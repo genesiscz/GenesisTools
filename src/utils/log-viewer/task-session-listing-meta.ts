@@ -76,9 +76,10 @@ export async function resolveTaskSessionListingMeta({
     // race, manual unlink, very old sessions before .meta.json existed). If
     // the caller already parsed records, reuse them; otherwise read only the
     // first line — the meta is always written there.
-    const inlineMeta = records !== undefined
-        ? jsonlMetaRecord(records)
-        : ((await firstLineMetaRecord(jsonlPath)) ?? jsonlMetaRecord(await readJsonlFile(jsonlPath)));
+    const inlineMeta =
+        records !== undefined
+            ? jsonlMetaRecord(records)
+            : ((await firstLineMetaRecord(jsonlPath)) ?? jsonlMetaRecord(await readJsonlFile(jsonlPath)));
 
     return {
         command: meta?.command ?? inlineMeta?.command,

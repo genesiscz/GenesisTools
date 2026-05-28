@@ -4,9 +4,9 @@ import { injectTtydMobileShell, shouldInjectTtydMobileShell } from "@app/dev-das
 describe("ttyd mobile-shell", () => {
     test("shouldInjectTtydMobileShell only patches ttyd HTML documents", () => {
         expect(shouldInjectTtydMobileShell("/ttyd/550e8400-e29b-41d4-a716-446655440000/", "text/html")).toBe(true);
-        expect(shouldInjectTtydMobileShell("/ttyd/550e8400-e29b-41d4-a716-446655440000/app.js", "text/javascript")).toBe(
-            false
-        );
+        expect(
+            shouldInjectTtydMobileShell("/ttyd/550e8400-e29b-41d4-a716-446655440000/app.js", "text/javascript")
+        ).toBe(false);
         expect(shouldInjectTtydMobileShell("/cmux", "text/html")).toBe(false);
     });
 

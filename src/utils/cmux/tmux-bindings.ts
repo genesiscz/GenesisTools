@@ -6,10 +6,7 @@ export interface CmuxTmuxSurfaceRef {
     title: string;
 }
 
-export function findCmuxSurfacesForTmuxSession(
-    layout: CmuxLayoutTree,
-    tmuxSessionName: string
-): CmuxTmuxSurfaceRef[] {
+export function findCmuxSurfacesForTmuxSession(layout: CmuxLayoutTree, tmuxSessionName: string): CmuxTmuxSurfaceRef[] {
     const bindings: CmuxTmuxSurfaceRef[] = [];
 
     for (const window of layout.windows) {

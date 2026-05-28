@@ -2,8 +2,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@ui/components/popover"
 import { Wrench } from "lucide-react";
 import type { ReactElement } from "react";
 import {
-    LOG_FONT_FAMILY_OPTIONS,
     type LineBoundaries,
+    LOG_FONT_FAMILY_OPTIONS,
     type LogFontFamily,
     type TimestampMode,
 } from "@/lib/display-settings";
@@ -90,7 +90,10 @@ export function DisplaySettingsButton(): ReactElement {
                     <Wrench className="w-4 h-4" />
                 </button>
             </PopoverTrigger>
-            <PopoverContent align="end" className="w-72 bg-[#0d0d18] border-white/10 text-white p-4 space-y-4 dbg-ui-text">
+            <PopoverContent
+                align="end"
+                className="w-72 bg-[#0d0d18] border-white/10 text-white p-4 space-y-4 dbg-ui-text"
+            >
                 <div>
                     <p className="dbg-ui-text-sm uppercase tracking-widest text-white/50">Display</p>
                     <p className="dbg-ui-text-xs text-white/35 mt-1">Settings persist in this browser.</p>

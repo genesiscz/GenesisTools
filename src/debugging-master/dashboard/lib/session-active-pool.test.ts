@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { DashboardSession } from "@app/utils/log-viewer/log-source";
-import { SESSION_ACTIVE_RETENTION_MS, isSessionInActivePool } from "./session-active-pool";
+import { isSessionInActivePool, SESSION_ACTIVE_RETENTION_MS } from "./session-active-pool";
 
 describe("session-active-pool", () => {
     const base: DashboardSession = {

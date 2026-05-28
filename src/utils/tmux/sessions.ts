@@ -1,5 +1,5 @@
-import { resolveTmuxBin } from "@app/utils/tmux/bin";
 import { buildTerminalSpawnEnv } from "@app/utils/terminal/locale";
+import { resolveTmuxBin } from "@app/utils/tmux/bin";
 import type { TmuxSessionInfo } from "@app/utils/tmux/types";
 
 export type TmuxSpawnSync = (cmd: string[], opts?: { cwd?: string }) => { exitCode: number | null; stdout: string };
@@ -66,7 +66,12 @@ export function listTmuxSessions(): TmuxSessionInfo[] {
         return [];
     }
 
-    const result = spawnSyncImpl([tmuxBin, "list-sessions", "-F", "#{session_name}\t#{session_attached}\t#{session_windows}"]);
+    const result = spawnSyncImpl([
+        tmuxBin,
+        "list-sessions",
+        "-F",
+        "#{session_name}\t#{session_attached}\t#{session_windows}",
+    ]);
 
     if (result.exitCode !== 0) {
         return [];

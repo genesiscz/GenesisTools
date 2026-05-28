@@ -1,3 +1,5 @@
+import { SafeJSON } from "@app/utils/json";
+
 export type LineBoundaries = "show" | "hide";
 
 export type TimestampMode = "every" | "change" | "never";
@@ -81,7 +83,7 @@ export function loadDisplaySettings(): DisplaySettings {
             return DEFAULT_DISPLAY_SETTINGS;
         }
 
-        const parsed = JSON.parse(raw) as Partial<DisplaySettings>;
+        const parsed = SafeJSON.parse(raw) as Partial<DisplaySettings>;
 
         return {
             uiFontSize: clampFontSize(parsed.uiFontSize, DEFAULT_DISPLAY_SETTINGS.uiFontSize),
@@ -102,7 +104,7 @@ export function saveDisplaySettings(settings: DisplaySettings): void {
     }
 
     try {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+        window.localStorage.setItem(STORAGE_KEY, SafeJSON.stringify(settings));
     } catch {
         // localStorage unavailable
     }

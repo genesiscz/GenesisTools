@@ -5,9 +5,14 @@ import { makeTtydTmuxSessionName } from "@app/dev-dashboard/lib/tmux/naming";
 import { findFreePort } from "@app/dev-dashboard/lib/ttyd/free-port";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import { logger } from "@app/logger";
-import { resolveTmuxBin } from "@app/utils/tmux/bin";
-import { createTmuxSession, ensureTmuxSessionUtf8Locale, killTmuxSession, sessionExists } from "@app/utils/tmux/sessions";
 import { buildTerminalSpawnEnv } from "@app/utils/terminal/locale";
+import { resolveTmuxBin } from "@app/utils/tmux/bin";
+import {
+    createTmuxSession,
+    ensureTmuxSessionUtf8Locale,
+    killTmuxSession,
+    sessionExists,
+} from "@app/utils/tmux/sessions";
 import type { Subprocess } from "bun";
 
 export { ttydLabel } from "@app/dev-dashboard/lib/ttyd/label";

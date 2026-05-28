@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test, afterEach } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import * as cli from "@app/cmux/lib/cli";
 import * as socket from "@app/cmux/lib/socket";
 import { fetchCmuxFullLayout, findWorkspaceByName, formatDualPreview } from "@app/utils/cmux/layout";
@@ -36,36 +36,28 @@ describe("fetchCmuxFullLayout", () => {
         const rpcSpy = spyOn(socket, "rpc").mockResolvedValue({
             workspaces: [{ ref: "workspace:1", id: "ws1", index: 0, title: "Main", selected: true }],
         });
-        const runJsonSpy = spyOn(cli, "runCmuxJSON").mockImplementation(async (args: string[]) => {
-            if (args[0] === "list-panes") {
-                return {
-                    panes: [
-                        {
-                            ref: "pane:1",
-                            title: "shell",
-                            focused: true,
-                            selected_surface_ref: "surface:1",
-                            surface_count: 1,
-                        },
-                    ],
-                };
-            }
-
-            if (args[0] === "list-pane-surfaces") {
-                return {
-                    surfaces: [
-                        {
-                            ref: "surface:1",
-                            title: "zsh",
-                            type: "terminal",
-                            selected: true,
-                        },
-                    ],
-                };
-            }
-
-            throw new Error(`unexpected args ${args.join(" ")}`);
-        });
+        const runJsonSpy = spyOn(cli, "runCmuxJSON")
+            .mockResolvedValueOnce({
+                panes: [
+                    {
+                        ref: "pane:1",
+                        title: "shell",
+                        focused: true,
+                        selected_surface_ref: "surface:1",
+                        surface_count: 1,
+                    },
+                ],
+            })
+            .mockResolvedValueOnce({
+                surfaces: [
+                    {
+                        ref: "surface:1",
+                        title: "zsh",
+                        type: "terminal",
+                        selected: true,
+                    },
+                ],
+            });
         const runSpy = spyOn(cli, "runCmux").mockResolvedValue({ code: 0, stdout: "prompt $", stderr: "" });
 
         const layout = await fetchCmuxFullLayout();

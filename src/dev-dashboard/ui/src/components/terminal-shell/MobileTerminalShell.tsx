@@ -112,9 +112,7 @@ export function MobileTerminalShell(props: MobileTerminalShellProps) {
                         {props.tabs.map((t) => renderTab(t, props.onSelect, props.onRename))}
                     </div>
                     <div className="dd-strip-side dd-strip-side--end">
-                        {props.headerActions ? (
-                            <div className="dd-strip-actions">{props.headerActions}</div>
-                        ) : null}
+                        {props.headerActions ? <div className="dd-strip-actions">{props.headerActions}</div> : null}
                         {props.primaryAction ? (
                             <button type="button" className="dd-plus" onClick={props.primaryAction.onClick}>
                                 {props.primaryAction.label}

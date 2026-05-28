@@ -1,6 +1,6 @@
-import { createTmuxSession, sessionExists } from "@app/utils/tmux/sessions";
-import { makeStandaloneTmuxSessionName } from "@app/utils/tmux/naming";
 import { out } from "@app/logger";
+import { makeStandaloneTmuxSessionName } from "@app/utils/tmux/naming";
+import { createTmuxSession, sessionExists } from "@app/utils/tmux/sessions";
 import type { Command } from "commander";
 
 interface CreateFlags {

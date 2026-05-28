@@ -22,7 +22,8 @@ export function slugify(title: string): string {
  */
 export function stripAnsi(input: string): string {
     // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape code matching
-    const csi = /\u001b\[[\?]?[0-9;]*[@-~]/g;
+    const csi = /\u001b\[[?]?[0-9;]*[@-~]/g;
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape code matching
     const osc = /\u001b\].*?\u0007/g;
     return input.replace(csi, "").replace(osc, "");
 }

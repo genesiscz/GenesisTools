@@ -1,8 +1,8 @@
 import { runBuild as runDbgDashboardBuild } from "@app/debugging-master/commands/dashboard";
 import { logDashboardApp } from "@app/debugging-master/lib/log-dashboard-app";
 import { out } from "@app/logger";
-import { dashboardUrlWithQuery } from "@app/utils/DashboardApp/lifecycle";
 import { TaskSessionStore } from "@app/task/lib/session-store";
+import { dashboardUrlWithQuery } from "@app/utils/DashboardApp/lifecycle";
 import type { Command } from "commander";
 
 export function registerDashboardCommand(program: Command): void {

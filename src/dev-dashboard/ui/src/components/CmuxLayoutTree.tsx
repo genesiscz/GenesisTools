@@ -22,15 +22,7 @@ interface Props {
     onCreateWorkspace?: () => void;
 }
 
-function Column({
-    title,
-    children,
-    delayMs,
-}: {
-    title: string;
-    children: ReactNode;
-    delayMs: number;
-}) {
+function Column({ title, children, delayMs }: { title: string; children: ReactNode; delayMs: number }) {
     return (
         <div
             className="flex min-h-[280px] flex-1 flex-col animate-in fade-in slide-in-from-bottom-3 fill-mode-both duration-700"
@@ -120,9 +112,7 @@ export function CmuxLayoutTreePicker({
     const selectedPane = panes.find((pane) => pane.id === paneId) ?? null;
     const surfaces = selectedPane?.surfaces ?? [];
     const selectedSurface =
-        surfaces.find((surface) => surface.id === surfaceId) ??
-        surfaces.find((surface) => surface.selected) ??
-        null;
+        surfaces.find((surface) => surface.id === surfaceId) ?? surfaces.find((surface) => surface.selected) ?? null;
 
     const preview =
         selectedSurface?.preview ??

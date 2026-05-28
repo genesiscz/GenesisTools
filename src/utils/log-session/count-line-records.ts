@@ -34,9 +34,15 @@ function countOccurrences(haystack: string, needle: string): number {
     let count = 0;
     let idx = 0;
 
-    while ((idx = haystack.indexOf(needle, idx)) !== -1) {
+    while (true) {
+        const found = haystack.indexOf(needle, idx);
+
+        if (found === -1) {
+            break;
+        }
+
         count += 1;
-        idx += needle.length;
+        idx = found + needle.length;
     }
 
     return count;

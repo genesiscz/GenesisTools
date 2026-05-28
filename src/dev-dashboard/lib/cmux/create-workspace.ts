@@ -17,7 +17,10 @@ export async function createCmuxWorkspace(opts: {
         try {
             await runCmuxOk(["rename-workspace", "--workspace", created.workspace_ref, opts.name]);
         } catch (error) {
-            logger.warn({ error, workspaceRef: created.workspace_ref, name: opts.name }, "rename-workspace failed after create");
+            logger.warn(
+                { error, workspaceRef: created.workspace_ref, name: opts.name },
+                "rename-workspace failed after create"
+            );
         }
     }
 

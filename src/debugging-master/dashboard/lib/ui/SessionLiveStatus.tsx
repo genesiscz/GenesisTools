@@ -1,6 +1,6 @@
-import type { ReactElement } from "react";
 import type { DashboardSession } from "@app/utils/log-viewer/log-source";
 import { useNowTick } from "@app/utils/ui/hooks/useNowTick";
+import type { ReactElement } from "react";
 import { resolveSessionLiveStatusDisplay } from "./session-live-status";
 
 interface Props {
@@ -43,7 +43,9 @@ export function SessionLiveStatus({ session, latestLineTs, className = "" }: Pro
                 <span className={phaseToneClass(display.phase)}>{display.stateLabel}</span>
                 <span className="text-white/35">
                     {" · last message "}
-                    <span className={`ui-recency ui-recency--${display.recencyTier ?? "muted"}`}>{display.agoLabel}</span>
+                    <span className={`ui-recency ui-recency--${display.recencyTier ?? "muted"}`}>
+                        {display.agoLabel}
+                    </span>
                 </span>
             </span>
         );
@@ -53,8 +55,7 @@ export function SessionLiveStatus({ session, latestLineTs, className = "" }: Pro
         <span className={`inline-flex items-baseline flex-wrap gap-x-1 ${className}`.trim()}>
             <span className={phaseToneClass(display.phase)}>{display.stateLabel}</span>
             <span className="text-white/35">
-                <span className="text-white/25">·</span>
-                {" "}
+                <span className="text-white/25">·</span>{" "}
                 <span className={`ui-recency ui-recency--${display.recencyTier ?? "muted"}`}>{display.agoLabel}</span>
             </span>
         </span>

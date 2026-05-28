@@ -26,9 +26,7 @@ export function Shell({ children }: ShellProps) {
             )}
             <main
                 className={
-                    focused
-                        ? "min-h-0 min-w-0 flex-1 overflow-hidden"
-                        : "dd-scroll-region min-h-0 min-w-0 flex-1 p-4"
+                    focused ? "min-h-0 min-w-0 flex-1 overflow-hidden" : "dd-scroll-region min-h-0 min-w-0 flex-1 p-4"
                 }
             >
                 {children}

@@ -66,10 +66,10 @@ describe("TaskSessionStore.resolveRunSessionName", () => {
         const name = "metro-reconcile";
         writeFileSync(
             jsonlPath(name),
-            [
+            `${[
                 '{"type":"meta","session":"metro-reconcile"}',
                 '{"type":"exit","code":0,"durationMs":1200,"ts":"2026-05-26T00:00:00.000Z"}',
-            ].join("\n") + "\n"
+            ].join("\n")}\n`
         );
         await store.prepareSession({
             name,
@@ -90,10 +90,10 @@ describe("TaskSessionStore.resolveRunSessionName", () => {
         const name = "dash-artifact";
         writeFileSync(
             jsonlPath(name),
-            [
+            `${[
                 '{"type":"meta","session":"dash-artifact","command":"test","mode":"pipe","cwd":"/tmp","startedAt":"2026-05-26T00:00:00.000Z"}',
                 '{"type":"exit","code":42,"durationMs":500,"ts":"2026-05-26T00:00:01.000Z"}',
-            ].join("\n") + "\n"
+            ].join("\n")}\n`
         );
 
         const reconciled = await store.reconcileSessionState(name);
@@ -110,11 +110,11 @@ describe("TaskSessionStore session reuse helpers", () => {
         const name = "reuse-seq";
         writeFileSync(
             jsonlPath(name),
-            [
+            `${[
                 '{"type":"meta","session":"reuse-seq"}',
                 '{"type":"line","seq":1,"out":"stdout","ts":1,"text":"a"}',
                 '{"type":"line","seq":3,"out":"stdout","ts":2,"text":"b"}',
-            ].join("\n") + "\n"
+            ].join("\n")}\n`
         );
 
         expect(await store.getLastLineSeq(name)).toBe(3);
@@ -159,11 +159,11 @@ describe("TaskSessionStore session reuse helpers", () => {
         const name = "reuse-continue";
         writeFileSync(
             jsonlPath(name),
-            [
+            `${[
                 '{"type":"meta","session":"reuse-continue"}',
                 '{"type":"line","seq":2,"out":"stdout","ts":1,"text":"keep"}',
                 '{"type":"exit","code":0,"durationMs":100,"ts":"2026-05-26T00:00:00.000Z"}',
-            ].join("\n") + "\n"
+            ].join("\n")}\n`
         );
         await store.prepareSession({
             name,
@@ -198,20 +198,20 @@ describe("TaskSessionStore session reuse helpers", () => {
         const paths = sessionFilePaths(name);
         writeFileSync(
             paths.jsonl,
-            [
+            `${[
                 '{"type":"meta","session":"reuse-trim"}',
                 '{"type":"line","seq":1,"out":"stdout","ts":1,"text":"drop"}',
                 '{"type":"line","seq":2,"out":"stdout","ts":2,"text":"drop"}',
                 '{"type":"line","seq":3,"out":"stdout","ts":3,"text":"keep"}',
-            ].join("\n") + "\n"
+            ].join("\n")}\n`
         );
         writeFileSync(
             paths.uiJsonl,
-            [
+            `${[
                 '{"type":"line","seq":1,"text":"drop"}',
                 '{"type":"line","seq":2,"text":"drop"}',
                 '{"type":"line","seq":3,"text":"keep"}',
-            ].join("\n") + "\n"
+            ].join("\n")}\n`
         );
 
         const removed = await store.clearOlderThanSeq(name, 2);

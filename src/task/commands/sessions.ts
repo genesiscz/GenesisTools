@@ -1,9 +1,9 @@
 import { out } from "@app/logger";
-import { formatBytes } from "@app/utils/format";
-import type { Command } from "commander";
 import { formatSessionState } from "@app/task/lib/format-session-state";
 import { sessionFilePaths } from "@app/task/lib/paths";
 import { TaskSessionStore } from "@app/task/lib/session-store";
+import { formatBytes } from "@app/utils/format";
+import type { Command } from "commander";
 
 export function registerSessionsCommand(program: Command): void {
     program

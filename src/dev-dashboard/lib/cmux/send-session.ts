@@ -1,6 +1,6 @@
+import { DEV_DASHBOARD_WORKSPACE } from "@app/dev-dashboard/lib/tmux/constants";
 import { attachTmuxToCmux } from "@app/utils/cmux/send-tmux";
 import type { AttachTmuxResult, CmuxSendTarget, DashboardSendTarget } from "@app/utils/cmux/types";
-import { DEV_DASHBOARD_WORKSPACE } from "@app/dev-dashboard/lib/tmux/constants";
 
 export function resolveDashboardSendTarget(target: DashboardSendTarget): CmuxSendTarget {
     if (target.mode === "quick_dev_dashboard") {

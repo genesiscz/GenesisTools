@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
 import { readTaskJsonl, runTaskCapture, runTaskCli } from "@app/task/lib/test-harness";
+import { SafeJSON } from "@app/utils/json";
+import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
 
 const dirs: string[] = [];
 
@@ -54,10 +55,10 @@ describe("eval2 bug fixes integration", () => {
         const session = "dash-artifact-cli";
         writeFileSync(
             sessionJsonlPath(homeDir, session),
-            [
+            `${[
                 '{"type":"meta","session":"dash-artifact-cli","command":"test","mode":"pipe","cwd":"/tmp","startedAt":"2026-05-26T00:00:00.000Z"}',
                 '{"type":"exit","code":0,"durationMs":100,"ts":"2026-05-26T00:00:01.000Z"}',
-            ].join("\n") + "\n"
+            ].join("\n")}\n`
         );
 
         const { stderr, exitCode } = await runTaskCli(["sessions"], { homeDir });
@@ -108,7 +109,7 @@ describe("eval2 bug fixes integration", () => {
         const session = `all-lines-${Date.now()}`;
 
         const lines = Array.from({ length: 100 }, (_, i) =>
-            JSON.stringify({
+            SafeJSON.stringify({
                 type: "line",
                 seq: i + 1,
                 out: "stdout",
@@ -133,10 +134,10 @@ describe("eval2 bug fixes integration", () => {
 
         writeFileSync(
             sessionJsonlPath(homeDir, session),
-            [
+            `${[
                 '{"type":"line","seq":1,"out":"stdout","ts":1,"text":"hello"}',
                 '{"type":"exit","code":42,"durationMs":100,"ts":"2026-05-26T00:00:00.000Z"}',
-            ].join("\n") + "\n"
+            ].join("\n")}\n`
         );
 
         const result = await Promise.race([

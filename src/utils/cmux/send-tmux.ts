@@ -1,5 +1,6 @@
+import { runCmuxJSON } from "@app/cmux/lib/cli";
 import { focusCmuxPane } from "@app/cmux/lib/controls";
-import { sessionExists } from "@app/utils/tmux/sessions";
+import { withFocusedWorkspace } from "@app/cmux/lib/focus-guard";
 import type { AttachTmuxResult, CmuxSendTarget } from "@app/utils/cmux/types";
 import {
     assertTerminalSurface,
@@ -9,8 +10,7 @@ import {
     renameSurfaceTab,
     sendAttachCommand,
 } from "@app/utils/cmux/workspace";
-import { runCmuxJSON } from "@app/cmux/lib/cli";
-import { withFocusedWorkspace } from "@app/cmux/lib/focus-guard";
+import { sessionExists } from "@app/utils/tmux/sessions";
 
 export interface AttachTmuxToCmuxOptions {
     tmuxSessionName: string;

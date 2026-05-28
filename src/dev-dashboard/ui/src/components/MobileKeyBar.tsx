@@ -64,8 +64,18 @@ export function MobileKeyBar({ onKey, onScroll, onPageScroll, scrollStep = 10, e
         { label: "↑", aria: "Arrow up", icon: <ArrowUp size={16} />, action: () => onKey("ArrowUp") },
         { label: "↓", aria: "Arrow down", icon: <ArrowDown size={16} />, action: () => onKey("ArrowDown") },
         { label: "→", aria: "Arrow right", icon: <ArrowRight size={16} />, action: () => onKey("ArrowRight") },
-        { label: "PgUp", aria: "Scroll up", icon: <ChevronsUp size={16} />, action: () => (onPageScroll ? onPageScroll(-1) : onScroll(-scrollStep)) },
-        { label: "PgDn", aria: "Scroll down", icon: <ChevronsDown size={16} />, action: () => (onPageScroll ? onPageScroll(1) : onScroll(scrollStep)) },
+        {
+            label: "PgUp",
+            aria: "Scroll up",
+            icon: <ChevronsUp size={16} />,
+            action: () => (onPageScroll ? onPageScroll(-1) : onScroll(-scrollStep)),
+        },
+        {
+            label: "PgDn",
+            aria: "Scroll down",
+            icon: <ChevronsDown size={16} />,
+            action: () => (onPageScroll ? onPageScroll(1) : onScroll(scrollStep)),
+        },
     ];
 
     return (

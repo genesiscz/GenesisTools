@@ -1,8 +1,8 @@
 import { runCmuxJSON, runCmuxOk } from "@app/cmux/lib/cli";
 import { withFocusedWorkspace } from "@app/cmux/lib/focus-guard";
 import { paneList, type SurfaceSplitResult, workspaceCreate } from "@app/cmux/lib/socket";
-import { findWorkspaceByName } from "@app/utils/cmux/layout";
 import { logger } from "@app/logger";
+import { findWorkspaceByName } from "@app/utils/cmux/layout";
 import { localeExportPrefix } from "@app/utils/terminal/locale";
 
 export interface OpenSplitResult {
@@ -118,11 +118,7 @@ export async function renameSurfaceTab(workspaceRef: string, surfaceRef: string,
     await runCmuxOk(["rename-tab", "--workspace", workspaceRef, "--surface", surfaceRef, title]);
 }
 
-export async function assertTerminalSurface(
-    workspaceRef: string,
-    paneRef: string,
-    surfaceRef: string
-): Promise<void> {
+export async function assertTerminalSurface(workspaceRef: string, paneRef: string, surfaceRef: string): Promise<void> {
     const surfaces = await runCmuxJSON<{ surfaces?: Array<{ ref?: string; type?: string }> }>([
         "list-pane-surfaces",
         "--workspace",

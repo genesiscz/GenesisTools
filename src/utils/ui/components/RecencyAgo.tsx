@@ -1,6 +1,6 @@
-import type { ReactElement } from "react";
 import { resolveQaRecency } from "@app/utils/ui/helpers/qa-recency";
 import { useNowTick } from "@app/utils/ui/hooks/useNowTick";
+import type { ReactElement } from "react";
 
 interface Props {
     ts: number;

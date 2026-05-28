@@ -1,6 +1,6 @@
 import { runCmuxJSON } from "@app/cmux/lib/cli";
 import { redactTerminalPreview } from "@app/cmux/lib/live-snapshot";
-import { rpc, windowList, type WorkspaceEntry } from "@app/cmux/lib/socket";
+import { rpc, type WorkspaceEntry, windowList } from "@app/cmux/lib/socket";
 import { logger } from "@app/logger";
 import type {
     CmuxLayoutPane,
@@ -69,11 +69,9 @@ export function formatDualPreview(text: string, maxLines = PREVIEW_LINE_BUDGET):
     const tailLines = maxLines - PREVIEW_HEAD_LINES - 1;
     const omitted = lines.length - PREVIEW_HEAD_LINES - tailLines;
 
-    return [
-        ...lines.slice(0, PREVIEW_HEAD_LINES),
-        `── ··· ${omitted} lines ··· ──`,
-        ...lines.slice(-tailLines),
-    ].join("\n");
+    return [...lines.slice(0, PREVIEW_HEAD_LINES), `── ··· ${omitted} lines ··· ──`, ...lines.slice(-tailLines)].join(
+        "\n"
+    );
 }
 
 async function readSelectedSurfacePreview(workspaceId: string, surfaceId: string): Promise<string | undefined> {

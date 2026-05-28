@@ -1,8 +1,8 @@
 import { out } from "@app/logger";
-import { escapeShellArg } from "@app/utils/string";
-import type { RunBannerInput, RunExitSummaryInput } from "@app/task/types";
 import { sessionFilePaths } from "@app/task/lib/paths";
 import { suggestDashboard, suggestGet, suggestLogs, suggestLogsFollow, suggestTail } from "@app/task/lib/suggest-flags";
+import type { RunBannerInput, RunExitSummaryInput } from "@app/task/types";
+import { escapeShellArg } from "@app/utils/string";
 
 export function formatCommandDisplay(command: string[]): string {
     return command.map((part) => escapeShellArg(part)).join(" ");

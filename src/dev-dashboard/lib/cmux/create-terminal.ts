@@ -1,14 +1,14 @@
 import { focusCmuxPane } from "@app/cmux/lib/controls";
 import { withFocusedWorkspace } from "@app/cmux/lib/focus-guard";
-import { makeCmuxTmuxSessionName } from "@app/dev-dashboard/lib/tmux/naming";
 import { DEV_DASHBOARD_WORKSPACE } from "@app/dev-dashboard/lib/tmux/constants";
+import { makeCmuxTmuxSessionName } from "@app/dev-dashboard/lib/tmux/naming";
+import type { AttachTmuxResult } from "@app/utils/cmux/types";
 import {
     ensureWorkspaceByName,
     openSplitInWorkspace,
     renameSurfaceTab,
     sendNewSessionCommand,
 } from "@app/utils/cmux/workspace";
-import type { AttachTmuxResult } from "@app/utils/cmux/types";
 
 export async function createDevDashboardTerminal(opts: { cwd?: string } = {}): Promise<AttachTmuxResult> {
     const cwd = opts.cwd ?? process.cwd();

@@ -1,4 +1,4 @@
-import { useEffect, useState, type Ref } from "react";
+import { type Ref, useEffect, useState } from "react";
 
 interface TtydFrameProps {
     id: string;

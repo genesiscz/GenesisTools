@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import type { TaskSessionMeta } from "@app/task/types";
 import { formatSessionState } from "@app/task/lib/format-session-state";
+import type { TaskSessionMeta } from "@app/task/types";
 
 describe("formatSessionState", () => {
     it("returns unknown when meta is null (eval2 bug #3)", () => {

@@ -1,10 +1,10 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactElement, type ReactNode } from "react";
+import { createContext, type ReactElement, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import {
     applyDisplaySettings,
     DEFAULT_DISPLAY_SETTINGS,
+    type DisplaySettings,
     loadDisplaySettings,
     saveDisplaySettings,
-    type DisplaySettings,
 } from "@/lib/display-settings";
 
 interface DisplaySettingsContextValue {

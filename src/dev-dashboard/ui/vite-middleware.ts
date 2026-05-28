@@ -12,13 +12,9 @@ import {
 import { getCurrentUsage, getUsageHistory, getUsageHistoryMulti } from "@app/dev-dashboard/lib/claude-usage/aggregator";
 import { createDevDashboardTerminal } from "@app/dev-dashboard/lib/cmux/create-terminal";
 import { createCmuxWorkspace } from "@app/dev-dashboard/lib/cmux/create-workspace";
+import { getCachedSnapshot, startPolling } from "@app/dev-dashboard/lib/cmux/poller";
 import { removeTmuxSessionFromCmux } from "@app/dev-dashboard/lib/cmux/remove-session";
 import { sendTmuxSessionToCmux } from "@app/dev-dashboard/lib/cmux/send-session";
-import { fetchCmuxFullLayout } from "@app/utils/cmux/layout";
-import { indexCmuxSurfacesByTmuxSession } from "@app/utils/cmux/tmux-bindings";
-import type { CmuxTmuxSurfaceRef } from "@app/utils/cmux/tmux-bindings";
-import type { DashboardSendTarget } from "@app/utils/cmux/types";
-import { getCachedSnapshot, startPolling } from "@app/dev-dashboard/lib/cmux/poller";
 import { listContainers } from "@app/dev-dashboard/lib/containers/docker";
 import {
     getAllRecentRuns,
@@ -38,10 +34,10 @@ import { renderSharePage } from "@app/dev-dashboard/lib/obsidian/share-template"
 import { enrichQaEntry } from "@app/dev-dashboard/lib/qa-render";
 import { createQaStream, todayLogFile } from "@app/dev-dashboard/lib/qa-sse";
 import { configureRetention, getCachedPulse, getSeries, startPulsePolling } from "@app/dev-dashboard/lib/system/poller";
-import { addTodo, completeTodo, deleteTodo, listTodos } from "@app/dev-dashboard/lib/todos/service";
-import { enrichSessionsForHub } from "@app/dev-dashboard/lib/tmux/hub";
 import { createStandaloneTmuxSession } from "@app/dev-dashboard/lib/tmux/create-session";
+import { enrichSessionsForHub } from "@app/dev-dashboard/lib/tmux/hub";
 import { renameTmuxSessionInHub } from "@app/dev-dashboard/lib/tmux/rename";
+import { addTodo, completeTodo, deleteTodo, listTodos } from "@app/dev-dashboard/lib/todos/service";
 import { killTtyd, listTtyd, renameTtyd, spawnTtyd } from "@app/dev-dashboard/lib/ttyd/manager";
 import { fetchWeather } from "@app/dev-dashboard/lib/weather/client";
 import { logger } from "@app/logger";
@@ -49,8 +45,12 @@ import { defaultDbPath } from "@app/question/commands/log";
 import { markEntriesRead, openReadModel, queryEntries } from "@app/question/lib/read-model";
 import { getAudioLibrary } from "@app/utils/audio/library";
 import { resolveSoundBuffer } from "@app/utils/audio/runner.server";
-import { listTmuxSessions } from "@app/utils/tmux/sessions";
+import { fetchCmuxFullLayout } from "@app/utils/cmux/layout";
+import type { CmuxTmuxSurfaceRef } from "@app/utils/cmux/tmux-bindings";
+import { indexCmuxSurfacesByTmuxSession } from "@app/utils/cmux/tmux-bindings";
+import type { DashboardSendTarget } from "@app/utils/cmux/types";
 import { SafeJSON } from "@app/utils/json";
+import { listTmuxSessions } from "@app/utils/tmux/sessions";
 import type { Connect } from "vite";
 
 let loggedGeneratedPassword = false;
@@ -299,7 +299,9 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
 
         if (req.method === "POST" && url.pathname === "/api/cmux/send-session") {
             try {
-                const body = await readJson<{ tmuxSessionName: string; target: DashboardSendTarget; cwd?: string }>(req);
+                const body = await readJson<{ tmuxSessionName: string; target: DashboardSendTarget; cwd?: string }>(
+                    req
+                );
                 const result = await sendTmuxSessionToCmux(body);
                 sendJson(res, 200, { result });
             } catch (err) {

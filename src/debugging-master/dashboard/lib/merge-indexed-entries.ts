@@ -1,9 +1,6 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
 
-export function mergeIndexedLogEntries(
-    existing: IndexedLogEntry[],
-    incoming: IndexedLogEntry[]
-): IndexedLogEntry[] {
+export function mergeIndexedLogEntries(existing: IndexedLogEntry[], incoming: IndexedLogEntry[]): IndexedLogEntry[] {
     if (incoming.length === 0) {
         return existing;
     }

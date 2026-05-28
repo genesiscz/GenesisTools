@@ -1,9 +1,9 @@
 import { logger } from "@app/logger";
-import { JsonlWriter } from "@app/utils/log-session/jsonl-writer";
-import { OrderedCaptureWriter } from "@app/utils/log-session/ordered-capture-writer";
-import type { RunTaskOptions, RunTaskResult, ResolvedRunSession } from "@app/task/types";
 import { jsonlPath, sessionFilePaths, stderrLogPath, stdoutLogPath, uiJsonlPath } from "@app/task/lib/paths";
 import { TaskSessionStore } from "@app/task/lib/session-store";
+import type { ResolvedRunSession, RunTaskOptions, RunTaskResult } from "@app/task/types";
+import { JsonlWriter } from "@app/utils/log-session/jsonl-writer";
+import { OrderedCaptureWriter } from "@app/utils/log-session/ordered-capture-writer";
 
 const log = logger.child({ component: "task:runner" });
 
@@ -154,8 +154,7 @@ async function runPtyMode(opts: RunTaskOptions, writer: OrderedCaptureWriter): P
             cols,
             rows,
             data(_term, data) {
-                const text =
-                    typeof data === "string" ? data : ptyDecoder.decode(data, { stream: true });
+                const text = typeof data === "string" ? data : ptyDecoder.decode(data, { stream: true });
                 process.stdout.write(text);
                 writer.enqueue("stdout", text);
             },
@@ -319,5 +318,11 @@ export async function runTask(opts: RunTaskOptions): Promise<RunTaskResult> {
         }
     }
 
-    return { exitCode, durationMs: Date.now() - startMs, session, requestedSession: resolved.requested, renamed: resolved.renamed };
+    return {
+        exitCode,
+        durationMs: Date.now() - startMs,
+        session,
+        requestedSession: resolved.requested,
+        renamed: resolved.renamed,
+    };
 }

@@ -2,27 +2,27 @@ import type { IndexedLogEntry } from "@app/debugging-master/types";
 import type { DashboardSession, LogSourceId } from "@app/utils/log-viewer/log-source";
 import { sessionKey } from "@app/utils/log-viewer/session-key";
 import { sortSessionsByRecency } from "@app/utils/log-viewer/session-recency";
+import { shortenPathWithPrefix } from "@app/utils/paths.client";
 import { buildBalancedMosaicLayout, reconcileMosaicLayout } from "@app/utils/ui/helpers/mosaic-layout";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
-import type { TimestampMode } from "@/lib/display-settings";
-import { filterDisplayLogLines, shouldShowLogTimestamp, visibleLogText } from "@/lib/log-line-display";
-import { api } from "@/lib/api";
 import { useAutoScroll } from "@app/utils/ui/hooks/useAutoScroll";
 import { useNowTick } from "@app/utils/ui/hooks/useNowTick";
+import { useDirPathPrefix } from "@ui/components/DirPath";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
+import { api } from "@/lib/api";
+import type { TimestampMode } from "@/lib/display-settings";
+import { filterDisplayLogLines, shouldShowLogTimestamp, visibleLogText } from "@/lib/log-line-display";
+import { isSessionInActivePool } from "@/lib/session-active-pool";
+import { formatSessionHeaderParts } from "@/lib/session-run-context";
 import type { ConnectionStatus, MultiplexLogEntry } from "@/lib/sse";
 import { connectActiveStream } from "@/lib/sse";
-import { isSessionInActivePool } from "@/lib/session-active-pool";
-import { StatusPill } from "./StatusPill";
 import { ActiveSessionMosaicToolbar } from "./ActiveSessionMosaicToolbar";
 import { DisplaySettingsButton } from "./DisplaySettingsButton";
-import { shortenPathWithPrefix } from "@app/utils/paths.client";
-import { useDirPathPrefix } from "@ui/components/DirPath";
-import { formatSessionHeaderParts } from "@/lib/session-run-context";
-import { SessionHeaderLine } from "./SessionHeaderLine";
-import { LogPreviewLine } from "./LogPreviewLine";
-import { SessionDeleteButton, SessionRowBar } from "./SessionRowBar";
 import { useDisplaySettings } from "./DisplaySettingsProvider";
+import { LogPreviewLine } from "./LogPreviewLine";
+import { SessionHeaderLine } from "./SessionHeaderLine";
+import { SessionDeleteButton, SessionRowBar } from "./SessionRowBar";
+import { StatusPill } from "./StatusPill";
 
 const ACTIVE_PREVIEW_LINES = 2000;
 const ARCHIVE_PREVIEW_LIMIT = 40;
@@ -69,14 +69,6 @@ function badgeClass(badge: string): string {
     }
 
     return "bg-purple-500/20 text-purple-300 border-purple-500/30";
-}
-
-function latestLineTimestamp(lines: MultiplexLogEntry[]): number | undefined {
-    if (lines.length === 0) {
-        return undefined;
-    }
-
-    return lines[lines.length - 1].ts;
 }
 
 type MosaicVisibility = "visible" | "hidden" | "overflow";
@@ -349,8 +341,7 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
         setLayout((current) => reconcileMosaicLayout(current, activeKeys, { maxColumns: MOSAIC_MAX_COLUMNS }));
     }, [activeKeys]);
 
-    const mosaicLayout =
-        layout ?? buildBalancedMosaicLayout(activeKeys, { maxColumns: MOSAIC_MAX_COLUMNS });
+    const mosaicLayout = layout ?? buildBalancedMosaicLayout(activeKeys, { maxColumns: MOSAIC_MAX_COLUMNS });
 
     // Stable membership signature of the mosaic — recomputes only when the
     // SET of active session keys changes, not on every `now` tick. Without
@@ -367,17 +358,11 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
             return;
         }
 
-        let cancelled = false;
-
         const prefetchActiveTails = async (): Promise<void> => {
             await Promise.all(mosaicActiveSessions.map((session) => prefetchSessionTail(session)));
         };
 
         void prefetchActiveTails();
-
-        return () => {
-            cancelled = true;
-        };
         // Depend on the stable membership signature, NOT mosaicActiveSessions
         // (which is a new array ref every second from useNowTick).
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -465,36 +450,39 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [onStatus, mosaicActiveKeysSig]);
 
-    const toggleArchiveRow = useCallback(async (session: DashboardSession) => {
-        const key = sessionKey(session.source, session.name);
-        setExpandedArchive((prev) => {
-            const next = new Set(prev);
-            if (next.has(key)) {
-                next.delete(key);
-                return next;
-            }
-            next.add(key);
-            return next;
-        });
-
-        if (archiveEntries.has(key) || loadingArchive.has(key)) {
-            return;
-        }
-
-        setLoadingArchive((prev) => new Set(prev).add(key));
-        try {
-            const res = await api.getEntries(session.source, session.name, 0, ARCHIVE_PREVIEW_LIMIT);
-            setArchiveEntries((prev) => new Map(prev).set(key, res.entries.slice(-ARCHIVE_PREVIEW_LIMIT)));
-        } catch {
-            setArchiveEntries((prev) => new Map(prev).set(key, []));
-        } finally {
-            setLoadingArchive((prev) => {
+    const toggleArchiveRow = useCallback(
+        async (session: DashboardSession) => {
+            const key = sessionKey(session.source, session.name);
+            setExpandedArchive((prev) => {
                 const next = new Set(prev);
-                next.delete(key);
+                if (next.has(key)) {
+                    next.delete(key);
+                    return next;
+                }
+                next.add(key);
                 return next;
             });
-        }
-    }, [archiveEntries, loadingArchive]);
+
+            if (archiveEntries.has(key) || loadingArchive.has(key)) {
+                return;
+            }
+
+            setLoadingArchive((prev) => new Set(prev).add(key));
+            try {
+                const res = await api.getEntries(session.source, session.name, 0, ARCHIVE_PREVIEW_LIMIT);
+                setArchiveEntries((prev) => new Map(prev).set(key, res.entries.slice(-ARCHIVE_PREVIEW_LIMIT)));
+            } catch {
+                setArchiveEntries((prev) => new Map(prev).set(key, []));
+            } finally {
+                setLoadingArchive((prev) => {
+                    const next = new Set(prev);
+                    next.delete(key);
+                    return next;
+                });
+            }
+        },
+        [archiveEntries, loadingArchive]
+    );
 
     const clearDeletedSessionLocalState = useCallback((session: DashboardSession) => {
         const key = sessionKey(session.source, session.name);
@@ -551,7 +539,9 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
 
                 {allActiveSessions.length > 0 ? (
                     <div className="px-3 sm:px-5 pb-2.5 flex flex-wrap items-center gap-1.5 border-t border-white/5 pt-2">
-                        <span className="dbg-ui-text-xs uppercase tracking-widest text-white/30 mr-1 shrink-0">Mosaic</span>
+                        <span className="dbg-ui-text-xs uppercase tracking-widest text-white/30 mr-1 shrink-0">
+                            Mosaic
+                        </span>
                         {allActiveSessions.map((session) => {
                             const key = sessionKey(session.source, session.name);
                             const visibility = resolveMosaicVisibility({
@@ -700,7 +690,8 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
                                                     <p className="px-2 py-1 text-white/30 italic">no log lines</p>
                                                 ) : (
                                                     filterDisplayLogLines(entries).map((entry, index, visible) => {
-                                                        const previousTs = index > 0 ? visible[index - 1]?.ts : undefined;
+                                                        const previousTs =
+                                                            index > 0 ? visible[index - 1]?.ts : undefined;
                                                         const showTimestamp = shouldShowLogTimestamp({
                                                             mode: settings.timestampMode,
                                                             ts: entry.ts,

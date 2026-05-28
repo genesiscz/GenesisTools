@@ -1,17 +1,5 @@
-import {
-    collapsePathForDisplay,
-    formatPathForDisplay,
-    longestCommonPathPrefix,
-    shortenPathWithPrefix,
-    toPosixPath,
-} from "@app/utils/paths.client";
-import {
-    createContext,
-    useContext,
-    useMemo,
-    type ReactElement,
-    type ReactNode,
-} from "react";
+import { formatPathForDisplay, longestCommonPathPrefix } from "@app/utils/paths.client";
+import { createContext, type ReactElement, type ReactNode, useContext, useMemo } from "react";
 
 const DirPathPrefixContext = createContext<string>("");
 

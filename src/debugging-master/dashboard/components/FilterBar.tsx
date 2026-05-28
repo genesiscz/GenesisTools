@@ -1,9 +1,9 @@
 import type { LogLevel } from "@app/debugging-master/types";
 import type { DashboardSession } from "@app/utils/log-viewer/log-source";
 import type { FilterState } from "@/lib/filters";
+import { FILTER_ORDER, LEVEL_META } from "@/lib/levels";
 import { formatSessionHeaderParts } from "@/lib/session-run-context";
 import { SessionLiveStatus } from "@/lib/ui/SessionLiveStatus";
-import { FILTER_ORDER, LEVEL_META } from "@/lib/levels";
 import { AutoscrollToggle } from "./AutoscrollToggle";
 import { LevelTooltip } from "./LevelTooltip";
 import { SessionHeaderLine } from "./SessionHeaderLine";

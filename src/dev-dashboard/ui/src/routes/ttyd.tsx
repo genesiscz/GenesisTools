@@ -4,6 +4,13 @@ import { Layers, Plus, Send, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
 import "react-mosaic-component/react-mosaic-component.css";
+import { ttydLabel } from "@app/dev-dashboard/lib/ttyd/label";
+import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
+import {
+    buildBalancedMosaicLayout,
+    flattenMosaicLeaves,
+    reconcileMosaicLayout,
+} from "@app/utils/ui/helpers/mosaic-layout";
 import { Button } from "@ui/components/button";
 import { CmuxSendTargetDialog } from "@/components/CmuxSendTargetDialog";
 import { MobileKeyBar } from "@/components/MobileKeyBar";
@@ -17,13 +24,10 @@ import { ShellIconButton } from "@/components/terminal-shell/ShellIconButton";
 import { useLayoutMode } from "@/hooks/useLayoutMode";
 import { useLockPageScroll } from "@/hooks/useLockPageScroll";
 import { useVisualViewportSize } from "@/hooks/useVisualViewportSize";
-import { ttydApi, tmuxApi } from "@/lib/api";
+import { tmuxApi, ttydApi } from "@/lib/api";
 import { scrollIframeTerminal, scrollIframeTerminalByPage, sendKeyToIframe } from "@/lib/iframe-keys";
 import { buildTtydTabs } from "@/lib/terminal-tabs";
 import { pickTtydActiveId, TTYD_TAB_SEARCH_KEY, writeTtydActiveId } from "@/lib/view-state";
-import { buildBalancedMosaicLayout, flattenMosaicLeaves, reconcileMosaicLayout } from "@app/utils/ui/helpers/mosaic-layout";
-import { ttydLabel } from "@app/dev-dashboard/lib/ttyd/label";
-import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 
 function LayoutToggle({ mode, setMode }: { mode: "mosaic" | "focused"; setMode: (m: "mosaic" | "focused") => void }) {
     return (
@@ -221,68 +225,68 @@ export function TtydRoute() {
                         </div>
                     ) : null}
                     <MobileTerminalShell
-                    tabs={buildTtydTabs(sessions, active).map((t) => ({ ...t, dot: "active" as const }))}
-                    onSelect={(id) => {
-                        setActiveId(id);
-                    }}
-                    onRename={(id, name) => renameMut.mutate({ id, name })}
-                    headerActions={
-                        <>
-                            <ShellIconButton icon={Layers} label="Tmux sessions" onClick={() => setHubOpen(true)} />
-                            {active ? (
-                                <ShellIconButton
-                                    icon={X}
-                                    label="Close terminal"
-                                    onClick={() => {
-                                        const session = sessions.find((candidate) => candidate.id === active);
+                        tabs={buildTtydTabs(sessions, active).map((t) => ({ ...t, dot: "active" as const }))}
+                        onSelect={(id) => {
+                            setActiveId(id);
+                        }}
+                        onRename={(id, name) => renameMut.mutate({ id, name })}
+                        headerActions={
+                            <>
+                                <ShellIconButton icon={Layers} label="Tmux sessions" onClick={() => setHubOpen(true)} />
+                                {active ? (
+                                    <ShellIconButton
+                                        icon={X}
+                                        label="Close terminal"
+                                        onClick={() => {
+                                            const session = sessions.find((candidate) => candidate.id === active);
 
-                                        if (session) {
-                                            setCloseTarget(session);
-                                        }
-                                    }}
-                                />
-                            ) : null}
-                        </>
-                    }
-                    primaryAction={{ label: "＋", onClick: () => spawn.mutate() }}
-                    renderPreview={(id) => {
-                        const s = sessions.find((x) => x.id === id);
+                                            if (session) {
+                                                setCloseTarget(session);
+                                            }
+                                        }}
+                                    />
+                                ) : null}
+                            </>
+                        }
+                        primaryAction={{ label: "＋", onClick: () => spawn.mutate() }}
+                        renderPreview={(id) => {
+                            const s = sessions.find((x) => x.id === id);
 
-                        return s ? (
-                            <TtydFrame
-                                id={s.id}
-                                title={`ttyd-prev-${id}`}
-                                className="h-full w-full border-0 bg-black"
-                            />
-                        ) : null;
-                    }}
-                >
-                    {sessions.length > 0 ? (
-                        sessions.map((s) => (
-                            <div
-                                key={s.id}
-                                className="absolute inset-0 min-w-0 overflow-hidden"
-                                style={{
-                                    opacity: s.id === active ? 1 : 0,
-                                    pointerEvents: s.id === active ? "auto" : "none",
-                                    zIndex: s.id === active ? 1 : 0,
-                                }}
-                            >
+                            return s ? (
                                 <TtydFrame
                                     id={s.id}
-                                    title={`ttyd-${s.id}`}
-                                    className="h-full w-full bg-black"
-                                    iframeRef={s.id === active ? activeIframeRef : undefined}
+                                    title={`ttyd-prev-${id}`}
+                                    className="h-full w-full border-0 bg-black"
                                 />
-                                {s.id === active ? <TtydScrollPads iframeRef={activeIframeRef} /> : null}
+                            ) : null;
+                        }}
+                    >
+                        {sessions.length > 0 ? (
+                            sessions.map((s) => (
+                                <div
+                                    key={s.id}
+                                    className="absolute inset-0 min-w-0 overflow-hidden"
+                                    style={{
+                                        opacity: s.id === active ? 1 : 0,
+                                        pointerEvents: s.id === active ? "auto" : "none",
+                                        zIndex: s.id === active ? 1 : 0,
+                                    }}
+                                >
+                                    <TtydFrame
+                                        id={s.id}
+                                        title={`ttyd-${s.id}`}
+                                        className="h-full w-full bg-black"
+                                        iframeRef={s.id === active ? activeIframeRef : undefined}
+                                    />
+                                    {s.id === active ? <TtydScrollPads iframeRef={activeIframeRef} /> : null}
+                                </div>
+                            ))
+                        ) : (
+                            <div className="flex h-full items-center justify-center text-[var(--dd-text-muted)]">
+                                No terminals — tap ＋ to start one.
                             </div>
-                        ))
-                    ) : (
-                        <div className="flex h-full items-center justify-center text-[var(--dd-text-muted)]">
-                            No terminals — tap ＋ to start one.
-                        </div>
-                    )}
-                </MobileTerminalShell>
+                        )}
+                    </MobileTerminalShell>
                 </div>
                 {focusedMobile && active ? (
                     <MobileKeyBar

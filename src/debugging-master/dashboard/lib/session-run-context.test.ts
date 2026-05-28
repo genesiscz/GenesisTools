@@ -1,6 +1,6 @@
+import { describe, expect, it } from "bun:test";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
 import type { DashboardSession } from "@app/utils/log-viewer/log-source";
 import { formatSessionHeaderParts } from "./session-run-context";
 

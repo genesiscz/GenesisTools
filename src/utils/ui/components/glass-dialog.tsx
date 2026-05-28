@@ -50,7 +50,10 @@ export function GlassDialogContent({
 
 export function GlassDialogBody({ className, children, ...props }: ComponentProps<"div">) {
     return (
-        <div className={cn("relative flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-5 sm:p-6", className)} {...props}>
+        <div
+            className={cn("relative flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-5 sm:p-6", className)}
+            {...props}
+        >
             {children}
         </div>
     );
@@ -66,10 +69,7 @@ export function GlassDialogScroll({ className, children, ...props }: ComponentPr
 
 export function GlassDialogEyebrow({ className, children, ...props }: ComponentProps<"p">) {
     return (
-        <p
-            className={cn("font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500", className)}
-            {...props}
-        >
+        <p className={cn("font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500", className)} {...props}>
             {children}
         </p>
     );

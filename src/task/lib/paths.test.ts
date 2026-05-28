@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getTaskSessionsDir, isCanonicalSessionJsonlFilename, jsonlPath, sessionNameFromJsonlFilename } from "@app/task/lib/paths";
+import {
+    getTaskSessionsDir,
+    isCanonicalSessionJsonlFilename,
+    jsonlPath,
+    sessionNameFromJsonlFilename,
+} from "@app/task/lib/paths";
 
 describe("task paths", () => {
     const originalHome = process.env.GENESIS_TOOLS_HOME;

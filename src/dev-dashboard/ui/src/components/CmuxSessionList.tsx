@@ -7,8 +7,14 @@ import { CircleDashed, Layers, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
 import "react-mosaic-component/react-mosaic-component.css";
-import { SemanticTerminalPreview } from "@/components/SemanticTerminalPreview";
+import {
+    buildBalancedMosaicLayout,
+    flattenMosaicLeaves,
+    pruneMosaicLeaves,
+    reconcileMosaicLayout,
+} from "@app/utils/ui/helpers/mosaic-layout";
 import { CmuxSendTargetDialog } from "@/components/CmuxSendTargetDialog";
+import { SemanticTerminalPreview } from "@/components/SemanticTerminalPreview";
 import { TmuxSessionsPanel } from "@/components/TmuxSessionsPanel";
 import { MobileTerminalShell } from "@/components/terminal-shell/MobileTerminalShell";
 import { ShellIconButton } from "@/components/terminal-shell/ShellIconButton";
@@ -21,12 +27,6 @@ import {
     ttydTabSearchHref,
     writeCmuxViewState,
 } from "@/lib/view-state";
-import {
-    buildBalancedMosaicLayout,
-    flattenMosaicLeaves,
-    pruneMosaicLeaves,
-    reconcileMosaicLayout,
-} from "@app/utils/ui/helpers/mosaic-layout";
 
 interface Props {
     snapshot: CmuxSnapshot;
@@ -381,19 +381,18 @@ export function CmuxSessionList({ snapshot }: Props) {
                             <Plus size={12} />
                             <span className="hidden sm:inline">New</span>
                         </Button>
-                        <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setHubOpen(true)}
-                            aria-label="Tmux sessions"
-                        >
+                        <Button size="sm" variant="outline" onClick={() => setHubOpen(true)} aria-label="Tmux sessions">
                             <Layers size={12} />
                             <span className="hidden sm:inline">Tmux</span>
                         </Button>
-                        <span className="truncate">snapshot · {formatClock(snapshot.fetchedAt, { seconds: true })}</span>
+                        <span className="truncate">
+                            snapshot · {formatClock(snapshot.fetchedAt, { seconds: true })}
+                        </span>
                     </span>
                     <span className="flex min-w-0 shrink-0 items-center gap-3">
-                        <span className="hidden lg:inline">drag panes to reorder · drag dividers to resize · live snapshot</span>
+                        <span className="hidden lg:inline">
+                            drag panes to reorder · drag dividers to resize · live snapshot
+                        </span>
                         {!isMobile ? (
                             <Button
                                 size="sm"

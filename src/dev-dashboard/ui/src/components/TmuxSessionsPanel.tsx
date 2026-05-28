@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { BezelCard } from "@ui/components/bezel-card";
 import { Button } from "@ui/components/button";
 import {
     GlassDialogBody,
@@ -10,13 +11,12 @@ import {
     GlassDialogShell,
     GlassDialogTitle,
 } from "@ui/components/glass-dialog";
-import { BezelCard } from "@ui/components/bezel-card";
 import { Monitor, Send, Terminal, Unlink } from "lucide-react";
 import { useState } from "react";
 import { CmuxSendTargetDialog } from "@/components/CmuxSendTargetDialog";
 import { TmuxSessionName } from "@/components/TmuxSessionName";
-import { cmuxApi, tmuxApi, ttydApi } from "@/lib/api";
 import type { TmuxHubSession } from "@/lib/api";
+import { cmuxApi, tmuxApi, ttydApi } from "@/lib/api";
 import { canRemoveFromCmux } from "@/lib/view-state";
 
 interface Props {

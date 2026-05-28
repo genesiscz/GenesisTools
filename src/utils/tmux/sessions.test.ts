@@ -1,6 +1,12 @@
-import { describe, expect, test, afterEach } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { resetTmuxBinCache, setTmuxBinForTests } from "@app/utils/tmux/bin";
-import { buildTmuxSpawnEnv, listTmuxSessions, renameTmuxSession, sessionExists, setTmuxSpawnSyncForTests } from "@app/utils/tmux/sessions";
+import {
+    buildTmuxSpawnEnv,
+    listTmuxSessions,
+    renameTmuxSession,
+    sessionExists,
+    setTmuxSpawnSyncForTests,
+} from "@app/utils/tmux/sessions";
 
 describe("tmux sessions", () => {
     afterEach(() => {

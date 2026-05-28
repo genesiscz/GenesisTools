@@ -1,8 +1,8 @@
 import { out } from "@app/logger";
-import type { Command } from "commander";
 import { getSessionInfo } from "@app/task/lib/get-session-info";
 import { TaskSessionStore } from "@app/task/lib/session-store";
 import { withResolvedSession } from "@app/task/lib/with-resolved-session";
+import type { Command } from "commander";
 
 export function registerGetCommand(program: Command): void {
     program

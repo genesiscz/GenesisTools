@@ -40,9 +40,7 @@ export type CmuxSendTarget =
     | { mode: "new_surface"; workspaceId: string; paneId: string }
     | { mode: "existing_surface"; workspaceId: string; surfaceId: string };
 
-export type DashboardSendTarget =
-    | { mode: "quick_dev_dashboard" }
-    | CmuxSendTarget;
+export type DashboardSendTarget = { mode: "quick_dev_dashboard" } | CmuxSendTarget;
 
 export interface AttachTmuxResult {
     workspaceId: string;
