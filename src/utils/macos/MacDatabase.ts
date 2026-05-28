@@ -58,19 +58,29 @@ export abstract class MacDatabase {
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
 
+            // macOS TCC denies the open() syscall with EPERM, which bun:sqlite surfaces as
+            // SQLITE_CANTOPEN ("unable to open database file") with no mention of EPERM. The
+            // file existence was already verified above, so a failed open here is almost
+            // always a Full Disk Access denial against the responsible process.
             if (
                 message.includes("authorization denied") ||
                 message.includes("not authorized") ||
-                message.includes("EPERM")
+                message.includes("EPERM") ||
+                message.includes("unable to open database file") ||
+                message.includes("SQLITE_CANTOPEN")
             ) {
                 const termApp = detectTerminalApp();
-                MacOS.settings.openFullDiskAccess();
+                // Only surface the GUI pane interactively — a launchd/cron daemon must not
+                // pop System Settings on every scheduled run.
+                if (process.stdout.isTTY) {
+                    MacOS.settings.openFullDiskAccess();
+                }
 
                 throw new Error(
                     [
                         `Full Disk Access is required to read the ${this.dbLabel}.`,
-                        "Opening System Settings → Privacy & Security → Full Disk Access...",
-                        `Add "${termApp}" to the list, then restart your terminal.`,
+                        `Grant it in System Settings → Privacy & Security → Full Disk Access, add "${termApp}" (or the binary running this command), then restart it.`,
+                        "If you recently upgraded a runtime (nvm/brew/bun), the new binary lives at a new path and must be re-granted — old grants don't transfer.",
                     ].join("\n")
                 );
             }
