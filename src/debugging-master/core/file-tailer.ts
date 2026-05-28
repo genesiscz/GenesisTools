@@ -6,6 +6,7 @@ import { FileWatcher } from "@app/utils/storage/fs";
 
 export interface TailerHandlers {
     onEntry: (entry: LogEntry, index: number) => void;
+    onTruncated?: () => void;
 }
 
 /**
@@ -48,6 +49,11 @@ export class FileTailer {
             this.watcher = new FileWatcher({
                 filePath: this.path,
                 onData: (newBytes) => this.handleNewData(newBytes),
+                onTruncated: () => {
+                    this.entryIndex = 0;
+                    this.remainder = Buffer.alloc(0);
+                    this.handlers.onTruncated?.();
+                },
             });
             this.watcher.start(offset);
         } catch (err) {
@@ -80,6 +86,13 @@ export class FileTailer {
         this.watcher = null;
         this.remainder = Buffer.alloc(0);
         this.started = false;
+    }
+
+    /** After an out-of-band truncate/clear — realign offset + entry numbering. */
+    resetAfterClear(): void {
+        this.entryIndex = 0;
+        this.remainder = Buffer.alloc(0);
+        this.watcher?.seek(0);
     }
 
     private measureCurrent(): { offset: number; lineCount: number } {
@@ -144,17 +157,6 @@ export class FileTailer {
     }
 
     private handleNewData(newBytes: Buffer): void {
-        // FileWatcher resets offset to 0 on truncation, but doesn't notify us
-        // explicitly. If we receive a chunk that begins from offset 0 again,
-        // the file was cleared — reset our index too.
-        const watcherOffset = this.watcher?.currentOffset ?? 0;
-        if (watcherOffset === newBytes.length) {
-            // Watcher's offset == size of new chunk → it was truncated and
-            // re-read from 0. Reset our index/buffer to match.
-            this.entryIndex = 0;
-            this.remainder = Buffer.alloc(0);
-        }
-
         const result = parseJsonlChunk<LogEntry>(newBytes, this.remainder);
         this.remainder = result.remainder;
 

@@ -21,6 +21,8 @@ export interface LogEntry {
     passed?: boolean;
     ctx?: unknown;
     durationMs?: number;
+    /** Dashboard-only ANSI text (task `.ui.jsonl` mirror). */
+    msgAnsi?: string;
     ts: number;
     file?: string;
     line?: number;

@@ -1,45 +1,78 @@
-import type { IndexedLogEntry, LogLevel, SessionMeta } from "@app/debugging-master/types";
+import type { IndexedLogEntry, LogLevel } from "@app/debugging-master/types";
+import type { DashboardSession, LogSourceId } from "@app/utils/log-viewer/log-source";
+import { isLogSourceId } from "@app/utils/log-viewer/session-key";
+import { sortSessionsByRecency } from "@app/utils/log-viewer/session-recency";
 import { TooltipProvider } from "@ui/components/tooltip";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { EntryList } from "@/components/EntryList";
+import { EntryList, type EntryListHandle } from "@/components/EntryList";
 import { FilterBar, type SortDir } from "@/components/FilterBar";
 import { Header } from "@/components/Header";
+import { SessionsHome } from "@/components/SessionsHome";
+import { DisplaySettingsProvider } from "@/components/DisplaySettingsProvider";
+import { SessionDeleteConfirmProvider } from "@/lib/ui/SessionDeleteConfirm";
+import { collectSessionCwds } from "@/lib/session-run-context";
+import { DirPathPrefixProvider } from "@ui/components/DirPath";
 import { api } from "@/lib/api";
 import { EntriesContext } from "@/lib/entries-context";
 import { applyFilter, collectHypotheses, defaultFilterState, type FilterState } from "@/lib/filters";
 import { FILTER_ORDER } from "@/lib/levels";
+import { mergeIndexedLogEntries } from "@/lib/merge-indexed-entries";
 import { type ConnectionStatus, connectStream } from "@/lib/sse";
 
 const FRESH_TTL_MS = 1500;
-const SESSIONS_REFRESH_MS = 5000;
+const SESSIONS_REFRESH_MS = 5_000;
 
-function readSessionFromUrl(): string | null {
+type AppView = "home" | "detail";
+
+function readFromUrl(): { view: AppView; source: LogSourceId | null; session: string | null } {
     if (typeof window === "undefined") {
-        return null;
+        return { view: "home", source: null, session: null };
     }
-    return new URLSearchParams(window.location.search).get("session");
+
+    const params = new URLSearchParams(window.location.search);
+    const sourceParam = params.get("source");
+    const session = params.get("session");
+    const source = sourceParam && isLogSourceId(sourceParam) ? sourceParam : null;
+
+    if (source && session) {
+        return { view: "detail", source, session };
+    }
+
+    return { view: "home", source: null, session: null };
 }
 
-function writeSessionToUrl(name: string | null): void {
+function applyUrl(view: AppView, source: LogSourceId | null, name: string | null, mode: "push" | "replace"): void {
     if (typeof window === "undefined") {
         return;
     }
+
     const url = new URL(window.location.href);
-    const current = url.searchParams.get("session");
-    if (name === current) {
-        return;
-    }
-    if (name) {
+
+    if (view === "detail" && source && name) {
+        url.searchParams.set("source", source);
         url.searchParams.set("session", name);
     } else {
+        url.searchParams.delete("source");
         url.searchParams.delete("session");
     }
-    window.history.replaceState(window.history.state, "", url);
+
+    const state = { view, source, session: name };
+    const href = `${url.pathname}${url.search}${url.hash}`;
+
+    if (mode === "push") {
+        window.history.pushState(state, "", href);
+        return;
+    }
+
+    window.history.replaceState(state, "", href);
 }
 
 export function App(): React.ReactElement {
-    const [sessions, setSessions] = useState<SessionMeta[]>([]);
-    const [activeSession, setActiveSession] = useState<string | null>(readSessionFromUrl);
+    const initial = readFromUrl();
+    const [view, setView] = useState<AppView>(initial.view);
+    const [sessions, setSessions] = useState<DashboardSession[]>([]);
+    const [activeSource, setActiveSource] = useState<LogSourceId | null>(initial.source);
+    const [activeSession, setActiveSession] = useState<string | null>(initial.session);
     const [entries, setEntries] = useState<IndexedLogEntry[]>([]);
     const [status, setStatus] = useState<ConnectionStatus>("connecting");
     const [filterState, setFilterState] = useState<FilterState>(defaultFilterState);
@@ -56,31 +89,78 @@ export function App(): React.ReactElement {
     });
     const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
     const [freshIds, setFreshIds] = useState<Set<number>>(new Set());
+    const entryListResumeRef = useRef<EntryListHandle | null>(null);
 
-    // Batched SSE delivery — accumulate incoming entries in a ref and flush
-    // once per animation frame. EventSource fires `message` events as separate
-    // tasks (React 18 doesn't auto-batch them), so a 300-entry backlog catch-up
-    // would otherwise trigger 300 setEntries spreads (O(N²) allocations) and
-    // 300 reconciliations, freezing the main thread.
     const pendingEntriesRef = useRef<IndexedLogEntry[]>([]);
     const pendingFreshRef = useRef<number[]>([]);
     const flushRafRef = useRef<number | null>(null);
     const freshSweepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const activeRef = useRef({ view: initial.view, source: initial.source, session: initial.session });
+    const refreshInFlightRef = useRef<Promise<void> | null>(null);
+    const entriesLoadGenerationRef = useRef(0);
+
+    const invalidateEntriesLoad = useCallback((): void => {
+        entriesLoadGenerationRef.current += 1;
+    }, []);
+
+    activeRef.current = { view, source: activeSource, session: activeSession };
+
+    const goHome = useCallback(() => {
+        setView("home");
+        setActiveSource(null);
+        setActiveSession(null);
+        applyUrl("home", null, null, "replace");
+    }, []);
+
+    const openSession = useCallback((source: LogSourceId, name: string) => {
+        const fromHome = activeRef.current.view === "home";
+        setView("detail");
+        setActiveSource(source);
+        setActiveSession(name);
+        applyUrl("detail", source, name, fromHome ? "push" : "replace");
+    }, []);
 
     const refreshSessions = useCallback(async () => {
-        try {
-            const { sessions: list } = await api.listSessions();
-            setSessions(list);
-            setActiveSession((current) => {
-                if (current && list.some((s) => s.name === current)) {
-                    return current;
-                }
-                return list[0]?.name ?? null;
-            });
-        } catch {
-            setStatus("down");
+        if (refreshInFlightRef.current) {
+            return refreshInFlightRef.current;
         }
-    }, []);
+
+        const run = async (): Promise<void> => {
+            try {
+                const { sessions: list } = await api.listSessions();
+                setSessions(sortSessionsByRecency(list));
+
+                const { view: currentView, source, session } = activeRef.current;
+
+                if (currentView !== "detail") {
+                    return;
+                }
+
+                const stillValid = source && session && list.some((s) => s.source === source && s.name === session);
+
+                if (stillValid) {
+                    return;
+                }
+
+                const first = list[0];
+                if (first) {
+                    setActiveSource(first.source);
+                    setActiveSession(first.name);
+                    applyUrl("detail", first.source, first.name, "replace");
+                    return;
+                }
+
+                goHome();
+            } catch {
+                setStatus("down");
+            } finally {
+                refreshInFlightRef.current = null;
+            }
+        };
+
+        refreshInFlightRef.current = run();
+        return refreshInFlightRef.current;
+    }, [goHome]);
 
     useEffect(() => {
         refreshSessions();
@@ -88,47 +168,38 @@ export function App(): React.ReactElement {
         return () => clearInterval(interval);
     }, [refreshSessions]);
 
-    // Sync activeSession ↔ URL: write on change, read on browser back/forward.
-    useEffect(() => {
-        writeSessionToUrl(activeSession);
-    }, [activeSession]);
-
     useEffect(() => {
         if (typeof window === "undefined") {
             return;
         }
         const onPop = (): void => {
-            const name = readSessionFromUrl();
-            setActiveSession((current) => {
-                if (name && name !== current) {
-                    return name;
-                }
-                return current;
-            });
+            const next = readFromUrl();
+            setView(next.view);
+            setActiveSource(next.source);
+            setActiveSession(next.session);
         };
         window.addEventListener("popstate", onPop);
         return () => window.removeEventListener("popstate", onPop);
     }, []);
 
     useEffect(() => {
-        if (!activeSession) {
+        if (view !== "detail" || !activeSource || !activeSession) {
             setEntries([]);
             return;
         }
 
         let cancelled = false;
+        const loadGeneration = ++entriesLoadGenerationRef.current;
+        const abortController = new AbortController();
         setEntries([]);
         setExpandedIds(new Set());
         setFreshIds(new Set());
 
-        api.getEntries(activeSession)
+        api.getEntries(activeSource, activeSession, 0, 5000, abortController.signal)
             .then((res) => {
-                if (cancelled) {
+                if (cancelled || loadGeneration !== entriesLoadGenerationRef.current) {
                     return;
                 }
-                // Mark the backlog hydration as a low-priority transition so React
-                // can yield to user input (clicks, scrolls) while reconciling — keeps
-                // the UI responsive even when the session has hundreds of entries.
                 startTransition(() => {
                     setEntries(res.entries);
                 });
@@ -137,7 +208,7 @@ export function App(): React.ReactElement {
                 /* ignore — SSE will catch up */
             });
 
-        const dispose = connectStream(activeSession, {
+        const dispose = connectStream(activeSource, activeSession, {
             onStatus: setStatus,
             onEntry: (entry) => {
                 pendingEntriesRef.current.push(entry);
@@ -145,6 +216,7 @@ export function App(): React.ReactElement {
                 scheduleFlush();
             },
             onCleared: () => {
+                invalidateEntriesLoad();
                 pendingEntriesRef.current = [];
                 pendingFreshRef.current = [];
                 if (flushRafRef.current !== null) {
@@ -159,14 +231,12 @@ export function App(): React.ReactElement {
 
         return () => {
             cancelled = true;
+            abortController.abort();
             dispose();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeSession]);
+    }, [view, activeSource, activeSession]);
 
-    // One-shot flush: dedup against current state, append novel entries, mark
-    // them fresh, schedule a single TTL sweep. Replaces the per-entry timer
-    // map that was firing N independent setState calls.
     const scheduleFlush = useCallback(() => {
         if (flushRafRef.current !== null) {
             return;
@@ -181,19 +251,7 @@ export function App(): React.ReactElement {
                 return;
             }
 
-            setEntries((prev) => {
-                const lastIndex = prev.length > 0 ? prev[prev.length - 1].index : -1;
-                const novel: IndexedLogEntry[] = [];
-                for (const e of incoming) {
-                    if (e.index > lastIndex) {
-                        novel.push(e);
-                    }
-                }
-                if (novel.length === 0) {
-                    return prev;
-                }
-                return prev.concat(novel);
-            });
+            setEntries((prev) => mergeIndexedLogEntries(prev, incoming));
 
             if (freshAdds.length > 0) {
                 setFreshIds((prev) => {
@@ -203,8 +261,6 @@ export function App(): React.ReactElement {
                     }
                     return next;
                 });
-                // Single TTL sweep that drains freshIds. Avoids the previous
-                // map-of-N-timers that was the second-largest perf cliff.
                 if (freshSweepTimerRef.current === null) {
                     freshSweepTimerRef.current = setTimeout(() => {
                         freshSweepTimerRef.current = null;
@@ -229,6 +285,22 @@ export function App(): React.ReactElement {
     const hypotheses = useMemo(() => collectHypotheses(entries), [entries]);
     const filtered = useMemo(() => applyFilter(entries, filterState), [entries, filterState]);
     const displayed = useMemo(() => (sortDir === "desc" ? [...filtered].reverse() : filtered), [filtered, sortDir]);
+
+    const activeSessionMeta = useMemo(() => {
+        if (!activeSource || !activeSession) {
+            return undefined;
+        }
+
+        return sessions.find((s) => s.source === activeSource && s.name === activeSession);
+    }, [sessions, activeSource, activeSession]);
+
+    const latestLineTs = useMemo(() => {
+        if (entries.length === 0) {
+            return undefined;
+        }
+
+        return entries[entries.length - 1]?.ts;
+    }, [entries]);
 
     const onToggleLevel = useCallback((lvl: LogLevel) => {
         setFilterState((prev) => {
@@ -259,7 +331,16 @@ export function App(): React.ReactElement {
     }, []);
 
     const onTogglePause = useCallback(() => {
-        setPaused((p) => !p);
+        if (paused) {
+            entryListResumeRef.current?.resume();
+            return;
+        }
+
+        setPaused(true);
+    }, [paused]);
+
+    const onAutoScrollChange = useCallback((enabled: boolean) => {
+        setPaused(!enabled);
     }, []);
 
     const onToggleSort = useCallback(() => {
@@ -287,64 +368,110 @@ export function App(): React.ReactElement {
     }, []);
 
     const onClear = useCallback(async () => {
-        if (!activeSession) {
+        if (!activeSource || !activeSession) {
             return;
         }
-        const ok = confirm(`Clear all logs in "${activeSession}"?`);
+        const ok = confirm(`Clear all logs in [${activeSource}] "${activeSession}"?`);
         if (!ok) {
             return;
         }
-        await api.clearSession(activeSession);
+        invalidateEntriesLoad();
         setEntries([]);
         setExpandedIds(new Set());
         setFreshIds(new Set());
-    }, [activeSession]);
+        await api.clearSession(activeSource, activeSession);
+    }, [activeSource, activeSession, invalidateEntriesLoad]);
+
+    const onDeleteSession = useCallback(
+        async (source: LogSourceId, name: string) => {
+            setSessions((prev) => prev.filter((session) => !(session.source === source && session.name === name)));
+
+            try {
+                await api.deleteSession(source, name);
+            } catch {
+                await refreshSessions();
+            }
+        },
+        [refreshSessions]
+    );
+
+    const sessionDirSources = useMemo(() => collectSessionCwds(sessions), [sessions]);
 
     return (
-        <TooltipProvider>
-            <EntriesContext.Provider value={entries}>
-                <div className="h-full flex flex-col relative">
-                    <Header
-                        sessions={sessions}
-                        activeSession={activeSession}
-                        onSelectSession={setActiveSession}
-                        status={status}
-                        entryCount={entries.length}
-                        onClear={onClear}
-                        onRefresh={refreshSessions}
-                    />
+        <DisplaySettingsProvider>
+            <SessionDeleteConfirmProvider onDeleteSession={onDeleteSession}>
+                <DirPathPrefixProvider paths={sessionDirSources}>
+                <TooltipProvider>
+                {view === "home" ? (
+                    <div className="h-full min-h-0 flex flex-col">
+                        <SessionsHome
+                            sessions={sessions}
+                            status={status}
+                            onRefresh={refreshSessions}
+                            onOpenSession={openSession}
+                            onStatus={setStatus}
+                        />
+                    </div>
+                ) : (
+                    <EntriesContext.Provider value={entries}>
+                        <div className="h-full flex flex-col relative">
+                            <Header
+                                sessions={sessions}
+                                activeSource={activeSource}
+                                activeSession={activeSession}
+                                onSelectSession={(source, name) => {
+                                    if (isLogSourceId(source)) {
+                                        openSession(source, name);
+                                    }
+                                }}
+                                status={status}
+                                entryCount={entries.length}
+                                onClear={onClear}
+                                onRefresh={() => {
+                                    void refreshSessions();
+                                }}
+                                onBack={goHome}
+                            />
 
-                    <FilterBar
-                        state={filterState}
-                        hypotheses={hypotheses}
-                        paused={paused}
-                        sortDir={sortDir}
-                        onToggleLevel={onToggleLevel}
-                        onToggleAll={onToggleAll}
-                        onChangeHypothesis={onChangeHypothesis}
-                        onChangeSearch={onChangeSearch}
-                        onTogglePause={onTogglePause}
-                        onToggleSort={onToggleSort}
-                    />
+                            <FilterBar
+                                state={filterState}
+                                hypotheses={hypotheses}
+                                paused={paused}
+                                sortDir={sortDir}
+                                session={activeSessionMeta}
+                                latestLineTs={latestLineTs}
+                                onToggleLevel={onToggleLevel}
+                                onToggleAll={onToggleAll}
+                                onChangeHypothesis={onChangeHypothesis}
+                                onChangeSearch={onChangeSearch}
+                                onTogglePause={onTogglePause}
+                                onToggleSort={onToggleSort}
+                            />
 
-                    <EntryList
-                        entries={displayed}
-                        expandedIds={expandedIds}
-                        freshIds={freshIds}
-                        autoScroll={!paused}
-                        sortDir={sortDir}
-                        onToggle={onToggleExpand}
-                        onFilterHypothesis={onChangeHypothesis}
-                    />
+                            <EntryList
+                                entries={displayed}
+                                expandedIds={expandedIds}
+                                freshIds={freshIds}
+                                autoScroll={!paused}
+                                sortDir={sortDir}
+                                onToggle={onToggleExpand}
+                                onFilterHypothesis={onChangeHypothesis}
+                                onAutoScrollChange={onAutoScrollChange}
+                                resumeRef={entryListResumeRef}
+                            />
 
-                    <footer className="px-3 sm:px-5 py-1.5 border-t border-white/8 bg-black/30 text-[10px] text-white/40 flex items-center justify-between">
-                        <span>
-                            {filtered.length} / {entries.length}
-                        </span>
-                        <span className="text-white/25">debugging-master · live</span>
-                    </footer>
-                </div>
-            </EntriesContext.Provider>
-        </TooltipProvider>
+                            <footer className="px-3 sm:px-5 py-1.5 border-t border-white/8 bg-black/30 text-[10px] text-white/40 flex items-center justify-between">
+                                <span>
+                                    {filtered.length} / {entries.length}
+                                </span>
+                                <span className="text-white/25">dbg + task · live</span>
+                            </footer>
+                        </div>
+                    </EntriesContext.Provider>
+                )}
+            </TooltipProvider>
+                </DirPathPrefixProvider>
+            </SessionDeleteConfirmProvider>
+        </DisplaySettingsProvider>
     );
 }
