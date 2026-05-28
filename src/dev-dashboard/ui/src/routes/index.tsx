@@ -17,6 +17,7 @@ interface PulseSnapshot {
     cpuPct: number | null;
     memUsedBytes: number | null;
     memTotalBytes: number | null;
+    memFreePct: number | null;
     swapUsedBytes: number | null;
     swapTotalBytes: number | null;
     batteryPct: number | null;
@@ -87,7 +88,7 @@ export function IndexRoute() {
     const snap = useQuery<PulseSnapshot>({
         queryKey: ["pulse", "snap"],
         queryFn: () => fetchJson<PulseSnapshot>("/api/system/pulse"),
-        refetchInterval: 2000,
+        refetchInterval: 5000,
     });
 
     const [rangeMinutes, setRangeMinutes] = useState<number>(HISTORY_RANGES[0].minutes);
@@ -99,9 +100,9 @@ export function IndexRoute() {
     });
 
     const memHistory = useQuery<PulseSeries>({
-        queryKey: ["pulse", "history", "mem", rangeMinutes],
-        queryFn: () => fetchJson<PulseSeries>(`/api/system/pulse/history?metric=mem&minutes=${rangeMinutes}`),
-        refetchInterval: 10000,
+        queryKey: ["pulse", "history", "mem_free", rangeMinutes],
+        queryFn: () => fetchJson<PulseSeries>(`/api/system/pulse/history?metric=mem_free&minutes=${rangeMinutes}`),
+        refetchInterval: rangeMinutes >= 1440 ? 60000 : 10000,
     });
 
     const weather = useQuery<WeatherSnapshot>({
@@ -128,8 +129,16 @@ export function IndexRoute() {
                 <KpiCard label="CPU" value={pct(s?.cpuPct ?? null)} />
                 <KpiCard
                     label="Memory"
-                    value={ratioPct(s?.memUsedBytes ?? null, s?.memTotalBytes ?? null)}
-                    sub={`${gb(s?.memUsedBytes ?? null)} / ${gb(s?.memTotalBytes ?? null)}`}
+                    value={
+                        s?.memFreePct != null
+                            ? `${s.memFreePct}% free`
+                            : ratioPct(s?.memUsedBytes ?? null, s?.memTotalBytes ?? null)
+                    }
+                    sub={
+                        s?.memFreePct != null
+                            ? `${gb((s.memTotalBytes ?? 0) * (1 - s.memFreePct / 100))} used · ${gb(s?.memTotalBytes ?? null)} total`
+                            : `${gb(s?.memUsedBytes ?? null)} / ${gb(s?.memTotalBytes ?? null)}`
+                    }
                 />
                 <KpiCard
                     label="Swap"
@@ -168,7 +177,7 @@ export function IndexRoute() {
                         })}
                     </div>
                     <PulseGraph title="CPU" points={cpuHistory.data?.points ?? []} unit="%" />
-                    <PulseGraph title="MEMORY" points={memHistory.data?.points ?? []} unit="%" />
+                    <PulseGraph title="Memory free" points={memHistory.data?.points ?? []} unit="%" />
                 </div>
                 <div className="flex flex-col gap-4">
                     <WeatherCard
