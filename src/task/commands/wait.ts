@@ -1,9 +1,9 @@
 import { out } from "@app/logger";
-import type { Command } from "commander";
 import { sessionFilePaths } from "@app/task/lib/paths";
 import { waitForSession } from "@app/task/lib/wait-for-session";
 import { withResolvedSession } from "@app/task/lib/with-resolved-session";
 import { filterLineRecords, lastNLines, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
+import type { Command } from "commander";
 
 export function registerWaitCommand(program: Command): void {
     program
@@ -36,10 +36,22 @@ export function registerWaitCommand(program: Command): void {
                     }
                 }
 
+                let exitOnMatchRegex: RegExp | undefined;
+                if (opts.exitOnMatch) {
+                    try {
+                        exitOnMatchRegex = new RegExp(opts.exitOnMatch);
+                    } catch (err) {
+                        out.printlnErr(
+                            `error: --exit-on-match requires a valid regex (${err instanceof Error ? err.message : String(err)})`
+                        );
+                        process.exit(1);
+                    }
+                }
+
                 await withResolvedSession(sessionFlag, async (resolved) => {
                     const result = await waitForSession({
                         session: resolved,
-                        exitOnMatch: opts.exitOnMatch ? new RegExp(opts.exitOnMatch) : undefined,
+                        exitOnMatch: exitOnMatchRegex,
                         timeoutMs: opts.timeout ? Number.parseInt(opts.timeout, 10) * 1000 : undefined,
                         waitForExit: !opts.exitOnMatch,
                     });
@@ -49,7 +61,7 @@ export function registerWaitCommand(program: Command): void {
                         const records = await readJsonlFile(sessionFilePaths(resolved).jsonl);
                         const tail = lastNLines(filterLineRecords(records), printN);
                         for (const line of tail) {
-                            process.stdout.write(`${line.text}\n`);
+                            out.result(line.text);
                         }
                     }
 

@@ -25,10 +25,10 @@ import {
     publishNote,
     unpublishNote,
 } from "@app/dev-dashboard/lib/obsidian/publish";
+import { listVault, mkdirInVault, readNote } from "@app/dev-dashboard/lib/obsidian/reader";
+import { renderSharePage } from "@app/dev-dashboard/lib/obsidian/share-template";
 import { saveToObsidianUnique } from "@app/dev-dashboard/lib/obsidian-save";
 import { formatQaAsMarkdown } from "@app/dev-dashboard/lib/qa-clipboard";
-import { mkdirInVault, listVault, readNote } from "@app/dev-dashboard/lib/obsidian/reader";
-import { renderSharePage } from "@app/dev-dashboard/lib/obsidian/share-template";
 import { enrichQaEntry } from "@app/dev-dashboard/lib/qa-render";
 import { createQaStream, todayLogFile } from "@app/dev-dashboard/lib/qa-sse";
 import { configureRetention, getCachedPulse, getSeries, startPulsePolling } from "@app/dev-dashboard/lib/system/poller";
@@ -37,7 +37,13 @@ import { killTtyd, listTtyd, renameTtyd, spawnTtyd } from "@app/dev-dashboard/li
 import { fetchWeather } from "@app/dev-dashboard/lib/weather/client";
 import { logger } from "@app/logger";
 import { defaultDbPath } from "@app/question/commands/log";
-import { markEntriesRead, markEntriesUnread, openReadModel, queryEntries } from "@app/question/lib/read-model";
+import {
+    getEntryById,
+    markEntriesRead,
+    markEntriesUnread,
+    openReadModel,
+    queryEntries,
+} from "@app/question/lib/read-model";
 import { getAudioLibrary } from "@app/utils/audio/library";
 import { resolveSoundBuffer } from "@app/utils/audio/runner.server";
 import { SafeJSON } from "@app/utils/json";
@@ -545,8 +551,7 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
                 }
 
                 db = openReadModel(defaultDbPath());
-                const rows = queryEntries(db, { limit: 500 });
-                const row = rows.find((r) => r.id === entryId);
+                const row = getEntryById(db, entryId);
 
                 if (!row) {
                     sendJson(res, 404, { error: `unknown entry: ${entryId}` });

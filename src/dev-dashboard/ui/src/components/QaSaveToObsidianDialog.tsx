@@ -88,15 +88,20 @@ export function QaSaveToObsidianDialog({
                                 allowAddDir
                                 onTreeChange={() => void queryClient.invalidateQueries({ queryKey: ["obsidian-tree"] })}
                             />
+                        ) : treeQuery.isError ? (
+                            <div className="space-y-1">
+                                <p className="text-xs text-[var(--dd-danger)]">
+                                    Failed to load vault: {String(treeQuery.error)}
+                                </p>
+                                <Button size="sm" variant="outline" onClick={() => void treeQuery.refetch()}>
+                                    Retry
+                                </Button>
+                            </div>
                         ) : (
                             <p className="text-xs text-[var(--dd-text-muted)]">Loading vault…</p>
                         )}
                         <div className="flex items-center gap-2">
-                            <Checkbox
-                                id="create-dir"
-                                checked={createDir}
-                                onCheckedChange={(v) => setCreateDir(!!v)}
-                            />
+                            <Checkbox id="create-dir" checked={createDir} onCheckedChange={(v) => setCreateDir(!!v)} />
                             <Label htmlFor="create-dir">Create directory if missing</Label>
                         </div>
                     </div>
@@ -150,12 +155,8 @@ export function QaSaveToObsidianDialog({
                         {save.isPending ? "Saving…" : mode === "append" ? "Append" : "Save"}
                     </Button>
                 </DialogFooter>
-                {save.isError ? (
-                    <p className="text-xs text-[var(--dd-danger)]">{String(save.error)}</p>
-                ) : null}
-                {save.isSuccess ? (
-                    <p className="text-xs text-emerald-400">Saved to {save.data?.path}</p>
-                ) : null}
+                {save.isError ? <p className="text-xs text-[var(--dd-danger)]">{String(save.error)}</p> : null}
+                {save.isSuccess ? <p className="text-xs text-emerald-400">Saved to {save.data?.path}</p> : null}
             </DialogContent>
         </Dialog>
     );

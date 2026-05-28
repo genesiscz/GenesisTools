@@ -1,10 +1,10 @@
 import { out } from "@app/logger";
-import type { Command } from "commander";
 import { buildLogQueryOpts, tailOrQuery } from "@app/task/lib/build-log-query-opts";
 import { applyGrepImpliesAll, applyLogWindowDefaults } from "@app/task/lib/log-window";
 import { waitForSession } from "@app/task/lib/wait-for-session";
 import { withResolvedSession } from "@app/task/lib/with-resolved-session";
 import type { LogCliOpts } from "@app/task/types";
+import type { Command } from "commander";
 
 export function registerTailCommand(program: Command): void {
     program
@@ -30,11 +30,23 @@ export function registerTailCommand(program: Command): void {
             let resolvedOpts = applyGrepImpliesAll(opts);
             resolvedOpts = applyLogWindowDefaults(resolvedOpts, { ttyTail: "10" });
 
+            let exitOnMatchRegex: RegExp | undefined;
+            if (opts.exitOnMatch) {
+                try {
+                    exitOnMatchRegex = new RegExp(opts.exitOnMatch);
+                } catch (err) {
+                    out.printlnErr(
+                        `error: --exit-on-match requires a valid regex (${err instanceof Error ? err.message : String(err)})`
+                    );
+                    process.exit(1);
+                }
+            }
+
             await withResolvedSession(sessionFlag, async (session) => {
-                if (opts.exitOnMatch) {
+                if (exitOnMatchRegex) {
                     const result = await waitForSession({
                         session,
-                        exitOnMatch: new RegExp(opts.exitOnMatch),
+                        exitOnMatch: exitOnMatchRegex,
                         waitForExit: true,
                     });
 

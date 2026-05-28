@@ -119,27 +119,8 @@ export interface QaRow extends QaEntry {
     readAt: number | null;
 }
 
-export function queryEntries(db: Database, opts: QueryOpts = {}): QaRow[] {
-    catchUp(db, opts.logBase);
-    const where: string[] = ["superseded_by IS NULL"];
-    const params: (string | number)[] = [];
-    if (opts.project) {
-        where.push("project = ?");
-        params.push(opts.project);
-    }
-
-    if (opts.tag) {
-        where.push("tag = ?");
-        params.push(opts.tag);
-    }
-
-    if (opts.unread) {
-        where.push("read_at IS NULL");
-    }
-
-    const sql = `SELECT * FROM entries WHERE ${where.join(" AND ")} ORDER BY ts DESC LIMIT ?`;
-    params.push(opts.limit ?? 50);
-    return (db.query(sql).all(...params) as Record<string, unknown>[]).map((r) => ({
+function rowToQaRow(r: Record<string, unknown>): QaRow {
+    return {
         id: r.id as string,
         ts: r.ts as number,
         sessionId: r.session_id as string,
@@ -161,7 +142,36 @@ export function queryEntries(db: Database, opts: QueryOpts = {}): QaRow[] {
         turnUuid: r.turn_uuid as string | null,
         supersededBy: r.superseded_by as string | null,
         readAt: r.read_at as number | null,
-    }));
+    };
+}
+
+export function queryEntries(db: Database, opts: QueryOpts = {}): QaRow[] {
+    catchUp(db, opts.logBase);
+    const where: string[] = ["superseded_by IS NULL"];
+    const params: (string | number)[] = [];
+    if (opts.project) {
+        where.push("project = ?");
+        params.push(opts.project);
+    }
+
+    if (opts.tag) {
+        where.push("tag = ?");
+        params.push(opts.tag);
+    }
+
+    if (opts.unread) {
+        where.push("read_at IS NULL");
+    }
+
+    const sql = `SELECT * FROM entries WHERE ${where.join(" AND ")} ORDER BY ts DESC LIMIT ?`;
+    params.push(opts.limit ?? 50);
+    return (db.query(sql).all(...params) as Record<string, unknown>[]).map(rowToQaRow);
+}
+
+export function getEntryById(db: Database, id: string, opts: Pick<QueryOpts, "logBase"> = {}): QaRow | null {
+    catchUp(db, opts.logBase);
+    const row = db.query("SELECT * FROM entries WHERE id = ? LIMIT 1").get(id) as Record<string, unknown> | null;
+    return row ? rowToQaRow(row) : null;
 }
 
 export function markEntriesUnread(db: Database, ids: string[], opts: Pick<QueryOpts, "logBase"> = {}): number {

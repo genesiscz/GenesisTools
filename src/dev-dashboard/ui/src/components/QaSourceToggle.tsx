@@ -3,21 +3,15 @@ import { BookOpen, FileCode } from "lucide-react";
 
 export type QaViewMode = "reading" | "source";
 
-export function QaSourceToggle({
-    mode,
-    onChange,
-}: {
-    mode: QaViewMode;
-    onChange: (m: QaViewMode) => void;
-}) {
+export function QaSourceToggle({ mode, onChange }: { mode: QaViewMode; onChange: (m: QaViewMode) => void }) {
     return (
         <ToggleGroup
             type="single"
             size="sm"
             value={mode}
             onValueChange={(v) => {
-                if (v) {
-                    onChange(v as QaViewMode);
+                if (v === "reading" || v === "source") {
+                    onChange(v);
                 }
             }}
         >
