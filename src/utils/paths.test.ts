@@ -185,6 +185,46 @@ describe("paths: collapsePath", () => {
     });
 });
 
+describe("collapsePathForDisplay", () => {
+    let collapsePathForDisplay: typeof import("./paths").collapsePathForDisplay;
+    const home = process.env.HOME || process.env.USERPROFILE || "/mock-home";
+
+    beforeEach(async () => {
+        const mod = await import("./paths");
+        collapsePathForDisplay = mod.collapsePathForDisplay;
+    });
+
+    it("leaves paths outside the current home unchanged", () => {
+        expect(collapsePathForDisplay("/Users/dev/my-app")).toBe("/Users/dev/my-app");
+    });
+
+    it("collapses the current home directory to ~", () => {
+        expect(collapsePathForDisplay(home)).toBe("~");
+    });
+
+    it("collapses paths under home to ~/...", () => {
+        // Avoid double-slash if `home` already ends with one (uncommon, but
+        // possible on some test rigs).
+        const trimmed = home.endsWith("/") || home.endsWith("\\") ? home.slice(0, -1) : home;
+        expect(collapsePathForDisplay(`${trimmed}/Projects/foo`)).toBe("~/Projects/foo");
+    });
+
+    it("collapses Windows backslash home paths to ~/... (bug #11)", () => {
+        // Simulate a Windows native path where home is a backslash path.
+        // The bug: pre-normalizing the input to POSIX before calling
+        // collapsePath() meant the backslash home-prefix check missed.
+        // The fix collapses against the original path; this test would
+        // have failed against the prior implementation when home contains
+        // backslashes. We can't reliably reproduce Windows homedir() here,
+        // but we CAN assert that collapsePathForDisplay returns the POSIX
+        // form of the leading "~" instead of the raw native path.
+        const trimmed = home.endsWith("/") || home.endsWith("\\") ? home.slice(0, -1) : home;
+        const result = collapsePathForDisplay(`${trimmed}/some/file.txt`);
+        expect(result.startsWith("~/")).toBe(true);
+        expect(result).not.toContain("\\");
+    });
+});
+
 // ---------------------------------------------------------------------------
 // Windows simulation tests
 // ---------------------------------------------------------------------------

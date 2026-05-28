@@ -228,6 +228,27 @@ export function formatRelativeTime(date: Date, options?: FormatRelativeTimeOptio
     return `${diffDays} day${diffDays === 1 ? "" : "s"} ago`;
 }
 
+/**
+ * Compact "time since last message" for live dashboards.
+ * Examples: `5s ago`, `2m 15s ago`, `1h 5m 3s ago`
+ */
+export function formatLastMessageAgo(deltaMs: number): string {
+    const totalSeconds = Math.max(0, Math.floor(deltaMs / 1000));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    if (hours > 0) {
+        return `${hours}h ${minutes}m ${seconds}s ago`;
+    }
+
+    if (minutes > 0) {
+        return `${minutes}m ${seconds}s ago`;
+    }
+
+    return `${seconds}s ago`;
+}
+
 // ============= Bytes =============
 
 /**

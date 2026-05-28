@@ -1,0 +1,47 @@
+.ui-recency {
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.ui-recency--hot {
+    color: #34d399;
+    text-shadow: 0 0 12px rgba(52, 211, 153, 0.65);
+    animation: ui-recency-pulse 1.4s ease-in-out infinite;
+}
+
+.ui-recency--fresh {
+    color: #2dd4bf;
+}
+
+.ui-recency--recent {
+    color: #22d3ee;
+}
+
+.ui-recency--warm {
+    color: #38bdf8;
+}
+
+.ui-recency--cool {
+    color: #7dd3fc;
+}
+
+.ui-recency--muted {
+    color: rgba(255, 255, 255, 0.55);
+    font-weight: 500;
+}
+
+.ui-recency--stale {
+    color: rgba(255, 255, 255, 0.35);
+    font-weight: 400;
+}
+
+@keyframes ui-recency-pulse {
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.72;
+    }
+}
