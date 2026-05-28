@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { logger } from "@app/logger";
+import { isProcessAlive } from "@app/utils/process-alive";
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const POLL_INTERVAL_MS = 50;
@@ -10,23 +11,6 @@ export class LockTimeoutError extends Error {
     constructor(lockPath: string, timeout: number) {
         super(`Failed to acquire file lock at ${lockPath} within ${timeout}ms. Another process may be holding it.`);
         this.name = "LockTimeoutError";
-    }
-}
-
-/**
- * Check if a process with the given PID is still alive.
- */
-function isProcessAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (err) {
-        // On Windows, EPERM means the process exists but we can't signal it
-        if (process.platform === "win32" && err instanceof Error && "code" in err) {
-            return (err as NodeJS.ErrnoException).code === "EPERM";
-        }
-
-        return false;
     }
 }
 

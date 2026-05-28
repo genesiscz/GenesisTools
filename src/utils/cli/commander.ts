@@ -150,6 +150,24 @@ function callerDirOf(argv: readonly string[]): string {
     return dirname(argv[1] ?? "");
 }
 
+export function argvRequestsReadme(args: string[]): boolean {
+    // Stop at the conventional `--` separator: everything after it is meant
+    // for a wrapped child command (e.g. `tools task run -- bash --readme`),
+    // not for the wrapper itself. Scanning past it caused the wrapper to
+    // hijack any child whose own flags happened to include --readme.
+    for (const arg of args) {
+        if (arg === "--") {
+            return false;
+        }
+
+        if (arg === "--readme" || arg.startsWith("--readme=")) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 /**
  * Unified tool bootstrap: registers the non-destructive `-v`/`--verbose`
  * (and trace-gated `--trace`) option + a visible `--readme` flag, resolves
@@ -173,6 +191,11 @@ export async function runTool(
 
     if (!program.options.some((o) => o.long === "--readme")) {
         program.option("--readme", "Print this tool's README and exit");
+    }
+
+    const readmeInArgv = argvRequestsReadme(argv.slice(2));
+    if (readmeInArgv) {
+        printReadmeAndExit(callerDirOf(argv));
     }
 
     program.hook("preAction", () => {

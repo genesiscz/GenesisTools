@@ -1126,7 +1126,10 @@ export function findOrphanedPorts(): PortSnapshot[] {
     return getListeningPorts().filter((portInfo) => portInfo.status === "orphaned" || portInfo.status === "zombie");
 }
 
-function isProcessAlive(pid: number): boolean {
+function isProcessAliveLocal(pid: number): boolean {
+    // Local wrapper kept for backwards-compat with the file-lock-style
+    // semantics already used in this file. New code should prefer
+    // `import { isProcessAlive } from "@app/utils/process-alive"`.
     try {
         process.kill(pid, 0);
         return true;
@@ -1167,7 +1170,7 @@ export async function killProcesses(pids: number[]): Promise<KillResult[]> {
     await new Promise((resolve) => setTimeout(resolve, GRACEFUL_SHUTDOWN_WAIT_MS));
 
     for (const pid of pending) {
-        if (!isProcessAlive(pid)) {
+        if (!isProcessAliveLocal(pid)) {
             results.push({ pid, status: "killed" });
             continue;
         }
