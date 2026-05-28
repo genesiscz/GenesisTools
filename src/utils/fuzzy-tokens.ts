@@ -1,6 +1,6 @@
 import { similarityScore } from "./fuzzy-match";
 
-const SEP = /[\s\-:/,.;_]+/;
+const SEP = /[\\\s\-:/,.;_]+/;
 
 export function tokenizeSearch(input: string): string[] {
     return input
@@ -31,7 +31,7 @@ export function findTokenMatches(haystack: string, tokens: string[], threshold =
             continue;
         }
 
-        for (const m of lower.matchAll(/[^\s\-:/,.;_]+/g)) {
+        for (const m of lower.matchAll(/[^\\\s\-:/,.;_]+/g)) {
             if (m.index === undefined) {
                 continue;
             }

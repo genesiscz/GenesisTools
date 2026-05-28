@@ -12,7 +12,9 @@ export async function runSessionGc(opts: { retentionDays: number }): Promise<{ r
 
     try {
         names = (await readdir(dir)).filter((n) => n.endsWith(".jsonl") && !n.endsWith(".ui.jsonl"));
-    } catch {
+    } catch (err) {
+        logger.warn({ err, dir }, "gc: failed to read sessions directory");
+
         return { removed: 0 };
     }
 

@@ -29,13 +29,14 @@ pre,
 }
 
 .dd-qa-topbar {
-    background: rgba(15, 23, 36, var(--dd-topbar-opacity, 0.8));
+    background: color-mix(in srgb, var(--dd-bg-panel) calc(var(--dd-topbar-opacity, 0.8) * 100%), transparent);
     transition: background 200ms linear;
-    border-bottom: 1px solid rgba(42, 52, 69, var(--dd-topbar-opacity, 0.8));
+    border-bottom: 1px solid
+        color-mix(in srgb, var(--dd-border) calc(var(--dd-topbar-opacity, 0.8) * 100%), transparent);
 }
 
 .dd-qa-mark {
-    background: rgba(250, 204, 21, 0.35);
+    background: color-mix(in srgb, var(--dd-accent-from) 35%, transparent);
     color: inherit;
     border-radius: 2px;
     padding: 0 1px;

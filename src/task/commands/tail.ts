@@ -1,3 +1,4 @@
+import { out } from "@app/logger";
 import type { Command } from "commander";
 import { buildLogQueryOpts, tailOrQuery } from "@app/task/lib/build-log-query-opts";
 import { applyGrepImpliesAll, applyLogWindowDefaults } from "@app/task/lib/log-window";
@@ -39,7 +40,7 @@ export function registerTailCommand(program: Command): void {
 
                     if (result.reason === "match") {
                         if (result.matchedLine) {
-                            process.stdout.write(`${result.matchedLine}\n`);
+                            out.result(result.matchedLine);
                         }
 
                         process.exit(0);
