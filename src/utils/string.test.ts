@@ -60,6 +60,14 @@ describe("stripAnsi", () => {
     it("handles nested codes", () => {
         expect(stripAnsi("\u001b[1m\u001b[31mbold red\u001b[0m")).toBe("bold red");
     });
+
+    it("strips DEC private mode sequences", () => {
+        expect(stripAnsi("\u001b[?25lhidden\u001b[?25h")).toBe("hidden");
+    });
+
+    it("strips erase-line CSI sequences", () => {
+        expect(stripAnsi("\u001b[2Kcleared")).toBe("cleared");
+    });
 });
 
 describe.skipIf(skip.onWindows)("escapeShellArg (Unix)", () => {

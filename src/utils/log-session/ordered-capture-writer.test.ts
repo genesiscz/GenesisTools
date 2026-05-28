@@ -1,0 +1,151 @@
+import { afterEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { filterLineRecords, readJsonlFile } from "./jsonl-reader";
+import { filterUiLineRecords } from "./ui-jsonl";
+import { OrderedCaptureWriter } from "./ordered-capture-writer";
+
+const dirs: string[] = [];
+afterEach(() => {
+    for (const d of dirs) {
+        rmSync(d, { recursive: true, force: true });
+    }
+});
+
+describe("OrderedCaptureWriter", () => {
+    it("preserves enqueue order in jsonl seq when stdout/stderr pushed concurrently", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "ocw-"));
+        dirs.push(dir);
+        const w = new OrderedCaptureWriter({
+            jsonlPath: join(dir, "s.jsonl"),
+            stdoutPath: join(dir, "s.log"),
+            stderrPath: join(dir, "s.err.log"),
+            mode: "pipe",
+        });
+
+        w.enqueue("stdout", "a\n");
+        w.enqueue("stderr", "b\n");
+        w.enqueue("stdout", "c\n");
+        await w.flush();
+
+        const records = await readJsonlFile(join(dir, "s.jsonl"));
+        const lines = filterLineRecords(records);
+        expect(lines.map((l) => l.text)).toEqual(["a", "b", "c"]);
+        expect(lines.map((l) => l.out)).toEqual(["stdout", "stderr", "stdout"]);
+        expect(lines.map((l) => l.seq)).toEqual([1, 2, 3]);
+        expect(lines.map((l) => l.level)).toEqual(["info", "info", "info"]);
+    });
+
+    it("pipe mode infers warn/error level from stderr text", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "ocw-"));
+        dirs.push(dir);
+        const w = new OrderedCaptureWriter({
+            jsonlPath: join(dir, "s.jsonl"),
+            stdoutPath: join(dir, "s.log"),
+            stderrPath: join(dir, "s.err.log"),
+            mode: "pipe",
+        });
+        w.enqueue("stderr", "Error: cache busted\n");
+        w.enqueue("stderr", " WARN  something\n");
+        w.enqueue("stderr", " INFO ok\n");
+        w.enqueue("stderr", "plain diagnostic\n");
+        await w.flush();
+
+        const lines = filterLineRecords(await readJsonlFile(join(dir, "s.jsonl")));
+        expect(lines.map((l) => l.out)).toEqual(["stderr", "stderr", "stderr", "stderr"]);
+        expect(lines.map((l) => l.level)).toEqual(["error", "warn", "info", "info"]);
+    });
+
+    it("pty mode infers warn/error level into jsonl", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "ocw-"));
+        dirs.push(dir);
+        const w = new OrderedCaptureWriter({
+            jsonlPath: join(dir, "s.jsonl"),
+            stdoutPath: join(dir, "s.log"),
+            stderrPath: join(dir, "s.err.log"),
+            mode: "pty",
+        });
+        w.enqueue("stdout", "Error: cache busted\n WARN  something\n INFO ok\n");
+        await w.flush();
+
+        const lines = filterLineRecords(await readJsonlFile(join(dir, "s.jsonl")));
+        expect(lines.map((l) => l.level)).toEqual(["error", "warn", "info"]);
+    });
+
+    it("pty mode writes all lines to stdout mirror only", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "ocw-"));
+        dirs.push(dir);
+        const w = new OrderedCaptureWriter({
+            jsonlPath: join(dir, "s.jsonl"),
+            stdoutPath: join(dir, "s.log"),
+            stderrPath: join(dir, "s.err.log"),
+            mode: "pty",
+        });
+        w.enqueue("stdout", "combined\n");
+        await w.flush();
+        expect(readFileSync(join(dir, "s.log"), "utf8")).toBe("combined\n");
+        expect(readFileSync(join(dir, "s.err.log"), "utf8")).toBe("");
+    });
+
+    it("writes dashboard ui jsonl with raw ansi while canonical jsonl stays plain", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "ocw-"));
+        dirs.push(dir);
+        const w = new OrderedCaptureWriter({
+            jsonlPath: join(dir, "s.jsonl"),
+            uiJsonlPath: join(dir, "s.ui.jsonl"),
+            stdoutPath: join(dir, "s.log"),
+            stderrPath: join(dir, "s.err.log"),
+            mode: "pty",
+        });
+
+        w.enqueue("stdout", "\u001b[31mError\u001b[0m\n");
+        await w.flush();
+
+        const records = filterLineRecords(await readJsonlFile(join(dir, "s.jsonl")));
+        expect(records[0]?.text).toBe("Error");
+
+        const uiRecords = filterUiLineRecords(await readJsonlFile(join(dir, "s.ui.jsonl")));
+        expect(uiRecords[0]?.text).toBe("\u001b[31mError\u001b[0m");
+    });
+
+    it("emits a single empty line for a lone \"\\n\" chunk (no asymmetric drop)", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "ocw-"));
+        dirs.push(dir);
+        const w = new OrderedCaptureWriter({
+            jsonlPath: join(dir, "s.jsonl"),
+            stdoutPath: join(dir, "s.log"),
+            stderrPath: join(dir, "s.err.log"),
+            mode: "pipe",
+        });
+
+        w.enqueue("stdout", "first\n");
+        w.enqueue("stdout", "\n");        // lone blank — was previously dropped
+        w.enqueue("stdout", "third\n");
+        w.enqueue("stdout", "\n\n");      // two blanks
+        w.enqueue("stdout", "last\n");
+        await w.flush();
+
+        const lines = filterLineRecords(await readJsonlFile(join(dir, "s.jsonl")));
+        expect(lines.map((l) => l.text)).toEqual(["first", "", "third", "", "", "last"]);
+    });
+
+    it("stores raw ansi on canonical jsonl records", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "ocw-"));
+        dirs.push(dir);
+        const w = new OrderedCaptureWriter({
+            jsonlPath: join(dir, "s.jsonl"),
+            uiJsonlPath: join(dir, "s.ui.jsonl"),
+            stdoutPath: join(dir, "s.log"),
+            stderrPath: join(dir, "s.err.log"),
+            mode: "pty",
+        });
+
+        w.enqueue("stdout", "\u001b[?25l\u001b[31m█\u001b[0m\n");
+        await w.flush();
+
+        const records = filterLineRecords(await readJsonlFile(join(dir, "s.jsonl")));
+        expect(records[0]?.text).toBe("█");
+        expect(records[0]?.raw).toBe("\u001b[?25l\u001b[31m█\u001b[0m");
+    });
+});
