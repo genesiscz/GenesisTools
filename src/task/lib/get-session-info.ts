@@ -4,7 +4,13 @@ import { filterByStream, filterLineRecords, lastNLines, readJsonlFile } from "@a
 import { formatSessionState } from "@app/task/lib/format-session-state";
 import { sessionFilePaths } from "@app/task/lib/paths";
 import { TaskSessionStore } from "@app/task/lib/session-store";
-import { suggestDashboard, suggestLogs, suggestLogsFollow, suggestTail } from "@app/task/lib/suggest-flags";
+import {
+    suggestDashboard,
+    suggestLogs,
+    suggestLogsAllGrep,
+    suggestLogsFollow,
+    suggestTail,
+} from "@app/task/lib/suggest-flags";
 
 export async function getSessionInfo(session: string): Promise<void> {
     const store = new TaskSessionStore();
@@ -85,27 +91,30 @@ export async function getSessionInfo(session: string): Promise<void> {
 
     out.printlnErr("║");
     out.printlnErr("║ WHAT TO RUN NEXT (copy-paste)");
-    out.printlnErr(`║   Read last 100    ${suggestLogs(session, ["--lines", "100"])}`);
+    out.printlnErr(`║   Read last 100    ${suggestLogs(session, ["--tail", "100"])}`);
     out.printlnErr(`║   All lines        ${suggestLogs(session, ["--all", "--raw"])}`);
     out.printlnErr(`║   Live follow      ${suggestTail(session)}`);
     out.printlnErr(`║   Same as above    ${suggestLogsFollow(session)}`);
     out.printlnErr(`║   Stderr only      ${suggestLogs(session, ["--stderr", "--raw"])}`);
-    out.printlnErr(`║   Grep stdout      ${suggestLogs(session, ["--raw"])} | grep PATTERN`);
+    out.printlnErr(`║   Grep stdout      ${suggestLogsAllGrep(session)}`);
     out.printlnErr(`║   JSONL + rg       ${suggestLogs(session, ["--jsonl"])} | rg error`);
     out.printlnErr(`║   Dashboard        ${suggestDashboard(session)}`);
+    out.printlnErr("║   Clean all        tools task clean --all");
     out.printlnErr("║");
     out.printlnErr("║ FLAGS (logs + tail — short forms also work but mean the same)");
-    out.printlnErr("║   --follow       Stream live until Ctrl+C (alias: -f)");
-    out.printlnErr("║   --tail         On logs only — same as --follow");
-    out.printlnErr("║   --lines N      Last N lines by seq (alias: -n; default: logs=50, tail=10)");
-    out.printlnErr("║   --all          Full session (ignore --lines default)");
-    out.printlnErr("║   --from-seq N   Include from seq N onward");
-    out.printlnErr("║   --to-seq N     Include up to seq N");
-    out.printlnErr("║   --stdout       Stdout lines only (default: both streams)");
-    out.printlnErr("║   --stderr       Stderr lines only");
-    out.printlnErr("║   --raw          Plain text on stdout → safe for | grep");
-    out.printlnErr("║   --jsonl        JSON lines on stdout → safe for | rg");
-    out.printlnErr("║   --grep PAT     Filter before printing");
+    out.printlnErr("║   -f, --follow  Stream live until Ctrl+C");
+    out.printlnErr("║   -H, --head N  First N lines");
+    out.printlnErr("║   -t, --tail N  Last N lines (default: logs=50, tail=10)");
+    out.printlnErr("║   --head X --tail Y   First X + last Y, with elision marker between");
+    out.printlnErr("║   --all         Full session (no slicing)");
+    out.printlnErr("║                 (non-TTY default: --all, so | grep sees everything)");
+    out.printlnErr("║   --from-seq N  Include from seq N onward");
+    out.printlnErr("║   --to-seq N    Include up to seq N");
+    out.printlnErr("║   --stdout      Stdout lines only (default: both streams)");
+    out.printlnErr("║   --stderr      Stderr lines only");
+    out.printlnErr("║   --raw         Plain text on stdout → safe for | grep");
+    out.printlnErr("║   --jsonl       JSON lines on stdout → safe for | rg");
+    out.printlnErr("║   --grep PAT    Filter before printing (implies --all unless --head/--tail given)");
     out.printlnErr("║");
     out.printlnErr("║ I/O CONTRACT");
     out.printlnErr("║   this panel (get)     → stderr — don't pipe");

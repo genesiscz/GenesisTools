@@ -9,6 +9,8 @@ import { registerLogsCommand } from "@app/task/commands/logs";
 import { registerRunCommand } from "@app/task/commands/run";
 import { registerSessionsCommand } from "@app/task/commands/sessions";
 import { registerTailCommand } from "@app/task/commands/tail";
+import { registerConfigCommand } from "@app/task/commands/config";
+import { registerWaitCommand } from "@app/task/commands/wait";
 
 const program = new Command();
 
@@ -22,6 +24,8 @@ registerRunCommand(program);
 registerGetCommand(program);
 registerLogsCommand(program);
 registerTailCommand(program);
+registerWaitCommand(program);
+registerConfigCommand(program);
 registerSessionsCommand(program);
 registerCleanCommand(program);
 registerDashboardCommand(program);
