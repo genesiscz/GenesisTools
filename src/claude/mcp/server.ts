@@ -31,7 +31,7 @@ const SERVER_INSTRUCTIONS =
 export async function startMcpServer(): Promise<void> {
     const server = new Server(
         { name: "genesis-tools", version: "1.0.0" },
-        { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
+        { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS }
     );
 
     server.setRequestHandler(ListToolsRequestSchema, async () => ({

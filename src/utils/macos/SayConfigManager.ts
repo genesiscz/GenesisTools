@@ -39,6 +39,12 @@ export interface SayConfigV2 {
         cacheThreshold?: number;
         /** Total cache size budget in bytes (LRU eviction). Default 50 MB. */
         cacheMaxBytes?: number;
+        /**
+         * Max age in ms before an entry (counter or persisted audio) is pruned
+         * by `lastUsed`. Keeps the index from growing unbounded with one-off
+         * phrases that never reach the threshold. Default 24h; <= 0 disables.
+         */
+        cacheTtlMs?: number;
     };
     apps: SayAppConfig[];
 }
@@ -288,11 +294,12 @@ export class SayConfigManager {
         await this.save(c);
     }
 
-    async getCacheSettings(): Promise<{ threshold: number; maxBytes: number }> {
+    async getCacheSettings(): Promise<{ threshold: number; maxBytes: number; ttlMs: number }> {
         const c = await this.load();
         return {
             threshold: c.global.cacheThreshold ?? 5,
             maxBytes: c.global.cacheMaxBytes ?? 50_000_000,
+            ttlMs: c.global.cacheTtlMs ?? 86_400_000,
         };
     }
 
