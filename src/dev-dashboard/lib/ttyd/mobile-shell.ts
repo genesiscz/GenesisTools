@@ -11,6 +11,8 @@ html, body {
     touch-action: auto;
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
+    background: #0c0e10;
+    color-scheme: dark;
 }
 #terminal, .terminal, .xterm {
     height: 100% !important;
