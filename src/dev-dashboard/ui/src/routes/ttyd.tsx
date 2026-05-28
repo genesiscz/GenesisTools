@@ -4,11 +4,13 @@ import { useEffect, useState } from "react";
 import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
 import "react-mosaic-component/react-mosaic-component.css";
 import { Button } from "@ui/components/button";
+import { MobileKeyBar } from "@/components/MobileKeyBar";
 import { TtydFrame } from "@/components/TtydFrame";
 import { TtydPane } from "@/components/TtydPane";
 import { MobileTerminalShell } from "@/components/terminal-shell/MobileTerminalShell";
 import { useLayoutMode } from "@/hooks/useLayoutMode";
 import { ttydApi } from "@/lib/api";
+import { findIframeByTitle, scrollIframeTerminal, sendKeyToIframe } from "@/lib/iframe-keys";
 import { buildBalancedMosaicLayout, flattenMosaicLeaves, reconcileMosaicLayout } from "@/lib/mosaic-layout";
 import { buildTtydTabs } from "@/lib/terminal-tabs";
 
@@ -140,6 +142,12 @@ export function TtydRoute() {
                         </div>
                     )}
                 </MobileTerminalShell>
+                {isMobile && active ? (
+                    <MobileKeyBar
+                        onKey={(key) => sendKeyToIframe(findIframeByTitle(`ttyd-${active}`), key)}
+                        onScroll={(lines) => scrollIframeTerminal(findIframeByTitle(`ttyd-${active}`), lines)}
+                    />
+                ) : null}
             </div>
         );
     }
