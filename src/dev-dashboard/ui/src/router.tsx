@@ -39,6 +39,15 @@ const indexRoute = createRoute({
 const ttydRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/ttyd",
+    validateSearch: (search: Record<string, unknown>): { tab?: string } => {
+        const tab = search.tab;
+
+        if (typeof tab === "string" && tab.length > 0) {
+            return { tab };
+        }
+
+        return {};
+    },
     component: TtydRoute,
 });
 

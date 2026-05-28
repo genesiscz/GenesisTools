@@ -18,6 +18,7 @@ import { cmuxApi, tmuxApi } from "@/lib/api";
 import {
     mergeStoredCmuxSurfaceSelection,
     pickStoredCmuxActivePaneId,
+    ttydTabSearchHref,
     writeCmuxViewState,
 } from "@/lib/view-state";
 import {
@@ -224,8 +225,7 @@ export function CmuxSessionList({ snapshot }: Props) {
                 open={hubOpen}
                 onOpenChange={setHubOpen}
                 onFocusTtydTab={(ttydId) => {
-                    sessionStorage.setItem("dd-ttyd-focus", ttydId);
-                    window.location.assign("/ttyd");
+                    window.location.assign(ttydTabSearchHref(ttydId));
                 }}
             />
             {sendTarget ? (

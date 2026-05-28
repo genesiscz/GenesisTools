@@ -1,6 +1,8 @@
 import { SafeJSON } from "@app/utils/json";
 import type { TmuxHubSession } from "@/lib/api";
 
+export const TTYD_TAB_SEARCH_KEY = "tab";
+
 const TTYD_ACTIVE_KEY = "dd:view:ttyd:activeId";
 const CMUX_ACTIVE_PANE_KEY = "dd:view:cmux:activePaneId";
 const CMUX_SURFACES_KEY = "dd:view:cmux:surfaceByPane";
@@ -9,26 +11,39 @@ export function canRemoveFromCmux(session: Pick<TmuxHubSession, "cmuxSurfaces">)
     return session.cmuxSurfaces.length > 0;
 }
 
-function hasViewStorage(): boolean {
+function hasLocalStorage(): boolean {
     return typeof localStorage !== "undefined";
 }
 
+function hasSessionStorage(): boolean {
+    return typeof sessionStorage !== "undefined";
+}
+
+/** Per browser tab — windows can keep different active ttyd sessions. */
 export function readTtydActiveId(): string | null {
-    if (!hasViewStorage()) {
+    if (!hasSessionStorage()) {
         return null;
     }
 
-    const value = localStorage.getItem(TTYD_ACTIVE_KEY);
+    const value = sessionStorage.getItem(TTYD_ACTIVE_KEY);
 
     return value && value.length > 0 ? value : null;
 }
 
 export function writeTtydActiveId(id: string): void {
-    if (!hasViewStorage()) {
+    if (!hasSessionStorage()) {
         return;
     }
 
-    localStorage.setItem(TTYD_ACTIVE_KEY, id);
+    sessionStorage.setItem(TTYD_ACTIVE_KEY, id);
+}
+
+export function clearTtydActiveId(): void {
+    if (!hasSessionStorage()) {
+        return;
+    }
+
+    sessionStorage.removeItem(TTYD_ACTIVE_KEY);
 }
 
 export interface CmuxViewState {
@@ -37,7 +52,7 @@ export interface CmuxViewState {
 }
 
 export function readCmuxViewState(): CmuxViewState {
-    if (!hasViewStorage()) {
+    if (!hasLocalStorage()) {
         return { activePaneId: null, surfaceByPaneId: {} };
     }
 
@@ -64,7 +79,7 @@ export function readCmuxViewState(): CmuxViewState {
 }
 
 export function writeCmuxViewState(state: CmuxViewState): void {
-    if (!hasViewStorage()) {
+    if (!hasLocalStorage()) {
         return;
     }
 
@@ -89,6 +104,31 @@ export function pickStoredTtydActiveId(sessionIds: string[]): string | null {
     }
 
     return null;
+}
+
+/** URL `?tab=` wins (shareable deep link), then per-tab sessionStorage, then first session. */
+export function pickTtydActiveId({
+    sessionIds,
+    urlTabId,
+}: {
+    sessionIds: string[];
+    urlTabId?: string | null;
+}): string | null {
+    if (urlTabId && sessionIds.includes(urlTabId)) {
+        return urlTabId;
+    }
+
+    const stored = pickStoredTtydActiveId(sessionIds);
+
+    if (stored) {
+        return stored;
+    }
+
+    return sessionIds[0] ?? null;
+}
+
+export function ttydTabSearchHref(ttydId: string): string {
+    return `/ttyd?${TTYD_TAB_SEARCH_KEY}=${encodeURIComponent(ttydId)}`;
 }
 
 export function pickStoredCmuxActivePaneId(paneIds: string[]): string | null {
