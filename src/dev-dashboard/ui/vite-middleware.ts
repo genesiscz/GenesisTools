@@ -11,8 +11,12 @@ import {
 } from "@app/dev-dashboard/lib/auth";
 import { getCurrentUsage, getUsageHistory, getUsageHistoryMulti } from "@app/dev-dashboard/lib/claude-usage/aggregator";
 import { createDevDashboardTerminal } from "@app/dev-dashboard/lib/cmux/create-terminal";
+import { createCmuxWorkspace } from "@app/dev-dashboard/lib/cmux/create-workspace";
+import { removeTmuxSessionFromCmux } from "@app/dev-dashboard/lib/cmux/remove-session";
 import { sendTmuxSessionToCmux } from "@app/dev-dashboard/lib/cmux/send-session";
 import { fetchCmuxFullLayout } from "@app/utils/cmux/layout";
+import { indexCmuxSurfacesByTmuxSession } from "@app/utils/cmux/tmux-bindings";
+import type { CmuxTmuxSurfaceRef } from "@app/utils/cmux/tmux-bindings";
 import type { DashboardSendTarget } from "@app/utils/cmux/types";
 import { getCachedSnapshot, startPolling } from "@app/dev-dashboard/lib/cmux/poller";
 import { listContainers } from "@app/dev-dashboard/lib/containers/docker";
@@ -36,6 +40,8 @@ import { createQaStream, todayLogFile } from "@app/dev-dashboard/lib/qa-sse";
 import { configureRetention, getCachedPulse, getSeries, startPulsePolling } from "@app/dev-dashboard/lib/system/poller";
 import { addTodo, completeTodo, deleteTodo, listTodos } from "@app/dev-dashboard/lib/todos/service";
 import { enrichSessionsForHub } from "@app/dev-dashboard/lib/tmux/hub";
+import { createStandaloneTmuxSession } from "@app/dev-dashboard/lib/tmux/create-session";
+import { renameTmuxSessionInHub } from "@app/dev-dashboard/lib/tmux/rename";
 import { killTtyd, listTtyd, renameTtyd, spawnTtyd } from "@app/dev-dashboard/lib/ttyd/manager";
 import { fetchWeather } from "@app/dev-dashboard/lib/weather/client";
 import { logger } from "@app/logger";
@@ -162,8 +168,44 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
         }
 
         if (req.method === "GET" && url.pathname === "/api/tmux/sessions") {
-            const sessions = enrichSessionsForHub(listTmuxSessions(), await listTtyd());
+            let cmuxBySession = new Map<string, CmuxTmuxSurfaceRef[]>();
+
+            try {
+                const layout = await fetchCmuxFullLayout();
+
+                if (layout.available) {
+                    cmuxBySession = indexCmuxSurfacesByTmuxSession(layout);
+                }
+            } catch (err) {
+                logger.debug({ err }, "tmux hub: cmux layout unavailable for enrichment");
+            }
+
+            const sessions = enrichSessionsForHub(listTmuxSessions(), await listTtyd(), cmuxBySession);
             sendJson(res, 200, { sessions });
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/tmux/create") {
+            try {
+                const body = await readJson<{ name?: string; cwd?: string; command?: string }>(req);
+                const created = createStandaloneTmuxSession(body);
+                sendJson(res, 200, created);
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/tmux/rename") {
+            try {
+                const body = await readJson<{ from: string; to: string }>(req);
+                const sessionName = await renameTmuxSessionInHub(body.from, body.to);
+                sendJson(res, 200, { sessionName });
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
             return;
         }
 
@@ -243,11 +285,35 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
             return;
         }
 
+        if (req.method === "POST" && url.pathname === "/api/cmux/create-workspace") {
+            try {
+                const body = await readJson<{ windowId: string; name?: string; cwd?: string }>(req);
+                const result = await createCmuxWorkspace(body);
+                sendJson(res, 200, { result });
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
         if (req.method === "POST" && url.pathname === "/api/cmux/send-session") {
             try {
                 const body = await readJson<{ tmuxSessionName: string; target: DashboardSendTarget; cwd?: string }>(req);
                 const result = await sendTmuxSessionToCmux(body);
                 sendJson(res, 200, { result });
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/cmux/remove-session") {
+            try {
+                const body = await readJson<{ tmuxSessionName: string }>(req);
+                const removed = await removeTmuxSessionFromCmux(body.tmuxSessionName);
+                sendJson(res, 200, { removed });
             } catch (err) {
                 sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
             }

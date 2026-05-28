@@ -15,6 +15,8 @@ export interface TmuxHubSession {
     windows: number;
     ttydTabIds: string[];
     canAttachInTtyd: boolean;
+    cmuxSurfaces: Array<{ workspaceId: string; surfaceId: string; title: string }>;
+    inCmux: boolean;
 }
 
 /**
@@ -61,6 +63,16 @@ export const ttydApi = {
 
 export const tmuxApi = {
     sessions: () => jsonFetch<{ sessions: TmuxHubSession[] }>("/api/tmux/sessions"),
+    create: (body: { name?: string; cwd?: string; command?: string } = {}) =>
+        jsonFetch<{ sessionName: string; cwd: string; command: string }>("/api/tmux/create", {
+            method: "POST",
+            body: SafeJSON.stringify(body),
+        }),
+    rename: (body: { from: string; to: string }) =>
+        jsonFetch<{ sessionName: string }>("/api/tmux/rename", {
+            method: "POST",
+            body: SafeJSON.stringify(body),
+        }),
 };
 
 export const cmuxApi = {
@@ -76,8 +88,18 @@ export const cmuxApi = {
             method: "POST",
             body: SafeJSON.stringify(body),
         }),
+    createWorkspace: (body: { windowId: string; name?: string; cwd?: string }) =>
+        jsonFetch<{ result: { workspaceId: string; windowId: string } }>("/api/cmux/create-workspace", {
+            method: "POST",
+            body: SafeJSON.stringify(body),
+        }),
     sendSession: (body: { tmuxSessionName: string; target: DashboardSendTarget; cwd?: string }) =>
         jsonFetch<{ result: AttachTmuxResult }>("/api/cmux/send-session", {
+            method: "POST",
+            body: SafeJSON.stringify(body),
+        }),
+    removeSession: (body: { tmuxSessionName: string }) =>
+        jsonFetch<{ removed: number }>("/api/cmux/remove-session", {
             method: "POST",
             body: SafeJSON.stringify(body),
         }),
