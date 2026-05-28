@@ -5,7 +5,7 @@ export function Sidebar() {
     const { pathname } = useLocation();
 
     return (
-        <nav className="flex flex-col items-center gap-3 pt-4">
+        <nav className="sticky top-0 flex h-screen flex-col items-center gap-3 overflow-y-auto pt-4">
             <div
                 className="flex h-[30px] w-[30px] items-center justify-center rounded-[9px]"
                 style={{ background: "var(--dd-accent-gradient)", boxShadow: "0 0 14px rgba(52,211,153,0.35)" }}
