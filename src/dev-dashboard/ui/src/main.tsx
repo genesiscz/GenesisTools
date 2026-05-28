@@ -4,6 +4,18 @@ import ReactDOM from "react-dom/client";
 import { getRouter } from "@/router";
 import "./styles.css";
 
+function preventMobileBrowserZoomGestures(): void {
+    document.addEventListener(
+        "gesturestart",
+        (event) => {
+            event.preventDefault();
+        },
+        { passive: false }
+    );
+}
+
+preventMobileBrowserZoomGestures();
+
 const router = getRouter();
 const rootElement = document.getElementById("app");
 if (rootElement && !rootElement.innerHTML) {
