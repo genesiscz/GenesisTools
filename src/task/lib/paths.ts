@@ -9,6 +9,10 @@ export function getTaskSessionsDir(): string {
     return resolve(genesisToolsRoot(), ".genesis-tools", "task", "sessions");
 }
 
+export function taskConfigPath(): string {
+    return process.env.TASK_CONFIG_PATH ?? resolve(genesisToolsRoot(), ".genesis-tools", "task", "config.json");
+}
+
 function safeSessionPath(session: string, suffix: string): string {
     const sessionsDir = getTaskSessionsDir();
     const candidate = resolve(sessionsDir, `${session}${suffix}`);

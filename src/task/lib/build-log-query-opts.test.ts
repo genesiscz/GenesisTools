@@ -2,27 +2,32 @@ import { describe, expect, it } from "bun:test";
 import { buildLogQueryOpts } from "@app/task/lib/build-log-query-opts";
 
 describe("buildLogQueryOpts", () => {
-    it("defaults to 50 lines when --all is not set (eval2 bug #7 baseline)", () => {
+    it("defaults head/tail unset when --all is not set", () => {
         const opts = buildLogQueryOpts("metro", {});
 
-        expect(opts.lines).toBe(50);
+        expect(opts.head).toBeUndefined();
+        expect(opts.tail).toBeUndefined();
+        expect(opts.all).toBe(false);
     });
 
-    it("passes lines undefined when --all is set (eval2 bug #7)", () => {
+    it("passes all true when --all is set", () => {
         const opts = buildLogQueryOpts("metro", { all: true });
 
-        expect(opts.lines).toBeUndefined();
+        expect(opts.all).toBe(true);
+        expect(opts.head).toBeUndefined();
+        expect(opts.tail).toBeUndefined();
     });
 
-    it("respects explicit --lines over default", () => {
-        const opts = buildLogQueryOpts("metro", { lines: "200" });
+    it("parses --head and --tail", () => {
+        const opts = buildLogQueryOpts("metro", { head: "5", tail: "10" });
 
-        expect(opts.lines).toBe(200);
+        expect(opts.head).toBe(5);
+        expect(opts.tail).toBe(10);
     });
 
-    it("prefers --all over explicit --lines", () => {
-        const opts = buildLogQueryOpts("metro", { all: true, lines: "200" });
+    it("prefers --all over explicit --head/--tail", () => {
+        const opts = buildLogQueryOpts("metro", { all: true, head: "5", tail: "10" });
 
-        expect(opts.lines).toBeUndefined();
+        expect(opts.all).toBe(true);
     });
 });
