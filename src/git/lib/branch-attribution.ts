@@ -46,11 +46,7 @@ function isShaLike(value: string): boolean {
     return /^[0-9a-f]{7,40}$/i.test(value);
 }
 
-function pickBranchFromContains(
-    branches: string[],
-    excludeTrunks: string[],
-    workitemIds: number[]
-): string | null {
+function pickBranchFromContains(branches: string[], excludeTrunks: string[], workitemIds: number[]): string | null {
     const filtered = branches
         .map(normalizeRefName)
         .filter((b) => b && !b.includes("HEAD detached") && !isTrunk(b, excludeTrunks));
@@ -85,19 +81,12 @@ async function nameRevBatch(shas: string[], cwd: string): Promise<Map<string, st
 
     const input = `${shas.join("\n")}\n`;
     const proc = Bun.spawn(
-        [
-            "git",
-            "name-rev",
-            "--name-only",
-            "--refs=refs/heads/*",
-            "--refs=refs/remotes/*",
-            "--annotate-stdin",
-        ],
+        ["git", "name-rev", "--name-only", "--refs=refs/heads/*", "--refs=refs/remotes/*", "--annotate-stdin"],
         {
             cwd,
             stdin: new Blob([input]),
             stdout: "pipe",
-            stderr: "pipe",
+            stderr: "ignore",
         }
     );
 
@@ -143,7 +132,7 @@ async function branchesContaining(sha: string, cwd: string): Promise<string[]> {
 async function buildReflogMap(cwd: string): Promise<Map<string, string>> {
     const map = new Map<string, string>();
     const executor = new Executor({ prefix: "git", verbose: false, cwd });
-    const res = await executor.exec(["reflog", "show", "--all", "--date=iso"]);
+    const res = await executor.exec(["reflog", "show", "--all", "-n", "10000", "--date=iso"]);
 
     if (!res.success) {
         return map;
@@ -156,7 +145,7 @@ async function buildReflogMap(cwd: string): Promise<Map<string, string>> {
             continue;
         }
 
-        const sha = match[1];
+        const sha = match[1].toLowerCase();
         const ref = match[2];
         const existing = map.get(sha);
 
@@ -174,14 +163,15 @@ async function buildReflogMap(cwd: string): Promise<Map<string, string>> {
 }
 
 function lookupReflogRef(sha: string, reflogMap: Map<string, string>): string | undefined {
-    const direct = reflogMap.get(sha);
+    const normalized = sha.toLowerCase();
+    const direct = reflogMap.get(normalized);
 
     if (direct) {
         return direct;
     }
 
     for (const [key, ref] of reflogMap) {
-        if (sha.startsWith(key) || key.startsWith(sha)) {
+        if (normalized.startsWith(key) || key.startsWith(normalized)) {
             return ref;
         }
     }
@@ -292,7 +282,7 @@ export function formatBranchTag(attribution: BranchAttribution | undefined): str
     }
 
     if (attribution.branch === DETACHED) {
-        return `(${DETACHED})`;
+        return DETACHED;
     }
 
     if (attribution.trunkFallback) {

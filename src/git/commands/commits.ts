@@ -5,13 +5,9 @@
  * branch attribution, rebase classification, and optional line change stats.
  */
 
-import { enrichWorkItems } from "@app/azure-devops/lib/work-item-enrichment";
 import { loadConfig } from "@app/azure-devops/config";
-import {
-    formatBranchTag,
-    resolveBranchForCommits,
-    type BranchAttribution,
-} from "@app/git/lib/branch-attribution";
+import { enrichWorkItems } from "@app/azure-devops/lib/work-item-enrichment";
+import { type BranchAttribution, formatBranchTag, resolveBranchForCommits } from "@app/git/lib/branch-attribution";
 import { showItems } from "@app/git/lib/format";
 import { renderMarkdown } from "@app/git/lib/markdown-render";
 import { computePatchIds, dedupByPatchId } from "@app/git/lib/patch-id-dedup";
@@ -21,8 +17,8 @@ import {
     formatClusterTimestamp,
     formatYmd,
     isLikelyResetAuthor,
-    rangeBoundsMs,
     type RebaseCluster,
+    rangeBoundsMs,
 } from "@app/git/lib/rebase-classifier";
 import { extractFromMessage, loadWorkitemPatternsAsync } from "@app/git/workitem-patterns";
 import { out } from "@app/logger";
@@ -94,7 +90,12 @@ async function loadStashHashes(cwd: string): Promise<Set<string>> {
         return new Set();
     }
 
-    return new Set(res.stdout.split("\n").map((line) => line.trim()).filter(Boolean));
+    return new Set(
+        res.stdout
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean)
+    );
 }
 
 async function loadExcludeTrunks(storage: Storage): Promise<string[]> {
@@ -238,10 +239,7 @@ function groupingDateFor(commit: CommitWithStats, dateMode: DateMode, resetMarke
     return commit.date;
 }
 
-function workitemTag(
-    commit: CommitWithStats,
-    showWorkitemId: boolean
-): string {
+function workitemTag(commit: CommitWithStats, showWorkitemId: boolean): string {
     if (!showWorkitemId || commit.workitemIds.length === 0) {
         return "";
     }
@@ -271,9 +269,7 @@ function formatCommitRow(
 ): string {
     const marker = commit.resetAuthorMarker ? chalk.dim(" (?)") : "";
     const branch =
-        opts.showBranch && commit.branchAttribution
-            ? chalk.dim(` ${formatBranchTag(commit.branchAttribution)}`)
-            : "";
+        opts.showBranch && commit.branchAttribution ? chalk.dim(` ${formatBranchTag(commit.branchAttribution)}`) : "";
     const stat =
         opts.includeStat && (commit.insertions > 0 || commit.deletions > 0)
             ? chalk.dim(` (${commit.filesChanged} files, +${commit.insertions}/-${commit.deletions})`)
@@ -286,12 +282,9 @@ function formatCommitRow(
 
 function buildWorkitemSummary(
     commits: CommitWithStats[],
-    includeStat: boolean
+    _includeStat: boolean
 ): Map<number, { commits: number; totalInsertions: number; totalDeletions: number }> {
-    const workitemMap = new Map<
-        number,
-        { commits: number; totalInsertions: number; totalDeletions: number }
-    >();
+    const workitemMap = new Map<number, { commits: number; totalInsertions: number; totalDeletions: number }>();
 
     for (const commit of commits) {
         for (const wid of commit.workitemIds) {
@@ -354,10 +347,7 @@ function renderTableMain(
             out.println(chalk.dim("─".repeat(80)));
 
             for (const commit of group) {
-                const dateSuffix =
-                    opts.dateMode !== "author"
-                        ? chalk.dim(` (${commit.date.split("T")[0]})`)
-                        : "";
+                const dateSuffix = opts.dateMode !== "author" ? chalk.dim(` (${commit.date.split("T")[0]})`) : "";
                 out.println(`${formatCommitRow(commit, opts)}${dateSuffix}`);
             }
         }
@@ -418,9 +408,7 @@ function renderRebasedCompressed(clusters: RebaseCluster<CommitWithStats>[]): vo
         out.println(
             `  ${chalk.cyan("▸")} ${cluster.commits.length} commits rebased ${landed}, authored ${from} – ${to}`
         );
-        out.println(
-            `    [${showItems(cluster.commits, (c) => c.shortHash)}]`
-        );
+        out.println(`    [${showItems(cluster.commits, (c) => c.shortHash)}]`);
     }
 }
 
@@ -433,7 +421,7 @@ function renderRebasedExpanded(
         showAuthor: boolean;
     }
 ): void {
-    out.println(`\n${chalk.bold("── Rebased into range (" + rebased.length + " commits) ──")}`);
+    out.println(`\n${chalk.bold(`── Rebased into range (${rebased.length} commits) ──`)}`);
 
     const groups = new Map<string, CommitWithStats[]>();
 
@@ -452,8 +440,7 @@ function renderRebasedExpanded(
         for (const commit of dayCommits) {
             const authoredDay = commit.date.split("T")[0];
             const landedDay = commit.commitDate.split("T")[0];
-            const authoredAnnotation =
-                authoredDay !== landedDay ? `[authored ${authoredDay}]` : undefined;
+            const authoredAnnotation = authoredDay !== landedDay ? `[authored ${authoredDay}]` : undefined;
 
             out.println(
                 formatCommitRow(commit, {
@@ -465,14 +452,14 @@ function renderRebasedExpanded(
     }
 }
 
-function outputJson(payload: {
+function buildCommitsJson(payload: {
     from: string;
     to: string;
     authors: string[];
     commits: CommitWithStats[];
     rebasedCommits: CommitWithStats[];
     workitemSummary: Map<number, { commits: number; totalInsertions: number; totalDeletions: number }>;
-}): void {
+}): string {
     const workitemSummary: Record<string, { commits: number; totalInsertions: number; totalDeletions: number }> = {};
 
     for (const [id, stats] of payload.workitemSummary) {
@@ -495,20 +482,29 @@ function outputJson(payload: {
         resetAuthorMarker: c.resetAuthorMarker ?? false,
     });
 
-    out.println(
-        SafeJSON.stringify(
-            {
-                from: payload.from,
-                to: payload.to,
-                authors: payload.authors,
-                commits: payload.commits.map(mapCommit),
-                rebasedCommits: payload.rebasedCommits.map(mapCommit),
-                workitemSummary,
-            },
-            null,
-            2
-        )
+    return SafeJSON.stringify(
+        {
+            from: payload.from,
+            to: payload.to,
+            authors: payload.authors,
+            commits: payload.commits.map(mapCommit),
+            rebasedCommits: payload.rebasedCommits.map(mapCommit),
+            workitemSummary,
+        },
+        null,
+        2
     );
+}
+
+function outputJson(payload: {
+    from: string;
+    to: string;
+    authors: string[];
+    commits: CommitWithStats[];
+    rebasedCommits: CommitWithStats[];
+    workitemSummary: Map<number, { commits: number; totalInsertions: number; totalDeletions: number }>;
+}): void {
+    out.println(buildCommitsJson(payload));
 }
 
 async function handleCommits(options: CommitsOptions): Promise<void> {
@@ -542,13 +538,7 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
         out.println(chalk.bold(`Finding git commits from ${options.from} until ${options.to} from ${authorDisplay}`));
     }
 
-    let commits = await getCommitsByDate(
-        options.from,
-        options.to,
-        authors,
-        !!options.stat,
-        !!options.withoutMerges
-    );
+    let commits = await getCommitsByDate(options.from, options.to, authors, !!options.stat, !!options.withoutMerges);
 
     if (options.withoutStashes) {
         const stashHashes = await loadStashHashes(process.cwd());
@@ -600,10 +590,11 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
         workitemBySha.set(commit.hash, commit.workitemIds);
     }
 
-    const branchMap = await resolveBranchForCommits(
-        [...workitemBySha.keys()],
-        { excludeTrunks, workitemBySha, cwd: process.cwd() }
-    );
+    const branchMap = await resolveBranchForCommits([...workitemBySha.keys()], {
+        excludeTrunks,
+        workitemBySha,
+        cwd: process.cwd(),
+    });
 
     for (const commit of [...authoredInRange, ...rebasedInRange]) {
         commit.branchAttribution = branchMap.get(commit.hash);
@@ -613,11 +604,7 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
         const azureConfig = loadConfig();
 
         if (azureConfig) {
-            const allIds = [
-                ...new Set(
-                    [...authoredInRange, ...rebasedInRange].flatMap((c) => c.workitemIds)
-                ),
-            ];
+            const allIds = [...new Set([...authoredInRange, ...rebasedInRange].flatMap((c) => c.workitemIds))];
             const enriched = await enrichWorkItems(azureConfig, allIds);
 
             for (const commit of [...authoredInRange, ...rebasedInRange]) {
@@ -651,6 +638,23 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
     const rebasedClusters = clusterRebasedByCI(rebased);
 
     if (authored.length === 0 && rebased.length === 0) {
+        if (options.format === "json") {
+            outputJson({
+                from: options.from,
+                to: options.to,
+                authors,
+                commits: [],
+                rebasedCommits: [],
+                workitemSummary: new Map(),
+            });
+            return;
+        }
+
+        if (options.markdown) {
+            out.println("");
+            return;
+        }
+
         out.println(chalk.yellow("\nNo commits found for the specified criteria."));
         return;
     }
@@ -685,8 +689,7 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
             showWorkitemId,
             includeStat: !!options.stat,
             groupBy,
-            groupingDate: (c) =>
-                groupingDateFor(c, dateMode, resetAuthorByHash.get(c.hash) ?? false),
+            groupingDate: (c) => groupingDateFor(c, dateMode, resetAuthorByHash.get(c.hash) ?? false),
             workitemSummary: workitemMap,
             rebasedClusters,
             includeRebasesExpanded: !!options.includeRebases,
@@ -709,9 +712,7 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
             out.println(`\n${chalk.bold("Workitem Summary:")}`);
 
             for (const [id, stats] of [...workitemMap.entries()].sort((a, b) => a[0] - b[0])) {
-                const statPart = options.stat
-                    ? chalk.dim(` (+${stats.totalInsertions}/-${stats.totalDeletions})`)
-                    : "";
+                const statPart = options.stat ? chalk.dim(` (+${stats.totalInsertions}/-${stats.totalDeletions})`) : "";
                 out.println(`  ${chalk.yellow(`#${id}`)} - ${stats.commits} commit(s)${statPart}`);
             }
         }
@@ -730,18 +731,17 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
             await copyToClipboard(outputText);
         } else if (options.format === "json") {
             await copyToClipboard(
-                SafeJSON.stringify(
-                    {
-                        from: options.from,
-                        to: options.to,
-                        authors,
-                        commits: authored,
-                        rebasedCommits: rebased,
-                    },
-                    null,
-                    2
-                )
+                buildCommitsJson({
+                    from: options.from,
+                    to: options.to,
+                    authors,
+                    commits: authored,
+                    rebasedCommits: rebased,
+                    workitemSummary: workitemMap,
+                })
             );
+        } else {
+            out.println(chalk.yellow("\nWarning: Clipboard copy is only supported with --markdown or --format json."));
         }
     }
 }

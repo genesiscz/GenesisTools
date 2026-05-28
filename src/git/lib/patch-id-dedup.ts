@@ -3,11 +3,24 @@ export interface PatchIdCommit {
     commitDate: string;
 }
 
+function commitDateMs(commitDate: string): number {
+    const ms = new Date(commitDate).getTime();
+
+    return Number.isNaN(ms) ? 0 : ms;
+}
+
 export async function computePatchIds(shas: string[], cwd: string): Promise<Map<string, string>> {
     const result = new Map<string, string>();
 
-    for (const sha of shas) {
-        const showProc = Bun.spawn(["git", "show", "--no-color", sha], {
+    if (shas.length === 0) {
+        return result;
+    }
+
+    const batchSize = 100;
+
+    for (let i = 0; i < shas.length; i += batchSize) {
+        const batch = shas.slice(i, i + batchSize);
+        const showProc = Bun.spawn(["git", "show", "--no-color", ...batch], {
             cwd,
             stdout: "pipe",
             stderr: "ignore",
@@ -30,16 +43,24 @@ export async function computePatchIds(shas: string[], cwd: string): Promise<Map<
             continue;
         }
 
-        const line = stdout.trim().split("\n")[0];
+        for (const line of stdout.trim().split("\n")) {
+            const parts = line.trim().split(/\s+/);
 
-        if (!line) {
-            continue;
-        }
+            if (parts.length < 2) {
+                continue;
+            }
 
-        const patchId = line.split(/\s+/)[0];
+            const [patchId, sha] = parts;
+            result.set(sha.toLowerCase(), patchId);
 
-        if (patchId) {
-            result.set(sha, patchId);
+            for (const inputSha of batch) {
+                if (
+                    inputSha.toLowerCase().startsWith(sha.toLowerCase()) ||
+                    sha.toLowerCase().startsWith(inputSha.toLowerCase())
+                ) {
+                    result.set(inputSha, patchId);
+                }
+            }
         }
     }
 
@@ -74,7 +95,7 @@ export function dedupByPatchId<T extends PatchIdCommit>(commits: T[], patchIds: 
         let best = group[0];
 
         for (const candidate of group.slice(1)) {
-            if (candidate.commitDate > best.commitDate) {
+            if (commitDateMs(candidate.commitDate) > commitDateMs(best.commitDate)) {
                 best = candidate;
             }
         }

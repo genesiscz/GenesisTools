@@ -67,17 +67,12 @@ export function isLikelyResetAuthor(
     return sameMinuteCount >= 2;
 }
 
-export function clusterRebasedByCI<T extends ClassifiableCommit>(
-    rebased: T[],
-    gapMs = 300_000
-): RebaseCluster<T>[] {
+export function clusterRebasedByCI<T extends ClassifiableCommit>(rebased: T[], gapMs = 300_000): RebaseCluster<T>[] {
     if (rebased.length === 0) {
         return [];
     }
 
-    const sorted = [...rebased].sort(
-        (a, b) => parseIsoMs(a.commitDate) - parseIsoMs(b.commitDate)
-    );
+    const sorted = [...rebased].sort((a, b) => parseIsoMs(a.commitDate) - parseIsoMs(b.commitDate));
 
     const clusters: RebaseCluster<T>[] = [];
     let current: T[] = [sorted[0]];

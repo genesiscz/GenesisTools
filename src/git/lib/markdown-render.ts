@@ -1,9 +1,9 @@
-import { formatDateTime } from "@app/utils/date";
 import type { BranchAttribution } from "@app/git/lib/branch-attribution";
 import { formatBranchTag } from "@app/git/lib/branch-attribution";
 import { showItems } from "@app/git/lib/format";
 import type { RebaseCluster } from "@app/git/lib/rebase-classifier";
 import { formatClusterTimestamp, formatYmd } from "@app/git/lib/rebase-classifier";
+import { formatDateTime } from "@app/utils/date";
 
 export interface MarkdownCommit {
     hash: string;
@@ -34,11 +34,7 @@ export interface MarkdownRenderOptions<T extends MarkdownCommit = MarkdownCommit
     rebasedExpanded: T[];
 }
 
-function workitemTag(
-    ids: number[],
-    titles: Map<number, string> | undefined,
-    show: boolean
-): string {
+function workitemTag(ids: number[], titles: Map<number, string> | undefined, show: boolean): string {
     if (!show || ids.length === 0) {
         return "";
     }
@@ -77,17 +73,12 @@ function formatDayHeader(day: string, count: number): string {
 function renderCommitLine<T extends MarkdownCommit>(commit: T, opts: MarkdownRenderOptions<T>): string {
     const marker = commit.resetAuthorMarker ? " (?)" : "";
     const stat =
-        opts.includeStat && commit.insertions !== undefined
-            ? ` (+${commit.insertions}/-${commit.deletions})`
-            : "";
+        opts.includeStat && commit.insertions !== undefined ? ` (+${commit.insertions}/-${commit.deletions})` : "";
 
     return `- \`${commit.shortHash}\`${marker} ${commit.message}${branchTag(commit.branchAttribution, opts.showBranch)}${workitemTag(commit.workitemIds, commit.workitemTitles, opts.showWorkitemId)}${stat}`;
 }
 
-export function renderMarkdown<T extends MarkdownCommit>(
-    commits: T[],
-    options: MarkdownRenderOptions<T>
-): string {
+export function renderMarkdown<T extends MarkdownCommit>(commits: T[], options: MarkdownRenderOptions<T>): string {
     const lines: string[] = [];
 
     if (options.groupBy === "none") {
@@ -167,9 +158,7 @@ export function renderMarkdown<T extends MarkdownCommit>(
                     commit.date.split("T")[0] !== commit.commitDate.split("T")[0]
                         ? ` [authored ${commit.date.split("T")[0]}]`
                         : "";
-                lines.push(
-                    `${renderCommitLine(commit, options).replace(/^- /, "- ")}${authored}`
-                );
+                lines.push(`${renderCommitLine(commit, options).replace(/^- /, "- ")}${authored}`);
             }
 
             lines.push("");
@@ -185,12 +174,8 @@ export function renderMarkdown<T extends MarkdownCommit>(
             const landed = formatClusterTimestamp(cluster.landedAt);
             const from = formatYmd(cluster.authorDateRange[0]);
             const to = formatYmd(cluster.authorDateRange[1]);
-            lines.push(
-                `- ${cluster.commits.length} commits rebased ${landed}, authored ${from} – ${to}`
-            );
-            lines.push(
-                `  - ${showItems(cluster.commits, (c) => `\`${c.shortHash}\``)}`
-            );
+            lines.push(`- ${cluster.commits.length} commits rebased ${landed}, authored ${from} – ${to}`);
+            lines.push(`  - ${showItems(cluster.commits, (c) => `\`${c.shortHash}\``)}`);
         }
     }
 

@@ -22,7 +22,7 @@ tools git commits --from 2026-04-01 --to 2026-04-30 --stat --author "Martin"
 # Group by branch, include workitem titles from Azure DevOps cache
 tools git commits --from 2026-05-01 --to 2026-05-15 --group-by branch --with-workitem-title
 
-# Markdown for standup / Clarity paste
+# markdown for standup / Clarity paste
 tools git commits --from 2026-05-14 --to 2026-05-27 --markdown --clipboard
 
 # Configure authors interactively (pick from git history)
@@ -64,7 +64,7 @@ Query commits by date range with optional workitem extraction, branch attributio
 | `--workitem <id>` | Filter to commits referencing workitem ID (repeatable, OR) |
 | `--include-rebases` | Expand rebased-into-range commits inline |
 | `--date <author\|commit\|true-first>` | Date used for grouping (default: `author`) |
-| `--markdown` | Markdown output (day headers, bullet list) |
+| `--markdown` | markdown output (day headers, bullet list) |
 | `--clipboard` | Copy output to clipboard (`--markdown` recommended) |
 
 **Rebase behaviour:** `git log --after`/`--before` still filter by committer date. Commits authored before `--from` but committed inside the range appear in a compressed “rebased into this range” footer (or inline with `--include-rebases`). Patch-id dedup collapses cherry-pick/rebase duplicates (keeps newest committer date).
