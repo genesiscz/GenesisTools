@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
@@ -122,10 +123,15 @@ function deriveWatchDirs(root: string, appDir: string, extraDirs: string[]): str
         rootRelativeToApp !== ".." &&
         !rootRelativeToApp.startsWith(`..${sep}`)
     ) {
-        const toolName = rootRelativeToApp.split(/[\\/]/)[0];
+        const withoutUi = rootRelativeToApp.replace(/[\\/]ui$/, "");
+        const withoutAppsWeb = withoutUi.replace(/[\\/]apps[\\/]web$/, "");
+        const toolRel =
+            withoutAppsWeb !== withoutUi || withoutUi !== rootRelativeToApp
+                ? withoutAppsWeb
+                : rootRelativeToApp.split(/[\\/]/)[0];
 
-        if (toolName) {
-            const toolDir = resolve(appDir, toolName);
+        if (toolRel) {
+            const toolDir = resolve(appDir, toolRel);
 
             if (toolDir !== root && existsSync(toolDir)) {
                 dirs.push(toolDir);
@@ -161,6 +167,54 @@ function deriveWatchDirs(root: string, appDir: string, extraDirs: string[]): str
     return dirs;
 }
 
+/**
+ * Find the monorepo git root, not the first `.git` walking up from `start`.
+ *
+ * Some dashboards (e.g. `src/claude-history-dashboard`) still carry a nested
+ * `.git` from their scaffold template. Stopping at the first match parked their
+ * Vite cache at `<dashboard>/node_modules/.vite-cache/root`, colliding with
+ * other tools and causing 504 Outdated Optimize Dep / duplicate React crashes.
+ */
+function resolveGitRoot(start: string): string {
+    let gitRoot = start;
+    let dir = start;
+
+    while (dir !== dirname(dir)) {
+        if (existsSync(join(dir, ".git"))) {
+            gitRoot = dir;
+        }
+
+        dir = dirname(dir);
+    }
+
+    return gitRoot;
+}
+
+/**
+ * Per-dashboard cacheDir under `<repo>/node_modules/.vite-cache/<slug>/`.
+ *
+ * Default Vite cacheDir is `<root>/node_modules/.vite`, which from
+ * `src/<tool>/ui` resolves to the repo-root `node_modules/.vite` for every
+ * dashboard — so running ≥2 in parallel makes their optimize-deps versioners
+ * race, rewriting the same `?v=<hash>` files and breaking already-open tabs
+ * with 504 "Outdated Optimize Dep" + "Failed to fetch dynamically imported
+ * module". Isolating per dashboard prevents the collision.
+ *
+ * **Anchored on `.git`, not the closest `node_modules`.** Some tools (e.g.
+ * `src/shops`) have their own nested `package.json` + `node_modules`. If we
+ * picked that as the cache home, Vite would resolve `react` from the nested
+ * tree while the rest of the deps come from the root — duplicate-React
+ * "Invalid hook call". Pinning the cache to the repo root guarantees a single
+ * resolution chain.
+ */
+function resolveDashboardCacheDir(root: string): string {
+    const gitRoot = resolveGitRoot(root);
+    const relativeRoot = relative(gitRoot, root) || "root";
+    const slug = createHash("sha1").update(relativeRoot).digest("hex").slice(0, 12);
+
+    return join(gitRoot, "node_modules", ".vite-cache", slug);
+}
+
 export function createDashboardViteConfig({
     root,
     port,
@@ -193,6 +247,7 @@ export function createDashboardViteConfig({
 
     return defineConfig({
         root,
+        cacheDir: resolveDashboardCacheDir(root),
         plugins: [...corePlugins, ...extraPlugins],
         server: {
             port,
@@ -223,6 +278,12 @@ export function createDashboardViteConfig({
                 "bun",
                 "@tanstack/react-start-client",
                 "@tanstack/start-client-core",
+                // Terminal-only packages pulled in by @tanstack/devtools-vite (chalk).
+                // Vite 8's rolldown optimizer resolves supports-color to browser.js,
+                // which lacks createSupportsColor — exclude the whole chain.
+                "chalk",
+                "supports-hyperlinks",
+                "supports-color",
                 ...(overrideOptimizeDeps?.exclude ?? []),
             ],
             include: [
@@ -238,6 +299,23 @@ export function createDashboardViteConfig({
         ssr: {
             external: ["node:async_hooks", "bun"],
         },
+        ...(tanstackStartOptions !== false
+            ? {
+                  environments: {
+                      ssr: {
+                          optimizeDeps: {
+                              include: [
+                                  "react",
+                                  "react-dom",
+                                  "react-dom/server",
+                                  "react/jsx-runtime",
+                                  "react/jsx-dev-runtime",
+                              ],
+                          },
+                      },
+                  },
+              }
+            : {}),
         ...rest,
     }) as UserConfig;
 }

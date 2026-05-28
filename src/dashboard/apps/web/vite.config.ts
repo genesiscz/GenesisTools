@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
 import { devtools } from "@tanstack/devtools-vite";
@@ -19,16 +20,20 @@ const nitroConfig: NitroConfig = {
     scanDirs: ["./server"],
 };
 
-const dashboardDependency = (specifier: string) => new URL(`./node_modules/${specifier}`, import.meta.url).pathname;
+const dashboardDependency = (specifier: string) =>
+    fileURLToPath(new URL(`./node_modules/${specifier}`, import.meta.url));
+
+const bindHost = process.env.DASHBOARD_BIND_HOST;
 
 const config = defineConfig({
     server: {
+        ...(bindHost ? { host: bindHost } : {}),
         hmr: {
             overlay: false,
         },
     },
     plugins: [
-        devtools(),
+        ...(process.env.DASHBOARD_DEVTOOLS === "1" ? [devtools()] : []),
         nitro(nitroConfig),
         // this is the plugin that enables path aliases
         viteTsConfigPaths({
@@ -54,11 +59,16 @@ const config = defineConfig({
             "@tanstack/router-core",
         ],
         alias: [
-            { find: "@ui", replacement: new URL("../../../utils/ui", import.meta.url).pathname },
+            { find: "@ui", replacement: fileURLToPath(new URL("../../../utils/ui", import.meta.url)) },
             {
                 find: "@dashboard/shared",
-                replacement: new URL("../../packages/shared/src/index.ts", import.meta.url).pathname,
+                replacement: fileURLToPath(new URL("../../packages/shared/src/index.ts", import.meta.url)),
             },
+            {
+                find: "@app/logger/client",
+                replacement: fileURLToPath(new URL("../../../logger/client.ts", import.meta.url)),
+            },
+            { find: "@app/utils/json", replacement: fileURLToPath(new URL("../../../utils/json.ts", import.meta.url)) },
             { find: "@radix-ui/react-avatar", replacement: dashboardDependency("@radix-ui/react-avatar") },
             { find: "@radix-ui/react-dialog", replacement: dashboardDependency("@radix-ui/react-dialog") },
             {

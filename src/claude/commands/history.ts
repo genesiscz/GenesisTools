@@ -17,6 +17,7 @@ import { out } from "@app/logger";
 import { getAgentRuntimeContext } from "@app/utils/agent-runtime";
 import { resolveProjectFilter } from "@app/utils/claude";
 import { isInteractive } from "@app/utils/cli";
+import { buildViteDevCmd, defineDashboardApp } from "@app/utils/DashboardApp";
 import { SafeJSON } from "@app/utils/json";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import * as p from "@app/utils/prompts/p";
@@ -331,33 +332,23 @@ export function registerHistoryCommand(program: Command): void {
             }
         });
 
-    // Dashboard command
-    historyCmd
-        .command("dashboard")
-        .description("Launch the web-based dashboard for browsing conversation history")
-        .option("-p, --port <port>", "Port to run the dashboard on", "3069")
-        .action(async (options) => {
-            const dashboardDir = resolve(import.meta.dir, "../../claude-history-dashboard");
+    const dashboardDir = resolve(import.meta.dir, "../../claude-history-dashboard");
+    const viteConfigPath = resolve(dashboardDir, "vite.config.ts");
 
-            out.println(chalk.cyan("Starting Claude History Dashboard..."));
-            out.println(chalk.dim(`   Port: ${options.port}`));
-            out.println();
+    const claudeHistoryApp = defineDashboardApp({
+        type: "ui",
+        key: "claude-history",
+        name: "Claude History Browser",
+        description: "Search & browse Claude Code conversation history",
+        commandName: "dashboard",
+        spawn: {
+            cmd: buildViteDevCmd({ configPath: viteConfigPath, strictPort: true }),
+            cwd: PROJECT_ROOT,
+        },
+        readiness: { kind: "http", path: "/" },
+        openBrowser: { enabled: true },
+        launchd: { available: true },
+    });
 
-            const proc = spawn({
-                cmd: [
-                    "bun",
-                    "--bun",
-                    "vite",
-                    "dev",
-                    "-c",
-                    resolve(dashboardDir, "vite.config.ts"),
-                    "--port",
-                    options.port,
-                ],
-                cwd: PROJECT_ROOT,
-                stdio: ["inherit", "inherit", "inherit"],
-            });
-
-            await proc.exited;
-        });
+    historyCmd.addCommand(claudeHistoryApp.commanderCommand);
 }
