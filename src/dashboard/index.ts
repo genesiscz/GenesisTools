@@ -6,20 +6,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { logger } from "@app/logger";
 import { runTool } from "@app/utils/cli";
+import { defineDashboardApp } from "@app/utils/DashboardApp";
 import { Command } from "commander";
 import pc from "picocolors";
 
 const DASHBOARD_DIR = dirname(fileURLToPath(import.meta.url));
 const NODE_MODULES = join(DASHBOARD_DIR, "node_modules");
 const DEFAULT_PORT = 3000;
-
-interface LaunchOptions {
-    prod: boolean;
-    open: boolean;
-    install: boolean;
-    reinstall: boolean;
-    port: number;
-}
 
 function runToCompletion(cmd: string, args: string[]): Promise<number> {
     const child = spawn(cmd, args, { cwd: DASHBOARD_DIR, stdio: "inherit" });
@@ -87,31 +80,30 @@ function openBrowser(url: string): void {
     child.unref();
 }
 
-async function launch(options: LaunchOptions): Promise<void> {
-    const { prod, open, install, reinstall, port } = options;
+async function launchProd(options: {
+    open: boolean;
+    install: boolean;
+    reinstall: boolean;
+    port: number;
+}): Promise<void> {
+    const { open, install, reinstall, port } = options;
     const url = `http://localhost:${port}/`;
 
     await ensureDeps(install, reinstall);
 
-    logger.info(
-        pc.cyan(
-            `▶ Starting dashboard (${prod ? "production build" : "dev"}) — ${pc.bold(
-                `bun run ${prod ? "build:prod" : "dev"}`
-            )}`
-        )
-    );
+    logger.info(pc.cyan(`▶ Starting dashboard (production build) — ${pc.bold("bun run build:prod")}`));
 
-    if (prod) {
-        const buildCode = await runToCompletion("bun", ["run", "build:prod"]);
-        if (buildCode !== 0) {
-            logger.error(`Production build failed (exit ${buildCode}).`);
-            process.exit(buildCode);
-        }
+    const buildCode = await runToCompletion("bun", ["run", "build:prod"]);
+    if (buildCode !== 0) {
+        logger.error(`Production build failed (exit ${buildCode}).`);
+        process.exit(buildCode);
+    }
 
-        logger.info(pc.cyan("▶ Build complete — starting PM2 (ecosystem.config.cjs)"));
-        spawn("bunx", ["pm2", "start", "ecosystem.config.cjs"], { cwd: DASHBOARD_DIR, stdio: "inherit" });
-    } else {
-        spawn("bun", ["run", "dev"], { cwd: DASHBOARD_DIR, stdio: "inherit" });
+    logger.info(pc.cyan("▶ Build complete — starting PM2 (ecosystem.config.cjs)"));
+    const pm2Code = await runToCompletion("bunx", ["pm2", "start", "ecosystem.config.cjs"]);
+    if (pm2Code !== 0) {
+        logger.error(`PM2 start failed (exit ${pm2Code}).`);
+        process.exit(pm2Code);
     }
 
     if (!open) {
@@ -128,6 +120,37 @@ async function launch(options: LaunchOptions): Promise<void> {
         logger.warn(`Server did not respond within 90s. It may still be starting — open ${url} manually.`);
     }
 }
+
+const dashboardApp = defineDashboardApp({
+    type: "ui",
+    key: "dashboard",
+    name: "Personal Dashboard",
+    description: "Tasks, timers, activity log, focus modes",
+    commandName: "dashboard",
+    port: DEFAULT_PORT,
+    spawn: {
+        cmd: ["bun", "run", "dev"],
+        cwd: DASHBOARD_DIR,
+    },
+    preflight: async () => {
+        if (existsSync(NODE_MODULES)) {
+            return { warnings: [] };
+        }
+
+        return {
+            warnings: [
+                {
+                    service: "dashboard",
+                    error: "src/dashboard/node_modules is missing.",
+                    fix: `Run ${pc.bold("bun install")} in src/dashboard, or use bare \`tools dashboard\` to auto-install.`,
+                },
+            ],
+        };
+    },
+    readiness: { kind: "http", path: "/" },
+    openBrowser: { enabled: true },
+    launchd: { available: true },
+});
 
 const program = new Command();
 
@@ -146,14 +169,23 @@ program
             process.exit(1);
         }
 
-        await launch({
-            prod: opts.prod,
-            open: opts.open,
-            install: opts.install,
-            reinstall: opts.reinstall,
-            port,
-        });
+        if (opts.prod) {
+            await launchProd({
+                open: opts.open,
+                install: opts.install,
+                reinstall: opts.reinstall,
+                port,
+            });
+            return;
+        }
+
+        await ensureDeps(opts.install, opts.reinstall);
+        await dashboardApp.up({ open: opts.open, port });
     });
+
+for (const sub of dashboardApp.commanderCommand.commands) {
+    program.addCommand(sub);
+}
 
 await runTool(program, { tool: "dashboard" }).catch((err: unknown) => {
     logger.error("dashboard launcher failed", err);

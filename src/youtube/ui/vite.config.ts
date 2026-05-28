@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
-import { DASHBOARDS } from "@app/utils/ui/dashboards";
-import { createDashboardViteConfig } from "@app/utils/ui/vite.base";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
+import { DASHBOARDS } from "../../utils/ui/dashboards";
+import { createDashboardViteConfig } from "../../utils/ui/vite.base";
 import { youtubeConfigPlugin } from "./vite.plugins/config-middleware";
 
 const root = resolve(import.meta.dirname);

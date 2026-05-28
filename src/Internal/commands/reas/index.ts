@@ -21,14 +21,14 @@ import {
     parsePeriod,
     resolveDistrict,
 } from "@app/Internal/commands/reas/lib/config-builder";
+import { reasUiApp } from "@app/Internal/commands/reas/lib/ui-app";
 import type { AnalysisFilters, FullAnalysis, TargetProperty } from "@app/Internal/commands/reas/types";
 import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
-import { isPortInUse } from "@app/utils/network";
+import * as p from "@app/utils/prompts/p";
 import { stripAnsi } from "@app/utils/string";
 import { formatTable } from "@app/utils/table";
-import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
 
@@ -81,7 +81,7 @@ async function resolveDistrictFromAddress(address: string): Promise<DistrictInfo
         process.exit(0);
     }
 
-    const resolved = getDistrict(picked);
+    const resolved = getDistrict(picked as string);
 
     if (!resolved) {
         throw new Error(`District "${picked}" not found in database`);
@@ -143,7 +143,7 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
                 process.exit(0);
             }
 
-            district = getDistrict(picked) ?? addressResults[0].district;
+            district = getDistrict(picked as string) ?? addressResults[0].district;
         }
     } else if (districtName === "__search__") {
         const query = await p.text({ message: "Type city/district name" });
@@ -170,7 +170,7 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
             process.exit(0);
         }
 
-        district = getDistrict(picked) ?? matches[0];
+        district = getDistrict(picked as string) ?? matches[0];
     } else if (districtName === "Praha") {
         const subDistrict = await p.select({
             message: "Select Praha district (or city-wide)",
@@ -185,7 +185,7 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
             process.exit(0);
         }
 
-        const resolved = getDistrict(subDistrict) ?? getDistrict("Praha");
+        const resolved = getDistrict(subDistrict as string) ?? getDistrict("Praha");
 
         if (!resolved) {
             p.cancel("Could not resolve district.");
@@ -291,12 +291,14 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
         process.exit(0);
     }
 
-    const parsedDisposition = disposition === "all" ? undefined : disposition;
+    const propertyTypeStr = propertyType as string;
+    const dispositionStr = disposition as string;
+    const parsedDisposition = dispositionStr === "all" ? undefined : dispositionStr;
     const dateRanges = (periods as string[]).map((period) => parsePeriod(period));
 
     const filters: AnalysisFilters = {
         estateType: "flat",
-        constructionType: propertyType,
+        constructionType: propertyTypeStr,
         disposition: parsedDisposition,
         periods: dateRanges,
         district: district,
@@ -306,7 +308,7 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
         price: Number(price),
         area: Number(area),
         disposition: parsedDisposition ?? "all",
-        constructionType: propertyType,
+        constructionType: propertyTypeStr,
         monthlyRent: Number(rent),
         monthlyCosts: Number(monthlyCosts),
         district: district.name,
@@ -475,45 +477,15 @@ async function runSearch(query: string, options: ReasOptions): Promise<void> {
 
 async function runReasAnalysis(options: ReasOptions): Promise<void> {
     if (options.dashboard) {
-        const { resolve } = await import("node:path");
-        const { spawn } = await import("node:child_process");
-        const configPath = resolve(import.meta.dir, "ui/vite.config.ts");
         const portStr = options.dashboardPort ?? "3072";
-        const port = Number.parseInt(portStr, 10);
+        const portArg = portStr ? Number.parseInt(portStr, 10) : undefined;
 
-        if (Number.isNaN(port) || port < 1 || port > 65535) {
-            out.error(`Invalid --dashboard-port value: "${portStr}". Please provide a valid port number (1-65535).`);
+        if (portArg !== undefined && (Number.isNaN(portArg) || portArg < 1 || portArg > 65535)) {
+            out.error(`Invalid --dashboard-port value: "${portStr}". Provide 1-65535.`);
             return;
         }
 
-        const portOccupied = await isPortInUse(port);
-
-        if (portOccupied) {
-            out.error(`Port ${port} is already in use.`);
-            out.println(
-                suggestCommand("tools internal reas --dashboard", {
-                    add: ["--dashboard-port", "<port>"],
-                })
-            );
-            return;
-        }
-
-        out.println(`Starting REAS dashboard on port ${port}...`);
-        const child = spawn("bun", ["--bun", "vite", "dev", "--strictPort", "-c", configPath, "--port", String(port)], {
-            stdio: "inherit",
-        });
-
-        const exitCode = await new Promise<number>((resolveExit) => {
-            child.once("error", (err: Error) => {
-                out.error("Dashboard failed:", err);
-                resolveExit(1);
-            });
-            child.once("close", (code) => {
-                resolveExit(code ?? 0);
-            });
-        });
-
-        process.exit(exitCode);
+        await reasUiApp.up({ port: portArg });
         return;
     }
 
@@ -586,6 +558,8 @@ export function registerReasCommand(program: Command): void {
         .action(async (opts: ReasOptions) => {
             await runReasAnalysis(opts);
         });
+
+    reas.addCommand(reasUiApp.commanderCommand);
 
     // ---- Subcommand: listings ----
     reas.command("listings")

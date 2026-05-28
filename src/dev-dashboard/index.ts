@@ -1,16 +1,16 @@
 #!/usr/bin/env bun
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { getConfig, saveConfig } from "@app/dev-dashboard/config";
 import { createBasicAuthCredentials } from "@app/dev-dashboard/lib/auth";
 import { startFrontProxy } from "@app/dev-dashboard/lib/front-proxy";
 import { findFreePort } from "@app/dev-dashboard/lib/ttyd/free-port";
 import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
+import { defineDashboardApp } from "@app/utils/DashboardApp";
+import { waitForUrlReady } from "@app/utils/DashboardApp/readiness";
 import { PROJECT_ROOT } from "@app/utils/paths";
-import { stripAnsi } from "@app/utils/string";
 import { Command } from "commander";
 
 const program = new Command()
@@ -75,8 +75,26 @@ async function runUiServer(): Promise<void> {
     // throws, the already-spawned Vite child would be orphaned. Kill it here.
     let frontProxy: ReturnType<typeof startFrontProxy>;
 
+    const internalUrl = `http://127.0.0.1:${internalPort}/`;
+    logger.info({ internalPort, publicPort: port }, "waiting for Vite before binding public front-proxy port");
+
+    const viteReady = await waitForUrlReady(internalUrl, 90_000);
+
+    if (!viteReady.ready) {
+        try {
+            child.kill("SIGTERM");
+        } catch (killErr) {
+            logger.debug({ err: killErr }, "failed terminating Vite after readiness timeout");
+        }
+
+        logger.error({ internalUrl, detail: viteReady.detail }, "Vite did not become ready");
+        process.exit(1);
+    }
+
     try {
-        frontProxy = startFrontProxy({ publicPort: port, internalPort });
+        const bindHost = process.env.DASHBOARD_BIND_HOST ?? "0.0.0.0";
+        frontProxy = startFrontProxy({ publicPort: port, internalPort, hostname: bindHost });
+        logger.info({ publicPort: port, internalPort }, "front proxy listening — upstream Vite is ready");
     } catch (err) {
         try {
             child.kill("SIGTERM");
@@ -121,37 +139,28 @@ async function runUiServer(): Promise<void> {
         killChild();
     });
 
-    // Open the browser only AFTER Vite is actually serving — the page load is
-    // what triggers /api/ttyd/spawn, so a blind 2s timer opened it before Vite
-    // was up and the proxy spammed ECONNREFUSED for Vite + the just-spawned
-    // ttyd. Poll the internal Vite port; ttyd is now effectively deferred until
-    // Vite is ready (no extra ttyd-lifecycle changes needed).
-    void (async () => {
-        const deadline = Date.now() + 20_000;
-        const internalUrl = `http://127.0.0.1:${internalPort}/`;
-        while (Date.now() < deadline) {
-            try {
-                await fetch(internalUrl, { signal: AbortSignal.timeout(1000) });
-                break; // any response (even 404) means Vite is listening
-            } catch (err) {
-                logger.debug({ err, internalUrl }, "vite readiness probe retry (not up yet)");
-                await new Promise((r) => setTimeout(r, 250));
-            }
-        }
+    // Foreground-only browser open (launchd/background restarts must not pop a tab).
+    // Lifecycle sets DASHBOARD_OPEN_BROWSER=1 when the user asked for --open.
+    if (process.env.DASHBOARD_OPEN_BROWSER === "1") {
+        void (async () => {
+            const ready = await waitForUrlReady(url, 20_000);
 
-        // Best-effort browser open. Detached spawns have no "error" listener by
-        // default; an unhandled "error" (opener binary missing) would crash the
-        // dashboard, so swallow it.
-        const [cmd, args] =
-            process.platform === "darwin"
-                ? (["open", [url]] as const)
-                : process.platform === "win32"
-                  ? (["cmd", ["/c", "start", "", url]] as const)
-                  : (["xdg-open", [url]] as const);
-        const opener = spawn(cmd, args, { stdio: "ignore", detached: true });
-        opener.on("error", (err) => logger.debug({ err, cmd }, "failed to auto-open browser"));
-        opener.unref();
-    })();
+            if (!ready.ready) {
+                logger.warn({ url, detail: ready.detail }, "dev-dashboard browser open skipped — page not ready");
+                return;
+            }
+
+            const [cmd, args] =
+                process.platform === "darwin"
+                    ? (["open", [url]] as const)
+                    : process.platform === "win32"
+                      ? (["cmd", ["/c", "start", "", url]] as const)
+                      : (["xdg-open", [url]] as const);
+            const opener = spawn(cmd, args, { stdio: "ignore", detached: true });
+            opener.on("error", (err) => logger.debug({ err, cmd }, "failed to auto-open browser"));
+            opener.unref();
+        })();
+    }
 
     const exitCode: number = await new Promise((resolveExit) => {
         child.on("exit", (code) => resolveExit(code ?? 1));
@@ -164,205 +173,31 @@ async function runUiServer(): Promise<void> {
     process.exit(exitCode);
 }
 
-async function pidsListeningOn(port: number): Promise<number[]> {
-    const proc = Bun.spawn(["lsof", "-ti", `tcp:${port}`, "-sTCP:LISTEN"], {
-        stdout: "pipe",
-        stderr: "ignore",
-    });
-    const out = await new Response(proc.stdout).text();
-    await proc.exited;
-
-    return out
-        .split("\n")
-        .map((line) => Number.parseInt(line.trim(), 10))
-        .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
-}
-
-async function pidsMatching(pattern: string): Promise<number[]> {
-    const proc = Bun.spawn(["pgrep", "-f", pattern], { stdout: "pipe", stderr: "ignore" });
-    const out = await new Response(proc.stdout).text();
-    await proc.exited;
-
-    return out
-        .split("\n")
-        .map((line) => Number.parseInt(line.trim(), 10))
-        .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
-}
-
-function signalPids(pids: number[], signal: NodeJS.Signals): void {
-    for (const pid of pids) {
-        try {
-            process.kill(pid, signal);
-        } catch (err) {
-            logger.debug({ err, pid, signal }, "dev-dashboard restart: kill failed (process already gone?)");
-        }
-    }
-}
-
-async function waitForPortFree(port: number, timeoutMs: number): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-
-    while (Date.now() < deadline) {
-        if ((await pidsListeningOn(port)).length === 0) {
-            return true;
-        }
-
-        await Bun.sleep(200);
-    }
-
-    return (await pidsListeningOn(port)).length === 0;
-}
-
-async function stopRunningDashboard(port: number): Promise<void> {
-    const pids = await pidsListeningOn(port);
-
-    if (pids.length === 0) {
-        out.println(`No dev-dashboard listening on :${port}.`);
-        return;
-    }
-
-    out.println(`Stopping dev-dashboard (pid ${pids.join(", ")}) on :${port} ...`);
-    // SIGTERM lets index.ts's handler stop the front-proxy and reap its Vite
-    // child gracefully; SIGKILL is the fallback if the port is still held.
-    signalPids(pids, "SIGTERM");
-
-    if (!(await waitForPortFree(port, 6000))) {
-        const stuck = await pidsListeningOn(port);
-        out.println(`Port :${port} still held by ${stuck.join(", ")}; sending SIGKILL.`);
-        signalPids(stuck, "SIGKILL");
-
-        if (!(await waitForPortFree(port, 4000))) {
-            // Abort here — proceeding would only fail later as an opaque
-            // EADDRINUSE inside runUiServer().
-            throw new Error(`Port :${port} is still in use after SIGTERM+SIGKILL; aborting restart.`);
-        }
-
-        // Only reachable on the force-kill path. A SIGKILLed parent can't reap
-        // its Vite child (the graceful SIGTERM path's shutdown handler does),
-        // so sweep the orphan here only — scoping it to this branch keeps a
-        // dev-dashboard running from another worktree/checkout untouched.
-        const orphanVite = await pidsMatching("src/dev-dashboard/ui/vite.config.ts");
-
-        if (orphanVite.length > 0) {
-            signalPids(orphanVite, "SIGTERM");
-        }
-    }
-}
-
-program.action(runUiServer);
-
-program.command("ui").alias("dashboard").description("Launch the dev-dashboard web UI").action(runUiServer);
+const devDashboardApp = defineDashboardApp({
+    type: "ui",
+    key: "dev-dashboard",
+    name: "Dev Dashboard",
+    description: "Launch the dev-dashboard front-proxy + Vite + ttyd",
+    commandName: "ui",
+    aliases: ["dashboard"],
+    bindHost: "0.0.0.0",
+    spawn: {
+        cmd: [process.execPath, process.argv[1], "__ui-server"],
+        cwd: PROJECT_ROOT,
+    },
+    readiness: { kind: "http", path: "/", timeoutMs: 90_000 },
+    openBrowser: { enabled: false },
+    launchd: { available: true },
+});
 
 program
-    .command("restart")
-    .description("Stop any running dev-dashboard, relaunch it detached in the background, then exit")
+    .command("__ui-server", { hidden: true })
+    .description("Internal entry: front-proxy + Vite + ttyd")
     .action(async () => {
-        const { port } = await getConfig();
-        await stopRunningDashboard(port);
-
-        const url = `http://localhost:${port}`;
-        const logFile = join(homedir(), ".genesis-tools", "logs", "dev-dashboard.bg.log");
-        mkdirSync(dirname(logFile), { recursive: true });
-        const logFd = openSync(logFile, "a");
-
-        // Daemonize: the UI is Vite + an in-process front-proxy. Re-invoke THIS
-        // script via process.execPath + argv[1] so it works even when `tools`
-        // isn't on PATH (t2). Child stdout/stderr go to a LOG FILE, not pipes —
-        // the inherited fd stays valid after we exit, so the backgrounded Vite
-        // never hits EPIPE/SIGPIPE on parent exit (t1). We tail the file for
-        // readiness; output to a file is also already ANSI-free.
-        const child = spawn(process.execPath, [process.argv[1], "ui"], {
-            cwd: PROJECT_ROOT,
-            detached: true,
-            stdio: ["ignore", logFd, logFd],
-            env: process.env,
-        });
-        closeSync(logFd); // the child holds its own dup'd fd now
-
-        const READY = /ready in \d+\s*m?s|Local:\s*http|localhost:\d+|press h \+ enter/i;
-        const isTty = Boolean(process.stdout.isTTY);
-        let settled = false;
-        let pos = 0;
-        let acc = "";
-        let poll: ReturnType<typeof setInterval> | undefined;
-        let deadline: ReturnType<typeof setTimeout> | undefined;
-
-        const finish = (note: string): void => {
-            if (settled) {
-                return;
-            }
-
-            settled = true;
-            if (poll) {
-                clearInterval(poll);
-            }
-
-            if (deadline) {
-                clearTimeout(deadline);
-            }
-
-            out.println(`\n${note}`);
-            out.println(`dev-dashboard running in background → ${url}  (pid ${child.pid})`);
-            out.println(`logs → ${logFile}`);
-            out.println(`stop it with: kill ${child.pid}  (\`tools dev-dashboard restart\` relaunches a new one)`);
-            child.unref();
-            process.exit(0);
-        };
-
-        // Tail the child's log file; echo new bytes (strip ANSI when our stdout
-        // isn't a TTY — t6) and match the accumulated stripped text (t3).
-        const drain = (): void => {
-            let size: number;
-            try {
-                size = statSync(logFile).size;
-            } catch {
-                return;
-            }
-
-            if (size <= pos) {
-                return;
-            }
-
-            const fd = openSync(logFile, "r");
-            try {
-                const buf = Buffer.alloc(size - pos);
-                const read = readSync(fd, buf, 0, buf.length, pos);
-                pos += read;
-                const chunk = buf.subarray(0, read).toString();
-                process.stdout.write(isTty ? chunk : stripAnsi(chunk));
-                acc += stripAnsi(chunk);
-                if (acc.length > 4000) {
-                    acc = acc.slice(-2000);
-                }
-
-                if (READY.test(acc)) {
-                    finish("✓ dev-dashboard is up.");
-                }
-            } finally {
-                closeSync(fd);
-            }
-        };
-
-        child.on("error", (err) => {
-            out.error(`Failed to launch dev-dashboard: ${err.message}`);
-            process.exit(1);
-        });
-        child.on("exit", (code) => {
-            if (!settled) {
-                drain();
-                out.error(`dev-dashboard exited before becoming ready (code ${code ?? "?"}) — see ${logFile}`);
-                process.exit(code ?? 1);
-            }
-        });
-
-        poll = setInterval(drain, 150);
-        // Safety net: detach + exit even if the ready marker never matches,
-        // rather than holding the terminal forever.
-        deadline = setTimeout(
-            () => finish("⚠ ready marker not seen in 30s — detaching anyway; check the URL."),
-            30_000
-        );
+        await runUiServer();
     });
+
+program.addCommand(devDashboardApp.commanderCommand);
 
 const auth = program.command("auth").description("Manage dev-dashboard Basic Auth");
 

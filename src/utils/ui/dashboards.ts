@@ -28,6 +28,8 @@ export interface DashboardEntry {
     readonly description: string;
     /** Default localhost port the dev server binds. Must be unique. */
     readonly port: number;
+    /** Dev-server bind address. Default 127.0.0.1 when omitted. */
+    readonly bindHost?: "127.0.0.1" | "0.0.0.0";
     /**
      * Whether the dev server passes `--strictPort` (a port clash is then a
      * hard crash rather than an auto-increment). Relevant to conflict risk.
@@ -72,6 +74,7 @@ export const DASHBOARDS = {
         name: "Dev Dashboard",
         description: "Obsidian vault + ttyd terminal + cmux multiplexer.",
         port: 3042,
+        bindHost: "0.0.0.0",
         strictPort: true,
         launch: "tools dev-dashboard",
         portOverride: { env: "DEV_DASHBOARD_PUBLIC_PORT" },
