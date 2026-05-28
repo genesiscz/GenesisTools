@@ -5,12 +5,12 @@
 
 import {
 	type DateRange,
-	getAllConversations,
 	getAvailableProjects,
 	getConversationBySessionId,
 	getConversationStats,
 	getConversationStatsWithCache,
 	getQuickStatsFromCache,
+	getSessionListing,
 	getStatsForDateRange,
 	type SearchFilters,
 	searchConversations,
@@ -24,6 +24,8 @@ import {
 	type SerializableStats,
 	type SidebarSession,
 	serializeResult,
+	serializeSessionMetadata,
+	toSidebarSession,
 } from "./serializers";
 
 // Re-export types so existing consumers don't break
@@ -42,42 +44,41 @@ export type {
 export const getConversations = createServerFn({ method: "GET" })
 	.inputValidator((filters: Omit<SearchFilters, "onProgress">) => filters)
 	.handler(async ({ data: filters }) => {
-		const results = filters.query
-			? await searchConversations(filters)
-			: await getAllConversations({ ...filters, limit: filters.limit || 50 });
-		return results.map(serializeResult);
+		if (filters.query) {
+			const results = await searchConversations(filters);
+			return results.map(serializeResult);
+		}
+
+		const listing = await getSessionListing({
+			project: filters.project,
+			excludeSubagents: filters.agentsOnly ? false : filters.excludeAgents !== false,
+			limit: filters.limit || 50,
+		});
+
+		return listing.sessions.map(serializeSessionMetadata);
 	});
 
 /**
  * Lightweight session list for sidebar tree (no message content)
  */
 export const getSidebarSessions = createServerFn({ method: "GET" }).handler(async () => {
-	const results = await getAllConversations({ limit: 500 });
+	const { sessions } = await getSessionListing({ limit: 200, excludeSubagents: false });
 
-	// Deduplicate by sessionId (same session can appear in multiple project dirs)
 	const seen = new Set<string>();
-	const sessions: SidebarSession[] = [];
+	const sidebar: SidebarSession[] = [];
 
-	for (const r of results) {
-		const serialized = serializeResult(r);
+	for (const session of sessions) {
+		const item = toSidebarSession(session);
 
-		if (seen.has(serialized.sessionId)) {
+		if (seen.has(item.sessionId)) {
 			continue;
 		}
 
-		seen.add(serialized.sessionId);
-		sessions.push({
-			sessionId: serialized.sessionId,
-			project: serialized.project,
-			summary: serialized.summary,
-			customTitle: serialized.customTitle,
-			timestamp: serialized.timestamp,
-			isSubagent: serialized.isSubagent,
-			messageCount: serialized.messageCount,
-		});
+		seen.add(item.sessionId);
+		sidebar.push(item);
 	}
 
-	return sessions;
+	return sidebar;
 });
 
 /**
@@ -131,7 +132,20 @@ export const getQuickStats = createServerFn({ method: "GET" }).handler(async () 
 		};
 	}
 
-	// No cache, compute synchronously (first load)
+	// No cache yet — warm incremental stats cache instead of full legacy scan
+	await getConversationStatsWithCache({ forceRefresh: false });
+	const warmed = getQuickStatsFromCache();
+
+	if (warmed) {
+		return {
+			totalConversations: warmed.totalConversations,
+			totalMessages: warmed.totalMessages,
+			subagentCount: warmed.subagentCount,
+			projectCount: warmed.projectCount,
+			isCached: true,
+		};
+	}
+
 	const stats = await getConversationStats();
 	return {
 		totalConversations: stats.totalConversations,

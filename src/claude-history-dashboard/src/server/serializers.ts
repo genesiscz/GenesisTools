@@ -1,3 +1,5 @@
+import type { SessionMetadataRecord } from "@app/claude/lib/history/cache";
+import { getFileIndex } from "@app/claude/lib/history/cache";
 import type { getAllConversations } from "@app/claude/lib/history/search";
 import type { ConversationMessage, ToolResultBlock, ToolUseBlock } from "@app/utils/claude/types";
 
@@ -90,6 +92,43 @@ export function serializeResult(result: Awaited<ReturnType<typeof getAllConversa
 		gitBranch: result.gitBranch,
 		messageCount,
 		isSubagent: result.isSubagent,
+	};
+}
+
+export function serializeSessionMetadata(record: SessionMetadataRecord): SerializableConversation {
+	const sessionId =
+		record.sessionId ||
+		record.filePath
+			.split("/")
+			.pop()
+			?.replace(/\.jsonl$/, "") ||
+		"unknown";
+	const fileIndex = getFileIndex(record.filePath);
+
+	return {
+		filePath: record.filePath,
+		project: record.project ?? "",
+		sessionId,
+		timestamp: record.firstTimestamp ?? new Date(record.mtime).toISOString(),
+		summary: record.summary ?? undefined,
+		customTitle: record.customTitle ?? undefined,
+		gitBranch: record.gitBranch ?? undefined,
+		messageCount: fileIndex?.messageCount ?? 0,
+		isSubagent: record.isSubagent,
+	};
+}
+
+export function toSidebarSession(record: SessionMetadataRecord): SidebarSession {
+	const serialized = serializeSessionMetadata(record);
+
+	return {
+		sessionId: serialized.sessionId,
+		project: serialized.project,
+		summary: serialized.summary,
+		customTitle: serialized.customTitle,
+		timestamp: serialized.timestamp,
+		isSubagent: serialized.isSubagent,
+		messageCount: serialized.messageCount,
 	};
 }
 
