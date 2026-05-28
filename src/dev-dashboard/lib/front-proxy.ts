@@ -19,6 +19,49 @@ import type { Server, ServerWebSocket } from "bun";
 
 const TTYD_PATH = /^\/ttyd\/([0-9a-fA-F-]{36})(?:\/|$)/;
 
+/** SSE and other streaming routes must not use the short upstream fetch timeout. */
+export function isLongLivedProxiedStream(pathname: string): boolean {
+    return pathname === "/api/qa/stream";
+}
+
+const UPSTREAM_RETRY_ATTEMPTS = 10;
+const UPSTREAM_RETRY_MS = 250;
+
+function isConnectionRefused(err: unknown): boolean {
+    const code = (err as { code?: string })?.code;
+    return code === "ConnectionRefused" || code === "ECONNREFUSED";
+}
+
+export async function fetchProxiedUpstream(forwarded: Request, longLived: boolean): Promise<Response> {
+    for (let attempt = 0; attempt < UPSTREAM_RETRY_ATTEMPTS; attempt++) {
+        try {
+            const upstream = await fetch(forwarded, {
+                redirect: "manual",
+                ...(longLived ? {} : { signal: AbortSignal.timeout(15_000) }),
+            });
+
+            if (
+                (upstream.status === 502 || upstream.status === 503 || upstream.status === 504) &&
+                attempt < UPSTREAM_RETRY_ATTEMPTS - 1
+            ) {
+                await Bun.sleep(UPSTREAM_RETRY_MS);
+                continue;
+            }
+
+            return upstream;
+        } catch (err) {
+            if (isConnectionRefused(err) && attempt < UPSTREAM_RETRY_ATTEMPTS - 1) {
+                await Bun.sleep(UPSTREAM_RETRY_MS);
+                continue;
+            }
+
+            throw err;
+        }
+    }
+
+    throw new Error("fetchProxiedUpstream exhausted retries without a response");
+}
+
 // LOCAL_ORIGIN_HEADER is the single source of truth in auth.ts (set/stripped
 // here, trusted by the Vite middleware — they must never desync).
 
@@ -125,14 +168,19 @@ function normalizeCloseCode(code: number): number {
 // can't grow the queue unbounded while the upstream is slow/stalled.
 const MAX_WS_QUEUE = 256;
 
-export function startFrontProxy(opts: { publicPort: number; internalPort: number }): Server<BridgeData> {
+export function startFrontProxy(opts: {
+    publicPort: number;
+    internalPort: number;
+    hostname?: string;
+}): Server<BridgeData> {
     const { publicPort, internalPort } = opts;
+    const hostname = opts.hostname ?? "0.0.0.0";
     const viteHttp = `http://127.0.0.1:${internalPort}`;
     const viteWs = `ws://127.0.0.1:${internalPort}`;
 
     const server = Bun.serve<BridgeData>({
         port: publicPort,
-        hostname: "0.0.0.0",
+        hostname,
         idleTimeout: 0,
         async fetch(req, srv) {
             const url = new URL(req.url);
@@ -216,10 +264,7 @@ export function startFrontProxy(opts: { publicPort: number; internalPort: number
             let upstream: Response;
 
             try {
-                upstream = await fetch(forwarded, {
-                    redirect: "manual",
-                    signal: AbortSignal.timeout(15_000),
-                });
+                upstream = await fetchProxiedUpstream(forwarded, isLongLivedProxiedStream(url.pathname));
             } catch (err) {
                 // A refused connection is almost always the benign startup race
                 // (upstream Vite/ttyd not listening yet) — log it at debug so it
