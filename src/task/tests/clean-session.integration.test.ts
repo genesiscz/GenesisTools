@@ -17,7 +17,7 @@ test("clean --session removes ONE session, leaves others (B5)", async () => {
         expect(cleanResult.code).toBe(0);
 
         const list = env.task(["sessions", "--json"]);
-        const names = (SafeJSON.parse(list.stdout) as Array<{ name: string }>).map((s) => s.name);
+        const names = (SafeJSON.parse(list.stdout, { strict: true }) as Array<{ name: string }>).map((s) => s.name);
         expect(names).not.toContain(A);
         expect(names).toContain(B);
     });

@@ -1,8 +1,8 @@
 import { playDingInBrowser } from "@app/utils/audio/runner.client";
 import { SafeJSON } from "@app/utils/json";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@ui/components/popover";
-import { useQuery } from "@tanstack/react-query";
 import { Wrench } from "lucide-react";
 import { useState } from "react";
 
@@ -33,7 +33,15 @@ function previewSound(id: string, vol: number): void {
 export function QaSoundWrench() {
     const { data: lib } = useQuery<AudioLib>({
         queryKey: ["qa-audio-library"],
-        queryFn: async () => (await fetch("/api/qa/audio-library")).json() as Promise<AudioLib>,
+        queryFn: async () => {
+            const r = await fetch("/api/qa/audio-library");
+
+            if (!r.ok) {
+                throw new Error(`audio-library: ${r.status}`);
+            }
+
+            return r.json() as Promise<AudioLib>;
+        },
     });
     const [id, setId] = useState<string | null>(null);
     const [vol, setVol] = useState(0.6);
@@ -67,9 +75,7 @@ export function QaSoundWrench() {
                 </Button>
             </PopoverTrigger>
             <PopoverContent align="end" className="flex w-80 flex-col gap-3">
-                <div className="text-xs uppercase tracking-wider text-[var(--dd-text-muted)]">
-                    Notification sound
-                </div>
+                <div className="text-xs uppercase tracking-wider text-[var(--dd-text-muted)]">Notification sound</div>
                 <select
                     className="rounded border border-[var(--dd-border)] bg-transparent px-2 py-1 text-sm text-[var(--dd-text-secondary)]"
                     value={selected}
@@ -108,7 +114,12 @@ export function QaSoundWrench() {
                     <span className="w-10 text-right font-mono text-xs tabular-nums">{Math.round(vol * 100)}%</span>
                 </div>
                 <div className="flex justify-end gap-2">
-                    <Button size="sm" variant="outline" disabled={!selected} onClick={() => previewSound(selected, vol)}>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!selected}
+                        onClick={() => previewSound(selected, vol)}
+                    >
                         Test
                     </Button>
                     <Button size="sm" disabled={!selected} onClick={apply}>

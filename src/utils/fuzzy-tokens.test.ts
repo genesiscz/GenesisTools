@@ -26,4 +26,15 @@ describe("fuzzy-tokens", () => {
         expect(scoreEntry("commit 1c0 only", tokenizeSearch("commit 1c0"))).toBe(1);
         expect(scoreEntry("commit only", tokenizeSearch("commit 1c0"))).toBeLessThan(1);
     });
+
+    test("tokenizes Windows-style path separators", () => {
+        expect(tokenizeSearch("src\\foo\\bar.ts")).toEqual(["src", "foo", "bar", "ts"]);
+        const tokens = tokenizeSearch("foo bar");
+        const matches = findTokenMatches("C:\\Users\\me\\foo\\bar.ts", tokens);
+        expect(matches.length).toBeGreaterThanOrEqual(2);
+    });
+
+    test("duplicate query tokens do not reduce full-match score", () => {
+        expect(scoreEntry("commit message", tokenizeSearch("commit commit"))).toBe(1);
+    });
 });

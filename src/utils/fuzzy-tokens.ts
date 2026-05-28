@@ -20,11 +20,11 @@ export function findTokenMatches(haystack: string, tokens: string[], threshold =
     const spans: TokenMatch[] = [];
 
     for (const token of tokens) {
-        let idx = 0;
+        let idx = lower.indexOf(token);
 
-        while ((idx = lower.indexOf(token, idx)) !== -1) {
+        while (idx !== -1) {
             spans.push({ token, start: idx, end: idx + token.length });
-            idx += token.length;
+            idx = lower.indexOf(token, idx + token.length);
         }
 
         if (spans.some((s) => s.token === token)) {
@@ -69,8 +69,9 @@ export function scoreEntry(haystack: string, tokens: string[]): number {
         return 1;
     }
 
-    const matches = findTokenMatches(haystack, tokens);
+    const uniqueTokens = [...new Set(tokens)];
+    const matches = findTokenMatches(haystack, uniqueTokens);
     const distinctTokensMatched = new Set(matches.map((m) => m.token)).size;
 
-    return distinctTokensMatched / tokens.length;
+    return distinctTokensMatched / uniqueTokens.length;
 }

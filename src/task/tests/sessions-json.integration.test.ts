@@ -16,7 +16,7 @@ afterAll(() => {
 test("tools task sessions --json emits parseable JSON array (F4)", () => {
     const r = env.task(["sessions", "--json"]);
     expect(r.code).toBe(0);
-    const parsed = SafeJSON.parse(r.stdout);
+    const parsed = SafeJSON.parse(r.stdout, { strict: true });
     expect(Array.isArray(parsed)).toBe(true);
     const fixture = (parsed as Array<{ name: string }>).find((s) => s.name === FIXTURE);
     expect(fixture).toBeDefined();
