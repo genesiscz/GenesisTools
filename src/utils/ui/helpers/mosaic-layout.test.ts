@@ -4,7 +4,7 @@ import {
     flattenMosaicLeaves,
     pruneMosaicLeaves,
     reconcileMosaicLayout,
-} from "@/lib/mosaic-layout";
+} from "@app/utils/ui/helpers/mosaic-layout";
 
 describe("mosaic layout helpers", () => {
     test("balances ttyd panes into stable rows", () => {
@@ -72,6 +72,21 @@ describe("mosaic layout helpers", () => {
         const next = reconcileMosaicLayout(current, ["1", "2", "3"], { maxColumns: 3 });
 
         expect(next).toBe(current);
+    });
+
+    test("removes hidden panes from the current layout", () => {
+        const current = buildBalancedMosaicLayout(["1", "2", "3"], { maxColumns: 3 });
+        const next = reconcileMosaicLayout(current, ["1", "3"], { maxColumns: 3 });
+
+        expect(flattenMosaicLeaves(next)).toEqual(["1", "3"]);
+        expect(next).not.toBe(current);
+    });
+
+    test("returns null when all panes are removed", () => {
+        const current = buildBalancedMosaicLayout(["1", "2"], { maxColumns: 3 });
+        const next = reconcileMosaicLayout(current, [], { maxColumns: 3 });
+
+        expect(next).toBeNull();
     });
 
     test("prunes stale pane leaves while preserving remaining leaves", () => {

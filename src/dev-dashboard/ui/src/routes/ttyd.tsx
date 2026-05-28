@@ -11,7 +11,7 @@ import { MobileTerminalShell } from "@/components/terminal-shell/MobileTerminalS
 import { useLayoutMode } from "@/hooks/useLayoutMode";
 import { ttydApi } from "@/lib/api";
 import { findIframeByTitle, scrollIframeTerminal, sendKeyToIframe } from "@/lib/iframe-keys";
-import { buildBalancedMosaicLayout, flattenMosaicLeaves, reconcileMosaicLayout } from "@/lib/mosaic-layout";
+import { buildBalancedMosaicLayout, flattenMosaicLeaves, reconcileMosaicLayout } from "@app/utils/ui/helpers/mosaic-layout";
 import { buildTtydTabs } from "@/lib/terminal-tabs";
 
 function LayoutToggle({ mode, setMode }: { mode: "mosaic" | "focused"; setMode: (m: "mosaic" | "focused") => void }) {

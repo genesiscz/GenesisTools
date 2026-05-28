@@ -147,13 +147,33 @@ export function reconcileMosaicLayout<T extends string>(
     nextItems: T[],
     options: BuildOptions
 ): MosaicNode<T> | null {
+    if (nextItems.length === 0) {
+        return null;
+    }
+
+    if (!current) {
+        return buildBalancedMosaicLayout(nextItems, options);
+    }
+
     const nextItemSet = new Set(nextItems);
-    const retainedItems = flattenMosaicLeaves(current).filter((item) => nextItemSet.has(item));
+    const currentLeaves = flattenMosaicLeaves(current);
+    const retainedItems = currentLeaves.filter((item) => nextItemSet.has(item));
     const retainedItemSet = new Set(retainedItems);
     const addedItems = nextItems.filter((item) => !retainedItemSet.has(item));
+    const removedItems = currentLeaves.filter((item) => !nextItemSet.has(item));
 
-    if (current && addedItems.length === 0 && retainedItems.length === nextItems.length) {
+    if (addedItems.length === 0 && removedItems.length === 0) {
         return current;
+    }
+
+    if (addedItems.length === 0 && removedItems.length > 0) {
+        const pruned = pruneMosaicLeaves(current, new Set(removedItems));
+
+        if (pruned) {
+            return pruned;
+        }
+
+        return buildBalancedMosaicLayout(nextItems, options);
     }
 
     return buildBalancedMosaicLayout([...retainedItems, ...addedItems], options);
