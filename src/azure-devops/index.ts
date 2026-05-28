@@ -14,6 +14,7 @@
  */
 
 import { exitWithAuthGuide, exitWithSslGuide, isAuthError, isSslError } from "@app/azure-devops/cli.utils";
+import { azLoginSuggestionBlock } from "@app/azure-devops/lib/az-cli.utils";
 import { logger, out } from "@app/logger";
 import * as p from "@app/utils/prompts/p";
 import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
@@ -118,7 +119,8 @@ Timelog Subcommands:
 First-Time Setup:
   1. Install Azure CLI: https://learn.microsoft.com/en-us/cli/azure/install-azure-cli
   2. Install extension: az extension add --name azure-devops
-  3. Login: az login --allow-no-subscriptions --use-device-code
+  3. Login:
+${azLoginSuggestionBlock({ indent: "     " })}
   4. Configure: tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
 
 Examples:
