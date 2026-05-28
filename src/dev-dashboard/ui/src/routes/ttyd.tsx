@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Layers, Plus, Send, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
 import "react-mosaic-component/react-mosaic-component.css";
 import { Button } from "@ui/components/button";
@@ -16,8 +16,9 @@ import { MobileTerminalShell } from "@/components/terminal-shell/MobileTerminalS
 import { ShellIconButton } from "@/components/terminal-shell/ShellIconButton";
 import { useLayoutMode } from "@/hooks/useLayoutMode";
 import { useLockPageScroll } from "@/hooks/useLockPageScroll";
+import { useVisualViewportSize } from "@/hooks/useVisualViewportSize";
 import { ttydApi, tmuxApi } from "@/lib/api";
-import { findIframeByTitle, scrollIframeTerminal, sendKeyToIframe } from "@/lib/iframe-keys";
+import { scrollIframeTerminal, sendKeyToIframe } from "@/lib/iframe-keys";
 import { buildTtydTabs } from "@/lib/terminal-tabs";
 import { pickTtydActiveId, TTYD_TAB_SEARCH_KEY, writeTtydActiveId } from "@/lib/view-state";
 import { buildBalancedMosaicLayout, flattenMosaicLeaves, reconcileMosaicLayout } from "@app/utils/ui/helpers/mosaic-layout";
@@ -53,13 +54,16 @@ export function TtydRoute() {
         tmuxHub?.some((session) => session.name === tmuxSessionName && session.inCmux) ?? false;
     const [layout, setLayout] = useState<MosaicNode<string> | null>(null);
     const { mode, isMobile, setMode } = useLayoutMode("ttyd");
+    const focusedMobile = mode === "focused" && isMobile;
     useLockPageScroll(mode === "focused");
+    useVisualViewportSize(focusedMobile);
     const [activeId, setActiveId] = useState<string | null>(null);
     const active = activeId ?? sessions[0]?.id ?? null;
     const [hubOpen, setHubOpen] = useState(false);
     const [closeTarget, setCloseTarget] = useState<TtydSession | null>(null);
     const [sendTarget, setSendTarget] = useState<TtydSession | null>(null);
     const [highlightId, setHighlightId] = useState<string | null>(null);
+    const activeIframeRef = useRef<HTMLIFrameElement | null>(null);
 
     const focusTtydTab = useCallback(
         (ttydId: string) => {
@@ -209,13 +213,14 @@ export function TtydRoute() {
 
     if (mode === "focused") {
         return (
-            <div className="dd-focused-host dd-ttyd-focused relative overflow-hidden">
-                {!isMobile ? (
-                    <div className="absolute right-2 top-1 z-30 flex gap-2">
-                        <LayoutToggle mode={mode} setMode={setMode} />
-                    </div>
-                ) : null}
-                <MobileTerminalShell
+            <div className="dd-focused-host dd-ttyd-focused relative flex min-h-0 flex-col overflow-hidden">
+                <div className="min-h-0 flex-1 overflow-hidden">
+                    {!isMobile ? (
+                        <div className="absolute right-2 top-1 z-30 flex gap-2">
+                            <LayoutToggle mode={mode} setMode={setMode} />
+                        </div>
+                    ) : null}
+                    <MobileTerminalShell
                     tabs={buildTtydTabs(sessions, active).map((t) => ({ ...t, dot: "active" as const }))}
                     onSelect={(id) => {
                         setActiveId(id);
@@ -263,8 +268,13 @@ export function TtydRoute() {
                                     zIndex: s.id === active ? 1 : 0,
                                 }}
                             >
-                                <TtydFrame id={s.id} title={`ttyd-${s.id}`} className="h-full w-full bg-black" />
-                                {s.id === active ? <TtydScrollPads iframeTitle={`ttyd-${s.id}`} /> : null}
+                                <TtydFrame
+                                    id={s.id}
+                                    title={`ttyd-${s.id}`}
+                                    className="h-full w-full bg-black"
+                                    iframeRef={s.id === active ? activeIframeRef : undefined}
+                                />
+                                {s.id === active ? <TtydScrollPads iframeRef={activeIframeRef} /> : null}
                             </div>
                         ))
                     ) : (
@@ -273,10 +283,12 @@ export function TtydRoute() {
                         </div>
                     )}
                 </MobileTerminalShell>
-                {isMobile && active ? (
+                </div>
+                {focusedMobile && active ? (
                     <MobileKeyBar
-                        onKey={(key) => sendKeyToIframe(findIframeByTitle(`ttyd-${active}`), key)}
-                        onScroll={(lines) => scrollIframeTerminal(findIframeByTitle(`ttyd-${active}`), lines)}
+                        embedded
+                        onKey={(key) => sendKeyToIframe(activeIframeRef.current, key)}
+                        onScroll={(lines) => scrollIframeTerminal(activeIframeRef.current, lines)}
                     />
                 ) : null}
                 {overlays}

@@ -10,9 +10,9 @@
  *      `event.isTrusted`, so the standard handler picks it up and writes
  *      the right ESC sequence to the websocket.
  *
- * For scrollback we prefer xterm.js's own `scrollLines()` when ttyd exposes
- * the terminal instance globally (faster + jank-free), and fall back to
- * Shift+PageUp/PageDown keydowns which xterm.js binds by default.
+ * Scrollback in tmux attach sessions uses xterm's alternate buffer — scrollLines
+ * is a no-op there. Real mouse wheel works via coreMouseService.triggerMouseEvent
+ * (SGR wheel buttons). The injected __ddTtydScroll helper mirrors that path.
  */
 
 export type IframeKey = "Escape" | "Tab" | "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "PageUp" | "PageDown";
@@ -33,22 +33,14 @@ interface XtermTerminal {
     focus?: () => void;
 }
 
-interface XtermWindow extends Window {
+interface TtydIframeWindow extends Window {
     term?: XtermTerminal;
+    __ddTtydScroll?: (lines: number) => boolean;
 }
 
 function getHelperTextarea(iframe: HTMLIFrameElement): HTMLTextAreaElement | null {
     try {
         return iframe.contentDocument?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea") ?? null;
-    } catch {
-        return null;
-    }
-}
-
-function getXtermInstance(iframe: HTMLIFrameElement): XtermTerminal | null {
-    try {
-        const w = iframe.contentWindow as XtermWindow | null;
-        return w?.term ?? null;
     } catch {
         return null;
     }
@@ -82,31 +74,35 @@ export function sendKeyToIframe(iframe: HTMLIFrameElement | null, key: IframeKey
     return dispatchKey(textarea, key);
 }
 
-/**
- * Scrolls the terminal's scrollback buffer. Positive amount = down, negative = up.
- *
- * xterm.js's reliable scroll inputs are (in priority order):
- *   1. the public `term.scrollLines(±n)` API if ttyd exposes the Terminal,
- *   2. a synthetic WheelEvent on `.xterm-viewport` — xterm.js binds wheel
- *      and converts deltaY into scrollback movement,
- *   3. direct scrollTop manipulation as a belt-and-braces nudge.
- *
- * What does NOT work: PageUp/PageDown keydowns (xterm.js doesn't bind those
- * by default — host apps add them, and ttyd doesn't). Earlier versions of
- * this file shipped that approach and it was a no-op on ttyd.
- */
-export function scrollIframeTerminal(iframe: HTMLIFrameElement | null, amount: number): boolean {
-    if (!iframe || amount === 0) {
+function scrollViaIframeHelper(contentWindow: TtydIframeWindow, amount: number): boolean {
+    if (typeof contentWindow.__ddTtydScroll === "function") {
+        return contentWindow.__ddTtydScroll(amount);
+    }
+
+    return false;
+}
+
+function scrollViaTermApi(contentWindow: TtydIframeWindow, amount: number): boolean {
+    const term = contentWindow.term;
+
+    if (!term?.scrollLines) {
         return false;
     }
 
-    const term = getXtermInstance(iframe);
-    if (term?.scrollLines) {
-        term.scrollLines(amount);
-        return true;
+    term.scrollLines.call(term, amount);
+    return true;
+}
+
+function scrollViaWheelEvent(iframe: HTMLIFrameElement, amount: number): boolean {
+    const contentWindow = iframe.contentWindow as TtydIframeWindow | null;
+    const doc = iframe.contentDocument;
+
+    if (!contentWindow || !doc) {
+        return false;
     }
 
-    const viewport = getXtermViewport(iframe);
+    const viewport = doc.querySelector<HTMLElement>(".xterm-viewport");
+
     if (!viewport) {
         return false;
     }
@@ -114,29 +110,74 @@ export function scrollIframeTerminal(iframe: HTMLIFrameElement | null, amount: n
     const lineHeight = estimateLineHeight(viewport);
     const deltaY = amount * lineHeight;
 
-    viewport.dispatchEvent(
-        new WheelEvent("wheel", {
+    return viewport.dispatchEvent(
+        new (contentWindow as Window).WheelEvent("wheel", {
             deltaY,
             deltaMode: 0,
             bubbles: true,
             cancelable: true,
         })
     );
+}
 
-    viewport.scrollTop = Math.max(0, viewport.scrollTop + deltaY);
-    return true;
+function scrollViaPostMessage(contentWindow: TtydIframeWindow, amount: number): void {
+    contentWindow.postMessage({ type: "dd-ttyd-scroll", lines: amount }, "*");
+}
+
+/**
+ * Scrolls the terminal scrollback. Positive = down (newer), negative = up (older).
+ */
+export function scrollIframeTerminal(iframe: HTMLIFrameElement | null, amount: number): boolean {
+    if (!iframe || amount === 0) {
+        return false;
+    }
+
+    try {
+        const contentWindow = iframe.contentWindow as TtydIframeWindow | null;
+
+        if (!contentWindow) {
+            return false;
+        }
+
+        if (scrollViaIframeHelper(contentWindow, amount)) {
+            return true;
+        }
+
+        if (scrollViaTermApi(contentWindow, amount)) {
+            return true;
+        }
+
+        if (scrollViaWheelEvent(iframe, amount)) {
+            return true;
+        }
+
+        scrollViaPostMessage(contentWindow, amount);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 export function estimateVisibleTerminalLines(iframe: HTMLIFrameElement | null): number {
-    const viewport = getXtermViewport(iframe);
-
-    if (!viewport) {
+    if (!iframe) {
         return 24;
     }
 
-    const lineHeight = estimateLineHeight(viewport);
+    const viewport = getXtermViewport(iframe);
 
-    return Math.max(1, Math.floor(viewport.clientHeight / lineHeight));
+    if (viewport && viewport.clientHeight > 0) {
+        const lineHeight = estimateLineHeight(viewport);
+
+        return Math.max(1, Math.floor(viewport.clientHeight / lineHeight));
+    }
+
+    const iframeHeight = iframe.clientHeight;
+
+    if (iframeHeight > 0) {
+        return Math.max(1, Math.floor(iframeHeight / 17));
+    }
+
+    return 24;
 }
 
 /** Scroll roughly one visible screen of scrollback up or down. */
@@ -161,5 +202,7 @@ function estimateLineHeight(viewport: HTMLElement): number {
 }
 
 export function findIframeByTitle(title: string): HTMLIFrameElement | null {
-    return document.querySelector<HTMLIFrameElement>(`iframe[title="${title}"]`);
+    const escaped = typeof CSS !== "undefined" && "escape" in CSS ? CSS.escape(title) : title;
+
+    return document.querySelector<HTMLIFrameElement>(`iframe[title="${escaped}"]`);
 }

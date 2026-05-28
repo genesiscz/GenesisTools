@@ -1,13 +1,14 @@
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { findIframeByTitle, scrollIframeTerminalByPage } from "@/lib/iframe-keys";
+import type { RefObject } from "react";
+import { scrollIframeTerminalByPage } from "@/lib/iframe-keys";
 
 interface Props {
-    iframeTitle: string;
+    iframeRef: RefObject<HTMLIFrameElement | null>;
 }
 
-export function TtydScrollPads({ iframeTitle }: Props) {
+export function TtydScrollPads({ iframeRef }: Props) {
     const scroll = (direction: -1 | 1) => {
-        scrollIframeTerminalByPage(findIframeByTitle(iframeTitle), direction);
+        scrollIframeTerminalByPage(iframeRef.current, direction);
     };
 
     return (

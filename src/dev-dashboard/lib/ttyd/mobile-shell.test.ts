@@ -16,8 +16,10 @@ describe("ttyd mobile-shell", () => {
 
         expect(patched).toContain("maximum-scale=1");
         expect(patched).toContain('id="dd-ttyd-mobile-shell"');
-        expect(patched).toContain("touchstart");
+        expect(patched).toContain("__ddTtydScroll");
+        expect(patched).toContain("coreMouseService");
+        expect(patched).toContain("triggerMouseEvent");
         expect(patched).toContain("scrollLines");
-        expect(patched).toContain("touch-action: pan-y");
+        expect(patched).toContain("touch-action: none");
     });
 });
