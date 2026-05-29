@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { Command } from "commander";
-import { addGlobalVerboseOption, applyVerbosityToEnv, argvRequestsReadme, getArgvVerbosity, isVerbose, runTool } from "./commander";
+import {
+    addGlobalVerboseOption,
+    applyVerbosityToEnv,
+    argvRequestsReadme,
+    getArgvVerbosity,
+    isVerbose,
+    runTool,
+} from "./commander";
 
 const ORIGINAL_LOG_DEBUG = process.env.LOG_DEBUG;
 const ORIGINAL_LOG_TRACE = process.env.LOG_TRACE;

@@ -6,7 +6,7 @@ import { countJsonlLineRecords } from "./count-line-records";
 
 describe("countJsonlLineRecords", () => {
     it("returns 0 for a missing file", async () => {
-        expect(await countJsonlLineRecords("/tmp/does-not-exist.jsonl")).toBe(0);
+        expect(await countJsonlLineRecords(join(tmpdir(), "genesis-tools-missing-count.jsonl"))).toBe(0);
     });
 
     it("counts only line records, ignoring meta + exit", async () => {

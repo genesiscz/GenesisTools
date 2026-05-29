@@ -23,6 +23,17 @@ function hasErrnoCode(e: unknown): e is { code: string } {
 }
 
 /**
+ * Parse newline-separated PID output (e.g. `lsof -t`, `pgrep`) into positive
+ * integer PIDs, dropping blank or non-numeric lines.
+ */
+export function parsePidLines(stdout: string): number[] {
+    return stdout
+        .split("\n")
+        .map((line) => Number(line.trim()))
+        .filter((pid) => Number.isFinite(pid) && pid > 0);
+}
+
+/**
  * Returns true if the given port is already bound on the given host.
  * Resolves false when the port is free (and closes the probe server).
  * Never throws for the normal EADDRINUSE case.
@@ -80,14 +91,8 @@ export async function getPortOwner(port: number): Promise<PortOwner | null> {
             return null;
         }
 
-        const pid = Number.parseInt(
-            lsofOut
-                .split("\n")
-                .map((line) => line.trim())
-                .find((line) => line.length > 0) ?? "",
-            10
-        );
-        if (Number.isNaN(pid) || pid <= 0) {
+        const pid = parsePidLines(lsofOut)[0];
+        if (!pid) {
             return null;
         }
 

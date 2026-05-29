@@ -1,10 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import {
-    collapsePathForDisplay,
-    longestCommonPathPrefix,
-    shortenPathWithPrefix,
-    toPosixPath,
-} from "./paths.client";
+import { collapsePathForDisplay, longestCommonPathPrefix, shortenPathWithPrefix, toPosixPath } from "./paths.client";
 
 describe("paths.client", () => {
     it("normalizes backslashes", () => {
@@ -44,9 +39,7 @@ describe("paths.client", () => {
     it("shortens paths using a shared prefix", () => {
         const prefix = "~/Tresors/Projects";
 
-        expect(shortenPathWithPrefix("~/Tresors/Projects/CEZ/col-fe/col-mobile", prefix)).toBe(
-            "CEZ/col-fe/col-mobile"
-        );
+        expect(shortenPathWithPrefix("~/Tresors/Projects/CEZ/col-fe/col-mobile", prefix)).toBe("CEZ/col-fe/col-mobile");
         expect(shortenPathWithPrefix("~/Tresors/Projects/GenesisTools", prefix)).toBe("GenesisTools");
         expect(shortenPathWithPrefix("~/Tresors/Projects", prefix)).toBe(".");
     });

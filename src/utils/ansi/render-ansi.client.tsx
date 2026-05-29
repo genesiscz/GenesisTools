@@ -4,7 +4,8 @@ function sanitizeAnsiForDisplay(text: string): string {
     return text.replace(/\r\n/g, "\n").replace(/\r/g, "");
 }
 
-const CSI_PATTERN = /\u001b\[([\?]?[0-9;]*)([@-~])/g;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape code matching
+const CSI_PATTERN = /\u001b\[([?]?[0-9;]*)([@-~])/g;
 
 const ANSI_FG: Record<number, string> = {
     30: "var(--ansi-black)",
@@ -123,7 +124,10 @@ function parseCodes(raw: string): number[] {
         return [0];
     }
 
-    return raw.split(";").map((part) => Number.parseInt(part, 10)).filter((n) => Number.isFinite(n));
+    return raw
+        .split(";")
+        .map((part) => Number.parseInt(part, 10))
+        .filter((n) => Number.isFinite(n));
 }
 
 export function ansiToReactNodes(text: string): ReactNode[] {
@@ -178,7 +182,5 @@ interface Props {
 }
 
 export function AnsiLogText({ text, className = "" }: Props): ReactElement {
-    return (
-        <span className={`ansi-log ${className}`}>{ansiToReactNodes(sanitizeAnsiForDisplay(text))}</span>
-    );
+    return <span className={`ansi-log ${className}`}>{ansiToReactNodes(sanitizeAnsiForDisplay(text))}</span>;
 }
