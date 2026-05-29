@@ -111,15 +111,28 @@ const TTYD_MOBILE_SHELL_SCRIPT = `<script id="dd-ttyd-mobile-shell-js">
         return Math.max(1, Math.round(Math.abs(lines) / WHEEL_LINES_PER_TICK));
     }
 
-    function wheelTicksForPage() {
+    function visibleRows() {
+        var vp = document.querySelector(".xterm-viewport");
         var term = getTerm();
-        var rows = term && term.rows ? term.rows : 24;
-        return Math.max(1, Math.round(rows / WHEEL_LINES_PER_TICK));
+        if (vp && vp.clientHeight > 0) {
+            return Math.max(1, Math.floor(vp.clientHeight / lineHeight()));
+        }
+
+        return term && term.rows ? term.rows : 24;
+    }
+
+    function wheelTicksForPage() {
+        return Math.max(1, Math.round(visibleRows() / WHEEL_LINES_PER_TICK));
     }
 
     window.__ddTtydScrollPage = function (direction) {
         if (!direction) {
             return false;
+        }
+
+        var pageLines = visibleRows();
+        if (applyScrollLines(direction * pageLines)) {
+            return true;
         }
 
         var ticks = wheelTicksForPage();
@@ -129,7 +142,7 @@ const TTYD_MOBILE_SHELL_SCRIPT = `<script id="dd-ttyd-mobile-shell-js">
 
         var term = getTerm();
         if (term && term.scrollLines && activeBufferType() !== "alternate") {
-            term.scrollLines.call(term, direction * (term.rows || 24));
+            term.scrollLines.call(term, direction * pageLines);
             return true;
         }
 

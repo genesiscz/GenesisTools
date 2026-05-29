@@ -21,6 +21,7 @@ describe("ttyd mobile-shell", () => {
         expect(patched).toContain("__ddTtydPaste");
         expect(patched).toContain("term.paste(text)");
         expect(patched).toContain("dd-ttyd-paste");
+        expect(patched).toContain("function visibleRows()");
         expect(patched).toContain("WHEEL_LINES_PER_TICK");
         expect(patched).toContain("coreMouseService");
         expect(patched).toContain("triggerMouseEvent");

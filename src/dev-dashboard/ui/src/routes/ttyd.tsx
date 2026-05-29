@@ -165,6 +165,21 @@ export function TtydRoute() {
         });
     }, []);
 
+    useEffect(() => {
+        if (mode !== "mosaic") {
+            return;
+        }
+
+        const nudgeMosaic = () => {
+            window.dispatchEvent(new Event("resize"));
+        };
+
+        nudgeMosaic();
+        window.addEventListener("resize", nudgeMosaic);
+
+        return () => window.removeEventListener("resize", nudgeMosaic);
+    }, [mode]);
+
     const spawn = useMutation({
         mutationFn: () => ttydApi.spawn(),
         onSuccess: (data) => {
@@ -257,11 +272,6 @@ export function TtydRoute() {
         return (
             <div className="dd-focused-host dd-ttyd-focused relative flex min-h-0 flex-col overflow-hidden">
                 <div className="min-h-0 flex-1 overflow-hidden">
-                    {!isMobile ? (
-                        <div className="absolute right-2 top-1 z-30 flex gap-2">
-                            <LayoutToggle mode={mode} setMode={setMode} />
-                        </div>
-                    ) : null}
                     <MobileTerminalShell
                         tabs={buildTtydTabs(sessions, active).map((t) => ({ ...t, dot: "active" as const }))}
                         onSelect={(id) => {
@@ -270,11 +280,13 @@ export function TtydRoute() {
                         onRename={(id, name) => renameMut.mutate({ id, name })}
                         headerActions={
                             <>
+                                {!isMobile ? <LayoutToggle mode={mode} setMode={setMode} /> : null}
                                 <ShellIconButton icon={Layers} label="Tmux sessions" onClick={() => setHubOpen(true)} />
                                 {active ? (
                                     <ShellIconButton
                                         icon={X}
                                         label="Close terminal"
+                                        variant="destructive"
                                         onClick={() => {
                                             const session = sessions.find((candidate) => candidate.id === active);
 
@@ -303,7 +315,11 @@ export function TtydRoute() {
                             sessions.map((s) => (
                                 <div
                                     key={s.id}
-                                    className="absolute inset-0 min-w-0 overflow-hidden"
+                                    className={
+                                        highlightId === s.id
+                                            ? "dd-ttyd-highlight dd-ttyd-highlight--pulse absolute inset-0 min-w-0 overflow-hidden"
+                                            : "absolute inset-0 min-w-0 overflow-hidden"
+                                    }
                                     style={{
                                         opacity: s.id === active ? 1 : 0,
                                         pointerEvents: s.id === active ? "auto" : "none",
@@ -402,6 +418,7 @@ export function TtydRoute() {
                                                 size="icon-sm"
                                                 variant="ghost"
                                                 tooltip="Close terminal"
+                                                className="text-red-400 hover:bg-red-500/15 hover:text-red-300"
                                                 onClick={() => setCloseTarget(session)}
                                             >
                                                 <X size={12} />
@@ -409,7 +426,13 @@ export function TtydRoute() {
                                         </div>
                                     }
                                 >
-                                    <div className={highlightId === id ? "dd-ttyd-highlight h-full" : "h-full"}>
+                                    <div
+                                        className={
+                                            highlightId === id
+                                                ? "dd-ttyd-highlight dd-ttyd-highlight--pulse h-full"
+                                                : "h-full"
+                                        }
+                                    >
                                         <TtydPane session={session} />
                                     </div>
                                 </MosaicWindow>
