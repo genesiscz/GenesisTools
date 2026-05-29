@@ -1,5 +1,5 @@
-import { SafeJSON } from "@app/utils/json";
 import { formatLastMessageAgo } from "@app/utils/format";
+import { SafeJSON } from "@app/utils/json";
 
 /** HH:MM:SS.mmm */
 export function formatTime(ts: number): string {

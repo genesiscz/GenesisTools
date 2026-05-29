@@ -1,6 +1,6 @@
-import type { ReactElement } from "react";
 import type { DashboardSession } from "@app/utils/log-viewer/log-source";
 import { DirPath } from "@ui/components/DirPath";
+import type { ReactElement } from "react";
 import { formatSessionHeaderParts } from "@/lib/session-run-context";
 
 export type SessionHeaderLayout = "stacked" | "inline" | "context";
@@ -36,7 +36,7 @@ export function SessionHeaderLine({
 
     if (layout === "context") {
         if (secondary.length === 0) {
-            return <></>;
+            return null;
         }
 
         return (

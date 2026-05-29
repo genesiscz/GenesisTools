@@ -1,9 +1,9 @@
-import { Popover, PopoverContent, PopoverTrigger } from "@ui/components/popover";
+import { IconPopover } from "@ui/components/icon-button";
 import { Wrench } from "lucide-react";
 import type { ReactElement } from "react";
 import {
-    LOG_FONT_FAMILY_OPTIONS,
     type LineBoundaries,
+    LOG_FONT_FAMILY_OPTIONS,
     type LogFontFamily,
     type TimestampMode,
 } from "@/lib/display-settings";
@@ -79,82 +79,82 @@ export function DisplaySettingsButton(): ReactElement {
     const { settings, updateSettings, resetSettings } = useDisplaySettings();
 
     return (
-        <Popover>
-            <PopoverTrigger asChild>
+        <IconPopover
+            tooltip="Display settings"
+            align="end"
+            contentClassName="w-72 bg-[#0d0d18] border-white/10 text-white p-4 space-y-4 dbg-ui-text"
+            trigger={
                 <button
                     type="button"
                     className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-white/10 text-white/55 hover:text-white/90 hover:border-cyan-500/40 hover:bg-white/5 transition-colors"
-                    title="Display settings"
-                    aria-label="Display settings"
                 >
                     <Wrench className="w-4 h-4" />
                 </button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-72 bg-[#0d0d18] border-white/10 text-white p-4 space-y-4 dbg-ui-text">
-                <div>
-                    <p className="dbg-ui-text-sm uppercase tracking-widest text-white/50">Display</p>
-                    <p className="dbg-ui-text-xs text-white/35 mt-1">Settings persist in this browser.</p>
-                </div>
-                <FontSizeField
-                    label="UI text"
-                    value={settings.uiFontSize}
-                    onChange={(uiFontSize) => {
-                        updateSettings({ uiFontSize });
-                    }}
-                />
-                <FontSizeField
-                    label="Session headers"
-                    value={settings.headerFontSize}
-                    onChange={(headerFontSize) => {
-                        updateSettings({ headerFontSize });
-                    }}
-                />
-                <FontSizeField
-                    label="Log lines"
-                    value={settings.logFontSize}
-                    onChange={(logFontSize) => {
-                        updateSettings({ logFontSize });
-                    }}
-                />
-                <SegmentedField<LogFontFamily>
-                    legend="Log font"
-                    value={settings.logFontFamily}
-                    options={LOG_FONT_FAMILY_OPTIONS}
-                    onChange={(logFontFamily) => {
-                        updateSettings({ logFontFamily });
-                    }}
-                />
-                <SegmentedField<TimestampMode>
-                    legend="Timestamps"
-                    value={settings.timestampMode}
-                    options={[
-                        { value: "every", label: "Every" },
-                        { value: "change", label: "On change" },
-                        { value: "never", label: "Never" },
-                    ]}
-                    onChange={(timestampMode) => {
-                        updateSettings({ timestampMode });
-                    }}
-                />
-                <SegmentedField<LineBoundaries>
-                    legend="Line boundaries"
-                    value={settings.lineBoundaries}
-                    options={[
-                        { value: "show", label: "Show" },
-                        { value: "hide", label: "Hide" },
-                    ]}
-                    onChange={(lineBoundaries) => {
-                        updateSettings({ lineBoundaries });
-                    }}
-                />
-                <button
-                    type="button"
-                    onClick={resetSettings}
-                    className="dbg-ui-text-xs uppercase tracking-wider text-white/45 hover:text-white/75"
-                >
-                    reset defaults
-                </button>
-            </PopoverContent>
-        </Popover>
+            }
+        >
+            <div>
+                <p className="dbg-ui-text-sm uppercase tracking-widest text-white/50">Display</p>
+                <p className="dbg-ui-text-xs text-white/35 mt-1">Settings persist in this browser.</p>
+            </div>
+            <FontSizeField
+                label="UI text"
+                value={settings.uiFontSize}
+                onChange={(uiFontSize) => {
+                    updateSettings({ uiFontSize });
+                }}
+            />
+            <FontSizeField
+                label="Session headers"
+                value={settings.headerFontSize}
+                onChange={(headerFontSize) => {
+                    updateSettings({ headerFontSize });
+                }}
+            />
+            <FontSizeField
+                label="Log lines"
+                value={settings.logFontSize}
+                onChange={(logFontSize) => {
+                    updateSettings({ logFontSize });
+                }}
+            />
+            <SegmentedField<LogFontFamily>
+                legend="Log font"
+                value={settings.logFontFamily}
+                options={LOG_FONT_FAMILY_OPTIONS}
+                onChange={(logFontFamily) => {
+                    updateSettings({ logFontFamily });
+                }}
+            />
+            <SegmentedField<TimestampMode>
+                legend="Timestamps"
+                value={settings.timestampMode}
+                options={[
+                    { value: "every", label: "Every" },
+                    { value: "change", label: "On change" },
+                    { value: "never", label: "Never" },
+                ]}
+                onChange={(timestampMode) => {
+                    updateSettings({ timestampMode });
+                }}
+            />
+            <SegmentedField<LineBoundaries>
+                legend="Line boundaries"
+                value={settings.lineBoundaries}
+                options={[
+                    { value: "show", label: "Show" },
+                    { value: "hide", label: "Hide" },
+                ]}
+                onChange={(lineBoundaries) => {
+                    updateSettings({ lineBoundaries });
+                }}
+            />
+            <button
+                type="button"
+                onClick={resetSettings}
+                className="dbg-ui-text-xs uppercase tracking-wider text-white/45 hover:text-white/75"
+            >
+                reset defaults
+            </button>
+        </IconPopover>
     );
 }

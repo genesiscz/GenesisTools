@@ -6,10 +6,10 @@ import { SafeJSON } from "@app/utils/json";
 import type { DashboardSession, LogSourceId } from "@app/utils/log-viewer/log-source";
 import { getAllLogSources, getLogSource } from "@app/utils/log-viewer/resolve-log-source";
 import { isLogSourceId } from "@app/utils/log-viewer/session-key";
-import { enrichDashboardTimestamps } from "@app/utils/log-viewer/tail-bridge";
-import { sortSessionsByRecency } from "@app/utils/log-viewer/session-recency";
 import { decodeSessionPathSegment, isSafeLogSessionName } from "@app/utils/log-viewer/session-name";
+import { sortSessionsByRecency } from "@app/utils/log-viewer/session-recency";
 import { resolveSessionState } from "@app/utils/log-viewer/session-state";
+import { enrichDashboardTimestamps } from "@app/utils/log-viewer/tail-bridge";
 
 const REF_ID = /^([se])([1-9]\d*)$/;
 
