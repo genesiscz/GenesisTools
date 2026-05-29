@@ -1,4 +1,4 @@
-import { Button } from "@ui/components/button";
+import { IconButton } from "@ui/components/icon-button";
 import { cn } from "@ui/lib/utils";
 import type React from "react";
 
@@ -25,16 +25,16 @@ export function ViewModeToggle<V extends string>({ modes, value, onChange, class
                 const isActive = value === mode.value;
 
                 return (
-                    <Button
+                    <IconButton
                         key={mode.value}
                         variant="ghost"
                         size="sm"
+                        tooltip={`${mode.label} view`}
                         onClick={() => onChange(mode.value)}
                         className={cn("h-8 px-3 rounded-none", isActive && "bg-purple-500/20 text-purple-400")}
-                        title={`${mode.label} view`}
                     >
                         <Icon className="h-4 w-4" />
-                    </Button>
+                    </IconButton>
                 );
             })}
         </div>

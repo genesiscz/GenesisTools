@@ -1,3 +1,4 @@
+import { escapeHtml } from "@app/utils/string";
 import hljs from "highlight.js";
 
 import { marked as markedRaw } from "marked";
@@ -25,10 +26,6 @@ function highlightCode(code: string, lang?: string): string {
     } catch {
         return escapeHtml(code);
     }
-}
-
-function escapeHtml(text: string): string {
-    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 // Use marked's renderer override API (works across all marked versions)

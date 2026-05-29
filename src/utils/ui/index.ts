@@ -53,6 +53,14 @@ export {
     DropdownMenuSubTrigger,
     DropdownMenuTrigger,
 } from "@ui/components/dropdown-menu";
+export {
+    ICON_TOOLTIP_DELAY_MS,
+    IconButton,
+    IconDropdownMenu,
+    IconPopover,
+    IconTooltip,
+    IconTooltipProvider,
+} from "@ui/components/icon-button";
 export { Input } from "@ui/components/input";
 export { Label } from "@ui/components/label";
 export {
@@ -79,6 +87,7 @@ export {
 export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@ui/components/popover";
 export { Progress } from "@ui/components/progress";
 export { ScrollArea, ScrollBar } from "@ui/components/scroll-area";
+export { SegmentedControl, type SegmentedControlOption } from "@ui/components/segmented-control";
 export {
     Select,
     SelectContent,
