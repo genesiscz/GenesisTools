@@ -1,6 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { ReminderPriority } from "@app/utils/macos/apple-reminders";
-import { mapPriority } from "./service";
+import { dedupeReminderLists, mapPriority } from "./service";
+
+describe("dedupeReminderLists", () => {
+    test("keeps first row per identifier", () => {
+        const lists = dedupeReminderLists([
+            { identifier: "a", title: "Screenpipe", color: "", source: "" },
+            { identifier: "a", title: "Screenpipe", color: "", source: "" },
+            { identifier: "b", title: "Other", color: "", source: "" },
+        ]);
+
+        expect(lists).toHaveLength(2);
+    });
+});
 
 describe("mapPriority", () => {
     test("maps each level to the matching ReminderPriority value", () => {
