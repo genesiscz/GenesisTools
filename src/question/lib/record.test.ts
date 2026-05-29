@@ -22,10 +22,12 @@ describe("recordAnswer", () => {
             question: string;
             sessionId: string;
             project: string;
+            agent: string;
         };
         expect(row.question).toBe("why bun?");
         expect(row.sessionId).toBe("sess-9");
         expect(row.project.length).toBeGreaterThan(0);
+        expect(row.agent).toBe("claude-code");
     });
 
     it("rejects empty question/answer", async () => {

@@ -5,9 +5,25 @@ import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { parseJsonlChunk } from "@app/utils/jsonl";
 import { logDir } from "./log-store";
-import type { QaEntry } from "./types";
+import type { QaAgent, QaEntry } from "./types";
 
 const log = logger.child({ component: "question:read-model" });
+
+function ensureColumn(db: Database, table: string, column: string, ddl: string): void {
+    const cols = db.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
+
+    if (!cols.some((c) => c.name === column)) {
+        db.exec(ddl);
+    }
+}
+
+function normalizeEntry(raw: QaEntry): QaEntry {
+    return {
+        ...raw,
+        commitMessage: raw.commitMessage ?? null,
+        agent: raw.agent ?? "unknown",
+    };
+}
 
 export function openReadModel(dbPath: string): Database {
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -16,6 +32,7 @@ export function openReadModel(dbPath: string): Database {
     db.exec(`CREATE TABLE IF NOT EXISTS entries (
         id TEXT PRIMARY KEY, ts INTEGER, session_id TEXT, session_title TEXT,
         project TEXT, repo_root TEXT, cwd TEXT, branch TEXT, commit_sha TEXT,
+        commit_message TEXT, agent TEXT,
         is_worktree INTEGER, worktree_path TEXT, ai_agent TEXT, agent_label TEXT,
         tag TEXT, question TEXT, answer_md TEXT, refs_json TEXT, source TEXT,
         turn_uuid TEXT, superseded_by TEXT, read_at INTEGER,
@@ -23,6 +40,8 @@ export function openReadModel(dbPath: string): Database {
     );`);
     db.exec("CREATE TABLE IF NOT EXISTS ingest_offsets (file TEXT PRIMARY KEY, byte_offset INTEGER);");
     db.exec("CREATE INDEX IF NOT EXISTS idx_entries_project_ts ON entries(project, ts);");
+    ensureColumn(db, "entries", "commit_message", "ALTER TABLE entries ADD COLUMN commit_message TEXT");
+    ensureColumn(db, "entries", "agent", "ALTER TABLE entries ADD COLUMN agent TEXT");
     return db;
 }
 
@@ -38,8 +57,8 @@ function catchUp(db: Database, logBase?: string): void {
     }
 
     const insert = db.prepare(`INSERT OR REPLACE INTO entries
-        (id,ts,session_id,session_title,project,repo_root,cwd,branch,commit_sha,is_worktree,worktree_path,ai_agent,agent_label,tag,question,answer_md,refs_json,source,turn_uuid,superseded_by,read_at,dedupe_key)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?)`);
+        (id,ts,session_id,session_title,project,repo_root,cwd,branch,commit_sha,commit_message,agent,is_worktree,worktree_path,ai_agent,agent_label,tag,question,answer_md,refs_json,source,turn_uuid,superseded_by,read_at,dedupe_key)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?)`);
     const getOff = db.prepare("SELECT byte_offset FROM ingest_offsets WHERE file = ?");
     const setOff = db.prepare("INSERT OR REPLACE INTO ingest_offsets (file, byte_offset) VALUES (?, ?)");
     const supersede = db.prepare(
@@ -73,7 +92,8 @@ function catchUp(db: Database, logBase?: string): void {
         // offset by the consumed-bytes only, never the full file size (t16).
         const consumed = buf.length - remainder.length;
         const tx = db.transaction((rows: QaEntry[]) => {
-            for (const en of rows) {
+            for (const raw of rows) {
+                const en = normalizeEntry(raw);
                 const key = dedupeKey(en);
                 insert.run(
                     en.id,
@@ -85,6 +105,8 @@ function catchUp(db: Database, logBase?: string): void {
                     en.cwd,
                     en.branch,
                     en.commitSha,
+                    en.commitMessage,
+                    en.agent,
                     en.isWorktree ? 1 : 0,
                     en.worktreePath,
                     en.aiAgent,
@@ -130,6 +152,8 @@ function rowToQaRow(r: Record<string, unknown>): QaRow {
         cwd: r.cwd as string,
         branch: r.branch as string | null,
         commitSha: r.commit_sha as string | null,
+        commitMessage: (r.commit_message as string | null) ?? null,
+        agent: ((r.agent as QaAgent | null) ?? "unknown") as QaAgent,
         isWorktree: !!r.is_worktree,
         worktreePath: r.worktree_path as string | null,
         aiAgent: r.ai_agent as string | null,

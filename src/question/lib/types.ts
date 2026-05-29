@@ -1,5 +1,6 @@
 export type QaTag = "question" | "action" | "directive";
 export type QaSource = "question" | "mcp" | "skill" | "cli";
+export type QaAgent = "claude-code" | "codex" | "unknown";
 export interface QaRef {
     type: "commit" | "file" | "url" | "plan";
     value: string;
@@ -15,6 +16,8 @@ export interface QaEntry {
     cwd: string;
     branch: string | null;
     commitSha: string | null;
+    commitMessage: string | null;
+    agent: QaAgent;
     isWorktree: boolean;
     worktreePath: string | null;
     aiAgent: string | null;

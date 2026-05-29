@@ -17,6 +17,8 @@ function entry(over: Partial<QaEntry> = {}): QaEntry {
         cwd: "/r",
         branch: "main",
         commitSha: "abc1234",
+        commitMessage: null,
+        agent: "unknown",
         isWorktree: false,
         worktreePath: null,
         aiAgent: null,

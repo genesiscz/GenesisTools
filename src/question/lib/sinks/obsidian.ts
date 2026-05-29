@@ -15,7 +15,10 @@ function renderEntry(e: QaEntry): string {
     const refs = e.refs.length ? `\n\n_refs:_ ${e.refs.map((r) => `${r.type}:${r.value}`).join(" · ")}` : "";
     // One assembled multi-line string → single appendFileSync (atomic enough;
     // different {project}/{date} files rarely collide across 8 agents).
-    return `\n## ${time} · ${e.question}\n- [ ] reviewed · \`${e.tag}\` · ${e.branch ?? "-"}@${e.commitSha ?? "-"} · session ${e.sessionId}\n\n${e.answerMd}${refs}\n\n---\n`;
+    const commit = e.commitSha ? `${e.commitSha}${e.commitMessage ? ` — ${e.commitMessage}` : ""}` : "-";
+    const agent = e.agent !== "unknown" ? ` · ${e.agent}` : "";
+    const title = e.sessionTitle ? ` · ${e.sessionTitle}` : "";
+    return `\n## ${time} · ${e.question}\n- [ ] reviewed · \`${e.tag}\` · ${e.branch ?? "-"}@${commit}${agent} · session ${e.sessionId}${title}\n\n${e.answerMd}${refs}\n\n---\n`;
 }
 
 /** Standalone so tests can inject a vault path; the Sink wraps this. */
