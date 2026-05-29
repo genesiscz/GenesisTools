@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { resetTmuxBinCache, setTmuxBinForTests } from "@app/utils/tmux/bin";
 import {
     buildTmuxSpawnEnv,
+    createTmuxSession,
     getTmuxScrollState,
     listTmuxSessions,
     renameTmuxSession,
@@ -107,6 +108,22 @@ describe("tmux sessions", () => {
         renameTmuxSession("foo", "bar");
 
         expect(calls.some((cmd) => cmd.includes("rename-session") && cmd.includes("bar"))).toBe(true);
+    });
+
+    test("createTmuxSession pins exit-empty off so the server keeps sessions across teardown", () => {
+        setTmuxBinForTests("/mock/tmux");
+        const calls: string[][] = [];
+        setTmuxSpawnSyncForTests((cmd) => {
+            calls.push(cmd);
+            return { exitCode: 0, stdout: "" };
+        });
+
+        createTmuxSession("foo", "/tmp", "/bin/zsh");
+
+        expect(calls.some((cmd) => cmd.includes("new-session") && cmd.includes("foo"))).toBe(true);
+        expect(
+            calls.some((cmd) => cmd.includes("set-option") && cmd.includes("exit-empty") && cmd.includes("off"))
+        ).toBe(true);
     });
 
     test("getTmuxScrollState parses display-message output", () => {

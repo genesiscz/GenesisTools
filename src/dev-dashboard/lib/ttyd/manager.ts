@@ -9,6 +9,7 @@ import { buildTerminalSpawnEnv } from "@app/utils/terminal/locale";
 import { resolveTmuxBin } from "@app/utils/tmux/bin";
 import {
     createTmuxSession,
+    ensureTmuxServerPersists,
     ensureTmuxSessionUtf8Locale,
     killTmuxSession,
     sessionExists,
@@ -175,6 +176,9 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
 
         tmuxSessionName = opts.attachTmuxSession;
         ensureTmuxSessionUtf8Locale(tmuxSessionName);
+        // Re-pin the server even when attaching to a pre-existing session — it may
+        // have been bootstrapped (by an older dashboard) with exit-empty on.
+        ensureTmuxServerPersists();
     } else {
         tmuxSessionName = makeTtydTmuxSessionName(id);
         createTmuxSession(tmuxSessionName, cwd, command);
