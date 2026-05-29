@@ -32,6 +32,7 @@ const KEY_TABLE: Record<IframeKey, { key: string; code: string; keyCode: number 
 interface TtydIframeWindow extends Window {
     __ddTtydScroll?: (lines: number) => boolean;
     __ddTtydScrollPage?: (direction: -1 | 1) => boolean;
+    __ddTtydPaste?: (text: string) => boolean;
 }
 
 function getHelperTextarea(iframe: HTMLIFrameElement): HTMLTextAreaElement | null {
@@ -98,6 +99,75 @@ export function scrollIframeTerminal(iframe: HTMLIFrameElement | null, amount: n
     } catch {
         return false;
     }
+}
+
+/**
+ * Outcome of a paste attempt. The clipboard read happens in the *parent*
+ * document (top-level secure context + user gesture), so the failure modes are
+ * all about clipboard availability — never about the terminal itself.
+ *  - `no-clipboard-api`: insecure context (plain http://LAN) — `navigator.clipboard` is undefined.
+ *  - `denied`: permission refused, or a browser that gates `readText` (Firefox).
+ *  - `empty`: clipboard had no text to paste.
+ */
+export type PasteResult = { ok: true } | { ok: false; reason: "no-iframe" | "no-clipboard-api" | "denied" | "empty" };
+
+/**
+ * Inject an already-known string into the terminal — no clipboard read.
+ * This is the path the manual paste dialog uses: the text comes from a real
+ * OS paste into a parent-page textarea, which needs no clipboard permission
+ * (the reliable route on iOS/Safari where `readText()` is denied).
+ */
+export function pasteTextToIframe(iframe: HTMLIFrameElement | null, text: string): boolean {
+    if (!iframe || !text) {
+        return false;
+    }
+
+    try {
+        const contentWindow = iframe.contentWindow as TtydIframeWindow | null;
+
+        if (!contentWindow) {
+            return false;
+        }
+
+        if (typeof contentWindow.__ddTtydPaste === "function") {
+            return contentWindow.__ddTtydPaste(text);
+        }
+
+        contentWindow.postMessage({ type: "dd-ttyd-paste", text }, "*");
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Read the parent-page clipboard and inject it into the embedded terminal.
+ * Resolves with a structured result so the caller can surface a one-line hint
+ * (e.g. "clipboard needs HTTPS/localhost") instead of a silent no-op.
+ */
+export async function pasteToIframe(iframe: HTMLIFrameElement | null): Promise<PasteResult> {
+    if (!iframe) {
+        return { ok: false, reason: "no-iframe" };
+    }
+
+    const clipboard = navigator.clipboard;
+    if (!clipboard || typeof clipboard.readText !== "function") {
+        return { ok: false, reason: "no-clipboard-api" };
+    }
+
+    let text: string;
+    try {
+        text = await clipboard.readText();
+    } catch {
+        return { ok: false, reason: "denied" };
+    }
+
+    if (!text) {
+        return { ok: false, reason: "empty" };
+    }
+
+    pasteTextToIframe(iframe, text);
+    return { ok: true };
 }
 
 function scrollPageViaPostMessage(contentWindow: TtydIframeWindow, direction: -1 | 1): void {

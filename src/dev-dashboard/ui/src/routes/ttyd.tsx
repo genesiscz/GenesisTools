@@ -19,6 +19,7 @@ import { TmuxSessionsPanel } from "@/components/TmuxSessionsPanel";
 import { TtydCloseDialog } from "@/components/TtydCloseDialog";
 import { TtydFrame } from "@/components/TtydFrame";
 import { TtydPane } from "@/components/TtydPane";
+import { TtydPasteDialog } from "@/components/TtydPasteDialog";
 import { TtydScrollPads } from "@/components/TtydScrollPads";
 import { MobileTerminalShell } from "@/components/terminal-shell/MobileTerminalShell";
 import { ShellIconButton } from "@/components/terminal-shell/ShellIconButton";
@@ -26,7 +27,13 @@ import { useLayoutMode } from "@/hooks/useLayoutMode";
 import { useLockPageScroll } from "@/hooks/useLockPageScroll";
 import { useVisualViewportSize } from "@/hooks/useVisualViewportSize";
 import { tmuxApi, ttydApi } from "@/lib/api";
-import { scrollIframeTerminal, scrollIframeTerminalByPage, sendKeyToIframe } from "@/lib/iframe-keys";
+import {
+    pasteTextToIframe,
+    pasteToIframe,
+    scrollIframeTerminal,
+    scrollIframeTerminalByPage,
+    sendKeyToIframe,
+} from "@/lib/iframe-keys";
 import { buildTtydTabs } from "@/lib/terminal-tabs";
 import { pickTtydActiveId, TTYD_TAB_SEARCH_KEY, writeTtydActiveId } from "@/lib/view-state";
 
@@ -68,7 +75,32 @@ export function TtydRoute() {
     const [closeTarget, setCloseTarget] = useState<TtydSession | null>(null);
     const [sendTarget, setSendTarget] = useState<TtydSession | null>(null);
     const [highlightId, setHighlightId] = useState<string | null>(null);
+    const [pasteHint, setPasteHint] = useState<string | null>(null);
+    const [pasteDialogOpen, setPasteDialogOpen] = useState(false);
     const activeIframeRef = useRef<HTMLIFrameElement | null>(null);
+
+    const handlePaste = useCallback(async () => {
+        const result = await pasteToIframe(activeIframeRef.current);
+
+        if (result.ok) {
+            return;
+        }
+
+        // Safari/Firefox/insecure-context deny the programmatic clipboard read —
+        // fall back to the manual paste dialog, where a native OS paste into a
+        // textarea needs no clipboard permission at all.
+        if (result.reason === "denied" || result.reason === "no-clipboard-api") {
+            setPasteDialogOpen(true);
+            return;
+        }
+
+        const hint: Record<"no-iframe" | "empty", string> = {
+            "no-iframe": "No active terminal to paste into",
+            empty: "Clipboard is empty",
+        };
+        setPasteHint(hint[result.reason]);
+        window.setTimeout(() => setPasteHint(null), 2500);
+    }, []);
 
     const focusTtydTab = useCallback(
         (ttydId: string) => {
@@ -175,6 +207,11 @@ export function TtydRoute() {
 
     const overlays = (
         <>
+            <TtydPasteDialog
+                open={pasteDialogOpen}
+                onOpenChange={setPasteDialogOpen}
+                onSubmit={(text) => pasteTextToIframe(activeIframeRef.current, text)}
+            />
             <TmuxSessionsPanel
                 open={hubOpen}
                 onOpenChange={setHubOpen}
@@ -290,12 +327,20 @@ export function TtydRoute() {
                     </MobileTerminalShell>
                 </div>
                 {focusedMobile && active ? (
-                    <MobileKeyBar
-                        embedded
-                        onKey={(key) => sendKeyToIframe(activeIframeRef.current, key)}
-                        onScroll={(lines) => scrollIframeTerminal(activeIframeRef.current, lines)}
-                        onPageScroll={(direction) => scrollIframeTerminalByPage(activeIframeRef.current, direction)}
-                    />
+                    <>
+                        {pasteHint ? (
+                            <div className="px-3 pb-1 text-center text-[11px] font-mono text-[var(--dd-text-muted)]">
+                                {pasteHint}
+                            </div>
+                        ) : null}
+                        <MobileKeyBar
+                            embedded
+                            onKey={(key) => sendKeyToIframe(activeIframeRef.current, key)}
+                            onScroll={(lines) => scrollIframeTerminal(activeIframeRef.current, lines)}
+                            onPageScroll={(direction) => scrollIframeTerminalByPage(activeIframeRef.current, direction)}
+                            onPaste={() => void handlePaste()}
+                        />
+                    </>
                 ) : null}
                 {overlays}
             </div>

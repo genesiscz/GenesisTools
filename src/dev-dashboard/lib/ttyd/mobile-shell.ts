@@ -157,6 +157,27 @@ const TTYD_MOBILE_SHELL_SCRIPT = `<script id="dd-ttyd-mobile-shell-js">
         return true;
     };
 
+    // Paste text into the live terminal. The parent page reads the clipboard
+    // (where the user gesture + permission live) and hands us the string, so we
+    // never touch navigator.clipboard from inside the iframe. term.paste feeds
+    // it through xterm's onData → websocket path, honouring bracketed-paste mode
+    // if the foreground app enabled it.
+    window.__ddTtydPaste = function (text) {
+        var term = getTerm();
+        if (!term || typeof term.paste !== "function" || typeof text !== "string" || text.length === 0) {
+            return false;
+        }
+
+        term.paste(text);
+
+        var textarea = document.querySelector(".xterm-helper-textarea");
+        if (textarea) {
+            textarea.focus();
+        }
+
+        return true;
+    };
+
     function flushPendingScroll() {
         if (!getTerm()) {
             return false;
@@ -180,7 +201,14 @@ const TTYD_MOBILE_SHELL_SCRIPT = `<script id="dd-ttyd-mobile-shell-js">
 
     window.addEventListener("message", function (event) {
         var data = event.data;
-        if (!data || (data.type !== "dd-ttyd-scroll" && data.type !== "dd-ttyd-scroll-page")) {
+        if (!data || (data.type !== "dd-ttyd-scroll" && data.type !== "dd-ttyd-scroll-page" && data.type !== "dd-ttyd-paste")) {
+            return;
+        }
+
+        if (data.type === "dd-ttyd-paste") {
+            if (typeof data.text === "string") {
+                window.__ddTtydPaste(data.text);
+            }
             return;
         }
 
