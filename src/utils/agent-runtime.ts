@@ -1,6 +1,5 @@
 import { basename, resolve } from "node:path";
 import { getSessionMetadataBySessionId } from "@app/claude/lib/history/cache";
-import { logger } from "@app/logger";
 import { detectCurrentProject } from "@app/utils/claude/projects";
 import { type AgentRuntimeContext, resolveClaudeContext } from "@app/utils/claude/runtime-context";
 import { isCodex, resolveCodexContext } from "@app/utils/codex/runtime-context";
@@ -69,12 +68,8 @@ export function getAgentRuntimeContext(
         try {
             const meta = getSessionMetadataBySessionId(merged.sessionId);
             merged.sessionTitle = meta?.customTitle ?? meta?.summary ?? null;
-        } catch (error) {
-            // History index is optional — log so a missing/corrupt index is diagnosable.
-            logger.debug(
-                { error, sessionId: merged.sessionId },
-                "agent-runtime: failed to backfill claude session title"
-            );
+        } catch {
+            // history index optional
         }
     }
 

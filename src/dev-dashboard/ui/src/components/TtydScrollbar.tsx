@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { type RefObject, useCallback, useRef, useState } from "react";
 import { ttydApi } from "@/lib/api";
 import { scrollIframeTerminal } from "@/lib/iframe-keys";
 
@@ -40,24 +40,6 @@ export function TtydScrollbar({ ttydId, iframeRef }: Props) {
     const relAccumRef = useRef(0);
     const settleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-    // Reset drag state and clear the settle timer when the active session changes
-    // or the component unmounts — otherwise a pending setDragFrac fires on an
-    // unmounted component or bleeds optimistic position across sessions.
-    useEffect(() => {
-        setDragFrac(null);
-        draggingRef.current = false;
-
-        if (settleTimer.current) {
-            clearTimeout(settleTimer.current);
-        }
-
-        return () => {
-            if (settleTimer.current) {
-                clearTimeout(settleTimer.current);
-            }
-        };
-    }, [ttydId]);
-
     const { data } = useQuery({
         queryKey: ["ttyd", "scroll-state", ttydId],
         queryFn: () => (ttydId ? ttydApi.scrollState(ttydId) : Promise.resolve({ state: null })),
@@ -84,10 +66,8 @@ export function TtydScrollbar({ ttydId, iframeRef }: Props) {
     const sendFraction = useCallback(
         (fraction: number) => {
             if (ttydId) {
-                ttydApi.scrollTo(ttydId, fraction).catch((error) => {
-                    // Transient backend/tmux hiccup — the next poll re-syncs the
-                    // thumb. Logged for triage only.
-                    console.debug("TtydScrollbar: scrollTo failed", { error, ttydId, fraction });
+                ttydApi.scrollTo(ttydId, fraction).catch(() => {
+                    // transient backend/tmux hiccup — the next poll re-syncs the thumb
                 });
             }
         },

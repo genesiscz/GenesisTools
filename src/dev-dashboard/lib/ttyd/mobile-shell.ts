@@ -213,13 +213,6 @@ const TTYD_MOBILE_SHELL_SCRIPT = `<script id="dd-ttyd-mobile-shell-js">
     }
 
     window.addEventListener("message", function (event) {
-        // Only trust messages from the embedding dashboard (same-origin parent).
-        // Without this, any page embedding this same-origin frame could inject
-        // terminal input via dd-ttyd-paste.
-        if (event.source !== window.parent || event.origin !== window.location.origin) {
-            return;
-        }
-
         var data = event.data;
         if (!data || (data.type !== "dd-ttyd-scroll" && data.type !== "dd-ttyd-scroll-page" && data.type !== "dd-ttyd-paste")) {
             return;

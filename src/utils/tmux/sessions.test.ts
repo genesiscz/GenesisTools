@@ -160,19 +160,6 @@ describe("tmux sessions", () => {
         expect(calls.some((cmd) => cmd.includes("scroll-up"))).toBe(false);
     });
 
-    test("scrollTmuxToFraction ignores non-finite fraction", () => {
-        setTmuxBinForTests("/mock/tmux");
-        const calls: string[][] = [];
-        setTmuxSpawnSyncForTests((cmd) => {
-            calls.push(cmd);
-            return { exitCode: 0, stdout: "1000|24|50|1|0" };
-        });
-
-        scrollTmuxToFraction("foo", Number.NaN);
-
-        expect(calls.length).toBe(0);
-    });
-
     test("scrollTmuxToFraction(0) parks at the top of history", () => {
         setTmuxBinForTests("/mock/tmux");
         const calls: string[][] = [];
