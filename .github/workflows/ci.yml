@@ -27,10 +27,11 @@ jobs:
           # valid in step-level timeout-minutes; only non-matrix contexts /
           # raw ternaries are rejected there).
           # testTimeout from real last-20-runs data: ubuntu test discovery
-          # med 66s / max 146s, plus a ~50-90s serial task/tests integration
-          # lane (run outside --parallel; see package.json `test`) -> 6m.
+          # med 66s / max 146s, plus a ~15-25s task/tests integration lane
+          # (run as its own --parallel pass isolated from the main suite so it
+          # doesn't starve subprocesses; see package.json `test`) -> 5m.
           # windows med 136s / healthy ~150s -> 7m.
-          inc='{"os":"ubuntu-latest","testTimeout":6}'
+          inc='{"os":"ubuntu-latest","testTimeout":5}'
           win=false
           if [ "$EVENT" = "workflow_dispatch" ]; then win=true; fi
           title_lc=$(printf '%s' "$PR_TITLE" | tr '[:upper:]' '[:lower:]')
