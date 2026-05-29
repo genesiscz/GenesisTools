@@ -18,6 +18,17 @@ describe("renderMarkdown", () => {
         expect(html).not.toContain("href=");
     });
 
+    test("wikilink to vault note links to obsidian route", () => {
+        const { html } = renderMarkdown("See [[2026-05-17-TranscriptionFixes]]", {
+            resolveWikilink: () => null,
+            resolveVaultNotePath: (name) =>
+                name === "2026-05-17-TranscriptionFixes" ? "GenesisTools/2026-05-17-TranscriptionFixes.md" : null,
+        });
+
+        expect(html).toContain('data-obsidian-note="GenesisTools/2026-05-17-TranscriptionFixes.md"');
+        expect(html).toContain("/obsidian?note=GenesisTools%2F2026-05-17-TranscriptionFixes.md");
+    });
+
     test("wikilink to published note links to share slug", () => {
         const { html } = renderMarkdown("see [[Other Note]] here", {
             resolveWikilink: (name) => (name === "Other Note" ? "abc123" : null),

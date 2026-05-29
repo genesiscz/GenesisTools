@@ -1,3 +1,5 @@
+import { buildObsidianNoteHref } from "@app/dev-dashboard/lib/obsidian/note-href";
+import { escapeHtml } from "@app/utils/string";
 import hljs from "highlight.js";
 import type { MarkedExtension, Tokens } from "marked";
 import { Marked } from "marked";
@@ -6,6 +8,7 @@ import markedKatex from "marked-katex-extension";
 
 interface RenderOptions {
     resolveWikilink: (name: string) => string | null;
+    resolveVaultNotePath?: (name: string) => string | null;
 }
 
 export interface RenderResult {
@@ -40,20 +43,6 @@ const LEADING_TAGS_RE = /^tags:\s*(.+)\r?\n/i;
 const WIKILINK_RE = /^\[\[([^\]\n|]+)(?:\|([^\]\n]+))?\]\]/;
 const EMBED_RE = /^!\[\[([^\]\n|]+)(?:\|([^\]\n]+))?\]\]/;
 const INLINE_TAG_RE = /^#([A-Za-z][\w/-]*)(?=$|[\s.,;:!?)\]])/;
-
-function escapeHtml(value: string): string {
-    return value.replace(/[&<>"']/g, (char) => {
-        const replacements: Record<string, string> = {
-            "&": "&amp;",
-            "<": "&lt;",
-            ">": "&gt;",
-            '"': "&quot;",
-            "'": "&#39;",
-        };
-
-        return replacements[char] ?? char;
-    });
-}
 
 // marked (v5+) no longer strips dangerous URL schemes, so a note containing
 // [x](javascript:...) or ![y](data:text/html;...) would execute on the public,
@@ -142,7 +131,7 @@ function renderTagsHeader(tags: string[]): string {
     return `<div class="dd-md-meta">${chips}</div>`;
 }
 
-function wikilinkExtension(resolve: (name: string) => string | null): MarkedExtension {
+function wikilinkExtension(opts: RenderOptions): MarkedExtension {
     return {
         extensions: [
             {
@@ -171,7 +160,15 @@ function wikilinkExtension(resolve: (name: string) => string | null): MarkedExte
                 },
                 renderer(token: Tokens.Generic): string {
                     const t = token as unknown as WikilinkToken;
-                    const slug = resolve(t.target);
+                    const vaultPath = opts.resolveVaultNotePath?.(t.target) ?? null;
+
+                    if (vaultPath) {
+                        const href = buildObsidianNoteHref(vaultPath);
+
+                        return `<a href="${escapeHtml(href)}" class="dd-wikilink" data-obsidian-note="${escapeHtml(vaultPath)}">${escapeHtml(t.display)}</a>`;
+                    }
+
+                    const slug = opts.resolveWikilink(t.target);
 
                     if (slug) {
                         return `<a href="/share/${encodeURIComponent(slug)}" class="dd-wikilink">${escapeHtml(t.display)}</a>`;
@@ -497,7 +494,7 @@ function buildMarked(opts: RenderOptions): Marked {
         obsidianCalloutExtension(),
         markedKatex({ throwOnError: false, output: "html", strict: false }),
         embedExtension(),
-        wikilinkExtension(opts.resolveWikilink),
+        wikilinkExtension(opts),
         inlineTagExtension()
     );
 }
