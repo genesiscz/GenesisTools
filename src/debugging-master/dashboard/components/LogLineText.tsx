@@ -1,6 +1,6 @@
-import type { ReactElement } from "react";
 import type { IndexedLogEntry } from "@app/debugging-master/types";
 import { AnsiLogText } from "@app/utils/ansi/render-ansi.client";
+import type { ReactElement } from "react";
 
 interface Props {
     entry: Pick<IndexedLogEntry, "msg" | "msgAnsi" | "level" | "label">;

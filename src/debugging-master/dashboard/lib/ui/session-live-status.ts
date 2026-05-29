@@ -1,5 +1,5 @@
-import type { DashboardSession } from "@app/utils/log-viewer/log-source";
 import { formatLastMessageAgo } from "@app/utils/format";
+import type { DashboardSession } from "@app/utils/log-viewer/log-source";
 import { resolveQaRecency } from "@app/utils/ui/helpers/qa-recency";
 
 export type SessionLiveStatusPhase = "running" | "killed" | "exited" | "fallback";
@@ -64,11 +64,7 @@ export function resolveSessionLiveStatusDisplay({
         const recency = resolveQaRecency(endedAt, now);
 
         const phase = killed ? "killed" : "exited";
-        const stateLabel = killed
-            ? "killed"
-            : failed
-              ? `exited (${session.exitCode})`
-              : "exited";
+        const stateLabel = killed ? "killed" : failed ? `exited (${session.exitCode})` : "exited";
 
         return {
             phase,

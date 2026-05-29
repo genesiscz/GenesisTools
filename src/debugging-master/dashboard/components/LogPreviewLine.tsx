@@ -1,5 +1,5 @@
-import type { ReactElement } from "react";
 import type { IndexedLogEntry } from "@app/debugging-master/types";
+import type { ReactElement } from "react";
 import { formatTime } from "@/lib/format";
 import type { MultiplexLogEntry } from "@/lib/sse";
 import { LogLineText } from "./LogLineText";

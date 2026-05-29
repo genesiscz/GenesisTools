@@ -2,8 +2,9 @@ import type { DashboardSession } from "@app/utils/log-viewer/log-source";
 import { isLogSourceId, parseSessionKey, sessionKey } from "@app/utils/log-viewer/session-key";
 import { sessionRecencyTs, sortSessionsByRecency } from "@app/utils/log-viewer/session-recency";
 import { shortenPathWithPrefix } from "@app/utils/paths.client";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@ui/components/select";
 import { useDirPathPrefix } from "@ui/components/DirPath";
+import { IconTooltip } from "@ui/components/icon-button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@ui/components/select";
 import { useMemo } from "react";
 import { formatRelativeTime } from "@/lib/format";
 import { formatSessionHeaderParts } from "@/lib/session-run-context";
@@ -11,6 +12,7 @@ import type { ConnectionStatus } from "@/lib/sse";
 import { useSessionDeleteConfirm } from "@/lib/ui/SessionDeleteConfirm";
 import { DisplaySettingsButton } from "./DisplaySettingsButton";
 import { StatusPill } from "./StatusPill";
+
 interface Props {
     sessions: DashboardSession[];
     activeSource: string | null;
@@ -51,9 +53,7 @@ export function Header({
     const pathPrefix = useDirPathPrefix();
     const meta = sessions.find((s) => s.source === activeSource && s.name === activeSession);
     const selectValue =
-        activeSource && activeSession && isLogSourceId(activeSource)
-            ? sessionKey(activeSource, activeSession)
-            : "";
+        activeSource && activeSession && isLogSourceId(activeSource) ? sessionKey(activeSource, activeSession) : "";
     const sortedSessions = useMemo(() => sortSessionsByRecency(sessions), [sessions]);
     const sessionOptions = useMemo(
         () =>
@@ -113,14 +113,15 @@ export function Header({
                     </div>
 
                     <div className="flex items-center gap-3 shrink-0">
-                        <button
-                            type="button"
-                            onClick={onRefresh}
-                            className="dbg-ui-btn uppercase tracking-wider text-white/50 hover:text-white/90 px-2 py-1 border border-white/10 rounded-md hover:border-cyan-500/40 transition-colors"
-                            title="refetch session list"
-                        >
-                            ↻
-                        </button>
+                        <IconTooltip tooltip="Refetch session list">
+                            <button
+                                type="button"
+                                onClick={onRefresh}
+                                className="dbg-ui-btn uppercase tracking-wider text-white/50 hover:text-white/90 px-2 py-1 border border-white/10 rounded-md hover:border-cyan-500/40 transition-colors"
+                            >
+                                ↻
+                            </button>
+                        </IconTooltip>
 
                         <button
                             type="button"

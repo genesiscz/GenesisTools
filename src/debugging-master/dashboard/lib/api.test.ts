@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { SafeJSON } from "@app/utils/json";
 
 const originalFetch = globalThis.fetch;
 
@@ -13,7 +14,7 @@ describe("dashboard api fetch (eval2 bug #9)", () => {
         globalThis.fetch = ((_url: string, init?: RequestInit) => {
             capturedSignal = init?.signal ?? null;
             return Promise.resolve(
-                new Response(JSON.stringify({ sessions: [] }), {
+                new Response(SafeJSON.stringify({ sessions: [] }), {
                     status: 200,
                     headers: { "Content-Type": "application/json" },
                 })

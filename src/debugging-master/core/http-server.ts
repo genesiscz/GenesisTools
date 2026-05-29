@@ -6,7 +6,7 @@ import { sseBroadcaster } from "@app/debugging-master/core/sse-broadcaster";
 import type { LogEntry } from "@app/debugging-master/types";
 
 import { SafeJSON } from "@app/utils/json";
-import { isSafeLogSessionName, decodeSessionPathSegment } from "@app/utils/log-viewer/session-name";
+import { decodeSessionPathSegment, isSafeLogSessionName } from "@app/utils/log-viewer/session-name";
 
 function ensureDir(): void {
     if (!existsSync(SESSIONS_DIR)) {

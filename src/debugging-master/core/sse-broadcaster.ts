@@ -1,8 +1,8 @@
 import type { LogEntry } from "@app/debugging-master/types";
 import { SafeJSON } from "@app/utils/json";
 import type { LogSourceId } from "@app/utils/log-viewer/log-source";
-import { createSourceTailer, sessionKey } from "@app/utils/log-viewer/tail-bridge";
 import { parseSessionKey } from "@app/utils/log-viewer/session-key";
+import { createSourceTailer, sessionKey } from "@app/utils/log-viewer/tail-bridge";
 import { resetTaskUiTailer, stopTaskUiTailer } from "@app/utils/log-viewer/task-ui-lines";
 
 interface Subscriber {
@@ -70,9 +70,10 @@ export class SSEBroadcaster {
         return { stream, unsubscribe };
     }
 
-    subscribeActive(
-        targets: ReadonlyArray<{ source: LogSourceId; sessionName: string }>
-    ): { stream: ReadableStream<Uint8Array>; unsubscribe: () => void } {
+    subscribeActive(targets: ReadonlyArray<{ source: LogSourceId; sessionName: string }>): {
+        stream: ReadableStream<Uint8Array>;
+        unsubscribe: () => void;
+    } {
         const keys = new Set(targets.map((t) => sessionKey(t.source, t.sessionName)));
         const id = this.nextId++;
         let sub: MultiplexSubscriber;

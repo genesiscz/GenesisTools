@@ -9,14 +9,7 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@ui/components/alert-dialog";
-import {
-    createContext,
-    useCallback,
-    useContext,
-    useState,
-    type ReactElement,
-    type ReactNode,
-} from "react";
+import { createContext, type ReactElement, type ReactNode, useCallback, useContext, useState } from "react";
 
 export interface SessionDeleteRequest {
     source: LogSourceId;

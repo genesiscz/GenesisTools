@@ -1,10 +1,10 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
-import { memo, useEffect, useImperativeHandle, useMemo } from "react";
 import { useAutoScroll } from "@app/utils/ui/hooks/useAutoScroll";
+import { memo, useEffect, useImperativeHandle, useMemo } from "react";
 import { filterDisplayLogLines, shouldShowLogTimestamp } from "@/lib/log-line-display";
+import { useDisplaySettings } from "./DisplaySettingsProvider";
 import { EntryRow } from "./EntryRow";
 import type { SortDir } from "./FilterBar";
-import { useDisplaySettings } from "./DisplaySettingsProvider";
 
 export interface EntryListHandle {
     resume: () => void;
@@ -63,11 +63,7 @@ function EntryListImpl({
     }
 
     return (
-        <div
-            ref={ref}
-            onScroll={onScroll}
-            className="flex-1 overflow-y-auto overflow-x-auto dbg-log-text font-mono"
-        >
+        <div ref={ref} onScroll={onScroll} className="flex-1 overflow-y-auto overflow-x-auto dbg-log-text font-mono">
             {visibleEntries.map((e, index) => {
                 const previousTs = index > 0 ? visibleEntries[index - 1]?.ts : undefined;
                 const showTimestamp = shouldShowLogTimestamp({

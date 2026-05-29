@@ -1,8 +1,8 @@
-import type { ReactElement, ReactNode } from "react";
 import type { DashboardSession } from "@app/utils/log-viewer/log-source";
+import type { ReactElement, ReactNode } from "react";
 import { useSessionDeleteConfirm } from "@/lib/ui/SessionDeleteConfirm";
-import { SessionHeaderLine } from "./SessionHeaderLine";
 import { SessionLiveStatus } from "@/lib/ui/SessionLiveStatus";
+import { SessionHeaderLine } from "./SessionHeaderLine";
 
 interface Props {
     session: DashboardSession;
