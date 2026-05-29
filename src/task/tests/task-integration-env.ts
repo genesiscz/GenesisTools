@@ -1,5 +1,5 @@
 import { afterAll } from "bun:test";
-import { spawn, spawnSync, type SpawnOptions } from "node:child_process";
+import { type SpawnOptions, spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";

@@ -7,21 +7,19 @@ test("tail --follow --exit-on-match PATTERN exits on first match (F2)", async ()
     const SESSION = `exit-match-${Date.now()}`;
 
     await withTaskSession(env, SESSION, async () => {
-        env
-            .taskSpawn(
-                [
-                    "run",
-                    "--session",
-                    SESSION,
-                    "--no-tty",
-                    "--",
-                    "bash",
-                    "-c",
-                    "echo noise1; sleep 0.5; echo SENTINEL_FOUND; sleep 2; echo more",
-                ],
-                { detached: true, stdio: "ignore" }
-            )
-            .unref();
+        env.taskSpawn(
+            [
+                "run",
+                "--session",
+                SESSION,
+                "--no-tty",
+                "--",
+                "bash",
+                "-c",
+                "echo noise1; sleep 0.5; echo SENTINEL_FOUND; sleep 2; echo more",
+            ],
+            { detached: true, stdio: "ignore" }
+        ).unref();
 
         await new Promise((r) => setTimeout(r, 800));
 
@@ -42,21 +40,10 @@ test("tail --follow --propagate-exit propagates session exit code (F3)", async (
     const SESSION = `prop-exit-${Date.now()}`;
 
     await withTaskSession(env, SESSION, async () => {
-        env
-            .taskSpawn(
-                [
-                    "run",
-                    "--session",
-                    SESSION,
-                    "--no-tty",
-                    "--",
-                    "bash",
-                    "-c",
-                    "echo working; sleep 0.3; exit 42",
-                ],
-                { detached: true, stdio: "ignore" }
-            )
-            .unref();
+        env.taskSpawn(
+            ["run", "--session", SESSION, "--no-tty", "--", "bash", "-c", "echo working; sleep 0.3; exit 42"],
+            { detached: true, stdio: "ignore" }
+        ).unref();
 
         await new Promise((r) => setTimeout(r, 800));
 

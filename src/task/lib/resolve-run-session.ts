@@ -1,7 +1,7 @@
-import * as p from "@clack/prompts";
 import { buildTimestampedSessionName } from "@app/task/lib/session-name";
 import type { TaskSessionStore } from "@app/task/lib/session-store";
 import type { ResolvedRunSession, SessionReuseMode } from "@app/task/types";
+import * as p from "@clack/prompts";
 
 export interface ResolveRunSessionOptions {
     /** Explicit --session flag: reuse-continue with warnings, no prompt. */

@@ -7,21 +7,19 @@ test("wait --exit-on-match exits 0 on first pattern match (F1)", async () => {
     const S = `wait-match-${Date.now()}`;
 
     await withTaskSession(env, S, async () => {
-        env
-            .taskSpawn(
-                [
-                    "run",
-                    "--session",
-                    S,
-                    "--no-tty",
-                    "--",
-                    "bash",
-                    "-c",
-                    "echo a; sleep 0.5; echo Bundled in 234ms; sleep 5",
-                ],
-                { detached: true, stdio: "ignore" }
-            )
-            .unref();
+        env.taskSpawn(
+            [
+                "run",
+                "--session",
+                S,
+                "--no-tty",
+                "--",
+                "bash",
+                "-c",
+                "echo a; sleep 0.5; echo Bundled in 234ms; sleep 5",
+            ],
+            { detached: true, stdio: "ignore" }
+        ).unref();
 
         await new Promise((r) => setTimeout(r, 800));
 

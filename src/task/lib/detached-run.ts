@@ -1,8 +1,8 @@
 import { openSync } from "node:fs";
-import { readJsonlFile } from "@app/utils/log-session/jsonl-reader";
-import type { JsonlExitRecord } from "@app/utils/log-session/types";
 import { jsonlPath, stdoutLogPath } from "@app/task/lib/paths";
 import type { TaskRunMode } from "@app/task/types";
+import { readJsonlFile } from "@app/utils/log-session/jsonl-reader";
+import type { JsonlExitRecord } from "@app/utils/log-session/types";
 
 const WORKER_ENV = "TASK_RUN_WORKER";
 

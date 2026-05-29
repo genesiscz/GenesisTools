@@ -1,14 +1,27 @@
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+    getTaskSessionsDir,
+    jsonlPath,
+    metaPath,
+    sessionFilePaths,
+    sessionNameFromJsonlFilename,
+    uiJsonlPath,
+} from "@app/task/lib/paths";
+import { isProcessAlive } from "@app/task/lib/process-alive";
+import { buildTimestampedSessionName, isRelatedSessionName } from "@app/task/lib/session-name";
+import type {
+    MarkExitedInput,
+    PrepareSessionInput,
+    ResolvedRunSession,
+    TaskConfig,
+    TaskSessionMeta,
+} from "@app/task/types";
 import { suggestCommand } from "@app/utils/cli/executor";
 import { SafeJSON } from "@app/utils/json";
 import { fuzzyResolveSession } from "@app/utils/log-session/fuzzy-resolver";
 import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
 import type { JsonlExitRecord, JsonlLineRecord, JsonlMetaRecord } from "@app/utils/log-session/types";
 import { Storage } from "@app/utils/storage/storage";
-import type { MarkExitedInput, PrepareSessionInput, ResolvedRunSession, TaskConfig, TaskSessionMeta } from "@app/task/types";
-import { getTaskSessionsDir, jsonlPath, metaPath, sessionFilePaths, sessionNameFromJsonlFilename, uiJsonlPath } from "@app/task/lib/paths";
-import { buildTimestampedSessionName, isRelatedSessionName } from "@app/task/lib/session-name";
-import { isProcessAlive } from "@app/task/lib/process-alive";
 
 export type { ResolvedRunSession } from "@app/task/types";
 
@@ -229,7 +242,7 @@ export class TaskSessionStore {
     }
 
     async reconcileSessionState(name: string): Promise<TaskSessionMeta | null> {
-        let meta = await this.getSessionMeta(name);
+        const meta = await this.getSessionMeta(name);
 
         if (meta?.exitCode !== undefined) {
             return meta;
