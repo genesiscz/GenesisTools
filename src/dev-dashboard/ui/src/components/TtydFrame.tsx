@@ -82,7 +82,7 @@ export function TtydFrame({ id, title, className, iframeRef }: TtydFrameProps) {
 
     return (
         <div className={`dd-ttyd-embed ${className ?? ""}`.trim()}>
-            <iframe ref={iframeRef} src={src} title={title} tabIndex={-1} />
+            <iframe ref={iframeRef} src={src} title={title} tabIndex={-1} allow="clipboard-read; clipboard-write" />
         </div>
     );
 }

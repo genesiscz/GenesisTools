@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronsDown, ChevronsUp } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronsDown, ChevronsUp, ClipboardPaste } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { IframeKey } from "@/lib/iframe-keys";
 
@@ -6,6 +6,8 @@ interface MobileKeyBarProps {
     onKey: (key: IframeKey) => void;
     onScroll: (lines: number) => void;
     onPageScroll?: (direction: -1 | 1) => void;
+    /** Paste the parent-page clipboard into the terminal. Omit to hide the key. */
+    onPaste?: () => void;
     /** Tweak how many lines a PgUp/PgDn tap scrolls. Defaults to 10. */
     scrollStep?: number;
     /** In document flow at the bottom of the ttyd shell (not fixed over the terminal). */
@@ -25,7 +27,14 @@ interface KeySpec {
  * using window.visualViewport (the only API iOS Safari actually honours),
  * and falls back to bottom-of-viewport when no soft keyboard is open.
  */
-export function MobileKeyBar({ onKey, onScroll, onPageScroll, scrollStep = 10, embedded = false }: MobileKeyBarProps) {
+export function MobileKeyBar({
+    onKey,
+    onScroll,
+    onPageScroll,
+    onPaste,
+    scrollStep = 10,
+    embedded = false,
+}: MobileKeyBarProps) {
     const [bottomOffset, setBottomOffset] = useState(0);
 
     useEffect(() => {
@@ -76,6 +85,16 @@ export function MobileKeyBar({ onKey, onScroll, onPageScroll, scrollStep = 10, e
             icon: <ChevronsDown size={16} />,
             action: () => (onPageScroll ? onPageScroll(1) : onScroll(scrollStep)),
         },
+        ...(onPaste
+            ? [
+                  {
+                      label: "Paste",
+                      aria: "Paste clipboard",
+                      icon: <ClipboardPaste size={16} />,
+                      action: onPaste,
+                  } satisfies KeySpec,
+              ]
+            : []),
     ];
 
     return (
