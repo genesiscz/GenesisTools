@@ -17,6 +17,7 @@ import { CmuxSendTargetDialog } from "@/components/CmuxSendTargetDialog";
 import { TmuxSessionName } from "@/components/TmuxSessionName";
 import type { TmuxHubSession } from "@/lib/api";
 import { cmuxApi, tmuxApi, ttydApi } from "@/lib/api";
+import { invalidateTmuxAndTtyd } from "@/lib/query-keys";
 import { canRemoveFromCmux } from "@/lib/view-state";
 
 interface Props {
@@ -47,8 +48,7 @@ export function TmuxSessionsPanel({ open, onOpenChange, onFocusTtydTab }: Props)
     const attach = useMutation({
         mutationFn: (tmuxSessionName: string) => ttydApi.spawn({ tmuxSessionName }),
         onSuccess: (data) => {
-            queryClient.invalidateQueries({ queryKey: ["ttyd"] });
-            queryClient.invalidateQueries({ queryKey: ["tmux"] });
+            invalidateTmuxAndTtyd(queryClient);
 
             if (data?.session?.id) {
                 onFocusTtydTab?.(data.session.id);
@@ -65,8 +65,7 @@ export function TmuxSessionsPanel({ open, onOpenChange, onFocusTtydTab }: Props)
             }
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["ttyd"] });
-            queryClient.invalidateQueries({ queryKey: ["tmux"] });
+            invalidateTmuxAndTtyd(queryClient);
         },
     });
 
@@ -134,8 +133,7 @@ export function TmuxSessionsPanel({ open, onOpenChange, onFocusTtydTab }: Props)
                                                 : undefined
                                         }
                                         onRenamed={(nextName) => {
-                                            queryClient.invalidateQueries({ queryKey: ["tmux"] });
-                                            queryClient.invalidateQueries({ queryKey: ["ttyd"] });
+                                            invalidateTmuxAndTtyd(queryClient);
                                             setSendTarget((current) => (current === session.name ? nextName : current));
                                         }}
                                     />
@@ -161,8 +159,7 @@ export function TmuxSessionsPanel({ open, onOpenChange, onFocusTtydTab }: Props)
                         setSendTarget(null);
                     }}
                     onRenamed={(nextName) => {
-                        queryClient.invalidateQueries({ queryKey: ["tmux"] });
-                        queryClient.invalidateQueries({ queryKey: ["ttyd"] });
+                        invalidateTmuxAndTtyd(queryClient);
                         setSendTarget(nextName);
                     }}
                 />

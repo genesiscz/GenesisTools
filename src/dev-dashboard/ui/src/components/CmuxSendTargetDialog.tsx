@@ -19,6 +19,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CmuxLayoutTreePicker, type CmuxPickKind } from "@/components/CmuxLayoutTree";
 import { TmuxSessionName, TmuxSessionNameLabel } from "@/components/TmuxSessionName";
 import { cmuxApi, tmuxApi } from "@/lib/api";
+import { invalidateTmuxAndTtyd } from "@/lib/query-keys";
 import { canRemoveFromCmux } from "@/lib/view-state";
 
 interface Props {
@@ -126,8 +127,7 @@ export function CmuxSendTargetDialog({ open, onOpenChange, tmuxSessionName, onSe
                                 size="sm"
                                 onRenamed={(nextName) => {
                                     setSessionName(nextName);
-                                    queryClient.invalidateQueries({ queryKey: ["tmux"] });
-                                    queryClient.invalidateQueries({ queryKey: ["ttyd"] });
+                                    invalidateTmuxAndTtyd(queryClient);
                                     onRenamed?.(nextName);
                                 }}
                             />

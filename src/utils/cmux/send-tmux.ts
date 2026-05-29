@@ -31,12 +31,15 @@ async function resolveSurfaceForExisting(
     ]);
 
     for (const pane of panes.panes ?? []) {
-        const paneId = pane.ref ?? "";
+        if (!pane.ref) {
+            continue;
+        }
+
         const refs = pane.surface_refs ?? [];
 
         if (refs.includes(surfaceId)) {
-            await assertTerminalSurface(workspaceId, paneId, surfaceId);
-            return { paneId, surfaceId };
+            await assertTerminalSurface(workspaceId, pane.ref, surfaceId);
+            return { paneId: pane.ref, surfaceId };
         }
     }
 

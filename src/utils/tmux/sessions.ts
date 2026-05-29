@@ -1,3 +1,4 @@
+import { logger } from "@app/logger";
 import { buildTerminalSpawnEnv } from "@app/utils/terminal/locale";
 import { resolveTmuxBin } from "@app/utils/tmux/bin";
 import type { TmuxSessionInfo } from "@app/utils/tmux/types";
@@ -37,7 +38,14 @@ export function ensureTmuxSessionUtf8Locale(sessionName: string): void {
             continue;
         }
 
-        spawnSyncImpl([tmuxBin, "set-environment", "-t", sessionName, key, value]);
+        const result = spawnSyncImpl([tmuxBin, "set-environment", "-t", sessionName, key, value]);
+
+        if (result.exitCode !== 0) {
+            logger.debug(
+                { sessionName, key, exitCode: result.exitCode, detail: tmuxErrorDetail(result.stderr) },
+                "tmux set-environment failed (locale not applied)"
+            );
+        }
     }
 }
 
