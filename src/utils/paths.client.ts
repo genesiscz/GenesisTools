@@ -69,11 +69,7 @@ function joinPathSegments(segments: string[]): string {
 /** Longest shared directory prefix across paths (collapsed, no trailing slash). Empty when not shared. */
 export function longestCommonPathPrefix(paths: readonly string[]): string {
     const normalized = [
-        ...new Set(
-            paths
-                .map((path) => collapsePathForDisplay(toPosixPath(path.trim())))
-                .filter(Boolean)
-        ),
+        ...new Set(paths.map((path) => collapsePathForDisplay(toPosixPath(path.trim()))).filter(Boolean)),
     ];
 
     if (normalized.length < 2) {

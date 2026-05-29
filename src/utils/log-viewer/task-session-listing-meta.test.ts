@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
 import { TaskSessionStore } from "@app/task/lib/session-store";
+import { SafeJSON } from "@app/utils/json";
 import { resolveTaskSessionListingMeta } from "./task-session-listing-meta";
 
 describe("resolveTaskSessionListingMeta", () => {

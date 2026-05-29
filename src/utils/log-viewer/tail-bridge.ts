@@ -5,13 +5,8 @@ import type { JsonlLineRecord } from "@app/utils/log-session/types";
 import type { LogSourceId } from "./log-source";
 import { taskRecordToLogEntry } from "./log-source";
 import { getLogSource } from "./resolve-log-source";
-import {
-    ensureTaskUiTailer,
-    lookupTaskUiText,
-    preloadTaskUiLineMap,
-    stopTaskUiTailer,
-} from "./task-ui-lines";
 import { sessionKey } from "./session-key";
+import { ensureTaskUiTailer, lookupTaskUiText, preloadTaskUiLineMap } from "./task-ui-lines";
 
 export function parseTailEntry(
     source: LogSourceId,

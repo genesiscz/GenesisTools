@@ -1,6 +1,6 @@
 /**
  * Shared string utilities for CLI tools.
- * Consolidates slugify, stripAnsi, escapeShellArg, removeDiacritics,
+ * Consolidates slugify, stripAnsi, escapeShellArg, escapeHtml, removeDiacritics,
  * truncateText, and sanitizeOutput from across the codebase.
  */
 
@@ -22,7 +22,8 @@ export function slugify(title: string): string {
  */
 export function stripAnsi(input: string): string {
     // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape code matching
-    const csi = /\u001b\[[\?]?[0-9;]*[@-~]/g;
+    const csi = /\u001b\[[?]?[0-9;]*[@-~]/g;
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape code matching
     const osc = /\u001b\].*?\u0007/g;
     return input.replace(csi, "").replace(osc, "");
 }
@@ -54,6 +55,22 @@ export function escapeShellArg(arg: string): string {
     }
 
     return `'${arg.replace(/'/g, "'\"'\"'")}'`;
+}
+
+const HTML_ESCAPES: Record<string, string> = {
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+};
+
+/**
+ * Escape the five HTML-significant characters (& < > " ') so a string is safe
+ * to interpolate into HTML text content or single/double-quoted attributes.
+ */
+export function escapeHtml(value: string): string {
+    return value.replace(/[&<>"']/g, (char) => HTML_ESCAPES[char] ?? char);
 }
 
 /**

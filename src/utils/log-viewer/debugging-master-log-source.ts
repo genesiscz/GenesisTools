@@ -1,4 +1,4 @@
-import { existsSync, unlinkSync, writeFileSync, statSync } from "node:fs";
+import { existsSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SESSIONS_DIR } from "@app/debugging-master/core/paths";
 import { countNewlines, SessionManager } from "@app/debugging-master/core/session-manager";

@@ -1,4 +1,7 @@
-import { ACTIVE_THRESHOLD_MS as DBG_ACTIVE_THRESHOLD_MS, SessionManager } from "@app/debugging-master/core/session-manager";
+import {
+    ACTIVE_THRESHOLD_MS as DBG_ACTIVE_THRESHOLD_MS,
+    SessionManager,
+} from "@app/debugging-master/core/session-manager";
 import { formatSessionState } from "@app/task/lib/format-session-state";
 import { ACTIVE_THRESHOLD_MS as TASK_ACTIVE_THRESHOLD_MS, TaskSessionStore } from "@app/task/lib/session-store";
 import type { DashboardSessionState, LogSourceId } from "./log-source";

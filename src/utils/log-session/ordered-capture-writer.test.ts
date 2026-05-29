@@ -3,8 +3,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { filterLineRecords, readJsonlFile } from "./jsonl-reader";
-import { filterUiLineRecords } from "./ui-jsonl";
 import { OrderedCaptureWriter } from "./ordered-capture-writer";
+import { filterUiLineRecords } from "./ui-jsonl";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -109,7 +109,7 @@ describe("OrderedCaptureWriter", () => {
         expect(uiRecords[0]?.text).toBe("\u001b[31mError\u001b[0m");
     });
 
-    it("emits a single empty line for a lone \"\\n\" chunk (no asymmetric drop)", async () => {
+    it('emits a single empty line for a lone "\\n" chunk (no asymmetric drop)', async () => {
         const dir = mkdtempSync(join(tmpdir(), "ocw-"));
         dirs.push(dir);
         const w = new OrderedCaptureWriter({
@@ -120,9 +120,9 @@ describe("OrderedCaptureWriter", () => {
         });
 
         w.enqueue("stdout", "first\n");
-        w.enqueue("stdout", "\n");        // lone blank — was previously dropped
+        w.enqueue("stdout", "\n"); // lone blank — was previously dropped
         w.enqueue("stdout", "third\n");
-        w.enqueue("stdout", "\n\n");      // two blanks
+        w.enqueue("stdout", "\n\n"); // two blanks
         w.enqueue("stdout", "last\n");
         await w.flush();
 

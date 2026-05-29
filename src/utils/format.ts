@@ -249,6 +249,32 @@ export function formatLastMessageAgo(deltaMs: number): string {
     return `${seconds}s ago`;
 }
 
+/**
+ * Compact elapsed duration with day/hour/minute parts (no seconds).
+ * Examples: `0m`, `22m`, `1h 22m`, `1d 1h 22m`
+ */
+export function formatElapsedDhM(deltaMs: number): string {
+    const totalMinutes = Math.floor(Math.max(0, deltaMs) / 60000);
+    const days = Math.floor(totalMinutes / (60 * 24));
+    const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+    const minutes = totalMinutes % 60;
+    const parts: string[] = [];
+
+    if (days > 0) {
+        parts.push(`${days}d`);
+    }
+
+    if (hours > 0) {
+        parts.push(`${hours}h`);
+    }
+
+    if (minutes > 0 || parts.length === 0) {
+        parts.push(`${minutes}m`);
+    }
+
+    return parts.join(" ");
+}
+
 // ============= Bytes =============
 
 /**
