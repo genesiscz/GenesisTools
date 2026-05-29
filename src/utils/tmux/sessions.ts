@@ -131,6 +131,47 @@ export function createTmuxSession(sessionName: string, cwd: string, command: str
     if (result.exitCode !== 0) {
         throw new Error(`Failed to create tmux session ${sessionName}${tmuxErrorDetail(result.stderr)}`);
     }
+
+    // Pin the (possibly freshly-bootstrapped) server to keep sessions alive.
+    ensureTmuxServerPersists(tmuxBin);
+}
+
+/**
+ * Pin the tmux server so sessions survive detach/teardown instead of dying.
+ *
+ * tmux defaults to `exit-empty on`: the server process exits the instant it has
+ * zero sessions, taking every remaining session with it at once. A headless
+ * `new-session` (how the dashboard and cmux bootstrap the shared default server)
+ * inherits that stock default — unlike an interactive tmux, where tmux-continuum
+ * flips `exit-empty off`. So on the shared socket whether sessions survive a UI
+ * restart otherwise depends on who bootstrapped the server first. The dashboard
+ * uses tmux as a session daemon that must outlive restarts, so force the durable
+ * options on every time it touches the server. Both calls are idempotent and
+ * safe (turning these off can only make sessions more durable).
+ */
+export function ensureTmuxServerPersists(tmuxBin?: string): void {
+    let bin: string;
+
+    try {
+        bin = tmuxBin ?? resolveTmuxBin();
+    } catch (error) {
+        logger.debug({ error }, "ensureTmuxServerPersists: tmux binary not resolvable");
+        return;
+    }
+
+    for (const args of [
+        ["set-option", "-s", "exit-empty", "off"],
+        ["set-option", "-g", "destroy-unattached", "off"],
+    ]) {
+        const result = spawnSyncImpl([bin, ...args]);
+
+        if (result.exitCode !== 0) {
+            logger.debug(
+                { args, exitCode: result.exitCode, detail: tmuxErrorDetail(result.stderr) },
+                "ensureTmuxServerPersists: tmux set-option failed"
+            );
+        }
+    }
 }
 
 export function killTmuxSession(sessionName: string): void {
