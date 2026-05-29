@@ -11,6 +11,7 @@ import { findFreePort } from "@app/dev-dashboard/lib/ttyd/free-port";
 import { devDashboardUiApp } from "@app/dev-dashboard/ui/app";
 import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
+import { openBrowserWhenDashboardEnv } from "@app/utils/DashboardApp/preview";
 import { waitForUrlReady } from "@app/utils/DashboardApp/readiness";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import { Command } from "commander";
@@ -143,26 +144,7 @@ async function runUiServer(): Promise<void> {
         killChild();
     });
 
-    if (process.env.DASHBOARD_OPEN_BROWSER === "1") {
-        void (async () => {
-            const ready = await waitForUrlReady(url, 20_000);
-
-            if (!ready.ready) {
-                logger.warn({ url, detail: ready.detail }, "dev-dashboard browser open skipped — page not ready");
-                return;
-            }
-
-            const [cmd, args] =
-                process.platform === "darwin"
-                    ? (["open", [url]] as const)
-                    : process.platform === "win32"
-                      ? (["cmd", ["/c", "start", "", url]] as const)
-                      : (["xdg-open", [url]] as const);
-            const opener = spawn(cmd, args, { stdio: "ignore", detached: true });
-            opener.on("error", (err) => logger.debug({ err, cmd }, "failed to auto-open browser"));
-            opener.unref();
-        })();
-    }
+    void openBrowserWhenDashboardEnv(url);
 
     const exitCode: number = await new Promise((resolveExit) => {
         child.on("exit", (code) => {

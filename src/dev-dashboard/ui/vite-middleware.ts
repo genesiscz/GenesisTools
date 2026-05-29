@@ -37,7 +37,14 @@ import { configureRetention, getCachedPulse, getSeries, startPulsePolling } from
 import { createStandaloneTmuxSession } from "@app/dev-dashboard/lib/tmux/create-session";
 import { enrichSessionsForHub } from "@app/dev-dashboard/lib/tmux/hub";
 import { renameTmuxSessionInHub } from "@app/dev-dashboard/lib/tmux/rename";
-import { addTodo, completeTodo, deleteTodo, listTodos } from "@app/dev-dashboard/lib/todos/service";
+import {
+    addTodo,
+    completeTodo,
+    deleteTodo,
+    listTodos,
+    RemindersPermissionError,
+    requestTodosAccess,
+} from "@app/dev-dashboard/lib/todos/service";
 import { killTtyd, listTtyd, renameTtyd, spawnTtyd } from "@app/dev-dashboard/lib/ttyd/manager";
 import { fetchWeather } from "@app/dev-dashboard/lib/weather/client";
 import { logger } from "@app/logger";
@@ -578,18 +585,36 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
         }
 
         if (req.method === "GET" && url.pathname === "/api/todos") {
-            const list = url.searchParams.get("list") ?? "GenesisTools";
+            const listsParam = url.searchParams.get("lists") ?? url.searchParams.get("list");
+            const listNames = listsParam
+                ? listsParam
+                      .split(",")
+                      .map((name) => name.trim())
+                      .filter((name) => name.length > 0)
+                : ["GenesisTools"];
+            const includeCompleted = url.searchParams.get("includeCompleted") === "true";
 
             try {
-                sendJson(res, 200, await listTodos(list));
+                sendJson(res, 200, await listTodos(listNames, { includeCompleted }));
             } catch (err) {
                 const message = err instanceof Error ? err.message : String(err);
-                const denied = /permission|privacy|reminders|authoriz/i.test(message);
+                const denied =
+                    err instanceof RemindersPermissionError || /permission|privacy|reminders|authoriz/i.test(message);
                 sendJson(res, denied ? 503 : 500, {
                     error: denied
                         ? "Reminders permission denied. Grant in System Settings → Privacy & Security → Reminders."
                         : message,
                 });
+            }
+
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/todos/request-access") {
+            try {
+                sendJson(res, 200, await requestTodosAccess());
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
             }
 
             return;

@@ -3,9 +3,10 @@ import type { QaEntry } from "@app/question/lib/types";
 import { playDingInBrowser } from "@app/utils/audio/runner.client";
 import { SafeJSON } from "@app/utils/json";
 import { useQuery } from "@tanstack/react-query";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, type MouseEvent, memo, useCallback, useEffect, useRef, useState } from "react";
 import { LiveSseIndicator } from "@/components/LiveSseIndicator";
 import { QaClockProvider } from "@/components/QaClockProvider";
+import { QaReadTime } from "@/components/QaReadTime";
 import { QaRecencyTime } from "@/components/QaRecencyTime";
 import { QaSectionHeading } from "@/components/QaSectionHeading";
 
@@ -140,23 +141,37 @@ function tagClass(tag: string): string {
 const QaCard = memo(function QaCard({
     entry,
     unread,
+    readAt,
     onSeen,
 }: {
     entry: QaRow;
     unread: boolean;
+    readAt: number | null;
     onSeen: (id: string) => void;
 }) {
-    const [open, setOpen] = useState(true);
+    const [open, setOpen] = useState(unread);
     const truncated = isQaAnswerTruncated(entry.answerMd);
     const answerHtml = open || !truncated ? entry.answerHtml : entry.answerHtmlPreview;
+
+    useEffect(() => {
+        if (!unread) {
+            setOpen(false);
+        }
+    }, [unread]);
 
     const handleMarkRead = useCallback(() => {
         if (!unread) {
             return;
         }
 
+        setOpen(false);
         onSeen(entry.id);
     }, [entry.id, onSeen, unread]);
+
+    const toggleOpen = useCallback((ev: MouseEvent | KeyboardEvent) => {
+        ev.stopPropagation();
+        setOpen((v) => !v);
+    }, []);
 
     return (
         <div
@@ -173,7 +188,7 @@ const QaCard = memo(function QaCard({
 
                 if (ev.key === "Enter" || ev.key === " ") {
                     ev.preventDefault();
-                    onSeen(entry.id);
+                    handleMarkRead();
                 }
             }}
         >
@@ -183,6 +198,12 @@ const QaCard = memo(function QaCard({
                 <span>·</span>
                 <span>{entry.branch ?? "-"}</span>
                 <span className={`rounded-full border px-2 py-[1px] ${tagClass(entry.tag)}`}>{entry.tag}</span>
+                {truncated ? (
+                    <button type="button" className="dd-accent-text" onClick={toggleOpen}>
+                        {open ? "Collapse" : "Expand"}
+                    </button>
+                ) : null}
+                {!unread && readAt != null ? <QaReadTime readAt={readAt} /> : null}
                 <QaRecencyTime ts={entry.ts} />
             </div>
             <QaSectionHeading label="Question" />
@@ -195,7 +216,7 @@ const QaCard = memo(function QaCard({
                 dangerouslySetInnerHTML={{ __html: answerHtml }}
             />
             {truncated ? (
-                <button type="button" className="dd-accent-text self-start text-xs" onClick={() => setOpen((v) => !v)}>
+                <button type="button" className="dd-accent-text self-start text-xs" onClick={toggleOpen}>
                     {open ? "▴ collapse" : "▾ expand full answer (rationale · refs · links)"}
                 </button>
             ) : null}
@@ -213,6 +234,7 @@ export function QaRoute() {
     const [live, setLive] = useState<QaRow[]>([]);
     const [sseDown, setSseDown] = useState(false);
     const [seenIds, setSeenIds] = useState<Set<string>>(() => new Set());
+    const [readAtById, setReadAtById] = useState<Map<string, number>>(() => new Map());
     const seen = useRef<Set<string>>(new Set());
     const markedReadRef = useRef<Set<string>>(new Set());
     const pendingReadIds = useRef<Set<string>>(new Set());
@@ -256,6 +278,7 @@ export function QaRoute() {
             }
 
             markedReadRef.current.add(id);
+            const readAt = Date.now();
             setSeenIds((prev) => {
                 if (prev.has(id)) {
                     return prev;
@@ -263,6 +286,15 @@ export function QaRoute() {
 
                 const next = new Set(prev);
                 next.add(id);
+                return next;
+            });
+            setReadAtById((prev) => {
+                if (prev.has(id)) {
+                    return prev;
+                }
+
+                const next = new Map(prev);
+                next.set(id, readAt);
                 return next;
             });
             pendingReadIds.current.add(id);
@@ -369,7 +401,13 @@ export function QaRoute() {
                 <QaClockProvider>
                     <div className="flex flex-col gap-3">
                         {all.map((entry) => (
-                            <QaCard key={entry.id} entry={entry} unread={!seenIds.has(entry.id)} onSeen={markSeen} />
+                            <QaCard
+                                key={entry.id}
+                                entry={entry}
+                                unread={!seenIds.has(entry.id)}
+                                readAt={readAtById.get(entry.id) ?? entry.readAt}
+                                onSeen={markSeen}
+                            />
                         ))}
                     </div>
                 </QaClockProvider>

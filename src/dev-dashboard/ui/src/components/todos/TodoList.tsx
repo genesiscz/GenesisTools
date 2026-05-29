@@ -1,63 +1,206 @@
-import { formatClock } from "@app/utils/format";
+import { groupReminders } from "@app/dev-dashboard/lib/todos/grouping";
+import {
+    formatReminderDue,
+    isReminderOverdue,
+    notesPreview,
+    priorityLabel,
+    reminderDetailFields,
+} from "@app/dev-dashboard/lib/todos/reminder-display";
+import type { TodoGroupBy, TodoStatusFilter } from "@app/dev-dashboard/lib/todos/types";
 import type { ReminderInfo } from "@genesiscz/darwinkit";
+import { useState } from "react";
 
 interface TodoListProps {
     reminders: ReminderInfo[];
+    statusFilter: TodoStatusFilter;
+    groupBy: TodoGroupBy;
+    showListName: boolean;
     onComplete: (id: string) => void;
     onDelete: (id: string) => void;
 }
 
-function formatDue(due: string): { label: string; overdue: boolean } {
-    const overdue = new Date(due).getTime() < Date.now();
-    const label = formatClock(due, { date: "short" });
-
-    return { label, overdue };
-}
-
-export function TodoList({ reminders, onComplete, onDelete }: TodoListProps) {
-    if (reminders.length === 0) {
-        return (
-            <div className="py-8 text-center text-sm text-[var(--dd-text-muted)]">No todos. You're all caught up.</div>
-        );
+function emptyMessage(statusFilter: TodoStatusFilter): string {
+    if (statusFilter === "done") {
+        return "No completed todos.";
     }
 
-    return (
-        <ul className="flex flex-col gap-1">
-            {reminders.map((reminder) => {
-                const dueInfo = reminder.due_date ? formatDue(reminder.due_date) : null;
+    if (statusFilter === "all") {
+        return "No todos in selected buckets.";
+    }
 
-                return (
-                    <li
-                        key={reminder.identifier}
-                        className="group flex items-center gap-3 rounded-md border border-transparent px-2 py-2 hover:border-[var(--dd-border)]"
+    return "No todos. You're all caught up.";
+}
+
+function TodoRow({
+    reminder,
+    showListName,
+    expanded,
+    onToggleExpand,
+    onComplete,
+    onDelete,
+}: {
+    reminder: ReminderInfo;
+    showListName: boolean;
+    expanded: boolean;
+    onToggleExpand: () => void;
+    onComplete: (id: string) => void;
+    onDelete: (id: string) => void;
+}) {
+    const completed = reminder.is_completed;
+    const dueLabel = formatReminderDue(reminder.due_date);
+    const overdue = isReminderOverdue(reminder.due_date, completed);
+    const preview = notesPreview(reminder.notes);
+    const priority = priorityLabel(reminder.priority);
+    const showPriority = reminder.priority !== 0;
+    const detailFields = reminderDetailFields(reminder);
+
+    return (
+        <li className="rounded-md border border-transparent transition-colors hover:border-[var(--dd-border)]">
+            <div className="group flex items-start gap-2 px-2 py-2">
+                <button
+                    type="button"
+                    aria-expanded={expanded}
+                    aria-label={expanded ? "Collapse details" : "Expand details"}
+                    onClick={onToggleExpand}
+                    className="mt-0.5 shrink-0 px-1 text-[var(--dd-text-muted)] transition-transform hover:text-[var(--dd-accent-from)]"
+                    style={{ transform: expanded ? "rotate(90deg)" : undefined }}
+                >
+                    ▸
+                </button>
+
+                {completed ? (
+                    <span
+                        aria-hidden
+                        className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 border-[var(--dd-accent-from)] bg-[var(--dd-accent-from)]/20 text-xs text-[var(--dd-accent-from)]"
                     >
-                        <button
-                            type="button"
-                            aria-label="Complete todo"
-                            onClick={() => onComplete(reminder.identifier)}
-                            className="h-5 w-5 shrink-0 rounded-full border-2 border-[var(--dd-border)] transition-colors hover:border-[var(--dd-accent-from)]"
-                        />
-                        <span className="flex-1 truncate text-sm text-[var(--dd-text-primary)]">{reminder.title}</span>
-                        {dueInfo ? (
-                            <span
-                                className={`shrink-0 text-xs ${
-                                    dueInfo.overdue ? "text-amber-400" : "text-[var(--dd-text-muted)]"
-                                }`}
-                            >
-                                {dueInfo.label}
+                        ✓
+                    </span>
+                ) : (
+                    <button
+                        type="button"
+                        aria-label="Complete todo"
+                        onClick={() => onComplete(reminder.identifier)}
+                        className="mt-0.5 h-5 w-5 shrink-0 rounded-full border-2 border-[var(--dd-border)] transition-colors hover:border-[var(--dd-accent-from)]"
+                    />
+                )}
+
+                <button type="button" onClick={onToggleExpand} className="min-w-0 flex-1 text-left">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <span
+                            className={`text-sm font-medium ${
+                                completed ? "text-[var(--dd-text-muted)] line-through" : "text-[var(--dd-text-primary)]"
+                            }`}
+                        >
+                            {reminder.title}
+                        </span>
+                        {reminder.is_flagged ? (
+                            <span className="text-[10px] text-amber-400" title="Flagged">
+                                ⚑
                             </span>
                         ) : null}
-                        <button
-                            type="button"
-                            aria-label="Delete todo"
-                            onClick={() => onDelete(reminder.identifier)}
-                            className="shrink-0 px-1 text-[var(--dd-text-muted)] opacity-0 transition-opacity hover:text-amber-400 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dd-accent-from)]"
-                        >
-                            ✕
-                        </button>
-                    </li>
-                );
-            })}
-        </ul>
+                    </div>
+
+                    {preview ? (
+                        <p className="mt-0.5 line-clamp-1 text-xs text-[var(--dd-text-secondary)]">{preview}</p>
+                    ) : null}
+
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-mono uppercase tracking-wide">
+                        {showListName ? (
+                            <span className="rounded border border-[var(--dd-border)] px-1.5 py-0.5 text-[var(--dd-text-muted)]">
+                                {reminder.list_title}
+                            </span>
+                        ) : null}
+                        {showPriority ? <span className="text-[var(--dd-accent-from)]">{priority}</span> : null}
+                        {dueLabel ? (
+                            <span className={overdue ? "text-amber-400" : "text-[var(--dd-text-muted)]"}>
+                                {dueLabel}
+                            </span>
+                        ) : null}
+                        {reminder.url ? <span className="text-[var(--dd-text-muted)]">Link</span> : null}
+                        {reminder.has_alarms ? <span className="text-[var(--dd-text-muted)]">Alarm</span> : null}
+                    </div>
+                </button>
+
+                <button
+                    type="button"
+                    aria-label="Delete todo"
+                    onClick={() => onDelete(reminder.identifier)}
+                    className="shrink-0 px-1 text-[var(--dd-text-muted)] opacity-0 transition-opacity hover:text-amber-400 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dd-accent-from)]"
+                >
+                    ✕
+                </button>
+            </div>
+
+            {expanded ? (
+                <div className="border-t border-[var(--dd-border)]/60 bg-[var(--dd-bg-panel)]/50 px-3 py-3 pl-11">
+                    <dl className="grid gap-2 text-xs">
+                        {detailFields.map((field) => (
+                            <div key={`${field.label}-${field.value.slice(0, 24)}`} className="grid gap-0.5">
+                                <dt className="font-mono uppercase tracking-wider text-[var(--dd-text-muted)]">
+                                    {field.label}
+                                </dt>
+                                <dd className="whitespace-pre-wrap break-words text-[var(--dd-text-secondary)]">
+                                    {field.label === "URL" ? (
+                                        <a
+                                            href={field.value}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="text-[var(--dd-accent-from)] underline-offset-2 hover:underline"
+                                        >
+                                            {field.value}
+                                        </a>
+                                    ) : (
+                                        field.value
+                                    )}
+                                </dd>
+                            </div>
+                        ))}
+                    </dl>
+                </div>
+            ) : null}
+        </li>
+    );
+}
+
+export function TodoList({ reminders, statusFilter, groupBy, showListName, onComplete, onDelete }: TodoListProps) {
+    const [expandedId, setExpandedId] = useState<string | null>(null);
+
+    if (reminders.length === 0) {
+        return <div className="py-8 text-center text-sm text-[var(--dd-text-muted)]">{emptyMessage(statusFilter)}</div>;
+    }
+
+    const groups = groupReminders(reminders, groupBy);
+
+    return (
+        <div className="flex flex-col gap-4">
+            {groups.map((group) => (
+                <section key={group.key} aria-labelledby={`todo-group-${group.key}`}>
+                    <h3
+                        id={`todo-group-${group.key}`}
+                        className="dd-accent-text mb-2 font-mono text-[11px] font-semibold uppercase tracking-[0.18em]"
+                    >
+                        {group.label}
+                        <span className="ml-2 text-[var(--dd-text-muted)]">({group.items.length})</span>
+                    </h3>
+                    <ul className="flex flex-col gap-1">
+                        {group.items.map((reminder) => (
+                            <TodoRow
+                                key={reminder.identifier}
+                                reminder={reminder}
+                                showListName={showListName}
+                                expanded={expandedId === reminder.identifier}
+                                onToggleExpand={() =>
+                                    setExpandedId((current) =>
+                                        current === reminder.identifier ? null : reminder.identifier
+                                    )
+                                }
+                                onComplete={onComplete}
+                                onDelete={onDelete}
+                            />
+                        ))}
+                    </ul>
+                </section>
+            ))}
+        </div>
     );
 }

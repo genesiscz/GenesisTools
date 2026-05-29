@@ -21,12 +21,13 @@ import {
     rangeBoundsMs,
 } from "@app/git/lib/rebase-classifier";
 import { extractFromMessage, loadWorkitemPatternsAsync } from "@app/git/workitem-patterns";
-import { out } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { Executor } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { formatDateTime } from "@app/utils/date";
 import type { DetailedCommitInfo } from "@app/utils/git";
 import { SafeJSON } from "@app/utils/json";
+import { Stopwatch } from "@app/utils/Stopwatch";
 import { Storage } from "@app/utils/storage";
 import chalk from "chalk";
 import type { Command } from "commander";
@@ -45,6 +46,8 @@ interface CommitsOptions {
     withoutBranch?: boolean;
     withoutWorkitemId?: boolean;
     withWorkitemTitle?: boolean;
+    withWorkitems?: boolean;
+    withFullCommitMessages?: boolean;
     withoutStashes?: boolean;
     withoutMerges?: boolean;
     workitem?: number[];
@@ -56,6 +59,8 @@ interface CommitsOptions {
 
 interface CommitWithStats extends DetailedCommitInfo {
     commitDate: string;
+    /** Full raw commit body (subject + body, multi-line). `message` is its first line. */
+    body: string;
     filesChanged: number;
     insertions: number;
     deletions: number;
@@ -108,6 +113,31 @@ async function loadExcludeTrunks(storage: Storage): Promise<string[]> {
     return DEFAULT_EXCLUDE_TRUNKS;
 }
 
+const NUMSTAT_LINE = /^(\d+|-)\t(\d+|-)\t/;
+
+/**
+ * Split a record's trailing `%B + numstat` field into the raw body and the
+ * numstat lines. numstat (when `--numstat` is set) is appended after the body,
+ * so we peel matching lines off the END — the body may itself contain blank
+ * lines and paragraphs, which a forward blank-line split would mishandle.
+ */
+function splitBodyAndStat(tail: string): { body: string; statLines: string[] } {
+    const lines = tail.split("\n");
+
+    // Drop trailing blank lines (git emits one before the next record separator).
+    while (lines.length > 0 && lines[lines.length - 1].trim() === "") {
+        lines.pop();
+    }
+
+    const statLines: string[] = [];
+
+    while (lines.length > 0 && NUMSTAT_LINE.test(lines[lines.length - 1])) {
+        statLines.unshift(lines.pop()!);
+    }
+
+    return { body: lines.join("\n").trim(), statLines };
+}
+
 async function getCommitsByDate(
     from: string,
     to: string,
@@ -118,12 +148,14 @@ async function getCommitsByDate(
     const executor = new Executor({ prefix: "git", verbose: false });
     const toExclusive = addOneDay(to);
 
+    // %x1e (record separator) prefixes each commit so multi-line %B bodies parse
+    // unambiguously; %B is last so trailing numstat lines append cleanly after it.
     const args = [
         "log",
         `--after=${from}`,
         `--before=${toExclusive}`,
         "--all",
-        "--pretty=format:%H%x00%h%x00%an%x00%aI%x00%cI%x00%s%x00%P",
+        "--pretty=format:%x1e%H%x00%h%x00%an%x00%aI%x00%cI%x00%P%x00%B",
     ];
 
     if (withoutMerges) {
@@ -145,68 +177,43 @@ async function getCommitsByDate(
     }
 
     const commits: CommitWithStats[] = [];
-    const lines = result.stdout.split("\n");
 
-    let i = 0;
-
-    while (i < lines.length) {
-        const line = lines[i].trim();
-
-        if (!line) {
-            i++;
+    for (const record of result.stdout.split("\x1e")) {
+        if (!record.trim()) {
             continue;
         }
 
-        if (!line.includes("\0")) {
-            i++;
-            continue;
-        }
-
-        const parts = line.split("\0");
+        const parts = record.split("\0");
 
         if (parts.length < 7) {
-            i++;
             continue;
         }
 
-        const [hash, shortHash, author, date, commitDate, message, parentPart] = parts;
+        const [hash, shortHash, author, date, commitDate, parentPart] = parts;
+        const tail = parts.slice(6).join("\0");
         const parentCount = parentPart.trim() ? parentPart.trim().split(/\s+/).length : 0;
+
+        const { body, statLines } = splitBodyAndStat(tail);
+        const message = body.split("\n", 1)[0];
 
         let filesChanged = 0;
         let insertions = 0;
         let deletions = 0;
 
-        if (includeStat) {
-            i++;
+        for (const statLine of statLines) {
+            const statParts = statLine.split("\t");
+            const ins = parseInt(statParts[0], 10);
+            const del = parseInt(statParts[1], 10);
 
-            while (i < lines.length) {
-                const statLine = lines[i].trim();
-
-                if (!statLine || statLine.includes("\0")) {
-                    break;
-                }
-
-                const statParts = statLine.split("\t");
-
-                if (statParts.length >= 3) {
-                    const ins = parseInt(statParts[0], 10);
-                    const del = parseInt(statParts[1], 10);
-
-                    if (!Number.isNaN(ins)) {
-                        insertions += ins;
-                    }
-
-                    if (!Number.isNaN(del)) {
-                        deletions += del;
-                    }
-
-                    filesChanged++;
-                }
-
-                i++;
+            if (!Number.isNaN(ins)) {
+                insertions += ins;
             }
-        } else {
-            i++;
+
+            if (!Number.isNaN(del)) {
+                deletions += del;
+            }
+
+            filesChanged++;
         }
 
         commits.push({
@@ -216,6 +223,7 @@ async function getCommitsByDate(
             date,
             commitDate,
             message,
+            body,
             filesChanged,
             insertions,
             deletions,
@@ -257,6 +265,24 @@ function workitemTag(commit: CommitWithStats, showWorkitemId: boolean): string {
     return parts.join("");
 }
 
+function commitBodyContinuation(commit: CommitWithStats): string {
+    const rest = commit.body.split("\n").slice(1);
+
+    while (rest.length > 0 && rest[0].trim() === "") {
+        rest.shift();
+    }
+
+    while (rest.length > 0 && rest[rest.length - 1].trim() === "") {
+        rest.pop();
+    }
+
+    if (rest.length === 0) {
+        return "";
+    }
+
+    return `\n${rest.map((line) => chalk.dim(`      ${line}`)).join("\n")}`;
+}
+
 function formatCommitRow(
     commit: CommitWithStats,
     opts: {
@@ -264,6 +290,7 @@ function formatCommitRow(
         showWorkitemId: boolean;
         includeStat: boolean;
         showAuthor: boolean;
+        showFullMessages?: boolean;
         authoredAnnotation?: string;
     }
 ): string {
@@ -276,8 +303,9 @@ function formatCommitRow(
             : "";
     const author = opts.showAuthor ? chalk.dim(` (${commit.author})`) : "";
     const authored = opts.authoredAnnotation ? chalk.dim(` ${opts.authoredAnnotation}`) : "";
+    const continuation = opts.showFullMessages ? commitBodyContinuation(commit) : "";
 
-    return `  ${chalk.dim(commit.shortHash)}${marker} ${commit.message}${branch}${workitemTag(commit, opts.showWorkitemId)}${stat}${authored}${author}`;
+    return `  ${chalk.dim(commit.shortHash)}${marker} ${commit.message}${branch}${workitemTag(commit, opts.showWorkitemId)}${stat}${authored}${author}${continuation}`;
 }
 
 function buildWorkitemSummary(
@@ -316,7 +344,9 @@ function renderTableMain(
         showWorkitemId: boolean;
         includeStat: boolean;
         showAuthor: boolean;
+        showFullMessages: boolean;
         resetAuthorByHash: Map<string, boolean>;
+        rebasedClusters?: RebaseCluster<CommitWithStats>[];
     }
 ): void {
     const dateFn = (c: CommitWithStats) =>
@@ -386,15 +416,70 @@ function renderTableMain(
         groups.set(day, list);
     }
 
-    for (const day of [...groups.keys()].sort()) {
-        const dayCommits = groups.get(day)!;
-        out.println(`\n${chalk.bold.cyan(formatDateForDisplay(day))} ${chalk.dim(`(${dayCommits.length} commits)`)}`);
+    // Rebased clusters land (committer date) within the range; group them under
+    // the day they landed so they sit beside that day's authored commits instead
+    // of in a detached footer.
+    const clustersByDay = new Map<string, RebaseCluster<CommitWithStats>[]>();
+
+    for (const cluster of opts.rebasedClusters ?? []) {
+        const day = formatYmd(cluster.landedAt);
+        const list = clustersByDay.get(day) ?? [];
+        list.push(cluster);
+        clustersByDay.set(day, list);
+    }
+
+    const allDays = [...new Set([...groups.keys(), ...clustersByDay.keys()])].sort();
+
+    for (const day of allDays) {
+        const dayCommits = groups.get(day) ?? [];
+        const dayClusters = clustersByDay.get(day) ?? [];
+        const rebasedCount = dayClusters.reduce((sum, c) => sum + c.commits.length, 0);
+        const countLabel =
+            rebasedCount > 0
+                ? `(${dayCommits.length} commits, ${rebasedCount} rebased)`
+                : `(${dayCommits.length} commits)`;
+        out.println(`\n${chalk.bold.cyan(formatDateForDisplay(day))} ${chalk.dim(countLabel)}`);
         out.println(chalk.dim("─".repeat(80)));
 
         for (const commit of dayCommits) {
             out.println(formatCommitRow(commit, opts));
         }
+
+        for (const cluster of dayClusters) {
+            renderRebasedClusterLine(cluster);
+        }
     }
+}
+
+function clusterBranchLabel(cluster: RebaseCluster<CommitWithStats>): string {
+    const counts = new Map<string, number>();
+
+    for (const commit of cluster.commits) {
+        const branch = commit.branchAttribution?.branch;
+
+        if (branch && branch !== "(detached)") {
+            counts.set(branch, (counts.get(branch) ?? 0) + 1);
+        }
+    }
+
+    if (counts.size === 0) {
+        return "";
+    }
+
+    const [dominant] = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+    const suffix = counts.size > 1 ? " +others" : "";
+
+    return chalk.dim(` [from ${dominant}${suffix}]`);
+}
+
+function renderRebasedClusterLine(cluster: RebaseCluster<CommitWithStats>): void {
+    const landed = formatClusterTimestamp(cluster.landedAt);
+    const from = formatYmd(cluster.authorDateRange[0]);
+    const to = formatYmd(cluster.authorDateRange[1]);
+    out.println(
+        `  ${chalk.cyan("▸")} ${cluster.commits.length} commits rebased ${landed}, authored ${from} – ${to}${clusterBranchLabel(cluster)}`
+    );
+    out.println(`    ${chalk.dim(`[${showItems(cluster.commits, (c) => c.shortHash)}]`)}`);
 }
 
 function renderRebasedCompressed(clusters: RebaseCluster<CommitWithStats>[]): void {
@@ -402,13 +487,7 @@ function renderRebasedCompressed(clusters: RebaseCluster<CommitWithStats>[]): vo
     out.println(`\n${chalk.dim(`… and ${total} commits rebased into this range (use --include-rebases):`)}`);
 
     for (const cluster of clusters) {
-        const landed = formatClusterTimestamp(cluster.landedAt);
-        const from = formatYmd(cluster.authorDateRange[0]);
-        const to = formatYmd(cluster.authorDateRange[1]);
-        out.println(
-            `  ${chalk.cyan("▸")} ${cluster.commits.length} commits rebased ${landed}, authored ${from} – ${to}`
-        );
-        out.println(`    [${showItems(cluster.commits, (c) => c.shortHash)}]`);
+        renderRebasedClusterLine(cluster);
     }
 }
 
@@ -419,6 +498,7 @@ function renderRebasedExpanded(
         showWorkitemId: boolean;
         includeStat: boolean;
         showAuthor: boolean;
+        showFullMessages?: boolean;
     }
 ): void {
     out.println(`\n${chalk.bold(`── Rebased into range (${rebased.length} commits) ──`)}`);
@@ -472,6 +552,7 @@ function buildCommitsJson(payload: {
         date: c.date,
         commitDate: c.commitDate,
         message: c.message,
+        body: c.body,
         author: c.author,
         branch: c.branchAttribution?.branch ?? null,
         trunkFallback: c.branchAttribution?.trunkFallback ?? false,
@@ -508,14 +589,21 @@ function outputJson(payload: {
 }
 
 async function handleCommits(options: CommitsOptions): Promise<void> {
+    const { log } = logger.scoped("git:commits");
+    const sw = new Stopwatch();
+    log.debug({ from: options.from, to: options.to }, "commits: start");
+
     const storage = new Storage("git");
     const configAuthors = (await storage.getConfigValue<string[]>("authors")) ?? [];
     const patterns = await loadWorkitemPatternsAsync();
     const excludeTrunks = await loadExcludeTrunks(storage);
+    log.debug({ lap: sw.lap() }, "commits: config loaded");
     const groupBy = options.groupBy ?? "day";
     const dateMode = options.date ?? "author";
     const showBranch = !options.withoutBranch;
     const showWorkitemId = !options.withoutWorkitemId;
+    const withTitles = !!options.withWorkitemTitle || !!options.withWorkitems;
+    const showFullMessages = !!options.withFullCommitMessages;
 
     let authors: string[] = [];
 
@@ -539,6 +627,7 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
     }
 
     let commits = await getCommitsByDate(options.from, options.to, authors, !!options.stat, !!options.withoutMerges);
+    log.debug({ lap: sw.lap(), count: commits.length }, "commits: git log done");
 
     if (options.withoutStashes) {
         const stashHashes = await loadStashHashes(process.cwd());
@@ -549,7 +638,7 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
     }
 
     for (const commit of commits) {
-        const refs = extractFromMessage(commit.message, patterns);
+        const refs = extractFromMessage(commit.body, patterns);
         commit.workitemIds = [...new Set(refs.map((r) => r.id))];
     }
 
@@ -558,6 +647,7 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
         process.cwd()
     );
     commits = dedupByPatchId(commits, patchIds);
+    log.debug({ lap: sw.lap(), afterDedup: commits.length }, "commits: patch-id dedup done");
 
     const bounds = rangeBoundsMs(options.from, options.to);
     const allForReset = commits;
@@ -595,26 +685,37 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
         workitemBySha,
         cwd: process.cwd(),
     });
+    log.debug({ lap: sw.lap(), shas: workitemBySha.size }, "commits: branch attribution done");
 
     for (const commit of [...authoredInRange, ...rebasedInRange]) {
         commit.branchAttribution = branchMap.get(commit.hash);
     }
 
-    if (options.withWorkitemTitle) {
+    const titlesById = new Map<number, string>();
+
+    if (withTitles) {
         const azureConfig = loadConfig();
 
-        if (azureConfig) {
+        if (!azureConfig) {
+            log.debug("commits: --with-workitems set but no Azure DevOps config found; titles skipped");
+        } else {
             const allIds = [...new Set([...authoredInRange, ...rebasedInRange].flatMap((c) => c.workitemIds))];
             const enriched = await enrichWorkItems(azureConfig, allIds);
+
+            for (const [id, item] of enriched) {
+                if (item.title) {
+                    titlesById.set(id, item.title);
+                }
+            }
 
             for (const commit of [...authoredInRange, ...rebasedInRange]) {
                 const titles = new Map<number, string>();
 
                 for (const id of commit.workitemIds) {
-                    const item = enriched.get(id);
+                    const title = titlesById.get(id);
 
-                    if (item?.title) {
-                        titles.set(id, item.title);
+                    if (title) {
+                        titles.set(id, title);
                     }
                 }
 
@@ -622,6 +723,11 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
                     commit.workitemTitles = titles;
                 }
             }
+
+            log.debug(
+                { lap: sw.lap(), ids: allIds.length, resolved: titlesById.size },
+                "commits: workitem titles resolved"
+            );
         }
     }
 
@@ -665,10 +771,16 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
         showWorkitemId,
         includeStat: !!options.stat,
         showAuthor,
+        showFullMessages,
         resetAuthorByHash,
         dateMode,
         groupBy,
     };
+
+    // Fold rebased clusters into their landed day only in the default day view;
+    // other groupings (branch/workitem/none) keep the detached footer.
+    const foldClustersIntoDays = groupBy === "day" && !options.includeRebases;
+    const anyResetMarker = [...authored, ...rebased].some((c) => c.resetAuthorMarker);
 
     let outputText = "";
 
@@ -691,6 +803,8 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
             groupBy,
             groupingDate: (c) => groupingDateFor(c, dateMode, resetAuthorByHash.get(c.hash) ?? false),
             workitemSummary: workitemMap,
+            workitemTitles: titlesById,
+            showFullMessages,
             rebasedClusters,
             includeRebasesExpanded: !!options.includeRebases,
             rebasedExpanded: rebased,
@@ -705,7 +819,9 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
             showWorkitemId,
             includeStat: !!options.stat,
             showAuthor,
+            showFullMessages,
             resetAuthorByHash,
+            rebasedClusters: foldClustersIntoDays ? rebasedClusters : undefined,
         });
 
         if (workitemMap.size > 0) {
@@ -713,17 +829,27 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
 
             for (const [id, stats] of [...workitemMap.entries()].sort((a, b) => a[0] - b[0])) {
                 const statPart = options.stat ? chalk.dim(` (+${stats.totalInsertions}/-${stats.totalDeletions})`) : "";
-                out.println(`  ${chalk.yellow(`#${id}`)} - ${stats.commits} commit(s)${statPart}`);
+                const title = titlesById.get(id);
+                const titlePart = title ? ` — ${title}` : "";
+                out.println(`  ${chalk.yellow(`#${id}${titlePart}`)} - ${stats.commits} commit(s)${statPart}`);
             }
         }
 
-        if (options.includeRebases) {
+        if (options.includeRebases && rebased.length > 0) {
             renderRebasedExpanded(rebased, renderOpts);
-        } else if (rebased.length > 0) {
+        } else if (!foldClustersIntoDays && rebased.length > 0) {
             renderRebasedCompressed(rebasedClusters);
         }
 
         out.println(`\n${chalk.dim(`Total: ${authored.length} commits`)}`);
+
+        if (anyResetMarker) {
+            out.println(
+                chalk.dim(
+                    "\n(?) author date ≈ commit date and clustered into one minute — the fingerprint of a rebase/amend that reset the author date. The time shown is likely when it was rebased, not when the work was first written (try --date true-first)."
+                )
+            );
+        }
     }
 
     if (options.clipboard) {
@@ -759,7 +885,9 @@ export function registerCommitsCommand(parent: Command, _storage: Storage): void
         .option("--group-by <mode>", "Group commits: day, branch, workitem, or none", "day")
         .option("--without-branch", "Hide inline branch column")
         .option("--without-workitem-id", "Hide inline #workitem column")
-        .option("--with-workitem-title", "Resolve workitem titles from Azure DevOps cache")
+        .option("--with-workitem-title", "Resolve workitem titles from Azure DevOps cache (inline + summary)")
+        .option("--with-workitems", "Alias for --with-workitem-title")
+        .option("--with-full-commit-messages", "Show full multi-line commit bodies (default: first line only)")
         .option("--without-stashes", "Exclude stash commits (WIP on / index on)")
         .option("--without-merges", "Exclude merge commits")
         .option(

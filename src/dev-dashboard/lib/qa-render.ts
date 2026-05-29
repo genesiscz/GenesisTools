@@ -4,7 +4,7 @@ import type { QaEntry } from "@app/question/lib/types";
 const noopWikilink = { resolveWikilink: () => null };
 
 /** Answers longer than this get a collapsible preview (first N lines when collapsed). */
-export const QA_ANSWER_PREVIEW_LINES = 50;
+export const QA_ANSWER_PREVIEW_LINES = 3;
 
 export function isQaAnswerTruncated(answerMd: string): boolean {
     return answerMd.split("\n").length > QA_ANSWER_PREVIEW_LINES;

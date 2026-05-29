@@ -36,7 +36,7 @@
                 min-height: 100%;
                 height: 100%;
                 opacity: 0;
-                transition: opacity 520ms cubic-bezier(0.22, 1, 0.36, 1);
+                transition: opacity 1000ms cubic-bezier(0.22, 1, 0.36, 1);
             }
 
             html.dd-app-ready #app {
@@ -53,8 +53,8 @@
                 overflow: hidden;
                 background: #0c0e10;
                 transition:
-                    opacity 480ms cubic-bezier(0.22, 1, 0.36, 1),
-                    visibility 480ms step-end;
+                    opacity 1000ms cubic-bezier(0.22, 1, 0.36, 1),
+                    visibility 1000ms step-end;
             }
 
             html.dd-app-ready #dd-boot {
@@ -158,11 +158,16 @@
             .dd-boot__bar-fill {
                 display: block;
                 height: 100%;
-                width: 42%;
+                width: 0;
                 border-radius: inherit;
-                background: linear-gradient(90deg, #34d399, #2dd4bf, #34d399);
-                background-size: 200% 100%;
-                animation: dd-boot-bar 1.35s ease-in-out infinite;
+                background: linear-gradient(90deg, #34d399, #2dd4bf);
+                animation: dd-boot-progress 2.8s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            }
+
+            html.dd-app-ready .dd-boot__bar-fill {
+                animation: none;
+                width: 100%;
+                transition: width 360ms cubic-bezier(0.22, 1, 0.36, 1);
             }
 
             @keyframes dd-boot-mark-pulse {
@@ -178,15 +183,13 @@
                 }
             }
 
-            @keyframes dd-boot-bar {
+            @keyframes dd-boot-progress {
                 0% {
-                    transform: translateX(-120%);
-                    background-position: 0% 50%;
+                    width: 0%;
                 }
 
                 100% {
-                    transform: translateX(280%);
-                    background-position: 100% 50%;
+                    width: 92%;
                 }
             }
 
@@ -218,6 +221,15 @@
                 .dd-boot__bar-fill,
                 .dd-boot__status-dots::after {
                     animation: none;
+                }
+
+                .dd-boot__bar-fill {
+                    width: 72%;
+                }
+
+                html.dd-app-ready .dd-boot__bar-fill {
+                    width: 100%;
+                    transition-duration: 80ms;
                 }
             }
         </style>

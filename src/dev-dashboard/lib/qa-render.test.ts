@@ -51,7 +51,7 @@ describe("enrichQaEntry", () => {
         });
 
         expect(entry.answerHtml).toContain("line 52");
-        expect(entry.answerHtmlPreview).toContain("line 50");
-        expect(entry.answerHtmlPreview).not.toContain("line 51");
+        expect(entry.answerHtmlPreview).toContain("line 3");
+        expect(entry.answerHtmlPreview).not.toContain("line 4");
     });
 });

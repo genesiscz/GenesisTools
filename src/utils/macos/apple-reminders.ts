@@ -358,19 +358,62 @@ export async function runDarwinkitGuarded<T>(
     }
 }
 
+export interface RemindersAuthResult {
+    authorized: boolean;
+    status: string;
+}
+
+export class RemindersPermissionError extends Error {
+    readonly name = "RemindersPermissionError";
+    readonly status: string;
+
+    constructor(status: string) {
+        super(
+            `Reminders access not authorized (status: ${status}). Use “Allow Reminders Access” in the dashboard, or run \`tools macos reminders list-lists\` in Terminal so macOS can show the permission dialog. If the dialog never appears (e.g. launchd background), run \`tools dev-dashboard ui up --foreground\` once. Toggle **bun** (and **DarwinKit** if listed) under System Settings → Privacy & Security → Reminders.`
+        );
+        this.status = status;
+    }
+}
+
+type RemindersClient = {
+    authorized: (opts?: { timeout?: number }) => Promise<RemindersAuthResult>;
+    requestFullAccess: (opts?: { timeout?: number }) => Promise<RemindersAuthResult>;
+};
+
 export class MacReminders {
-    static async ensureAuthorized(options?: GuardOptions): Promise<void> {
-        const auth = await runDarwinkitGuarded(
+    static async authorizationStatus(options?: GuardOptions): Promise<RemindersAuthResult> {
+        return runDarwinkitGuarded(
             getDarwinKit(),
             "reminders.authorized",
-            (dk) => dk.reminders.authorized({ timeout: options?.timeoutMs ?? resolveDefaultTimeoutMs() }),
+            (dk) =>
+                (dk.reminders as RemindersClient).authorized({
+                    timeout: options?.timeoutMs ?? resolveDefaultTimeoutMs(),
+                }),
             options
         );
+    }
+
+    /** Triggers the macOS Reminders permission sheet when status is notDetermined (no manual “+” in Settings). */
+    static async requestAccess(options?: GuardOptions): Promise<RemindersAuthResult> {
+        const timeoutMs = options?.timeoutMs ?? 120_000;
+
+        return runDarwinkitGuarded(
+            getDarwinKit(),
+            "reminders.request_full_access",
+            (dk) => (dk.reminders as RemindersClient).requestFullAccess({ timeout: timeoutMs }),
+            { ...options, timeoutMs }
+        );
+    }
+
+    static async ensureAuthorized(options?: GuardOptions & { requestIfNeeded?: boolean }): Promise<void> {
+        let auth = await MacReminders.authorizationStatus(options);
+
+        if (!auth.authorized && options?.requestIfNeeded !== false) {
+            auth = await MacReminders.requestAccess(options);
+        }
 
         if (!auth.authorized) {
-            throw new Error(
-                `Reminders access not authorized (status: ${auth.status}). Grant access in System Settings > Privacy & Security > Reminders.`
-            );
+            throw new RemindersPermissionError(auth.status);
         }
     }
 
@@ -385,20 +428,21 @@ export class MacReminders {
     }
 
     static async listReminders(
-        listName?: string,
+        listName?: string | string[],
         options?: GuardOptions & { includeCompleted?: boolean }
     ): Promise<ReminderInfo[]> {
         let listIdentifiers: string[] | undefined;
 
         if (listName) {
+            const names = Array.isArray(listName) ? listName : [listName];
             const lists = await MacReminders.listLists(options);
-            const match = lists.find((l) => l.title === listName);
+            listIdentifiers = names
+                .map((name) => lists.find((l) => l.title === name)?.identifier)
+                .filter((id): id is string => Boolean(id));
 
-            if (!match) {
+            if (listIdentifiers.length === 0) {
                 return [];
             }
-
-            listIdentifiers = [match.identifier];
         }
 
         const callTimeout = options?.timeoutMs ?? resolveDefaultTimeoutMs();

@@ -18,7 +18,9 @@ For Vite dev + HMR on localhost only:
 tools dev-dashboard ui up --dev --foreground
 ```
 
-APIs (`/api/tmux/*`, Obsidian share, ttyd) behave the same in both modes. Harness config lives in `ui/app.ts` (`buildDashboardUiServerCmd` from `@app/utils/DashboardApp`).
+APIs (`/api/tmux/*`, Obsidian share, ttyd) behave the same in both modes. Harness config lives in `ui/app.ts` (`buildDashboardUiServerCmd` from `@app/utils/DashboardApp`). The preview loop itself is `runDashboardPreviewUiServer` in `@app/utils/DashboardApp/preview`; dev-dashboard only wires front-proxy, Reminders paths, and reload hooks in `lib/preview-ui-server.ts`.
+
+**Preview mode hot reload:** saves under `ui/src/` rebuild the client bundle (browser reload). Edits to `ui/vite-middleware.ts`, `lib/`, etc. restart the Vite preview subprocess automatically (~1s) — no full `ui restart` needed. Use `ui up --dev` only if you want Vite dev + HMR for the React app.
 
 Config is stored at `~/.genesis-tools/dev-dashboard/config.json`.
 

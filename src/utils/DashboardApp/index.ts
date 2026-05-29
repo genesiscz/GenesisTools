@@ -12,6 +12,7 @@
  *       description: "Launch the Clarity dashboard",
  *       spawn: { cmd: buildViteDevCmd({ configPath, strictPort: true }), cwd: PROJECT_ROOT },
  *   // Or front-proxy dashboards: buildDashboardUiServerCmd({ serverScript, mode: "preview" })
+ *   // and implement __ui-server with runDashboardPreviewUiServer() from ./preview
  *       bindHost: "127.0.0.1", // default; use "0.0.0.0" for LAN/tunnel (see dev-dashboard)
  *       readiness: { kind: "http" },
  *       openBrowser: { enabled: true },
@@ -62,6 +63,17 @@ export {
     resolveDashboardBrowserUrl,
 } from "./access";
 export { dashboardUrlWithQuery } from "./lifecycle";
+export type {
+    DashboardPreviewPublicProxy,
+    DashboardPreviewUiOptions,
+    PreviewServerWatchGlobsOptions,
+} from "./preview";
+export {
+    buildPreviewServerWatchGlobs,
+    openBrowserWhenDashboardEnv,
+    runDashboardPreviewUiServer,
+    watchPreviewServerFiles,
+} from "./preview";
 export type {
     AttachOptions,
     DashboardAccessConfig,

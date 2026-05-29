@@ -1,15 +1,33 @@
-import { MacReminders, ReminderPriority } from "@app/utils/macos/apple-reminders";
+import {
+    MacReminders,
+    ReminderPriority,
+    type RemindersAuthResult,
+    RemindersPermissionError,
+} from "@app/utils/macos/apple-reminders";
 import type { TodoPriority, TodosResult } from "./types";
+
+export { RemindersPermissionError };
+
+export async function requestTodosAccess(): Promise<RemindersAuthResult> {
+    return MacReminders.requestAccess();
+}
 
 export function mapPriority(level: TodoPriority): number {
     return ReminderPriority[level];
 }
 
-export async function listTodos(listName: string): Promise<TodosResult> {
-    await MacReminders.ensureAuthorized();
+export async function listTodos(
+    listNames: string | string[],
+    options?: { includeCompleted?: boolean }
+): Promise<TodosResult> {
+    const includeCompleted = options?.includeCompleted ?? false;
+    const names = Array.isArray(listNames) ? listNames : [listNames];
+    const listFilter = names.length > 0 ? names : undefined;
+
+    await MacReminders.ensureAuthorized({ requestIfNeeded: true });
     const [lists, reminders] = await Promise.all([
         MacReminders.listLists(),
-        MacReminders.listReminders(listName, { includeCompleted: false }),
+        MacReminders.listReminders(listFilter, { includeCompleted }),
     ]);
 
     return { lists, reminders };
