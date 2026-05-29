@@ -1,3 +1,4 @@
+import { IconTooltip } from "@ui/components/icon-button";
 import { Check, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
@@ -197,20 +198,24 @@ export function TimeEditor({ timeMs, onSave, onCancel, maxHours = 99, className 
 
             {/* Action buttons */}
             <div className="flex flex-col gap-1">
-                <button
-                    onClick={handleSave}
-                    className="p-1.5 rounded-md bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors"
-                    title="Save (Enter)"
-                >
-                    <Check className="h-4 w-4" />
-                </button>
-                <button
-                    onClick={onCancel}
-                    className="p-1.5 rounded-md bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
-                    title="Cancel (Esc)"
-                >
-                    <X className="h-4 w-4" />
-                </button>
+                <IconTooltip tooltip="Save (Enter)">
+                    <button
+                        type="button"
+                        onClick={handleSave}
+                        className="p-1.5 rounded-md bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors"
+                    >
+                        <Check className="h-4 w-4" />
+                    </button>
+                </IconTooltip>
+                <IconTooltip tooltip="Cancel (Esc)">
+                    <button
+                        type="button"
+                        onClick={onCancel}
+                        className="p-1.5 rounded-md bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
+                    >
+                        <X className="h-4 w-4" />
+                    </button>
+                </IconTooltip>
             </div>
         </div>
     );

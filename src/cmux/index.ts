@@ -14,6 +14,7 @@
  */
 
 import { registerProfilesCommand } from "@app/cmux/commands/profiles";
+import { registerTmuxCommand } from "@app/cmux/commands/tmux";
 import { out } from "@app/logger";
 import { enhanceHelp, runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
@@ -31,6 +32,7 @@ program
     .option("-v, --verbose", "Enable debug logging");
 
 registerProfilesCommand(program);
+registerTmuxCommand(program);
 
 enhanceHelp(program);
 

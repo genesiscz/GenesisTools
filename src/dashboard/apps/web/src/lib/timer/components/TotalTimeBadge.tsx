@@ -1,3 +1,4 @@
+import { IconTooltip } from "@ui/components/icon-button";
 import { Clock, Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -37,20 +38,22 @@ export function TotalTimeBadge({ totalTimeMs, showTotal, onToggle, className }: 
     return (
         <div className={cn("flex items-center gap-2", className)}>
             {/* Toggle button */}
-            {onToggle && (
-                <button
-                    onClick={onToggle}
-                    className={cn(
-                        "p-1.5 rounded-lg transition-all duration-200",
-                        showTotal
-                            ? "bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30"
-                            : "bg-gray-500/20 text-gray-500 hover:bg-gray-500/30"
-                    )}
-                    title={showTotal ? "Hide total time" : "Show total time"}
-                >
-                    {showTotal ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-                </button>
-            )}
+            {onToggle ? (
+                <IconTooltip tooltip={showTotal ? "Hide total time" : "Show total time"}>
+                    <button
+                        type="button"
+                        onClick={onToggle}
+                        className={cn(
+                            "p-1.5 rounded-lg transition-all duration-200",
+                            showTotal
+                                ? "bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30"
+                                : "bg-gray-500/20 text-gray-500 hover:bg-gray-500/30"
+                        )}
+                    >
+                        {showTotal ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                    </button>
+                </IconTooltip>
+            ) : null}
 
             {/* Total time badge */}
             {showTotal && (

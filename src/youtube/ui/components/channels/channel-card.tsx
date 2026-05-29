@@ -1,12 +1,8 @@
 import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { Card, CardContent } from "@app/utils/ui/components/card";
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from "@app/utils/ui/components/dropdown-menu";
+import { DropdownMenuItem } from "@app/utils/ui/components/dropdown-menu";
+import { IconDropdownMenu } from "@app/utils/ui/components/icon-button";
 import type { Channel } from "@app/youtube/lib/types";
 import { useRemoveChannel, useSyncChannel } from "@app/yt/api.hooks";
 import { formatDateTime, formatNumber } from "@app/yt/lib/format";
@@ -53,8 +49,9 @@ export function ChannelCard({ channel }: { channel: Channel }) {
                             <p className="font-mono text-xs text-secondary">{channel.handle}</p>
                         </div>
                     </button>
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
+                    <IconDropdownMenu
+                        tooltip="Channel actions"
+                        trigger={
                             <Button
                                 variant="ghost"
                                 size="icon"
@@ -62,16 +59,15 @@ export function ChannelCard({ channel }: { channel: Channel }) {
                             >
                                 <MoreVertical className="size-4" />
                             </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={onSync}>
-                                <RefreshCw className="size-4" /> Sync
-                            </DropdownMenuItem>
-                            <DropdownMenuItem variant="destructive" onClick={onRemove}>
-                                <Trash2 className="size-4" /> Remove
-                            </DropdownMenuItem>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
+                        }
+                    >
+                        <DropdownMenuItem onClick={onSync}>
+                            <RefreshCw className="size-4" /> Sync
+                        </DropdownMenuItem>
+                        <DropdownMenuItem variant="destructive" onClick={onRemove}>
+                            <Trash2 className="size-4" /> Remove
+                        </DropdownMenuItem>
+                    </IconDropdownMenu>
                 </div>
                 <div className="flex flex-wrap gap-2">
                     <Badge variant="cyber-secondary">{formatNumber(channel.subscriberCount)} subs</Badge>

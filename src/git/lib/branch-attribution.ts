@@ -1,4 +1,7 @@
+import { logger } from "@app/logger";
+import { concurrentMap } from "@app/utils/async";
 import { Executor } from "@app/utils/cli";
+import { Stopwatch } from "@app/utils/Stopwatch";
 
 export interface BranchAttribution {
     branch: string;
@@ -197,11 +200,15 @@ export async function resolveBranchForCommits(
     shas: string[],
     opts: ResolveBranchOptions
 ): Promise<Map<string, BranchAttribution>> {
+    const { log } = logger.scoped("git:branch-attr");
+    const sw = new Stopwatch();
     const cwd = opts.cwd ?? process.cwd();
     const result = new Map<string, BranchAttribution>();
     const excludeTrunks = opts.excludeTrunks;
     const reflogMap = await buildReflogMap(cwd);
+    log.debug({ lap: sw.lap(), reflogEntries: reflogMap.size }, "branch-attr: reflog map built");
     const nameRev = await nameRevBatch(shas, cwd);
+    log.debug({ lap: sw.lap(), resolved: nameRev.size, total: shas.length }, "branch-attr: name-rev batch done");
 
     const needsFallback: string[] = [];
 
@@ -216,10 +223,19 @@ export async function resolveBranchForCommits(
         needsFallback.push(sha);
     }
 
+    // `git branch -a --contains <sha>` is one spawn per sha and dominates wall-clock
+    // when name-rev resolves to a trunk (the common case for merged backup branches).
+    // Compute all of them once, in parallel, and reuse the result in both passes below.
+    const containsCache = await concurrentMap({
+        items: needsFallback,
+        concurrency: 48,
+        fn: (sha) => branchesContaining(sha, cwd),
+    });
+
     const stillUnmapped: string[] = [];
 
     for (const sha of needsFallback) {
-        const contains = await branchesContaining(sha, cwd);
+        const contains = containsCache.get(sha) ?? [];
         const picked = pickBranchFromContains(contains, excludeTrunks, opts.workitemBySha.get(sha) ?? []);
 
         if (picked) {
@@ -229,6 +245,11 @@ export async function resolveBranchForCommits(
 
         stillUnmapped.push(sha);
     }
+
+    log.debug(
+        { lap: sw.lap(), fallbackContains: needsFallback.length, stillUnmapped: stillUnmapped.length },
+        "branch-attr: name-rev fallback (branch --contains) done"
+    );
 
     for (const sha of stillUnmapped) {
         const reflogRef = lookupReflogRef(sha, reflogMap);
@@ -243,7 +264,7 @@ export async function resolveBranchForCommits(
         }
 
         const fromNameRev = nameRev.get(sha);
-        const contains = await branchesContaining(sha, cwd);
+        const contains = containsCache.get(sha) ?? [];
         const trunkCandidates = new Set<string>();
 
         if (fromNameRev && isTrunk(fromNameRev, excludeTrunks)) {
@@ -272,6 +293,8 @@ export async function resolveBranchForCommits(
 
         result.set(sha, { branch: DETACHED, trunkFallback: false });
     }
+
+    log.debug({ lap: sw.lap(), total: sw.elapsed() }, "branch-attr: unmapped resolution done");
 
     return result;
 }

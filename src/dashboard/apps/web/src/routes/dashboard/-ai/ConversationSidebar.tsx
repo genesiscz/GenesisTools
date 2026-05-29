@@ -1,4 +1,4 @@
-import { Button } from "@ui/components/button";
+import { IconButton } from "@ui/components/icon-button";
 import { ScrollArea } from "@ui/components/scroll-area";
 import { MessageSquarePlus, MessagesSquare, Trash2 } from "lucide-react";
 import type { AiConversation } from "@/drizzle";
@@ -27,15 +27,15 @@ export function ConversationSidebar({
                     Conversations
                 </span>
 
-                <Button
+                <IconButton
                     onClick={onNew}
                     size="icon"
                     variant="ghost"
                     className="h-7 w-7 rounded-lg text-violet-400 hover:bg-violet-400/10 hover:text-violet-300"
-                    title="New conversation"
+                    tooltip="New conversation"
                 >
                     <MessageSquarePlus className="h-4 w-4" />
-                </Button>
+                </IconButton>
             </div>
 
             <ScrollArea className="flex-1">
@@ -72,24 +72,19 @@ export function ConversationSidebar({
                                 >
                                     <span className="flex-1 truncate">{conv.title}</span>
 
-                                    <span
-                                        role="button"
-                                        tabIndex={0}
+                                    <IconButton
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        tooltip="Delete conversation"
                                         onClick={(e) => {
                                             e.stopPropagation();
                                             onDelete(conv.id);
                                         }}
-                                        onKeyDown={(e) => {
-                                            if (e.key === "Enter" || e.key === " ") {
-                                                e.stopPropagation();
-                                                onDelete(conv.id);
-                                            }
-                                        }}
-                                        className="rounded p-0.5 text-white/40 opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
-                                        title="Delete conversation"
+                                        className="h-6 w-6 rounded p-0.5 text-white/40 opacity-0 transition-opacity hover:bg-transparent hover:text-red-400 group-hover:opacity-100"
                                     >
                                         <Trash2 className="h-3.5 w-3.5" />
-                                    </span>
+                                    </IconButton>
                                 </button>
                             </li>
                         );

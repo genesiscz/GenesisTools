@@ -1,3 +1,4 @@
+import { IconTooltip } from "@ui/components/icon-button";
 import { Check, Pencil, X } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
@@ -89,20 +90,24 @@ export const TimerNameInput = memo(function TimerNameInput({ name, onNameChange,
                 </div>
 
                 {/* Action buttons - smaller */}
-                <button
-                    onClick={handleSave}
-                    className="p-1.5 rounded-md bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors"
-                    title="Save"
-                >
-                    <Check className="h-3.5 w-3.5" />
-                </button>
-                <button
-                    onClick={handleCancel}
-                    className="p-1.5 rounded-md bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
-                    title="Cancel"
-                >
-                    <X className="h-3.5 w-3.5" />
-                </button>
+                <IconTooltip tooltip="Save">
+                    <button
+                        type="button"
+                        onClick={handleSave}
+                        className="p-1.5 rounded-md bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors"
+                    >
+                        <Check className="h-3.5 w-3.5" />
+                    </button>
+                </IconTooltip>
+                <IconTooltip tooltip="Cancel">
+                    <button
+                        type="button"
+                        onClick={handleCancel}
+                        className="p-1.5 rounded-md bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
+                    >
+                        <X className="h-3.5 w-3.5" />
+                    </button>
+                </IconTooltip>
             </div>
         );
     }
