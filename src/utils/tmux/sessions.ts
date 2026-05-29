@@ -160,3 +160,100 @@ export function renameTmuxSession(fromName: string, toName: string): void {
         throw new Error(`Failed to rename tmux session ${fromName}${tmuxErrorDetail(result.stderr)}`);
     }
 }
+
+export interface TmuxScrollState {
+    /** Lines of scrollback history above the live screen. */
+    historySize: number;
+    /** Visible rows of the pane. */
+    paneHeight: number;
+    /** Lines scrolled up from the live bottom (0 = at the bottom / following output). */
+    scrollPosition: number;
+    /** Whether the pane is currently in copy-mode (where scrollPosition is meaningful). */
+    inMode: boolean;
+    /**
+     * Whether the alternate screen is active — i.e. a full-screen TUI app
+     * (Claude Code, vim, less) is running. Such apps own their own scrolling and
+     * consume mouse-wheel events; tmux copy-mode does NOT scroll *their* viewport,
+     * so the scrollbar must send wheel events to the app instead.
+     */
+    alternateOn: boolean;
+}
+
+/**
+ * Read scrollback geometry for a session's active pane. `scrollPosition` is only
+ * reported by tmux in copy-mode, so it reads as 0 (live bottom) when `inMode` is
+ * false. Returns null if tmux is unavailable or the session is gone.
+ */
+export function getTmuxScrollState(sessionName: string): TmuxScrollState | null {
+    let tmuxBin: string;
+
+    try {
+        tmuxBin = resolveTmuxBin();
+    } catch {
+        return null;
+    }
+
+    const result = spawnSyncImpl([
+        tmuxBin,
+        "display-message",
+        "-p",
+        "-t",
+        sessionName,
+        "-F",
+        "#{history_size}|#{pane_height}|#{scroll_position}|#{pane_in_mode}|#{alternate_on}",
+    ]);
+
+    if (result.exitCode !== 0) {
+        return null;
+    }
+
+    const [hist, height, scroll, inMode, alternate] = result.stdout.trim().split("|");
+
+    return {
+        historySize: Number.parseInt(hist ?? "0", 10) || 0,
+        paneHeight: Number.parseInt(height ?? "0", 10) || 0,
+        scrollPosition: scroll && scroll.length > 0 ? Number.parseInt(scroll, 10) || 0 : 0,
+        inMode: inMode === "1",
+        alternateOn: alternate === "1",
+    };
+}
+
+/**
+ * Scroll a session's active pane to `fraction` of its scrollback, where 0 is the
+ * oldest line (top of history) and 1 is the live bottom. Drives tmux copy-mode:
+ * a fraction at/near the bottom cancels copy-mode so the pane follows live output
+ * again; otherwise it parks at the exact line via history-bottom + N scroll-up.
+ */
+export function scrollTmuxToFraction(sessionName: string, fraction: number): void {
+    let tmuxBin: string;
+
+    try {
+        tmuxBin = resolveTmuxBin();
+    } catch {
+        return;
+    }
+
+    const state = getTmuxScrollState(sessionName);
+
+    if (!state) {
+        return;
+    }
+
+    const clamped = Math.min(1, Math.max(0, fraction));
+    const fromBottom = Math.min(state.historySize, Math.round((1 - clamped) * state.historySize));
+
+    if (fromBottom <= 0) {
+        if (state.inMode) {
+            spawnSyncImpl([tmuxBin, "send-keys", "-t", sessionName, "-X", "cancel"]);
+        }
+
+        return;
+    }
+
+    if (!state.inMode) {
+        spawnSyncImpl([tmuxBin, "copy-mode", "-t", sessionName]);
+    }
+
+    spawnSyncImpl([tmuxBin, "send-keys", "-t", sessionName, "-X", "history-bottom"]);
+    spawnSyncImpl([tmuxBin, "send-keys", "-t", sessionName, "-X", "-N", String(fromBottom), "scroll-up"]);
+}

@@ -2,8 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { resetTmuxBinCache, setTmuxBinForTests } from "@app/utils/tmux/bin";
 import {
     buildTmuxSpawnEnv,
+    getTmuxScrollState,
     listTmuxSessions,
     renameTmuxSession,
+    scrollTmuxToFraction,
     sessionExists,
     setTmuxSpawnSyncForTests,
 } from "@app/utils/tmux/sessions";
@@ -105,5 +107,76 @@ describe("tmux sessions", () => {
         renameTmuxSession("foo", "bar");
 
         expect(calls.some((cmd) => cmd.includes("rename-session") && cmd.includes("bar"))).toBe(true);
+    });
+
+    test("getTmuxScrollState parses display-message output", () => {
+        setTmuxBinForTests("/mock/tmux");
+        setTmuxSpawnSyncForTests((cmd) => {
+            if (cmd.includes("display-message")) {
+                return { exitCode: 0, stdout: "979|24|100|1|1\n" };
+            }
+
+            return { exitCode: 0, stdout: "" };
+        });
+
+        expect(getTmuxScrollState("foo")).toEqual({
+            historySize: 979,
+            paneHeight: 24,
+            scrollPosition: 100,
+            inMode: true,
+            alternateOn: true,
+        });
+    });
+
+    test("getTmuxScrollState treats empty scroll_position as live bottom", () => {
+        setTmuxBinForTests("/mock/tmux");
+        setTmuxSpawnSyncForTests(() => ({ exitCode: 0, stdout: "500|40||0|0" }));
+
+        expect(getTmuxScrollState("foo")).toEqual({
+            historySize: 500,
+            paneHeight: 40,
+            scrollPosition: 0,
+            inMode: false,
+            alternateOn: false,
+        });
+    });
+
+    test("scrollTmuxToFraction(1) cancels copy-mode to follow live output", () => {
+        setTmuxBinForTests("/mock/tmux");
+        const calls: string[][] = [];
+        setTmuxSpawnSyncForTests((cmd) => {
+            calls.push(cmd);
+
+            if (cmd.includes("display-message")) {
+                return { exitCode: 0, stdout: "1000|24|50|1|0" };
+            }
+
+            return { exitCode: 0, stdout: "" };
+        });
+
+        scrollTmuxToFraction("foo", 1);
+
+        expect(calls.some((cmd) => cmd.includes("cancel"))).toBe(true);
+        expect(calls.some((cmd) => cmd.includes("scroll-up"))).toBe(false);
+    });
+
+    test("scrollTmuxToFraction(0) parks at the top of history", () => {
+        setTmuxBinForTests("/mock/tmux");
+        const calls: string[][] = [];
+        setTmuxSpawnSyncForTests((cmd) => {
+            calls.push(cmd);
+
+            if (cmd.includes("display-message")) {
+                return { exitCode: 0, stdout: "1000|24||0|0" };
+            }
+
+            return { exitCode: 0, stdout: "" };
+        });
+
+        scrollTmuxToFraction("foo", 0);
+
+        expect(calls.some((cmd) => cmd.includes("copy-mode"))).toBe(true);
+        expect(calls.some((cmd) => cmd.includes("history-bottom"))).toBe(true);
+        expect(calls.some((cmd) => cmd.includes("scroll-up") && cmd.includes("1000"))).toBe(true);
     });
 });
