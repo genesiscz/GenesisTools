@@ -1,4 +1,5 @@
 import type { RenderResult } from "@app/dev-dashboard/lib/obsidian/markdown";
+import { escapeHtml } from "@app/utils/string";
 
 interface ShareTemplateOptions {
     title: string;
@@ -13,20 +14,6 @@ const KATEX_CSS_SRI = "sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03B
 const MERMAID_JS_URL = "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
 const INTER_FONT_URL =
     "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Lora:ital,wght@0,400;0,600;1,400&display=swap";
-
-function escapeHtml(value: string): string {
-    return value.replace(/[&<>"']/g, (char) => {
-        const replacements: Record<string, string> = {
-            "&": "&amp;",
-            "<": "&lt;",
-            ">": "&gt;",
-            '"': "&quot;",
-            "'": "&#39;",
-        };
-
-        return replacements[char] ?? char;
-    });
-}
 
 function buildCss(): string {
     return `

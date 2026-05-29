@@ -1,7 +1,9 @@
+import { expandedDirsForNote, parseOpenDirs, serializeOpenDirs } from "@app/utils/obsidian/expanded-dirs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Button } from "@ui/components/button";
 import { Copy, Globe, GlobeLock } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { obsidianApi } from "@/lib/api";
 
 interface Props {
@@ -9,6 +11,8 @@ interface Props {
 }
 
 export function ObsidianReader({ path }: Props) {
+    const navigate = useNavigate({ from: "/obsidian" });
+    const { open } = useSearch({ from: "/obsidian" });
     const queryClient = useQueryClient();
     const { data, isPending, isError } = useQuery({
         queryKey: ["obsidian", "note", path],
@@ -24,6 +28,35 @@ export function ObsidianReader({ path }: Props) {
         mutationFn: (slug: string) => obsidianApi.unpublish(slug),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["obsidian", "note", path] }),
     });
+
+    const onArticleClick = useCallback(
+        (event: React.MouseEvent<HTMLElement>) => {
+            const anchor = (event.target as HTMLElement).closest("a[data-obsidian-note]");
+
+            if (!anchor) {
+                return;
+            }
+
+            event.preventDefault();
+
+            const notePath = anchor.getAttribute("data-obsidian-note");
+
+            if (!notePath) {
+                return;
+            }
+
+            const nextOpen = expandedDirsForNote(notePath, parseOpenDirs(open));
+            const search: { note: string; open?: string } = { note: notePath };
+            const openSerialized = serializeOpenDirs(nextOpen);
+
+            if (openSerialized) {
+                search.open = openSerialized;
+            }
+
+            navigate({ search, replace: false });
+        },
+        [navigate, open]
+    );
 
     if (isPending) {
         return (
@@ -82,6 +115,7 @@ export function ObsidianReader({ path }: Props) {
             <article
                 className="dd-markdown flex-1 overflow-auto px-5 py-4"
                 dangerouslySetInnerHTML={{ __html: data.html }}
+                onClick={onArticleClick}
             />
         </div>
     );

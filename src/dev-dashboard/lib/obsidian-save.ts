@@ -1,5 +1,6 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
+import { normalizeObsidianBaseName } from "@app/utils/obsidian/filename";
 
 function resolveUnderVault(vaultRoot: string, ...segments: string[]): string {
     const root = resolve(vaultRoot);
@@ -48,7 +49,8 @@ export async function saveToObsidianUnique(opts: {
     mode: "create" | "append";
     createDir?: boolean;
 }): Promise<{ path: string }> {
-    assertSafeBaseName(opts.baseName);
+    const baseName = normalizeObsidianBaseName(opts.baseName);
+    assertSafeBaseName(baseName);
     const dir = resolveUnderVault(opts.vaultRoot, opts.relativeDir);
 
     if (opts.createDir) {
@@ -62,7 +64,7 @@ export async function saveToObsidianUnique(opts: {
     }
 
     if (opts.mode === "append") {
-        const path = resolveFileInDir(dir, `${opts.baseName}.md`);
+        const path = resolveFileInDir(dir, `${baseName}.md`);
         const existing = await readExistingMarkdown(path);
         const sep = existing && !existing.endsWith("\n") ? "\n\n" : existing ? "\n" : "";
 
@@ -72,7 +74,7 @@ export async function saveToObsidianUnique(opts: {
     }
 
     for (let n = 1; n <= 999; n++) {
-        const candidate = n === 1 ? `${opts.baseName}.md` : `${opts.baseName}-${n}.md`;
+        const candidate = n === 1 ? `${baseName}.md` : `${baseName}-${n}.md`;
         const path = resolveFileInDir(dir, candidate);
 
         try {

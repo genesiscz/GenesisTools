@@ -1,9 +1,4 @@
-export interface VaultEntry {
-    name: string;
-    relativePath: string;
-    isDirectory: boolean;
-    children?: VaultEntry[];
-}
+export type { VaultEntry } from "@app/utils/obsidian/vault-tree";
 
 export interface RenderedNote {
     source: string;
