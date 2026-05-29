@@ -21,11 +21,15 @@ interface Props {
 }
 
 /**
- * Fallback paste path for browsers where `navigator.clipboard.readText()` is
- * denied (iOS / macOS Safari, Firefox). The user pastes into a real focusable
- * textarea via the native OS paste — which needs no clipboard permission — then
- * Sends, and we inject the value with the same `term.paste()` bridge the
- * one-tap path uses. Multi-line is preserved; ⌘/Ctrl+Enter sends.
+ * Paste-into-terminal dialog for mobile, where the keybar Paste key can't read
+ * the clipboard directly (iOS/Safari deny a programmatic read tied to a stale
+ * gesture). Three ways in, all needing no special permission on the open itself:
+ *   - "Paste from clipboard" button — `readText()` runs inside *this* button's
+ *     click (a fresh gesture on a mounted element), so iOS shows its native
+ *     paste-confirm and actually fills the box.
+ *   - long-press → Paste into the textarea (a native OS paste, always allowed).
+ *   - on Chrome/desktop the box auto-fills from the clipboard on open.
+ * Send injects the value via the same `term.paste()` bridge; ⌘/Ctrl+Enter sends.
  */
 export function TtydPasteDialog({ open, onOpenChange, onSubmit }: Props) {
     const [value, setValue] = useState("");
@@ -37,12 +41,40 @@ export function TtydPasteDialog({ open, onOpenChange, onSubmit }: Props) {
             return;
         }
 
-        // Best-effort focus so the soft keyboard rises; on iOS the user may need
-        // one tap if the activation gesture was already consumed upstream.
-        const id = window.setTimeout(() => textareaRef.current?.focus(), 50);
+        // Best-effort auto-fill on open. Works on Chrome/desktop (no gesture
+        // needed there); iOS/Safari/Firefox reject it and the user taps the
+        // "Paste from clipboard" button or long-press-pastes instead.
+        let cancelled = false;
+        navigator.clipboard
+            ?.readText?.()
+            .then((text) => {
+                if (!cancelled && text) {
+                    setValue((current) => current || text);
+                }
+            })
+            .catch(() => {
+                // no permission on open (iOS/Safari/Firefox/insecure) — manual paste
+            });
 
-        return () => window.clearTimeout(id);
+        return () => {
+            cancelled = true;
+        };
     }, [open]);
+
+    const pasteFromClipboard = async () => {
+        try {
+            // Called synchronously inside this click → a real user gesture on a
+            // mounted element, so iOS surfaces its native paste-confirm here.
+            const text = await navigator.clipboard?.readText?.();
+
+            if (text) {
+                setValue(text);
+                textareaRef.current?.focus({ preventScroll: true });
+            }
+        } catch {
+            // denied/unavailable — fall back to long-press → Paste into the box
+        }
+    };
 
     const submit = () => {
         if (!value) {
@@ -55,7 +87,14 @@ export function TtydPasteDialog({ open, onOpenChange, onSubmit }: Props) {
 
     return (
         <GlassDialogShell open={open} onOpenChange={onOpenChange}>
-            <GlassDialogContent size="md" showCloseButton>
+            <GlassDialogContent
+                size="md"
+                showCloseButton
+                // Top-anchor on mobile so the input sits above the soft keyboard —
+                // a vertically-centered dialog forces iOS to scroll/align when the
+                // keyboard covers the lower half. Stays centered on desktop (sm+).
+                className="top-6 translate-y-0 sm:top-1/2 sm:-translate-y-1/2"
+            >
                 <GlassDialogBody>
                     <GlassDialogHeader className="space-y-2 text-left">
                         <GlassDialogEyebrow>Paste into terminal</GlassDialogEyebrow>
@@ -64,8 +103,7 @@ export function TtydPasteDialog({ open, onOpenChange, onSubmit }: Props) {
                             Paste &amp; send
                         </GlassDialogTitle>
                         <GlassDialogDescription className="font-mono text-xs text-zinc-400">
-                            Long-press → Paste (or ⌘V) into the box, then Send. Works where the one-tap paste can&apos;t
-                            (Safari / Firefox).
+                            Tap Paste from clipboard (Safari shows a confirm), or long-press the box → Paste. Then Send.
                         </GlassDialogDescription>
                     </GlassDialogHeader>
 
@@ -80,12 +118,21 @@ export function TtydPasteDialog({ open, onOpenChange, onSubmit }: Props) {
                             }
                         }}
                         placeholder="Paste here…"
-                        autoFocus
                         rows={5}
                         className="resize-none font-mono text-sm"
                     />
 
                     <GlassDialogFooter className="gap-2 sm:justify-end">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void pasteFromClipboard()}
+                            className="mr-auto gap-2 font-mono text-xs"
+                        >
+                            <ClipboardPaste size={14} />
+                            Paste from clipboard
+                        </Button>
                         <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>
                             Cancel
                         </Button>

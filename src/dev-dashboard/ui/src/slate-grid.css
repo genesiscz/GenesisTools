@@ -705,6 +705,88 @@
     transform: scale(0.94);
     background: rgba(52, 211, 153, 0.12);
 }
+
+/* tmux-aware scrollback scrubber — collapsed to a notch, expands to a drag track */
+.dd-ttyd-scrollbar-notch {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 55;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 60px;
+    padding: 0;
+    color: var(--dd-text-muted);
+    background: color-mix(in srgb, var(--dd-border) 82%, transparent);
+    border: 1px solid var(--dd-border);
+    border-right: none;
+    border-radius: 10px 0 0 10px;
+    backdrop-filter: blur(8px);
+    cursor: pointer;
+}
+.dd-ttyd-scrollbar-notch:active {
+    color: var(--dd-accent-from);
+    transform: translateY(-50%) scale(0.96);
+}
+.dd-ttyd-scrollbar {
+    position: absolute;
+    right: 8px;
+    top: 12%;
+    bottom: 12%;
+    z-index: 55;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+.dd-ttyd-scrollbar-hide {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    color: var(--dd-text-muted);
+    background: color-mix(in srgb, var(--dd-border) 82%, transparent);
+    border: 1px solid var(--dd-border);
+    border-radius: 9999px;
+    backdrop-filter: blur(8px);
+    cursor: pointer;
+}
+.dd-ttyd-scrollbar-hide:active {
+    color: var(--dd-accent-from);
+}
+.dd-ttyd-scrollbar-track {
+    position: relative;
+    flex: 1 1 auto;
+    width: 18px;
+    border-radius: 9999px;
+    background: color-mix(in srgb, var(--dd-border) 55%, transparent);
+    border: 1px solid var(--dd-border);
+    touch-action: none;
+    cursor: grab;
+}
+.dd-ttyd-scrollbar-track:active {
+    cursor: grabbing;
+}
+.dd-ttyd-scrollbar-thumb {
+    position: absolute;
+    left: 3px;
+    right: 3px;
+    min-height: 26px;
+    border-radius: 9999px;
+    background: var(--dd-accent-gradient);
+    box-shadow: 0 0 10px var(--dd-accent-glow);
+    pointer-events: none;
+}
+/* relative (alt-screen) grip: a jog control that springs back to centre on release */
+.dd-ttyd-scrollbar-thumb.is-relative {
+    transition: top 150ms cubic-bezier(0.22, 1, 0.36, 1);
+    opacity: 0.9;
+}
 .dd-edge {
     position: absolute;
     left: 0;

@@ -48,7 +48,7 @@ import {
     requestTodosAccess,
     updateTodo,
 } from "@app/dev-dashboard/lib/todos/service";
-import { killTtyd, listTtyd, renameTtyd, spawnTtyd } from "@app/dev-dashboard/lib/ttyd/manager";
+import { getTtydTmuxSessionName, killTtyd, listTtyd, renameTtyd, spawnTtyd } from "@app/dev-dashboard/lib/ttyd/manager";
 import { fetchWeather } from "@app/dev-dashboard/lib/weather/client";
 import { logger } from "@app/logger";
 import { defaultDbPath } from "@app/question/commands/log";
@@ -67,7 +67,7 @@ import { indexCmuxSurfacesByTmuxSession } from "@app/utils/cmux/tmux-bindings";
 import type { DashboardSendTarget } from "@app/utils/cmux/types";
 import { SafeJSON } from "@app/utils/json";
 import { resolveWikilinkToVaultPath } from "@app/utils/obsidian/wikilink-resolve";
-import { listTmuxSessions } from "@app/utils/tmux/sessions";
+import { getTmuxScrollState, listTmuxSessions, scrollTmuxToFraction } from "@app/utils/tmux/sessions";
 import type { Connect } from "vite";
 
 let loggedGeneratedPassword = false;
@@ -272,6 +272,45 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
                 const ok = await renameTtyd(body.id, body.name);
                 sendJson(res, 200, { ok });
             } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/api/ttyd/scroll-state") {
+            try {
+                const id = url.searchParams.get("id") ?? "";
+                const tmuxSessionName = await getTtydTmuxSessionName(id);
+
+                if (!tmuxSessionName) {
+                    sendJson(res, 404, { error: "ttyd session not found" });
+                    return;
+                }
+
+                sendJson(res, 200, { state: getTmuxScrollState(tmuxSessionName) });
+            } catch (err) {
+                logger.warn({ err, route: "GET /api/ttyd/scroll-state" }, "tmux hub: ttyd scroll-state failed");
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/ttyd/scroll-to") {
+            try {
+                const body = await readJson<{ id: string; fraction: number }>(req);
+                const tmuxSessionName = await getTtydTmuxSessionName(body.id);
+
+                if (!tmuxSessionName) {
+                    sendJson(res, 404, { error: "ttyd session not found" });
+                    return;
+                }
+
+                scrollTmuxToFraction(tmuxSessionName, Number(body.fraction));
+                sendJson(res, 200, { ok: true });
+            } catch (err) {
+                logger.warn({ err, route: "POST /api/ttyd/scroll-to" }, "tmux hub: ttyd scroll-to failed");
                 sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
             }
 

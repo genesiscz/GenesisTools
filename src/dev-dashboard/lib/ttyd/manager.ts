@@ -270,6 +270,24 @@ export async function getTtydPort(id: string): Promise<number | null> {
     return config.ttydSessions.find((session) => session.id === id)?.port ?? null;
 }
 
+/**
+ * Resolve a session's tmux session name. Like getTtydPort, this is on the hit
+ * path of frequent polling (the scrollbar reads tmux state), so it stays
+ * in-memory with a single config fallback for cross-process / post-hydrate
+ * sessions — no per-call prune.
+ */
+export async function getTtydTmuxSessionName(id: string): Promise<string | null> {
+    await hydrateRegistry();
+
+    const cached = registry.get(id)?.session.tmuxSessionName;
+    if (cached !== undefined) {
+        return cached;
+    }
+
+    const config = await getConfig();
+    return config.ttydSessions.find((session) => session.id === id)?.tmuxSessionName ?? null;
+}
+
 export async function renameTtyd(id: string, name: string): Promise<boolean> {
     await hydrateRegistry();
     const tracked = registry.get(id);

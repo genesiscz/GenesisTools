@@ -8,6 +8,7 @@ import type {
 import type { VaultEntry } from "@app/dev-dashboard/lib/obsidian/types";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import { SafeJSON } from "@app/utils/json";
+import type { TmuxScrollState } from "@app/utils/tmux/sessions";
 
 export interface TmuxHubSession {
     name: string;
@@ -58,6 +59,13 @@ export const ttydApi = {
         jsonFetch<{ ok: boolean }>("/api/ttyd/rename", {
             method: "POST",
             body: SafeJSON.stringify({ id, name }),
+        }),
+    scrollState: (id: string) =>
+        jsonFetch<{ state: TmuxScrollState | null }>(`/api/ttyd/scroll-state?id=${encodeURIComponent(id)}`),
+    scrollTo: (id: string, fraction: number) =>
+        jsonFetch<{ ok: boolean }>("/api/ttyd/scroll-to", {
+            method: "POST",
+            body: SafeJSON.stringify({ id, fraction }),
         }),
 };
 
