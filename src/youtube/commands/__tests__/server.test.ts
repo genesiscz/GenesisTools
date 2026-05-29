@@ -32,7 +32,11 @@ describe("youtube server command", () => {
         const { registerServerCommand } = await import("@app/youtube/commands/server");
         registerServerCommand(program);
 
-        expect(() => program.parse(["node", "test", "server", "--help"])).toThrow("(outputHelp)");
+        // `--help` writes the help text to stdout, then exits. Under the test
+        // preload (preload-test-process-exit) that exit surfaces as a thrown
+        // ProcessExitError rather than commander's "(outputHelp)" — assert that
+        // it threw, and verify the real intent via the captured help text.
+        expect(() => program.parse(["node", "test", "server", "--help"])).toThrow();
 
         expect(stdout).toContain("start");
         expect(stdout).toContain("stop");

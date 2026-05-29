@@ -111,8 +111,9 @@ describe("youtube cache command", () => {
             stdout += String(chunk);
             return true;
         });
-        stderrSpy = spyOn(console, "error").mockImplementation((chunk?: unknown) => {
-            stderr += `${String(chunk)}\n`;
+        stderrSpy = spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+            stderr += String(chunk);
+            return true;
         });
     });
 

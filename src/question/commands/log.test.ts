@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { stripAnsi } from "@app/utils/string";
 import { appendEntry } from "../lib/log-store";
 import type { QaEntry } from "../lib/types";
 import { renderDigest } from "./log";
@@ -40,6 +41,8 @@ describe("renderDigest", () => {
     it("returns a placeholder when nothing is recorded", () => {
         const logBase = mkdtempSync(join(tmpdir(), "qa-empty-"));
         const out = renderDigest({ logBase, dbPath: join(mkdtempSync(join(tmpdir(), "db-")), "qa.db") });
-        expect(out).toBe("No questions recorded.");
+        // pc.dim() colorizes when CI is set (picocolors treats `"CI" in env` as
+        // color-supported even without a TTY), so strip ANSI before the exact match.
+        expect(stripAnsi(out)).toBe("No questions recorded.");
     });
 });
