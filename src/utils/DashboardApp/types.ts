@@ -82,6 +82,8 @@ export interface DashboardAppConfig {
     /** Spawn instructions for the child process. */
     spawn: {
         cmd: readonly string[];
+        /** When set, `up --dev` / `restart --dev` use this instead of `cmd` (vite dev + HMR). */
+        devCmd?: readonly string[];
         cwd?: string;
         env?: Record<string, string | undefined>;
     };
@@ -139,6 +141,8 @@ export interface UpOptions {
     interactive?: boolean;
     /** When true, an already-running instance on our port is stopped without a menu (used by `install`). */
     replaceRunning?: boolean;
+    /** Use `spawn.devCmd` when the dashboard defines it (`up --dev`). */
+    uiServe?: "dev";
 }
 
 export interface InstallOptions {
