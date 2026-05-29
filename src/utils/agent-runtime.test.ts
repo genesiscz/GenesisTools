@@ -9,6 +9,7 @@ describe("getAgentRuntimeContext", () => {
         expect(ctx.isInAgent).toBe(true);
         expect(typeof ctx.project).toBe("string");
         expect(ctx.project.length).toBeGreaterThan(0);
+        expect(ctx.commitMessage === null || typeof ctx.commitMessage === "string").toBe(true);
     });
 
     it("honors explicit overrides over env", () => {

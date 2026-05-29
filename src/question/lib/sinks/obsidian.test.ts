@@ -16,6 +16,8 @@ const entry: QaEntry = {
     cwd: "/r",
     branch: "feat/x",
     commitSha: "abc1234",
+    commitMessage: "fix things",
+    agent: "claude-code",
     isWorktree: false,
     worktreePath: null,
     aiAgent: null,

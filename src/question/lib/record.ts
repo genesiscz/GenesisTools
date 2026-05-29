@@ -49,6 +49,8 @@ export async function recordAnswer(input: RecordInput, deps: RecordDeps = {}): P
         cwd: ctx.cwd,
         branch: ctx.branch,
         commitSha: ctx.commitSha,
+        commitMessage: ctx.commitMessage,
+        agent: ctx.agent,
         isWorktree: ctx.isWorktree,
         worktreePath: ctx.worktreePath,
         aiAgent: ctx.aiAgent,

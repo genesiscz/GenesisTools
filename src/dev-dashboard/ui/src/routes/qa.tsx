@@ -44,6 +44,90 @@ function tagClass(tag: string): string {
     return "border-[var(--dd-border)] text-[var(--dd-text-secondary)]";
 }
 
+function truncateMiddle(text: string, maxLen: number): string {
+    if (text.length <= maxLen) {
+        return text;
+    }
+
+    const head = Math.ceil((maxLen - 1) / 2);
+    const tail = Math.floor((maxLen - 1) / 2);
+
+    return `${text.slice(0, head)}…${text.slice(-tail)}`;
+}
+
+function shortSessionId(sessionId: string): string {
+    if (sessionId === "unknown" || sessionId.length <= 12) {
+        return sessionId;
+    }
+
+    return `${sessionId.slice(0, 8)}…`;
+}
+
+function QaContextStrip({ entry }: { entry: QaRow }) {
+    const commitRef = entry.refs.find((r) => r.type === "commit");
+    const hasContext =
+        entry.commitSha ||
+        entry.commitMessage ||
+        entry.isWorktree ||
+        entry.cwd ||
+        entry.agent !== "unknown" ||
+        entry.sessionId !== "unknown" ||
+        entry.sessionTitle;
+
+    if (!hasContext) {
+        return null;
+    }
+
+    const commitLabel = entry.commitSha
+        ? `${entry.commitSha}${entry.commitMessage ? ` — ${truncateMiddle(entry.commitMessage, 48)}` : ""}`
+        : null;
+
+    return (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-[var(--dd-border)] pt-2 text-[10px] font-mono text-[var(--dd-text-muted)]">
+            {commitLabel ? (
+                <span title={entry.commitMessage ?? entry.commitSha ?? undefined}>
+                    {commitRef ? (
+                        <a
+                            href={`https://github.com/search?q=${encodeURIComponent(commitRef.value)}&type=commits`}
+                            className="dd-accent-text hover:opacity-80"
+                            onClick={(ev) => ev.stopPropagation()}
+                        >
+                            {commitLabel}
+                        </a>
+                    ) : (
+                        <span className="text-[var(--dd-text-secondary)]">{commitLabel}</span>
+                    )}
+                </span>
+            ) : null}
+            {entry.isWorktree ? (
+                <span
+                    className="rounded border border-[var(--dd-border)] px-1.5 py-px text-[var(--dd-text-secondary)]"
+                    title={entry.worktreePath ?? entry.cwd}
+                >
+                    worktree
+                    {entry.worktreePath ? `: ${truncateMiddle(entry.worktreePath, 36)}` : ""}
+                </span>
+            ) : null}
+            {entry.cwd ? (
+                <span className="max-w-full truncate" title={entry.cwd}>
+                    cwd {truncateMiddle(entry.cwd, 42)}
+                </span>
+            ) : null}
+            {entry.agent !== "unknown" || entry.sessionId !== "unknown" ? (
+                <span title={entry.sessionId}>
+                    {entry.agent !== "unknown" ? entry.agent : "session"}{" "}
+                    <span className="text-[var(--dd-text-secondary)]">{shortSessionId(entry.sessionId)}</span>
+                </span>
+            ) : null}
+            {entry.sessionTitle ? (
+                <span className="text-[var(--dd-text-secondary)]" title={entry.sessionTitle}>
+                    {truncateMiddle(entry.sessionTitle, 40)}
+                </span>
+            ) : null}
+        </div>
+    );
+}
+
 const QaCard = memo(function QaCard({
     entry,
     unread,
@@ -180,6 +264,7 @@ const QaCard = memo(function QaCard({
                     {!unread && readAt != null ? <QaReadTime readAt={readAt} /> : null}
                     <QaRecencyTime ts={entry.ts} />
                 </div>
+                <QaContextStrip entry={entry} />
                 <QaSectionHeading label="Question" />
                 {viewMode === "reading" ? (
                     <article

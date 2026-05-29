@@ -14,6 +14,11 @@ function entryHaystack(row: QaRow): string {
         row.project ?? "",
         row.branch ?? "",
         row.commitSha ?? "",
+        row.commitMessage ?? "",
+        row.sessionTitle ?? "",
+        row.cwd ?? "",
+        row.agent ?? "",
+        row.sessionId ?? "",
         row.agentLabel ?? "",
         row.refs.map((x) => `${x.type}:${x.value}`).join(" "),
     ].join(" ");

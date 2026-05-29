@@ -12,6 +12,8 @@ function row(over: Partial<QaRow> & { id: string }): QaRow {
         cwd: "/r",
         branch: null,
         commitSha: null,
+        commitMessage: null,
+        agent: "unknown",
         isWorktree: false,
         worktreePath: null,
         aiAgent: null,

@@ -12,6 +12,8 @@ const baseEntry: QaEntry = {
     cwd: "/tmp",
     branch: "main",
     commitSha: null,
+    commitMessage: null,
+    agent: "unknown",
     isWorktree: false,
     worktreePath: null,
     aiAgent: null,

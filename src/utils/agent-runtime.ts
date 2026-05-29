@@ -1,4 +1,5 @@
 import { basename, resolve } from "node:path";
+import { getSessionMetadataBySessionId } from "@app/claude/lib/history/cache";
 import { detectCurrentProject } from "@app/utils/claude/projects";
 import { type AgentRuntimeContext, resolveClaudeContext } from "@app/utils/claude/runtime-context";
 import { isCodex, resolveCodexContext } from "@app/utils/codex/runtime-context";
@@ -44,6 +45,7 @@ export function getAgentRuntimeContext(
     // main root — `isWorktree` could never be true (t23).
     const gitDir = gitSync(["rev-parse", "--git-dir"], cwd);
     const gitCommonDir = gitSync(["rev-parse", "--git-common-dir"], cwd);
+    const isWorktree = gitDir != null && gitCommonDir != null && resolve(cwd, gitDir) !== resolve(cwd, gitCommonDir);
     const base: AgentRuntimeContext = {
         agent: "unknown",
         sessionId: null,
@@ -53,11 +55,23 @@ export function getAgentRuntimeContext(
         project: detectCurrentProject() ?? basename(repoRoot),
         repoRoot,
         cwd,
-        isWorktree: gitDir != null && gitCommonDir != null && resolve(cwd, gitDir) !== resolve(cwd, gitCommonDir),
-        worktreePath: null,
+        isWorktree,
+        worktreePath: isWorktree ? gitSync(["rev-parse", "--show-toplevel"], cwd) : null,
         branch: gitSync(["rev-parse", "--abbrev-ref", "HEAD"], cwd),
         commitSha: gitSync(["rev-parse", "--short", "HEAD"], cwd),
+        commitMessage: gitSync(["log", "-1", "--format=%s"], cwd),
     };
 
-    return { ...base, ...agentPartial, ...overrides };
+    const merged = { ...base, ...agentPartial, ...overrides };
+
+    if (!merged.sessionTitle && merged.agent === "claude-code" && merged.sessionId) {
+        try {
+            const meta = getSessionMetadataBySessionId(merged.sessionId);
+            merged.sessionTitle = meta?.customTitle ?? meta?.summary ?? null;
+        } catch {
+            // history index optional
+        }
+    }
+
+    return merged;
 }
