@@ -21,4 +21,6 @@ test("clean --session removes ONE session, leaves others (B5)", async () => {
         expect(names).not.toContain(A);
         expect(names).toContain(B);
     });
-});
+    // Runs several cold `tools task` subprocesses in sequence; generous bun
+    // per-test timeout so it survives `bun test --parallel` CI contention.
+}, 60_000);
