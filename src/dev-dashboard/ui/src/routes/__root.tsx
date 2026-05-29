@@ -1,4 +1,5 @@
 import { useLocation } from "@tanstack/react-router";
+import { IconTooltipProvider } from "@ui/components/icon-button";
 import type { ReactNode } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { useLayoutMode } from "@/hooks/useLayoutMode";
@@ -18,13 +19,23 @@ export function Shell({ children }: ShellProps) {
     const focused = routeKey !== null && mode === "focused";
 
     return (
-        <div className="dd-grid-bg flex min-h-screen">
-            {focused ? null : (
-                <aside className="w-[62px] border-r border-[var(--dd-border)] bg-[var(--dd-bg-panel)]">
-                    <Sidebar />
-                </aside>
-            )}
-            <main className={focused ? "flex-1" : "flex-1 p-4"}>{children}</main>
-        </div>
+        <IconTooltipProvider>
+            <div className="dd-grid-bg flex h-full min-h-0 min-w-0 max-w-full overflow-hidden">
+                {focused ? null : (
+                    <aside className="w-[62px] shrink-0 border-r border-[var(--dd-border)] bg-[var(--dd-bg-panel)]">
+                        <Sidebar />
+                    </aside>
+                )}
+                <main
+                    className={
+                        focused
+                            ? "min-h-0 min-w-0 flex-1 overflow-hidden"
+                            : "dd-scroll-region min-h-0 min-w-0 flex-1 p-4"
+                    }
+                >
+                    {children}
+                </main>
+            </div>
+        </IconTooltipProvider>
     );
 }

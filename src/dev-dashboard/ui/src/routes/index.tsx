@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { SegmentedControl } from "@ui/components/segmented-control";
 import { useState } from "react";
 import { KpiCard } from "@/components/pulse/KpiCard";
 import { NetworkInfo } from "@/components/pulse/NetworkInfo";
@@ -91,18 +92,19 @@ export function IndexRoute() {
         refetchInterval: 5000,
     });
 
-    const [rangeMinutes, setRangeMinutes] = useState<number>(HISTORY_RANGES[0].minutes);
+    const [rangeMinutes, setRangeMinutes] = useState<string>(String(HISTORY_RANGES[0].minutes));
+    const rangeMinutesNum = Number(rangeMinutes);
 
     const cpuHistory = useQuery<PulseSeries>({
-        queryKey: ["pulse", "history", "cpu", rangeMinutes],
-        queryFn: () => fetchJson<PulseSeries>(`/api/system/pulse/history?metric=cpu&minutes=${rangeMinutes}`),
+        queryKey: ["pulse", "history", "cpu", rangeMinutesNum],
+        queryFn: () => fetchJson<PulseSeries>(`/api/system/pulse/history?metric=cpu&minutes=${rangeMinutesNum}`),
         refetchInterval: 10000,
     });
 
     const memHistory = useQuery<PulseSeries>({
-        queryKey: ["pulse", "history", "mem_free", rangeMinutes],
-        queryFn: () => fetchJson<PulseSeries>(`/api/system/pulse/history?metric=mem_free&minutes=${rangeMinutes}`),
-        refetchInterval: rangeMinutes >= 1440 ? 60000 : 10000,
+        queryKey: ["pulse", "history", "mem_free", rangeMinutesNum],
+        queryFn: () => fetchJson<PulseSeries>(`/api/system/pulse/history?metric=mem_free&minutes=${rangeMinutesNum}`),
+        refetchInterval: rangeMinutesNum >= 1440 ? 60000 : 10000,
     });
 
     const weather = useQuery<WeatherSnapshot>({
@@ -154,27 +156,18 @@ export function IndexRoute() {
 
             <div className="grid gap-4 lg:grid-cols-3">
                 <div className="flex flex-col gap-4 lg:col-span-2">
-                    <div className="flex justify-end gap-1" role="group" aria-label="History time range">
-                        {HISTORY_RANGES.map(({ label, minutes }) => {
-                            const active = rangeMinutes === minutes;
-
-                            return (
-                                <button
-                                    key={minutes}
-                                    type="button"
-                                    onClick={() => setRangeMinutes(minutes)}
-                                    aria-pressed={active}
-                                    className="rounded-[6px] border px-2 py-1 text-xs transition"
-                                    style={{
-                                        background: active ? "var(--dd-accent-gradient)" : "transparent",
-                                        borderColor: active ? "transparent" : "var(--dd-border)",
-                                        color: active ? "#0c0e10" : "var(--dd-text-secondary)",
-                                    }}
-                                >
-                                    {label}
-                                </button>
-                            );
-                        })}
+                    <div className="flex justify-end">
+                        <SegmentedControl
+                            tone="dd"
+                            aria-label="History time range"
+                            className="w-auto"
+                            value={rangeMinutes}
+                            onValueChange={setRangeMinutes}
+                            options={HISTORY_RANGES.map(({ label, minutes }) => ({
+                                value: String(minutes),
+                                label,
+                            }))}
+                        />
                     </div>
                     <PulseGraph title="CPU" points={cpuHistory.data?.points ?? []} unit="%" />
                     <PulseGraph title="Memory free" points={memHistory.data?.points ?? []} unit="%" />

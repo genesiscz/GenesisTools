@@ -1,4 +1,4 @@
-import { classifyTerminalPreview } from "@/lib/terminal-colors";
+import { classifyTerminalPreview } from "@app/utils/terminal/line-classify";
 
 interface Props {
     preview: string;

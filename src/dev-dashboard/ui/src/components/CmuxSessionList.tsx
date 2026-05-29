@@ -1,23 +1,32 @@
 import type { CmuxSnapshot } from "@app/dev-dashboard/lib/cmux/types";
 import { formatClock } from "@app/utils/format";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@ui/components/tooltip";
-import { CircleDashed } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { CircleDashed, Layers, Plus } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
 import "react-mosaic-component/react-mosaic-component.css";
-import { SemanticTerminalPreview } from "@/components/SemanticTerminalPreview";
-import { MobileTerminalShell } from "@/components/terminal-shell/MobileTerminalShell";
-import { useLayoutMode } from "@/hooks/useLayoutMode";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { cmuxApi } from "@/lib/api";
 import {
     buildBalancedMosaicLayout,
     flattenMosaicLeaves,
     pruneMosaicLeaves,
     reconcileMosaicLayout,
 } from "@app/utils/ui/helpers/mosaic-layout";
+import { CmuxSendTargetDialog } from "@/components/CmuxSendTargetDialog";
+import { SemanticTerminalPreview } from "@/components/SemanticTerminalPreview";
+import { TmuxSessionsPanel } from "@/components/TmuxSessionsPanel";
+import { MobileTerminalShell } from "@/components/terminal-shell/MobileTerminalShell";
+import { ShellIconButton } from "@/components/terminal-shell/ShellIconButton";
+import { useLayoutMode } from "@/hooks/useLayoutMode";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { cmuxApi, tmuxApi } from "@/lib/api";
+import {
+    mergeStoredCmuxSurfaceSelection,
+    pickStoredCmuxActivePaneId,
+    ttydTabSearchHref,
+    writeCmuxViewState,
+} from "@/lib/view-state";
 
 interface Props {
     snapshot: CmuxSnapshot;
@@ -45,6 +54,9 @@ function GoneCmuxPane({ id, onExpire }: GonePaneProps) {
 }
 
 export function CmuxSessionList({ snapshot }: Props) {
+    const queryClient = useQueryClient();
+    const [hubOpen, setHubOpen] = useState(false);
+    const [sendTarget, setSendTarget] = useState<string | null>(null);
     const workspaceById = useMemo(
         () => new Map(snapshot.workspaces.map((workspace) => [workspace.id, workspace])),
         [snapshot.workspaces]
@@ -71,8 +83,17 @@ export function CmuxSessionList({ snapshot }: Props) {
         mutationFn: (body: { workspaceId: string; surfaceId?: string; title: string }) => cmuxApi.rename(body),
         // snapshot poll (2s, in CmuxRoute) reflects the new title — no invalidate.
     });
+    const createSession = useMutation({
+        mutationFn: () => tmuxApi.create(),
+        onSuccess: (data) => {
+            queryClient.invalidateQueries({ queryKey: ["tmux"] });
+            setSendTarget(data.sessionName);
+        },
+    });
     const { mode, isMobile, setMode } = useLayoutMode("cmux");
+    const isCompactChrome = useMediaQuery("(max-width: 1024px)");
     const [activePaneId, setActivePaneId] = useState<string | null>(null);
+    const skipViewPersist = useRef(true);
     const removeGonePane = useCallback((id: string) => {
         setLayout((current) => pruneMosaicLeaves(current, new Set([id])));
     }, []);
@@ -105,24 +126,61 @@ export function CmuxSessionList({ snapshot }: Props) {
     }, [mosaicOptions]);
 
     useEffect(() => {
+        if (panes.length === 0) {
+            return;
+        }
+
+        setActivePaneId((current) => {
+            if (current && panes.some((pane) => pane.id === current)) {
+                return current;
+            }
+
+            const storedPane = pickStoredCmuxActivePaneId(paneIds);
+
+            if (storedPane) {
+                return storedPane;
+            }
+
+            return panes.find((pane) => pane.active)?.id ?? panes[0]?.id ?? null;
+        });
+
         setSurfaceSelectionByPaneId((current) => {
+            const seeded = skipViewPersist.current
+                ? { ...mergeStoredCmuxSurfaceSelection(panes), ...current }
+                : current;
             const next: Record<string, string> = {};
 
             for (const pane of panes) {
-                const selectedSurfaceId = current[pane.id];
+                const selectedSurfaceId = seeded[pane.id];
+
                 if (selectedSurfaceId && pane.surfaces.some((surface) => surface.id === selectedSurfaceId)) {
                     next[pane.id] = selectedSurfaceId;
                 }
             }
 
-            const currentKeys = Object.keys(current);
+            const seededKeys = Object.keys(seeded);
             const nextKeys = Object.keys(next);
             const changed =
-                currentKeys.length !== nextKeys.length || currentKeys.some((key) => current[key] !== next[key]);
+                seededKeys.length !== nextKeys.length || seededKeys.some((key) => seeded[key] !== next[key]);
 
-            return changed ? next : current;
+            return changed ? next : seeded;
         });
-    }, [panes, surfaceIdsKey]);
+
+        if (skipViewPersist.current) {
+            skipViewPersist.current = false;
+        }
+    }, [panes, paneIds, paneIdsKey, surfaceIdsKey]);
+
+    useEffect(() => {
+        if (skipViewPersist.current) {
+            return;
+        }
+
+        writeCmuxViewState({
+            activePaneId,
+            surfaceByPaneId: surfaceSelectionByPaneId,
+        });
+    }, [activePaneId, surfaceSelectionByPaneId]);
 
     if (!snapshot.available) {
         return (
@@ -149,14 +207,73 @@ export function CmuxSessionList({ snapshot }: Props) {
         );
     };
 
+    const shellHeaderActions = (
+        <>
+            <ShellIconButton
+                icon={Plus}
+                label="New tmux session in cmux"
+                disabled={createSession.isPending}
+                onClick={() => createSession.mutate()}
+            />
+            <ShellIconButton icon={Layers} label="Tmux sessions" onClick={() => setHubOpen(true)} />
+        </>
+    );
+
+    const cmuxOverlays = (
+        <>
+            <TmuxSessionsPanel
+                open={hubOpen}
+                onOpenChange={setHubOpen}
+                onFocusTtydTab={(ttydId) => {
+                    window.location.assign(ttydTabSearchHref(ttydId));
+                }}
+            />
+            {sendTarget ? (
+                <CmuxSendTargetDialog
+                    open
+                    tmuxSessionName={sendTarget}
+                    onOpenChange={(open) => {
+                        if (!open) {
+                            setSendTarget(null);
+                        }
+                    }}
+                    onSent={() => {
+                        queryClient.invalidateQueries({ queryKey: ["cmux"] });
+                        queryClient.invalidateQueries({ queryKey: ["tmux"] });
+                        setSendTarget(null);
+                    }}
+                    onRenamed={(nextName) => {
+                        queryClient.invalidateQueries({ queryKey: ["tmux"] });
+                        setSendTarget(nextName);
+                    }}
+                />
+            ) : null}
+        </>
+    );
+
     if (mode === "focused") {
         const activePane = panes.find((p) => p.id === activePaneId) ?? panes.find((p) => p.active) ?? panes[0] ?? null;
         const activeSurface = activePane ? surfaceFor(activePane.id) : undefined;
 
         return (
-            <div className="dd-focused-host relative h-[100dvh]">
+            <div className="dd-focused-host relative overflow-hidden">
                 {!isMobile ? (
-                    <div className="absolute right-2 top-1 z-30">
+                    <div className="absolute right-2 top-1 z-30 flex gap-2">
+                        {!isCompactChrome ? (
+                            <>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={createSession.isPending}
+                                    onClick={() => createSession.mutate()}
+                                >
+                                    <Plus size={12} /> New
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={() => setHubOpen(true)}>
+                                    <Layers size={12} /> Tmux
+                                </Button>
+                            </>
+                        ) : null}
                         <Button
                             size="sm"
                             variant="outline"
@@ -170,6 +287,7 @@ export function CmuxSessionList({ snapshot }: Props) {
                 {/* Always render the shell so the edge/nav + strip are present
                     even when there are no cmux panes (lets you navigate away). */}
                 <MobileTerminalShell
+                    headerActions={isCompactChrome || isMobile ? shellHeaderActions : undefined}
                     tabs={panes.map((p) => {
                         const ws = workspaceById.get(p.workspaceId);
 
@@ -212,7 +330,7 @@ export function CmuxSessionList({ snapshot }: Props) {
                             : undefined
                     }
                     primaryAction={
-                        activePane
+                        activePane && !isCompactChrome
                             ? {
                                   label: "attach",
                                   onClick: () =>
@@ -232,7 +350,7 @@ export function CmuxSessionList({ snapshot }: Props) {
                     )}
                 >
                     {activePane ? (
-                        <div className="absolute inset-0 flex flex-col overflow-hidden p-2 font-mono">
+                        <div className="absolute inset-0 flex min-w-0 flex-col overflow-hidden p-2 font-mono">
                             <SemanticTerminalPreview
                                 preview={activeSurface?.preview || activePane.preview || "(no snapshot text)"}
                             />
@@ -243,17 +361,38 @@ export function CmuxSessionList({ snapshot }: Props) {
                         </div>
                     )}
                 </MobileTerminalShell>
+                {cmuxOverlays}
             </div>
         );
     }
 
     return (
         <TooltipProvider>
-            <div className="flex h-full flex-col gap-2 overflow-hidden font-mono">
-                <div className="dd-panel flex items-center justify-between px-3 py-2 text-[11px] text-[var(--dd-text-muted)]">
-                    <span>snapshot · {formatClock(snapshot.fetchedAt, { seconds: true })}</span>
-                    <span className="flex items-center gap-3">
-                        <span>drag panes to reorder · drag dividers to resize · live snapshot</span>
+            <div className="flex h-full min-w-0 flex-col gap-2 overflow-hidden font-mono">
+                <div className="dd-panel flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 px-3 py-2 text-[11px] text-[var(--dd-text-muted)]">
+                    <span className="flex min-w-0 flex-wrap items-center gap-2">
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={createSession.isPending}
+                            onClick={() => createSession.mutate()}
+                            aria-label="New tmux session in cmux"
+                        >
+                            <Plus size={12} />
+                            <span className="hidden sm:inline">New</span>
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => setHubOpen(true)} aria-label="Tmux sessions">
+                            <Layers size={12} />
+                            <span className="hidden sm:inline">Tmux</span>
+                        </Button>
+                        <span className="truncate">
+                            snapshot · {formatClock(snapshot.fetchedAt, { seconds: true })}
+                        </span>
+                    </span>
+                    <span className="flex min-w-0 shrink-0 items-center gap-3">
+                        <span className="hidden lg:inline">
+                            drag panes to reorder · drag dividers to resize · live snapshot
+                        </span>
                         {!isMobile ? (
                             <Button
                                 size="sm"
@@ -312,8 +451,8 @@ export function CmuxSessionList({ snapshot }: Props) {
                                             </Tooltip>
                                         }
                                     >
-                                        <div className="dd-cmux-tile flex h-full flex-col overflow-hidden p-2">
-                                            <div className="dd-cmux-meta mb-2 flex min-w-0 items-center gap-2">
+                                        <div className="dd-cmux-tile flex h-full min-w-0 flex-col overflow-hidden p-2">
+                                            <div className="dd-cmux-meta mb-2 flex min-w-0 items-center gap-2 overflow-hidden">
                                                 <span
                                                     className="inline-block h-[7px] w-[7px] shrink-0 rounded-full"
                                                     style={
@@ -366,7 +505,7 @@ export function CmuxSessionList({ snapshot }: Props) {
                                     </MosaicWindow>
                                 );
                             }}
-                            className="dd-mosaic"
+                            className="dd-mosaic min-w-0"
                         />
                     ) : (
                         <div className="dd-panel flex h-full items-center justify-center text-[var(--dd-text-muted)]">
@@ -374,6 +513,7 @@ export function CmuxSessionList({ snapshot }: Props) {
                         </div>
                     )}
                 </div>
+                {cmuxOverlays}
             </div>
         </TooltipProvider>
     );

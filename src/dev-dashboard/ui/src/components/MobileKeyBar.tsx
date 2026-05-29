@@ -5,8 +5,11 @@ import type { IframeKey } from "@/lib/iframe-keys";
 interface MobileKeyBarProps {
     onKey: (key: IframeKey) => void;
     onScroll: (lines: number) => void;
+    onPageScroll?: (direction: -1 | 1) => void;
     /** Tweak how many lines a PgUp/PgDn tap scrolls. Defaults to 10. */
     scrollStep?: number;
+    /** In document flow at the bottom of the ttyd shell (not fixed over the terminal). */
+    embedded?: boolean;
 }
 
 interface KeySpec {
@@ -22,10 +25,14 @@ interface KeySpec {
  * using window.visualViewport (the only API iOS Safari actually honours),
  * and falls back to bottom-of-viewport when no soft keyboard is open.
  */
-export function MobileKeyBar({ onKey, onScroll, scrollStep = 10 }: MobileKeyBarProps) {
+export function MobileKeyBar({ onKey, onScroll, onPageScroll, scrollStep = 10, embedded = false }: MobileKeyBarProps) {
     const [bottomOffset, setBottomOffset] = useState(0);
 
     useEffect(() => {
+        if (embedded) {
+            return;
+        }
+
         const vv = window.visualViewport;
         if (!vv) {
             return;
@@ -48,7 +55,7 @@ export function MobileKeyBar({ onKey, onScroll, scrollStep = 10 }: MobileKeyBarP
             vv.removeEventListener("resize", sync);
             vv.removeEventListener("scroll", sync);
         };
-    }, []);
+    }, [embedded]);
 
     const keys: KeySpec[] = [
         { label: "Esc", aria: "Escape", action: () => onKey("Escape"), accent: true },
@@ -57,12 +64,27 @@ export function MobileKeyBar({ onKey, onScroll, scrollStep = 10 }: MobileKeyBarP
         { label: "↑", aria: "Arrow up", icon: <ArrowUp size={16} />, action: () => onKey("ArrowUp") },
         { label: "↓", aria: "Arrow down", icon: <ArrowDown size={16} />, action: () => onKey("ArrowDown") },
         { label: "→", aria: "Arrow right", icon: <ArrowRight size={16} />, action: () => onKey("ArrowRight") },
-        { label: "PgUp", aria: "Scroll up", icon: <ChevronsUp size={16} />, action: () => onScroll(-scrollStep) },
-        { label: "PgDn", aria: "Scroll down", icon: <ChevronsDown size={16} />, action: () => onScroll(scrollStep) },
+        {
+            label: "PgUp",
+            aria: "Scroll up",
+            icon: <ChevronsUp size={16} />,
+            action: () => (onPageScroll ? onPageScroll(-1) : onScroll(-scrollStep)),
+        },
+        {
+            label: "PgDn",
+            aria: "Scroll down",
+            icon: <ChevronsDown size={16} />,
+            action: () => (onPageScroll ? onPageScroll(1) : onScroll(scrollStep)),
+        },
     ];
 
     return (
-        <div className="dd-keybar" style={{ bottom: bottomOffset }} role="toolbar" aria-label="terminal keys">
+        <div
+            className={embedded ? "dd-keybar dd-keybar--embedded" : "dd-keybar"}
+            style={embedded ? undefined : { bottom: bottomOffset }}
+            role="toolbar"
+            aria-label="terminal keys"
+        >
             {keys.map((k) => (
                 <button
                     key={k.aria}

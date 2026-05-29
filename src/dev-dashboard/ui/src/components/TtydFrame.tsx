@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { type Ref, useEffect, useState } from "react";
 
 interface TtydFrameProps {
     id: string;
     title: string;
     className?: string;
+    iframeRef?: Ref<HTMLIFrameElement>;
 }
 
 const RETRY_MS = 600;
@@ -16,7 +17,7 @@ const MAX_ATTEMPTS = 30; // ~18s — covers spawn→bind + a dashboard restart
  * and only mount the iframe once /ttyd/<id>/ returns 200 — the user never
  * sees the gateway page and never has to refresh.
  */
-export function TtydFrame({ id, title, className }: TtydFrameProps) {
+export function TtydFrame({ id, title, className, iframeRef }: TtydFrameProps) {
     const src = `/ttyd/${encodeURIComponent(id)}/`;
     const [ready, setReady] = useState(false);
     const [failed, setFailed] = useState(false);
@@ -79,5 +80,9 @@ export function TtydFrame({ id, title, className }: TtydFrameProps) {
         );
     }
 
-    return <iframe src={src} title={title} className={className} />;
+    return (
+        <div className={`dd-ttyd-embed ${className ?? ""}`.trim()}>
+            <iframe ref={iframeRef} src={src} title={title} tabIndex={-1} />
+        </div>
+    );
 }
