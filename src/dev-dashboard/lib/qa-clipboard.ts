@@ -1,4 +1,3 @@
-import { renderQaAnswerHtml, renderQaQuestionHtml } from "@app/dev-dashboard/lib/qa-render";
 import type { QaRow } from "./qa-types";
 
 function frontmatter(entry: QaRow): string {
@@ -28,13 +27,14 @@ export function suggestObsidianFilename(question: string): string {
     );
 }
 
-export function formatQaAsMarkdown(entry: QaRow, opts?: { includeFrontmatter?: boolean; includeQuestion?: boolean }): string {
+export function formatQaAsMarkdown(
+    entry: QaRow,
+    opts?: { includeFrontmatter?: boolean; includeQuestion?: boolean }
+): string {
     const includeFrontmatter = opts?.includeFrontmatter !== false;
     const includeQuestion = opts?.includeQuestion !== false;
     const refs =
-        entry.refs.length > 0
-            ? `\n\n**Refs:** ${entry.refs.map((r) => `${r.type}:${r.value}`).join(", ")}`
-            : "";
+        entry.refs.length > 0 ? `\n\n**Refs:** ${entry.refs.map((r) => `${r.type}:${r.value}`).join(", ")}` : "";
     const fm = includeFrontmatter ? `${frontmatter(entry)}\n\n` : "";
     const question = includeQuestion ? `## Question\n\n${entry.question}\n\n` : "";
 
@@ -47,9 +47,7 @@ export function formatQaAsHtml(entry: QaRow, opts?: { includeQuestion?: boolean 
         entry.refs.length > 0
             ? `<p><strong>Refs:</strong> ${entry.refs.map((r) => `${r.type}:${r.value}`).join(", ")}</p>`
             : "";
-    const question = includeQuestion
-        ? `<h2>Question</h2>\n${renderQaQuestionHtml(entry.question)}\n`
-        : "";
+    const question = includeQuestion ? `<h2>Question</h2>\n${entry.questionHtml}\n` : "";
 
-    return `<article>\n${question}<h2>Answer</h2>\n${renderQaAnswerHtml(entry.answerMd)}\n${refs}\n</article>`;
+    return `<article>\n${question}<h2>Answer</h2>\n${entry.answerHtml}\n${refs}\n</article>`;
 }

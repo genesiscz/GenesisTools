@@ -24,7 +24,9 @@ export function QaScrollNav({
     }
 
     const jumpTo = (id: string): void => {
-        document.querySelector(`[data-qa-id="${CSS.escape(id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        document
+            .querySelector(`[data-qa-id="${CSS.escape(id)}"]`)
+            ?.scrollIntoView({ behavior: "smooth", block: "start" });
     };
 
     return (
