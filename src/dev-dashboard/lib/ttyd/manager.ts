@@ -1,9 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { getConfig, saveTtydSessions } from "@app/dev-dashboard/config";
-import { findFreePort } from "@app/dev-dashboard/lib/ttyd/free-port";
+import { makeTtydTmuxSessionName } from "@app/dev-dashboard/lib/tmux/naming";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import { logger } from "@app/logger";
+import { findFreePort } from "@app/utils/net/free-port";
+import { buildTerminalSpawnEnv } from "@app/utils/terminal/locale";
+import { resolveTmuxBin } from "@app/utils/tmux/bin";
+import {
+    createTmuxSession,
+    ensureTmuxSessionUtf8Locale,
+    killTmuxSession,
+    sessionExists,
+} from "@app/utils/tmux/sessions";
 import type { Subprocess } from "bun";
 
 export { ttydLabel } from "@app/dev-dashboard/lib/ttyd/label";
@@ -18,30 +27,25 @@ interface Tracked {
 export interface SpawnOptions {
     command?: string;
     cwd?: string;
+    attachTmuxSession?: string;
+}
+
+export interface KillTtydOptions {
+    killTmux?: boolean;
 }
 
 const registry = new Map<string, Tracked>();
 const TTYD_BIN = "/opt/homebrew/bin/ttyd";
-const TMUX_BIN = "/opt/homebrew/bin/tmux";
 let hydrated = false;
 
-function makeTmuxSessionName(id: string): string {
-    return `dev-dashboard-${id.slice(0, 8)}`;
-}
-
-function killTmuxSession(sessionName: string): void {
-    Bun.spawnSync([TMUX_BIN, "kill-session", "-t", sessionName], { stdio: ["ignore", "ignore", "ignore"] });
-}
-
-function createTmuxSession(sessionName: string, cwd: string, command: string): void {
-    const result = Bun.spawnSync([TMUX_BIN, "new-session", "-d", "-s", sessionName, "-c", cwd, command], {
-        cwd,
-        stdio: ["ignore", "ignore", "ignore"],
-    });
-
-    if (result.exitCode !== 0) {
-        throw new Error(`Failed to create tmux session ${sessionName}`);
+function tmuxAlreadyOpenInTtyd(tmuxSessionName: string): boolean {
+    for (const tracked of registry.values()) {
+        if (tracked.session.tmuxSessionName === tmuxSessionName) {
+            return true;
+        }
     }
+
+    return false;
 }
 
 /**
@@ -119,10 +123,6 @@ async function pruneDeadSessions(): Promise<void> {
 
     for (const [id, tracked] of registry.entries()) {
         if (!isSessionAlive(tracked.session)) {
-            if (tracked.session.tmuxSessionName) {
-                killTmuxSession(tracked.session.tmuxSessionName);
-            }
-
             registry.delete(id);
             changed = true;
         }
@@ -133,6 +133,20 @@ async function pruneDeadSessions(): Promise<void> {
     }
 }
 
+function stopTtydProcess(tracked: Tracked, id: string): void {
+    if (tracked.child) {
+        tracked.child.kill("SIGTERM");
+    } else if (processMatchesSession(tracked.session)) {
+        try {
+            process.kill(tracked.session.pid, "SIGTERM");
+        } catch (err) {
+            logger.debug({ err, id }, "ttyd process already gone");
+        }
+    } else {
+        logger.debug({ id, pid: tracked.session.pid }, "ttyd pid no longer ours; skipping kill");
+    }
+}
+
 export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
     await hydrateRegistry();
 
@@ -140,16 +154,32 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
         throw new Error(`ttyd not found at ${TTYD_BIN}`);
     }
 
-    if (!existsSync(TMUX_BIN)) {
-        throw new Error(`tmux not found at ${TMUX_BIN}`);
-    }
-
+    const tmuxBin = resolveTmuxBin();
     const command = opts.command ?? process.env.SHELL ?? "/bin/zsh";
     const cwd = opts.cwd ?? process.cwd();
     const port = await findFreePort();
     const id = randomUUID();
-    const tmuxSessionName = makeTmuxSessionName(id);
-    createTmuxSession(tmuxSessionName, cwd, command);
+
+    let tmuxSessionName: string;
+
+    if (opts.attachTmuxSession) {
+        if (!sessionExists(opts.attachTmuxSession)) {
+            throw new Error(`tmux session ${opts.attachTmuxSession} does not exist`);
+        }
+
+        if (tmuxAlreadyOpenInTtyd(opts.attachTmuxSession)) {
+            const err = new Error(`tmux session ${opts.attachTmuxSession} is already open in ttyd`);
+            (err as Error & { statusCode?: number }).statusCode = 409;
+            throw err;
+        }
+
+        tmuxSessionName = opts.attachTmuxSession;
+        ensureTmuxSessionUtf8Locale(tmuxSessionName);
+    } else {
+        tmuxSessionName = makeTtydTmuxSessionName(id);
+        createTmuxSession(tmuxSessionName, cwd, command);
+    }
+
     // Bind loopback-only and serve under /ttyd/<id> so the Bun.serve front
     // proxy can reverse-proxy it same-origin (HTTPS tunnel + mobile, where a
     // bare http://localhost:<port> iframe is unreachable). The base-path makes
@@ -164,12 +194,13 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
             "-W",
             "-p",
             String(port),
-            TMUX_BIN,
+            tmuxBin,
             "attach-session",
             "-t",
             tmuxSessionName,
         ],
         cwd,
+        env: buildTerminalSpawnEnv(),
         stdio: ["ignore", "ignore", "ignore"],
         detached: true,
         onExit(_proc, code, signal, err) {
@@ -202,7 +233,7 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
     };
     registry.set(id, { session, child });
     await persistRegistry();
-    logger.info({ id, port, command, cwd }, "ttyd spawned");
+    logger.info({ id, port, command, cwd, tmuxSessionName, attach: Boolean(opts.attachTmuxSession) }, "ttyd spawned");
 
     return session;
 }
@@ -255,7 +286,25 @@ export async function renameTtyd(id: string, name: string): Promise<boolean> {
     return true;
 }
 
-export async function killTtyd(id: string): Promise<boolean> {
+export async function retargetTtydTmuxBindings(fromName: string, toName: string): Promise<void> {
+    await hydrateRegistry();
+
+    let changed = false;
+
+    for (const tracked of registry.values()) {
+        if (tracked.session.tmuxSessionName === fromName) {
+            tracked.session.tmuxSessionName = toName;
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        await persistRegistry();
+        logger.info({ fromName, toName }, "retargeted ttyd tmux bindings after rename");
+    }
+}
+
+export async function killTtyd(id: string, opts: KillTtydOptions = {}): Promise<boolean> {
     await hydrateRegistry();
 
     const tracked = registry.get(id);
@@ -264,19 +313,9 @@ export async function killTtyd(id: string): Promise<boolean> {
         return false;
     }
 
-    if (tracked.child) {
-        tracked.child.kill("SIGTERM");
-    } else if (processMatchesSession(tracked.session)) {
-        try {
-            process.kill(tracked.session.pid, "SIGTERM");
-        } catch (err) {
-            logger.debug({ err, id }, "ttyd process already gone");
-        }
-    } else {
-        logger.debug({ id, pid: tracked.session.pid }, "ttyd pid no longer ours; skipping kill");
-    }
+    stopTtydProcess(tracked, id);
 
-    if (tracked.session.tmuxSessionName) {
+    if (opts.killTmux && tracked.session.tmuxSessionName) {
         killTmuxSession(tracked.session.tmuxSessionName);
     }
 
@@ -291,22 +330,8 @@ export async function killAllTtyd(): Promise<void> {
     // persist in config; hydrate first so they're actually terminated.
     await hydrateRegistry();
 
-    for (const { child, session } of registry.values()) {
-        if (child) {
-            child.kill("SIGTERM");
-        } else if (processMatchesSession(session)) {
-            try {
-                process.kill(session.pid, "SIGTERM");
-            } catch (err) {
-                logger.debug({ err, id: session.id }, "ttyd process already gone");
-            }
-        } else {
-            logger.debug({ id: session.id, pid: session.pid }, "ttyd pid no longer ours; skipping kill");
-        }
-
-        if (session.tmuxSessionName) {
-            killTmuxSession(session.tmuxSessionName);
-        }
+    for (const [id, tracked] of registry.entries()) {
+        stopTtydProcess(tracked, id);
     }
 
     registry.clear();

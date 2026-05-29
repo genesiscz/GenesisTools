@@ -10,7 +10,11 @@ import {
     verifySessionToken,
 } from "@app/dev-dashboard/lib/auth";
 import { getCurrentUsage, getUsageHistory, getUsageHistoryMulti } from "@app/dev-dashboard/lib/claude-usage/aggregator";
+import { createDevDashboardTerminal } from "@app/dev-dashboard/lib/cmux/create-terminal";
+import { createCmuxWorkspace } from "@app/dev-dashboard/lib/cmux/create-workspace";
 import { getCachedSnapshot, startPolling } from "@app/dev-dashboard/lib/cmux/poller";
+import { removeTmuxSessionFromCmux } from "@app/dev-dashboard/lib/cmux/remove-session";
+import { sendTmuxSessionToCmux } from "@app/dev-dashboard/lib/cmux/send-session";
 import { listContainers } from "@app/dev-dashboard/lib/containers/docker";
 import {
     getAllRecentRuns,
@@ -32,7 +36,18 @@ import { formatQaAsMarkdown } from "@app/dev-dashboard/lib/qa-clipboard";
 import { enrichQaEntry } from "@app/dev-dashboard/lib/qa-render";
 import { createQaStream, todayLogFile } from "@app/dev-dashboard/lib/qa-sse";
 import { configureRetention, getCachedPulse, getSeries, startPulsePolling } from "@app/dev-dashboard/lib/system/poller";
-import { addTodo, completeTodo, deleteTodo, listTodos } from "@app/dev-dashboard/lib/todos/service";
+import { createStandaloneTmuxSession } from "@app/dev-dashboard/lib/tmux/create-session";
+import { enrichSessionsForHub } from "@app/dev-dashboard/lib/tmux/hub";
+import { renameTmuxSessionInHub } from "@app/dev-dashboard/lib/tmux/rename";
+import {
+    addTodo,
+    completeTodo,
+    deleteTodo,
+    listTodos,
+    RemindersPermissionError,
+    requestTodosAccess,
+    updateTodo,
+} from "@app/dev-dashboard/lib/todos/service";
 import { killTtyd, listTtyd, renameTtyd, spawnTtyd } from "@app/dev-dashboard/lib/ttyd/manager";
 import { fetchWeather } from "@app/dev-dashboard/lib/weather/client";
 import { logger } from "@app/logger";
@@ -46,7 +61,13 @@ import {
 } from "@app/question/lib/read-model";
 import { getAudioLibrary } from "@app/utils/audio/library";
 import { resolveSoundBuffer } from "@app/utils/audio/runner.server";
+import { fetchCmuxFullLayout } from "@app/utils/cmux/layout";
+import type { CmuxTmuxSurfaceRef } from "@app/utils/cmux/tmux-bindings";
+import { indexCmuxSurfacesByTmuxSession } from "@app/utils/cmux/tmux-bindings";
+import type { DashboardSendTarget } from "@app/utils/cmux/types";
 import { SafeJSON } from "@app/utils/json";
+import { resolveWikilinkToVaultPath } from "@app/utils/obsidian/wikilink-resolve";
+import { listTmuxSessions } from "@app/utils/tmux/sessions";
 import type { Connect } from "vite";
 
 let loggedGeneratedPassword = false;
@@ -163,6 +184,50 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
             return;
         }
 
+        if (req.method === "GET" && url.pathname === "/api/tmux/sessions") {
+            let cmuxBySession = new Map<string, CmuxTmuxSurfaceRef[]>();
+
+            try {
+                const layout = await fetchCmuxFullLayout();
+
+                if (layout.available) {
+                    cmuxBySession = indexCmuxSurfacesByTmuxSession(layout);
+                }
+            } catch (err) {
+                logger.debug({ err }, "tmux hub: cmux layout unavailable for enrichment");
+            }
+
+            const sessions = enrichSessionsForHub(listTmuxSessions(), await listTtyd(), cmuxBySession);
+            sendJson(res, 200, { sessions });
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/tmux/create") {
+            try {
+                const body = await readJson<{ name?: string; cwd?: string; command?: string }>(req);
+                const created = createStandaloneTmuxSession(body);
+                sendJson(res, 200, created);
+            } catch (err) {
+                logger.warn({ err, route: "POST /api/tmux/create" }, "tmux hub: create session failed");
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/tmux/rename") {
+            try {
+                const body = await readJson<{ from: string; to: string }>(req);
+                const sessionName = await renameTmuxSessionInHub(body.from, body.to);
+                sendJson(res, 200, { sessionName });
+            } catch (err) {
+                logger.warn({ err, route: "POST /api/tmux/rename" }, "tmux hub: rename session failed");
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
         if (req.method === "GET" && url.pathname === "/api/ttyd/list") {
             sendJson(res, 200, { sessions: await listTtyd() });
             return;
@@ -170,11 +235,19 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
 
         if (req.method === "POST" && url.pathname === "/api/ttyd/spawn") {
             try {
-                const body = await readJson<{ command?: string; cwd?: string }>(req);
-                const session = await spawnTtyd(body);
+                const body = await readJson<{ command?: string; cwd?: string; tmuxSessionName?: string }>(req);
+                const session = await spawnTtyd({
+                    command: body.command,
+                    cwd: body.cwd,
+                    attachTmuxSession: body.tmuxSessionName,
+                });
                 sendJson(res, 200, { session });
             } catch (err) {
-                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+                const statusCode = (err as Error & { statusCode?: number }).statusCode;
+                logger.warn({ err, route: "POST /api/ttyd/spawn", statusCode }, "tmux hub: ttyd spawn failed");
+                sendJson(res, statusCode === 409 ? 409 : 500, {
+                    error: err instanceof Error ? err.message : String(err),
+                });
             }
 
             return;
@@ -182,10 +255,11 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
 
         if (req.method === "POST" && url.pathname === "/api/ttyd/kill") {
             try {
-                const body = await readJson<{ id: string }>(req);
-                const ok = await killTtyd(body.id);
+                const body = await readJson<{ id: string; killTmux?: boolean }>(req);
+                const ok = await killTtyd(body.id, { killTmux: body.killTmux === true });
                 sendJson(res, 200, { ok });
             } catch (err) {
+                logger.warn({ err, route: "POST /api/ttyd/kill" }, "tmux hub: ttyd kill failed");
                 sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
             }
 
@@ -206,6 +280,67 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
 
         if (req.method === "GET" && url.pathname === "/api/cmux/snapshot") {
             sendJson(res, 200, { snapshot: getCachedSnapshot() });
+            return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/api/cmux/layout") {
+            try {
+                const layout = await fetchCmuxFullLayout();
+                sendJson(res, 200, { layout });
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/cmux/create-terminal") {
+            try {
+                const body = await readJson<{ cwd?: string }>(req);
+                const result = await createDevDashboardTerminal({ cwd: body.cwd });
+                sendJson(res, 200, { result });
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/cmux/create-workspace") {
+            try {
+                const body = await readJson<{ windowId: string; name?: string; cwd?: string }>(req);
+                const result = await createCmuxWorkspace(body);
+                sendJson(res, 200, { result });
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/cmux/send-session") {
+            try {
+                const body = await readJson<{ tmuxSessionName: string; target: DashboardSendTarget; cwd?: string }>(
+                    req
+                );
+                const result = await sendTmuxSessionToCmux(body);
+                sendJson(res, 200, { result });
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/cmux/remove-session") {
+            try {
+                const body = await readJson<{ tmuxSessionName: string }>(req);
+                const removed = await removeTmuxSessionFromCmux(body.tmuxSessionName);
+                sendJson(res, 200, { removed });
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
             return;
         }
 
@@ -464,18 +599,36 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
         }
 
         if (req.method === "GET" && url.pathname === "/api/todos") {
-            const list = url.searchParams.get("list") ?? "GenesisTools";
+            const listIdsParam = url.searchParams.get("listIds") ?? url.searchParams.get("lists");
+            const listIds = listIdsParam
+                ? listIdsParam
+                      .split(",")
+                      .map((id) => id.trim())
+                      .filter((id) => id.length > 0)
+                : [];
+            const includeCompleted = url.searchParams.get("includeCompleted") === "true";
 
             try {
-                sendJson(res, 200, await listTodos(list));
+                sendJson(res, 200, await listTodos(listIds, { includeCompleted }));
             } catch (err) {
                 const message = err instanceof Error ? err.message : String(err);
-                const denied = /permission|privacy|reminders|authoriz/i.test(message);
+                const denied =
+                    err instanceof RemindersPermissionError || /permission|privacy|reminders|authoriz/i.test(message);
                 sendJson(res, denied ? 503 : 500, {
                     error: denied
                         ? "Reminders permission denied. Grant in System Settings → Privacy & Security → Reminders."
                         : message,
                 });
+            }
+
+            return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/todos/request-access") {
+            try {
+                sendJson(res, 200, await requestTodosAccess());
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
             }
 
             return;
@@ -509,6 +662,35 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
             try {
                 const body = await readJson<{ reminderId: string }>(req);
                 await completeTodo(body.reminderId);
+                sendJson(res, 200, { ok: true });
+            } catch (err) {
+                sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+            }
+
+            return;
+        }
+
+        if (req.method === "PATCH" && url.pathname === "/api/todos") {
+            try {
+                const body = await readJson<{
+                    reminderId: string;
+                    listIdentifier: string;
+                    title: string;
+                    notes?: string;
+                    due?: string | null;
+                    priority?: "none" | "low" | "medium" | "high";
+                    url?: string;
+                }>(req);
+
+                await updateTodo({
+                    reminderId: body.reminderId,
+                    listIdentifier: body.listIdentifier,
+                    title: body.title,
+                    notes: body.notes,
+                    due: body.due,
+                    priority: body.priority,
+                    url: body.url,
+                });
                 sendJson(res, 200, { ok: true });
             } catch (err) {
                 sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
@@ -639,6 +821,7 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
             try {
                 const { obsidianVault } = await getConfig();
                 const source = await readNote(obsidianVault, path);
+                const vaultEntries = await listVault(obsidianVault);
                 const published = await listPublished();
                 const publishedSlug = published.find((note) => note.vaultPath === path)?.slug ?? null;
                 const rendered = renderMarkdown(source, {
@@ -651,6 +834,7 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
 
                         return match?.slug ?? null;
                     },
+                    resolveVaultNotePath: (name) => resolveWikilinkToVaultPath(vaultEntries, name, path),
                 });
                 sendJson(res, 200, { source, html: rendered.html, publishedSlug });
             } catch (err) {
