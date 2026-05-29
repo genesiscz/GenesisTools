@@ -1,3 +1,4 @@
+import { Button } from "@ui/components/button";
 import { type FormEvent, useState } from "react";
 
 interface AddTodoFormProps {
@@ -7,9 +8,24 @@ interface AddTodoFormProps {
 
 const PRIORITY_OPTIONS = ["none", "low", "medium", "high"] as const;
 
+function formatDateTimeLocal(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function defaultDueDatetimeLocal(): string {
+    const due = new Date();
+    due.setHours(due.getHours() + 1);
+    return formatDateTimeLocal(due);
+}
+
 export function AddTodoForm({ onAdd, pending }: AddTodoFormProps) {
     const [title, setTitle] = useState("");
-    const [due, setDue] = useState("");
+    const [due, setDue] = useState(defaultDueDatetimeLocal);
     const [priority, setPriority] = useState<string>("none");
 
     const handleSubmit = (e: FormEvent) => {
@@ -26,7 +42,7 @@ export function AddTodoForm({ onAdd, pending }: AddTodoFormProps) {
             priority: priority === "none" ? undefined : priority,
         });
         setTitle("");
-        setDue("");
+        setDue(defaultDueDatetimeLocal());
         setPriority("none");
     };
 
@@ -59,13 +75,15 @@ export function AddTodoForm({ onAdd, pending }: AddTodoFormProps) {
                     </option>
                 ))}
             </select>
-            <button
+            <Button
                 type="submit"
+                variant="ghost"
+                size="sm"
                 disabled={pending || !title.trim()}
-                className="rounded-md bg-[var(--dd-accent-gradient)] px-4 py-1.5 text-sm font-medium text-[var(--dd-bg-panel)] disabled:opacity-50"
+                className="dd-btn-accent shrink-0 hover:bg-transparent"
             >
                 {pending ? "Adding..." : "Add"}
-            </button>
+            </Button>
         </form>
     );
 }
