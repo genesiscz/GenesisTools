@@ -10,6 +10,10 @@ const hasTtydDeps = existsSync("/opt/homebrew/bin/ttyd") && existsSync("/opt/hom
 
 describe.skipIf(!hasTtydDeps)("ttyd manager", () => {
     afterEach(async () => {
+        const sessions = await listTtyd();
+        for (const session of sessions) {
+            await killTtyd(session.id, { killTmux: true });
+        }
         await killAllTtyd();
     });
 
@@ -31,16 +35,44 @@ describe.skipIf(!hasTtydDeps)("ttyd manager", () => {
 
     test("kill removes from registry and terminates process", async () => {
         const session = await spawnTtyd({ command: "/bin/sh", cwd: process.cwd() });
-        const ok = await killTtyd(session.id);
+        const ok = await killTtyd(session.id, { killTmux: true });
 
         expect(ok).toBe(true);
         expect(await listTtyd()).toHaveLength(0);
+    });
+
+    test("kill without killTmux leaves tmux session registered until manual cleanup", async () => {
+        const session = await spawnTtyd({ command: "/bin/sh", cwd: process.cwd() });
+        const ok = await killTtyd(session.id, { killTmux: false });
+
+        expect(ok).toBe(true);
+        expect(await listTtyd()).toHaveLength(0);
+
+        if (session.tmuxSessionName) {
+            const { killTmuxSession } = await import("@app/utils/tmux/sessions");
+            killTmuxSession(session.tmuxSessionName);
+        }
     });
 
     test("killTtyd on unknown id returns false", async () => {
         const ok = await killTtyd("nope");
 
         expect(ok).toBe(false);
+    });
+
+    test("spawn attaches to existing tmux session when attachTmuxSession set", async () => {
+        const base = await spawnTtyd({ command: "/bin/sh", cwd: process.cwd() });
+        const tmuxName = base.tmuxSessionName;
+        expect(tmuxName).toBeTruthy();
+
+        await killTtyd(base.id, { killTmux: false });
+
+        const attached = await spawnTtyd({ attachTmuxSession: tmuxName, cwd: process.cwd() });
+        expect(attached.tmuxSessionName).toBe(tmuxName);
+
+        await expect(spawnTtyd({ attachTmuxSession: tmuxName })).rejects.toThrow("already open in ttyd");
+
+        await killTtyd(attached.id, { killTmux: true });
     });
 });
 
