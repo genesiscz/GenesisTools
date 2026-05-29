@@ -1,14 +1,12 @@
 import { renderMarkdown } from "@app/dev-dashboard/lib/obsidian/markdown";
+import { isQaAnswerTruncated, QA_ANSWER_PREVIEW_LINES } from "@app/dev-dashboard/lib/qa-preview";
+import type { EnrichedQaEntry } from "@app/dev-dashboard/lib/qa-types";
 import type { QaEntry } from "@app/question/lib/types";
 
+export type { EnrichedQaEntry };
+export { QA_ANSWER_PREVIEW_LINES, isQaAnswerTruncated };
+
 const noopWikilink = { resolveWikilink: () => null };
-
-/** Answers longer than this get a collapsible preview (first N lines when collapsed). */
-export const QA_ANSWER_PREVIEW_LINES = 50;
-
-export function isQaAnswerTruncated(answerMd: string): boolean {
-    return answerMd.split("\n").length > QA_ANSWER_PREVIEW_LINES;
-}
 
 export function renderQaAnswerHtml(answerMd: string): string {
     return renderMarkdown(answerMd, noopWikilink).html;
@@ -17,12 +15,6 @@ export function renderQaAnswerHtml(answerMd: string): string {
 export function renderQaQuestionHtml(questionMd: string): string {
     return renderMarkdown(questionMd, noopWikilink).html;
 }
-
-export type EnrichedQaEntry = QaEntry & {
-    answerHtml: string;
-    answerHtmlPreview: string;
-    questionHtml: string;
-};
 
 export function enrichQaEntry(entry: QaEntry): EnrichedQaEntry {
     const lines = entry.answerMd.split("\n");

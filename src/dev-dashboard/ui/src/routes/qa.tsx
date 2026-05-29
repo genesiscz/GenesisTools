@@ -1,14 +1,15 @@
+import { isQaAnswerTruncated } from "@app/dev-dashboard/lib/qa-preview";
 import { searchQa } from "@app/dev-dashboard/lib/qa-search";
-import { isQaAnswerTruncated } from "@app/dev-dashboard/lib/qa-render";
 import type { QaRow } from "@app/dev-dashboard/lib/qa-types";
-import { highlightMatchesInHtml } from "@app/utils/ui/helpers/highlight-matches.client";
-import { hasNonEmptySelection } from "@app/utils/ui/hooks/useSelectionAware.client";
-import { useScrollProgress } from "@app/utils/ui/hooks/useScrollProgress.client";
 import { SafeJSON } from "@app/utils/json";
+import { highlightMatchesInHtml } from "@app/utils/ui/helpers/highlight-matches.client";
+import { useScrollProgress } from "@app/utils/ui/hooks/useScrollProgress.client";
+import { hasNonEmptySelection } from "@app/utils/ui/hooks/useSelectionAware.client";
 import { useQuery } from "@tanstack/react-query";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { type KeyboardEvent, type MouseEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { QaClockProvider } from "@/components/QaClockProvider";
 import { QaCopyButtons } from "@/components/QaCopyButtons";
+import { QaReadTime } from "@/components/QaReadTime";
 import { QaRecencyTime } from "@/components/QaRecencyTime";
 import { QaSaveToObsidianDialog } from "@/components/QaSaveToObsidianDialog";
 import { QA_SCROLL_NAV_OFFSET_PX, QaScrollNav } from "@/components/QaScrollNav";
@@ -46,7 +47,7 @@ function tagClass(tag: string): string {
 const QaCard = memo(function QaCard({
     entry,
     unread,
-    wasReadOnLoad,
+    readAt,
     viewMode,
     highlightTokens,
     onSeen,
@@ -54,13 +55,19 @@ const QaCard = memo(function QaCard({
 }: {
     entry: QaRow;
     unread: boolean;
-    wasReadOnLoad: boolean;
+    readAt: number | null;
     viewMode: QaViewMode;
     highlightTokens: string[];
     onSeen: (id: string) => void;
     onUnseen: (id: string) => void;
 }) {
-    const [open, setOpen] = useState(!wasReadOnLoad);
+    const [open, setOpen] = useState(unread);
+
+    useEffect(() => {
+        if (!unread) {
+            setOpen(false);
+        }
+    }, [unread]);
     const [saveDialogOpen, setSaveDialogOpen] = useState(false);
     const truncated = isQaAnswerTruncated(entry.answerMd);
     const answerBase = open || !truncated ? entry.answerHtml : entry.answerHtmlPreview;
@@ -91,35 +98,44 @@ const QaCard = memo(function QaCard({
         return highlightMatchesInHtml(answerBase, highlightTokens);
     }, [answerBase, highlightTokens, viewMode]);
 
-    const handleCardMouseUp = useCallback((ev: MouseEvent) => {
-        const target = ev.target as HTMLElement;
+    const handleCardMouseUp = useCallback(
+        (ev: MouseEvent) => {
+            const target = ev.target as HTMLElement;
 
-        if (target.closest("button") || target.closest("a")) {
-            return;
-        }
+            if (target.closest("button") || target.closest("a")) {
+                return;
+            }
 
-        const nestedButton = target.closest("[role='button']");
+            const nestedButton = target.closest("[role='button']");
 
-        if (nestedButton && nestedButton !== ev.currentTarget) {
-            return;
-        }
+            if (nestedButton && nestedButton !== ev.currentTarget) {
+                return;
+            }
 
-        if (hasNonEmptySelection()) {
-            return;
-        }
-
-        setTimeout(() => {
             if (hasNonEmptySelection()) {
                 return;
             }
 
-            if (unread) {
-                onSeen(entry.id);
-            } else {
-                onUnseen(entry.id);
-            }
-        }, 0);
-    }, [entry.id, onSeen, onUnseen, unread]);
+            setTimeout(() => {
+                if (hasNonEmptySelection()) {
+                    return;
+                }
+
+                if (unread) {
+                    setOpen(false);
+                    onSeen(entry.id);
+                } else {
+                    onUnseen(entry.id);
+                }
+            }, 0);
+        },
+        [entry.id, onSeen, onUnseen, unread]
+    );
+
+    const toggleOpen = useCallback((ev: MouseEvent | KeyboardEvent) => {
+        ev.stopPropagation();
+        setOpen((v) => !v);
+    }, []);
 
     const openSave = (): void => setSaveDialogOpen(true);
 
@@ -137,6 +153,7 @@ const QaCard = memo(function QaCard({
                         ev.preventDefault();
 
                         if (unread) {
+                            setOpen(false);
                             onSeen(entry.id);
                         } else {
                             onUnseen(entry.id);
@@ -150,7 +167,17 @@ const QaCard = memo(function QaCard({
                     <span>·</span>
                     <span>{entry.branch ?? "-"}</span>
                     <span className={`rounded-full border px-2 py-[1px] ${tagClass(entry.tag)}`}>{entry.tag}</span>
+                    {truncated ? (
+                        <button
+                            type="button"
+                            className="dd-accent-text cursor-pointer transition-opacity hover:opacity-80"
+                            onClick={toggleOpen}
+                        >
+                            {open ? "Collapse" : "Expand"}
+                        </button>
+                    ) : null}
                     <QaCopyButtons entry={entry} onSaveToObsidian={openSave} />
+                    {!unread && readAt != null ? <QaReadTime readAt={readAt} /> : null}
                     <QaRecencyTime ts={entry.ts} />
                 </div>
                 <QaSectionHeading label="Question" />
@@ -172,14 +199,11 @@ const QaCard = memo(function QaCard({
                     <pre className="dd-qa-section-body text-xs whitespace-pre-wrap">{entry.answerMd}</pre>
                 )}
                 {truncated ? (
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--dd-text-muted)]">
                         <button
                             type="button"
-                            className="dd-accent-text self-start text-xs"
-                            onClick={(ev) => {
-                                ev.stopPropagation();
-                                setOpen((v) => !v);
-                            }}
+                            className="dd-accent-text shrink-0 cursor-pointer transition-opacity hover:opacity-80"
+                            onClick={toggleOpen}
                         >
                             {open ? "▴ collapse" : "▾ expand full answer (rationale · refs · links)"}
                         </button>
@@ -204,7 +228,7 @@ export function QaRoute() {
     const [seenIds, setSeenIds] = useState<Set<string>>(() => new Set());
     const [viewMode, setViewMode] = useState<QaViewMode>("reading");
     const [query, setQuery] = useState("");
-    const initialReadIds = useRef<Set<string> | null>(null);
+    const [readAtById, setReadAtById] = useState<Map<string, number>>(() => new Map());
     const seen = useRef<Set<string>>(new Set());
     const markedReadRef = useRef<Set<string>>(new Set());
     const pendingReadIds = useRef<Set<string>>(new Set());
@@ -212,12 +236,6 @@ export function QaRoute() {
     const readFlushTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const readApiDisabledRef = useRef(false);
     const { y: scrollY } = useScrollProgress();
-
-    useEffect(() => {
-        if (initialReadIds.current === null && logQuery.data) {
-            initialReadIds.current = new Set(logQuery.data.filter((r) => r.readAt != null).map((r) => r.id));
-        }
-    }, [logQuery.data]);
 
     const flushReadIds = useCallback(() => {
         readFlushTimer.current = undefined;
@@ -273,6 +291,7 @@ export function QaRoute() {
 
             markedReadRef.current.add(id);
             pendingUnreadIds.current.delete(id);
+            const readAt = Date.now();
             setSeenIds((prev) => {
                 if (prev.has(id)) {
                     return prev;
@@ -280,6 +299,15 @@ export function QaRoute() {
 
                 const next = new Set(prev);
                 next.add(id);
+                return next;
+            });
+            setReadAtById((prev) => {
+                if (prev.has(id)) {
+                    return prev;
+                }
+
+                const next = new Map(prev);
+                next.set(id, readAt);
                 return next;
             });
             pendingReadIds.current.add(id);
@@ -298,6 +326,15 @@ export function QaRoute() {
                 }
 
                 const next = new Set(prev);
+                next.delete(id);
+                return next;
+            });
+            setReadAtById((prev) => {
+                if (!prev.has(id)) {
+                    return prev;
+                }
+
+                const next = new Map(prev);
                 next.delete(id);
                 return next;
             });
@@ -338,6 +375,28 @@ export function QaRoute() {
             }
 
             return changed ? next : prev;
+        });
+
+        setReadAtById((prev) => {
+            let next: Map<string, number> | null = null;
+
+            for (const row of logQuery.data) {
+                if (row.readAt == null) {
+                    continue;
+                }
+
+                if (prev.get(row.id) === row.readAt) {
+                    continue;
+                }
+
+                if (!next) {
+                    next = new Map(prev);
+                }
+
+                next.set(row.id, row.readAt);
+            }
+
+            return next ?? prev;
         });
     }, [logQuery.data]);
 
@@ -402,15 +461,13 @@ export function QaRoute() {
                 </div>
             ) : (
                 <QaClockProvider>
-                    <div
-                        className={`flex flex-col gap-3${showScrollNav ? " pr-0 lg:pr-68" : ""}`}
-                    >
+                    <div className={`flex flex-col gap-3${showScrollNav ? " pr-0 lg:pr-68" : ""}`}>
                         {filtered.map((entry) => (
                             <QaCard
                                 key={entry.id}
                                 entry={entry}
                                 unread={!seenIds.has(entry.id)}
-                                wasReadOnLoad={initialReadIds.current?.has(entry.id) ?? false}
+                                readAt={readAtById.get(entry.id) ?? entry.readAt}
                                 viewMode={viewMode}
                                 highlightTokens={highlightTokens}
                                 onSeen={markSeen}

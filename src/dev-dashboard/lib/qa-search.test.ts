@@ -4,7 +4,6 @@ import type { QaRow } from "./qa-types";
 
 function row(over: Partial<QaRow> & { id: string }): QaRow {
     return {
-        id: over.id,
         ts: Date.now(),
         sessionId: "s",
         sessionTitle: null,
@@ -39,10 +38,7 @@ describe("searchQa", () => {
     });
 
     test("filters by tokenized query", () => {
-        const rows = [
-            row({ id: "1", question: "metro bundler setup" }),
-            row({ id: "2", question: "unrelated topic" }),
-        ];
+        const rows = [row({ id: "1", question: "metro bundler setup" }), row({ id: "2", question: "unrelated topic" })];
         const { entries } = searchQa(rows, "metro");
 
         expect(entries.map((e) => e.id)).toEqual(["1"]);

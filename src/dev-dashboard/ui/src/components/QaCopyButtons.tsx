@@ -1,6 +1,6 @@
 import { formatQaAsHtml, formatQaAsMarkdown } from "@app/dev-dashboard/lib/qa-clipboard";
 import type { QaRow } from "@app/dev-dashboard/lib/qa-types";
-import { Button } from "@ui/components/button";
+import { IconButton } from "@ui/components/icon-button";
 import { FileText, FileType2, NotebookPen } from "lucide-react";
 import { useState } from "react";
 
@@ -33,12 +33,12 @@ export function QaCopyButtons({ entry, onSaveToObsidian }: { entry: QaRow; onSav
     };
 
     return (
-        <div className="inline-flex items-center gap-1">
-            <Button
-                size="icon"
+        <div className="inline-flex shrink-0 items-center gap-0.5 text-[var(--dd-text-muted)]">
+            <IconButton
                 variant="ghost"
-                aria-label="Copy as Markdown"
-                title="Copy as Markdown"
+                size="icon-sm"
+                className="size-6 text-inherit hover:bg-[var(--dd-border)]/50 hover:text-[var(--dd-text-secondary)]"
+                tooltip="Copy as Markdown"
                 onClick={() => void copy("md")}
             >
                 {copied === "md" ? (
@@ -48,12 +48,12 @@ export function QaCopyButtons({ entry, onSaveToObsidian }: { entry: QaRow; onSav
                 ) : (
                     <FileText className="h-3.5 w-3.5" />
                 )}
-            </Button>
-            <Button
-                size="icon"
+            </IconButton>
+            <IconButton
                 variant="ghost"
-                aria-label="Copy as formatted"
-                title="Copy as formatted (rich text)"
+                size="icon-sm"
+                className="size-6 text-inherit hover:bg-[var(--dd-border)]/50 hover:text-[var(--dd-text-secondary)]"
+                tooltip="Copy as formatted (rich text)"
                 onClick={() => void copy("html")}
             >
                 {copied === "html" ? (
@@ -63,16 +63,16 @@ export function QaCopyButtons({ entry, onSaveToObsidian }: { entry: QaRow; onSav
                 ) : (
                     <FileType2 className="h-3.5 w-3.5" />
                 )}
-            </Button>
-            <Button
-                size="icon"
+            </IconButton>
+            <IconButton
                 variant="ghost"
-                aria-label="Save to Obsidian"
-                title="Save to Obsidian"
+                size="icon-sm"
+                className="size-6 text-inherit hover:bg-[var(--dd-border)]/50 hover:text-[var(--dd-text-secondary)]"
+                tooltip="Save to Obsidian"
                 onClick={onSaveToObsidian}
             >
                 <NotebookPen className="h-3.5 w-3.5" />
-            </Button>
+            </IconButton>
         </div>
     );
 }

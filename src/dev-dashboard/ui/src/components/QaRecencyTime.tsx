@@ -1,5 +1,5 @@
-import { resolveQaRecency } from "@app/utils/ui/helpers/qa-recency";
 import { formatClock } from "@app/utils/format";
+import { resolveQaRecency } from "@app/utils/ui/helpers/qa-recency";
 import { memo } from "react";
 import { useQaClock } from "@/components/QaClockProvider";
 

@@ -1,5 +1,10 @@
-import type { EnrichedQaEntry } from "@app/dev-dashboard/lib/qa-render";
 import type { QaEntry } from "@app/question/lib/types";
+
+export interface EnrichedQaEntry {
+    answerHtml: string;
+    answerHtmlPreview: string;
+    questionHtml: string;
+}
 
 export interface QaRow extends QaEntry, EnrichedQaEntry {
     supersededBy: string | null;
