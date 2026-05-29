@@ -52,10 +52,8 @@ export function TtydPasteDialog({ open, onOpenChange, onSubmit }: Props) {
                     setValue((current) => current || text);
                 }
             })
-            .catch((error) => {
-                // Expected on iOS/Safari/Firefox/insecure contexts (no permission
-                // on open) — the user pastes manually. Logged for triage only.
-                console.debug("TtydPasteDialog: clipboard auto-fill on open denied", { error });
+            .catch(() => {
+                // no permission on open (iOS/Safari/Firefox/insecure) — manual paste
             });
 
         return () => {
@@ -73,14 +71,10 @@ export function TtydPasteDialog({ open, onOpenChange, onSubmit }: Props) {
                 setValue(text);
                 textareaRef.current?.focus({ preventScroll: true });
             }
-        } catch (error) {
-            // Denied/unavailable — the user falls back to long-press → Paste into
-            // the box. Logged for triage only.
-            console.debug("TtydPasteDialog: clipboard read on button click denied", { error });
+        } catch {
+            // denied/unavailable — fall back to long-press → Paste into the box
         }
     };
-
-    const canReadClipboard = typeof navigator !== "undefined" && Boolean(navigator.clipboard?.readText);
 
     const submit = () => {
         if (!value) {
@@ -129,18 +123,16 @@ export function TtydPasteDialog({ open, onOpenChange, onSubmit }: Props) {
                     />
 
                     <GlassDialogFooter className="gap-2 sm:justify-end">
-                        {canReadClipboard && (
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => void pasteFromClipboard()}
-                                className="mr-auto gap-2 font-mono text-xs"
-                            >
-                                <ClipboardPaste size={14} />
-                                Paste from clipboard
-                            </Button>
-                        )}
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void pasteFromClipboard()}
+                            className="mr-auto gap-2 font-mono text-xs"
+                        >
+                            <ClipboardPaste size={14} />
+                            Paste from clipboard
+                        </Button>
                         <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>
                             Cancel
                         </Button>

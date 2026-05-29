@@ -153,15 +153,14 @@ export function TtydRoute() {
             return;
         }
 
-        // Nudge react-mosaic to recompute once after the container paints. A
-        // persistent "resize" listener that re-dispatches "resize" recurses
-        // infinitely on a real resize — react-mosaic already listens to window
-        // resizes itself, so a single post-paint nudge on mode switch is enough.
-        const rafId = window.requestAnimationFrame(() => {
+        const nudgeMosaic = () => {
             window.dispatchEvent(new Event("resize"));
-        });
+        };
 
-        return () => window.cancelAnimationFrame(rafId);
+        nudgeMosaic();
+        window.addEventListener("resize", nudgeMosaic);
+
+        return () => window.removeEventListener("resize", nudgeMosaic);
     }, [mode]);
 
     const spawn = useMutation({
@@ -398,7 +397,7 @@ export function TtydRoute() {
                                                 size="icon-sm"
                                                 variant="ghost"
                                                 tooltip="Close terminal"
-                                                className="text-[var(--dd-danger)] hover:bg-[var(--dd-danger)]/15 hover:text-[var(--dd-danger)]"
+                                                className="text-red-400 hover:bg-red-500/15 hover:text-red-300"
                                                 onClick={() => setCloseTarget(session)}
                                             >
                                                 <X size={12} />

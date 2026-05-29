@@ -725,7 +725,6 @@
     border-right: none;
     border-radius: 10px 0 0 10px;
     backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
     cursor: pointer;
 }
 .dd-ttyd-scrollbar-notch:active {
@@ -755,7 +754,6 @@
     border: 1px solid var(--dd-border);
     border-radius: 9999px;
     backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
     cursor: pointer;
 }
 .dd-ttyd-scrollbar-hide:active {
@@ -945,14 +943,14 @@
 }
 
 .dd-shell-icon--destructive {
-    color: var(--dd-danger);
-    border-color: color-mix(in srgb, var(--dd-danger) 45%, var(--dd-border));
+    color: #f87171;
+    border-color: color-mix(in srgb, #f87171 45%, var(--dd-border));
 }
 
 .dd-shell-icon--destructive:hover {
-    color: color-mix(in srgb, var(--dd-danger) 70%, white);
-    border-color: color-mix(in srgb, var(--dd-danger) 65%, transparent);
-    background: color-mix(in srgb, var(--dd-danger) 14%, var(--dd-bg-base));
+    color: #fca5a5;
+    border-color: color-mix(in srgb, #f87171 65%, transparent);
+    background: color-mix(in srgb, #ef4444 14%, #11201a);
 }
 
 .dd-tab {
