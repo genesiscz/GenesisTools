@@ -314,6 +314,25 @@
     border-radius: 0.5rem;
 }
 
+.dd-ttyd-highlight--pulse {
+    animation: dd-ttyd-highlight-pulse 2.5s ease-out 1;
+}
+
+@keyframes dd-ttyd-highlight-pulse {
+    0%,
+    100% {
+        box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--dd-accent-from) 55%, transparent);
+        opacity: 1;
+    }
+    18%,
+    55% {
+        box-shadow:
+            inset 0 0 0 2px color-mix(in srgb, var(--dd-accent-from) 85%, transparent),
+            0 0 22px color-mix(in srgb, var(--dd-accent-from) 35%, transparent);
+        opacity: 1;
+    }
+}
+
 .dd-terminal-line {
     min-height: 1.55em;
 }
@@ -640,7 +659,7 @@
 }
 .dd-ttyd-scroll-pads {
     position: absolute;
-    top: 10px;
+    top: var(--dd-ttyd-scroll-pads-top, 56px);
     right: 10px;
     z-index: 50;
     display: flex;
@@ -806,6 +825,7 @@
     align-items: center;
     justify-content: center;
     min-width: 28px;
+    min-height: 28px;
     cursor: pointer;
     border: 1px solid var(--dd-border);
     border-radius: 5px;
@@ -820,6 +840,12 @@
         color 120ms ease;
 }
 
+.dd-burger {
+    width: 28px;
+    padding: 0;
+    font-size: 14px;
+}
+
 .dd-burger:hover,
 .dd-plus:hover,
 .dd-shell-icon:hover {
@@ -832,6 +858,17 @@
     width: 28px;
     height: 28px;
     padding: 0;
+}
+
+.dd-shell-icon--destructive {
+    color: #f87171;
+    border-color: color-mix(in srgb, #f87171 45%, var(--dd-border));
+}
+
+.dd-shell-icon--destructive:hover {
+    color: #fca5a5;
+    border-color: color-mix(in srgb, #f87171 65%, transparent);
+    background: color-mix(in srgb, #ef4444 14%, #11201a);
 }
 
 .dd-tab {
