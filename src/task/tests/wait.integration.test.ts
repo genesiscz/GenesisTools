@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { setupTaskIntegrationHome, withTaskSession } from "./task-integration-env";
+import { setupTaskIntegrationHome, waitForSession, withTaskSession } from "./task-integration-env";
 
 const env = setupTaskIntegrationHome();
 
@@ -16,26 +16,23 @@ test("wait --exit-on-match exits 0 on first pattern match (F1)", async () => {
                 "--",
                 "bash",
                 "-c",
-                "echo a; sleep 0.5; echo Bundled in 234ms; sleep 30",
+                "echo a; sleep 0.5; echo Bundled in 234ms; sleep 5",
             ],
             { detached: true, stdio: "ignore" }
         ).unref();
 
-        await new Promise((r) => setTimeout(r, 800));
+        await waitForSession(env, S);
 
         const start = Date.now();
-        const r = env.task(["wait", "--session", S, "--exit-on-match", "Bundled", "--timeout", "30"], {
-            timeout: 25000,
+        const r = env.task(["wait", "--session", S, "--exit-on-match", "Bundled", "--timeout", "10"], {
+            timeout: 12000,
         });
         const elapsed = Date.now() - start;
 
         expect(r.code).toBe(0);
-        // Generous bound: the decoy session sleeps 30s, so finishing well under
-        // that still proves wait exited on match. Tight bounds flake under the
-        // CI `bun test --parallel` subprocess contention.
-        expect(elapsed).toBeLessThan(20000);
+        expect(elapsed).toBeLessThan(3000);
     });
-}, 30_000);
+});
 
 test("wait --timeout exits non-zero on deadline (F1)", async () => {
     const S = `wait-timeout-${Date.now()}`;
@@ -46,15 +43,15 @@ test("wait --timeout exits non-zero on deadline (F1)", async () => {
             stdio: "ignore",
         }).unref();
 
-        await new Promise((r) => setTimeout(r, 800));
+        await waitForSession(env, S);
 
         const r = env.task(["wait", "--session", S, "--exit-on-match", "NEVER_APPEARS", "--timeout", "2"], {
-            timeout: 25000,
+            timeout: 5000,
         });
 
         expect(r.code).not.toBe(0);
     });
-}, 30_000);
+});
 
 test("wait without --exit-on-match waits for session exit + --propagate-exit (F1)", async () => {
     const S = `wait-exit-${Date.now()}`;
@@ -65,10 +62,10 @@ test("wait without --exit-on-match waits for session exit + --propagate-exit (F1
             stdio: "ignore",
         }).unref();
 
-        await new Promise((r) => setTimeout(r, 800));
+        await waitForSession(env, S);
 
-        const r = env.task(["wait", "--session", S, "--timeout", "30", "--propagate-exit"], { timeout: 25000 });
+        const r = env.task(["wait", "--session", S, "--timeout", "10", "--propagate-exit"], { timeout: 12000 });
 
         expect(r.code).toBe(17);
     });
-}, 30_000);
+});

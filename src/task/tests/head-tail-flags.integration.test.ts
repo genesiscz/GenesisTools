@@ -16,11 +16,11 @@ beforeAll(() => {
         "-c",
         "for i in $(seq 1 100); do echo line $i; done",
     ]);
-});
+}, 15_000);
 
 afterAll(() => {
     env.clean(SESSION);
-});
+}, 15_000);
 
 test("--head 5 returns first 5 lines (F7)", () => {
     const r = env.task(["logs", "--session", SESSION, "--head", "5", "--raw"]);

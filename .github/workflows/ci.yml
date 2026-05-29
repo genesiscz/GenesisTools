@@ -27,12 +27,11 @@ jobs:
           # valid in step-level timeout-minutes; only non-matrix contexts /
           # raw ternaries are rejected there).
           # testTimeout from real last-20-runs data: ubuntu test discovery
-          # med 66s / max 146s, plus a ~97s SERIAL task/tests integration lane.
-          # The lane must stay serial: run --parallel (even isolated to its 13
-          # files) it flakes on CI's slower cores — the tests race a fixed-sleep
-          # session warm-up that loses under any real contention. -> 6m.
+          # med 66s / max 146s -> 4m. The task/tests integration lane is gated
+          # out of the default suite (see package.json `test`) and run on demand
+          # via `bun run test:task`, so it is not part of this step's budget.
           # windows med 136s / healthy ~150s -> 7m.
-          inc='{"os":"ubuntu-latest","testTimeout":6}'
+          inc='{"os":"ubuntu-latest","testTimeout":4}'
           win=false
           if [ "$EVENT" = "workflow_dispatch" ]; then win=true; fi
           title_lc=$(printf '%s' "$PR_TITLE" | tr '[:upper:]' '[:lower:]')

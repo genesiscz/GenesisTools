@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { setupTaskIntegrationHome, withTaskSession } from "./task-integration-env";
+import { setupTaskIntegrationHome, waitForSession, withTaskSession } from "./task-integration-env";
 
 const env = setupTaskIntegrationHome();
 
@@ -16,28 +16,25 @@ test("tail --follow --exit-on-match PATTERN exits on first match (F2)", async ()
                 "--",
                 "bash",
                 "-c",
-                "echo noise1; sleep 0.5; echo SENTINEL_FOUND; sleep 30; echo more",
+                "echo noise1; sleep 0.5; echo SENTINEL_FOUND; sleep 2; echo more",
             ],
             { detached: true, stdio: "ignore" }
         ).unref();
 
-        await new Promise((r) => setTimeout(r, 800));
+        await waitForSession(env, SESSION);
 
         const waitStart = Date.now();
         const watcher = env.task(
             ["tail", "--session", SESSION, "--follow", "--raw", "--exit-on-match", "SENTINEL_FOUND"],
-            { timeout: 25000 }
+            { timeout: 5000 }
         );
         const elapsed = Date.now() - waitStart;
 
         expect(watcher.code).toBe(0);
-        // Generous bound: the decoy session sleeps 30s after the sentinel, so
-        // finishing well under that proves tail exited on match. Tight bounds
-        // flake under the CI `bun test --parallel` subprocess contention.
-        expect(elapsed).toBeLessThan(20000);
+        expect(elapsed).toBeLessThan(2000);
         expect(watcher.stdout).toContain("SENTINEL_FOUND");
     });
-}, 30_000);
+});
 
 test("tail --follow --propagate-exit propagates session exit code (F3)", async () => {
     const SESSION = `prop-exit-${Date.now()}`;
@@ -48,10 +45,10 @@ test("tail --follow --propagate-exit propagates session exit code (F3)", async (
             { detached: true, stdio: "ignore" }
         ).unref();
 
-        await new Promise((r) => setTimeout(r, 800));
+        await waitForSession(env, SESSION);
 
-        const watcher = env.task(["tail", "--session", SESSION, "--follow", "--propagate-exit"], { timeout: 25000 });
+        const watcher = env.task(["tail", "--session", SESSION, "--follow", "--propagate-exit"], { timeout: 5000 });
 
         expect(watcher.code).toBe(42);
     });
-}, 30_000);
+});
