@@ -10,9 +10,10 @@
  *      `event.isTrusted`, so the standard handler picks it up and writes
  *      the right ESC sequence to the websocket.
  *
- * For scrollback we prefer xterm.js's own `scrollLines()` when ttyd exposes
- * the terminal instance globally (faster + jank-free), and fall back to
- * Shift+PageUp/PageDown keydowns which xterm.js binds by default.
+ * Scrollback in tmux attach sessions uses xterm's alternate buffer — scrollLines
+ * is a no-op there. Real mouse wheel works via coreMouseService.triggerMouseEvent
+ * (SGR wheel buttons). The front-proxy injects __ddTtydScroll into ttyd HTML to
+ * mirror that path; the parent calls it directly or via postMessage.
  */
 
 export type IframeKey = "Escape" | "Tab" | "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "PageUp" | "PageDown";
@@ -28,27 +29,14 @@ const KEY_TABLE: Record<IframeKey, { key: string; code: string; keyCode: number 
     PageDown: { key: "PageDown", code: "PageDown", keyCode: 34 },
 };
 
-interface XtermTerminal {
-    scrollLines?: (amount: number) => void;
-    focus?: () => void;
-}
-
-interface XtermWindow extends Window {
-    term?: XtermTerminal;
+interface TtydIframeWindow extends Window {
+    __ddTtydScroll?: (lines: number) => boolean;
+    __ddTtydScrollPage?: (direction: -1 | 1) => boolean;
 }
 
 function getHelperTextarea(iframe: HTMLIFrameElement): HTMLTextAreaElement | null {
     try {
         return iframe.contentDocument?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea") ?? null;
-    } catch {
-        return null;
-    }
-}
-
-function getXtermInstance(iframe: HTMLIFrameElement): XtermTerminal | null {
-    try {
-        const w = iframe.contentWindow as XtermWindow | null;
-        return w?.term ?? null;
     } catch {
         return null;
     }
@@ -82,67 +70,60 @@ export function sendKeyToIframe(iframe: HTMLIFrameElement | null, key: IframeKey
     return dispatchKey(textarea, key);
 }
 
+function scrollViaPostMessage(contentWindow: TtydIframeWindow, amount: number): void {
+    contentWindow.postMessage({ type: "dd-ttyd-scroll", lines: amount }, "*");
+}
+
 /**
- * Scrolls the terminal's scrollback buffer. Positive amount = down, negative = up.
- *
- * xterm.js's reliable scroll inputs are (in priority order):
- *   1. the public `term.scrollLines(±n)` API if ttyd exposes the Terminal,
- *   2. a synthetic WheelEvent on `.xterm-viewport` — xterm.js binds wheel
- *      and converts deltaY into scrollback movement,
- *   3. direct scrollTop manipulation as a belt-and-braces nudge.
- *
- * What does NOT work: PageUp/PageDown keydowns (xterm.js doesn't bind those
- * by default — host apps add them, and ttyd doesn't). Earlier versions of
- * this file shipped that approach and it was a no-op on ttyd.
+ * Scrolls the terminal scrollback. Positive = down (newer), negative = up (older).
  */
 export function scrollIframeTerminal(iframe: HTMLIFrameElement | null, amount: number): boolean {
     if (!iframe || amount === 0) {
         return false;
     }
 
-    const term = getXtermInstance(iframe);
-    if (term?.scrollLines) {
-        term.scrollLines(amount);
-        return true;
-    }
+    try {
+        const contentWindow = iframe.contentWindow as TtydIframeWindow | null;
 
-    const viewport = getXtermViewport(iframe);
-    if (!viewport) {
+        if (!contentWindow) {
+            return false;
+        }
+
+        if (typeof contentWindow.__ddTtydScroll === "function") {
+            return contentWindow.__ddTtydScroll(amount);
+        }
+
+        scrollViaPostMessage(contentWindow, amount);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function scrollPageViaPostMessage(contentWindow: TtydIframeWindow, direction: -1 | 1): void {
+    contentWindow.postMessage({ type: "dd-ttyd-scroll-page", direction }, "*");
+}
+
+/** Scroll roughly one visible screen of scrollback up or down. */
+export function scrollIframeTerminalByPage(iframe: HTMLIFrameElement | null, direction: -1 | 1): boolean {
+    if (!iframe) {
         return false;
     }
 
-    const lineHeight = estimateLineHeight(viewport);
-    const deltaY = amount * lineHeight;
-
-    viewport.dispatchEvent(
-        new WheelEvent("wheel", {
-            deltaY,
-            deltaMode: 0, // pixels
-            bubbles: true,
-            cancelable: true,
-        })
-    );
-
-    // Some xterm.js renderers detach visual rows from the scrollable DOM, so
-    // belt-and-braces also nudge scrollTop; harmless if the wheel already won.
-    viewport.scrollTop = Math.max(0, viewport.scrollTop + deltaY);
-    return true;
-}
-
-function getXtermViewport(iframe: HTMLIFrameElement): HTMLElement | null {
     try {
-        return iframe.contentDocument?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
+        const contentWindow = iframe.contentWindow as TtydIframeWindow | null;
+
+        if (!contentWindow) {
+            return false;
+        }
+
+        if (typeof contentWindow.__ddTtydScrollPage === "function") {
+            return contentWindow.__ddTtydScrollPage(direction);
+        }
+
+        scrollPageViaPostMessage(contentWindow, direction);
+        return true;
     } catch {
-        return null;
+        return false;
     }
-}
-
-function estimateLineHeight(viewport: HTMLElement): number {
-    const rowEl = viewport.parentElement?.querySelector<HTMLElement>(".xterm-rows > div");
-    const measured = rowEl?.getBoundingClientRect().height;
-    return measured && measured > 4 ? measured : 17;
-}
-
-export function findIframeByTitle(title: string): HTMLIFrameElement | null {
-    return document.querySelector<HTMLIFrameElement>(`iframe[title="${title}"]`);
 }

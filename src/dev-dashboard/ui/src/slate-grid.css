@@ -18,6 +18,8 @@
         linear-gradient(var(--dd-grid) 1px, transparent 1px),
         linear-gradient(90deg, var(--dd-grid) 1px, transparent 1px);
     background-size: 20px 20px;
+    height: 100%;
+    min-height: 0;
 }
 
 .dd-panel {
@@ -26,11 +28,62 @@
     border-radius: 8px;
 }
 
+/* Accent CTA (todos Add, etc.) */
+.dd-btn-accent {
+    cursor: pointer;
+    border-color: var(--dd-accent-from);
+    background: var(--dd-accent-gradient) !important;
+    color: #0c0e10 !important;
+    font-weight: 600;
+    box-shadow: 0 0 14px var(--dd-accent-glow);
+    transition:
+        opacity 150ms ease,
+        box-shadow 150ms ease,
+        filter 150ms ease;
+}
+
+.dd-btn-accent:hover:not(:disabled) {
+    opacity: 0.92;
+    filter: brightness(1.04);
+    box-shadow: 0 0 18px var(--dd-accent-glow);
+}
+
+.dd-btn-accent:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+/* Native buttons in dev-dashboard shell */
+.dd-grid-bg button:not(:disabled):not([data-disabled="true"]) {
+    cursor: pointer;
+}
+
+.dd-grid-bg button:disabled,
+.dd-grid-bg button[aria-disabled="true"] {
+    cursor: not-allowed;
+}
+
 .dd-accent-text {
     background: var(--dd-accent-gradient);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
+}
+
+/* SegmentedControl tone="dd" — active = SYSTEM PULSE fill; hover = todos Add button */
+.dd-segmented-control .dd-segment-item:hover:not([data-state="on"]) {
+    background: var(--dd-accent-gradient) !important;
+    color: #0c0e10 !important;
+    opacity: 0.9;
+    box-shadow: 0 0 14px var(--dd-accent-glow);
+}
+.dd-segmented-control .dd-segment-item[data-state="on"] {
+    background: var(--dd-accent-gradient) !important;
+    color: #0c0e10 !important;
+    box-shadow: 0 0 14px var(--dd-accent-glow);
+}
+.dd-segmented-control .dd-segment-item[data-state="on"]:hover {
+    opacity: 0.9;
 }
 
 .dd-qa-section-heading {
@@ -174,9 +227,11 @@
 
 .dd-cmux-tabs {
     display: flex;
+    min-width: 0;
     min-height: 24px;
     gap: 4px;
     overflow-x: auto;
+    overscroll-behavior-x: contain;
     padding-bottom: 2px;
 }
 
@@ -237,10 +292,26 @@
     font-size: 11px;
     line-height: 1.55;
     text-shadow: 0 0 10px rgba(52, 211, 153, 0.05);
-    white-space: pre-wrap;
-    /* Native momentum scroll on iOS + don't yank parent scroll. */
+    white-space: pre;
+    overflow: auto;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
+}
+
+.dd-cmux-preview-pane {
+    max-height: min(calc(1.55em * 20 + 1.25rem), 38vh);
+    min-height: calc(1.55em * 8 + 1rem);
+}
+
+@media (min-width: 768px) {
+    .dd-cmux-preview-pane {
+        max-height: min(calc(1.55em * 30 + 1.25rem), 42vh);
+    }
+}
+
+.dd-ttyd-highlight {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--dd-accent-from) 55%, transparent);
+    border-radius: 0.5rem;
 }
 
 .dd-terminal-line {
@@ -496,8 +567,124 @@
 }
 
 /* ── Focused terminal chrome (MobileTerminalShell) ───────────────────── */
+.dd-focused-host {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    max-height: 100%;
+    overscroll-behavior: none;
+    touch-action: manipulation;
+}
+.dd-focused-host.dd-ttyd-focused {
+    contain: layout size;
+    touch-action: auto;
+    height: var(--dd-vv-height, 100%);
+    max-height: var(--dd-vv-height, 100%);
+}
+.dd-focused-host > .dd-focused {
+    flex: 1;
+    min-height: 0;
+}
 .dd-focused {
     padding: 0;
+    overflow: hidden;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    contain: inline-size;
+}
+.dd-shell-chrome {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    min-width: 0;
+    max-width: 100%;
+    flex: none;
+    background: var(--dd-bg-panel);
+}
+.dd-shell-chrome .dd-subrow {
+    background: var(--dd-bg-base);
+}
+.dd-shell-body {
+    position: relative;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+    overscroll-behavior: contain;
+    touch-action: auto;
+}
+.dd-ttyd-embed {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: contain;
+    touch-action: auto;
+}
+.dd-ttyd-embed iframe {
+    display: block;
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 0;
+    border: 0;
+    overflow: hidden;
+    touch-action: auto;
+}
+.dd-ttyd-scroll-pads {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+}
+.dd-ttyd-scroll-pad {
+    pointer-events: auto;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 9999px;
+    border: 1px solid rgba(52, 211, 153, 0.38);
+    background:
+        radial-gradient(circle at 30% 25%, rgba(52, 211, 153, 0.16), transparent 55%),
+        rgba(8, 12, 10, 0.86);
+    color: #baf7dc;
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.35) inset,
+        0 8px 22px rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    transition:
+        transform 90ms ease,
+        border-color 120ms ease,
+        background 120ms ease,
+        box-shadow 120ms ease;
+}
+.dd-ttyd-scroll-pad:hover {
+    border-color: rgba(52, 211, 153, 0.62);
+    box-shadow:
+        0 0 0 1px rgba(52, 211, 153, 0.18) inset,
+        0 10px 26px rgba(0, 0, 0, 0.5),
+        0 0 18px rgba(52, 211, 153, 0.16);
+}
+.dd-ttyd-scroll-pad:active {
+    transform: scale(0.94);
+    background: rgba(52, 211, 153, 0.12);
 }
 .dd-edge {
     position: absolute;
@@ -515,6 +702,7 @@
     transform: translateY(-50%);
     width: 14px;
     height: 46px;
+    cursor: pointer;
     background: #11201a;
     border: 1px solid var(--dd-accent-from);
     border-left: 0;
@@ -522,32 +710,136 @@
     color: var(--dd-accent-from);
     z-index: 31;
     box-shadow: 0 0 9px rgba(52, 211, 153, 0.35);
+    transition:
+        background 120ms ease,
+        box-shadow 120ms ease,
+        filter 120ms ease;
+}
+
+.dd-edge-handle:hover {
+    background: rgba(52, 211, 153, 0.1);
+    filter: brightness(1.06);
+    box-shadow: 0 0 12px rgba(52, 211, 153, 0.45);
 }
 .dd-strip {
+    --dd-strip-gutter: 36px;
+
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
     background: var(--dd-bg-panel);
     border-bottom: 1px solid var(--dd-border);
     padding: 6px 6px 6px 18px;
+    z-index: 20;
+}
+.dd-strip-side {
+    display: flex;
+    align-items: center;
+    flex: none;
+}
+.dd-strip-side--end {
+    justify-content: flex-end;
+    gap: 4px;
+}
+.dd-strip-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.dd-strip-scroll {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
+    scrollbar-width: none;
+}
+.dd-strip-scroll::-webkit-scrollbar {
+    display: none;
 }
 .dd-subrow {
+    display: grid;
+    grid-template-columns: var(--dd-strip-gutter, 36px) minmax(0, 1fr);
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
     background: var(--dd-bg-base);
     border-bottom: 1px solid var(--dd-border);
     padding: 5px 6px 5px 18px;
 }
-.dd-burger,
-.dd-plus {
+.dd-subrow-gutter {
+    width: var(--dd-strip-gutter, 36px);
     flex: none;
+}
+.dd-subrow-scroll {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
+    scrollbar-width: none;
+}
+.dd-subrow-scroll::-webkit-scrollbar {
+    display: none;
+}
+.dd-burger,
+.dd-plus,
+.dd-shell-icon {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    cursor: pointer;
     border: 1px solid var(--dd-border);
     border-radius: 5px;
     background: #11201a;
     color: var(--dd-accent-from);
     padding: 4px 8px;
     font-size: 12px;
+    line-height: 1;
+    transition:
+        background 120ms ease,
+        border-color 120ms ease,
+        color 120ms ease;
 }
+
+.dd-burger:hover,
+.dd-plus:hover,
+.dd-shell-icon:hover {
+    border-color: rgba(52, 211, 153, 0.45);
+    background: rgba(52, 211, 153, 0.08);
+    color: var(--dd-accent-from);
+}
+
+.dd-shell-icon {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+}
+
 .dd-tab {
     flex: none;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 4px;
+    cursor: pointer;
     font-size: 12px;
     color: var(--dd-text-secondary);
     background: #11201a;
@@ -555,7 +847,17 @@
     border-radius: 5px;
     padding: 4px 8px;
     white-space: nowrap;
-    max-width: 60vw;
+    max-width: min(220px, 52vw);
+    transition:
+        background 120ms ease,
+        border-color 120ms ease,
+        color 120ms ease;
+}
+
+.dd-tab:hover:not(.is-active) {
+    border-color: rgba(52, 211, 153, 0.35);
+    background: rgba(52, 211, 153, 0.06);
+    color: var(--dd-text-primary);
 }
 .dd-tab.is-active {
     color: #06120d;
@@ -601,16 +903,88 @@
     overflow: auto;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
 }
+
+/* Obsidian /obsidian — mobile vault browser drops from top over the reader */
+.dd-obsidian-browser-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    background: rgba(0, 0, 0, 0.55);
+}
+.dd-obsidian-browser {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 80dvh;
+    max-height: 80dvh;
+    overflow: hidden;
+    background: var(--dd-bg-panel);
+    border-bottom: 1px solid var(--dd-border);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65);
+}
+.dd-obsidian-browser-chrome {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--dd-border);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 11px;
+    color: var(--dd-text-secondary);
+}
+.dd-obsidian-browse-btn {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    padding: 6px 10px;
+    border: 1px solid var(--dd-border);
+    border-radius: 6px;
+    background: var(--dd-bg-elevated, #14181c);
+    color: var(--dd-text-primary);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 11px;
+    transition:
+        background 120ms ease,
+        border-color 120ms ease,
+        color 120ms ease;
+}
+
+.dd-obsidian-browse-btn:hover {
+    border-color: rgba(52, 211, 153, 0.35);
+    background: rgba(52, 211, 153, 0.06);
+}
+
+.dd-obsidian-browse-btn[aria-expanded="true"] {
+    border-color: var(--dd-accent-from);
+    color: var(--dd-accent-from);
+}
+
 .dd-acc {
     display: flex;
     align-items: center;
     gap: 8px;
     width: 100%;
+    cursor: pointer;
     padding: 10px 12px;
     font-size: 13px;
     color: var(--dd-text-secondary);
     border-bottom: 1px solid var(--dd-border);
     background: transparent;
+    transition:
+        background 120ms ease,
+        color 120ms ease;
+}
+
+.dd-acc:hover {
+    color: var(--dd-text-primary);
+    background: rgba(52, 211, 153, 0.05);
 }
 .dd-acc.is-open {
     color: var(--dd-text-primary);
@@ -646,10 +1020,18 @@
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
     overflow-x: auto;
+    overscroll-behavior-x: contain;
+    touch-action: manipulation;
     scrollbar-width: none;
     font-family: "JetBrains Mono", source-code-pro, Menlo, Monaco, Consolas, monospace;
-    /* Mobile only — desktop never sees this. */
     pointer-events: auto;
+}
+.dd-keybar--embedded {
+    position: relative;
+    left: auto;
+    right: auto;
+    flex: none;
+    z-index: 20;
 }
 
 .dd-keybar::-webkit-scrollbar {
@@ -673,6 +1055,7 @@
     letter-spacing: 0.04em;
     cursor: pointer;
     user-select: none;
+    touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
     transition:
         background 120ms ease,

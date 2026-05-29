@@ -1,5 +1,6 @@
 import type { AccountUsage } from "@app/claude/lib/usage/api";
 import { useQuery } from "@tanstack/react-query";
+import { SegmentedControl } from "@ui/components/segmented-control";
 import { useMemo, useState } from "react";
 import { AccountCard } from "@/components/claude-usage/AccountCard";
 import { AccountUsageChart } from "@/components/claude-usage/AccountUsageChart";
@@ -17,7 +18,7 @@ export function ClaudeRoute() {
         queryFn: () => fetchJson<AccountUsage[]>("/api/claude/usage"),
         refetchInterval: 30000,
     });
-    const [rangeMinutes, setRangeMinutes] = useState<number>(10080);
+    const [rangeMinutes, setRangeMinutes] = useState<string>("10080");
 
     // One window end shared by every chart so their time axes align exactly.
     // Recomputed on each poll tick and on range change, not per chart render
@@ -53,24 +54,17 @@ export function ClaudeRoute() {
 
             <div className="flex items-center justify-between">
                 <h3 className="dd-accent-text text-sm font-semibold">Utilization history</h3>
-                <div className="flex gap-1" role="group" aria-label="History time range">
-                    {RANGES.map((r) => (
-                        <button
-                            key={r.minutes}
-                            type="button"
-                            onClick={() => setRangeMinutes(r.minutes)}
-                            className="dd-tab"
-                            style={
-                                rangeMinutes === r.minutes
-                                    ? { color: "#06120d", background: "var(--dd-accent-from)", fontWeight: 700 }
-                                    : undefined
-                            }
-                            aria-pressed={rangeMinutes === r.minutes}
-                        >
-                            {r.label}
-                        </button>
-                    ))}
-                </div>
+                <SegmentedControl
+                    tone="dd"
+                    aria-label="History time range"
+                    className="w-auto"
+                    value={rangeMinutes}
+                    onValueChange={setRangeMinutes}
+                    options={RANGES.map((r) => ({
+                        value: String(r.minutes),
+                        label: r.label,
+                    }))}
+                />
             </div>
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -80,7 +74,7 @@ export function ClaudeRoute() {
                         accountName={account.accountName}
                         label={account.label}
                         accountError={account.error}
-                        rangeMinutes={rangeMinutes}
+                        rangeMinutes={Number(rangeMinutes)}
                         rangeEndMs={rangeEndMs}
                     />
                 ))}

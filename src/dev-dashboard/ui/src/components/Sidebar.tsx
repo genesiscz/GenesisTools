@@ -1,4 +1,5 @@
 import { Link, useLocation } from "@tanstack/react-router";
+import { IconTooltip } from "@ui/components/icon-button";
 import { NAV_ROUTES } from "@/lib/nav-routes";
 
 export function Sidebar() {
@@ -15,20 +16,19 @@ export function Sidebar() {
                 const active = exact ? pathname === to : pathname.startsWith(to);
 
                 return (
-                    <Link
-                        key={to}
-                        to={to}
-                        title={label}
-                        aria-label={label}
-                        className="flex h-[28px] w-[28px] items-center justify-center rounded-[7px] border transition"
-                        style={{
-                            background: active ? "var(--dd-accent-gradient)" : "transparent",
-                            borderColor: active ? "transparent" : "var(--dd-border)",
-                            color: active ? "#0c0e10" : "var(--dd-text-secondary)",
-                        }}
-                    >
-                        <Icon size={14} />
-                    </Link>
+                    <IconTooltip key={to} tooltip={label}>
+                        <Link
+                            to={to}
+                            className="flex h-[28px] w-[28px] items-center justify-center rounded-[7px] border transition"
+                            style={{
+                                background: active ? "var(--dd-accent-gradient)" : "transparent",
+                                borderColor: active ? "transparent" : "var(--dd-border)",
+                                color: active ? "#0c0e10" : "var(--dd-text-secondary)",
+                            }}
+                        >
+                            <Icon size={14} />
+                        </Link>
+                    </IconTooltip>
                 );
             })}
         </nav>

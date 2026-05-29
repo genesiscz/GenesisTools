@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, Outlet } from "@tanstack/react-router";
+import { parseObsidianSearch } from "@/lib/obsidian-url-state";
 import { Shell } from "@/routes/__root";
 import { ClaudeRoute } from "@/routes/claude";
 import { CmuxRoute } from "@/routes/cmux";
@@ -39,6 +40,15 @@ const indexRoute = createRoute({
 const ttydRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/ttyd",
+    validateSearch: (search: Record<string, unknown>): { tab?: string } => {
+        const tab = search.tab;
+
+        if (typeof tab === "string" && tab.length > 0) {
+            return { tab };
+        }
+
+        return {};
+    },
     component: TtydRoute,
 });
 
@@ -51,6 +61,7 @@ const cmuxRoute = createRoute({
 const obsidianRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/obsidian",
+    validateSearch: (search: Record<string, unknown>) => parseObsidianSearch(search),
     component: ObsidianRoute,
 });
 
