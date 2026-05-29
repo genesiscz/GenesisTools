@@ -58,7 +58,9 @@ Query commits by date range with optional workitem extraction, branch attributio
 | `--group-by <day\|branch\|workitem\|none>` | Group main listing (default: `day`) |
 | `--without-branch` | Hide inline `[branch]` column (shown by default) |
 | `--without-workitem-id` | Hide inline `[#id]` column (shown by default) |
-| `--with-workitem-title` | Append Azure DevOps title after `#id` (cache-first) |
+| `--with-workitem-title` | Resolve Azure DevOps titles (cache-first); shown inline after `#id` **and** in the Workitem Summary |
+| `--with-workitems` | Alias for `--with-workitem-title` |
+| `--with-full-commit-messages` | Show full multi-line commit bodies (default: first line only) |
 | `--without-stashes` | Exclude `WIP on` / `index on` stash commits |
 | `--without-merges` | Exclude merge commits |
 | `--workitem <id>` | Filter to commits referencing workitem ID (repeatable, OR) |
@@ -67,9 +69,13 @@ Query commits by date range with optional workitem extraction, branch attributio
 | `--markdown` | markdown output (day headers, bullet list) |
 | `--clipboard` | Copy output to clipboard (`--markdown` recommended) |
 
-**Rebase behaviour:** `git log --after`/`--before` still filter by committer date. Commits authored before `--from` but committed inside the range appear in a compressed “rebased into this range” footer (or inline with `--include-rebases`). Patch-id dedup collapses cherry-pick/rebase duplicates (keeps newest committer date).
+**Rebase behaviour:** `git log --after`/`--before` still filter by committer date. Commits authored before `--from` but committed inside the range are clustered by landing time. In the default `day` grouping each cluster is folded into the day it **landed** (committer date) as a single `▸ N commits rebased … [from <branch>]` line, with the day header showing `(N commits, M rebased)`. Under `--group-by branch|workitem|none` the clusters stay in a compressed footer instead. `--include-rebases` expands every rebased commit in its own section. Patch-id dedup collapses cherry-pick/rebase duplicates (keeps newest committer date).
 
-**Default inline columns:** each row shows `[branch]` and `[#workitem]` when known. Trunk-only attribution is labelled `[trunk: develop]`.
+**Default inline columns:** each row shows `[branch]` and `[#workitem]` when known. Trunk-only attribution is labelled `[trunk: develop]`. Only the **first line** of each commit message is shown — pass `--with-full-commit-messages` for the full body.
+
+**`(?)` marker:** a commit flagged `(?)` had its author date likely reset by a rebase/amend, so the timestamp shown is the original authoring time, not when it landed. A legend prints at the bottom whenever any `(?)` appears.
+
+**Performance:** branch attribution (`git branch --contains`) and patch-id dedup (`git show | git patch-id`) run in parallel; a ~1000-commit / two-week range over `--all` resolves in ~1s. Per-phase timings are logged at `debug` level — run with `-v` or read `~/.genesis-tools/logs/<today>.log` to triage slow runs.
 
 ### `configure-authors`
 

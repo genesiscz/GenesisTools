@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Button } from "@ui/components/button";
+import { IconButton } from "@ui/components/icon-button";
 import { Input } from "@ui/components/input";
 import { Label } from "@ui/components/label";
 import { Textarea } from "@ui/components/textarea";
@@ -847,13 +848,13 @@ function TaskDetailPage() {
             {showHandoffHistory && (
                 <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
                     <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-[#0a0a14]/95 rounded-xl border border-cyan-500/30 p-6">
-                        <Button
+                        <IconButton
                             variant="ghost"
                             size="icon"
+                            tooltip="Close"
                             onClick={() => setShowHandoffHistory(false)}
                             className="absolute top-4 right-4 text-cyan-400 hover:bg-cyan-500/10"
                         >
-                            <span className="sr-only">Close</span>
                             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path
                                     strokeLinecap="round"
@@ -862,7 +863,7 @@ function TaskDetailPage() {
                                     d="M6 18L18 6M6 6l12 12"
                                 />
                             </svg>
-                        </Button>
+                        </IconButton>
                         <HandoffHistory handoffs={taskHandoffs} decisions={decisions} blockers={blockers} />
                     </div>
                 </div>

@@ -1,4 +1,4 @@
-import { Button } from "@ui/components/button";
+import { IconButton } from "@ui/components/icon-button";
 import { TagChip } from "@ui/custom";
 import { cn } from "@ui/lib/utils";
 import { ExternalLink, Globe, Trash2 } from "lucide-react";
@@ -51,24 +51,24 @@ export function BookmarkCard({ bookmark, onDelete, className }: BookmarkCardProp
                 </div>
 
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Button
+                    <IconButton
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-muted-foreground hover:text-rose-400"
+                        tooltip="Open bookmark"
                         onClick={() => window.open(bookmark.url, "_blank", "noopener,noreferrer")}
-                        aria-label="Open bookmark"
                     >
                         <ExternalLink className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
+                    </IconButton>
+                    <IconButton
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-muted-foreground hover:text-rose-400"
+                        tooltip="Delete bookmark"
                         onClick={() => onDelete(bookmark.id)}
-                        aria-label="Delete bookmark"
                     >
                         <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                    </IconButton>
                 </div>
             </div>
 

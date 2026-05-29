@@ -1,4 +1,5 @@
 import { Button } from "@ui/components/button";
+import { IconButton } from "@ui/components/icon-button";
 import { ArrowRight, Calendar, Check, ChevronDown, ChevronUp, Eye, FileText, X } from "lucide-react";
 import { useState } from "react";
 import type { Decision, HandoffDocument, TaskBlocker } from "@/lib/assistant/types";
@@ -149,16 +150,17 @@ export function HandoffBanner({
                                 <Check className="h-4 w-4" />
                                 {acknowledging ? "Acknowledging..." : "Acknowledge"}
                             </Button>
-                            {onDismiss && (
-                                <Button
+                            {onDismiss ? (
+                                <IconButton
                                     variant="ghost"
                                     size="icon"
+                                    tooltip="Dismiss handoff"
                                     onClick={onDismiss}
                                     className="h-8 w-8 text-muted-foreground hover:text-foreground"
                                 >
                                     <X className="h-4 w-4" />
-                                </Button>
-                            )}
+                                </IconButton>
+                            ) : null}
                         </div>
                     </div>
                 </div>
@@ -235,15 +237,15 @@ export function HandoffBanner({
             {showFullDocument && (
                 <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
                     <div className="relative w-full max-w-3xl max-h-[90vh] overflow-y-auto">
-                        <Button
+                        <IconButton
                             variant="ghost"
                             size="icon"
+                            tooltip="Close"
                             onClick={() => setShowFullDocument(false)}
                             className="absolute top-4 right-4 z-10 text-cyan-400 hover:bg-cyan-500/10"
                         >
-                            <span className="sr-only">Close</span>
                             <X className="h-5 w-5" />
-                        </Button>
+                        </IconButton>
                         <HandoffDocumentView handoff={handoff} decisions={linkedDecisions} blockers={linkedBlockers} />
                     </div>
                 </div>

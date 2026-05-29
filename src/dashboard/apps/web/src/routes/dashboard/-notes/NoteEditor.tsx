@@ -1,3 +1,4 @@
+import { IconTooltip } from "@ui/components/icon-button";
 import { Pin, PinOff, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
@@ -130,34 +131,36 @@ export function NoteEditor({ note, userId }: NoteEditorProps) {
                     style={{ fontFamily: "'JetBrains Mono', monospace" }}
                 />
 
-                <button
-                    type="button"
-                    onClick={handlePinToggle}
-                    title={isPinned ? "Unpin" : "Pin to top"}
-                    className={[
-                        "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-all hover:-translate-y-0.5",
-                        isPinned
-                            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
-                            : "border-white/10 bg-zinc-900/60 text-zinc-500 hover:border-emerald-500/20 hover:text-emerald-400",
-                    ].join(" ")}
-                >
-                    {isPinned ? <Pin className="h-4 w-4" /> : <PinOff className="h-4 w-4" />}
-                </button>
+                <IconTooltip tooltip={isPinned ? "Unpin" : "Pin to top"}>
+                    <button
+                        type="button"
+                        onClick={handlePinToggle}
+                        className={[
+                            "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-all hover:-translate-y-0.5",
+                            isPinned
+                                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+                                : "border-white/10 bg-zinc-900/60 text-zinc-500 hover:border-emerald-500/20 hover:text-emerald-400",
+                        ].join(" ")}
+                    >
+                        {isPinned ? <Pin className="h-4 w-4" /> : <PinOff className="h-4 w-4" />}
+                    </button>
+                </IconTooltip>
 
-                <button
-                    type="button"
-                    onClick={handleDelete}
-                    title="Delete note"
-                    disabled={deleteMutation.isPending}
-                    className={[
-                        "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/10",
-                        "bg-zinc-900/60 text-zinc-500 transition-all hover:-translate-y-0.5",
-                        "hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-400",
-                        "disabled:opacity-40",
-                    ].join(" ")}
-                >
-                    <Trash2 className="h-4 w-4" />
-                </button>
+                <IconTooltip tooltip="Delete note">
+                    <button
+                        type="button"
+                        onClick={handleDelete}
+                        disabled={deleteMutation.isPending}
+                        className={[
+                            "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/10",
+                            "bg-zinc-900/60 text-zinc-500 transition-all hover:-translate-y-0.5",
+                            "hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-400",
+                            "disabled:opacity-40",
+                        ].join(" ")}
+                    >
+                        <Trash2 className="h-4 w-4" />
+                    </button>
+                </IconTooltip>
             </div>
 
             <div className="flex flex-1 gap-3 min-h-0">

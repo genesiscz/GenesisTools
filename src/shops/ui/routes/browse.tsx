@@ -1,7 +1,7 @@
 import type { MasterListResponse } from "@app/shops/types";
 import { BrowseGrid } from "@app/shops/ui/components/BrowseGrid";
 import { useDebouncedValue } from "@app/shops/ui/hooks/useDebouncedValue";
-import { Button } from "@app/utils/ui/components/button";
+import { IconButton } from "@app/utils/ui/components/icon-button";
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import { useQuery } from "@tanstack/react-query";
@@ -117,14 +117,15 @@ function BrowsePage() {
                             className="pl-8 w-56 font-mono text-xs"
                         />
                         {qInput && (
-                            <Button
+                            <IconButton
                                 variant="ghost"
                                 size="icon"
+                                tooltip="Clear search"
                                 onClick={() => setQInput("")}
                                 className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6"
                             >
                                 <X className="w-3 h-3" />
-                            </Button>
+                            </IconButton>
                         )}
                     </div>
                     <Select

@@ -2,13 +2,8 @@ import type { ListingRow } from "@app/Internal/commands/reas/lib/store";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ui/components/card";
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuGroup,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from "@ui/components/dropdown-menu";
+import { DropdownMenuGroup, DropdownMenuItem } from "@ui/components/dropdown-menu";
+import { IconDropdownMenu } from "@ui/components/icon-button";
 import { Pagination, PaginationContent, PaginationItem } from "@ui/components/pagination";
 import { Skeleton } from "@ui/components/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/components/table";
@@ -316,8 +311,9 @@ function RowActions({
     onSelectListing: (listingId: number) => void;
 }) {
     return (
-        <DropdownMenu>
-            <DropdownMenuTrigger asChild>
+        <IconDropdownMenu
+            tooltip="Listing actions"
+            trigger={
                 <Button
                     variant="outline"
                     size="icon"
@@ -327,20 +323,18 @@ function RowActions({
                     }}
                 >
                     <MoreHorizontal className="h-4 w-4" />
-                    <span className="sr-only">Listing actions</span>
                 </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-                <DropdownMenuGroup>
-                    <DropdownMenuItem onSelect={() => onSelectListing(listing.id)}>View details</DropdownMenuItem>
-                    <DropdownMenuItem asChild>
-                        <a href={listing.link} target="_blank" rel="noreferrer">
-                            Open source
-                        </a>
-                    </DropdownMenuItem>
-                </DropdownMenuGroup>
-            </DropdownMenuContent>
-        </DropdownMenu>
+            }
+        >
+            <DropdownMenuGroup>
+                <DropdownMenuItem onSelect={() => onSelectListing(listing.id)}>View details</DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                    <a href={listing.link} target="_blank" rel="noreferrer">
+                        Open source
+                    </a>
+                </DropdownMenuItem>
+            </DropdownMenuGroup>
+        </IconDropdownMenu>
     );
 }
 

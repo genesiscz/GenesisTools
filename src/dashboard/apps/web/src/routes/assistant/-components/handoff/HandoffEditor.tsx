@@ -1,5 +1,6 @@
 import { Button } from "@ui/components/button";
 import { Checkbox } from "@ui/components/checkbox";
+import { IconButton } from "@ui/components/icon-button";
 import { Input } from "@ui/components/input";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@ui/components/sheet";
 import { Textarea } from "@ui/components/textarea";
@@ -435,15 +436,16 @@ export function HandoffEditor({
                                         }
                                     }}
                                 />
-                                <Button
+                                <IconButton
                                     type="button"
                                     variant="outline"
                                     size="icon"
+                                    tooltip="Add step"
                                     onClick={handleAddStep}
                                     className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
                                 >
                                     <Plus className="h-4 w-4" />
-                                </Button>
+                                </IconButton>
                             </div>
                         </div>
 
