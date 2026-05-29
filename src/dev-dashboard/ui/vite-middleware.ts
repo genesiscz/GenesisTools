@@ -39,6 +39,7 @@ import { configureRetention, getCachedPulse, getSeries, startPulsePolling } from
 import { createStandaloneTmuxSession } from "@app/dev-dashboard/lib/tmux/create-session";
 import { enrichSessionsForHub } from "@app/dev-dashboard/lib/tmux/hub";
 import { renameTmuxSessionInHub } from "@app/dev-dashboard/lib/tmux/rename";
+import { logTtydTmuxSnapshot } from "@app/dev-dashboard/lib/restart-diag";
 import {
     addTodo,
     completeTodo,
@@ -88,6 +89,10 @@ getConfig()
         logger.warn({ err }, "dev-dashboard: pulse config load failed, polling with 5000ms default");
         startPulsePolling(5000);
     });
+
+// Restart diagnostics: snapshot ttyd/tmux state once at startup so two
+// consecutive instances reveal what a `ui restart` did to the sessions.
+logTtydTmuxSnapshot("startup");
 
 async function readJson<T>(req: IncomingMessage): Promise<T> {
     const chunks: Buffer[] = [];
