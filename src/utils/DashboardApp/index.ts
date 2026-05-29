@@ -11,6 +11,8 @@
  *       commandName: "ui",
  *       description: "Launch the Clarity dashboard",
  *       spawn: { cmd: buildViteDevCmd({ configPath, strictPort: true }), cwd: PROJECT_ROOT },
+ *   // Or front-proxy dashboards: buildDashboardUiServerCmd({ serverScript, mode: "preview" })
+ *   // and implement __ui-server with runDashboardPreviewUiServer() from ./preview
  *       bindHost: "127.0.0.1", // default; use "0.0.0.0" for LAN/tunnel (see dev-dashboard)
  *       readiness: { kind: "http" },
  *       openBrowser: { enabled: true },
@@ -62,6 +64,19 @@ export {
 } from "./access";
 export { dashboardUrlWithQuery } from "./lifecycle";
 export type {
+    DashboardPreviewPublicProxy,
+    DashboardPreviewUiOptions,
+    PreviewServerWatchGlobsOptions,
+} from "./preview";
+export {
+    buildPreviewServerWatchGlobs,
+    openBrowserWhenDashboardEnv,
+    runDashboardPreviewUiServer,
+    watchPreviewServerFiles,
+} from "./preview";
+export type { StopUiServerOptions } from "./stopUiServerOnPort";
+export { stopUiServerOnPort } from "./stopUiServerOnPort";
+export type {
     AttachOptions,
     DashboardAccessConfig,
     DashboardApp,
@@ -82,8 +97,13 @@ export type {
     UpOptions,
     UpResult,
 } from "./types";
-export type { ViteDevCmdOptions } from "./viteSpawn";
-export { buildViteDevCmd, DEFAULT_BIND_HOST, resolveViteEntry } from "./viteSpawn";
+export type { DashboardUiServeMode, DashboardUiServerCmdOptions, ViteDevCmdOptions } from "./viteSpawn";
+export {
+    buildDashboardUiServerCmd,
+    buildViteDevCmd,
+    DEFAULT_BIND_HOST,
+    resolveViteEntry,
+} from "./viteSpawn";
 
 function resolvePort(config: DashboardAppConfig): number {
     if (typeof config.port === "number") {

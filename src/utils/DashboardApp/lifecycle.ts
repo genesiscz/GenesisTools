@@ -11,9 +11,10 @@ import { logger, out } from "@app/logger";
 import { Browser } from "@app/utils/browser";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { getPortOwner } from "@app/utils/network";
-import { isProcessAlive } from "@app/utils/process-alive";
 import { spawnDashboard } from "@app/utils/process/spawnDashboard";
+import { isProcessAlive } from "@app/utils/process-alive";
 import { stripAnsi } from "@app/utils/string";
+import { terminalLocaleEnvRecord } from "@app/utils/terminal/locale";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import {
@@ -76,9 +77,18 @@ export function buildLifecycleContext(config: DashboardAppConfig, resolvedPort: 
     };
 }
 
+function resolveSpawnCmd(config: DashboardAppConfig, opts: UpOptions = {}): string[] {
+    if (opts.uiServe === "dev" && config.spawn.devCmd) {
+        return [...config.spawn.devCmd];
+    }
+
+    return [...config.spawn.cmd];
+}
+
 function spawnEnv(config: DashboardAppConfig): Record<string, string | undefined> {
     return {
         ...config.spawn.env,
+        ...terminalLocaleEnvRecord(),
         ...(config.type === "ui"
             ? {
                   FORCE_COLOR: "1",
@@ -135,7 +145,7 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
         writePid(config.key, process.pid);
         try {
             const exitCode = await spawnDashboard({
-                cmd: [...config.spawn.cmd],
+                cmd: resolveSpawnCmd(config, opts),
                 cwd: config.spawn.cwd,
                 env: {
                     ...spawnEnv(config),
@@ -153,7 +163,7 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
     // Background: detached spawn with stdio → logfile.
     resetLogFile(config.key);
     const { pid } = spawnDetached({
-        cmd: [...config.spawn.cmd],
+        cmd: resolveSpawnCmd(config, opts),
         cwd: config.spawn.cwd,
         env: spawnEnv(config),
         logFile: ctx.logFile,
