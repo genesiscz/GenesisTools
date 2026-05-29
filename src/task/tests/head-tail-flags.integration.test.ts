@@ -48,18 +48,27 @@ test("--head 5 --tail 5 returns 10 lines with elision marker (F7)", () => {
 
 test("--all dumps every line, overrides --head/--tail (F7)", () => {
     const r = env.task(["logs", "--session", SESSION, "--all", "--raw"]);
-    const lines = r.stdout.trim().split("\n").filter((l) => l.startsWith("line "));
+    const lines = r.stdout
+        .trim()
+        .split("\n")
+        .filter((l) => l.startsWith("line "));
     expect(lines).toHaveLength(100);
 });
 
 test("B1 repro — tail --all returns ALL lines, not just last 10", () => {
     const r = env.task(["tail", "--session", SESSION, "--all", "--raw"]);
-    const matchingLines = r.stdout.trim().split("\n").filter((l) => l.startsWith("line "));
+    const matchingLines = r.stdout
+        .trim()
+        .split("\n")
+        .filter((l) => l.startsWith("line "));
     expect(matchingLines).toHaveLength(100);
 });
 
 test("B1 repro — tail --all --grep returns ALL matching lines", () => {
     const r = env.task(["tail", "--session", SESSION, "--all", "--grep", "^line ", "--raw"]);
-    const matchingLines = r.stdout.trim().split("\n").filter((l) => /^line /.test(l));
+    const matchingLines = r.stdout
+        .trim()
+        .split("\n")
+        .filter((l) => /^line /.test(l));
     expect(matchingLines).toHaveLength(100);
 });

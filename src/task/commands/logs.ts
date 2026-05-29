@@ -1,8 +1,8 @@
-import type { Command } from "commander";
 import { buildLogQueryOpts, tailOrQuery } from "@app/task/lib/build-log-query-opts";
 import { applyGrepImpliesAll, applyLogWindowDefaults } from "@app/task/lib/log-window";
 import { withResolvedSession } from "@app/task/lib/with-resolved-session";
 import type { LogCliOpts } from "@app/task/types";
+import type { Command } from "commander";
 
 export function registerLogsCommand(program: Command): void {
     program

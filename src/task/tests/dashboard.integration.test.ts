@@ -55,10 +55,7 @@ describe("task dashboard integration", () => {
         const session = `ui-mirror-${Date.now()}`;
         const path = jsonlPath(session);
         appendFileSync(path, `${SafeJSON.stringify({ type: "meta", session, command: "echo", cwd: "/tmp" })}\n`);
-        appendFileSync(
-            uiJsonlPath(session),
-            `${SafeJSON.stringify({ type: "line", seq: 1, text: "ansi mirror" })}\n`
-        );
+        appendFileSync(uiJsonlPath(session), `${SafeJSON.stringify({ type: "line", seq: 1, text: "ansi mirror" })}\n`);
 
         const res = await fetchApi("/api/sessions");
         expect(res.ok).toBe(true);
@@ -135,7 +132,10 @@ describe("task dashboard integration", () => {
     it("DELETE removes task session files", async () => {
         const session = `del-${Date.now()}`;
         const path = jsonlPath(session);
-        appendFileSync(path, `${SafeJSON.stringify({ type: "line", seq: 1, out: "stdout", ts: Date.now(), text: "bye" })}\n`);
+        appendFileSync(
+            path,
+            `${SafeJSON.stringify({ type: "line", seq: 1, out: "stdout", ts: Date.now(), text: "bye" })}\n`
+        );
 
         const encoded = encodeURIComponent(session);
         const delRes = await fetchApi(`/api/sessions/task/${encoded}`, { method: "DELETE" });

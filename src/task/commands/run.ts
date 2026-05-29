@@ -1,23 +1,19 @@
-import { out } from "@app/logger";
+import { logger, out } from "@app/logger";
+import { printRunBanner, printRunExitSummary } from "@app/task/lib/banner";
+import { loadTaskToolConfig } from "@app/task/lib/config";
+import { pollSessionExitCode, shouldSuperviseDetachedRun, spawnDetachedRunWorker } from "@app/task/lib/detached-run";
+import { runSessionGc } from "@app/task/lib/gc";
+import { resolveRunSession } from "@app/task/lib/resolve-run-session";
+import { resolveRunMode } from "@app/task/lib/run-mode";
+import { runTask } from "@app/task/lib/runner";
+import { TaskSessionStore } from "@app/task/lib/session-store";
+import { suggestClearOlderThanSeq, suggestTail } from "@app/task/lib/suggest-flags";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { printRunBanner, printRunExitSummary } from "@app/task/lib/banner";
-import { resolveRunSession } from "@app/task/lib/resolve-run-session";
-import { pollSessionExitCode, shouldSuperviseDetachedRun, spawnDetachedRunWorker } from "@app/task/lib/detached-run";
-import { loadTaskToolConfig } from "@app/task/lib/config";
-import { runSessionGc } from "@app/task/lib/gc";
-import { logger } from "@app/logger";
-import { resolveRunMode } from "@app/task/lib/run-mode";
-import { runTask } from "@app/task/lib/runner";
-import { suggestClearOlderThanSeq, suggestTail } from "@app/task/lib/suggest-flags";
-import { TaskSessionStore } from "@app/task/lib/session-store";
 
-function printExplicitReuseWarnings(
-    session: string,
-    previousLastSeq: number | undefined
-): void {
+function printExplicitReuseWarnings(session: string, previousLastSeq: number | undefined): void {
     out.printlnErr(pc.yellow(`warn: reusing existing session "${session}" (append mode)`));
 
     if (previousLastSeq !== undefined && previousLastSeq > 0) {
@@ -27,9 +23,7 @@ function printExplicitReuseWarnings(
     out.printlnErr(pc.dim(`info: tail live output: ${suggestTail(session)}`));
 
     if (previousLastSeq !== undefined && previousLastSeq > 0) {
-        out.printlnErr(
-            pc.dim(`info: clear older lines: ${suggestClearOlderThanSeq(session, previousLastSeq)}`)
-        );
+        out.printlnErr(pc.dim(`info: clear older lines: ${suggestClearOlderThanSeq(session, previousLastSeq)}`));
     }
 }
 
@@ -109,9 +103,7 @@ export function registerRunCommand(program: Command): void {
             }
 
             if (resolved.renamed) {
-                out.printlnErr(
-                    `note: session "${resolved.requested}" already exists — using "${resolved.session}"`
-                );
+                out.printlnErr(`note: session "${resolved.requested}" already exists — using "${resolved.session}"`);
                 out.printlnErr(`task-session-id: ${resolved.session}`);
             }
 

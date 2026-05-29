@@ -1,7 +1,7 @@
 import { out } from "@app/logger";
+import { loadTaskToolConfig, saveTaskToolConfig } from "@app/task/lib/config";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
-import { loadTaskToolConfig, saveTaskToolConfig } from "@app/task/lib/config";
 
 export function registerConfigCommand(program: Command): void {
     program

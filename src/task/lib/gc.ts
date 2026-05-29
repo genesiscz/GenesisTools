@@ -2,8 +2,8 @@ import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { logger } from "@app/logger";
 import { getTaskSessionsDir } from "@app/task/lib/paths";
-import { TaskSessionStore } from "@app/task/lib/session-store";
 import { isProcessAlive } from "@app/task/lib/process-alive";
+import { TaskSessionStore } from "@app/task/lib/session-store";
 
 export async function runSessionGc(opts: { retentionDays: number }): Promise<{ removed: number }> {
     const cutoffMs = Date.now() - opts.retentionDays * 24 * 3600 * 1000;
