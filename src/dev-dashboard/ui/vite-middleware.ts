@@ -300,6 +300,13 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
         if (req.method === "POST" && url.pathname === "/api/ttyd/scroll-to") {
             try {
                 const body = await readJson<{ id: string; fraction: number }>(req);
+                const fraction = Number(body.fraction);
+
+                if (!Number.isFinite(fraction) || fraction < 0 || fraction > 1) {
+                    sendJson(res, 400, { error: "fraction must be a finite number between 0 and 1" });
+                    return;
+                }
+
                 const tmuxSessionName = await getTtydTmuxSessionName(body.id);
 
                 if (!tmuxSessionName) {
@@ -307,7 +314,7 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
                     return;
                 }
 
-                scrollTmuxToFraction(tmuxSessionName, Number(body.fraction));
+                scrollTmuxToFraction(tmuxSessionName, fraction);
                 sendJson(res, 200, { ok: true });
             } catch (err) {
                 logger.warn({ err, route: "POST /api/ttyd/scroll-to" }, "tmux hub: ttyd scroll-to failed");

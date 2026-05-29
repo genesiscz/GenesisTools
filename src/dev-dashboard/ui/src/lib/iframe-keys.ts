@@ -123,9 +123,14 @@ export function pasteTextToIframe(iframe: HTMLIFrameElement | null, text: string
             return contentWindow.__ddTtydPaste(text);
         }
 
-        contentWindow.postMessage({ type: "dd-ttyd-paste", text }, "*");
+        // Restrict to the iframe's actual origin so pasted text can't leak if the
+        // frame ever navigates somewhere unexpected (it's served same-origin under
+        // the dashboard's reverse proxy).
+        const targetOrigin = new URL(iframe.src, window.location.href).origin;
+        contentWindow.postMessage({ type: "dd-ttyd-paste", text }, targetOrigin);
         return true;
-    } catch {
+    } catch (error) {
+        console.debug("pasteTextToIframe: paste injection failed", { error, textLength: text.length });
         return false;
     }
 }

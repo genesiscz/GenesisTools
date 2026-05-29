@@ -189,7 +189,8 @@ export function getTmuxScrollState(sessionName: string): TmuxScrollState | null 
 
     try {
         tmuxBin = resolveTmuxBin();
-    } catch {
+    } catch (error) {
+        logger.debug({ error }, "getTmuxScrollState: tmux binary not resolvable");
         return null;
     }
 
@@ -225,11 +226,16 @@ export function getTmuxScrollState(sessionName: string): TmuxScrollState | null 
  * again; otherwise it parks at the exact line via history-bottom + N scroll-up.
  */
 export function scrollTmuxToFraction(sessionName: string, fraction: number): void {
+    if (!Number.isFinite(fraction)) {
+        return;
+    }
+
     let tmuxBin: string;
 
     try {
         tmuxBin = resolveTmuxBin();
-    } catch {
+    } catch (error) {
+        logger.debug({ error }, "scrollTmuxToFraction: tmux binary not resolvable");
         return;
     }
 
