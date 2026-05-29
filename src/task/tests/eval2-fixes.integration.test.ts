@@ -144,13 +144,13 @@ describe("eval2 bug fixes integration", () => {
         const result = await Promise.race([
             runTaskCli(["tail", "--session", session, "--follow", "--raw"], { homeDir }),
             new Promise<{ exitCode: number; stderr: string }>((resolve) =>
-                setTimeout(() => resolve({ exitCode: -1, stderr: "timeout" }), 25000)
+                setTimeout(() => resolve({ exitCode: -1, stderr: "timeout" }), 5000)
             ),
         ]);
 
         expect(result.stderr).not.toBe("timeout");
         expect(result.stderr).toContain("Session exited (code 42)");
-    }, 30_000);
+    }, 10_000);
 
     it("explicit --session reuses existing session in non-interactive mode (bug #6 — current contract)", async () => {
         // Original eval2 bug #6 tested that a second run with the same explicit

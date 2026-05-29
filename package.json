@@ -17,7 +17,8 @@
         "format:dashboard": "cd src/claude-history-dashboard && biome format --write .",
         "dev:reas-dashboard": "bun --bun vite dev --strictPort -c src/Internal/commands/reas/ui/vite.config.ts",
         "clear-cache": "bun src/utils/clearCache.ts",
-        "test": "bun test --parallel --path-ignore-patterns='**/dashboard/**' --path-ignore-patterns='**/dev-dashboard/**' --path-ignore-patterns='**/claude-history-dashboard/**' --path-ignore-patterns='**/Internal/**' --path-ignore-patterns='**/shops/**' --path-ignore-patterns='**/task/tests/**' && bun test src/task/tests/",
+        "test": "bun test --parallel --path-ignore-patterns='**/dashboard/**' --path-ignore-patterns='**/dev-dashboard/**' --path-ignore-patterns='**/claude-history-dashboard/**' --path-ignore-patterns='**/Internal/**' --path-ignore-patterns='**/shops/**' --path-ignore-patterns='**/task/tests/**'",
+        "test:task": "bun test --parallel src/task/tests/",
         "test:coverage": "bun run test --coverage --coverage-reporter=lcov --coverage-dir=coverage"
     },
     "devDependencies": {

@@ -20,4 +20,6 @@ test("GC removes sessions older than retention window (F6)", async () => {
         env.task(["run", "--session", triggerName, "--no-tty", "--", "bash", "-c", "echo trigger"]);
         expect(existsSync(path)).toBe(false);
     });
-});
+    // Spawns several cold `tools task` subprocesses synchronously; generous
+    // per-test timeout so it survives subprocess contention when run --parallel.
+}, 30_000);

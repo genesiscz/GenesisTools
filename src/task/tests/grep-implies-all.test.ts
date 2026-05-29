@@ -16,11 +16,11 @@ beforeAll(() => {
         "-c",
         "for i in $(seq 1 100); do echo line $i; done",
     ]);
-});
+}, 15_000);
 
 afterAll(() => {
     env.clean(SESSION);
-});
+}, 15_000);
 
 test("--grep returns ALL matches, not last-50 of matches (F5)", () => {
     const r = env.task(["logs", "--session", SESSION, "--grep", "^line ", "--raw"]);

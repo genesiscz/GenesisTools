@@ -1,6 +1,6 @@
 import { afterAll } from "bun:test";
 import { type SpawnOptions, spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -69,4 +69,28 @@ export async function withTaskSession(
     } finally {
         env.clean(session);
     }
+}
+
+/**
+ * Wait until a detached `tools task` session is observable on disk, instead of a
+ * fixed sleep. Polls the session artifacts under env.sessionsDir() (the test's
+ * temp home): returns as soon as the session exists — faster than a fixed warm-up
+ * when uncontended, and correct under parallel-test subprocess contention, where
+ * a fixed sleep races the detached session's startup and a foreground wait/tail
+ * would otherwise find no session and exit 1.
+ */
+export async function waitForSession(env: TaskIntegrationEnv, session: string, timeoutMs = 10_000): Promise<void> {
+    const jsonl = join(env.sessionsDir(), `${session}.jsonl`);
+    const meta = join(env.sessionsDir(), `${session}.meta.json`);
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+        if (existsSync(jsonl) || existsSync(meta)) {
+            return;
+        }
+
+        await Bun.sleep(25);
+    }
+
+    throw new Error(`task session "${session}" not ready within ${timeoutMs}ms`);
 }
