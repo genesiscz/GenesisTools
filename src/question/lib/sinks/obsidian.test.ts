@@ -48,6 +48,8 @@ describe("obsidianSink", () => {
         expect(md).toContain("Because **Y**.");
         expect(md).toContain("- [ ] reviewed");
         expect(md).toContain("commit:abc1234");
+        expect(md).toContain("fix things");
+        expect(md).toContain("claude-code");
     });
 
     it("throws SinkError with a remedy when no vault resolvable", () => {

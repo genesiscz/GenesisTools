@@ -52,7 +52,7 @@ function truncateMiddle(text: string, maxLen: number): string {
     const head = Math.ceil((maxLen - 1) / 2);
     const tail = Math.floor((maxLen - 1) / 2);
 
-    return `${text.slice(0, head)}…${text.slice(-tail)}`;
+    return `${text.slice(0, head)}…${text.slice(text.length - tail)}`;
 }
 
 function shortSessionId(sessionId: string): string {

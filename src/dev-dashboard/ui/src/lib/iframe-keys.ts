@@ -123,9 +123,14 @@ export function pasteTextToIframe(iframe: HTMLIFrameElement | null, text: string
             return contentWindow.__ddTtydPaste(text);
         }
 
+        // The ttyd frame is served same-origin under the dashboard's reverse
+        // proxy. A scoped targetOrigin broke the cloudflared-proxied mobile path
+        // (mac.foltyn.dev), so post with "*" — the front proxy already auth-gates
+        // every /ttyd/ request, so an untrusted embedder can't load this frame.
         contentWindow.postMessage({ type: "dd-ttyd-paste", text }, "*");
         return true;
-    } catch {
+    } catch (error) {
+        console.debug("pasteTextToIframe: paste injection failed", { error, textLength: text.length });
         return false;
     }
 }
