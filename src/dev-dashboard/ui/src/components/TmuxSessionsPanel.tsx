@@ -53,8 +53,6 @@ export function TmuxSessionsPanel({ open, onOpenChange, onFocusTtydTab }: Props)
             if (data?.session?.id) {
                 onFocusTtydTab?.(data.session.id);
             }
-
-            onOpenChange(false);
         },
     });
 
@@ -82,7 +80,6 @@ export function TmuxSessionsPanel({ open, onOpenChange, onFocusTtydTab }: Props)
     const handleAttach = (session: TmuxHubSession) => {
         if (session.ttydTabIds.length > 0) {
             onFocusTtydTab?.(session.ttydTabIds[0]!);
-            onOpenChange(false);
             return;
         }
 

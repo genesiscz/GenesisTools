@@ -77,6 +77,7 @@ export function TtydRoute() {
     const [highlightId, setHighlightId] = useState<string | null>(null);
     const [pasteDialogOpen, setPasteDialogOpen] = useState(false);
     const activeIframeRef = useRef<HTMLIFrameElement | null>(null);
+    const pendingFocusTtydIdRef = useRef<string | null>(null);
 
     // Open the paste dialog synchronously in the tap. The dialog owns the
     // clipboard read (a real in-gesture button there is the only path iOS honours)
@@ -87,6 +88,7 @@ export function TtydRoute() {
 
     const focusTtydTab = useCallback(
         (ttydId: string) => {
+            pendingFocusTtydIdRef.current = ttydId;
             setActiveId(ttydId);
             writeTtydActiveId(ttydId);
             setHighlightId(ttydId);
@@ -103,6 +105,14 @@ export function TtydRoute() {
 
         setActiveId((current) => {
             if (current && sessions.some((session) => session.id === current)) {
+                if (pendingFocusTtydIdRef.current === current) {
+                    pendingFocusTtydIdRef.current = null;
+                }
+
+                return current;
+            }
+
+            if (current && current === pendingFocusTtydIdRef.current) {
                 return current;
             }
 
@@ -169,8 +179,9 @@ export function TtydRoute() {
         onSuccess: (data) => {
             queryClient.invalidateQueries({ queryKey: ["ttyd", "list"] });
             queryClient.invalidateQueries({ queryKey: ["tmux"] });
+
             if (data?.session?.id) {
-                setActiveId(data.session.id);
+                focusTtydTab(data.session.id);
             }
         },
     });
@@ -194,7 +205,14 @@ export function TtydRoute() {
 
     const toolbar = (
         <>
-            <Button size="sm" variant="outline" onClick={() => spawn.mutate()} disabled={spawn.isPending}>
+            <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                    spawn.mutate();
+                }}
+                disabled={spawn.isPending}
+            >
                 <Plus size={14} /> New terminal
             </Button>
             <Button size="sm" variant="outline" onClick={() => setHubOpen(true)} aria-label="Tmux sessions">
@@ -216,7 +234,6 @@ export function TtydRoute() {
                 onOpenChange={setHubOpen}
                 onFocusTtydTab={(ttydId) => {
                     focusTtydTab(ttydId);
-                    setHubOpen(false);
                 }}
             />
             {closeTarget ? (
@@ -259,7 +276,7 @@ export function TtydRoute() {
                     <MobileTerminalShell
                         tabs={buildTtydTabs(sessions, active).map((t) => ({ ...t, dot: "active" as const }))}
                         onSelect={(id) => {
-                            setActiveId(id);
+                            focusTtydTab(id);
                         }}
                         onRename={(id, name) => renameMut.mutate({ id, name })}
                         headerActions={
@@ -282,7 +299,12 @@ export function TtydRoute() {
                                 ) : null}
                             </>
                         }
-                        primaryAction={{ label: "＋", onClick: () => spawn.mutate() }}
+                        primaryAction={{
+                            label: "＋",
+                            onClick: () => {
+                                spawn.mutate();
+                            },
+                        }}
                         renderPreview={(id) => {
                             const s = sessions.find((x) => x.id === id);
 
