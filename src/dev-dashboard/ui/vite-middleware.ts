@@ -193,7 +193,11 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
             let cmuxBySession = new Map<string, CmuxTmuxSurfaceRef[]>();
 
             try {
-                const layout = await fetchCmuxFullLayout();
+                // Skip preview capture — `indexCmuxSurfacesByTmuxSession` only reads
+                // workspace/surface ids+titles, never `preview`. Capturing the visible
+                // screen of each selected surface (the default) added ~600ms to this
+                // endpoint on a 12-workspace machine.
+                const layout = await fetchCmuxFullLayout({ includePreviews: false });
 
                 if (layout.available) {
                     cmuxBySession = indexCmuxSurfacesByTmuxSession(layout);

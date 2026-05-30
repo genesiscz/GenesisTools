@@ -119,7 +119,19 @@ async function hydrateRegistry(): Promise<void> {
     }
 }
 
+// Short TTL cache so 2-3s polls (TmuxSessionsPanel @3s, /ttyd route @5s) don't each
+// pay 11× `ps -p $PID` subprocess spawns. Explicit spawn/kill/onExit paths already
+// mutate the registry directly, so this cache only delays detection of EXTERNAL
+// deaths (ttyd crash, external kill -9); 3s of staleness is harmless — the next
+// poll catches it and the front-proxy 502s the stale id in the meantime.
+const PRUNE_TTL_MS = 3000;
+let lastPruneAt = 0;
+
 async function pruneDeadSessions(): Promise<void> {
+    if (Date.now() - lastPruneAt < PRUNE_TTL_MS) {
+        return;
+    }
+
     let changed = false;
 
     for (const [id, tracked] of registry.entries()) {
@@ -128,6 +140,8 @@ async function pruneDeadSessions(): Promise<void> {
             changed = true;
         }
     }
+
+    lastPruneAt = Date.now();
 
     if (changed) {
         await persistRegistry();
