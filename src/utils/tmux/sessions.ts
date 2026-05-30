@@ -12,26 +12,47 @@ export function buildTmuxSpawnEnv(): NodeJS.ProcessEnv {
     return buildTerminalSpawnEnv();
 }
 
-function tmuxLocaleArgs(): string[] {
-    const env = buildTerminalSpawnEnv();
-    const args: string[] = [];
+const TMUX_SESSION_ENV_KEYS = ["LANG", "LC_ALL", "LC_CTYPE", "COLORTERM", "CLAUDE_CODE_TMUX_TRUECOLOR"] as const;
 
-    for (const key of ["LANG", "LC_ALL", "LC_CTYPE"] as const) {
+function resolveLoginShell(shell: string): string {
+    const trimmed = shell.trim();
+
+    if (trimmed.length > 0 && !trimmed.includes("=")) {
+        return trimmed;
+    }
+
+    const fromEnv = process.env.SHELL?.trim();
+
+    if (fromEnv && fromEnv.length > 0 && !fromEnv.includes("=")) {
+        return fromEnv;
+    }
+
+    return "/bin/zsh";
+}
+
+/** Initial pane: `env KEY=val … /bin/zsh` so tmux never treats `truecolor` as the command. */
+function tmuxLoginShellArgv(shell: string): string[] {
+    const env = buildTerminalSpawnEnv();
+    const argv: string[] = ["/usr/bin/env"];
+
+    for (const key of TMUX_SESSION_ENV_KEYS) {
         const value = env[key];
 
         if (value) {
-            args.push("-e", `${key}=${value}`);
+            argv.push(`${key}=${value}`);
         }
     }
 
-    return args;
+    argv.push(resolveLoginShell(shell));
+
+    return argv;
 }
 
-export function ensureTmuxSessionUtf8Locale(sessionName: string): void {
+export function ensureTmuxSessionEnvironment(sessionName: string): void {
     const tmuxBin = resolveTmuxBin();
     const env = buildTerminalSpawnEnv();
 
-    for (const key of ["LANG", "LC_ALL", "LC_CTYPE"] as const) {
+    for (const key of TMUX_SESSION_ENV_KEYS) {
         const value = env[key];
 
         if (!value) {
@@ -43,11 +64,14 @@ export function ensureTmuxSessionUtf8Locale(sessionName: string): void {
         if (result.exitCode !== 0) {
             logger.debug(
                 { sessionName, key, exitCode: result.exitCode, detail: tmuxErrorDetail(result.stderr) },
-                "tmux set-environment failed (locale not applied)"
+                "tmux set-environment failed (session env not applied)"
             );
         }
     }
 }
+
+/** @deprecated Use {@link ensureTmuxSessionEnvironment} */
+export const ensureTmuxSessionUtf8Locale = ensureTmuxSessionEnvironment;
 
 const defaultSpawnSync: TmuxSpawnSync = (cmd, opts) => {
     const result = Bun.spawnSync(cmd, {
@@ -124,7 +148,7 @@ export function sessionExists(sessionName: string): boolean {
 export function createTmuxSession(sessionName: string, cwd: string, command: string): void {
     const tmuxBin = resolveTmuxBin();
     const result = spawnSyncImpl(
-        [tmuxBin, "new-session", "-d", "-s", sessionName, "-c", cwd, ...tmuxLocaleArgs(), command],
+        [tmuxBin, "new-session", "-d", "-s", sessionName, "-c", cwd, "--", ...tmuxLoginShellArgv(command)],
         { cwd }
     );
 
@@ -132,12 +156,16 @@ export function createTmuxSession(sessionName: string, cwd: string, command: str
         throw new Error(`Failed to create tmux session ${sessionName}${tmuxErrorDetail(result.stderr)}`);
     }
 
+    ensureTmuxSessionEnvironment(sessionName);
+
     // Pin the (possibly freshly-bootstrapped) server to keep sessions alive.
     ensureTmuxServerPersists(tmuxBin);
 }
 
 /**
- * Pin the tmux server so sessions survive detach/teardown instead of dying.
+ * Pin the tmux server so sessions survive detach/teardown instead of dying,
+ * AND scrub the server's global environment of color-killing inheritance from
+ * whichever process happened to bootstrap it.
  *
  * tmux defaults to `exit-empty on`: the server process exits the instant it has
  * zero sessions, taking every remaining session with it at once. A headless
@@ -146,8 +174,15 @@ export function createTmuxSession(sessionName: string, cwd: string, command: str
  * flips `exit-empty off`. So on the shared socket whether sessions survive a UI
  * restart otherwise depends on who bootstrapped the server first. The dashboard
  * uses tmux as a session daemon that must outlive restarts, so force the durable
- * options on every time it touches the server. Both calls are idempotent and
- * safe (turning these off can only make sessions more durable).
+ * options on every time it touches the server.
+ *
+ * The env scrub fixes a separate bug: if the founder process had `NO_COLOR=1`
+ * (Claude Code subprocesses commonly do) or `COLORTERM=""`, tmux captures it in
+ * the SERVER GLOBAL env and seeds EVERY new session's shell with the same vars
+ * — making Claude TUI render monochrome inside ttyd panes. `-gu NO_COLOR` unsets
+ * it for the whole server; setting COLORTERM=truecolor on the global ensures new
+ * sessions don't inherit an empty value either. All set-options are idempotent
+ * and safe.
  */
 export function ensureTmuxServerPersists(tmuxBin?: string): void {
     let bin: string;
@@ -159,10 +194,17 @@ export function ensureTmuxServerPersists(tmuxBin?: string): void {
         return;
     }
 
-    for (const args of [
+    // -u = unset; -g = global. Run set-environment FIRST so any session created
+    // immediately after this call (e.g. createTmuxSession → ensureTmuxServerPersists
+    // → next createTmuxSession) gets the clean env.
+    const setOptionArgs: string[][] = [
+        ["set-environment", "-gu", "NO_COLOR"],
+        ["set-environment", "-g", "COLORTERM", "truecolor"],
         ["set-option", "-s", "exit-empty", "off"],
         ["set-option", "-g", "destroy-unattached", "off"],
-    ]) {
+    ];
+
+    for (const args of setOptionArgs) {
         const result = spawnSyncImpl([bin, ...args]);
 
         if (result.exitCode !== 0) {

@@ -44,4 +44,22 @@ describe("terminal locale", () => {
         expect(env.LANG).toBe(env.LC_CTYPE);
         expect(env.LANG).toMatch(/UTF-8/i);
     });
+
+    test("buildTerminalSpawnEnv sets truecolor + Claude tmux override when unset", () => {
+        const env = buildTerminalSpawnEnv({ PATH: "/bin" });
+
+        expect(env.COLORTERM).toBe("truecolor");
+        expect(env.CLAUDE_CODE_TMUX_TRUECOLOR).toBe("1");
+    });
+
+    test("buildTerminalSpawnEnv preserves explicit COLORTERM and Claude override", () => {
+        const env = buildTerminalSpawnEnv({
+            PATH: "/bin",
+            COLORTERM: "24bit",
+            CLAUDE_CODE_TMUX_TRUECOLOR: "0",
+        });
+
+        expect(env.COLORTERM).toBe("24bit");
+        expect(env.CLAUDE_CODE_TMUX_TRUECOLOR).toBe("0");
+    });
 });
