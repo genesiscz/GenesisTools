@@ -63,11 +63,24 @@ export function resolveUtf8Locale(): string {
 export function buildTerminalSpawnEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
     const locale = resolveUtf8Locale();
 
+    // NO_COLOR (no-color.org) forces chalk/supports-color to level 0 and overrides
+    // everything else. Some parents (Claude Code subprocess paths, captured tmux
+    // server globals) set it to keep ANSI out of captured output — but for a
+    // terminal we OWN it's poison. Strip it so the child app can decide.
+    const env: NodeJS.ProcessEnv = { ...base };
+    delete env.NO_COLOR;
+
     return {
-        ...base,
+        ...env,
         LANG: locale,
         LC_ALL: locale,
         LC_CTYPE: locale,
+        // `||` (not `??`) so an inherited empty string `""` is replaced — `??`
+        // only catches null/undefined and would silently keep the empty value.
+        COLORTERM: base.COLORTERM || "truecolor",
+        // Claude Code clamps to 256-color whenever $TMUX is set unless this is
+        // present at process launch (settings.json is too late — module load time).
+        CLAUDE_CODE_TMUX_TRUECOLOR: base.CLAUDE_CODE_TMUX_TRUECOLOR || "1",
     };
 }
 

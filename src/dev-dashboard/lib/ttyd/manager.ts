@@ -10,7 +10,7 @@ import { resolveTmuxBin } from "@app/utils/tmux/bin";
 import {
     createTmuxSession,
     ensureTmuxServerPersists,
-    ensureTmuxSessionUtf8Locale,
+    ensureTmuxSessionEnvironment,
     killTmuxSession,
     sessionExists,
 } from "@app/utils/tmux/sessions";
@@ -156,7 +156,8 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
     }
 
     const tmuxBin = resolveTmuxBin();
-    const command = opts.command ?? process.env.SHELL ?? "/bin/zsh";
+    const rawCommand = opts.command ?? process.env.SHELL ?? "/bin/zsh";
+    const command = rawCommand.trim().length > 0 && !rawCommand.includes("=") ? rawCommand.trim() : "/bin/zsh";
     const cwd = opts.cwd ?? process.cwd();
     const port = await findFreePort();
     const id = randomUUID();
@@ -175,7 +176,7 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
         }
 
         tmuxSessionName = opts.attachTmuxSession;
-        ensureTmuxSessionUtf8Locale(tmuxSessionName);
+        ensureTmuxSessionEnvironment(tmuxSessionName);
         // Re-pin the server even when attaching to a pre-existing session — it may
         // have been bootstrapped (by an older dashboard) with exit-empty on.
         ensureTmuxServerPersists();

@@ -121,8 +121,29 @@ describe("tmux sessions", () => {
         createTmuxSession("foo", "/tmp", "/bin/zsh");
 
         expect(calls.some((cmd) => cmd.includes("new-session") && cmd.includes("foo"))).toBe(true);
+        expect(calls.some((cmd) => cmd.includes("new-session") && cmd.includes("--"))).toBe(true);
+        expect(calls.some((cmd) => cmd.includes("new-session") && cmd.includes("/usr/bin/env"))).toBe(true);
+        expect(calls.some((cmd) => cmd.includes("new-session") && cmd.includes("COLORTERM=truecolor"))).toBe(true);
         expect(
             calls.some((cmd) => cmd.includes("set-option") && cmd.includes("exit-empty") && cmd.includes("off"))
+        ).toBe(true);
+        expect(
+            calls.some(
+                (cmd) =>
+                    cmd.includes("set-environment") &&
+                    cmd.includes("foo") &&
+                    cmd.includes("CLAUDE_CODE_TMUX_TRUECOLOR") &&
+                    cmd.includes("1")
+            )
+        ).toBe(true);
+        expect(
+            calls.some(
+                (cmd) =>
+                    cmd.includes("set-environment") &&
+                    cmd.includes("foo") &&
+                    cmd.includes("COLORTERM") &&
+                    cmd.includes("truecolor")
+            )
         ).toBe(true);
     });
 
