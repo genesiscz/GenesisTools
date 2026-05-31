@@ -70,7 +70,15 @@ export const ttydApi = {
 };
 
 export const tmuxApi = {
-    sessions: () => jsonFetch<{ sessions: TmuxHubSession[] }>("/api/tmux/sessions"),
+    /**
+     * Pass `includeCmux: true` ONLY when the caller reads `cmuxSurfaces`/`inCmux`.
+     * The default skips the ~150ms cmux layout fetch — without it `cmuxSurfaces`
+     * is `[]` and `inCmux` is `false` for every session.
+     */
+    sessions: (opts: { includeCmux?: boolean } = {}) => {
+        const qs = opts.includeCmux ? "?include=cmux" : "";
+        return jsonFetch<{ sessions: TmuxHubSession[] }>(`/api/tmux/sessions${qs}`);
+    },
     create: (body: { name?: string; cwd?: string; command?: string } = {}) =>
         jsonFetch<{ sessionName: string; cwd: string; command: string }>("/api/tmux/create", {
             method: "POST",

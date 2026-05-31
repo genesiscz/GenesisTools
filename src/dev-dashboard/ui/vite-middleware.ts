@@ -190,20 +190,33 @@ export function attachDevDashboardMiddleware(middlewares: Connect.Server): void 
         }
 
         if (req.method === "GET" && url.pathname === "/api/tmux/sessions") {
+            // `?include=cmux` opts the caller into cmux-layout enrichment
+            // (`cmuxSurfaces` + `inCmux`). The fetch is ~150ms even with previews
+            // disabled (N+1 RPC over workspaces × panes × surfaces) and dwarfs
+            // the rest of this endpoint (~3-5ms). Most consumers only need the
+            // raw tmux session list, so the default is off and `enrichSessionsForHub`
+            // emits `cmuxSurfaces: []` / `inCmux: false` for the missing fields.
+            const include = (url.searchParams.get("include") ?? "")
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean);
+            const includeCmux = include.includes("cmux");
             let cmuxBySession = new Map<string, CmuxTmuxSurfaceRef[]>();
 
-            try {
-                // Skip preview capture — `indexCmuxSurfacesByTmuxSession` only reads
-                // workspace/surface ids+titles, never `preview`. Capturing the visible
-                // screen of each selected surface (the default) added ~600ms to this
-                // endpoint on a 12-workspace machine.
-                const layout = await fetchCmuxFullLayout({ includePreviews: false });
+            if (includeCmux) {
+                try {
+                    // Skip preview capture — `indexCmuxSurfacesByTmuxSession` only reads
+                    // workspace/surface ids+titles, never `preview`. Capturing the visible
+                    // screen of each selected surface (the default) added ~600ms to this
+                    // endpoint on a 12-workspace machine.
+                    const layout = await fetchCmuxFullLayout({ includePreviews: false });
 
-                if (layout.available) {
-                    cmuxBySession = indexCmuxSurfacesByTmuxSession(layout);
+                    if (layout.available) {
+                        cmuxBySession = indexCmuxSurfacesByTmuxSession(layout);
+                    }
+                } catch (err) {
+                    logger.debug({ err }, "tmux hub: cmux layout unavailable for enrichment");
                 }
-            } catch (err) {
-                logger.debug({ err }, "tmux hub: cmux layout unavailable for enrichment");
             }
 
             const sessions = enrichSessionsForHub(listTmuxSessions(), await listTtyd(), cmuxBySession);

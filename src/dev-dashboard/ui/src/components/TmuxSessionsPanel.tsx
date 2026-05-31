@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { BezelCard } from "@ui/components/bezel-card";
 import { Button } from "@ui/components/button";
 import {
@@ -15,8 +15,9 @@ import { Monitor, Send, Terminal, Unlink } from "lucide-react";
 import { useState } from "react";
 import { CmuxSendTargetDialog } from "@/components/CmuxSendTargetDialog";
 import { TmuxSessionName } from "@/components/TmuxSessionName";
+import { useTmuxHubSessions } from "@/hooks/useTmuxHubSessions";
 import type { TmuxHubSession } from "@/lib/api";
-import { cmuxApi, tmuxApi, ttydApi } from "@/lib/api";
+import { cmuxApi, ttydApi } from "@/lib/api";
 import { invalidateTmuxAndTtyd } from "@/lib/query-keys";
 import { canRemoveFromCmux } from "@/lib/view-state";
 
@@ -38,12 +39,7 @@ export function TmuxSessionsPanel({ open, onOpenChange, onFocusTtydTab }: Props)
     const queryClient = useQueryClient();
     const [sendTarget, setSendTarget] = useState<string | null>(null);
 
-    const { data, isLoading, isError, error } = useQuery({
-        queryKey: ["tmux", "sessions"],
-        queryFn: () => tmuxApi.sessions().then((r) => r.sessions),
-        enabled: open,
-        refetchInterval: open ? 3000 : false,
-    });
+    const { sessions, isLoading, isError, error } = useTmuxHubSessions({ enabled: open });
 
     const attach = useMutation({
         mutationFn: (tmuxSessionName: string) => ttydApi.spawn({ tmuxSessionName }),
@@ -74,8 +70,6 @@ export function TmuxSessionsPanel({ open, onOpenChange, onFocusTtydTab }: Props)
             queryClient.invalidateQueries({ queryKey: ["cmux"] });
         },
     });
-
-    const sessions = data ?? [];
 
     const handleAttach = (session: TmuxHubSession) => {
         if (session.ttydTabIds.length > 0) {
