@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
+import { SafeJSON } from "@app/utils/json";
 import { WebSocket, WebSocketServer } from "ws";
 
 const clientScriptPath = resolve(__dirname, "./client.ts");
@@ -94,11 +95,11 @@ describe("Hold-AI Client", () => {
         }
 
         // Send messages from mock server to client
-        connectedClientWS.send(JSON.stringify({ timestamp: new Date().toISOString(), message: "Message 1" }));
+        connectedClientWS.send(SafeJSON.stringify({ timestamp: new Date().toISOString(), message: "Message 1" }));
         await setTimeout(50); // allow client to process
-        connectedClientWS.send(JSON.stringify({ timestamp: new Date().toISOString(), message: "Message 2" }));
+        connectedClientWS.send(SafeJSON.stringify({ timestamp: new Date().toISOString(), message: "Message 2" }));
         await setTimeout(50);
-        connectedClientWS.send(JSON.stringify({ timestamp: new Date().toISOString(), message: "__COMPLETED__" }));
+        connectedClientWS.send(SafeJSON.stringify({ timestamp: new Date().toISOString(), message: "__COMPLETED__" }));
 
         const { stdout, exitCode } = await clientRunPromise;
 
@@ -145,7 +146,7 @@ describe("Hold-AI Client", () => {
         }
 
         // Send completion to allow client to exit cleanly
-        connectedClientWS.send(JSON.stringify({ timestamp: new Date().toISOString(), message: "__COMPLETED__" }));
+        connectedClientWS.send(SafeJSON.stringify({ timestamp: new Date().toISOString(), message: "__COMPLETED__" }));
 
         const { stdout, exitCode } = await clientRunPromise;
         expect(exitCode).toBe(0);

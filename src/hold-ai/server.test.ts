@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { type ChildProcess, spawn } from "node:child_process"; // Using node:child_process for more control
 import { resolve } from "node:path";
 import { setTimeout } from "node:timers/promises"; // For async delays
+import { SafeJSON } from "@app/utils/json";
 import { WebSocket } from "ws";
 
 const serverScriptPath = resolve(__dirname, "./server.ts");
@@ -119,7 +120,7 @@ describe("Hold-AI Server", () => {
         const testMessage = { timestamp: expect.any(String), message: "Hello Client" };
 
         client.on("message", (data) => {
-            const received = JSON.parse(data.toString());
+            const received = SafeJSON.parse(data.toString());
             expect(received).toEqual(testMessage);
             client.close();
             done();
@@ -143,7 +144,7 @@ describe("Hold-AI Server", () => {
         await new Promise<void>((resolve) => client1.once("message", () => resolve()));
 
         client1.on("message", (data) => {
-            const received = JSON.parse(data.toString());
+            const received = SafeJSON.parse(data.toString());
             if (received.message === "__COMPLETED__") {
                 client1ReceivedCompleted = true;
             }
@@ -157,7 +158,7 @@ describe("Hold-AI Server", () => {
                 .then((client2) => {
                     let receivedInitial = false;
                     client2.on("message", (data) => {
-                        const msg = JSON.parse(data.toString());
+                        const msg = SafeJSON.parse(data.toString());
                         if (msg.message === "Initial Message") {
                             receivedInitial = true;
                         }
