@@ -26,8 +26,9 @@ import { MobileTerminalShell } from "@/components/terminal-shell/MobileTerminalS
 import { ShellIconButton } from "@/components/terminal-shell/ShellIconButton";
 import { useLayoutMode } from "@/hooks/useLayoutMode";
 import { useLockPageScroll } from "@/hooks/useLockPageScroll";
+import { useTmuxHubSessions } from "@/hooks/useTmuxHubSessions";
 import { useVisualViewportSize } from "@/hooks/useVisualViewportSize";
-import { tmuxApi, ttydApi } from "@/lib/api";
+import { ttydApi } from "@/lib/api";
 import {
     pasteTextToIframe,
     scrollIframeTerminal,
@@ -55,15 +56,11 @@ export function TtydRoute() {
     const navigate = useNavigate({ from: "/ttyd" });
     const { tab: urlTabId } = useSearch({ from: "/ttyd" });
     const { data } = useQuery({ queryKey: ["ttyd", "list"], queryFn: ttydApi.list });
-    const { data: tmuxHub } = useQuery({
-        queryKey: ["tmux", "sessions"],
-        queryFn: () => tmuxApi.sessions().then((r) => r.sessions),
-        refetchInterval: 5000,
-    });
+    const { sessions: tmuxHub } = useTmuxHubSessions({ listIntervalMs: 5000 });
     const sessions = data?.sessions ?? [];
 
     const isSessionInCmux = (tmuxSessionName: string) =>
-        tmuxHub?.some((session) => session.name === tmuxSessionName && session.inCmux) ?? false;
+        tmuxHub.some((session) => session.name === tmuxSessionName && session.inCmux);
     const [layout, setLayout] = useState<MosaicNode<string> | null>(null);
     const { mode, isMobile, setMode } = useLayoutMode("ttyd");
     const focusedMobile = mode === "focused" && isMobile;

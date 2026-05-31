@@ -18,7 +18,8 @@ import { ArrowUpRight, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { CmuxLayoutTreePicker, type CmuxPickKind } from "@/components/CmuxLayoutTree";
 import { TmuxSessionName, TmuxSessionNameLabel } from "@/components/TmuxSessionName";
-import { cmuxApi, tmuxApi } from "@/lib/api";
+import { useTmuxHubSessions } from "@/hooks/useTmuxHubSessions";
+import { cmuxApi } from "@/lib/api";
 import { invalidateTmuxAndTtyd } from "@/lib/query-keys";
 import { canRemoveFromCmux } from "@/lib/view-state";
 
@@ -38,14 +39,16 @@ export function CmuxSendTargetDialog({ open, onOpenChange, tmuxSessionName, onSe
         setSessionName(tmuxSessionName);
     }, [tmuxSessionName]);
 
-    const { data: hubSessions } = useQuery({
-        queryKey: ["tmux", "sessions"],
-        queryFn: () => tmuxApi.sessions().then((r) => r.sessions),
+    // Dialog opens on-demand and needs cmux enrichment to gate "Remove from cmux".
+    // Use a faster cmux interval (5s) while the dialog is open so the button state
+    // tracks reality within ~5s rather than the default 15s.
+    const { sessions: hubSessions } = useTmuxHubSessions({
         enabled: open,
-        staleTime: 2000,
+        listIntervalMs: 3000,
+        cmuxIntervalMs: 5000,
     });
 
-    const hubSession = hubSessions?.find((session) => session.name === sessionName);
+    const hubSession = hubSessions.find((session) => session.name === sessionName);
     const inCmux = (hubSession?.cmuxSurfaces.length ?? 0) > 0;
     const canRemove = hubSession ? canRemoveFromCmux(hubSession) : false;
 
