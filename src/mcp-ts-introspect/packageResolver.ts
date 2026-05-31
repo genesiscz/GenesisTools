@@ -1,7 +1,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import logger from "../logger";
+import { logger } from "@app/logger";
 import type { PackageLocation } from "./types";
 
 export async function findPackageJsonAndDir(

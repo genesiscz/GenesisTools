@@ -1,4 +1,4 @@
-import logger from "../logger";
+import { logger } from "@app/logger";
 import type { ExportInfo } from "./types";
 
 export function filterExports(exports: ExportInfo[], searchTerm?: string, limit?: number): ExportInfo[] {

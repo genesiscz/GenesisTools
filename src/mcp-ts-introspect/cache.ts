@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import logger from "../logger";
+import { logger } from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import type { CacheEntry, ExportInfo } from "./types";
 
 const CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -44,7 +45,7 @@ export async function saveCache(cacheDir: string, key: string, exports: ExportIn
             timestamp: Date.now(),
         };
 
-        await Bun.write(cacheFile, JSON.stringify(cacheEntry, null, 2));
+        await Bun.write(cacheFile, SafeJSON.stringify(cacheEntry, null, 2));
         logger.info(`Saved cache for ${key} (${exports.length} exports)`);
     } catch (error) {
         logger.warn(`Failed to save cache for ${key}: ${error}`);

@@ -1,8 +1,10 @@
+import { logger } from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
+import { ExitPromptError } from "@inquirer/core";
+import { editor, input, select } from "@inquirer/prompts";
 import chalk from "chalk";
 import clipboardy from "clipboardy";
-import Enquirer from "enquirer";
-import minimist from "minimist";
-import logger from "../logger";
+import { Command } from "commander";
 import { introspectPackage, introspectProject, introspectSource } from "./introspect";
 import { startMcpServer } from "./mcp-server";
 import type { ExportInfo, IntrospectOptions } from "./types";
@@ -19,192 +21,110 @@ interface Options {
     limit?: number;
     output?: string;
     verbose?: boolean;
-    help?: boolean;
     mcp?: boolean;
-    // Aliases
-    m?: string;
-    p?: string;
-    s?: string;
-    t?: string;
-    o?: string;
-    v?: boolean;
-    h?: boolean;
 }
 
-interface Args extends Options {
-    _: string[]; // Positional arguments
+function cancelOnExit(error: unknown): never {
+    if (error instanceof ExitPromptError) {
+        logger.info("\nOperation cancelled by user.");
+        process.exit(0);
+    }
+    throw error;
 }
 
-const prompter = new Enquirer();
-
-function showHelp() {
-    console.log(`
-Usage: tools mcp-ts-introspect [options]
-
-Introspect TypeScript exports from packages, source code, or projects.
-
-Modes:
-  -m, --mode MODE         Introspection mode: package, source, or project
-  -p, --package NAME      Package name to introspect (for package mode)
-  -s, --source CODE       TypeScript source code to analyze (for source mode)
-  --project PATH          Project path to analyze (for project mode, defaults to current directory)
-
-Options:
-  --search-paths PATH     Additional paths to search for packages (can use multiple times)
-  -t, --search-term TERM  Filter exports by search term (supports regex)
-  --cache                 Enable caching (default: true)
-  --cache-dir DIR         Cache directory (default: .ts-morph-cache)
-  --limit NUM             Maximum number of results to return
-  -o, --output DEST       Output destination: file, clipboard, or stdout (default: stdout)
-  -v, --verbose           Enable verbose logging
-  -h, --help              Show this help message
-  --mcp                   Run as MCP server
-
-Examples:
-  tools mcp-ts-introspect -m package -p typescript -t "Type.*" -o clipboard
-  tools mcp-ts-introspect -m source -s "export function hello() { return 'world'; }"
-  tools mcp-ts-introspect -m project --search-term "^get" --limit 20
-  tools mcp-ts-introspect  # Interactive mode
-  tools mcp-ts-introspect --mcp  # Run as MCP server
-`);
-}
-
-async function getMode(argv: Args): Promise<string> {
-    if (argv.mode) {
-        return argv.mode;
+async function getMode(opts: Options): Promise<string> {
+    if (opts.mode) {
+        return opts.mode;
     }
 
     // Try to infer mode from other arguments
-    if (argv.package) {
+    if (opts.package) {
         return "package";
     }
-    if (argv.source) {
+    if (opts.source) {
         return "source";
     }
-    if (argv.project !== undefined) {
+    if (opts.project !== undefined) {
         return "project";
     }
 
     // Interactive prompt
     try {
-        const response = (await prompter.prompt({
-            type: "select",
-            name: "mode",
+        return await select({
             message: "Select introspection mode:",
             choices: ["package", "source", "project"],
-        })) as { mode: string };
-
-        return response.mode;
+        });
     } catch (error: unknown) {
-        if (error instanceof Error && error.message === "canceled") {
-            logger.info("\nOperation cancelled by user.");
-            process.exit(0);
-        }
-        throw error;
+        cancelOnExit(error);
     }
 }
 
-async function getPackageName(argv: Args): Promise<string> {
-    if (argv.package) {
-        return argv.package;
+async function getPackageName(opts: Options): Promise<string> {
+    if (opts.package) {
+        return opts.package;
     }
 
     try {
-        const response = (await prompter.prompt({
-            type: "input",
-            name: "packageName",
+        return await input({
             message: "Enter package name to introspect:",
-            initial: "typescript",
-        })) as { packageName: string };
-
-        return response.packageName;
+            default: "typescript",
+        });
     } catch (error: unknown) {
-        if (error instanceof Error && error.message === "canceled") {
-            logger.info("\nOperation cancelled by user.");
-            process.exit(0);
-        }
-        throw error;
+        cancelOnExit(error);
     }
 }
 
-async function getSourceCode(argv: Args): Promise<string> {
-    if (argv.source) {
-        return argv.source;
+async function getSourceCode(opts: Options): Promise<string> {
+    if (opts.source) {
+        return opts.source;
     }
 
     try {
-        const response = (await prompter.prompt({
-            type: "input",
-            name: "source",
+        return await editor({
             message: "Enter TypeScript source code:",
-            multiline: true,
-            initial: "export function example() { return 42; }",
-        })) as { source: string };
-
-        return response.source;
+            default: "export function example() { return 42; }",
+        });
     } catch (error: unknown) {
-        if (error instanceof Error && error.message === "canceled") {
-            logger.info("\nOperation cancelled by user.");
-            process.exit(0);
-        }
-        throw error;
+        cancelOnExit(error);
     }
 }
 
-async function getProjectPath(argv: Args): Promise<string> {
-    if (typeof argv.project === "string") {
-        return argv.project;
+async function getProjectPath(opts: Options): Promise<string> {
+    if (typeof opts.project === "string") {
+        return opts.project;
     }
 
     try {
-        const response = (await prompter.prompt({
-            type: "input",
-            name: "projectPath",
+        return await input({
             message: "Enter project path:",
-            initial: process.cwd(),
-        })) as { projectPath: string };
-
-        return response.projectPath;
+            default: process.cwd(),
+        });
     } catch (error: unknown) {
-        if (error instanceof Error && error.message === "canceled") {
-            logger.info("\nOperation cancelled by user.");
-            process.exit(0);
-        }
-        throw error;
+        cancelOnExit(error);
     }
 }
 
-async function getOutputDestination(argv: Args): Promise<string> {
-    if (argv.output) {
-        return argv.output;
+async function getOutputDestination(opts: Options): Promise<string> {
+    if (opts.output) {
+        return opts.output;
     }
 
     try {
-        const response = (await prompter.prompt({
-            type: "select",
-            name: "output",
+        const output = await select({
             message: "Where to output results?",
             choices: ["stdout", "clipboard", "file"],
-        })) as { output: string };
+        });
 
-        if (response.output === "file") {
-            const fileResponse = (await prompter.prompt({
-                type: "input",
-                name: "filename",
+        if (output === "file") {
+            return await input({
                 message: "Enter output filename:",
-                initial: "exports.json",
-            })) as { filename: string };
-
-            return fileResponse.filename;
+                default: "exports.json",
+            });
         }
 
-        return response.output;
+        return output;
     } catch (error: unknown) {
-        if (error instanceof Error && error.message === "canceled") {
-            logger.info("\nOperation cancelled by user.");
-            process.exit(0);
-        }
-        throw error;
+        cancelOnExit(error);
     }
 }
 
@@ -217,7 +137,7 @@ function formatExports(exports: ExportInfo[], verbose: boolean): string {
 
     if (verbose) {
         // Detailed JSON format
-        return JSON.stringify(exports, null, 2);
+        return SafeJSON.stringify(exports, null, 2);
     } else {
         // Concise human-readable format
         output.push(`Found ${exports.length} export(s):\n`);
@@ -235,56 +155,48 @@ function formatExports(exports: ExportInfo[], verbose: boolean): string {
     return output.join("\n");
 }
 
-async function main() {
-    const argv = minimist<Args>(process.argv.slice(2), {
-        alias: {
-            m: "mode",
-            p: "package",
-            s: "source",
-            t: "searchTerm",
-            o: "output",
-            v: "verbose",
-            h: "help",
-        },
-        boolean: ["cache", "verbose", "help", "mcp"],
-        string: ["mode", "package", "source", "project", "searchTerm", "cacheDir", "output"],
-        default: {
-            cache: true,
-            cacheDir: ".ts-morph-cache",
-        },
-    });
+interface RawOptions {
+    mode?: string;
+    package?: string;
+    source?: string;
+    project?: string;
+    searchPaths?: string[];
+    searchTerm?: string;
+    cache: boolean;
+    cacheDir: string;
+    limit?: string;
+    output?: string;
+    verbose?: boolean;
+    mcp?: boolean;
+}
 
-    if (argv.help) {
-        showHelp();
-        process.exit(0);
-    }
+function collect(value: string, previous: string[]): string[] {
+    return previous.concat([value]);
+}
 
+async function run(opts: Options) {
     // Run as MCP server if --mcp flag is set
-    if (argv.mcp) {
+    if (opts.mcp) {
         await startMcpServer();
         return; // The server runs indefinitely
     }
 
     try {
         // Get introspection mode
-        const mode = await getMode(argv);
+        const mode = await getMode(opts);
 
         // Build options
         const options: IntrospectOptions = {
-            searchPaths: Array.isArray(argv.searchPaths)
-                ? argv.searchPaths
-                : argv.searchPaths
-                  ? [argv.searchPaths]
-                  : [],
-            searchTerm: argv.searchTerm,
-            cache: argv.cache,
-            cacheDir: argv.cacheDir,
-            limit: argv.limit,
+            searchPaths: opts.searchPaths ?? [],
+            searchTerm: opts.searchTerm,
+            cache: opts.cache,
+            cacheDir: opts.cacheDir,
+            limit: opts.limit,
         };
 
-        if (argv.verbose) {
+        if (opts.verbose) {
             logger.info(`Introspection mode: ${mode}`);
-            logger.info(`Options: ${JSON.stringify(options, null, 2)}`);
+            logger.info(`Options: ${SafeJSON.stringify(options, null, 2)}`);
         }
 
         let exports: ExportInfo[] = [];
@@ -292,8 +204,8 @@ async function main() {
         // Execute introspection based on mode
         switch (mode) {
             case "package": {
-                const packageName = await getPackageName(argv);
-                if (argv.verbose) {
+                const packageName = await getPackageName(opts);
+                if (opts.verbose) {
                     logger.info(`Introspecting package: ${packageName}`);
                 }
                 exports = await introspectPackage(packageName, options);
@@ -301,8 +213,8 @@ async function main() {
             }
 
             case "source": {
-                const sourceCode = await getSourceCode(argv);
-                if (argv.verbose) {
+                const sourceCode = await getSourceCode(opts);
+                if (opts.verbose) {
                     logger.info(`Introspecting source code...`);
                 }
                 exports = await introspectSource(sourceCode, options);
@@ -310,8 +222,8 @@ async function main() {
             }
 
             case "project": {
-                const projectPath = await getProjectPath(argv);
-                if (argv.verbose) {
+                const projectPath = await getProjectPath(opts);
+                if (opts.verbose) {
                     logger.info(`Introspecting project: ${projectPath}`);
                 }
                 exports = await introspectProject(projectPath, options);
@@ -324,10 +236,10 @@ async function main() {
         }
 
         // Format results
-        const formattedOutput = formatExports(exports, argv.verbose || false);
+        const formattedOutput = formatExports(exports, opts.verbose || false);
 
         // Handle output
-        const outputDest = await getOutputDestination(argv);
+        const outputDest = await getOutputDestination(opts);
 
         if (outputDest === "clipboard") {
             await clipboardy.write(formattedOutput);
@@ -341,14 +253,60 @@ async function main() {
         }
     } catch (error) {
         console.error(`✖ Error: ${error}`);
-        if (argv.verbose && error instanceof Error) {
+        if (opts.verbose && error instanceof Error) {
             console.error(error.stack || "");
         }
         process.exit(1);
     }
 }
 
-main().catch((err) => {
+const program = new Command();
+
+program
+    .name("mcp-ts-introspect")
+    .description("Introspect TypeScript exports from packages, source code, or projects.")
+    .option("-m, --mode <mode>", "Introspection mode: package, source, or project")
+    .option("-p, --package <name>", "Package name to introspect (for package mode)")
+    .option("-s, --source <code>", "TypeScript source code to analyze (for source mode)")
+    .option("--project <path>", "Project path to analyze (for project mode, defaults to current directory)")
+    .option("--search-paths <path>", "Additional paths to search for packages (repeatable)", collect, [])
+    .option("-t, --search-term <term>", "Filter exports by search term (supports regex)")
+    .option("--no-cache", "Disable caching")
+    .option("--cache-dir <dir>", "Cache directory", ".ts-morph-cache")
+    .option("--limit <num>", "Maximum number of results to return")
+    .option("-o, --output <dest>", "Output destination: file, clipboard, or stdout (default: stdout)")
+    .option("-v, --verbose", "Enable verbose logging")
+    .option("--mcp", "Run as MCP server")
+    .addHelpText(
+        "after",
+        `
+Examples:
+  tools mcp-ts-introspect -m package -p typescript -t "Type.*" -o clipboard
+  tools mcp-ts-introspect -m source -s "export function hello() { return 'world'; }"
+  tools mcp-ts-introspect -m project --search-term "^get" --limit 20
+  tools mcp-ts-introspect  # Interactive mode
+  tools mcp-ts-introspect --mcp  # Run as MCP server
+`
+    )
+    .action(async (raw: RawOptions) => {
+        const opts: Options = {
+            mode: raw.mode,
+            package: raw.package,
+            source: raw.source,
+            project: raw.project,
+            searchPaths: raw.searchPaths,
+            searchTerm: raw.searchTerm,
+            cache: raw.cache,
+            cacheDir: raw.cacheDir,
+            limit: raw.limit !== undefined ? Number(raw.limit) : undefined,
+            output: raw.output,
+            verbose: raw.verbose,
+            mcp: raw.mcp,
+        };
+        await run(opts);
+    });
+
+program.parseAsync().catch((err) => {
     console.error(`\n✖ Unexpected error: ${err}`);
     process.exit(1);
 });
