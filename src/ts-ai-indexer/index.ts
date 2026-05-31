@@ -1,5 +1,6 @@
 import { existsSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { logger } from "@app/logger";
 import * as p from "@clack/prompts";
 import clipboardy from "clipboardy";
 import { Command } from "commander";
@@ -18,7 +19,6 @@ import {
     SyntaxKind,
     type TypeAliasDeclaration,
 } from "ts-morph";
-import logger from "../logger";
 
 interface Options {
     path?: string;
