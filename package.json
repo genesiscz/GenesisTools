@@ -3,6 +3,7 @@
     "description": "Useful tools that I use for my projects",
     "module": "index.ts",
     "type": "module",
+    "workspaces": ["packages/*"],
     "scripts": {
         "prepare": "git config core.hooksPath .githooks",
         "typecheck:all": "tsgo --noEmit && tsgo -p src/claude-history-dashboard/tsconfig.json --noEmit",

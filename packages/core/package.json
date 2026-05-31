@@ -1,0 +1,13 @@
+{
+    "name": "@gt/core",
+    "version": "0.0.0",
+    "private": true,
+    "type": "module",
+    "exports": {
+        "./math": {
+            "bun": "./src/math.ts",
+            "types": "./src/math.ts",
+            "default": "./dist/math.js"
+        }
+    }
+}
