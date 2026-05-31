@@ -5,9 +5,9 @@ import { RefStoreManager } from "@app/har-analyzer/core/ref-store";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { HarEntry, HarHeader, OutputOptions } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
-import { formatBytes, formatDuration } from "@app/utils/format";
-import { parseJSON } from "@app/utils/json";
-import { formatSchema } from "@app/utils/json-schema";
+import { formatBytes, formatDuration } from "@gt/utils/format";
+import { parseJSON } from "@gt/utils/json";
+import { formatSchema } from "@gt/utils/json-schema";
 import type { Command } from "commander";
 
 function formatHeaders(headers: HarHeader[]): string {

@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import type { HarEntry, HarFile, HarSession, IndexedEntry, SessionStats } from "@app/har-analyzer/types.ts";
-import { xxhash } from "@app/utils/hash";
+import { xxhash } from "@gt/utils/hash";
 
 function extractDomainAndPath(url: string): { domain: string; path: string } {
     try {

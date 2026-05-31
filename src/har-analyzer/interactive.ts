@@ -5,9 +5,9 @@ import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { HarFile, HarSession, IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
 import { out } from "@app/logger";
-import { formatBytes, formatDuration } from "@app/utils/format";
 import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
+import { formatBytes, formatDuration } from "@gt/utils/format";
 import pc from "picocolors";
 
 export async function runInteractive(parentOpts: OutputOptions): Promise<void> {

@@ -1,0 +1,22 @@
+{
+    "name": "@gt/utils",
+    "type": "module",
+    "private": true,
+    "exports": {
+        "./json": "./src/json.ts",
+        "./json-schema": "./src/json-schema.ts",
+        "./paths": "./src/paths.ts",
+        "./paths.client": "./src/paths.client.ts",
+        "./string": "./src/string.ts",
+        "./date": "./src/date.ts",
+        "./date-locale": "./src/date-locale.ts",
+        "./math": "./src/math.ts",
+        "./array": "./src/array.ts",
+        "./object": "./src/object.ts",
+        "./Stopwatch": "./src/Stopwatch.ts",
+        "./tokens": "./src/tokens.ts",
+        "./hash": "./src/hash.ts",
+        "./url": "./src/url.ts",
+        "./format": "./src/format.ts"
+    }
+}
