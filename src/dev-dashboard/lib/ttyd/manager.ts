@@ -68,26 +68,51 @@ function processMatchesSession(session: TtydSession): boolean {
     return cmd.includes("ttyd") && cmd.includes(`/ttyd/${session.id}`);
 }
 
-function isSessionAlive(session: TtydSession): boolean {
-    if (session.pid <= 0) {
+async function processMatchesSessionAsync(session: TtydSession): Promise<boolean> {
+    const proc = Bun.spawn(["/bin/ps", "-p", String(session.pid), "-o", "command="], {
+        stdio: ["ignore", "pipe", "ignore"],
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode !== 0) {
         return false;
     }
 
-    try {
-        process.kill(session.pid, 0);
-    } catch {
-        return false;
-    }
+    const cmd = stdout.trim();
+    return cmd.includes("ttyd") && cmd.includes(`/ttyd/${session.id}`);
+}
 
-    // PID exists, but PIDs are reused — confirm it's still our ttyd before
-    // treating the entry as alive (and, by extension, before signalling it).
-    return processMatchesSession(session);
+/**
+ * Batched async variant — parallelizes N× `ps -p PID` across all sessions.
+ * Benchmark on Apple Silicon (n=11): sync-serial 10.4ms median, async-parallel
+ * 2.6ms median, sync-batch (one `ps -p PID1,PID2,…`) 43ms (macOS ps takes a
+ * full-proctable slow path for multi-pid). Async-parallel is the win.
+ */
+async function isSessionAliveBatch(sessions: TtydSession[]): Promise<Map<string, boolean>> {
+    return new Map(
+        await Promise.all(
+            sessions.map(async (session): Promise<[string, boolean]> => {
+                if (session.pid <= 0) {
+                    return [session.id, false];
+                }
+
+                try {
+                    process.kill(session.pid, 0);
+                } catch {
+                    return [session.id, false];
+                }
+
+                return [session.id, await processMatchesSessionAsync(session)];
+            })
+        )
+    );
 }
 
 async function persistRegistry(): Promise<void> {
-    const sessions = Array.from(registry.values())
-        .map((tracked) => tracked.session)
-        .filter((session) => isSessionAlive(session));
+    const all = Array.from(registry.values()).map((tracked) => tracked.session);
+    const alive = await isSessionAliveBatch(all);
+    const sessions = all.filter((session) => alive.get(session.id) === true);
     await saveTtydSessions(sessions);
 }
 
@@ -100,14 +125,13 @@ async function hydrateRegistry(): Promise<void> {
     // read error here would otherwise permanently brick hydration.
     const config = await getConfig();
     hydrated = true;
+
+    const fresh = config.ttydSessions.filter((session) => !registry.has(session.id));
+    const alive = await isSessionAliveBatch(fresh);
     let changed = false;
 
-    for (const session of config.ttydSessions) {
-        if (registry.has(session.id)) {
-            continue;
-        }
-
-        if (isSessionAlive(session)) {
+    for (const session of fresh) {
+        if (alive.get(session.id) === true) {
             registry.set(session.id, { session, child: null });
         } else {
             changed = true;
@@ -132,11 +156,13 @@ async function pruneDeadSessions(): Promise<void> {
         return;
     }
 
+    const all = Array.from(registry.values()).map((tracked) => tracked.session);
+    const alive = await isSessionAliveBatch(all);
     let changed = false;
 
-    for (const [id, tracked] of registry.entries()) {
-        if (!isSessionAlive(tracked.session)) {
-            registry.delete(id);
+    for (const session of all) {
+        if (alive.get(session.id) !== true) {
+            registry.delete(session.id);
             changed = true;
         }
     }
