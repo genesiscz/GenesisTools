@@ -1,6 +1,6 @@
 # GenesisTools Monorepo — Target Architecture (Build-Pipeline frame: Turborepo + Bun workspaces)
 
-> Status: design + empirically-validated foundation spike (committed on `feat/monorepo-2`).
+> Status: design + **EXECUTED foundation milestone** (committed on `feat/monorepo-2`). `@gt/core` (10 modules) extracted with shims, 6 tools migrated to consume it, turbo wired with a verified FULL TURBO cache hit, whole-repo tsgo = 0.
 > Frame: **build-pipeline** — Turborepo task orchestration + caching over Bun workspaces, packages with explicit `exports` maps, optimized for CI speed / incremental builds / remote+local caching / scaling to many packages.
 
 ## 0. What was actually measured (not hand-waved)
@@ -19,13 +19,15 @@ Before designing, the real code was inspected and a spike was run end-to-end in 
   - `utils/async.ts` → `@app/logger`.
   - ⇒ **`cli ↔ logger ↔ prompts` form a mutually-recursive cluster, and `prompts` leaks into the `doctor` tool.** This cluster is NOT cleanly extractable now (see §6, deferred).
 
-- **Spike (committed): extracted `src/utils/math.ts` → `packages/core/src/math.ts`** behind `@gt/core/math`, shimmed the old path, migrated one real importer (`vector-store.ts`), and verified:
-  - `tsgo --noEmit` whole-repo → **still 0 errors** (the `exports` map's `bun`/`types` conditions resolve to source `.ts` — **no tsconfig `paths` entry for `@gt/*` was needed**).
-  - Bun runtime resolves **both** `@gt/core/math` (direct) and `@app/utils/math` (shim) — verified with `bun -e`.
-  - `./tools json` + `./tools collect-files-for-ai --help` smoke-run green.
-  - `bun test packages/core/src/math.test.ts` → 5 pass.
+- **Foundation EXECUTED (committed):** `packages/core` (`@gt/core`) now holds **10 leaf modules** — `array`, `date`, `format`, `json`, `math`, `object`, `paths`, `paths.client`, `string`, `Stopwatch` — each behind a source-first `exports` subpath, each old `src/utils/<f>.ts` path replaced by a **re-export shim**. Six real tools migrated to import `@gt/core/*` directly: `json`, `npm-package-diff`, `files-to-prompt`, `last-changes`, `timer`, `usage`. Verified:
+  - `tsgo --noEmit` whole-repo → **0 errors** (the `exports` map's `bun`/`types` conditions resolve to source `.ts` — **no tsconfig `paths` entry for `@gt/*` was needed**).
+  - **`turbo run typecheck --filter=@gt/core`** → isolated package typecheck passes, and a rerun is **FULL TURBO cache hit** (904ms → 62ms) — the build-pipeline thesis made concrete, not asserted.
+  - Bun runtime resolves **both** `@gt/core/<f>` (direct) and `@app/utils/<f>` (shim) — verified with `bun -e` and live tools.
+  - All 6 migrated tools smoke-run green via `./tools`; `biome check` clean on touched files.
+  - Root `bun test` discovers the relocated package tests (`packages/core/src/{math,paths.client}.test.ts`) — 13 pass.
+  - One real boundary issue was caught-and-fixed during execution: `paths.ts` imports a pure sibling `paths.client.ts`, which had to move into `@gt/core` too (it also has external `@app/utils/paths.client` importers, so it got its own shim). This is exactly the kind of leak the per-file tsgo-0 gate surfaces.
 
-This spike is the proof-of-mechanism the whole spec rests on; everything else is elaboration of a verified pattern.
+This executed foundation is the proof-of-mechanism the whole spec rests on; the remaining packages are elaboration of this verified pattern.
 
 ## 1. Tooling choice + rationale
 

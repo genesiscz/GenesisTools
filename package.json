@@ -3,7 +3,10 @@
     "description": "Useful tools that I use for my projects",
     "module": "index.ts",
     "type": "module",
-    "workspaces": ["packages/*"],
+    "packageManager": "bun@1.3.14",
+    "workspaces": [
+        "packages/*"
+    ],
     "scripts": {
         "prepare": "git config core.hooksPath .githooks",
         "typecheck:all": "tsgo --noEmit && tsgo -p src/claude-history-dashboard/tsconfig.json --noEmit",
@@ -61,6 +64,7 @@
         "react-devtools-core": "^7.0.0",
         "tailwind-merge": "^3.5.0",
         "ts-morph": "^28.0.0",
+        "turbo": "2.7.3",
         "tw-animate-css": "^1.3.6",
         "vite-tsconfig-paths": "^6.1.1",
         "web-vitals": "^5.2.0"

@@ -17,19 +17,18 @@ tsgo --noEmit 2>&1 | rg -c "error TS" || echo "0 errors (baseline)"        # MUS
 
 ---
 
-## FOUNDATION MILESTONE — leaves the repo GREEN now
+## FOUNDATION MILESTONE — EXECUTED, repo is GREEN
 
-Goal: stand up Bun workspaces + Turborepo, extract the acyclic **`@gt/core`** leaf spine, shim every old path, and migrate a representative set of **6 tools** that actually exercise the extracted utilities. Keep whole-repo tsgo at 0 and smoke-run the tools.
+Goal (DONE): stand up Bun workspaces + Turborepo, extract the acyclic **`@gt/core`** leaf spine, shim every old path, and migrate a representative set of tools that actually exercise the extracted utilities. Whole-repo tsgo = 0, all migrated tools smoke-run.
 
-### Step 0 — Proof spike (DONE, committed)
+### Status: all steps below are EXECUTED and committed on `feat/monorepo-2`
 
-Already executed and verified in this worktree (this is what de-risks the whole plan):
-- `packages/core/` created; `src/utils/math.ts` + `math.test.ts` moved to `packages/core/src/`.
-- `packages/core/package.json` with `exports` map (`bun`/`types` → `src/math.ts`, `default` → `dist`).
-- Root `package.json` gained `"workspaces": ["packages/*"]`.
-- `src/utils/math.ts` rewritten as the shim: `export * from "@gt/core/math";`.
-- One real importer migrated: `src/utils/search/stores/vector-store.ts` now imports `@gt/core/math`.
-- **Verified:** `bun install` symlinks `@gt/core`; whole-repo `tsgo` = 0 errors; `bun -e` resolves both `@gt/core/math` and `@app/utils/math`; `./tools json` + `./tools collect-files-for-ai --help` run; `bun test packages/core/src/math.test.ts` = 5 pass.
+- `packages/core` (`@gt/core`) holds **10 leaf modules**: `array`, `date`, `format`, `json`, `math`, `object`, `paths`, `paths.client`, `string`, `Stopwatch`. Each `src/utils/<f>.ts` is now a re-export shim (`export * from "@gt/core/<f>";`).
+- Root `package.json` gained `"workspaces": ["packages/*"]` + `"packageManager": "bun@1.3.14"` (turbo requires it); `turbo@2.7.3` pinned in devDeps; root `turbo.json` + `packages/core/tsconfig.json` added; `.turbo`/`packages/*/dist` git-ignored.
+- 6 tools migrated to import `@gt/core/*` directly: `json`, `npm-package-diff`, `files-to-prompt`, `last-changes`, `timer`, `usage`. One util consumer (`src/utils/search/stores/vector-store.ts`) also migrated.
+- **Verified:** `bun install` (with `PUPPETEER_SKIP_DOWNLOAD=1`) symlinks `@gt/core`; whole-repo `tsgo --noEmit` = 0 errors; `turbo run typecheck --filter=@gt/core` passes then FULL TURBO cache-hits (904ms→62ms); `bun -e` resolves both `@gt/core/<f>` and `@app/utils/<f>`; all 6 tools smoke-run via `./tools`; root `bun test packages/` = 13 pass; `biome check` clean on touched files.
+
+The steps below document the recipe used (and to reuse for the deferred packages).
 
 ### Step 1 — Pin turbo + add `turbo.json`
 

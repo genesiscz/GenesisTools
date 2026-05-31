@@ -1,0 +1,9 @@
+{
+    "$schema": "https://turbo.build/schema.json",
+    "tasks": {
+        "typecheck": { "dependsOn": ["^typecheck"], "outputs": [] },
+        "build": { "dependsOn": ["^build"], "outputs": ["dist/**"] },
+        "lint": { "outputs": [] },
+        "test": { "dependsOn": ["^build"], "outputs": ["coverage/**"], "env": ["CI"] }
+    }
+}
