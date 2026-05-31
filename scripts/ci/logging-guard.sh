@@ -34,7 +34,7 @@ fi
 #    The plan's `[^)]*` form false-positived ~10 idiomatic DIAGNOSTIC lines
 #    (`logger.debug(\`…${SafeJSON.stringify(ctx)}\`)`, context-object logging)
 #    that the overhaul never intended to ban; failing CI on those is wrong.
-if rg -n 'logger\.(info|warn|error|debug|trace)\(\s*(SafeJSON|JSON)\.stringify\(' src ; then
+if rg -n 'logger\.(info|warn|error|debug|trace)\(\s*(SafeJSON|JSON)\.stringify\(' src packages ; then
     echo "::error:: logger used to emit a serialized result payload — that is stdout's job: use out.result()/out.print(). logger.* is diagnostics only (file + gated stderr)."
     fail=1
 fi

@@ -37,6 +37,8 @@
 
         // Path aliases
         "paths": {
+            "@gt/core": ["./packages/core/src/index.ts"],
+            "@gt/core/*": ["./packages/core/src/*"],
             "@app/*": ["./src/*"],
             "@ask/*": ["./src/ask/*"],
             "@ui/*": ["./src/utils/ui/*"],
@@ -47,5 +49,5 @@
             "@ext": ["./src/youtube/extension/index.ts"]
         }
     },
-    "include": ["src/**/*", "./test-*.ts"]
+    "include": ["src/**/*", "packages/*/src/**/*", "./test-*.ts"]
 }
