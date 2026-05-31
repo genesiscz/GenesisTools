@@ -1,8 +1,8 @@
 import crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { logger } from "@app/logger";
 import { Project, ts } from "ts-morph";
-import logger from "../logger";
 import { loadCache, saveCache } from "./cache";
 import { extractExports } from "./exportExtractor";
 import { findDeclarationFiles, findPackageJsonAndDir } from "./packageResolver";

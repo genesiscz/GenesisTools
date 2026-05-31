@@ -1,5 +1,5 @@
+import { logger } from "@app/logger";
 import { type Symbol as MorphSymbol, Node, type SourceFile } from "ts-morph";
-import logger from "../logger";
 import type { ExportInfo } from "./types";
 
 export async function extractExports(sourceFile: SourceFile): Promise<ExportInfo[]> {

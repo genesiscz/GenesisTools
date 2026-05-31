@@ -1,8 +1,9 @@
+import { logger } from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import logger from "../logger";
 import { introspectPackage, introspectProject, introspectSource } from "./introspect";
 import type { IntrospectOptions } from "./types";
 
@@ -62,7 +63,7 @@ export async function startMcpServer() {
                     content: [
                         {
                             type: "text",
-                            text: JSON.stringify(exports, null, 2),
+                            text: SafeJSON.stringify(exports, null, 2),
                         },
                     ],
                 };
@@ -90,7 +91,7 @@ export async function startMcpServer() {
                     content: [
                         {
                             type: "text",
-                            text: JSON.stringify(exports, null, 2),
+                            text: SafeJSON.stringify(exports, null, 2),
                         },
                     ],
                 };
@@ -120,7 +121,7 @@ export async function startMcpServer() {
                     content: [
                         {
                             type: "text",
-                            text: JSON.stringify(exports, null, 2),
+                            text: SafeJSON.stringify(exports, null, 2),
                         },
                     ],
                 };
