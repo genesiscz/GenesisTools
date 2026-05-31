@@ -1,0 +1,24 @@
+{
+    "name": "@gt/core",
+    "version": "0.0.0",
+    "private": true,
+    "type": "module",
+    "exports": {
+        ".": "./src/index.ts",
+        "./json": "./src/json.ts",
+        "./date": "./src/date.ts",
+        "./date-locale": "./src/date-locale.ts",
+        "./format": "./src/format.ts",
+        "./string": "./src/string.ts",
+        "./array": "./src/array.ts",
+        "./object": "./src/object.ts",
+        "./math": "./src/math.ts",
+        "./hash": "./src/hash.ts",
+        "./tokens": "./src/tokens.ts",
+        "./Stopwatch": "./src/Stopwatch.ts"
+    },
+    "dependencies": {
+        "comment-json": "^4.6.2",
+        "gpt-3-encoder": "^1.1.4"
+    }
+}

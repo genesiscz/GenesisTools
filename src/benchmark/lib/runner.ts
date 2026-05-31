@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
+import { SafeJSON } from "@gt/core/json";
 import pc from "picocolors";
 import { getResultPath } from "./results";
 import type {
