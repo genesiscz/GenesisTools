@@ -317,7 +317,12 @@ export class SSEBroadcaster {
     }
 
     private removeMultiplexSubscriber(sub: MultiplexSubscriber): void {
+        const keys = [...sub.keys];
         this.multiplexSubscribers.delete(sub);
+
+        for (const key of keys) {
+            this.stopTailerIfUnreferenced(key);
+        }
 
         if (this.subscribers.size === 0 && this.multiplexSubscribers.size === 0 && this.heartbeat) {
             clearInterval(this.heartbeat);
@@ -334,28 +339,34 @@ export class SSEBroadcaster {
         bucket.delete(sub);
         if (bucket.size === 0) {
             this.subscribers.delete(sub.key);
-
-            // Don't tear down the tailer / UI-line map if ANY multiplex
-            // subscriber still references this key — SessionsHome holds a
-            // multiplex sub that needs to keep receiving the session's
-            // entries even after the user closes the session-detail page.
-            if (!this.isKeyReferencedByMultiplex(sub.key)) {
-                const tailer = this.tailers.get(sub.key);
-                if (tailer) {
-                    tailer.stop();
-                    this.tailers.delete(sub.key);
-                }
-
-                const parsed = parseSessionKey(sub.key);
-                if (parsed?.source === "task") {
-                    stopTaskUiTailer(sub.key);
-                }
-            }
+            this.stopTailerIfUnreferenced(sub.key);
         }
 
         if (this.subscribers.size === 0 && this.multiplexSubscribers.size === 0 && this.heartbeat) {
             clearInterval(this.heartbeat);
             this.heartbeat = null;
+        }
+    }
+
+    private stopTailerIfUnreferenced(key: string): void {
+        const bucket = this.subscribers.get(key);
+        if (bucket && bucket.size > 0) {
+            return;
+        }
+
+        if (this.isKeyReferencedByMultiplex(key)) {
+            return;
+        }
+
+        const tailer = this.tailers.get(key);
+        if (tailer) {
+            tailer.stop();
+            this.tailers.delete(key);
+        }
+
+        const parsed = parseSessionKey(key);
+        if (parsed?.source === "task") {
+            stopTaskUiTailer(key);
         }
     }
 
