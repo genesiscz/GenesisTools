@@ -31,6 +31,15 @@ const ARCHIVE_PREVIEW_LIMIT = 40;
 const MAX_ACTIVE_TILES = 6;
 const MOSAIC_MAX_COLUMNS = 3;
 
+/** Membership signature stable across recency re-sorts (poll / now tick). */
+function stableSessionKeysSig(keys: string[]): string {
+    if (keys.length === 0) {
+        return "";
+    }
+
+    return [...keys].sort().join("\n");
+}
+
 function toMultiplexEntry(session: DashboardSession, entry: IndexedLogEntry): MultiplexLogEntry {
     return {
         ...entry,
@@ -385,8 +394,16 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
     // entries per session per second, and tearing down + re-opening one
     // EventSource per second. That swamped the dashboard server (the
     // exact symptom that caused the dashboard hang during eval2).
-    const mosaicActiveKeysSig = useMemo(() => mosaicActiveKeys.join("\n"), [mosaicActiveKeys]);
-    const allActiveKeysSig = useMemo(() => allActiveKeys.join("\n"), [allActiveKeys]);
+    const mosaicActiveKeysSig = useMemo(() => stableSessionKeysSig(mosaicActiveKeys), [mosaicActiveKeys]);
+    const allActiveKeysSig = useMemo(() => stableSessionKeysSig(allActiveKeys), [allActiveKeys]);
+    const mosaicEntryCountsSig = useMemo(() => {
+        const byKey = new Map(sessions.map((session) => [sessionKey(session.source, session.name), session]));
+
+        return mosaicActiveKeys
+            .map((key) => `${key}:${byKey.get(key)?.entryCount ?? 0}`)
+            .sort()
+            .join("\n");
+    }, [mosaicActiveKeys, sessions]);
 
     useEffect(() => {
         if (mosaicActiveSessions.length === 0) {
@@ -464,7 +481,7 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
             }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [sessions, mosaicActiveKeysSig, prefetchSessionTail]);
+    }, [mosaicEntryCountsSig, prefetchSessionTail]);
 
     useEffect(() => {
         // Re-open the multiplex SSE whenever the SET of active pool keys changes
