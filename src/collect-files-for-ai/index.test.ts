@@ -113,18 +113,20 @@ describe("collect-files-for-ai", () => {
         // console.log("Help STDOUT:", stdout);
         // console.log("Help STDERR:", stderr);
         expect(exitCode).toBe(0);
-        expect(stdout).toContain("Usage: collect-uncommitted-files.ts <directory> [options]");
-        expect(stdout).toContain("-c, --commits NUM");
+        expect(stdout).toContain("Usage: collect-files-for-ai [options] [directory]");
+        expect(stdout).toContain("-c, --commits <number>");
         expect(stdout).toContain("-s, --staged");
         expect(stdout).toContain("-f, --flat");
     });
 
-    it("should show help and exit with 1 if no directory is provided", async () => {
-        const { stdout, exitCode } = await runScript([]);
-        // console.log("No dir STDOUT:", stdout);
-        // console.log("No dir STDERR:", stderr);
+    it("should default directory to '.' and operate on the current working directory", async () => {
+        // No directory arg: commander defaults `[directory]` to ".", so the tool runs
+        // against the cwd (the freshly-init'd test repo with no commits). Default mode
+        // is "all", which runs `git diff HEAD` — that fails (exit 128) because there is
+        // no HEAD yet, so the tool exits 1 with the handled git-error message on stderr.
+        const { stderr, exitCode } = await runScript([]);
         expect(exitCode).toBe(1);
-        expect(stdout).toContain("Usage: collect-uncommitted-files.ts <directory> [options]");
+        expect(stderr).toContain("Error getting file list from git.");
     });
 
     it("should exit with error if directory is not a git repository", async () => {
@@ -198,12 +200,10 @@ describe("collect-files-for-ai", () => {
             await setupFiles({ "file1.txt": "content1", "file2.txt": "content2" });
             await runGit(["add", "file1.txt"], testRepoDir);
 
-            const { stdout, exitCode } = await runScript([testRepoDir, "--staged", "-t", targetOutputDir]);
-            // console.log("--staged STDOUT:", stdout);
-            // console.log("--staged STDERR:", stderr);
+            const { stderr, exitCode } = await runScript([testRepoDir, "--staged", "-t", targetOutputDir]);
             expect(exitCode).toBe(0);
-            expect(stdout).toContain("Found 1 file(s) to copy.");
-            expect(stdout).toContain("Copied: file1.txt");
+            expect(stderr).toContain("Found 1 file(s) to copy.");
+            expect(stderr).toContain("Copied: file1.txt");
 
             const copiedFiles = await getFilesInDir(targetOutputDir);
             expect(copiedFiles).toEqual(["file1.txt"]);
@@ -215,10 +215,10 @@ describe("collect-files-for-ai", () => {
             await setupFiles({ "dir1/file1.txt": "content1", "file2.txt": "content2" });
             await runGit(["add", "dir1/file1.txt"], testRepoDir);
 
-            const { stdout, exitCode } = await runScript([testRepoDir, "--staged", "-t", targetOutputDir, "--flat"]);
+            const { stderr, exitCode } = await runScript([testRepoDir, "--staged", "-t", targetOutputDir, "--flat"]);
             expect(exitCode).toBe(0);
-            expect(stdout).toContain("Found 1 file(s) to copy.");
-            expect(stdout).toContain("Copied: dir1/file1.txt as file1.txt");
+            expect(stderr).toContain("Found 1 file(s) to copy.");
+            expect(stderr).toContain("Copied: dir1/file1.txt as file1.txt");
 
             const copiedFiles = await getFilesInDir(targetOutputDir);
             expect(copiedFiles).toEqual(["file1.txt"]);
@@ -233,12 +233,10 @@ describe("collect-files-for-ai", () => {
 
             await writeFile(join(testRepoDir, "file1.txt"), "modified content"); // Unstaged modification
 
-            const { stdout, exitCode } = await runScript([testRepoDir, "--unstaged", "-t", targetOutputDir]);
-            // console.log("--unstaged STDOUT:", stdout);
-            // console.log("--unstaged STDERR:", stderr);
+            const { stderr, exitCode } = await runScript([testRepoDir, "--unstaged", "-t", targetOutputDir]);
             expect(exitCode).toBe(0);
-            expect(stdout).toContain("Found 1 file(s) to copy.");
-            expect(stdout).toContain("Copied: file1.txt");
+            expect(stderr).toContain("Found 1 file(s) to copy.");
+            expect(stderr).toContain("Copied: file1.txt");
 
             const copiedFiles = await getFilesInDir(targetOutputDir);
             expect(copiedFiles).toEqual(["file1.txt"]);
@@ -266,10 +264,7 @@ describe("collect-files-for-ai", () => {
             // Stage a new file
             await runGit(["add", "new_staged.txt"], testRepoDir);
 
-            const { stdout, exitCode } = await runScript([testRepoDir, "--all", "-t", targetOutputDir]);
-            // console.log("--all STDOUT:", stdout);
-            // console.log("--all STDERR:", stderr);
-
+            const { stderr, exitCode } = await runScript([testRepoDir, "--all", "-t", targetOutputDir]);
             expect(exitCode).toBe(0);
             // The script uses `git diff --name-only HEAD` for --all, which shows staged and unstaged *modifications* to *tracked* files.
             // It does not show newly created, unstaged files that are not yet tracked.
@@ -278,10 +273,10 @@ describe("collect-files-for-ai", () => {
             // 1. tracked_modified.txt (unstaged change to a tracked file)
             // 2. tracked_staged.txt (staged change to a tracked file)
             // 3. new_staged.txt (staged new file)
-            expect(stdout).toContain("Found 3 file(s) to copy.");
-            expect(stdout).toContain("Copied: tracked_modified.txt");
-            expect(stdout).toContain("Copied: tracked_staged.txt");
-            expect(stdout).toContain("Copied: new_staged.txt");
+            expect(stderr).toContain("Found 3 file(s) to copy.");
+            expect(stderr).toContain("Copied: tracked_modified.txt");
+            expect(stderr).toContain("Copied: tracked_staged.txt");
+            expect(stderr).toContain("Copied: new_staged.txt");
 
             const copiedFiles = await getFilesInDir(targetOutputDir);
             expect(copiedFiles).toEqual(
@@ -303,10 +298,10 @@ describe("collect-files-for-ai", () => {
             await runGit(["commit", "-m", "initial"], testRepoDir);
             await writeFile(join(testRepoDir, "file1.txt"), "modified"); // Unstaged
 
-            const { stdout, exitCode } = await runScript([testRepoDir, "-t", targetOutputDir]);
+            const { stderr, exitCode } = await runScript([testRepoDir, "-t", targetOutputDir]);
             expect(exitCode).toBe(0);
-            expect(stdout).toContain("Found 1 file(s) to copy."); // file1.txt is modified
-            expect(stdout).toContain("Copied: file1.txt");
+            expect(stderr).toContain("Found 1 file(s) to copy."); // file1.txt is modified
+            expect(stderr).toContain("Copied: file1.txt");
             const copiedFiles = await getFilesInDir(targetOutputDir);
             expect(copiedFiles).toEqual(["file1.txt"]);
         });
@@ -334,14 +329,13 @@ describe("collect-files-for-ai", () => {
             });
 
             it("should collect files from the last commit with --commits 1", async () => {
-                const { stdout, exitCode } = await runScript([testRepoDir, "--commits", "1", "-t", targetOutputDir]);
-                // console.log("--commits 1 STDOUT:", stdout);
+                const { stderr, exitCode } = await runScript([testRepoDir, "--commits", "1", "-t", targetOutputDir]);
                 expect(exitCode).toBe(0);
                 // Diff between HEAD~1 and HEAD
                 // file_c3.txt was added in HEAD, shared.txt was modified in HEAD
-                expect(stdout).toContain("Found 2 file(s) to copy.");
-                expect(stdout).toContain("Copied: file_c3.txt");
-                expect(stdout).toContain("Copied: shared.txt");
+                expect(stderr).toContain("Found 2 file(s) to copy.");
+                expect(stderr).toContain("Copied: file_c3.txt");
+                expect(stderr).toContain("Copied: shared.txt");
 
                 const copiedFiles = await getFilesInDir(targetOutputDir);
                 expect(copiedFiles).toEqual(expect.arrayContaining(["file_c3.txt", "shared.txt"]));
@@ -354,17 +348,16 @@ describe("collect-files-for-ai", () => {
             });
 
             it("should collect files from the last 2 commits with --commits 2", async () => {
-                const { stdout, exitCode } = await runScript([testRepoDir, "--commits", "2", "-t", targetOutputDir]);
-                // console.log("--commits 2 STDOUT:", stdout);
+                const { stderr, exitCode } = await runScript([testRepoDir, "--commits", "2", "-t", targetOutputDir]);
                 expect(exitCode).toBe(0);
                 // Diff between HEAD~2 and HEAD
                 // file_c2.txt (from commit 2)
                 // file_c3.txt (from commit 3)
                 // shared.txt (modified in commit 2 and commit 3, so it's included, content from HEAD)
-                expect(stdout).toContain("Found 3 file(s) to copy.");
-                expect(stdout).toContain("Copied: file_c2.txt");
-                expect(stdout).toContain("Copied: file_c3.txt");
-                expect(stdout).toContain("Copied: shared.txt");
+                expect(stderr).toContain("Found 3 file(s) to copy.");
+                expect(stderr).toContain("Copied: file_c2.txt");
+                expect(stderr).toContain("Copied: file_c3.txt");
+                expect(stderr).toContain("Copied: shared.txt");
 
                 const copiedFiles = await getFilesInDir(targetOutputDir);
                 expect(copiedFiles).toEqual(expect.arrayContaining(["file_c2.txt", "file_c3.txt", "shared.txt"]));
@@ -376,11 +369,14 @@ describe("collect-files-for-ai", () => {
 
             it("should collect files with --commits and --flat", async () => {
                 await setupFiles({ "dir/file_c4.txt": "c4" });
-                await runGit(["add", "."], testRepoDir);
-                await runGit(["commit", "-m", "commit 4 with dir"], testRepoDir); // This is now HEAD
+                // Commit ONLY the nested file via a pathspec-limited commit. The describe
+                // block's beforeEach already staged `uncommitted.txt`; a plain commit would
+                // sweep it into HEAD too, making `git diff HEAD~1 HEAD` report two files.
+                await runGit(["add", "dir/file_c4.txt"], testRepoDir);
+                await runGit(["commit", "-m", "commit 4 with dir", "--", "dir/file_c4.txt"], testRepoDir); // This is now HEAD
 
                 // HEAD is commit 4, HEAD~1 is commit 3
-                const { stdout, exitCode } = await runScript([
+                const { stderr, exitCode } = await runScript([
                     testRepoDir,
                     "--commits",
                     "1",
@@ -389,44 +385,43 @@ describe("collect-files-for-ai", () => {
                     "--flat",
                 ]);
                 expect(exitCode).toBe(0);
-                expect(stdout).toContain("Found 1 file(s) to copy."); // Only dir/file_c4.txt from the latest commit
-                expect(stdout).toContain("Copied: dir/file_c4.txt as file_c4.txt");
+                expect(stderr).toContain("Found 1 file(s) to copy."); // Only dir/file_c4.txt from the latest commit
+                expect(stderr).toContain("Copied: dir/file_c4.txt as file_c4.txt");
 
                 const copiedFiles = await getFilesInDir(targetOutputDir);
                 expect(copiedFiles).toEqual(["file_c4.txt"]); // Flattened
             });
 
-            it("should handle --commits NUM greater than history (collects all based on git diff behavior)", async () => {
-                const { stdout, exitCode } = await runScript([testRepoDir, "--commits", "10", "-t", targetOutputDir]); // We have 3 commits initially in this describe block
-                expect(exitCode).toBe(0);
-                // Git diff HEAD~10 HEAD will effectively be all tracked files if 10 > num_commits in the repo
-                // For this specific setup (Commit 1, 2, 3): file_c1.txt, file_c2.txt, file_c3.txt, shared.txt
-                expect(stdout).toContain("Found 4 file(s) to copy.");
+            it("should exit with a git error when --commits NUM exceeds the available history", async () => {
+                // We have 3 commits in this describe block, so `git diff HEAD~10 HEAD` fails
+                // with "fatal: ambiguous argument 'HEAD~10'" (git exit 128) because HEAD~10
+                // is not a valid revision. The tool catches that and exits 1 — there is no
+                // git behavior that "collects all" when NUM > history.
+                const { stderr, exitCode } = await runScript([testRepoDir, "--commits", "10", "-t", targetOutputDir]);
+                expect(exitCode).toBe(1);
+                expect(stderr).toContain("Error getting file list from git.");
                 const copiedFiles = await getFilesInDir(targetOutputDir);
-                expect(copiedFiles).toEqual(
-                    expect.arrayContaining(["file_c1.txt", "file_c2.txt", "file_c3.txt", "shared.txt"])
-                );
-                expect(copiedFiles.length).toBe(4);
+                expect(copiedFiles.length).toBe(0);
             });
         });
 
         it("should create default target directory if -t is not specified", async () => {
-            await setupFiles({ "file.txt": "content" });
+            // Need an initial commit so default mode "all" (`git diff HEAD`) has a HEAD to
+            // diff against; otherwise git fails with "no HEAD". Modify a tracked file so the
+            // diff reports one changed file.
+            await runGit(["commit", "--allow-empty", "-m", "init"], testRepoDir);
+            await setupFiles({ "file.txt": "initial" });
             await runGit(["add", "file.txt"], testRepoDir);
-            // No commit, so it's uncommitted/staged. Default mode is 'all'.
+            await runGit(["commit", "-m", "add file"], testRepoDir);
+            await writeFile(join(testRepoDir, "file.txt"), "content"); // Unstaged modification
 
-            // Mock getTimestampDirName to return a predictable name for this test
-            // This is tricky as the script is run as a separate process.
-            // Instead, we'll check for the existence of a .ai directory and its contents.
-            // We'll need to clean up this .ai directory in afterEach more robustly.
-
-            const { stdout, exitCode } = await runScript([testRepoDir]); // No -t
-            // console.log("Default target STDOUT:", stdout);
-            // console.log("Default target STDERR:", stderr);
+            // The script writes to a timestamped dir under .ai/ when -t is not given;
+            // assert that dir exists and holds the copied file.
+            const { stderr, exitCode } = await runScript([testRepoDir]); // No -t
 
             expect(exitCode).toBe(0);
-            expect(stdout).toContain("Found 1 file(s) to copy.");
-            expect(stdout).toContain("Copied: file.txt");
+            expect(stderr).toContain("Found 1 file(s) to copy.");
+            expect(stderr).toContain("Copied: file.txt");
 
             const aiDir = join(testRepoDir, ".ai");
             const subDirs = await readdir(aiDir);
@@ -443,9 +438,9 @@ describe("collect-files-for-ai", () => {
             // Fresh repo, no commits, no staged/unstaged files
             await runGit(["commit", "--allow-empty", "-m", "empty initial"], testRepoDir); // Make sure HEAD exists
 
-            const { stdout, exitCode } = await runScript([testRepoDir, "--staged", "-t", targetOutputDir]);
+            const { stderr, exitCode } = await runScript([testRepoDir, "--staged", "-t", targetOutputDir]);
             expect(exitCode).toBe(0);
-            expect(stdout).toContain("No files found matching the criteria.");
+            expect(stderr).toContain("No files found matching the criteria.");
             const copiedFiles = await getFilesInDir(targetOutputDir);
             expect(copiedFiles.length).toBe(0);
         });

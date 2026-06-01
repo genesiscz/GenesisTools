@@ -111,8 +111,8 @@ describe("t3chat-length processor", () => {
 
         expect(result.length).toBe(2);
 
-        const emptyMsg = result.find((m) => m.threadLink.includes("empty"));
-        const nonEmptyMsg = result.find((m) => m.threadLink.includes("not_empty"));
+        const emptyMsg = result.find((m) => m.threadLink.endsWith("/empty"));
+        const nonEmptyMsg = result.find((m) => m.threadLink.endsWith("/not_empty"));
 
         expect(emptyMsg).toBeDefined();
         expect(nonEmptyMsg).toBeDefined();

@@ -89,13 +89,14 @@ describe("git-last-commits-diff", () => {
     it("should show help with --help flag", async () => {
         const { stdout, exitCode } = await runScript(["--help"], originalCwd); // Run from original CWD if script expects repo path as arg
         expect(exitCode).toBe(0);
-        expect(stdout).toContain("Usage: tools git-last-commits-diff <directory>");
+        expect(stdout).toContain("Usage: git-last-commits-diff");
+        expect(stdout).toContain("-c, --commits");
     });
 
     it("should show help and exit with 1 if no directory is provided", async () => {
-        const { stdout, exitCode } = await runScript([], originalCwd);
+        const { stderr, exitCode } = await runScript([], originalCwd);
         expect(exitCode).toBe(1);
-        expect(stdout).toContain("Usage: tools git-last-commits-diff <directory>");
+        expect(stderr).toContain("Usage: tools git-last-commits-diff <directory>");
     });
 
     it("should exit with error for invalid --commits value", async () => {
@@ -132,15 +133,15 @@ describe("git-last-commits-diff", () => {
 
         it("should output diff for last 2 commits to specified file", async () => {
             const outputFile = join(testRepoDir, "diff_output.txt");
-            const { stdout, exitCode } = await runScript([testRepoDir, "--commits", "2", "--output", outputFile]);
+            const { stderr, exitCode } = await runScript([testRepoDir, "--commits", "2", "--output", outputFile]);
             expect(exitCode).toBe(0);
-            // Informational messages go to stdout
-            expect(stdout).toContain("ℹ Will diff the last 2 commit(s)");
-            expect(stdout).toContain(`ℹ Output will be written to file: ${outputFile}`);
-            expect(stdout).toContain(`✔ Diff successfully written to ${outputFile}`);
-            expect(stdout).toContain("✔ Absolute path ");
-            expect(stdout).toContain(`"${outputFile}"`);
-            expect(stdout).toContain(" copied to clipboard.");
+            // Informational messages go to stderr
+            expect(stderr).toContain("ℹ Will diff the last 2 commit(s)");
+            expect(stderr).toContain(`ℹ Output will be written to file: ${outputFile}`);
+            expect(stderr).toContain(`✔ Diff successfully written to ${outputFile}`);
+            expect(stderr).toContain("✔ Absolute path ");
+            expect(stderr).toContain(`"${outputFile}"`);
+            expect(stderr).toContain(" copied to clipboard.");
 
             const diffContent = await readFile(outputFile, "utf-8");
             expect(diffContent).toContain("diff --git a/file1.txt b/file1.txt");
@@ -165,7 +166,7 @@ describe("git-last-commits-diff", () => {
             // Set the env var to ensure that even if clipboard mode was somehow triggered, it would write to a file we can check.
             // process.env.TEST_MODE_CLIPBOARD_OUTPUT_FILE = testClipboardFile; // REMOVE, not needed as --output takes precedence
 
-            const { stdout, exitCode, stderr } = await runScript([
+            const { exitCode, stderr } = await runScript([
                 testRepoDir,
                 "--commits",
                 "1",
@@ -178,13 +179,13 @@ describe("git-last-commits-diff", () => {
             // delete process.env.TEST_MODE_CLIPBOARD_OUTPUT_FILE; // REMOVE
 
             expect(exitCode).toBe(0);
-            // Informational messages go to stdout
-            expect(stdout).toContain("ℹ Will diff the last 1 commit(s)");
-            expect(stdout).toContain(`ℹ Output will be written to file: ${outputFile}`);
-            expect(stdout).toContain(`✔ Diff successfully written to ${outputFile}`);
-            expect(stdout).toContain("✔ Absolute path ");
-            expect(stdout).toContain(`"${outputFile}"`);
-            expect(stdout).toContain(" copied to clipboard.");
+            // Informational messages go to stderr
+            expect(stderr).toContain("ℹ Will diff the last 1 commit(s)");
+            expect(stderr).toContain(`ℹ Output will be written to file: ${outputFile}`);
+            expect(stderr).toContain(`✔ Diff successfully written to ${outputFile}`);
+            expect(stderr).toContain("✔ Absolute path ");
+            expect(stderr).toContain(`"${outputFile}"`);
+            expect(stderr).toContain(" copied to clipboard.");
 
             // Ensure the actual output file was written
             const fileContent = await readFile(outputFile, "utf-8");

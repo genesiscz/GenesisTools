@@ -110,28 +110,16 @@ describe("files-to-prompt", () => {
         expect(stdout).toContain("--cxml");
         expect(stdout).toContain("--markdown");
         expect(stdout).toMatch(/-n, --line-numbers\s+Add line numbers to the output/);
-        expect(stdout).toMatch(/files-to-prompt v\d+\.\d+\.\d+/);
+        expect(stdout).toMatch(/--version\s+Show version information/);
     });
 
     it("should output version with --version flag", async () => {
-        // Assuming version is hardcoded or accessible. The provided script snippet doesn't show version implementation.
-        // This test might need adjustment if version handling is different.
-        const { stdout, exitCode } = await runScript(["--version"]);
+        // showVersion() emits via logger.info, which writes to stderr (logger is the
+        // diagnostics channel; stdout is reserved for the machine result). So --version
+        // prints "files-to-prompt vX.Y.Z" to stderr, not stdout.
+        const { stderr, exitCode } = await runScript(["--version"]);
         expect(exitCode).toBe(0);
-        // A simple check, actual version string might vary.
-        // The provided script shows 'version?: boolean' in options, but no implementation for it.
-        // The actual script might have it or this test will fail until implemented.
-        // For now, let's assume it prints something like "files-to-prompt version x.y.z"
-        // If not implemented, it might just show help or exit cleanly. Let's check for non-error exit.
-        // Based on current script structure (if --version leads to no action and no error), it might show help.
-        // The script shows `if (argv.version || argv.v) { showVersion(); process.exit(0); }`
-        // but showVersion() is not in the provided snippet.
-        // If showVersion() is missing, it would error. Let's assume for now it's a placeholder or exits cleanly.
-        // The original script actually has `if (argv.version) { logger.info(VERSION); process.exit(0); }`
-        // and `const VERSION = "1.2.0";` so this test should work if that part of script is present.
-        // For now, let's assume it contains the word "version" or exits cleanly.
-        // The provided code doesn't have VERSION or showVersion. Let's assume it doesn't crash.
-        expect(stdout).toMatch(/files-to-prompt v\d+\.\d+\.\d+/);
+        expect(stderr).toMatch(/files-to-prompt v\d+\.\d+\.\d+/);
     });
 
     describe("Basic File/Directory Processing", () => {
@@ -192,7 +180,7 @@ describe("files-to-prompt", () => {
         });
 
         it("should output with line numbers using -n", async () => {
-            const { stdout, exitCode } = await runScript([join(testDir, "test.js"), "--lineNumbers"]);
+            const { stdout, exitCode } = await runScript([join(testDir, "test.js"), "--line-numbers"]);
             expect(exitCode).toBe(0);
             expect(stdout).toContain(join(testDir, "test.js"));
             expect(stdout).toContain("---");
@@ -222,7 +210,7 @@ describe("files-to-prompt", () => {
         });
 
         it("should use Markdown with line numbers", async () => {
-            const { stdout, exitCode } = await runScript([join(testDir, "test.js"), "-m", "--lineNumbers"]);
+            const { stdout, exitCode } = await runScript([join(testDir, "test.js"), "-m", "--line-numbers"]);
             expect(exitCode).toBe(0);
             expect(stdout).toContain(join(testDir, "test.js"));
             expect(stdout).toMatch(/```javascript\s*1\s+console\.log\('hello'\);\s*```/s);
@@ -267,7 +255,7 @@ describe("files-to-prompt", () => {
         });
 
         it("should include hidden files with --includeHidden", async () => {
-            const { stdout, exitCode } = await runScript([testDir, "--includeHidden"]);
+            const { stdout, exitCode } = await runScript([testDir, "--include-hidden"]);
             expect(exitCode).toBe(0);
             expect(stdout).toContain(".hiddenfile");
             expect(stdout).toContain("hidden content");
@@ -315,13 +303,14 @@ describe("files-to-prompt", () => {
             });
 
             it("should ignore .gitignore with --ignoreGitignore", async () => {
-                const { stdout, exitCode } = await runScript([testDir, "--ignoreGitignore"]);
+                const { stdout, exitCode } = await runScript([testDir, "--ignore-gitignore"]);
                 expect(exitCode).toBe(0);
                 expect(stdout).toContain(join(testDir, "fileA.txt"));
                 expect(stdout).toContain(join(testDir, "fileB.log")); // Now included
                 expect(stdout).toContain(join(testDir, "node_modules/some_dep/file.js")); // Now included
-                const envPath = join(testDir, ".env");
-                expect(stdout).toContain(`${envPath}\n---\nsecret\n---`); // Now included and checking content
+                // .env* files are unconditionally skipped as a security feature (index.ts processDirectory),
+                // even with --ignore-gitignore — so .env / its content are NEVER emitted.
+                expect(stdout).not.toContain("secret");
                 expect(stdout).toContain(join(testDir, "subdir/fileC.txt")); // Now included
                 expect(stdout).toContain(join(testDir, "subdir/fileD.log")); // Now included
                 // console.log("ignoreGitignore stdout:", stdout);
@@ -342,7 +331,7 @@ describe("files-to-prompt", () => {
             it("should combine --ignoreGitignore and --ignore", async () => {
                 const { stdout, exitCode } = await runScript([
                     testDir,
-                    "--ignoreGitignore",
+                    "--ignore-gitignore",
                     "--ignore",
                     "*.log",
                     "--ignore",
@@ -361,10 +350,10 @@ describe("files-to-prompt", () => {
                 // Test case: ignore *.js files, but still traverse into node_modules if it wasn't gitignored
                 const { stdout, exitCode } = await runScript([
                     testDir,
-                    "--ignoreGitignore", // So node_modules is considered for traversal
+                    "--ignore-gitignore", // So node_modules is considered for traversal
                     "--ignore",
                     "*.js",
-                    "--ignoreFilesOnly",
+                    "--ignore-files-only",
                 ]);
                 expect(exitCode).toBe(0);
                 expect(stdout).toContain(join(testDir, "fileA.txt"));
@@ -372,7 +361,13 @@ describe("files-to-prompt", () => {
                 // Crucially, other files in node_modules (if any and not .js) would be processed.
                 // This setup only has one .js file there. If we add a non-js file:
                 await createStructure(testDir, { "node_modules/another.txt": "another in node_modules" });
-                const result = await runScript([testDir, "--ignoreGitignore", "--ignore", "*.js", "--ignoreFilesOnly"]);
+                const result = await runScript([
+                    testDir,
+                    "--ignore-gitignore",
+                    "--ignore",
+                    "*.js",
+                    "--ignore-files-only",
+                ]);
                 expect(result.stdout).toContain("another in node_modules");
                 expect(result.stdout).not.toContain("dep file");
             });

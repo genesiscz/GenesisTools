@@ -17,7 +17,7 @@ handleReadmeFlag(import.meta.url);
 const program = new Command()
     .name("watch")
     .description("Watch files matching a glob pattern and display changes in real-time")
-    .argument("<pattern>", "Glob pattern to watch")
+    .argument("<patterns...>", "Glob pattern(s) to watch")
     .option("-s, --seconds <n>", "Polling interval in seconds for directory rescans", "1")
     .option("-v, --verbose", "Enable verbose logging", false)
     .option("-f, --follow", "Follow mode: continuously watch files for changes (like tail -f)", false)
@@ -405,8 +405,9 @@ async function startWatcher() {
     log.info(chalk.cyan("Performing initial scan for existing files..."));
     const initialFiles = await scanForFiles();
 
-    // If no files are found, exit with a message
-    if (initialFiles.length === 0) {
+    // If no files are found, exit — but only in snapshot mode. In follow mode we keep
+    // watching so files created later are still detected (NEW FILE events via rescan).
+    if (initialFiles.length === 0 && !options.follow) {
         log.error("No files found matching the patterns. Exiting.");
         process.exit(1);
     }

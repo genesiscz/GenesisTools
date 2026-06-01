@@ -53,7 +53,7 @@ async function main() {
 
     await runTool(program, { tool: "collect-files-for-ai" });
 
-    const repoDir = resolve(program.args[0]);
+    const repoDir = resolve(program.processedArgs[0] ?? ".");
     const git = new Executor({ prefix: "git", cwd: repoDir });
     const options: Options = program.opts();
 

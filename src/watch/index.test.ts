@@ -8,16 +8,25 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 const scriptPath = resolve(__dirname, "./index.ts");
 
+interface OutputBuffer {
+    stdout: string;
+    stderr: string;
+}
+
 interface WatchResult {
     stdout: string;
     stderr: string;
     exitCode: number | null;
     process: ChildProcess;
+    // Live, continuously-accumulating buffer (mutated by the stdout/stderr listeners
+    // from spawn time). Follow-mode assertions read this via waitForOutput so they never
+    // race against output emitted between snapshot time and a late listener attach.
+    output: OutputBuffer;
 }
 
 // Helper to run the watch script
 async function runWatchScript(args: string[], testDir: string, timeoutMs = 5000): Promise<WatchResult> {
-    const output = { stdout: "", stderr: "" };
+    const output: OutputBuffer = { stdout: "", stderr: "" };
 
     const scriptProcess = spawn("bun", ["run", scriptPath, ...args], {
         cwd: testDir,
@@ -57,7 +66,7 @@ async function runWatchScript(args: string[], testDir: string, timeoutMs = 5000)
         await sleep(500);
     }
 
-    return { ...output, exitCode, process: scriptProcess };
+    return { ...output, exitCode, process: scriptProcess, output };
 }
 
 async function stopWatchScript(proc: ChildProcess): Promise<void> {
@@ -119,15 +128,19 @@ describe("watch tool", () => {
         const result = await runWatchScript(["--help"], testDir);
         currentProcess = result.process;
         expect(result.exitCode).toBe(0);
-        expect(result.stdout).toContain("Usage:\n  tools watch [glob-pattern] [options]");
+        // Help is rendered by commander to stdout.
+        expect(result.stdout).toContain("Usage: watch");
+        expect(result.stdout).toContain("-f, --follow");
     });
 
     it("should error if no glob pattern is provided", async () => {
         const result = await runWatchScript([], testDir);
         currentProcess = result.process;
         expect(result.exitCode).toBe(1);
-        expect(result.stderr).toContain("Error: No glob pattern provided");
-        expect(result.stdout).toContain("Use --help for usage information");
+        // `patterns` is a required (variadic) argument; commander reports the missing-arg
+        // error and prints usage, both on stderr.
+        expect(result.stderr).toContain("missing required argument 'patterns'");
+        expect(result.stderr).toContain("Usage: watch");
     });
 
     it("should warn if glob pattern is likely shell-expanded (single non-glob arg)", async () => {
@@ -135,9 +148,10 @@ describe("watch tool", () => {
         const result = await runWatchScript(["testfile.txt"], testDir);
         currentProcess = result.process;
         expect(result.exitCode).toBe(1);
+        // The shell-expansion warning and its guidance are diagnostics → stderr.
         expect(result.stderr).toContain("Error: It appears your glob patterns may have been expanded by the shell");
-        expect(result.stdout).toContain("To prevent this, please wrap each pattern in quotes:");
-        expect(result.stdout).toContain(
+        expect(result.stderr).toContain("To prevent this, please wrap each pattern in quotes:");
+        expect(result.stderr).toContain(
             "Without quotes, the shell expands wildcards before passing arguments to the script."
         );
     });
@@ -145,7 +159,7 @@ describe("watch tool", () => {
     it("should not warn for shell expansion if glob pattern is quoted (contains glob chars)", async () => {
         const result = await runWatchScript(["*.nothing"], testDir);
         currentProcess = result.process;
-        expect(result.stdout).not.toContain("Error: It appears your glob patterns may have been expanded by the shell");
+        expect(result.stderr).not.toContain("Error: It appears your glob patterns may have been expanded by the shell");
         expect([1, null].includes(result.exitCode)).toBe(true);
     });
 
@@ -163,40 +177,36 @@ describe("watch tool", () => {
             currentProcess = result.process;
 
             expect(result.exitCode).toBe(0);
-            expect(result.stdout).toContain("EXISTING FILE:");
-            expect(result.stdout).toContain("another.txt");
-            expect(result.stdout).toContain("Single line");
-            expect(result.stdout).toContain("file1.txt");
-            expect(result.stdout).toContain("UpdatedL1");
-            expect(result.stdout).toContain("sub/file2.log");
-            expect(result.stdout).toContain("Log Data 3");
-            expect(result.stdout).toContain("Log Data 2");
+            // Snapshot output (file headers + content) is rendered via logger → stderr.
+            expect(result.stderr).toContain("EXISTING FILE:");
+            expect(result.stderr).toContain("another.txt");
+            expect(result.stderr).toContain("Single line");
+            expect(result.stderr).toContain("file1.txt");
+            expect(result.stderr).toContain("UpdatedL1");
+            expect(result.stderr).toContain("sub/file2.log");
+            expect(result.stderr).toContain("Log Data 3");
+            expect(result.stderr).toContain("Log Data 2");
         }, 10000);
     });
 
     describe("Follow Mode (-f)", () => {
-        async function waitForOutput(proc: ChildProcess, text: string | RegExp, timeout = 5000): Promise<boolean> {
-            return new Promise((resolve) => {
-                let accumulatedStdout = "";
-                let timer: NodeJS.Timeout | null = null;
-                const listener = (data: Buffer) => {
-                    const chunk = data.toString();
-                    accumulatedStdout += chunk;
-                    if (typeof text === "string" ? accumulatedStdout.includes(text) : text.test(accumulatedStdout)) {
-                        if (timer) {
-                            clearTimeout(timer);
-                        }
-                        proc.stdout?.removeListener("data", listener);
-                        resolve(true);
-                    }
-                };
-                proc.stdout?.on("data", listener);
-                timer = setTimeout(() => {
-                    timer = null;
-                    proc.stdout?.removeListener("data", listener);
-                    resolve(false);
-                }, timeout) as ReturnType<typeof setTimeout>;
-            });
+        // Poll the live, continuously-accumulating stderr buffer (where the tool's
+        // file output is rendered via logger.info). Polling the shared buffer — rather
+        // than attaching a fresh listener — is race-free: output emitted before this call
+        // is already captured. Resolves as soon as the pattern appears; the timeout is a
+        // ceiling, not a delay.
+        async function waitForOutput(output: OutputBuffer, text: string | RegExp, timeout = 5000): Promise<boolean> {
+            const matches = () => (typeof text === "string" ? output.stderr.includes(text) : text.test(output.stderr));
+            const start = Date.now();
+            while (Date.now() - start < timeout) {
+                if (matches()) {
+                    return true;
+                }
+
+                await sleep(50);
+            }
+
+            return matches();
         }
 
         it("should display initial files and then new content for appends", async () => {
@@ -205,45 +215,59 @@ describe("watch tool", () => {
             currentProcess = result.process;
 
             const initialOutputFound = await waitForOutput(
-                result.process,
-                /EXISTING FILE: .*follow.txt.*Initial content\./s
+                result.output,
+                /EXISTING FILE:.*follow\.txt.*Initial content\./s
             );
             expect(initialOutputFound).toBe(true);
 
+            // Wait until the file watcher is fully active before mutating, so a cold
+            // start can't drop the append (root-cause sync, not a timing guess).
+            expect(await waitForOutput(result.output, "Watcher initialized and ready")).toBe(true);
+
+            // Follow mode emits only newly-appended content (tail -f semantics), so each
+            // update block shows just the new line, not the whole file. The "UPDATED:" header
+            // is intentionally suppressed for consecutive appends to the SAME file (index.ts
+            // 275-283 dedups on lastUpdatedFile), so we assert on the appended content itself.
             await appendFile(join(testDir, "follow.txt"), "\nAppended line 1.");
-            const update1Found = await waitForOutput(
-                result.process,
-                /UPDATED: follow.txt.*Initial content\.\nAppended line 1\./s
-            );
+            const update1Found = await waitForOutput(result.output, /Appended line 1\./);
             expect(update1Found).toBe(true);
 
             await appendFile(join(testDir, "follow.txt"), "\nAppended line 2.");
-            const update2Found = await waitForOutput(
-                result.process,
-                /UPDATED: follow.txt.*Appended line 1\.\nAppended line 2\./s
-            );
+            const update2Found = await waitForOutput(result.output, /Appended line 2\./);
             expect(update2Found).toBe(true);
-        }, 5000);
+        }, 15000);
 
         it("should detect and display content of new files", async () => {
             const result = await runWatchScript(["*.new", "-f"], testDir, 15000);
             currentProcess = result.process;
 
+            // Starting with NO matching file, follow mode keeps watching (index.ts only
+            // exits-on-empty in snapshot mode). Detection of a later-created file comes from
+            // the 1s directory rescan, not a per-file watcher, so we don't gate on the
+            // "ready" line here; we give the NEW FILE wait enough margin for cold start +
+            // one rescan cycle.
             await sleep(1000);
 
             await writeFile(join(testDir, "newfile.new"), "Content of new file.");
-            const newFileFound = await waitForOutput(result.process, /NEW FILE: .*newfile.new.*Content of new file\./s);
+            const newFileFound = await waitForOutput(
+                result.output,
+                /NEW FILE:.*newfile\.new.*Content of new file\./s,
+                10000
+            );
             expect(newFileFound).toBe(true);
-        }, 5000);
+        }, 15000);
 
         it("should report removed files", async () => {
             await createStructure(testDir, { "todelete.del": "delete me" });
             const result = await runWatchScript(["*.del", "-f"], testDir, 15000);
             currentProcess = result.process;
 
+            // Ensure the watcher is active before removing, so the deletion is observed.
+            expect(await waitForOutput(result.output, "Watcher initialized and ready")).toBe(true);
+
             await unlink(join(testDir, "todelete.del"));
-            const removedFileFound = await waitForOutput(result.process, /REMOVED: .*todelete.del/s);
+            const removedFileFound = await waitForOutput(result.output, /REMOVED:.*todelete\.del/s);
             expect(removedFileFound).toBe(true);
-        }, 5000);
+        }, 15000);
     });
 });
