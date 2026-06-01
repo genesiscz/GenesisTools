@@ -1,4 +1,4 @@
-import type { LogEntry } from "@app/debugging-master/types";
+import type { IndexedLogEntry, LogEntry } from "@app/debugging-master/types";
 import { inferLineLevel } from "@app/utils/log-session/infer-line-level";
 import type { JsonlLineRecord } from "@app/utils/log-session/types";
 
@@ -39,6 +39,7 @@ export interface LogSource {
     badge: string;
     listSessions(): Promise<LogSourceSession[]>;
     readEntries(sessionName: string): Promise<LogEntry[]>;
+    readIndexedEntries(sessionName: string): Promise<IndexedLogEntry[]>;
     getJsonlPath(sessionName: string): string;
     deleteSession(sessionName: string): Promise<void>;
     /** Clear ALL log mirrors + meta for this session (task: jsonl, ui.jsonl,

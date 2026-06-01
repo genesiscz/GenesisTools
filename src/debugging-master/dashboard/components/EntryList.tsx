@@ -1,7 +1,9 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
 import { useAutoScroll } from "@app/utils/ui/hooks/useAutoScroll";
 import { memo, useEffect, useImperativeHandle, useMemo } from "react";
+import { DEFAULT_LOG_SEARCH, type LogSearchState } from "@/components/LogSearchPopover";
 import { filterDisplayLogLines, shouldShowLogTimestamp } from "@/lib/log-line-display";
+import { useScrollToFirstLogMatch } from "@/lib/use-scroll-to-first-log-match";
 import { useDisplaySettings } from "./DisplaySettingsProvider";
 import { EntryRow } from "./EntryRow";
 import type { SortDir } from "./FilterBar";
@@ -16,6 +18,11 @@ interface Props {
     freshIds: Set<number>;
     autoScroll: boolean;
     sortDir: SortDir;
+    highlightTokens?: string[];
+    hitByIndex?: Map<number, { isMatch: boolean; isContext: boolean }>;
+    logSearch?: LogSearchState;
+    matchCount?: number;
+    isSearchActive?: boolean;
     onToggle: (index: number) => void;
     onFilterHypothesis: (h: string) => void;
     onAutoScrollChange: (enabled: boolean) => void;
@@ -28,6 +35,11 @@ function EntryListImpl({
     freshIds,
     autoScroll,
     sortDir,
+    highlightTokens = [],
+    hitByIndex,
+    logSearch = DEFAULT_LOG_SEARCH,
+    matchCount = 0,
+    isSearchActive = false,
     onToggle,
     onFilterHypothesis,
     onAutoScrollChange,
@@ -51,12 +63,14 @@ function EntryListImpl({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sortDir]);
 
+    useScrollToFirstLogMatch(ref, logSearch, matchCount, isSearchActive);
+
     if (visibleEntries.length === 0) {
         return (
             <div className="flex-1 grid place-items-center text-white/30 text-[13px] tracking-wider uppercase">
                 <div className="flex flex-col items-center gap-2">
                     <span className="status-dot status-warn" />
-                    waiting for logs…
+                    {highlightTokens.length > 0 ? "no matches" : "waiting for logs…"}
                 </div>
             </div>
         );
@@ -72,6 +86,8 @@ function EntryListImpl({
                     previousTs,
                 });
 
+                const hit = hitByIndex?.get(e.index);
+
                 return (
                     <EntryRow
                         key={e.index}
@@ -79,6 +95,9 @@ function EntryListImpl({
                         expanded={expandedIds.has(e.index)}
                         fresh={freshIds.has(e.index)}
                         showTimestamp={showTimestamp}
+                        highlightTokens={highlightTokens}
+                        isMatch={hit?.isMatch}
+                        isContext={hit?.isContext}
                         onToggle={onToggle}
                         onFilterHypothesis={onFilterHypothesis}
                     />

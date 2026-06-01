@@ -61,6 +61,7 @@ export {
     IconTooltip,
     IconTooltipProvider,
 } from "@ui/components/icon-button";
+export { HighlightText } from "@ui/components/highlight-text";
 export { Input } from "@ui/components/input";
 export { Label } from "@ui/components/label";
 export {

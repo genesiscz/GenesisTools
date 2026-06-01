@@ -1,4 +1,4 @@
-import { type RefObject, useCallback, useEffect, useRef } from "react";
+import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
 const EDGE_THRESHOLD_PX = 24;
 
@@ -63,7 +63,7 @@ export function useAutoScroll({
         snapToEdge();
     }, [onEnabledChange, snapToEdge]);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (enabled && pinnedToEdgeRef.current) {
             snapToEdge();
         }

@@ -14,6 +14,7 @@ import { api } from "@/lib/api";
 import { EntriesContext } from "@/lib/entries-context";
 import { applyFilter, collectHypotheses, defaultFilterState, type FilterState } from "@/lib/filters";
 import { FILTER_ORDER } from "@/lib/levels";
+import { resetLogSearchState, useLogSearchDisplay } from "@/lib/use-log-search-display";
 import { mergeIndexedLogEntries } from "@/lib/merge-indexed-entries";
 import { collectSessionCwds } from "@/lib/session-run-context";
 import { type ConnectionStatus, connectStream } from "@/lib/sse";
@@ -284,7 +285,17 @@ export function App(): React.ReactElement {
 
     const hypotheses = useMemo(() => collectHypotheses(entries), [entries]);
     const filtered = useMemo(() => applyFilter(entries, filterState), [entries, filterState]);
-    const displayed = useMemo(() => (sortDir === "desc" ? [...filtered].reverse() : filtered), [filtered, sortDir]);
+    const logDisplay = useLogSearchDisplay(filtered);
+    const displayed = useMemo(() => {
+        const items = logDisplay.hits.map((hit) => hit.item);
+
+        return sortDir === "desc" ? [...items].reverse() : items;
+    }, [logDisplay.hits, sortDir]);
+
+    useEffect(() => {
+        logDisplay.setLogSearch(resetLogSearchState());
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeSource, activeSession]);
 
     const activeSessionMeta = useMemo(() => {
         if (!activeSource || !activeSession) {
@@ -324,10 +335,6 @@ export function App(): React.ReactElement {
 
     const onChangeHypothesis = useCallback((h: string | "all") => {
         setFilterState((prev) => ({ ...prev, hypothesis: h }));
-    }, []);
-
-    const onChangeSearch = useCallback((s: string) => {
-        setFilterState((prev) => ({ ...prev, search: s }));
     }, []);
 
     const onTogglePause = useCallback(() => {
@@ -440,10 +447,13 @@ export function App(): React.ReactElement {
                                         sortDir={sortDir}
                                         session={activeSessionMeta}
                                         latestLineTs={latestLineTs}
+                                        logSearch={logDisplay.logSearch}
+                                        onLogSearchChange={logDisplay.setLogSearch}
+                                        logMatchCount={logDisplay.matchCount}
+                                        logLineCount={logDisplay.lineCount}
                                         onToggleLevel={onToggleLevel}
                                         onToggleAll={onToggleAll}
                                         onChangeHypothesis={onChangeHypothesis}
-                                        onChangeSearch={onChangeSearch}
                                         onTogglePause={onTogglePause}
                                         onToggleSort={onToggleSort}
                                     />
@@ -452,8 +462,13 @@ export function App(): React.ReactElement {
                                         entries={displayed}
                                         expandedIds={expandedIds}
                                         freshIds={freshIds}
-                                        autoScroll={!paused}
+                                        autoScroll={!paused && !logDisplay.isSearchActive}
                                         sortDir={sortDir}
+                                        highlightTokens={logDisplay.highlightTokens}
+                                        hitByIndex={logDisplay.hitByIndex}
+                                        logSearch={logDisplay.logSearch}
+                                        matchCount={logDisplay.matchCount}
+                                        isSearchActive={logDisplay.isSearchActive}
                                         onToggle={onToggleExpand}
                                         onFilterHypothesis={onChangeHypothesis}
                                         onAutoScrollChange={onAutoScrollChange}
@@ -462,7 +477,7 @@ export function App(): React.ReactElement {
 
                                     <footer className="px-3 sm:px-5 py-1.5 border-t border-white/8 bg-black/30 text-[10px] text-white/40 flex items-center justify-between">
                                         <span>
-                                            {filtered.length} / {entries.length}
+                                            {displayed.length} / {filtered.length} / {entries.length}
                                         </span>
                                         <span className="text-white/25">dbg + task · live</span>
                                     </footer>

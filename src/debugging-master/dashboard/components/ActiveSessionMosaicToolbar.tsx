@@ -2,11 +2,17 @@ import type { DashboardSession } from "@app/utils/log-viewer/log-source";
 import type { ReactElement } from "react";
 import type { MultiplexLogEntry } from "@/lib/sse";
 import { AutoscrollToggle } from "./AutoscrollToggle";
+import { LogSearchControl } from "./LogSearchControl";
+import type { LogSearchState } from "./LogSearchPopover";
 import { SessionDeleteButton, SessionRowBar } from "./SessionRowBar";
 
 interface Props {
     session: DashboardSession;
     lines: MultiplexLogEntry[];
+    logSearch: LogSearchState;
+    onLogSearchChange: (next: LogSearchState) => void;
+    logMatchCount: number;
+    logLineCount: number;
     paused: boolean;
     onTogglePause: () => void;
     onOpen: () => void;
@@ -24,6 +30,10 @@ function latestLineTimestamp(lines: MultiplexLogEntry[]): number | undefined {
 export function ActiveSessionMosaicToolbar({
     session,
     lines,
+    logSearch,
+    onLogSearchChange,
+    logMatchCount,
+    logLineCount,
     paused,
     onTogglePause,
     onOpen,
@@ -39,6 +49,12 @@ export function ActiveSessionMosaicToolbar({
             className="dbg-session-toolbar dbg-ui-text w-full"
             trailing={
                 <>
+                    <LogSearchControl
+                        logSearch={logSearch}
+                        onLogSearchChange={onLogSearchChange}
+                        matchCount={logMatchCount}
+                        lineCount={logLineCount}
+                    />
                     {isLive ? <AutoscrollToggle paused={paused} onToggle={onTogglePause} /> : null}
                     <SessionDeleteButton session={session} onConfirmed={onDeleteConfirmed} />
                 </>

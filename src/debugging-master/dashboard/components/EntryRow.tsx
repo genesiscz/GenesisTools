@@ -1,8 +1,10 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
+import { HighlightText } from "@ui/components/highlight-text";
 import { memo } from "react";
 import { entryHasExpandableContent } from "@/lib/entry-expandable";
 import { formatDurationMs, formatTime } from "@/lib/format";
 import { LEVEL_META } from "@/lib/levels";
+import { visibleLogText } from "@/lib/log-line-display";
 import { ExpandedView } from "./ExpandedView";
 import { InlineJsonPreview } from "./InlineJsonPreview";
 import { LogLineText } from "./LogLineText";
@@ -14,6 +16,9 @@ interface Props {
     expanded: boolean;
     fresh: boolean;
     showTimestamp?: boolean;
+    highlightTokens?: string[];
+    isMatch?: boolean;
+    isContext?: boolean;
     onToggle: (index: number) => void;
     onFilterHypothesis?: (h: string) => void;
 }
@@ -23,9 +28,14 @@ function EntryRowImpl({
     expanded,
     fresh,
     showTimestamp = true,
+    highlightTokens = [],
+    isMatch = false,
+    isContext = false,
     onToggle,
     onFilterHypothesis,
 }: Props): React.ReactElement {
+    const highlighting = highlightTokens.length > 0;
+    const previewText = visibleLogText(entry);
     const failed = entry.level === "assert" && entry.passed === false;
     const refMeta = LEVEL_META[entry.level];
     const refId = refMeta.refPrefix ? `${refMeta.refPrefix}${entry.index}` : null;
@@ -40,6 +50,8 @@ function EntryRowImpl({
             data-failed={failed ? "true" : undefined}
             data-fresh={fresh ? "true" : undefined}
             data-expandable={expandable ? "true" : "false"}
+            data-log-index={entry.index}
+            data-log-match={isMatch ? "true" : undefined}
             onClick={expandable ? () => onToggle(entry.index) : undefined}
             onKeyDown={
                 expandable
@@ -54,7 +66,9 @@ function EntryRowImpl({
             role={expandable ? "button" : undefined}
             tabIndex={expandable ? 0 : undefined}
         >
-            <div className="dbg-log-line px-3 sm:px-4">
+            <div
+                className={`dbg-log-line px-3 sm:px-4${isMatch ? " dbg-log-line--match" : ""}${isContext ? " dbg-log-line--context" : ""}`}
+            >
                 <span className="dbg-log-line__ts" aria-hidden={!showTimestamp}>
                     {showTimestamp ? formatTime(entry.ts) : null}
                 </span>
@@ -82,8 +96,10 @@ function EntryRowImpl({
                             h:{entry.h}
                         </button>
                     ) : null}
-                    <span className={`flex-1 min-w-0 ${entry.msgAnsi ? "" : "truncate-mono"}`}>
-                        {entry.msgAnsi ? (
+                    <span className={`flex-1 min-w-0 ${entry.msgAnsi && !highlighting ? "" : "truncate-mono"}`}>
+                        {highlighting && previewText ? (
+                            <HighlightText text={previewText} tokens={highlightTokens} className="text-white/85" />
+                        ) : entry.msgAnsi ? (
                             <LogLineText entry={entry} />
                         ) : (
                             <>

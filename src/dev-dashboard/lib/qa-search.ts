@@ -1,4 +1,4 @@
-import { scoreEntry, tokenizeSearch } from "@app/utils/fuzzy-tokens";
+import { fuzzySearchByHaystack } from "@app/utils/fuzzy-search";
 import type { QaRow } from "./qa-types";
 
 export interface SearchResult {
@@ -25,17 +25,7 @@ function entryHaystack(row: QaRow): string {
 }
 
 export function searchQa(rows: QaRow[], query: string): SearchResult {
-    const tokens = tokenizeSearch(query);
+    const { items, tokens } = fuzzySearchByHaystack(rows, query, entryHaystack);
 
-    if (tokens.length === 0) {
-        return { entries: rows, tokens: [] };
-    }
-
-    const entries = rows
-        .map((entry) => ({ entry, score: scoreEntry(entryHaystack(entry), tokens) }))
-        .filter((x) => x.score > 0)
-        .sort((a, b) => b.score - a.score)
-        .map((x) => x.entry);
-
-    return { entries, tokens };
+    return { entries: items, tokens };
 }
