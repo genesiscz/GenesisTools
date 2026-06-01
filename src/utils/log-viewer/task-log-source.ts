@@ -1,4 +1,4 @@
-import type { LogEntry } from "@app/debugging-master/types";
+import type { IndexedLogEntry, LogEntry } from "@app/debugging-master/types";
 import { jsonlPath, metaPath, uiJsonlPath } from "@app/task/lib/paths";
 import { TaskSessionStore } from "@app/task/lib/session-store";
 import { countJsonlLineRecords } from "@app/utils/log-session/count-line-records";
@@ -51,10 +51,19 @@ export class TaskLogSource implements LogSource {
     }
 
     async readEntries(sessionName: string): Promise<LogEntry[]> {
+        const indexed = await this.readIndexedEntries(sessionName);
+
+        return indexed.map(({ index: _index, ...entry }) => entry);
+    }
+
+    async readIndexedEntries(sessionName: string): Promise<IndexedLogEntry[]> {
         const records = await readJsonlFile(jsonlPath(sessionName));
         const uiMap = await readUiLineMap(uiJsonlPath(sessionName));
 
-        return filterLineRecords(records).map((record) => taskRecordToLogEntry(record, uiMap.get(record.seq)));
+        return filterLineRecords(records).map((record) => ({
+            ...taskRecordToLogEntry(record, uiMap.get(record.seq)),
+            index: record.seq,
+        }));
     }
 
     getJsonlPath(sessionName: string): string {

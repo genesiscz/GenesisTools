@@ -153,8 +153,7 @@ async function handleApiRequest(req: Request, url: URL, cors: Record<string, str
         const rawLimit = Number.parseInt(url.searchParams.get("limit") ?? "5000", 10);
         const since = Number.isFinite(rawSince) ? Math.max(0, rawSince) : 0;
         const limit = Number.isFinite(rawLimit) ? Math.min(5000, Math.max(1, rawLimit)) : 5000;
-        const all = await logSource.readEntries(sessionName);
-        const indexed: IndexedLogEntry[] = all.map((e, i) => ({ ...e, index: i + 1 }));
+        const indexed = await logSource.readIndexedEntries(sessionName);
         const sliced = indexed.slice(since, since + limit);
         return jsonResponse({ entries: sliced, total: indexed.length, source }, cors);
     }

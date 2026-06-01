@@ -6,6 +6,8 @@ import { formatSessionHeaderParts } from "@/lib/session-run-context";
 import { SessionLiveStatus } from "@/lib/ui/SessionLiveStatus";
 import { AutoscrollToggle } from "./AutoscrollToggle";
 import { LevelTooltip } from "./LevelTooltip";
+import { LogSearchControl } from "./LogSearchControl";
+import type { LogSearchState } from "./LogSearchPopover";
 import { SessionHeaderLine } from "./SessionHeaderLine";
 
 export type SortDir = "asc" | "desc";
@@ -17,10 +19,13 @@ interface Props {
     sortDir: SortDir;
     session?: DashboardSession;
     latestLineTs?: number;
+    logSearch: LogSearchState;
+    onLogSearchChange: (next: LogSearchState) => void;
+    logMatchCount: number;
+    logLineCount: number;
     onToggleLevel: (level: LogLevel) => void;
     onToggleAll: () => void;
     onChangeHypothesis: (h: string | "all") => void;
-    onChangeSearch: (s: string) => void;
     onTogglePause: () => void;
     onToggleSort: () => void;
 }
@@ -32,10 +37,13 @@ export function FilterBar({
     sortDir,
     session,
     latestLineTs,
+    logSearch,
+    onLogSearchChange,
+    logMatchCount,
+    logLineCount,
     onToggleLevel,
     onToggleAll,
     onChangeHypothesis,
-    onChangeSearch,
     onTogglePause,
     onToggleSort,
 }: Props): React.ReactElement {
@@ -75,12 +83,12 @@ export function FilterBar({
                 })}
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 min-w-0">
                 <select
                     aria-label="hypothesis filter"
                     value={state.hypothesis}
                     onChange={(e) => onChangeHypothesis(e.target.value)}
-                    className="bg-black/40 border border-white/10 text-white/80 text-xs px-2 py-1 rounded focus:outline-none focus:border-purple-500/50 disabled:opacity-30"
+                    className="bg-black/40 border border-white/10 text-white/80 text-xs px-2 py-1 rounded focus:outline-none focus:border-purple-500/50 disabled:opacity-30 shrink-0"
                     disabled={hypotheses.length === 0}
                 >
                     <option value="all">h: all</option>
@@ -91,13 +99,17 @@ export function FilterBar({
                     ))}
                 </select>
 
-                <input
-                    type="text"
-                    placeholder="search…"
-                    value={state.search}
-                    onChange={(e) => onChangeSearch(e.target.value)}
-                    className="flex-1 min-w-[8rem] bg-black/40 border border-white/10 text-white/90 text-xs px-2.5 py-1 rounded placeholder:text-white/30 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/20"
+                <LogSearchControl
+                    logSearch={logSearch}
+                    onLogSearchChange={onLogSearchChange}
+                    matchCount={logMatchCount}
+                    lineCount={logLineCount}
                 />
+                {logSearch.query.trim().length > 0 ? (
+                    <span className="dbg-ui-text-xs text-white/35 truncate min-w-0 flex-1">
+                        fuzzy: <span className="text-cyan-400/80">{logSearch.query.trim()}</span>
+                    </span>
+                ) : null}
             </div>
 
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">

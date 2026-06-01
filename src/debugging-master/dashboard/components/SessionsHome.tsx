@@ -12,6 +12,8 @@ import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
 import { api } from "@/lib/api";
 import type { TimestampMode } from "@/lib/display-settings";
 import { filterDisplayLogLines, shouldShowLogTimestamp, visibleLogText } from "@/lib/log-line-display";
+import { useLogSearchDisplay } from "@/lib/use-log-search-display";
+import { useScrollToFirstLogMatch } from "@/lib/use-scroll-to-first-log-match";
 import { isSessionInActivePool } from "@/lib/session-active-pool";
 import { formatSessionHeaderParts } from "@/lib/session-run-context";
 import type { ConnectionStatus, MultiplexLogEntry } from "@/lib/sse";
@@ -138,18 +140,18 @@ function previewText(entry: IndexedLogEntry | MultiplexLogEntry): string {
 }
 
 function ActiveSessionTile({
-    lines,
+    lineHits,
+    highlightTokens,
     scrollRef,
     onScroll,
     timestampMode,
 }: {
-    lines: MultiplexLogEntry[];
+    lineHits: Array<{ line: MultiplexLogEntry; isMatch: boolean; isContext: boolean }>;
+    highlightTokens: string[];
     scrollRef: React.RefObject<HTMLDivElement | null>;
     onScroll: () => void;
     timestampMode: TimestampMode;
 }): React.ReactElement {
-    const visibleLines = useMemo(() => filterDisplayLogLines(lines), [lines]);
-
     return (
         <div className="h-full flex flex-col bg-black/30">
             <div
@@ -157,11 +159,13 @@ function ActiveSessionTile({
                 onScroll={onScroll}
                 className="flex-1 min-h-0 overflow-y-auto overflow-x-auto font-mono dbg-log-text"
             >
-                {visibleLines.length === 0 ? (
-                    <p className="px-2 py-2 text-white/25 italic">waiting for lines…</p>
+                {lineHits.length === 0 ? (
+                    <p className="px-2 py-2 text-white/25 italic">
+                        {highlightTokens.length > 0 ? "no matches" : "waiting for lines…"}
+                    </p>
                 ) : (
-                    visibleLines.map((line, index) => {
-                        const previousTs = index > 0 ? visibleLines[index - 1]?.ts : undefined;
+                    lineHits.map(({ line, isMatch, isContext }, index) => {
+                        const previousTs = index > 0 ? lineHits[index - 1]?.line.ts : undefined;
                         const showTimestamp = shouldShowLogTimestamp({
                             mode: timestampMode,
                             ts: line.ts,
@@ -174,6 +178,9 @@ function ActiveSessionTile({
                                 entry={line}
                                 previewText={previewText(line)}
                                 showTimestamp={showTimestamp}
+                                highlightTokens={highlightTokens}
+                                isMatch={isMatch}
+                                isContext={isContext}
                             />
                         );
                     })
@@ -206,12 +213,26 @@ function ActiveSessionMosaicPane({
         setPaused(!enabled);
     }, []);
 
+    const visibleLines = useMemo(() => filterDisplayLogLines(lines), [lines]);
+
+    const logDisplay = useLogSearchDisplay(visibleLines);
+
+    const lineHits = useMemo(() => {
+        return logDisplay.hits.map((hit) => ({
+            line: hit.item,
+            isMatch: hit.isMatch,
+            isContext: hit.isContext,
+        }));
+    }, [logDisplay.hits]);
+
     const { ref, onScroll, resume } = useAutoScroll({
-        enabled: !paused,
+        enabled: !paused && !logDisplay.isSearchActive,
         onEnabledChange: onAutoscrollChange,
         edge: "bottom",
-        snapDeps: [lines],
+        snapDeps: [lineHits],
     });
+
+    useScrollToFirstLogMatch(ref, logDisplay.logSearch, logDisplay.matchCount, logDisplay.isSearchActive);
 
     const togglePause = useCallback(() => {
         if (paused) {
@@ -232,6 +253,10 @@ function ActiveSessionMosaicPane({
                     <ActiveSessionMosaicToolbar
                         session={session}
                         lines={lines}
+                        logSearch={logDisplay.logSearch}
+                        onLogSearchChange={logDisplay.setLogSearch}
+                        logMatchCount={logDisplay.matchCount}
+                        logLineCount={logDisplay.lineCount}
                         paused={paused}
                         onTogglePause={togglePause}
                         onOpen={() => {
@@ -244,7 +269,13 @@ function ActiveSessionMosaicPane({
                 </div>
             )}
         >
-            <ActiveSessionTile lines={lines} scrollRef={ref} onScroll={onScroll} timestampMode={timestampMode} />
+            <ActiveSessionTile
+                lineHits={lineHits}
+                highlightTokens={logDisplay.highlightTokens}
+                scrollRef={ref}
+                onScroll={onScroll}
+                timestampMode={timestampMode}
+            />
         </MosaicWindow>
     );
 }
@@ -261,6 +292,9 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
     const [layout, setLayout] = useState<MosaicNode<string> | null>(null);
     const [userHiddenKeys, setUserHiddenKeys] = useState<Set<string>>(() => new Set());
     const prefetchGenerationRef = useRef(new Map<string, number>());
+    const seenEntryCountRef = useRef(new Map<string, number>());
+    const liveLinesRef = useRef(liveLines);
+    liveLinesRef.current = liveLines;
 
     const bumpPrefetchGeneration = useCallback((key: string): number => {
         const next = (prefetchGenerationRef.current.get(key) ?? 0) + 1;
@@ -352,6 +386,7 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
     // EventSource per second. That swamped the dashboard server (the
     // exact symptom that caused the dashboard hang during eval2).
     const mosaicActiveKeysSig = useMemo(() => mosaicActiveKeys.join("\n"), [mosaicActiveKeys]);
+    const allActiveKeysSig = useMemo(() => allActiveKeys.join("\n"), [allActiveKeys]);
 
     useEffect(() => {
         if (mosaicActiveSessions.length === 0) {
@@ -404,11 +439,41 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
     );
 
     useEffect(() => {
-        // Re-open the multiplex SSE whenever the SET of active keys changes,
-        // so newly-spawned sessions actually stream into the home view. The
-        // server-side `subscribeActive` snapshots its target keys once at
-        // subscribe time; without a re-open, new sessions appear via the
-        // prefetch above but get NO live updates until manual refresh.
+        if (allActiveKeys.length === 0) {
+            return;
+        }
+
+        for (const key of mosaicActiveKeys) {
+            const session = sessionByKeyRef.current.get(key);
+            if (!session) {
+                continue;
+            }
+
+            const serverCount = session.entryCount ?? 0;
+            const tracked = seenEntryCountRef.current.get(key) ?? 0;
+
+            if (serverCount <= tracked) {
+                continue;
+            }
+
+            seenEntryCountRef.current.set(key, serverCount);
+            const localCount = liveLinesRef.current.get(key)?.length ?? 0;
+
+            if (serverCount > localCount) {
+                void prefetchSessionTail(session);
+            }
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sessions, mosaicActiveKeysSig, prefetchSessionTail]);
+
+    useEffect(() => {
+        // Re-open the multiplex SSE whenever the SET of active pool keys changes
+        // (not just mosaic tiles). subscribeActive snapshots server targets once
+        // at connect time; mosaic-only deps left new actives without live tail.
+        if (allActiveKeys.length === 0) {
+            return;
+        }
+
         const dispose = connectActiveStream({
             onStatus: onStatus,
             onEntry: (entry) => {
@@ -422,6 +487,7 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
             },
             onRemoved: (source, session) => {
                 const key = sessionKey(source, session);
+                seenEntryCountRef.current.delete(key);
                 setLiveLines((prev) => {
                     const next = new Map(prev);
                     next.delete(key);
@@ -431,6 +497,7 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
             onCleared: (source, session) => {
                 const key = sessionKey(source, session);
                 bumpPrefetchGeneration(key);
+                seenEntryCountRef.current.set(key, 0);
                 setLiveLines((prev) => {
                     const next = new Map(prev);
                     next.set(key, []);
@@ -445,10 +512,8 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
         });
 
         return dispose;
-        // Depend on the stable membership signature — see prefetchActiveTails
-        // for why mosaicActiveSessions itself is not used as a dep.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [onStatus, mosaicActiveKeysSig]);
+    }, [onStatus, allActiveKeysSig]);
 
     const toggleArchiveRow = useCallback(
         async (session: DashboardSession) => {

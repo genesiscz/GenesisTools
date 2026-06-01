@@ -2,7 +2,7 @@ import { existsSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SESSIONS_DIR } from "@app/debugging-master/core/paths";
 import { countNewlines, SessionManager } from "@app/debugging-master/core/session-manager";
-import type { LogEntry } from "@app/debugging-master/types";
+import type { IndexedLogEntry, LogEntry } from "@app/debugging-master/types";
 import type { LogSource, LogSourceSession } from "./log-source";
 
 export class DebuggingMasterLogSource implements LogSource {
@@ -42,6 +42,12 @@ export class DebuggingMasterLogSource implements LogSource {
 
     async readEntries(sessionName: string): Promise<LogEntry[]> {
         return this.manager.readEntries(sessionName);
+    }
+
+    async readIndexedEntries(sessionName: string): Promise<IndexedLogEntry[]> {
+        const entries = await this.manager.readEntries(sessionName);
+
+        return entries.map((entry, i) => ({ ...entry, index: i + 1 }));
     }
 
     getJsonlPath(sessionName: string): string {
