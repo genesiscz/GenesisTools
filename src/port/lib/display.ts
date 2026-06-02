@@ -296,6 +296,28 @@ export function displayWatchHeader(includeSystem: boolean, intervalMs: number): 
     out.println(pc.dim("  Press Ctrl+C to stop.\n"));
 }
 
+export interface PortSnapshotJson extends Omit<PortSnapshot, "startTime"> {
+    startTime: string | null;
+}
+
+export interface ProcessSnapshotJson extends Omit<ProcessSnapshot, "startTime"> {
+    startTime: string | null;
+}
+
+export function toPortJson(snapshots: PortSnapshot[]): PortSnapshotJson[] {
+    return snapshots.map((snapshot) => ({
+        ...snapshot,
+        startTime: snapshot.startTime ? snapshot.startTime.toISOString() : null,
+    }));
+}
+
+export function toProcessJson(processes: ProcessSnapshot[]): ProcessSnapshotJson[] {
+    return processes.map((processInfo) => ({
+        ...processInfo,
+        startTime: processInfo.startTime ? processInfo.startTime.toISOString() : null,
+    }));
+}
+
 export function displayWatchEvent(event: "new" | "removed", snapshot: PortSnapshot): void {
     const timestamp = pc.dim(new Date().toLocaleTimeString());
 
