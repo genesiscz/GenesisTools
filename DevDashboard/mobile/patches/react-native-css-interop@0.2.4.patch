@@ -1,0 +1,37 @@
+diff --git a/dist/metro/index.js b/dist/metro/index.js
+index c91ba6adf049dd5c6eec1ec8301ecc0802f41bfc..9ccf0e3ac57c7b1a6e79f024ff605b7bf972b109 100644
+--- a/dist/metro/index.js
++++ b/dist/metro/index.js
+@@ -176,18 +176,21 @@ async function startCSSProcessor(filePath, platform, isDev, { input, getCSSForPl
+                 ? css
+                 : getNativeJS((0, css_to_rn_1.cssToReactNativeRuntime)(css, options), debug)));
+             debug(`virtualStyles.emit ${platform}`);
++            // Metro >= 0.83 (Expo SDK 55 / RN 0.82+) changed the haste "change"
++            // event shape from { eventsQueue: [...] } to
++            // { changes: { addedFiles, modifiedFiles, removedFiles }, rootDir }.
++            // The old shape crashes DependencyGraph._onHasteChange with
++            // "Cannot read properties of undefined (reading 'addedFiles')".
++            // See nativewind/nativewind#1773 and PR #1795.
+             haste.emit("change", {
+-                eventsQueue: [
+-                    {
+-                        filePath,
+-                        metadata: {
+-                            modifiedTime: Date.now(),
+-                            size: 1,
+-                            type: "virtual",
+-                        },
+-                        type: "change",
+-                    },
+-                ],
++                changes: {
++                    addedDirectories: new Set(),
++                    removedDirectories: new Set(),
++                    addedFiles: [],
++                    modifiedFiles: [[filePath, { isSymlink: false, modifiedTime: Date.now() }]],
++                    removedFiles: [],
++                },
++                rootDir: "",
+             });
+         }).then((css) => {
+             debug(`virtualStyles.initial ${platform}`);
