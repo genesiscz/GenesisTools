@@ -11,7 +11,7 @@ import {
 import { Input } from "@ui/components/input";
 import { Label } from "@ui/components/label";
 import { Textarea } from "@ui/components/textarea";
-import { ArrowRight, Bell, Calendar, Check, CheckCircle, Copy, MessageSquare } from "lucide-react";
+import { ArrowRight, Bell, Calendar, Check, CheckCircle, Copy, MessageSquare, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import type { TaskBlocker } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
@@ -22,6 +22,8 @@ interface BlockerActionsProps {
     onSwitch?: () => void;
     onSetReminder?: (blocker: TaskBlocker, date: Date) => void;
     onResolve?: (blockerId: string) => void;
+    onReopen?: (blockerId: string) => void;
+    onDelete?: (blockerId: string) => void;
     compact?: boolean;
 }
 
@@ -58,14 +60,18 @@ export function BlockerActions({
     onSwitch: _onSwitch,
     onSetReminder,
     onResolve,
+    onReopen,
+    onDelete,
     compact = false,
 }: BlockerActionsProps) {
     const [remindDialogOpen, setRemindDialogOpen] = useState(false);
     const [reminderDialogOpen, setReminderDialogOpen] = useState(false);
     const [resolveDialogOpen, setResolveDialogOpen] = useState(false);
+    const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     const [reminderDate, setReminderDate] = useState("");
     const [copied, setCopied] = useState(false);
 
+    const isResolved = Boolean(blocker.unblockedAt);
     const draftMessage = generateReminderMessage(blocker);
 
     async function handleCopyMessage() {
@@ -86,6 +92,19 @@ export function BlockerActions({
         if (onResolve) {
             onResolve(blocker.id);
             setResolveDialogOpen(false);
+        }
+    }
+
+    function handleReopen() {
+        if (onReopen) {
+            onReopen(blocker.id);
+        }
+    }
+
+    function handleDelete() {
+        if (onDelete) {
+            onDelete(blocker.id);
+            setDeleteDialogOpen(false);
         }
     }
 
@@ -112,7 +131,7 @@ export function BlockerActions({
                         <ArrowRight className="h-3.5 w-3.5" />
                     </Link>
                 </Button>
-                {onResolve && (
+                {!isResolved && onResolve && (
                     <Button
                         variant="ghost"
                         size="sm"
@@ -120,6 +139,26 @@ export function BlockerActions({
                         className="h-7 px-2 text-xs text-green-400 hover:text-green-300 hover:bg-green-500/10"
                     >
                         <CheckCircle className="h-3.5 w-3.5" />
+                    </Button>
+                )}
+                {isResolved && onReopen && (
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleReopen}
+                        className="h-7 px-2 text-xs text-amber-400 hover:text-amber-300 hover:bg-amber-500/10"
+                    >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                    </Button>
+                )}
+                {onDelete && (
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setDeleteDialogOpen(true)}
+                        className="h-7 px-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                    >
+                        <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                 )}
             </div>
@@ -189,9 +228,10 @@ export function BlockerActions({
                     </Button>
                 )}
 
-                {/* Resolve button */}
-                {onResolve && (
+                {/* Resolve button (active blockers) */}
+                {!isResolved && onResolve && (
                     <Button
+                        data-testid="blocker-resolve"
                         variant="outline"
                         size="sm"
                         onClick={() => setResolveDialogOpen(true)}
@@ -206,6 +246,48 @@ export function BlockerActions({
                     >
                         <CheckCircle className="h-3.5 w-3.5" />
                         Resolve
+                    </Button>
+                )}
+
+                {/* Reopen button (resolved blockers) */}
+                {isResolved && onReopen && (
+                    <Button
+                        data-testid="blocker-reopen"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleReopen}
+                        className={cn(
+                            "gap-1.5 text-xs",
+                            "border-amber-500/30 hover:border-amber-500/50",
+                            "text-amber-400 hover:text-amber-300",
+                            "hover:bg-amber-500/10",
+                            "transition-all duration-200",
+                            "hover:shadow-[0_0_15px_rgba(245,158,11,0.2)]"
+                        )}
+                    >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        Reopen
+                    </Button>
+                )}
+
+                {/* Delete button */}
+                {onDelete && (
+                    <Button
+                        data-testid="blocker-delete"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setDeleteDialogOpen(true)}
+                        className={cn(
+                            "gap-1.5 text-xs",
+                            "border-red-500/30 hover:border-red-500/50",
+                            "text-red-400 hover:text-red-300",
+                            "hover:bg-red-500/10",
+                            "transition-all duration-200",
+                            "hover:shadow-[0_0_15px_rgba(239,68,68,0.2)]"
+                        )}
+                    >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Delete
                     </Button>
                 )}
             </div>
@@ -347,6 +429,39 @@ export function BlockerActions({
                         <Button onClick={handleResolve} className="gap-2 bg-green-600 hover:bg-green-700">
                             <CheckCircle className="h-4 w-4" />
                             Resolve Blocker
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Delete Dialog */}
+            <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <Trash2 className="h-5 w-5 text-red-400" />
+                            Delete Blocker
+                        </DialogTitle>
+                        <DialogDescription>
+                            Permanently remove this blocker. This cannot be undone.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="mt-4 p-3 rounded-lg bg-rose-500/10 border border-rose-500/20">
+                        <p className="text-sm text-rose-200">{blocker.reason}</p>
+                    </div>
+
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
+                            Cancel
+                        </Button>
+                        <Button
+                            data-testid="blocker-delete-confirm"
+                            onClick={handleDelete}
+                            className="gap-2 bg-red-600 hover:bg-red-700"
+                        >
+                            <Trash2 className="h-4 w-4" />
+                            Delete Blocker
                         </Button>
                     </DialogFooter>
                 </DialogContent>

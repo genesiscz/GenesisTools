@@ -24,12 +24,16 @@ function offsetToIso(offsetPx: number, durationMs: number, referenceDate: Date):
     return { start: start.toISOString(), end: end.toISOString() };
 }
 
+/** Droppable id of the inbox drop zone — dropping a scheduled block here unschedules it. */
+export const INBOX_DROPPABLE_ID = "inbox";
+
 interface UsePlannerDndOptions {
     onSchedule: (taskId: string, start: string, end: string) => Promise<unknown>;
+    onUnschedule: (taskId: string) => Promise<unknown>;
     getTaskSchedule: (taskId: string) => { scheduledStart: string | null; scheduledEnd: string | null } | undefined;
 }
 
-export function usePlannerDnd({ onSchedule, getTaskSchedule }: UsePlannerDndOptions) {
+export function usePlannerDnd({ onSchedule, onUnschedule, getTaskSchedule }: UsePlannerDndOptions) {
     const [activeDragId, setActiveDragId] = useState<string | null>(null);
 
     const sensors = useSensors(
@@ -52,6 +56,15 @@ export function usePlannerDnd({ onSchedule, getTaskSchedule }: UsePlannerDndOpti
         const taskId = String(active.id);
         const schedule = getTaskSchedule(taskId);
         if (!schedule?.scheduledStart || !schedule.scheduledEnd) {
+            return;
+        }
+
+        // Dropping a scheduled block onto the inbox unschedules it (clears its
+        // time) instead of repositioning it on the timeline.
+        if (over.id === INBOX_DROPPABLE_ID) {
+            onUnschedule(taskId).catch((err) => {
+                console.error("[PlannerDnd] unschedule failed", err);
+            });
             return;
         }
 

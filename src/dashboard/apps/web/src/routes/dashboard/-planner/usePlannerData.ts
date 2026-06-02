@@ -5,6 +5,8 @@ import {
     assistantKeys,
     useAssistantTasksQuery,
     useCreateAssistantTaskMutation,
+    useDeleteAssistantTaskMutation,
+    useUpdateAssistantTaskMutation,
 } from "@/lib/assistant/hooks/useAssistantQueries";
 import { rescheduleTask } from "@/lib/assistant/planner.server";
 import type { TaskInput } from "@/lib/assistant/types";
@@ -20,6 +22,18 @@ export interface ScheduledTask extends AssistantTask {
     scheduledEnd: string;
 }
 
+/** "YYYY-MM-DD" in local time for the given ISO timestamp. */
+function localDateStr(iso: string): string {
+    return new Date(iso).toLocaleDateString("en-CA");
+}
+
+/** Same wall-clock time, one day later, as an ISO string. */
+function shiftToTomorrow(iso: string): string {
+    const d = new Date(iso);
+    d.setDate(d.getDate() + 1);
+    return d.toISOString();
+}
+
 export function usePlannerData() {
     const { user } = useAuth();
     const userId = user?.id ?? (import.meta.env.DEV ? DEV_USER_ID : null);
@@ -28,10 +42,16 @@ export function usePlannerData() {
     const tasksQuery = useAssistantTasksQuery(userId);
     const rawTasks: AssistantTask[] = tasksQuery.data ?? [];
 
-    // Split tasks into scheduled (have both start+end) and unscheduled (inbox)
+    const todayStr = new Date().toLocaleDateString("en-CA");
+
+    // Scheduled blocks on TODAY's timeline. Completed tasks stay (rendered as
+    // done) so a finished block is visibly marked rather than vanishing; tasks
+    // deferred to another day fall out of this set entirely.
     const scheduledTasks: ScheduledTask[] = rawTasks.filter(
         (t): t is ScheduledTask =>
-            t.status !== "completed" && typeof t.scheduledStart === "string" && typeof t.scheduledEnd === "string"
+            typeof t.scheduledStart === "string" &&
+            typeof t.scheduledEnd === "string" &&
+            localDateStr(t.scheduledStart) === todayStr
     );
 
     const unscheduledTasks: AssistantTask[] = rawTasks.filter(
@@ -55,6 +75,44 @@ export function usePlannerData() {
 
     function unscheduleTask(id: string) {
         return rescheduleMutation.mutateAsync({ id, scheduledStart: null, scheduledEnd: null });
+    }
+
+    const updateMutation = useUpdateAssistantTaskMutation();
+
+    function updateTaskTitle(id: string, title: string) {
+        return updateMutation.mutateAsync({ id, data: { title } });
+    }
+
+    function setTaskCompleted(id: string, completed: boolean) {
+        return updateMutation.mutateAsync({
+            id,
+            data: {
+                status: completed ? "completed" : "in-progress",
+                completedAt: completed ? new Date().toISOString() : null,
+            },
+        });
+    }
+
+    function deferTaskToTomorrow(task: AssistantTask) {
+        if (!task.scheduledStart || !task.scheduledEnd) {
+            return Promise.reject(new Error("Task is not scheduled"));
+        }
+
+        return rescheduleMutation.mutateAsync({
+            id: task.id,
+            scheduledStart: shiftToTomorrow(task.scheduledStart),
+            scheduledEnd: shiftToTomorrow(task.scheduledEnd),
+        });
+    }
+
+    const deleteMutation = useDeleteAssistantTaskMutation();
+
+    function deleteTask(id: string) {
+        if (!userId) {
+            return Promise.reject(new Error("No user"));
+        }
+
+        return deleteMutation.mutateAsync({ id, userId });
     }
 
     const createMutation = useCreateAssistantTaskMutation();
@@ -95,7 +153,6 @@ export function usePlannerData() {
     const focusSessions: FocusSessionBlock[] = focusSessionsQuery.data ?? [];
 
     // ── Planner Inbox footer counts ──────────────────────────────────────────
-    const todayDateStr = new Date().toLocaleDateString("en-CA"); // "YYYY-MM-DD" in local time
     const tomorrowDate = new Date();
     tomorrowDate.setDate(tomorrowDate.getDate() + 1);
     const tomorrowDateStr = tomorrowDate.toLocaleDateString("en-CA");
@@ -105,7 +162,7 @@ export function usePlannerData() {
             t.status === "completed" &&
             t.completedAt !== null &&
             t.completedAt !== undefined &&
-            new Date(t.completedAt).toLocaleDateString("en-CA") === todayDateStr
+            new Date(t.completedAt).toLocaleDateString("en-CA") === todayStr
     ).length;
 
     const deferredToTomorrow: number = rawTasks.filter(
@@ -124,9 +181,14 @@ export function usePlannerData() {
         allActiveTasks: rawTasks.filter((t) => t.status !== "completed"),
         scheduleTask,
         unscheduleTask,
+        updateTaskTitle,
+        setTaskCompleted,
+        deferTaskToTomorrow,
+        deleteTask,
         createTask,
         isCreating: createMutation.isPending,
         isRescheduling: rescheduleMutation.isPending,
+        isMutating: updateMutation.isPending || deleteMutation.isPending || rescheduleMutation.isPending,
         // New
         focusSessions,
         completedToday,

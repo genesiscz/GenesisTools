@@ -7,12 +7,14 @@ import { useState } from "react";
 import { DashboardLayout } from "@/components/dashboard";
 import { RouteError } from "@/components/RouteError";
 import { RouteSkeleton } from "@/components/RouteSkeleton";
+import { deriveTitle } from "@/lib/ai/deriveTitle";
 import {
     aiQueryKeys,
     useConversations,
     useCreateConversation,
     useDeleteConversation,
     useMessages,
+    useUpdateConversationTitle,
 } from "@/lib/ai/useAIQueries";
 import { useServerEvents } from "@/lib/events/useServerEvents";
 import { ChatInput } from "./-ai/ChatInput";
@@ -49,6 +51,11 @@ function AIAssistantPage() {
 
     const createConv = useCreateConversation(userId);
     const deleteConv = useDeleteConversation(userId);
+    const updateTitle = useUpdateConversationTitle(userId);
+
+    function handleRenameConversation(id: string, title: string) {
+        updateTitle.mutate({ id, title });
+    }
 
     async function handleNewConversation() {
         if (!userId) {
@@ -110,6 +117,17 @@ function AIAssistantPage() {
             return;
         }
 
+        const active = conversations.find((c) => c.id === activeConversationId);
+        const isFirstMessage = persistedMessages.length === 0 && streamingMessages.length === 0;
+
+        if (active && isFirstMessage && active.title.startsWith("Chat ")) {
+            const derived = deriveTitle(content);
+
+            if (derived) {
+                updateTitle.mutate({ id: active.id, title: derived });
+            }
+        }
+
         void sendMessage(content);
     }
 
@@ -129,6 +147,7 @@ function AIAssistantPage() {
                     }}
                     onNew={handleNewConversation}
                     onDelete={handleDeleteConversation}
+                    onRename={handleRenameConversation}
                 />
 
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden">

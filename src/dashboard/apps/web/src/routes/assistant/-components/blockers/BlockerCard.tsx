@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { FeatureCard, FeatureCardContent, FeatureCardHeader } from "@ui/custom/feature-card-nexus";
-import { AlertTriangle, ArrowRight, Bell, Clock, Timer, User } from "lucide-react";
+import { AlertTriangle, ArrowRight, Bell, CheckCircle2, Clock, Timer, User } from "lucide-react";
 import type { BlockerFollowUpAction, Task, TaskBlocker } from "@/lib/assistant/types";
 import { formatTimeBlocked } from "@/lib/assistant/utils";
 import { cn } from "@/lib/utils";
@@ -13,6 +13,8 @@ interface BlockerCardProps {
     onSwitch?: () => void;
     onSetReminder?: (blocker: TaskBlocker, date: Date) => void;
     onResolve?: (blockerId: string) => void;
+    onReopen?: (blockerId: string) => void;
+    onDelete?: (blockerId: string) => void;
     className?: string;
 }
 
@@ -68,54 +70,74 @@ export function BlockerCard({
     onSwitch,
     onSetReminder,
     onResolve,
+    onReopen,
+    onDelete,
     className,
 }: BlockerCardProps) {
+    const isResolved = Boolean(blocker.unblockedAt);
     const urgency = getBlockerUrgency(new Date(blocker.blockedSince));
     const followUpInfo = getFollowUpInfo(blocker.followUpAction);
     const FollowUpIcon = followUpInfo?.icon;
 
     return (
         <FeatureCard
-            color="rose"
+            color={isResolved ? "emerald" : "rose"}
             className={cn(
                 "relative overflow-hidden transition-all duration-300",
-                urgency === "critical" && "ring-2 ring-rose-500/50",
+                !isResolved && urgency === "critical" && "ring-2 ring-rose-500/50",
+                isResolved && "opacity-80",
                 className
             )}
         >
             {/* Pulsing indicator for critical blockers */}
-            {urgency === "critical" && (
+            {!isResolved && urgency === "critical" && (
                 <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-rose-500 via-red-500 to-rose-500 animate-pulse" />
             )}
 
             <FeatureCardHeader className="pb-2">
                 {/* Header: Time blocked + urgency indicator */}
                 <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                        <div
-                            className={cn(
-                                "relative h-2 w-2 rounded-full",
-                                urgency === "normal" && "bg-rose-400",
-                                urgency === "warning" && "bg-rose-500",
-                                urgency === "critical" && "bg-red-500"
-                            )}
-                        >
-                            {urgency === "critical" && (
-                                <span className="absolute inset-0 rounded-full bg-red-500 animate-ping" />
-                            )}
+                    {isResolved ? (
+                        <div className="flex items-center gap-2">
+                            <div className="h-2 w-2 rounded-full bg-emerald-400" />
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                            <span className="text-xs font-medium text-emerald-300">
+                                Resolved{" "}
+                                {blocker.unblockedAt
+                                    ? new Date(blocker.unblockedAt).toLocaleDateString(undefined, {
+                                          month: "short",
+                                          day: "numeric",
+                                      })
+                                    : ""}
+                            </span>
                         </div>
-                        <Clock className="h-3.5 w-3.5 text-rose-400" />
-                        <span
-                            className={cn(
-                                "text-xs font-medium",
-                                urgency === "normal" && "text-rose-300",
-                                urgency === "warning" && "text-rose-400",
-                                urgency === "critical" && "text-red-400"
-                            )}
-                        >
-                            Blocked {formatTimeBlocked(new Date(blocker.blockedSince))}
-                        </span>
-                    </div>
+                    ) : (
+                        <div className="flex items-center gap-2">
+                            <div
+                                className={cn(
+                                    "relative h-2 w-2 rounded-full",
+                                    urgency === "normal" && "bg-rose-400",
+                                    urgency === "warning" && "bg-rose-500",
+                                    urgency === "critical" && "bg-red-500"
+                                )}
+                            >
+                                {urgency === "critical" && (
+                                    <span className="absolute inset-0 rounded-full bg-red-500 animate-ping" />
+                                )}
+                            </div>
+                            <Clock className="h-3.5 w-3.5 text-rose-400" />
+                            <span
+                                className={cn(
+                                    "text-xs font-medium",
+                                    urgency === "normal" && "text-rose-300",
+                                    urgency === "warning" && "text-rose-400",
+                                    urgency === "critical" && "text-red-400"
+                                )}
+                            >
+                                Blocked {formatTimeBlocked(new Date(blocker.blockedSince))}
+                            </span>
+                        </div>
+                    )}
 
                     {/* Follow-up action badge */}
                     {followUpInfo && FollowUpIcon && (
@@ -187,6 +209,8 @@ export function BlockerCard({
                     onSwitch={onSwitch}
                     onSetReminder={onSetReminder}
                     onResolve={onResolve}
+                    onReopen={onReopen}
+                    onDelete={onDelete}
                 />
             </FeatureCardContent>
         </FeatureCard>
