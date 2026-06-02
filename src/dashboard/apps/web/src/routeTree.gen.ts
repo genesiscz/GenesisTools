@@ -19,9 +19,14 @@ import { Route as TimerIndexRouteImport } from './routes/timer/index'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
 import { Route as AssistantIndexRouteImport } from './routes/assistant/index'
 import { Route as TimerTimerIdRouteImport } from './routes/timer.$timerId'
+import { Route as DashboardReadingRouteImport } from './routes/dashboard/reading'
 import { Route as DashboardPlannerRouteImport } from './routes/dashboard/planner'
 import { Route as DashboardNotesRouteImport } from './routes/dashboard/notes'
+import { Route as DashboardMoodRouteImport } from './routes/dashboard/mood'
+import { Route as DashboardHabitsRouteImport } from './routes/dashboard/habits'
+import { Route as DashboardGoalsRouteImport } from './routes/dashboard/goals'
 import { Route as DashboardFocusRouteImport } from './routes/dashboard/focus'
+import { Route as DashboardExpensesRouteImport } from './routes/dashboard/expenses'
 import { Route as DashboardBookmarksRouteImport } from './routes/dashboard/bookmarks'
 import { Route as DashboardAiRouteImport } from './routes/dashboard/ai'
 import { Route as AuthSignupRouteImport } from './routes/auth/signup'
@@ -34,6 +39,7 @@ import { Route as AssistantParkingRouteImport } from './routes/assistant/parking
 import { Route as AssistantNextRouteImport } from './routes/assistant/next'
 import { Route as AssistantDecisionsRouteImport } from './routes/assistant/decisions'
 import { Route as AssistantCommunicationRouteImport } from './routes/assistant/communication'
+import { Route as AssistantBlockersRouteImport } from './routes/assistant/blockers'
 import { Route as AssistantAnalyticsRouteImport } from './routes/assistant/analytics'
 import { Route as ApiTimerEventsRouteImport } from './routes/api.timer-events'
 import { Route as ApiHealthRouteImport } from './routes/api.health'
@@ -93,6 +99,11 @@ const TimerTimerIdRoute = TimerTimerIdRouteImport.update({
   path: '/timer/$timerId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DashboardReadingRoute = DashboardReadingRouteImport.update({
+  id: '/reading',
+  path: '/reading',
+  getParentRoute: () => DashboardRouteRoute,
+} as any)
 const DashboardPlannerRoute = DashboardPlannerRouteImport.update({
   id: '/planner',
   path: '/planner',
@@ -103,9 +114,29 @@ const DashboardNotesRoute = DashboardNotesRouteImport.update({
   path: '/notes',
   getParentRoute: () => DashboardRouteRoute,
 } as any)
+const DashboardMoodRoute = DashboardMoodRouteImport.update({
+  id: '/mood',
+  path: '/mood',
+  getParentRoute: () => DashboardRouteRoute,
+} as any)
+const DashboardHabitsRoute = DashboardHabitsRouteImport.update({
+  id: '/habits',
+  path: '/habits',
+  getParentRoute: () => DashboardRouteRoute,
+} as any)
+const DashboardGoalsRoute = DashboardGoalsRouteImport.update({
+  id: '/goals',
+  path: '/goals',
+  getParentRoute: () => DashboardRouteRoute,
+} as any)
 const DashboardFocusRoute = DashboardFocusRouteImport.update({
   id: '/focus',
   path: '/focus',
+  getParentRoute: () => DashboardRouteRoute,
+} as any)
+const DashboardExpensesRoute = DashboardExpensesRouteImport.update({
+  id: '/expenses',
+  path: '/expenses',
   getParentRoute: () => DashboardRouteRoute,
 } as any)
 const DashboardBookmarksRoute = DashboardBookmarksRouteImport.update({
@@ -168,6 +199,11 @@ const AssistantCommunicationRoute = AssistantCommunicationRouteImport.update({
   path: '/communication',
   getParentRoute: () => AssistantRouteRoute,
 } as any)
+const AssistantBlockersRoute = AssistantBlockersRouteImport.update({
+  id: '/blockers',
+  path: '/blockers',
+  getParentRoute: () => AssistantRouteRoute,
+} as any)
 const AssistantAnalyticsRoute = AssistantAnalyticsRouteImport.update({
   id: '/analytics',
   path: '/analytics',
@@ -221,6 +257,7 @@ export interface FileRoutesByFullPath {
   '/api/health': typeof ApiHealthRoute
   '/api/timer-events': typeof ApiTimerEventsRoute
   '/assistant/analytics': typeof AssistantAnalyticsRoute
+  '/assistant/blockers': typeof AssistantBlockersRoute
   '/assistant/communication': typeof AssistantCommunicationRoute
   '/assistant/decisions': typeof AssistantDecisionsRoute
   '/assistant/next': typeof AssistantNextRoute
@@ -233,9 +270,14 @@ export interface FileRoutesByFullPath {
   '/auth/signup': typeof AuthSignupRoute
   '/dashboard/ai': typeof DashboardAiRoute
   '/dashboard/bookmarks': typeof DashboardBookmarksRoute
+  '/dashboard/expenses': typeof DashboardExpensesRoute
   '/dashboard/focus': typeof DashboardFocusRoute
+  '/dashboard/goals': typeof DashboardGoalsRoute
+  '/dashboard/habits': typeof DashboardHabitsRoute
+  '/dashboard/mood': typeof DashboardMoodRoute
   '/dashboard/notes': typeof DashboardNotesRoute
   '/dashboard/planner': typeof DashboardPlannerRoute
+  '/dashboard/reading': typeof DashboardReadingRoute
   '/timer/$timerId': typeof TimerTimerIdRoute
   '/assistant/': typeof AssistantIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
@@ -254,6 +296,7 @@ export interface FileRoutesByTo {
   '/api/health': typeof ApiHealthRoute
   '/api/timer-events': typeof ApiTimerEventsRoute
   '/assistant/analytics': typeof AssistantAnalyticsRoute
+  '/assistant/blockers': typeof AssistantBlockersRoute
   '/assistant/communication': typeof AssistantCommunicationRoute
   '/assistant/decisions': typeof AssistantDecisionsRoute
   '/assistant/next': typeof AssistantNextRoute
@@ -266,9 +309,14 @@ export interface FileRoutesByTo {
   '/auth/signup': typeof AuthSignupRoute
   '/dashboard/ai': typeof DashboardAiRoute
   '/dashboard/bookmarks': typeof DashboardBookmarksRoute
+  '/dashboard/expenses': typeof DashboardExpensesRoute
   '/dashboard/focus': typeof DashboardFocusRoute
+  '/dashboard/goals': typeof DashboardGoalsRoute
+  '/dashboard/habits': typeof DashboardHabitsRoute
+  '/dashboard/mood': typeof DashboardMoodRoute
   '/dashboard/notes': typeof DashboardNotesRoute
   '/dashboard/planner': typeof DashboardPlannerRoute
+  '/dashboard/reading': typeof DashboardReadingRoute
   '/timer/$timerId': typeof TimerTimerIdRoute
   '/assistant': typeof AssistantIndexRoute
   '/dashboard': typeof DashboardIndexRoute
@@ -290,6 +338,7 @@ export interface FileRoutesById {
   '/api/health': typeof ApiHealthRoute
   '/api/timer-events': typeof ApiTimerEventsRoute
   '/assistant/analytics': typeof AssistantAnalyticsRoute
+  '/assistant/blockers': typeof AssistantBlockersRoute
   '/assistant/communication': typeof AssistantCommunicationRoute
   '/assistant/decisions': typeof AssistantDecisionsRoute
   '/assistant/next': typeof AssistantNextRoute
@@ -302,9 +351,14 @@ export interface FileRoutesById {
   '/auth/signup': typeof AuthSignupRoute
   '/dashboard/ai': typeof DashboardAiRoute
   '/dashboard/bookmarks': typeof DashboardBookmarksRoute
+  '/dashboard/expenses': typeof DashboardExpensesRoute
   '/dashboard/focus': typeof DashboardFocusRoute
+  '/dashboard/goals': typeof DashboardGoalsRoute
+  '/dashboard/habits': typeof DashboardHabitsRoute
+  '/dashboard/mood': typeof DashboardMoodRoute
   '/dashboard/notes': typeof DashboardNotesRoute
   '/dashboard/planner': typeof DashboardPlannerRoute
+  '/dashboard/reading': typeof DashboardReadingRoute
   '/timer/$timerId': typeof TimerTimerIdRoute
   '/assistant/': typeof AssistantIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
@@ -327,6 +381,7 @@ export interface FileRouteTypes {
     | '/api/health'
     | '/api/timer-events'
     | '/assistant/analytics'
+    | '/assistant/blockers'
     | '/assistant/communication'
     | '/assistant/decisions'
     | '/assistant/next'
@@ -339,9 +394,14 @@ export interface FileRouteTypes {
     | '/auth/signup'
     | '/dashboard/ai'
     | '/dashboard/bookmarks'
+    | '/dashboard/expenses'
     | '/dashboard/focus'
+    | '/dashboard/goals'
+    | '/dashboard/habits'
+    | '/dashboard/mood'
     | '/dashboard/notes'
     | '/dashboard/planner'
+    | '/dashboard/reading'
     | '/timer/$timerId'
     | '/assistant/'
     | '/dashboard/'
@@ -360,6 +420,7 @@ export interface FileRouteTypes {
     | '/api/health'
     | '/api/timer-events'
     | '/assistant/analytics'
+    | '/assistant/blockers'
     | '/assistant/communication'
     | '/assistant/decisions'
     | '/assistant/next'
@@ -372,9 +433,14 @@ export interface FileRouteTypes {
     | '/auth/signup'
     | '/dashboard/ai'
     | '/dashboard/bookmarks'
+    | '/dashboard/expenses'
     | '/dashboard/focus'
+    | '/dashboard/goals'
+    | '/dashboard/habits'
+    | '/dashboard/mood'
     | '/dashboard/notes'
     | '/dashboard/planner'
+    | '/dashboard/reading'
     | '/timer/$timerId'
     | '/assistant'
     | '/dashboard'
@@ -395,6 +461,7 @@ export interface FileRouteTypes {
     | '/api/health'
     | '/api/timer-events'
     | '/assistant/analytics'
+    | '/assistant/blockers'
     | '/assistant/communication'
     | '/assistant/decisions'
     | '/assistant/next'
@@ -407,9 +474,14 @@ export interface FileRouteTypes {
     | '/auth/signup'
     | '/dashboard/ai'
     | '/dashboard/bookmarks'
+    | '/dashboard/expenses'
     | '/dashboard/focus'
+    | '/dashboard/goals'
+    | '/dashboard/habits'
+    | '/dashboard/mood'
     | '/dashboard/notes'
     | '/dashboard/planner'
+    | '/dashboard/reading'
     | '/timer/$timerId'
     | '/assistant/'
     | '/dashboard/'
@@ -513,6 +585,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TimerTimerIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dashboard/reading': {
+      id: '/dashboard/reading'
+      path: '/reading'
+      fullPath: '/dashboard/reading'
+      preLoaderRoute: typeof DashboardReadingRouteImport
+      parentRoute: typeof DashboardRouteRoute
+    }
     '/dashboard/planner': {
       id: '/dashboard/planner'
       path: '/planner'
@@ -527,11 +606,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardNotesRouteImport
       parentRoute: typeof DashboardRouteRoute
     }
+    '/dashboard/mood': {
+      id: '/dashboard/mood'
+      path: '/mood'
+      fullPath: '/dashboard/mood'
+      preLoaderRoute: typeof DashboardMoodRouteImport
+      parentRoute: typeof DashboardRouteRoute
+    }
+    '/dashboard/habits': {
+      id: '/dashboard/habits'
+      path: '/habits'
+      fullPath: '/dashboard/habits'
+      preLoaderRoute: typeof DashboardHabitsRouteImport
+      parentRoute: typeof DashboardRouteRoute
+    }
+    '/dashboard/goals': {
+      id: '/dashboard/goals'
+      path: '/goals'
+      fullPath: '/dashboard/goals'
+      preLoaderRoute: typeof DashboardGoalsRouteImport
+      parentRoute: typeof DashboardRouteRoute
+    }
     '/dashboard/focus': {
       id: '/dashboard/focus'
       path: '/focus'
       fullPath: '/dashboard/focus'
       preLoaderRoute: typeof DashboardFocusRouteImport
+      parentRoute: typeof DashboardRouteRoute
+    }
+    '/dashboard/expenses': {
+      id: '/dashboard/expenses'
+      path: '/expenses'
+      fullPath: '/dashboard/expenses'
+      preLoaderRoute: typeof DashboardExpensesRouteImport
       parentRoute: typeof DashboardRouteRoute
     }
     '/dashboard/bookmarks': {
@@ -618,6 +725,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AssistantCommunicationRouteImport
       parentRoute: typeof AssistantRouteRoute
     }
+    '/assistant/blockers': {
+      id: '/assistant/blockers'
+      path: '/blockers'
+      fullPath: '/assistant/blockers'
+      preLoaderRoute: typeof AssistantBlockersRouteImport
+      parentRoute: typeof AssistantRouteRoute
+    }
     '/assistant/analytics': {
       id: '/assistant/analytics'
       path: '/analytics'
@@ -679,6 +793,7 @@ declare module '@tanstack/react-router' {
 
 interface AssistantRouteRouteChildren {
   AssistantAnalyticsRoute: typeof AssistantAnalyticsRoute
+  AssistantBlockersRoute: typeof AssistantBlockersRoute
   AssistantCommunicationRoute: typeof AssistantCommunicationRoute
   AssistantDecisionsRoute: typeof AssistantDecisionsRoute
   AssistantNextRoute: typeof AssistantNextRoute
@@ -690,6 +805,7 @@ interface AssistantRouteRouteChildren {
 
 const AssistantRouteRouteChildren: AssistantRouteRouteChildren = {
   AssistantAnalyticsRoute: AssistantAnalyticsRoute,
+  AssistantBlockersRoute: AssistantBlockersRoute,
   AssistantCommunicationRoute: AssistantCommunicationRoute,
   AssistantDecisionsRoute: AssistantDecisionsRoute,
   AssistantNextRoute: AssistantNextRoute,
@@ -706,18 +822,28 @@ const AssistantRouteRouteWithChildren = AssistantRouteRoute._addFileChildren(
 interface DashboardRouteRouteChildren {
   DashboardAiRoute: typeof DashboardAiRoute
   DashboardBookmarksRoute: typeof DashboardBookmarksRoute
+  DashboardExpensesRoute: typeof DashboardExpensesRoute
   DashboardFocusRoute: typeof DashboardFocusRoute
+  DashboardGoalsRoute: typeof DashboardGoalsRoute
+  DashboardHabitsRoute: typeof DashboardHabitsRoute
+  DashboardMoodRoute: typeof DashboardMoodRoute
   DashboardNotesRoute: typeof DashboardNotesRoute
   DashboardPlannerRoute: typeof DashboardPlannerRoute
+  DashboardReadingRoute: typeof DashboardReadingRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
 }
 
 const DashboardRouteRouteChildren: DashboardRouteRouteChildren = {
   DashboardAiRoute: DashboardAiRoute,
   DashboardBookmarksRoute: DashboardBookmarksRoute,
+  DashboardExpensesRoute: DashboardExpensesRoute,
   DashboardFocusRoute: DashboardFocusRoute,
+  DashboardGoalsRoute: DashboardGoalsRoute,
+  DashboardHabitsRoute: DashboardHabitsRoute,
+  DashboardMoodRoute: DashboardMoodRoute,
   DashboardNotesRoute: DashboardNotesRoute,
   DashboardPlannerRoute: DashboardPlannerRoute,
+  DashboardReadingRoute: DashboardReadingRoute,
   DashboardIndexRoute: DashboardIndexRoute,
 }
 

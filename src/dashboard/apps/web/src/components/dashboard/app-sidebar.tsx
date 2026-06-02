@@ -2,21 +2,27 @@ import { Link, useLocation } from "@tanstack/react-router";
 import { AppSidebar as SharedAppSidebar, type SidebarNavGroup } from "@ui/custom";
 import { useAuth } from "@workos/authkit-tanstack-react-start/client";
 import {
+    Ban,
     BarChart3,
     Bookmark,
+    BookOpen,
     Brain,
     CalendarDays,
     Compass,
+    Goal,
     LayoutDashboard,
     ListTodo,
     MessageSquare,
     ParkingCircle,
+    Repeat,
     Scale,
     Settings,
+    Smile,
     StickyNote,
     Target,
     Timer,
     User,
+    Wallet,
 } from "lucide-react";
 import { useFocusSession } from "@/routes/dashboard/-focus";
 
@@ -64,6 +70,11 @@ const assistantNavItems = [
         url: "/assistant/analytics",
         icon: BarChart3,
     },
+    {
+        title: "Blockers",
+        url: "/assistant/blockers",
+        icon: Ban,
+    },
 ];
 
 const appsNavItems = [
@@ -91,6 +102,31 @@ const appsNavItems = [
         title: "Daily Planner",
         url: "/dashboard/planner",
         icon: CalendarDays,
+    },
+    {
+        title: "Habits",
+        url: "/dashboard/habits",
+        icon: Repeat,
+    },
+    {
+        title: "Goals & OKRs",
+        url: "/dashboard/goals",
+        icon: Goal,
+    },
+    {
+        title: "Mood Journal",
+        url: "/dashboard/mood",
+        icon: Smile,
+    },
+    {
+        title: "Expenses",
+        url: "/dashboard/expenses",
+        icon: Wallet,
+    },
+    {
+        title: "Reading List",
+        url: "/dashboard/reading",
+        icon: BookOpen,
     },
 ];
 

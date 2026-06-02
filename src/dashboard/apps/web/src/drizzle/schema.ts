@@ -683,3 +683,209 @@ export type NewAiConversation = typeof aiConversations.$inferInsert;
 
 export type AiMessage = typeof aiMessages.$inferSelect;
 export type NewAiMessage = typeof aiMessages.$inferInsert;
+
+// ============================================
+// Dashboard Enhancements — new feature tables
+// Each carries `metadataJson` (TEXT DEFAULT '{}') as an ad-hoc escape hatch so
+// a feature can stash extra fields without a schema migration. Timestamps are
+// ISO strings; money is integer cents; per-day keys are "YYYY-MM-DD".
+// ============================================
+
+// --- Habits ---------------------------------------------------------------
+export const habits = sqliteTable(
+    "habits",
+    {
+        id: text("id").primaryKey(),
+        userId: text("user_id").notNull(),
+        name: text("name").notNull(),
+        color: text("color").notNull().default("emerald"),
+        icon: text("icon").notNull().default("CircleCheck"),
+        // "daily" | "weekly"; weekly target lives in targetPerWeek
+        cadence: text("cadence").notNull().default("daily"),
+        targetPerWeek: integer("target_per_week").notNull().default(7),
+        sortOrder: integer("sort_order").notNull().default(0),
+        archived: integer("archived").notNull().default(0),
+        createdAt: text("created_at").notNull(),
+        updatedAt: text("updated_at").notNull(),
+        metadataJson: text("metadata_json").notNull().default("{}"),
+    },
+    (table) => ({
+        userIdIdx: index("idx_habits_user_id").on(table.userId),
+    })
+);
+
+export const habitEntries = sqliteTable(
+    "habit_entries",
+    {
+        id: text("id").primaryKey(),
+        userId: text("user_id").notNull(),
+        habitId: text("habit_id").notNull(),
+        // "YYYY-MM-DD" local day key
+        day: text("day").notNull(),
+        count: integer("count").notNull().default(1),
+        createdAt: text("created_at").notNull(),
+        metadataJson: text("metadata_json").notNull().default("{}"),
+    },
+    (table) => ({
+        habitDayIdx: index("idx_habit_entries_habit_day").on(table.habitId, table.day),
+        userIdIdx: index("idx_habit_entries_user_id").on(table.userId),
+    })
+);
+
+// --- Goals & OKRs ---------------------------------------------------------
+export const goals = sqliteTable(
+    "goals",
+    {
+        id: text("id").primaryKey(),
+        userId: text("user_id").notNull(),
+        title: text("title").notNull(),
+        description: text("description").notNull().default(""),
+        category: text("category").notNull().default("personal"),
+        // "YYYY-Qn", e.g. "2026-Q2"
+        quarter: text("quarter").notNull().default(""),
+        targetDate: text("target_date"),
+        status: text("status").notNull().$type<"active" | "done" | "archived">().default("active"),
+        // 0-100, manual or derived from key results
+        progress: integer("progress").notNull().default(0),
+        sortOrder: integer("sort_order").notNull().default(0),
+        createdAt: text("created_at").notNull(),
+        updatedAt: text("updated_at").notNull(),
+        metadataJson: text("metadata_json").notNull().default("{}"),
+    },
+    (table) => ({
+        userIdIdx: index("idx_goals_user_id").on(table.userId),
+    })
+);
+
+export const goalKeyResults = sqliteTable(
+    "goal_key_results",
+    {
+        id: text("id").primaryKey(),
+        userId: text("user_id").notNull(),
+        goalId: text("goal_id").notNull(),
+        title: text("title").notNull(),
+        unit: text("unit").notNull().default(""),
+        startValue: integer("start_value").notNull().default(0),
+        targetValue: integer("target_value").notNull().default(100),
+        currentValue: integer("current_value").notNull().default(0),
+        createdAt: text("created_at").notNull(),
+        updatedAt: text("updated_at").notNull(),
+        metadataJson: text("metadata_json").notNull().default("{}"),
+    },
+    (table) => ({
+        goalIdIdx: index("idx_goal_key_results_goal_id").on(table.goalId),
+        userIdIdx: index("idx_goal_key_results_user_id").on(table.userId),
+    })
+);
+
+// --- Mood Journal ---------------------------------------------------------
+export const moodEntries = sqliteTable(
+    "mood_entries",
+    {
+        id: text("id").primaryKey(),
+        userId: text("user_id").notNull(),
+        // "YYYY-MM-DD" local day key (one primary check-in per day, extras allowed)
+        day: text("day").notNull(),
+        // 1-5 scales
+        mood: integer("mood").notNull(),
+        energy: integer("energy").notNull().default(3),
+        note: text("note").notNull().default(""),
+        tags: text("tags", { mode: "json" }).$type<string[]>().default([]),
+        createdAt: text("created_at").notNull(),
+        updatedAt: text("updated_at").notNull(),
+        metadataJson: text("metadata_json").notNull().default("{}"),
+    },
+    (table) => ({
+        userDayIdx: index("idx_mood_entries_user_day").on(table.userId, table.day),
+    })
+);
+
+// --- Expense Tracker ------------------------------------------------------
+export const expenses = sqliteTable(
+    "expenses",
+    {
+        id: text("id").primaryKey(),
+        userId: text("user_id").notNull(),
+        // integer minor units (cents) to avoid float drift
+        amountCents: integer("amount_cents").notNull(),
+        currency: text("currency").notNull().default("USD"),
+        category: text("category").notNull().default("other"),
+        description: text("description").notNull().default(""),
+        // "YYYY-MM-DD"
+        day: text("day").notNull(),
+        createdAt: text("created_at").notNull(),
+        updatedAt: text("updated_at").notNull(),
+        metadataJson: text("metadata_json").notNull().default("{}"),
+    },
+    (table) => ({
+        userDayIdx: index("idx_expenses_user_day").on(table.userId, table.day),
+        categoryIdx: index("idx_expenses_category").on(table.category),
+    })
+);
+
+// --- Reading List ---------------------------------------------------------
+export const readingItems = sqliteTable(
+    "reading_items",
+    {
+        id: text("id").primaryKey(),
+        userId: text("user_id").notNull(),
+        title: text("title").notNull(),
+        author: text("author").notNull().default(""),
+        type: text("type").notNull().$type<"book" | "article" | "paper">().default("book"),
+        url: text("url"),
+        coverUrl: text("cover_url"),
+        status: text("status").notNull().$type<"to_read" | "reading" | "done">().default("to_read"),
+        currentPage: integer("current_page").notNull().default(0),
+        totalPages: integer("total_pages").notNull().default(0),
+        // 0-5, 0 = unrated
+        rating: integer("rating").notNull().default(0),
+        tags: text("tags", { mode: "json" }).$type<string[]>().default([]),
+        createdAt: text("created_at").notNull(),
+        updatedAt: text("updated_at").notNull(),
+        metadataJson: text("metadata_json").notNull().default("{}"),
+    },
+    (table) => ({
+        userIdIdx: index("idx_reading_items_user_id").on(table.userId),
+        statusIdx: index("idx_reading_items_status").on(table.status),
+    })
+);
+
+export const readingHighlights = sqliteTable(
+    "reading_highlights",
+    {
+        id: text("id").primaryKey(),
+        userId: text("user_id").notNull(),
+        itemId: text("item_id").notNull(),
+        text: text("text").notNull(),
+        note: text("note").notNull().default(""),
+        location: text("location").notNull().default(""),
+        createdAt: text("created_at").notNull(),
+        metadataJson: text("metadata_json").notNull().default("{}"),
+    },
+    (table) => ({
+        itemIdIdx: index("idx_reading_highlights_item_id").on(table.itemId),
+        userIdIdx: index("idx_reading_highlights_user_id").on(table.userId),
+    })
+);
+
+// --- Types for new feature tables ----------------------------------------
+export type Habit = typeof habits.$inferSelect;
+export type NewHabit = typeof habits.$inferInsert;
+export type HabitEntry = typeof habitEntries.$inferSelect;
+export type NewHabitEntry = typeof habitEntries.$inferInsert;
+
+export type Goal = typeof goals.$inferSelect;
+export type NewGoal = typeof goals.$inferInsert;
+export type GoalKeyResult = typeof goalKeyResults.$inferSelect;
+export type NewGoalKeyResult = typeof goalKeyResults.$inferInsert;
+
+export type MoodEntry = typeof moodEntries.$inferSelect;
+export type NewMoodEntry = typeof moodEntries.$inferInsert;
+
+export type Expense = typeof expenses.$inferSelect;
+export type NewExpense = typeof expenses.$inferInsert;
+
+export type ReadingItem = typeof readingItems.$inferSelect;
+export type NewReadingItem = typeof readingItems.$inferInsert;
+export type ReadingHighlight = typeof readingHighlights.$inferSelect;
+export type NewReadingHighlight = typeof readingHighlights.$inferInsert;
