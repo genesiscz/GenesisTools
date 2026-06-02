@@ -33,7 +33,7 @@ program
 
         const payload = buildTextPayload(text);
         logger.debug({ payload }, "qr: rendering text payload");
-        const matrix = renderQr(payload, { small: options.small });
+        const matrix = renderQr(payload, { small: options.small ?? false });
         out.log.step(`QR for: ${text}`);
         out.print(matrix);
     });
@@ -77,7 +77,7 @@ program
         });
 
         logger.debug({ payload }, "qr: rendering wifi payload");
-        const matrix = renderQr(payload, { small: options.small });
+        const matrix = renderQr(payload, { small: options.small ?? false });
         out.log.step(`WIFI payload: ${payload}`);
         out.print(matrix);
     });
