@@ -14,6 +14,8 @@ import {
     displayProcessTable,
     displayWatchEvent,
     displayWatchHeader,
+    toPortJson,
+    toProcessJson,
 } from "./lib/display";
 import {
     findOrphanedPorts,
@@ -31,6 +33,7 @@ interface RootOptions {
     all?: boolean;
     kill?: boolean;
     yes?: boolean;
+    json?: boolean;
 }
 
 type SelectionKind = "all" | "listeners" | "connections" | number;
@@ -173,16 +176,28 @@ async function maybeKillProcessesForPort(
     }
 }
 
-async function showPortOverview(includeSystem: boolean): Promise<void> {
+async function showPortOverview(includeSystem: boolean, json: boolean): Promise<void> {
     const ports = getListeningPorts().filter(
         (snapshot) => includeSystem || isLikelyDevProcess(snapshot.processName, snapshot.command)
     );
+
+    if (json) {
+        out.result(toPortJson(ports));
+        return;
+    }
+
     displayPortTable(ports, !includeSystem);
 }
 
 async function inspectPort(portArg: string, options: RootOptions): Promise<void> {
     const port = validatePort(portArg);
     const snapshots = getPortDetails(port);
+
+    if (options.json) {
+        out.result(toPortJson(snapshots));
+        return;
+    }
+
     const gitBranch = snapshots.length > 0 ? getGitBranch(snapshots[0].cwd) : null;
 
     displayPortDetail(port, snapshots, gitBranch);
@@ -199,10 +214,15 @@ async function inspectPort(portArg: string, options: RootOptions): Promise<void>
     }
 }
 
-async function showProcessOverview(includeSystem: boolean): Promise<void> {
+async function showProcessOverview(includeSystem: boolean, json: boolean): Promise<void> {
     const processes = getAllProcesses()
         .filter((processInfo) => includeSystem || isLikelyDevProcess(processInfo.processName, processInfo.command))
         .sort((left, right) => right.cpu - left.cpu || left.pid - right.pid);
+
+    if (json) {
+        out.result(toProcessJson(processes));
+        return;
+    }
 
     displayProcessTable(processes, !includeSystem);
 }
@@ -273,9 +293,10 @@ program
     .option("-a, --all", "Include system processes and listeners in list views")
     .option("-k, --kill", "Kill every PID found for the inspected port")
     .option("-y, --yes", "Skip confirmation prompts")
+    .option("-j, --json", "Emit machine-readable JSON instead of a table (read-only, never kills)")
     .action(async (portArg: string | undefined, options: RootOptions) => {
         if (!portArg) {
-            await showPortOverview(Boolean(options.all));
+            await showPortOverview(Boolean(options.all), Boolean(options.json));
             return;
         }
 
@@ -286,8 +307,9 @@ program
     .command("ps")
     .description("Show a colorful process listing focused on dev workflows")
     .option("-a, --all", "Include system processes")
-    .action(async (options: { all?: boolean }) => {
-        await showProcessOverview(Boolean(options.all));
+    .option("-j, --json", "Emit machine-readable JSON instead of a table")
+    .action(async (options: { all?: boolean; json?: boolean }) => {
+        await showProcessOverview(Boolean(options.all), Boolean(options.json));
     });
 
 program
