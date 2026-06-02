@@ -22,3 +22,10 @@ export function getDevDashboardStorage(): DevDashboardStorage {
 
     return _instance;
 }
+
+/** Drop the memoized singleton so the next `getDevDashboardStorage()` re-reads
+ * `GENESIS_TOOLS_HOME`. Test-only — production never changes the storage root
+ * mid-process. */
+export function resetDevDashboardStorage(): void {
+    _instance = null;
+}

@@ -2,10 +2,13 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { runTunnelSetup } from "@app/dev-dashboard/commands/tunnel";
 import { getConfig, saveConfig } from "@app/dev-dashboard/config";
 import { createBasicAuthCredentials } from "@app/dev-dashboard/lib/auth";
+import { generatePairingCode, savePairingCode } from "@app/dev-dashboard/lib/e2e/pairing-code";
 import { startFrontProxy } from "@app/dev-dashboard/lib/front-proxy";
 import { runPreviewUiServer } from "@app/dev-dashboard/lib/preview-ui-server";
+import { serveAgent } from "@app/dev-dashboard/server/serve";
 import { devDashboardUiApp } from "@app/dev-dashboard/ui/app";
 import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
@@ -192,6 +195,46 @@ auth.command("reset")
         out.println("dev-dashboard Basic Auth updated");
         out.println(`username: ${nextAuth.username}`);
         out.println(`password: ${password}`);
+    });
+
+program
+    .command("agent")
+    .description("Run the standalone DevDashboard Agent (API only, no Vite)")
+    .option("--port <port>", "port to bind", (v) => Number.parseInt(v, 10), 3043)
+    .option("--host <host>", "bind host", "0.0.0.0")
+    .option("--no-advertise-mdns", "disable Bonjour/mDNS LAN advertising")
+    .option("--e2e", "accept end-to-end-encrypted requests on POST /api/e2e/rpc (managed tier)")
+    .action(async (opts: { port: number; host: string; advertiseMdns: boolean; e2e?: boolean }) => {
+        await serveAgent({
+            port: opts.port,
+            host: opts.host,
+            advertiseMdns: opts.advertiseMdns,
+            e2e: opts.e2e === true,
+        });
+    });
+
+const tunnel = program.command("tunnel").description("Manage remote access tunnels");
+
+tunnel
+    .command("setup")
+    .description("Guided self-hosted Cloudflare Tunnel setup (emits a pairing QR)")
+    .option("--port <port>", "local dashboard port", (v) => Number.parseInt(v, 10), 3042)
+    .action(async (opts: { port: number }) => {
+        await runTunnelSetup({ port: opts.port });
+    });
+
+program
+    .command("pair")
+    .description("Show a one-time device code to admit a phone to the managed E2E tier")
+    .action(async () => {
+        const code = generatePairingCode();
+        const expiresAt = await savePairingCode(code);
+        const minutes = Math.max(1, Math.round((expiresAt - Date.now()) / 60_000));
+
+        out.println("");
+        out.println(`  Pairing code:  ${code}`);
+        out.println(`  Enter it on your phone within ${minutes} min to admit the device. One-time use.`);
+        out.println("");
     });
 
 await runTool(program, { tool: "dev-dashboard" }).catch((err) => {

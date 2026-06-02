@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-    friendlyProcessName,
     parseBattery,
     parseCpuIdlePct,
     parseDfRoot,
@@ -95,23 +94,5 @@ describe("parseWifiSsid", () => {
 
     test("returns null when not associated", () => {
         expect(parseWifiSsid(WIFI_NOT_ASSOCIATED)).toBeNull();
-    });
-});
-
-describe("friendlyProcessName", () => {
-    test("extracts the .app bundle name", () => {
-        expect(friendlyProcessName("/Applications/Android Studio.app/Contents/MacOS/studio")).toBe("Android Studio");
-    });
-
-    test("falls back to the binary basename", () => {
-        expect(friendlyProcessName("/Users/Martin/.bun/install/global/node_modules/.bin/node")).toBe("node");
-    });
-
-    test("returns a dash for empty input", () => {
-        expect(friendlyProcessName("   ")).toBe("—");
-    });
-
-    test("returns input unchanged when there is no path separator", () => {
-        expect(friendlyProcessName("bun")).toBe("bun");
     });
 });

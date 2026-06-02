@@ -16,6 +16,14 @@ export interface CmuxLivePane {
     surfaceCount: number;
     surfaces: CmuxLiveSurface[];
     preview?: string;
+    /**
+     * The ttyd session id this pane's terminal surface is backed by, when the pane hosts a tmux
+     * session that also has a ttyd terminal (joined by tmux session name). Lets a client open the
+     * pane as a real terminal instead of only focusing it in the native cmux app. Populated by the
+     * dev-dashboard layer (`enrichPanesWithTtyd`) — this generic module stays ttyd-agnostic, so it is
+     * always undefined here and set downstream.
+     */
+    ttydSessionId?: string;
 }
 
 export interface CmuxLiveSurface {

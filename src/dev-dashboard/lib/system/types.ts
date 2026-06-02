@@ -4,6 +4,16 @@ export interface TopProcess {
     rssBytes: number;
 }
 
+export type ProcessSort = "rss" | "name";
+
+export interface ProcessInfo {
+    pid: number;
+    name: string;
+    rssBytes: number;
+    uptimeMs: number;
+    cpuPct: number;
+}
+
 export interface PulseSnapshot {
     cpuPct: number | null;
     memUsedBytes: number | null;

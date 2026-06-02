@@ -5,6 +5,17 @@ import type {
     CmuxSnapshot,
     DashboardSendTarget,
 } from "@app/dev-dashboard/lib/cmux/types";
+import type {
+    AttentionRes,
+    CommandsRes,
+    ProcessesRes,
+    TmuxPresetRestoreRes,
+    TmuxPresetSaveRes,
+    TmuxPresetsRes,
+} from "@app/dev-dashboard/contract/endpoints";
+import type { SavedCommand, SavedCommandInput } from "@app/dev-dashboard/lib/commands/types";
+import type { KillPortResult, PortsResult } from "@app/dev-dashboard/lib/ports/types";
+import type { ProcessSort } from "@app/dev-dashboard/lib/system/types";
 import type { VaultEntry } from "@app/dev-dashboard/lib/obsidian/types";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import { SafeJSON } from "@app/utils/json";
@@ -91,6 +102,25 @@ export const tmuxApi = {
         }),
 };
 
+export const presetsApi = {
+    list: () => jsonFetch<TmuxPresetsRes>("/api/tmux/presets"),
+    save: (body: { name: string; note?: string; prefix?: string }) =>
+        jsonFetch<TmuxPresetSaveRes>("/api/tmux/presets/save", {
+            method: "POST",
+            body: SafeJSON.stringify(body),
+        }),
+    restore: (name: string) =>
+        jsonFetch<TmuxPresetRestoreRes>("/api/tmux/presets/restore", {
+            method: "POST",
+            body: SafeJSON.stringify({ name }),
+        }),
+    remove: (name: string) =>
+        jsonFetch<{ removed: boolean }>("/api/tmux/presets", {
+            method: "DELETE",
+            body: SafeJSON.stringify({ name }),
+        }),
+};
+
 export const cmuxApi = {
     snapshot: () => jsonFetch<{ snapshot: CmuxSnapshot }>("/api/cmux/snapshot"),
     layout: () => jsonFetch<{ layout: CmuxLayoutTree }>("/api/cmux/layout"),
@@ -141,5 +171,55 @@ export const obsidianApi = {
         jsonFetch<{ remaining: PublishedNote[] }>("/api/obsidian/unpublish", {
             method: "POST",
             body: SafeJSON.stringify({ slug }),
+        }),
+};
+
+export const processesApi = {
+    list: (sort: ProcessSort = "rss", limit?: number) => {
+        const params = new URLSearchParams({ sort });
+
+        if (limit) {
+            params.set("limit", String(limit));
+        }
+
+        return jsonFetch<ProcessesRes>(`/api/processes?${params.toString()}`);
+    },
+    kill: (pid: number) =>
+        jsonFetch<{ ok: boolean }>("/api/processes/kill", {
+            method: "POST",
+            body: SafeJSON.stringify({ pid }),
+        }),
+};
+
+export const attentionApi = {
+    list: () => jsonFetch<AttentionRes>("/api/attention"),
+    /** Mark a QA action entry read so it drops out of the attention queue (reuses /api/qa/read). */
+    read: (ids: string[]) =>
+        jsonFetch<{ ok: boolean; updated: number }>("/api/qa/read", {
+            method: "POST",
+            body: SafeJSON.stringify({ ids, unread: false }),
+        }),
+};
+
+export const portsApi = {
+    list: () => jsonFetch<PortsResult>("/api/ports"),
+    kill: (pid: number, expectedCommand?: string) =>
+        jsonFetch<KillPortResult>("/api/ports/kill", {
+            method: "POST",
+            body: SafeJSON.stringify({ pid, expectedCommand }),
+        }),
+};
+
+export const commandsApi = {
+    list: () => jsonFetch<CommandsRes>("/api/commands"),
+    create: (body: SavedCommandInput) =>
+        jsonFetch<{ command: SavedCommand }>("/api/commands", {
+            method: "POST",
+            body: SafeJSON.stringify(body),
+        }),
+    remove: (id: string) =>
+        jsonFetch<{ removed: number }>("/api/commands", {
+            method: "DELETE",
+            body: SafeJSON.stringify({ id }),
         }),
 };

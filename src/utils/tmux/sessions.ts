@@ -78,6 +78,12 @@ const defaultSpawnSync: TmuxSpawnSync = (cmd, opts) => {
         cwd: opts?.cwd,
         env: buildTmuxSpawnEnv(),
         stdio: ["ignore", "pipe", "pipe"],
+        // Bound every tmux call. A wedged tmux server makes `list-sessions` (and friends) block
+        // forever, spinning a core at ~100% CPU; if the parent process is then killed mid-call the
+        // child is orphaned and keeps spinning. 10s is far above any healthy tmux command, so this
+        // only ever fires on a genuine wedge. SIGKILL because a spinning `list-sessions` ignores TERM.
+        timeout: 10_000,
+        killSignal: "SIGKILL",
     });
 
     return {
@@ -139,6 +145,50 @@ export function listTmuxSessions(): TmuxSessionInfo[] {
     }
 
     return sessions;
+}
+
+/**
+ * One `list-sessions` call mapping each session name → the command running in its active pane
+ * (`#{pane_current_command}`). Lightweight (no scrollback parse, unlike `captureTmuxSnapshot`) so it
+ * is cheap enough for the ttyd-list hit path that derives an auto-name from the live command.
+ */
+export function listTmuxSessionCommands(): Map<string, string> {
+    let tmuxBin: string;
+
+    try {
+        tmuxBin = resolveTmuxBin();
+    } catch {
+        return new Map();
+    }
+
+    const result = spawnSyncImpl([tmuxBin, "list-sessions", "-F", "#{session_name}\t#{pane_current_command}"]);
+
+    if (result.exitCode !== 0) {
+        return new Map();
+    }
+
+    const commands = new Map<string, string>();
+
+    for (const line of result.stdout.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) {
+            continue;
+        }
+
+        const tab = trimmed.indexOf("\t");
+        if (tab === -1) {
+            continue;
+        }
+
+        const name = trimmed.slice(0, tab);
+        const command = trimmed.slice(tab + 1).trim();
+
+        if (name && command) {
+            commands.set(name, command);
+        }
+    }
+
+    return commands;
 }
 
 export function sessionExists(sessionName: string): boolean {

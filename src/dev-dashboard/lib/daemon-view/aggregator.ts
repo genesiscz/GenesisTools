@@ -1,7 +1,7 @@
-import { isAbsolute, relative, resolve } from "node:path";
 import { getLogsBaseDir, loadConfig } from "@app/daemon/lib/config";
 import { getDaemonStatus } from "@app/daemon/lib/launchd";
 import { listRunsForTask, listTasksWithLogs, parseLogFile } from "@app/daemon/lib/log-reader";
+import { assertLogFileContained } from "@app/dev-dashboard/lib/daemon-run-tail";
 import type { DaemonOverview, LogEntry, RunSummary } from "./types";
 
 export async function getDaemonOverview(): Promise<DaemonOverview> {
@@ -47,15 +47,9 @@ export function getAllRecentRuns(limit: number): RunSummary[] {
 }
 
 export function getRunLog(logFile: string, baseDir: string = getLogsBaseDir()): LogEntry[] {
-    // logFile arrives straight from the ?logFile= query param. Contain it to the
-    // daemon logs dir so a crafted value can't read arbitrary files.
-    const root = resolve(baseDir);
-    const resolved = resolve(logFile);
-    const rel = relative(root, resolved);
-
-    if (rel.startsWith("..") || isAbsolute(rel)) {
-        throw new Error("logFile escapes the daemon logs directory");
-    }
+    // logFile arrives straight from the ?logFile= query param. The shared guard contains it to the
+    // daemon logs dir so a crafted value can't read arbitrary files (root-fix: one guard, two callers).
+    const resolved = assertLogFileContained(logFile, baseDir);
 
     return parseLogFile(resolved);
 }

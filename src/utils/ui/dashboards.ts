@@ -141,6 +141,18 @@ export const DASHBOARDS = {
         auth: "none",
         note: "Shared by `tools task dashboard open` and `tools debugging-master dashboard serve open` (latter via the DashboardApp commander).",
     },
+    "dev-dashboard-cloud": {
+        key: "dev-dashboard-cloud",
+        name: "DevDashboard Cloud",
+        description: "Managed-tier marketing landing + signup + customer dashboard (provisioning, billing).",
+        port: 7251,
+        strictPort: false,
+        launch: "tools dev-dashboard-cloud",
+        portOverride: { env: "DD_CLOUD_PORT", flag: "-p, --port" },
+        tech: "vite+tanstack-start+nitro",
+        auth: "none",
+        note: "Auth is Better-Auth + SQLite (pluggable; WorkOS is the documented alternate adapter — the registry enum has no `better-auth` value, so `none` here means 'not WorkOS/basic-auth'). App in DevDashboard/cloud/web.",
+    },
 } as const satisfies Record<string, DashboardEntry>;
 
 export type DashboardKey = keyof typeof DASHBOARDS;

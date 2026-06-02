@@ -1,6 +1,11 @@
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { makeBasicAuthHeader, parseBasicAuthHeader } from "@app/dev-dashboard/contract/auth-header";
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+
+// The pure base64 Basic-Auth codec moved into the RN-safe contract (plan 02 Task 0);
+// re-exported here so the Agent's existing import paths keep working unchanged.
+export { makeBasicAuthHeader, parseBasicAuthHeader };
 
 export interface DashboardAuthConfig {
     enabled: boolean;
@@ -20,11 +25,6 @@ interface CreateBasicAuthOptions {
     salt?: string;
 }
 
-interface BasicAuthInput {
-    username: string;
-    password: string;
-}
-
 const PASSWORD_KEY_LENGTH = 32;
 
 function hashPassword(password: string, salt: string): string {
@@ -40,25 +40,6 @@ function secureHexEqual(left: string, right: string): boolean {
     }
 
     return timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-function parseBasicAuthHeader(header: string | null): BasicAuthInput | null {
-    if (!header || !/^basic\s+/i.test(header)) {
-        return null;
-    }
-
-    const encoded = header.replace(/^basic\s+/i, "").trim();
-    const decoded = Buffer.from(encoded, "base64").toString("utf8");
-    const separatorIndex = decoded.indexOf(":");
-
-    if (separatorIndex < 1) {
-        return null;
-    }
-
-    return {
-        username: decoded.slice(0, separatorIndex),
-        password: decoded.slice(separatorIndex + 1),
-    };
 }
 
 export function createBasicAuthCredentials(options: CreateBasicAuthOptions = {}): {
@@ -82,10 +63,6 @@ export function createBasicAuthCredentials(options: CreateBasicAuthOptions = {})
 
 export function isCompleteAuthConfig(auth: DashboardAuthConfig): auth is CompleteDashboardAuthConfig {
     return Boolean(auth.passwordHash && auth.passwordSalt);
-}
-
-export function makeBasicAuthHeader(input: BasicAuthInput): string {
-    return `Basic ${Buffer.from(`${input.username}:${input.password}`).toString("base64")}`;
 }
 
 export function verifyBasicAuthHeader(header: string | null, auth: CompleteDashboardAuthConfig): boolean {
