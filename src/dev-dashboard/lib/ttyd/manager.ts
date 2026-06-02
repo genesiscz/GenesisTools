@@ -12,6 +12,7 @@ import {
     ensureTmuxServerPersists,
     ensureTmuxSessionEnvironment,
     killTmuxSession,
+    listTmuxSessionCommands,
     sessionExists,
 } from "@app/utils/tmux/sessions";
 import type { Subprocess } from "bun";
@@ -287,7 +288,16 @@ export async function listTtyd(): Promise<TtydSession[]> {
     await hydrateRegistry();
     await pruneDeadSessions();
 
-    return Array.from(registry.values()).map((tracked) => tracked.session);
+    // Refresh each session's live `lastCommand` from its bound tmux session (one list-sessions call,
+    // shared across all sessions). Drives the auto-name; a manual `name` still wins downstream.
+    const commandByTmux = listTmuxSessionCommands();
+
+    return Array.from(registry.values()).map((tracked) => {
+        const { session } = tracked;
+        const lastCommand = session.tmuxSessionName ? commandByTmux.get(session.tmuxSessionName) : undefined;
+
+        return { ...session, lastCommand };
+    });
 }
 
 /**

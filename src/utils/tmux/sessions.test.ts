@@ -4,6 +4,7 @@ import {
     buildTmuxSpawnEnv,
     createTmuxSession,
     getTmuxScrollState,
+    listTmuxSessionCommands,
     listTmuxSessions,
     renameTmuxSession,
     scrollTmuxToFraction,
@@ -41,6 +42,29 @@ describe("tmux sessions", () => {
         setTmuxBinForTests("/mock/tmux");
         setTmuxSpawnSyncForTests(() => ({ exitCode: 1, stdout: "" }));
         expect(listTmuxSessions()).toEqual([]);
+    });
+
+    test("listTmuxSessionCommands maps session name to its active pane command", () => {
+        setTmuxBinForTests("/mock/tmux");
+        setTmuxSpawnSyncForTests((cmd) => {
+            if (cmd.includes("list-sessions")) {
+                return { exitCode: 0, stdout: "dev-dashboard-abc12345\tclaude\ncmux-test\tzsh\nblank-cmd\t\n" };
+            }
+
+            return { exitCode: 0, stdout: "" };
+        });
+
+        const commands = listTmuxSessionCommands();
+        expect(commands.get("dev-dashboard-abc12345")).toBe("claude");
+        expect(commands.get("cmux-test")).toBe("zsh");
+        // A blank command is skipped (no entry), not stored as "".
+        expect(commands.has("blank-cmd")).toBe(false);
+    });
+
+    test("listTmuxSessionCommands returns empty when tmux fails", () => {
+        setTmuxBinForTests("/mock/tmux");
+        setTmuxSpawnSyncForTests(() => ({ exitCode: 1, stdout: "" }));
+        expect(listTmuxSessionCommands().size).toBe(0);
     });
 
     test("sessionExists checks parsed list", () => {

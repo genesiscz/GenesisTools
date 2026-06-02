@@ -14,7 +14,9 @@ import { fetchJson } from "@/lib/api";
 
 const DEFAULT_LIST = "GenesisTools";
 
-class PermissionError extends Error {}
+class PermissionError extends Error {
+    readonly kind = "permission" as const;
+}
 
 async function fetchTodos(listIds: string[], includeCompleted: boolean): Promise<TodosResult> {
     const params = new URLSearchParams();
