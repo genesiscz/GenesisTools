@@ -144,7 +144,7 @@ program
     .action(async (files: string[], options: Options) => {
         if (!isHashAlgo(options.algo)) {
             out.error(`Unknown algorithm: ${options.algo}`);
-            await exitWith(1);
+            return await exitWith(1);
         }
 
         const algo = options.algo;
@@ -152,11 +152,11 @@ program
         if (options.check) {
             if (files.length > 0) {
                 out.error("Cannot pass files together with --check.");
-                await exitWith(1);
+                return await exitWith(1);
             }
 
             const code = await runCheck(algo, options.check, options.quiet ?? false);
-            await exitWith(code);
+            return await exitWith(code);
         }
 
         if (files.length === 0) {
@@ -165,11 +165,11 @@ program
                 out.log.info(suggestCommand("tools hash", { add: ["<file>", "--algo", "sha256"] }));
             }
 
-            await exitWith(1);
+            return await exitWith(1);
         }
 
         const code = await runCompute(algo, files);
-        await exitWith(code);
+        return await exitWith(code);
     });
 
 await runTool(program, { tool: "hash" });
