@@ -1,4 +1,4 @@
-import { SafeJSON } from "@app/utils/json";
+import { loadPersistedSettings, savePersistedSettings } from "@ui/settings";
 
 export interface SessionPoolSettings {
     /** How long after exit a session stays in the live / mosaic pool. */
@@ -12,7 +12,13 @@ export const DEFAULT_SESSION_POOL_SETTINGS: SessionPoolSettings = {
     keepAllAlive: true,
 };
 
-const STORAGE_KEY = "dbg.sessionPoolSettings";
+export const SESSION_POOL_SETTINGS_STORAGE_KEY = "dbg.sessionPoolSettings";
+
+const persistOptions = {
+    storageKey: SESSION_POOL_SETTINGS_STORAGE_KEY,
+    defaults: DEFAULT_SESSION_POOL_SETTINGS,
+    parse: parseSessionPoolSettings,
+};
 
 const MIN_ACTIVE_SESSION_LIMIT_MINUTES = 5;
 const MAX_ACTIVE_SESSION_LIMIT_MINUTES = 24 * 60;
@@ -21,38 +27,21 @@ export function activeSessionRetentionMs(settings: SessionPoolSettings): number 
     return settings.activeSessionLimitMinutes * 60 * 1000;
 }
 
+export function parseSessionPoolSettings(raw: unknown): SessionPoolSettings {
+    const parsed = (raw ?? {}) as Partial<SessionPoolSettings>;
+
+    return {
+        activeSessionLimitMinutes: clampActiveSessionLimitMinutes(parsed.activeSessionLimitMinutes),
+        keepAllAlive: parsed.keepAllAlive !== false,
+    };
+}
+
 export function loadSessionPoolSettings(): SessionPoolSettings {
-    if (typeof window === "undefined") {
-        return DEFAULT_SESSION_POOL_SETTINGS;
-    }
-
-    try {
-        const raw = window.localStorage.getItem(STORAGE_KEY);
-        if (!raw) {
-            return DEFAULT_SESSION_POOL_SETTINGS;
-        }
-
-        const parsed = SafeJSON.parse(raw) as Partial<SessionPoolSettings>;
-
-        return {
-            activeSessionLimitMinutes: clampActiveSessionLimitMinutes(parsed.activeSessionLimitMinutes),
-            keepAllAlive: parsed.keepAllAlive !== false,
-        };
-    } catch {
-        return DEFAULT_SESSION_POOL_SETTINGS;
-    }
+    return loadPersistedSettings(persistOptions);
 }
 
 export function saveSessionPoolSettings(settings: SessionPoolSettings): void {
-    if (typeof window === "undefined") {
-        return;
-    }
-
-    try {
-        window.localStorage.setItem(STORAGE_KEY, SafeJSON.stringify(settings));
-    } catch {
-        // localStorage unavailable
-    }
+    savePersistedSettings(persistOptions, settings);
 }
 
 function clampActiveSessionLimitMinutes(value: unknown): number {
