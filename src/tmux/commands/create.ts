@@ -1,7 +1,6 @@
 import { out } from "@app/logger";
-import { resolveTmuxBin } from "@app/utils/tmux/bin";
 import { makeStandaloneTmuxSessionName } from "@app/utils/tmux/naming";
-import { createTmuxSession, sessionExists } from "@app/utils/tmux/sessions";
+import { attachTmuxSession, createTmuxSession, sessionExists } from "@app/utils/tmux/sessions";
 import type { Command } from "commander";
 
 interface CreateFlags {
@@ -11,8 +10,8 @@ interface CreateFlags {
     attach?: boolean;
 }
 
-export function registerTmuxCreateCommand(parent: Command): void {
-    parent
+export function registerCreateCommand(program: Command): void {
+    program
         .command("create")
         .description("Create a detached tmux session (visible in dev-dashboard tmux hub)")
         .option("-n, --name <name>", "Session name (default: cmux-<id>)")
@@ -41,15 +40,6 @@ export function registerTmuxCreateCommand(parent: Command): void {
                 );
             }
 
-            const tmuxBin = resolveTmuxBin();
-            // Hand the terminal to tmux. Bun.spawnSync with inherit stdio replaces our
-            // I/O with tmux's; control returns to this process on detach (C-b d) or kill.
-            const result = Bun.spawnSync([tmuxBin, "attach-session", "-t", sessionName], {
-                stdio: ["inherit", "inherit", "inherit"],
-            });
-
-            if (result.exitCode !== 0) {
-                throw new Error(`tmux attach-session exited with code ${result.exitCode}`);
-            }
+            attachTmuxSession(sessionName);
         });
 }

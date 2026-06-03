@@ -7,9 +7,9 @@ interface ListPresetsFlags {
     json?: boolean;
 }
 
-export function registerListPresetsCommand(parent: Command): void {
+export function registerPresetListCommand(parent: Command): void {
     parent
-        .command("list-presets")
+        .command("list")
         .description("List saved tmux session presets")
         .option("--json", "Output as JSON")
         .action((flags: ListPresetsFlags) => {
@@ -27,7 +27,7 @@ export function runListPresets(flags: ListPresetsFlags): void {
     }
 
     if (presets.length === 0) {
-        out.println(pc.dim(`(no presets — save one with "tools cmux tmux sessions save-preset")`));
+        out.println(pc.dim(`(no presets — save one with "tools tmux presets save")`));
         out.println(pc.dim(`dir: ${store.getDir()}`));
         return;
     }

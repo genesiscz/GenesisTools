@@ -8,9 +8,9 @@ interface DeleteFlags {
     yes?: boolean;
 }
 
-export function registerDeletePresetCommand(parent: Command): void {
+export function registerPresetDeleteCommand(parent: Command): void {
     parent
-        .command("delete-preset <name>")
+        .command("delete <name>")
         .description("Delete a saved tmux session preset")
         .option("-y, --yes", "Skip the confirmation prompt")
         .action((name: string, flags: DeleteFlags) => {
@@ -30,7 +30,7 @@ export function runDeletePreset(name: string, flags: DeleteFlags): void {
     if (!flags.yes) {
         if (!isInteractive()) {
             out.error(
-                `Pass --yes to skip the confirmation in non-interactive mode. ${suggestCommand(`tools cmux tmux sessions delete-preset ${name} --yes`)}`
+                `Pass --yes to skip the confirmation in non-interactive mode. ${suggestCommand(`tools tmux presets delete ${name} --yes`)}`
             );
             process.exitCode = 1;
             return;

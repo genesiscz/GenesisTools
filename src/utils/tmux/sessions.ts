@@ -271,6 +271,22 @@ export function killTmuxSession(sessionName: string): void {
     spawnSyncImpl([tmuxBin, "kill-session", "-t", sessionName]);
 }
 
+/**
+ * Hand the controlling terminal to `tmux attach-session`. Replaces our stdio with
+ * tmux's; control returns on detach (C-b d) or session kill. The caller MUST guard
+ * for a TTY first — attaching without one fails. Throws on a non-zero exit.
+ */
+export function attachTmuxSession(sessionName: string): void {
+    const tmuxBin = resolveTmuxBin();
+    const result = Bun.spawnSync([tmuxBin, "attach-session", "-t", sessionName], {
+        stdio: ["inherit", "inherit", "inherit"],
+    });
+
+    if (result.exitCode !== 0) {
+        throw new Error(`tmux attach-session exited with code ${result.exitCode}`);
+    }
+}
+
 export function renameTmuxSession(fromName: string, toName: string): void {
     const tmuxBin = resolveTmuxBin();
     const trimmed = toName.trim();
