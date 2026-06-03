@@ -1,6 +1,6 @@
 export { Avatar, AvatarFallback, AvatarImage } from "@ui/components/avatar";
-export { Badge, badgeVariants } from "@ui/components/badge";
 export { BlinkingBox, type BlinkingBoxProps, type BlinkingBoxVariant } from "@ui/components/BlinkingBox";
+export { Badge, badgeVariants } from "@ui/components/badge";
 export { Button, buttonVariants } from "@ui/components/button";
 export type { CardAccent } from "@ui/components/card";
 export {
@@ -54,6 +54,7 @@ export {
     DropdownMenuSubTrigger,
     DropdownMenuTrigger,
 } from "@ui/components/dropdown-menu";
+export { HighlightText } from "@ui/components/highlight-text";
 export {
     ICON_TOOLTIP_DELAY_MS,
     IconButton,
@@ -62,7 +63,6 @@ export {
     IconTooltip,
     IconTooltipProvider,
 } from "@ui/components/icon-button";
-export { HighlightText } from "@ui/components/highlight-text";
 export { Input } from "@ui/components/input";
 export { Label } from "@ui/components/label";
 export {
@@ -167,15 +167,15 @@ export type { DashboardLayoutProps, NavLink } from "@ui/layouts/DashboardLayout"
 export { DashboardLayout } from "@ui/layouts/DashboardLayout";
 export { cn } from "@ui/lib/utils";
 export {
+    type CreateSettingsProviderConfig,
     createPersistedSettingsStorage,
     createSettingsProvider,
     loadPersistedSettings,
-    savePersistedSettings,
-    type CreateSettingsProviderConfig,
     type PersistedSettingsOptions,
     type PersistedSettingsStorage,
     type SettingsContextValue,
     type SettingsStoreKind,
+    savePersistedSettings,
 } from "@ui/settings";
 // Themes — apply via className: "wow" | "cyberpunk"
 export type { ThemeVariant } from "@ui/theme/provider";

@@ -1,5 +1,5 @@
-import type { ReactElement, ReactNode } from "react";
 import { createSettingsProvider } from "@ui/settings";
+import type { ReactElement, ReactNode } from "react";
 import {
     applyDisplaySettings,
     DEFAULT_DISPLAY_SETTINGS,

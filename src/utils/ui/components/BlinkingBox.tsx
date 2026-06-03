@@ -1,6 +1,6 @@
 import { Slot } from "@radix-ui/react-slot";
 import { cn } from "@ui/lib/utils";
-import type { CSSProperties, ComponentPropsWithoutRef, ReactElement, ReactNode } from "react";
+import type { ComponentPropsWithoutRef, CSSProperties, ReactElement, ReactNode } from "react";
 
 export type BlinkingBoxVariant = "amber-inset" | "cyan-inset" | "accent-glow";
 
@@ -84,9 +84,7 @@ export function BlinkingBox({
           }
         : undefined;
 
-    const style: CSSProperties | undefined = animationStyle
-        ? { ...styleProp, ...animationStyle }
-        : styleProp;
+    const style: CSSProperties | undefined = animationStyle ? { ...styleProp, ...animationStyle } : styleProp;
 
     return (
         <>
