@@ -5,6 +5,11 @@ interface BuildOptions {
     extraRowPlacement?: "start" | "end";
 }
 
+export interface ReconcileOptions extends BuildOptions {
+    /** Lay out added panes using `nextItems` order (e.g. recency) instead of after retained panes. */
+    followNextItemOrder?: boolean;
+}
+
 function equalPercentages(count: number): number[] {
     return Array.from({ length: count }, () => Number((100 / count).toFixed(4)));
 }
@@ -145,7 +150,7 @@ export function pruneMosaicLeaves<T extends string>(
 export function reconcileMosaicLayout<T extends string>(
     current: MosaicNode<T> | null,
     nextItems: T[],
-    options: BuildOptions
+    options: ReconcileOptions
 ): MosaicNode<T> | null {
     if (nextItems.length === 0) {
         return null;
@@ -173,6 +178,10 @@ export function reconcileMosaicLayout<T extends string>(
             return pruned;
         }
 
+        return buildBalancedMosaicLayout(nextItems, options);
+    }
+
+    if (options.followNextItemOrder) {
         return buildBalancedMosaicLayout(nextItems, options);
     }
 
