@@ -10,10 +10,10 @@ interface ListFlags {
     prefix?: string;
 }
 
-export function registerListCommand(parent: Command): void {
-    parent
-        .command("list")
-        .description("List live tmux sessions on the default socket (alias: default action)")
+export function registerSessionsCommand(program: Command): void {
+    program
+        .command("sessions")
+        .description("List live tmux sessions on the default socket")
         .option("--json", "Output as JSON")
         .option("--detailed", "Include per-pane cwd / current command (slower; runs capture)")
         .option("--prefix <str>", "Only sessions whose name starts with this prefix")

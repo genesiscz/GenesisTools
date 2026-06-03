@@ -12,10 +12,10 @@ interface SaveFlags {
     note?: string;
 }
 
-export function registerSavePresetCommand(parent: Command): void {
+export function registerPresetSaveCommand(parent: Command): void {
     parent
-        .command("save-preset [name]")
-        .description("Snapshot current tmux sessions to ~/.genesis-tools/cmux/tmux-presets/<name>.json")
+        .command("save [name]")
+        .description("Snapshot the current tmux sessions into a named preset")
         .option("--prefix <str>", "Only capture sessions whose name starts with this prefix")
         .option("-f, --force", "Overwrite an existing preset of the same name")
         .option("--skip-history", "Skip per-pane last-shell-command parsing (smaller / faster)")
@@ -33,7 +33,7 @@ export function runSavePreset(rawName: string | undefined, flags: SaveFlags): vo
         out.error(`Preset "${name}" already exists. Use --force to overwrite.`);
 
         if (!isInteractive()) {
-            out.error(suggestCommand(`tools cmux tmux sessions save-preset ${name}`, { add: ["--force"] }));
+            out.error(suggestCommand(`tools tmux presets save ${name}`, { add: ["--force"] }));
         }
 
         process.exitCode = 1;
@@ -83,9 +83,7 @@ export function runSavePreset(rawName: string | undefined, flags: SaveFlags): vo
             out.println(`  ${pc.dim("note:")} ${preset.note}`);
         }
 
-        out.println(
-            `\nRestore with ${pc.cyan(`tools cmux tmux sessions restore-preset ${name}`)}`
-        );
+        out.println(`\nRestore with ${pc.cyan(`tools tmux presets restore ${name}`)}`);
     } catch (error) {
         if (error instanceof PresetExistsError) {
             out.error(error.message);
@@ -93,7 +91,7 @@ export function runSavePreset(rawName: string | undefined, flags: SaveFlags): vo
             return;
         }
 
-        logger.error({ error, name }, "[tmux save-preset] failed");
+        logger.error({ error, name }, "[tmux presets save] failed");
         throw error;
     }
 }

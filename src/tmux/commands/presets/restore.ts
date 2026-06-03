@@ -2,7 +2,7 @@ import { logger, out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import { sessionExists } from "@app/utils/tmux/sessions";
-import { restoreTmuxSession } from "@app/utils/tmux/snapshot";
+import { restoreTmuxSession, type TmuxPreset } from "@app/utils/tmux/snapshot";
 import { PresetNotFoundError, TmuxPresetStore } from "@app/utils/tmux/snapshot-store";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -16,16 +16,13 @@ interface RestoreFlags {
     only?: string;
 }
 
-export function registerRestorePresetCommand(parent: Command): void {
+export function registerPresetRestoreCommand(parent: Command): void {
     parent
-        .command("restore-preset <name>")
+        .command("restore <name>")
         .description("Recreate tmux sessions from a saved preset (skips sessions that already exist)")
         .option("-y, --yes", "Skip the confirmation prompt")
         .option("--skip-replay", "Don't pre-type the captured last shell command in each pane")
-        .option(
-            "--suffix <str>",
-            "Append this suffix to every recreated session name (use when originals still alive)"
-        )
+        .option("--suffix <str>", "Append this suffix to every recreated session name (use when originals still alive)")
         .option("--dry-run", "Print the plan without touching tmux")
         .option("--only <prefix>", "Only restore sessions whose original name starts with this prefix")
         .action(async (name: string, flags: RestoreFlags) => {
@@ -36,7 +33,7 @@ export function registerRestorePresetCommand(parent: Command): void {
 export async function runRestorePreset(name: string, flags: RestoreFlags): Promise<void> {
     const store = new TmuxPresetStore();
 
-    let preset;
+    let preset: TmuxPreset;
     try {
         preset = store.read(name);
     } catch (error) {
@@ -77,7 +74,7 @@ export async function runRestorePreset(name: string, flags: RestoreFlags): Promi
     if (!flags.yes) {
         if (!isInteractive()) {
             out.error(
-                `Pass --yes to skip the confirmation in non-interactive mode. ${suggestCommand(`tools cmux tmux sessions restore-preset ${name} --yes`)}`
+                `Pass --yes to skip the confirmation in non-interactive mode. ${suggestCommand(`tools tmux presets restore ${name} --yes`)}`
             );
             process.exitCode = 1;
             return;
@@ -113,7 +110,7 @@ export async function runRestorePreset(name: string, flags: RestoreFlags): Promi
             }
         } catch (error) {
             failures.push({ name: session.name, error });
-            logger.error({ error, sessionName: session.name }, "[tmux restore-preset] failed");
+            logger.error({ error, sessionName: session.name }, "[tmux presets restore] failed");
             out.println(`  ${pc.red("✗")} ${session.name}: ${error instanceof Error ? error.message : String(error)}`);
         }
     }

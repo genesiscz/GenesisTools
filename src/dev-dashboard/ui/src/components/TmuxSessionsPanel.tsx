@@ -102,9 +102,8 @@ export function TmuxSessionsPanel({ open, onOpenChange, onFocusTtydTab }: Props)
                                 </p>
                             ) : sessions.length === 0 ? (
                                 <p className="py-6 text-center font-mono text-sm text-zinc-500">
-                                    No tmux sessions. Run{" "}
-                                    <code className="text-emerald-400">tools cmux tmux create</code> or start a ttyd
-                                    terminal.
+                                    No tmux sessions. Run <code className="text-emerald-400">tools tmux create</code> or
+                                    start a ttyd terminal.
                                 </p>
                             ) : (
                                 sessions.map((session: TmuxHubSession, index) => (
