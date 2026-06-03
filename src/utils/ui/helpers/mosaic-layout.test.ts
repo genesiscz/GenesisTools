@@ -67,6 +67,16 @@ describe("mosaic layout helpers", () => {
         expect(flattenMosaicLeaves(next)).toEqual(["1", "3", "4", "5"]);
     });
 
+    test("followNextItemOrder lays out new panes in nextItems order (newest first)", () => {
+        const current = buildBalancedMosaicLayout(["1", "2", "3", "4"], { maxColumns: 3 });
+        const next = reconcileMosaicLayout(current, ["5", "1", "3", "4"], {
+            maxColumns: 3,
+            followNextItemOrder: true,
+        });
+
+        expect(flattenMosaicLeaves(next)).toEqual(["5", "1", "3", "4"]);
+    });
+
     test("keeps the current layout object when panes did not change", () => {
         const current = buildBalancedMosaicLayout(["1", "2", "3"], { maxColumns: 3 });
         const next = reconcileMosaicLayout(current, ["1", "2", "3"], { maxColumns: 3 });
