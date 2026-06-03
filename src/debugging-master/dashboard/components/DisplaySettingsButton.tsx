@@ -75,56 +75,19 @@ function SegmentedField<T extends string>({
     );
 }
 
-export function DisplaySettingsButton(): ReactElement {
-    const { settings, updateSettings, resetSettings } = useDisplaySettings();
-
+function LogDisplayFields({
+    settings,
+    updateSettings,
+    onReset,
+    resetLabel,
+}: {
+    settings: ReturnType<typeof useDisplaySettings>["settings"];
+    updateSettings: ReturnType<typeof useDisplaySettings>["updateSettings"];
+    onReset: () => void;
+    resetLabel: string;
+}): ReactElement {
     return (
-        <IconPopover
-            tooltip="Display settings"
-            align="end"
-            contentClassName="w-72 bg-[#0d0d18] border-white/10 text-white p-4 space-y-4 dbg-ui-text"
-            trigger={
-                <button
-                    type="button"
-                    className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-white/10 text-white/55 hover:text-white/90 hover:border-cyan-500/40 hover:bg-white/5 transition-colors"
-                >
-                    <Wrench className="w-4 h-4" />
-                </button>
-            }
-        >
-            <div>
-                <p className="dbg-ui-text-sm uppercase tracking-widest text-white/50">Display</p>
-                <p className="dbg-ui-text-xs text-white/35 mt-1">Settings persist in this browser.</p>
-            </div>
-            <FontSizeField
-                label="UI text"
-                value={settings.uiFontSize}
-                onChange={(uiFontSize) => {
-                    updateSettings({ uiFontSize });
-                }}
-            />
-            <FontSizeField
-                label="Session headers"
-                value={settings.headerFontSize}
-                onChange={(headerFontSize) => {
-                    updateSettings({ headerFontSize });
-                }}
-            />
-            <FontSizeField
-                label="Log lines"
-                value={settings.logFontSize}
-                onChange={(logFontSize) => {
-                    updateSettings({ logFontSize });
-                }}
-            />
-            <SegmentedField<LogFontFamily>
-                legend="Log font"
-                value={settings.logFontFamily}
-                options={LOG_FONT_FAMILY_OPTIONS}
-                onChange={(logFontFamily) => {
-                    updateSettings({ logFontFamily });
-                }}
-            />
+        <>
             <SegmentedField<TimestampMode>
                 legend="Timestamps"
                 value={settings.timestampMode}
@@ -148,13 +111,95 @@ export function DisplaySettingsButton(): ReactElement {
                     updateSettings({ lineBoundaries });
                 }}
             />
+            <SegmentedField<"show" | "hide">
+                legend="Line ID"
+                value={settings.showLineId ? "show" : "hide"}
+                options={[
+                    { value: "show", label: "Show" },
+                    { value: "hide", label: "Hide" },
+                ]}
+                onChange={(next) => {
+                    updateSettings({ showLineId: next === "show" });
+                }}
+            />
             <button
                 type="button"
-                onClick={resetSettings}
+                onClick={onReset}
                 className="dbg-ui-text-xs uppercase tracking-wider text-white/45 hover:text-white/75"
             >
-                reset defaults
+                {resetLabel}
             </button>
+        </>
+    );
+}
+
+interface Props {
+    variant?: "full" | "log";
+}
+
+export function DisplaySettingsButton({ variant = "full" }: Props): ReactElement {
+    const { settings, updateSettings, resetSettings, resetLogSettings } = useDisplaySettings();
+    const isLogOnly = variant === "log";
+
+    return (
+        <IconPopover
+            tooltip={isLogOnly ? "Log display settings" : "Display settings"}
+            align="end"
+            contentClassName="w-72 bg-[#0d0d18] border-white/10 text-white p-4 space-y-4 dbg-ui-text"
+            trigger={
+                <button
+                    type="button"
+                    className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-white/10 text-white/55 hover:text-white/90 hover:border-cyan-500/40 hover:bg-white/5 transition-colors"
+                >
+                    <Wrench className="w-4 h-4" />
+                </button>
+            }
+        >
+            <div>
+                <p className="dbg-ui-text-sm uppercase tracking-widest text-white/50">
+                    {isLogOnly ? "Log display" : "Display"}
+                </p>
+                <p className="dbg-ui-text-xs text-white/35 mt-1">Settings persist in this browser.</p>
+            </div>
+            {!isLogOnly ? (
+                <>
+                    <FontSizeField
+                        label="UI text"
+                        value={settings.uiFontSize}
+                        onChange={(uiFontSize) => {
+                            updateSettings({ uiFontSize });
+                        }}
+                    />
+                    <FontSizeField
+                        label="Session headers"
+                        value={settings.headerFontSize}
+                        onChange={(headerFontSize) => {
+                            updateSettings({ headerFontSize });
+                        }}
+                    />
+                    <FontSizeField
+                        label="Log lines"
+                        value={settings.logFontSize}
+                        onChange={(logFontSize) => {
+                            updateSettings({ logFontSize });
+                        }}
+                    />
+                    <SegmentedField<LogFontFamily>
+                        legend="Log font"
+                        value={settings.logFontFamily}
+                        options={LOG_FONT_FAMILY_OPTIONS}
+                        onChange={(logFontFamily) => {
+                            updateSettings({ logFontFamily });
+                        }}
+                    />
+                </>
+            ) : null}
+            <LogDisplayFields
+                settings={settings}
+                updateSettings={updateSettings}
+                onReset={isLogOnly ? resetLogSettings : resetSettings}
+                resetLabel={isLogOnly ? "reset log defaults" : "reset defaults"}
+            />
         </IconPopover>
     );
 }

@@ -2,6 +2,7 @@ import { createContext, type ReactElement, type ReactNode, useContext, useEffect
 import {
     applyDisplaySettings,
     DEFAULT_DISPLAY_SETTINGS,
+    DEFAULT_LOG_DISPLAY_SETTINGS,
     type DisplaySettings,
     loadDisplaySettings,
     saveDisplaySettings,
@@ -11,6 +12,7 @@ interface DisplaySettingsContextValue {
     settings: DisplaySettings;
     updateSettings: (patch: Partial<DisplaySettings>) => void;
     resetSettings: () => void;
+    resetLogSettings: () => void;
 }
 
 const DisplaySettingsContext = createContext<DisplaySettingsContextValue | null>(null);
@@ -35,6 +37,9 @@ export function DisplaySettingsProvider({ children }: { children: ReactNode }): 
             },
             resetSettings: () => {
                 setSettings(DEFAULT_DISPLAY_SETTINGS);
+            },
+            resetLogSettings: () => {
+                setSettings((prev) => ({ ...prev, ...DEFAULT_LOG_DISPLAY_SETTINGS }));
             },
         }),
         [settings]

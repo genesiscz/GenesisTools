@@ -5,8 +5,11 @@ import { entryHasExpandableContent } from "@/lib/entry-expandable";
 import { formatDurationMs, formatTime } from "@/lib/format";
 import { LEVEL_META } from "@/lib/levels";
 import { visibleLogText } from "@/lib/log-line-display";
+import { formatLogLineIndex } from "@/lib/log-line-index";
 import { ExpandedView } from "./ExpandedView";
 import { InlineJsonPreview } from "./InlineJsonPreview";
+import { LogLineIndexButton } from "./LogLineIndexButton";
+import { useLogLineJump } from "./LogLineJumpProvider";
 import { LogLineText } from "./LogLineText";
 
 type InlinePayload = { kind: "json"; value: unknown } | { kind: "text"; value: string } | null;
@@ -16,6 +19,8 @@ interface Props {
     expanded: boolean;
     fresh: boolean;
     showTimestamp?: boolean;
+    showLineId?: boolean;
+    jumpEnabled?: boolean;
     highlightTokens?: string[];
     isMatch?: boolean;
     isContext?: boolean;
@@ -28,24 +33,27 @@ function EntryRowImpl({
     expanded,
     fresh,
     showTimestamp = true,
+    showLineId = true,
+    jumpEnabled = false,
     highlightTokens = [],
     isMatch = false,
     isContext = false,
     onToggle,
     onFilterHypothesis,
 }: Props): React.ReactElement {
+    const { jumpTargetIndex, jumpToLine, clearJump } = useLogLineJump();
     const highlighting = highlightTokens.length > 0;
     const previewText = visibleLogText(entry);
     const failed = entry.level === "assert" && entry.passed === false;
-    const refMeta = LEVEL_META[entry.level];
-    const refId = refMeta.refPrefix ? `${refMeta.refPrefix}${entry.index}` : null;
+    const lineIndexLabel = formatLogLineIndex(entry.index);
+    const isJumpTarget = jumpTargetIndex === entry.index;
     const expandable = entryHasExpandableContent(entry);
     const inline: InlinePayload = expandable && !expanded ? getInlinePayload(entry) : null;
     const showLevelChip = !entry.msgAnsi;
 
     return (
         <div
-            className="entry-row"
+            className={`entry-row${isJumpTarget ? " entry-row--jump" : ""}`}
             data-lvl={entry.level}
             data-failed={failed ? "true" : undefined}
             data-fresh={fresh ? "true" : undefined}
@@ -69,8 +77,17 @@ function EntryRowImpl({
             <div
                 className={`dbg-log-line px-3 sm:px-4${isMatch ? " dbg-log-line--match" : ""}${isContext ? " dbg-log-line--context" : ""}`}
             >
-                <span className="dbg-log-line__ts" aria-hidden={!showTimestamp}>
-                    {showTimestamp ? formatTime(entry.ts) : null}
+                <span className="dbg-log-line__ts" aria-hidden={!showTimestamp && !showLineId}>
+                    {showTimestamp ? <span className="tabular-nums">{formatTime(entry.ts)}</span> : null}
+                    {showLineId ? (
+                        <LogLineIndexButton
+                            index={entry.index}
+                            isJumpTarget={isJumpTarget}
+                            onJump={jumpToLine}
+                            onClearJump={clearJump}
+                            disabled={!jumpEnabled}
+                        />
+                    ) : null}
                 </span>
                 <div className="dbg-log-line__body flex items-baseline gap-2 min-w-0 flex-wrap">
                     {showLevelChip ? (
@@ -96,11 +113,11 @@ function EntryRowImpl({
                             h:{entry.h}
                         </button>
                     ) : null}
-                    <span className={`flex-1 min-w-0 ${entry.msgAnsi && !highlighting ? "" : "truncate-mono"}`}>
+                    <span className={`flex-1 min-w-0 dbg-log-wrap ${entry.msgAnsi && !highlighting ? "" : ""}`}>
                         {highlighting && previewText ? (
                             <HighlightText text={previewText} tokens={highlightTokens} className="text-white/85" />
                         ) : entry.msgAnsi ? (
-                            <LogLineText entry={entry} />
+                            <LogLineText entry={entry} className="dbg-log-wrap" />
                         ) : (
                             <>
                                 {entry.label ? <span className="text-amber-200">{entry.label}</span> : null}
@@ -117,7 +134,7 @@ function EntryRowImpl({
                             {formatDurationMs(entry.durationMs)}
                         </span>
                     ) : null}
-                    {refId ? <span className="dbg-log-meta text-white/45 tabular-nums shrink-0">{refId}</span> : null}
+                    <span className="dbg-log-meta text-white/45 tabular-nums shrink-0">{lineIndexLabel}</span>
                     {expandable ? (
                         <span className="dbg-log-meta text-white/45 shrink-0">{expanded ? "▾" : "▸"}</span>
                     ) : null}

@@ -51,6 +51,7 @@ export interface DisplaySettings {
     lineBoundaries: LineBoundaries;
     logFontFamily: LogFontFamily;
     timestampMode: TimestampMode;
+    showLineId: boolean;
 }
 
 export const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {
@@ -60,6 +61,13 @@ export const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {
     lineBoundaries: "show",
     logFontFamily: "default",
     timestampMode: "every",
+    showLineId: true,
+};
+
+export const DEFAULT_LOG_DISPLAY_SETTINGS: Pick<DisplaySettings, "timestampMode" | "lineBoundaries" | "showLineId"> = {
+    timestampMode: DEFAULT_DISPLAY_SETTINGS.timestampMode,
+    lineBoundaries: DEFAULT_DISPLAY_SETTINGS.lineBoundaries,
+    showLineId: DEFAULT_DISPLAY_SETTINGS.showLineId,
 };
 
 const STORAGE_KEY = "dbg.displaySettings";
@@ -92,6 +100,7 @@ export function loadDisplaySettings(): DisplaySettings {
             lineBoundaries: parsed.lineBoundaries === "hide" ? "hide" : "show",
             logFontFamily: parseLogFontFamily(parsed.logFontFamily),
             timestampMode: parseTimestampMode(parsed.timestampMode),
+            showLineId: parsed.showLineId === false ? false : true,
         };
     } catch {
         return DEFAULT_DISPLAY_SETTINGS;
@@ -175,4 +184,5 @@ export function applyDisplaySettings(settings: DisplaySettings): void {
     root.style.setProperty("--dbg-font-family", resolveLogFontFamilyCss(settings.logFontFamily));
     root.dataset.dbgLineBoundaries = settings.lineBoundaries;
     root.dataset.dbgTimestampMode = settings.timestampMode;
+    root.dataset.dbgShowLineId = settings.showLineId ? "true" : "false";
 }
