@@ -1,4 +1,5 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
+import { BlinkingBox } from "@ui/components/BlinkingBox";
 import { HighlightText } from "@ui/components/highlight-text";
 import type { ReactElement } from "react";
 import { formatTime } from "@/lib/format";
@@ -69,8 +70,10 @@ export function LogPreviewLine({
     );
 
     return (
-        <div
-            className={`${lineClass}${isJumpTarget ? " dbg-log-line--jump" : ""}`}
+        <BlinkingBox
+            active={isJumpTarget}
+            variant="amber-inset"
+            className={lineClass}
             title={previewText}
             data-log-index={entry.index}
             data-log-match={isMatch ? "true" : undefined}
@@ -113,6 +116,6 @@ export function LogPreviewLine({
                     </span>
                 )}
             </div>
-        </div>
+        </BlinkingBox>
     );
 }

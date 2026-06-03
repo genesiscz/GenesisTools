@@ -11,8 +11,10 @@ import {
     flattenMosaicLeaves,
     reconcileMosaicLayout,
 } from "@app/utils/ui/helpers/mosaic-layout";
+import { BlinkingBox } from "@ui/components/BlinkingBox";
 import { Button } from "@ui/components/button";
 import { IconButton } from "@ui/components/icon-button";
+import { cn } from "@ui/lib/utils";
 import { CmuxSendTargetDialog } from "@/components/CmuxSendTargetDialog";
 import { MobileKeyBar } from "@/components/MobileKeyBar";
 import { TmuxSessionsPanel } from "@/components/TmuxSessionsPanel";
@@ -316,13 +318,16 @@ export function TtydRoute() {
                     >
                         {sessions.length > 0 ? (
                             sessions.map((s) => (
-                                <div
+                                <BlinkingBox
                                     key={s.id}
-                                    className={
-                                        highlightId === s.id
-                                            ? "dd-ttyd-highlight dd-ttyd-highlight--pulse absolute inset-0 min-w-0 overflow-hidden"
-                                            : "absolute inset-0 min-w-0 overflow-hidden"
-                                    }
+                                    active={highlightId === s.id}
+                                    variant="accent-glow"
+                                    iterations={1}
+                                    durationMs={2500}
+                                    className={cn(
+                                        "absolute inset-0 min-w-0 overflow-hidden",
+                                        highlightId === s.id ? "dd-ttyd-highlight" : undefined
+                                    )}
                                     style={{
                                         opacity: s.id === active ? 1 : 0,
                                         pointerEvents: s.id === active ? "auto" : "none",
@@ -339,7 +344,7 @@ export function TtydRoute() {
                                     {s.id === active ? (
                                         <TtydScrollbar ttydId={active} iframeRef={activeIframeRef} />
                                     ) : null}
-                                </div>
+                                </BlinkingBox>
                             ))
                         ) : (
                             <div className="flex h-full items-center justify-center text-[var(--dd-text-muted)]">
@@ -425,15 +430,15 @@ export function TtydRoute() {
                                         </div>
                                     }
                                 >
-                                    <div
-                                        className={
-                                            highlightId === id
-                                                ? "dd-ttyd-highlight dd-ttyd-highlight--pulse h-full"
-                                                : "h-full"
-                                        }
+                                    <BlinkingBox
+                                        active={highlightId === id}
+                                        variant="accent-glow"
+                                        iterations={1}
+                                        durationMs={2500}
+                                        className={cn("h-full", highlightId === id ? "dd-ttyd-highlight" : undefined)}
                                     >
                                         <TtydPane session={session} />
-                                    </div>
+                                    </BlinkingBox>
                                 </MosaicWindow>
                             );
                         }}
