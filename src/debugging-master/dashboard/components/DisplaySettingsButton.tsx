@@ -137,8 +137,20 @@ interface Props {
     variant?: "full" | "log";
 }
 
+function ResetDefaultsButton({ label, onClick }: { label: string; onClick: () => void }): ReactElement {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            className="dbg-ui-text-xs uppercase tracking-wider text-white/45 hover:text-white/75"
+        >
+            {label}
+        </button>
+    );
+}
+
 export function DisplaySettingsButton({ variant = "full" }: Props): ReactElement {
-    const { settings, updateSettings, resetSettings, resetLogSettings } = useDisplaySettings();
+    const { settings, updateSettings, resetTypographySettings, resetLogSettings } = useDisplaySettings();
     const isLogOnly = variant === "log";
 
     return (
@@ -192,13 +204,14 @@ export function DisplaySettingsButton({ variant = "full" }: Props): ReactElement
                             updateSettings({ logFontFamily });
                         }}
                     />
+                    <ResetDefaultsButton label="reset typography defaults" onClick={resetTypographySettings} />
                 </>
             ) : null}
             <LogDisplayFields
                 settings={settings}
                 updateSettings={updateSettings}
-                onReset={isLogOnly ? resetLogSettings : resetSettings}
-                resetLabel={isLogOnly ? "reset log defaults" : "reset defaults"}
+                onReset={resetLogSettings}
+                resetLabel={isLogOnly ? "reset log defaults" : "reset log display defaults"}
             />
         </IconPopover>
     );
