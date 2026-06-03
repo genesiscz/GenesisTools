@@ -1,4 +1,4 @@
-import { SafeJSON } from "@app/utils/json";
+import { loadPersistedSettings, savePersistedSettings } from "@ui/settings";
 
 export type LineBoundaries = "show" | "hide";
 
@@ -70,7 +70,23 @@ export const DEFAULT_LOG_DISPLAY_SETTINGS: Pick<DisplaySettings, "timestampMode"
     showLineId: DEFAULT_DISPLAY_SETTINGS.showLineId,
 };
 
-const STORAGE_KEY = "dbg.displaySettings";
+export const DEFAULT_TYPOGRAPHY_SETTINGS: Pick<
+    DisplaySettings,
+    "uiFontSize" | "headerFontSize" | "logFontSize" | "logFontFamily"
+> = {
+    uiFontSize: DEFAULT_DISPLAY_SETTINGS.uiFontSize,
+    headerFontSize: DEFAULT_DISPLAY_SETTINGS.headerFontSize,
+    logFontSize: DEFAULT_DISPLAY_SETTINGS.logFontSize,
+    logFontFamily: DEFAULT_DISPLAY_SETTINGS.logFontFamily,
+};
+
+export const DISPLAY_SETTINGS_STORAGE_KEY = "dbg.displaySettings";
+
+const persistOptions = {
+    storageKey: DISPLAY_SETTINGS_STORAGE_KEY,
+    defaults: DEFAULT_DISPLAY_SETTINGS,
+    parse: parseDisplaySettings,
+};
 
 const WEB_FONTS_LINK_ID = "dbg-web-fonts";
 const WEB_FONTS_URL =
@@ -80,43 +96,26 @@ const LOG_FONT_FAMILIES = new Set<LogFontFamily>(Object.keys(LOG_FONT_FAMILY_PRE
 
 const TIMESTAMP_MODES = new Set<TimestampMode>(["every", "change", "never"]);
 
+export function parseDisplaySettings(raw: unknown): DisplaySettings {
+    const parsed = (raw ?? {}) as Partial<DisplaySettings>;
+
+    return {
+        uiFontSize: clampFontSize(parsed.uiFontSize, DEFAULT_DISPLAY_SETTINGS.uiFontSize),
+        headerFontSize: clampFontSize(parsed.headerFontSize, DEFAULT_DISPLAY_SETTINGS.headerFontSize),
+        logFontSize: clampFontSize(parsed.logFontSize, DEFAULT_DISPLAY_SETTINGS.logFontSize),
+        lineBoundaries: parsed.lineBoundaries === "hide" ? "hide" : "show",
+        logFontFamily: parseLogFontFamily(parsed.logFontFamily),
+        timestampMode: parseTimestampMode(parsed.timestampMode),
+        showLineId: parsed.showLineId !== false,
+    };
+}
+
 export function loadDisplaySettings(): DisplaySettings {
-    if (typeof window === "undefined") {
-        return DEFAULT_DISPLAY_SETTINGS;
-    }
-
-    try {
-        const raw = window.localStorage.getItem(STORAGE_KEY);
-        if (!raw) {
-            return DEFAULT_DISPLAY_SETTINGS;
-        }
-
-        const parsed = SafeJSON.parse(raw) as Partial<DisplaySettings>;
-
-        return {
-            uiFontSize: clampFontSize(parsed.uiFontSize, DEFAULT_DISPLAY_SETTINGS.uiFontSize),
-            headerFontSize: clampFontSize(parsed.headerFontSize, DEFAULT_DISPLAY_SETTINGS.headerFontSize),
-            logFontSize: clampFontSize(parsed.logFontSize, DEFAULT_DISPLAY_SETTINGS.logFontSize),
-            lineBoundaries: parsed.lineBoundaries === "hide" ? "hide" : "show",
-            logFontFamily: parseLogFontFamily(parsed.logFontFamily),
-            timestampMode: parseTimestampMode(parsed.timestampMode),
-            showLineId: parsed.showLineId !== false,
-        };
-    } catch {
-        return DEFAULT_DISPLAY_SETTINGS;
-    }
+    return loadPersistedSettings(persistOptions);
 }
 
 export function saveDisplaySettings(settings: DisplaySettings): void {
-    if (typeof window === "undefined") {
-        return;
-    }
-
-    try {
-        window.localStorage.setItem(STORAGE_KEY, SafeJSON.stringify(settings));
-    } catch {
-        // localStorage unavailable
-    }
+    savePersistedSettings(persistOptions, settings);
 }
 
 function clampFontSize(value: unknown, fallback: number): number {
