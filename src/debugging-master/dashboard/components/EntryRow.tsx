@@ -1,4 +1,5 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
+import { BlinkingBox } from "@ui/components/BlinkingBox";
 import { HighlightText } from "@ui/components/highlight-text";
 import { memo } from "react";
 import { entryHasExpandableContent } from "@/lib/entry-expandable";
@@ -53,7 +54,7 @@ function EntryRowImpl({
 
     return (
         <div
-            className={`entry-row${isJumpTarget ? " entry-row--jump" : ""}`}
+            className="entry-row"
             data-lvl={entry.level}
             data-failed={failed ? "true" : undefined}
             data-fresh={fresh ? "true" : undefined}
@@ -74,7 +75,9 @@ function EntryRowImpl({
             role={expandable ? "button" : undefined}
             tabIndex={expandable ? 0 : undefined}
         >
-            <div
+            <BlinkingBox
+                active={isJumpTarget}
+                variant="amber-inset"
                 className={`dbg-log-line px-3 sm:px-4${isMatch ? " dbg-log-line--match" : ""}${isContext ? " dbg-log-line--context" : ""}`}
             >
                 <span className="dbg-log-line__ts" aria-hidden={!showTimestamp && !showLineId}>
@@ -139,7 +142,7 @@ function EntryRowImpl({
                         <span className="dbg-log-meta text-white/45 shrink-0">{expanded ? "▾" : "▸"}</span>
                     ) : null}
                 </div>
-            </div>
+            </BlinkingBox>
             {inline ? (
                 <div className="json-tree px-3 sm:px-4 pb-1.5 pl-[5.5rem] sm:pl-[6.5rem] text-[11px] truncate-mono">
                     {inline.kind === "json" ? (
