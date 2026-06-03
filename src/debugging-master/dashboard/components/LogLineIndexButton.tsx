@@ -1,11 +1,7 @@
 import { IconTooltip } from "@ui/components/icon-button";
 import { Crosshair } from "lucide-react";
 import type { MouseEvent, ReactElement } from "react";
-import {
-    formatLogLineIndex,
-    LOG_LINE_JUMP_CLEAR_TOOLTIP,
-    LOG_LINE_JUMP_TOOLTIP,
-} from "@/lib/log-line-index";
+import { formatLogLineIndex, LOG_LINE_JUMP_CLEAR_TOOLTIP, LOG_LINE_JUMP_TOOLTIP } from "@/lib/log-line-index";
 
 interface Props {
     index: number;
@@ -29,8 +25,7 @@ export function LogLineIndexButton({
     tooltip: tooltipOverride,
 }: Props): ReactElement {
     const label = formatLogLineIndex(index);
-    const tooltip =
-        tooltipOverride ?? (isJumpTarget ? LOG_LINE_JUMP_CLEAR_TOOLTIP : LOG_LINE_JUMP_TOOLTIP);
+    const tooltip = tooltipOverride ?? (isJumpTarget ? LOG_LINE_JUMP_CLEAR_TOOLTIP : LOG_LINE_JUMP_TOOLTIP);
 
     const handleClick = (event: MouseEvent<HTMLButtonElement>) => {
         event.stopPropagation();

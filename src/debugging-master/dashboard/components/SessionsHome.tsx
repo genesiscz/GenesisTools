@@ -9,20 +9,25 @@ import { useNowTick } from "@app/utils/ui/hooks/useNowTick";
 import { useDirPathPrefix } from "@ui/components/DirPath";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
+import { freezeLogSearch } from "@/components/LogSearchPopover";
 import { api } from "@/lib/api";
 import type { TimestampMode } from "@/lib/display-settings";
 import { filterDisplayLogLines, shouldShowLogTimestamp, visibleLogText } from "@/lib/log-line-display";
-import { useLogSearchDisplay } from "@/lib/use-log-search-display";
-import { useScrollToFirstLogMatch } from "@/lib/use-scroll-to-first-log-match";
 import { isSessionInActivePool } from "@/lib/session-active-pool";
+import { activeSessionRetentionMs } from "@/lib/session-pool-settings";
 import { formatSessionHeaderParts } from "@/lib/session-run-context";
 import type { ConnectionStatus, MultiplexLogEntry } from "@/lib/sse";
 import { connectActiveStream } from "@/lib/sse";
+import { useLogSearchDisplay } from "@/lib/use-log-search-display";
+import { useScrollToFirstLogMatch } from "@/lib/use-scroll-to-first-log-match";
 import { ActiveSessionMosaicToolbar } from "./ActiveSessionMosaicToolbar";
 import { DisplaySettingsButton } from "./DisplaySettingsButton";
 import { useDisplaySettings } from "./DisplaySettingsProvider";
+import { LogLineJumpProvider, useLogLineJump } from "./LogLineJumpProvider";
 import { LogPreviewLine } from "./LogPreviewLine";
 import { SessionHeaderLine } from "./SessionHeaderLine";
+import { SessionPoolSettingsButton } from "./SessionPoolSettingsButton";
+import { useSessionPoolSettings } from "./SessionPoolSettingsProvider";
 import { SessionDeleteButton, SessionRowBar } from "./SessionRowBar";
 import { StatusPill } from "./StatusPill";
 
@@ -154,13 +159,20 @@ function ActiveSessionTile({
     scrollRef,
     onScroll,
     timestampMode,
+    jumpEnabled,
 }: {
     lineHits: Array<{ line: MultiplexLogEntry; isMatch: boolean; isContext: boolean }>;
     highlightTokens: string[];
     scrollRef: React.RefObject<HTMLDivElement | null>;
     onScroll: () => void;
     timestampMode: TimestampMode;
+    jumpEnabled: boolean;
 }): React.ReactElement {
+    const { registerScrollContainer } = useLogLineJump();
+
+    useEffect(() => {
+        registerScrollContainer(scrollRef);
+    }, [registerScrollContainer, scrollRef]);
     return (
         <div className="h-full flex flex-col bg-black/30">
             <div
@@ -187,6 +199,8 @@ function ActiveSessionTile({
                                 entry={line}
                                 previewText={previewText(line)}
                                 showTimestamp={showTimestamp}
+                                lineIdPresentation="hover-rail"
+                                jumpEnabled={jumpEnabled}
                                 highlightTokens={highlightTokens}
                                 isMatch={isMatch}
                                 isContext={isContext}
@@ -235,13 +249,13 @@ function ActiveSessionMosaicPane({
     }, [logDisplay.hits]);
 
     const { ref, onScroll, resume } = useAutoScroll({
-        enabled: !paused && !logDisplay.isSearchActive,
+        enabled: !paused && !logDisplay.isFilterActive,
         onEnabledChange: onAutoscrollChange,
         edge: "bottom",
         snapDeps: [lineHits],
     });
 
-    useScrollToFirstLogMatch(ref, logDisplay.logSearch, logDisplay.matchCount, logDisplay.isSearchActive);
+    useScrollToFirstLogMatch(ref, logDisplay.logSearch, logDisplay.matchCount, logDisplay.isFilterActive);
 
     const togglePause = useCallback(() => {
         if (paused) {
@@ -253,46 +267,59 @@ function ActiveSessionMosaicPane({
     }, [paused, resume]);
 
     return (
-        <MosaicWindow<string>
-            path={path}
-            title=""
-            toolbarControls={<span />}
-            renderToolbar={() => (
-                <div className="flex w-full min-w-0">
-                    <ActiveSessionMosaicToolbar
-                        session={session}
-                        lines={lines}
-                        logSearch={logDisplay.logSearch}
-                        onLogSearchChange={logDisplay.setLogSearch}
-                        logMatchCount={logDisplay.matchCount}
-                        logLineCount={logDisplay.lineCount}
-                        paused={paused}
-                        onTogglePause={togglePause}
-                        onOpen={() => {
-                            onOpenSession(session.source, session.name);
-                        }}
-                        onDeleteConfirmed={() => {
-                            onDeleteConfirmed(session);
-                        }}
-                    />
-                </div>
-            )}
+        <LogLineJumpProvider
+            onBeforeJump={() => {
+                logDisplay.setLogSearch((prev) => freezeLogSearch(prev));
+            }}
         >
-            <ActiveSessionTile
-                lineHits={lineHits}
-                highlightTokens={logDisplay.highlightTokens}
-                scrollRef={ref}
-                onScroll={onScroll}
-                timestampMode={timestampMode}
-            />
-        </MosaicWindow>
+            <MosaicWindow<string>
+                path={path}
+                title=""
+                toolbarControls={<span />}
+                renderToolbar={() => (
+                    <div className="flex w-full min-w-0">
+                        <ActiveSessionMosaicToolbar
+                            session={session}
+                            lines={lines}
+                            logSearch={logDisplay.logSearch}
+                            onLogSearchChange={logDisplay.setLogSearch}
+                            logMatchCount={logDisplay.matchCount}
+                            logLineCount={logDisplay.lineCount}
+                            paused={paused}
+                            onTogglePause={togglePause}
+                            onOpen={() => {
+                                onOpenSession(session.source, session.name);
+                            }}
+                            onDeleteConfirmed={() => {
+                                onDeleteConfirmed(session);
+                            }}
+                        />
+                    </div>
+                )}
+            >
+                <ActiveSessionTile
+                    lineHits={lineHits}
+                    highlightTokens={logDisplay.highlightTokens}
+                    scrollRef={ref}
+                    onScroll={onScroll}
+                    timestampMode={timestampMode}
+                    jumpEnabled={logDisplay.isSearchActive}
+                />
+            </MosaicWindow>
+        </LogLineJumpProvider>
     );
 }
 
 export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onStatus }: Props): React.ReactElement {
     const { settings } = useDisplaySettings();
+    const { settings: poolSettings } = useSessionPoolSettings();
     const pathPrefix = useDirPathPrefix();
     const now = useNowTick(1000);
+    const activeRetentionMs = useMemo(
+        () => activeSessionRetentionMs(poolSettings),
+        [poolSettings.activeSessionLimitMinutes]
+    );
+    const maxMosaicTiles = poolSettings.keepAllAlive ? Number.MAX_SAFE_INTEGER : MAX_ACTIVE_TILES;
     const [liveLines, setLiveLines] = useState<Map<string, MultiplexLogEntry[]>>(new Map());
     const [archiveOpen, setArchiveOpen] = useState(false);
     const [expandedArchive, setExpandedArchive] = useState<Set<string>>(new Set());
@@ -334,24 +361,28 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
     }, []);
 
     const allActiveSessions = useMemo(
-        () => sortSessionsByRecency(sessions.filter((session) => isSessionInActivePool(session, now))),
-        [sessions, now]
+        () =>
+            sortSessionsByRecency(sessions.filter((session) => isSessionInActivePool(session, now, activeRetentionMs))),
+        [sessions, now, activeRetentionMs]
     );
     const allActiveKeys = useMemo(
         () => allActiveSessions.map((s) => sessionKey(s.source, s.name)),
         [allActiveSessions]
     );
     const mosaicActiveKeys = useMemo(() => {
-        return allActiveKeys.filter((key) => !userHiddenKeys.has(key)).slice(0, MAX_ACTIVE_TILES);
-    }, [allActiveKeys, userHiddenKeys]);
+        return allActiveKeys.filter((key) => !userHiddenKeys.has(key)).slice(0, maxMosaicTiles);
+    }, [allActiveKeys, userHiddenKeys, maxMosaicTiles]);
     const mosaicActiveSessions = useMemo(() => {
         const visible = new Set(mosaicActiveKeys);
 
         return allActiveSessions.filter((session) => visible.has(sessionKey(session.source, session.name)));
     }, [allActiveSessions, mosaicActiveKeys]);
     const archiveSessions = useMemo(
-        () => sortSessionsByRecency(sessions.filter((session) => !isSessionInActivePool(session, now))),
-        [sessions, now]
+        () =>
+            sortSessionsByRecency(
+                sessions.filter((session) => !isSessionInActivePool(session, now, activeRetentionMs))
+            ),
+        [sessions, now, activeRetentionMs]
     );
     const hiddenActiveCount = allActiveSessions.length - mosaicActiveKeys.length;
 
@@ -381,7 +412,12 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
     }, [allActiveKeys]);
 
     useEffect(() => {
-        setLayout((current) => reconcileMosaicLayout(current, activeKeys, { maxColumns: MOSAIC_MAX_COLUMNS }));
+        setLayout((current) =>
+            reconcileMosaicLayout(current, activeKeys, {
+                maxColumns: MOSAIC_MAX_COLUMNS,
+                followNextItemOrder: true,
+            })
+        );
     }, [activeKeys]);
 
     const mosaicLayout = layout ?? buildBalancedMosaicLayout(activeKeys, { maxColumns: MOSAIC_MAX_COLUMNS });
@@ -426,7 +462,7 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
                 const next = new Set(prev);
                 const currentlyVisible = allActiveKeys
                     .filter((candidate) => !next.has(candidate))
-                    .slice(0, MAX_ACTIVE_TILES);
+                    .slice(0, maxMosaicTiles);
                 const isVisible = currentlyVisible.includes(key);
 
                 if (isVisible) {
@@ -438,7 +474,7 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
 
                 const wouldBeVisible = allActiveKeys.filter((candidate) => !next.has(candidate));
 
-                if (wouldBeVisible.length > MAX_ACTIVE_TILES) {
+                if (!poolSettings.keepAllAlive && wouldBeVisible.length > MAX_ACTIVE_TILES) {
                     for (let index = currentlyVisible.length - 1; index >= 0; index--) {
                         const displaced = currentlyVisible[index];
 
@@ -452,7 +488,7 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
                 return next;
             });
         },
-        [allActiveKeys]
+        [allActiveKeys, maxMosaicTiles, poolSettings.keepAllAlive]
     );
 
     useEffect(() => {
@@ -622,16 +658,14 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
 
                 {allActiveSessions.length > 0 ? (
                     <div className="px-3 sm:px-5 pb-2.5 flex flex-wrap items-center gap-1.5 border-t border-white/5 pt-2">
-                        <span className="dbg-ui-text-xs uppercase tracking-widest text-white/30 mr-1 shrink-0">
-                            Mosaic
-                        </span>
+                        <SessionPoolSettingsButton />
                         {allActiveSessions.map((session) => {
                             const key = sessionKey(session.source, session.name);
                             const visibility = resolveMosaicVisibility({
                                 key,
                                 allActiveKeys,
                                 userHiddenKeys,
-                                maxTiles: MAX_ACTIVE_TILES,
+                                maxTiles: maxMosaicTiles,
                             });
 
                             return (
@@ -766,32 +800,35 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
                                         </div>
 
                                         {open ? (
-                                            <div className="border-t border-white/6 bg-black/25 max-h-40 overflow-y-auto font-mono dbg-log-text">
-                                                {loading ? (
-                                                    <p className="px-2 py-1 text-white/30 italic">loading…</p>
-                                                ) : entries.length === 0 ? (
-                                                    <p className="px-2 py-1 text-white/30 italic">no log lines</p>
-                                                ) : (
-                                                    filterDisplayLogLines(entries).map((entry, index, visible) => {
-                                                        const previousTs =
-                                                            index > 0 ? visible[index - 1]?.ts : undefined;
-                                                        const showTimestamp = shouldShowLogTimestamp({
-                                                            mode: settings.timestampMode,
-                                                            ts: entry.ts,
-                                                            previousTs,
-                                                        });
+                                            <LogLineJumpProvider>
+                                                <div className="border-t border-white/6 bg-black/25 max-h-40 overflow-y-auto font-mono dbg-log-text">
+                                                    {loading ? (
+                                                        <p className="px-2 py-1 text-white/30 italic">loading…</p>
+                                                    ) : entries.length === 0 ? (
+                                                        <p className="px-2 py-1 text-white/30 italic">no log lines</p>
+                                                    ) : (
+                                                        filterDisplayLogLines(entries).map((entry, index, visible) => {
+                                                            const previousTs =
+                                                                index > 0 ? visible[index - 1]?.ts : undefined;
+                                                            const showTimestamp = shouldShowLogTimestamp({
+                                                                mode: settings.timestampMode,
+                                                                ts: entry.ts,
+                                                                previousTs,
+                                                            });
 
-                                                        return (
-                                                            <LogPreviewLine
-                                                                key={entry.index}
-                                                                entry={entry}
-                                                                previewText={previewText(entry)}
-                                                                showTimestamp={showTimestamp}
-                                                            />
-                                                        );
-                                                    })
-                                                )}
-                                            </div>
+                                                            return (
+                                                                <LogPreviewLine
+                                                                    key={entry.index}
+                                                                    entry={entry}
+                                                                    previewText={previewText(entry)}
+                                                                    showTimestamp={showTimestamp}
+                                                                    showLineId={settings.showLineId}
+                                                                />
+                                                            );
+                                                        })
+                                                    )}
+                                                </div>
+                                            </LogLineJumpProvider>
                                         ) : null}
                                     </article>
                                 );

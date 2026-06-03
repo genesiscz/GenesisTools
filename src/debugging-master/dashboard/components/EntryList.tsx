@@ -6,8 +6,8 @@ import { filterDisplayLogLines, shouldShowLogTimestamp } from "@/lib/log-line-di
 import { useScrollToFirstLogMatch } from "@/lib/use-scroll-to-first-log-match";
 import { useDisplaySettings } from "./DisplaySettingsProvider";
 import { EntryRow } from "./EntryRow";
-import { useLogLineJump } from "./LogLineJumpProvider";
 import type { SortDir } from "./FilterBar";
+import { useLogLineJump } from "./LogLineJumpProvider";
 
 export interface EntryListHandle {
     resume: () => void;
