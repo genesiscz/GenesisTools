@@ -6,6 +6,7 @@ import { filterDisplayLogLines, shouldShowLogTimestamp } from "@/lib/log-line-di
 import { useScrollToFirstLogMatch } from "@/lib/use-scroll-to-first-log-match";
 import { useDisplaySettings } from "./DisplaySettingsProvider";
 import { EntryRow } from "./EntryRow";
+import { useLogLineJump } from "./LogLineJumpProvider";
 import type { SortDir } from "./FilterBar";
 
 export interface EntryListHandle {
@@ -23,6 +24,7 @@ interface Props {
     logSearch?: LogSearchState;
     matchCount?: number;
     isSearchActive?: boolean;
+    jumpEnabled?: boolean;
     onToggle: (index: number) => void;
     onFilterHypothesis: (h: string) => void;
     onAutoScrollChange: (enabled: boolean) => void;
@@ -40,12 +42,14 @@ function EntryListImpl({
     logSearch = DEFAULT_LOG_SEARCH,
     matchCount = 0,
     isSearchActive = false,
+    jumpEnabled = false,
     onToggle,
     onFilterHypothesis,
     onAutoScrollChange,
     resumeRef,
 }: Props): React.ReactElement {
     const { settings } = useDisplaySettings();
+    const { registerScrollContainer } = useLogLineJump();
     const edge = sortDir === "desc" ? "top" : "bottom";
     const visibleEntries = useMemo(() => filterDisplayLogLines(entries), [entries]);
     const { ref, onScroll, resume } = useAutoScroll({
@@ -56,6 +60,10 @@ function EntryListImpl({
     });
 
     useImperativeHandle(resumeRef, () => ({ resume }), [resume]);
+
+    useEffect(() => {
+        registerScrollContainer(ref);
+    }, [registerScrollContainer, ref]);
 
     // When sort direction flips, snap to the new active edge immediately.
     useEffect(() => {
@@ -95,6 +103,8 @@ function EntryListImpl({
                         expanded={expandedIds.has(e.index)}
                         fresh={freshIds.has(e.index)}
                         showTimestamp={showTimestamp}
+                        showLineId={settings.showLineId}
+                        jumpEnabled={jumpEnabled}
                         highlightTokens={highlightTokens}
                         isMatch={hit?.isMatch}
                         isContext={hit?.isContext}

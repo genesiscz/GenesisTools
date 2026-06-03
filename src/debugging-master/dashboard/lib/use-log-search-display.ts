@@ -1,5 +1,6 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
 import { fuzzySearchWithContext } from "@app/utils/fuzzy-search";
+import { tokenizeSearch } from "@app/utils/fuzzy-tokens";
 import { useMemo, useState } from "react";
 import { DEFAULT_LOG_SEARCH, type LogSearchState } from "@/components/LogSearchPopover";
 import { logLineHaystack } from "./log-line-haystack";
@@ -20,13 +21,16 @@ export interface UseLogSearchDisplayResult<T extends LogSearchableLine> {
     lineCount: number;
     hits: LogLineHit<T>[];
     hitByIndex: Map<number, { isMatch: boolean; isContext: boolean }>;
+    /** Query has tokens (search engaged). */
     isSearchActive: boolean;
+    /** Fuzzy filter is narrowing the visible lines (not frozen). */
+    isFilterActive: boolean;
 }
 
 export function useLogSearchDisplay<T extends LogSearchableLine>(items: readonly T[]): UseLogSearchDisplayResult<T> {
     const [logSearch, setLogSearch] = useState<LogSearchState>(DEFAULT_LOG_SEARCH);
 
-    const result = useMemo(() => {
+    const filtered = useMemo(() => {
         return fuzzySearchWithContext({
             items,
             query: logSearch.query,
@@ -35,15 +39,26 @@ export function useLogSearchDisplay<T extends LogSearchableLine>(items: readonly
         });
     }, [items, logSearch.query, logSearch.contextLines]);
 
-    const hits = useMemo((): LogLineHit<T>[] => {
-        const hasTokens = result.tokens.length > 0;
+    const frozenWithQuery = Boolean(logSearch.frozen && logSearch.query.trim().length > 0);
+    const highlightTokens = frozenWithQuery ? tokenizeSearch(logSearch.query) : filtered.tokens;
 
-        return result.hits.map((hit) => ({
+    const hits = useMemo((): LogLineHit<T>[] => {
+        if (frozenWithQuery) {
+            return items.map((item) => ({
+                item,
+                isMatch: false,
+                isContext: false,
+            }));
+        }
+
+        const hasTokens = filtered.tokens.length > 0;
+
+        return filtered.hits.map((hit) => ({
             item: hit.item,
             isMatch: hit.isMatch,
             isContext: !hit.isMatch && hasTokens,
         }));
-    }, [result]);
+    }, [filtered.hits, filtered.tokens, frozenWithQuery, items]);
 
     const hitByIndex = useMemo(() => {
         const map = new Map<number, { isMatch: boolean; isContext: boolean }>();
@@ -55,15 +70,19 @@ export function useLogSearchDisplay<T extends LogSearchableLine>(items: readonly
         return map;
     }, [hits]);
 
+    const isSearchActive = highlightTokens.length > 0;
+    const isFilterActive = isSearchActive && !frozenWithQuery;
+
     return {
         logSearch,
         setLogSearch,
-        highlightTokens: result.tokens,
-        matchCount: result.matchCount,
+        highlightTokens,
+        matchCount: filtered.matchCount,
         lineCount: hits.length,
         hits,
         hitByIndex,
-        isSearchActive: result.tokens.length > 0,
+        isSearchActive,
+        isFilterActive,
     };
 }
 

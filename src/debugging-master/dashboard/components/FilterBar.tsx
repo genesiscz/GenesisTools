@@ -5,6 +5,7 @@ import { FILTER_ORDER, LEVEL_META } from "@/lib/levels";
 import { formatSessionHeaderParts } from "@/lib/session-run-context";
 import { SessionLiveStatus } from "@/lib/ui/SessionLiveStatus";
 import { AutoscrollToggle } from "./AutoscrollToggle";
+import { DisplaySettingsButton } from "./DisplaySettingsButton";
 import { LevelTooltip } from "./LevelTooltip";
 import { LogSearchControl } from "./LogSearchControl";
 import type { LogSearchState } from "./LogSearchPopover";
@@ -105,8 +106,12 @@ export function FilterBar({
                     matchCount={logMatchCount}
                     lineCount={logLineCount}
                 />
+                <DisplaySettingsButton variant="log" />
                 {logSearch.query.trim().length > 0 ? (
                     <span className="dbg-ui-text-xs text-white/35 truncate min-w-0 flex-1">
+                        {logSearch.frozen ? (
+                            <span className="text-amber-300/85 uppercase tracking-wider mr-1.5">frozen</span>
+                        ) : null}
                         fuzzy: <span className="text-cyan-400/80">{logSearch.query.trim()}</span>
                     </span>
                 ) : null}

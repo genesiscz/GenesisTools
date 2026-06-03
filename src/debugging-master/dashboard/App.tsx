@@ -6,7 +6,9 @@ import { DirPathPrefixProvider } from "@ui/components/DirPath";
 import { IconTooltipProvider } from "@ui/components/icon-button";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DisplaySettingsProvider } from "@/components/DisplaySettingsProvider";
+import { SessionPoolSettingsProvider } from "@/components/SessionPoolSettingsProvider";
 import { EntryList, type EntryListHandle } from "@/components/EntryList";
+import { LogLineJumpProvider } from "@/components/LogLineJumpProvider";
 import { FilterBar, type SortDir } from "@/components/FilterBar";
 import { Header } from "@/components/Header";
 import { SessionsHome } from "@/components/SessionsHome";
@@ -14,6 +16,7 @@ import { api } from "@/lib/api";
 import { EntriesContext } from "@/lib/entries-context";
 import { applyFilter, collectHypotheses, defaultFilterState, type FilterState } from "@/lib/filters";
 import { FILTER_ORDER } from "@/lib/levels";
+import { freezeLogSearch } from "@/components/LogSearchPopover";
 import { resetLogSearchState, useLogSearchDisplay } from "@/lib/use-log-search-display";
 import { mergeIndexedLogEntries } from "@/lib/merge-indexed-entries";
 import { collectSessionCwds } from "@/lib/session-run-context";
@@ -406,6 +409,7 @@ export function App(): React.ReactElement {
 
     return (
         <DisplaySettingsProvider>
+            <SessionPoolSettingsProvider>
             <SessionDeleteConfirmProvider onDeleteSession={onDeleteSession}>
                 <DirPathPrefixProvider paths={sessionDirSources}>
                     <IconTooltipProvider>
@@ -421,6 +425,11 @@ export function App(): React.ReactElement {
                             </div>
                         ) : (
                             <EntriesContext.Provider value={entries}>
+                                <LogLineJumpProvider
+                                    onBeforeJump={() => {
+                                        logDisplay.setLogSearch((prev) => freezeLogSearch(prev));
+                                    }}
+                                >
                                 <div className="h-full flex flex-col relative">
                                     <Header
                                         sessions={sessions}
@@ -462,13 +471,14 @@ export function App(): React.ReactElement {
                                         entries={displayed}
                                         expandedIds={expandedIds}
                                         freshIds={freshIds}
-                                        autoScroll={!paused && !logDisplay.isSearchActive}
+                                        autoScroll={!paused && !logDisplay.isFilterActive}
                                         sortDir={sortDir}
                                         highlightTokens={logDisplay.highlightTokens}
                                         hitByIndex={logDisplay.hitByIndex}
                                         logSearch={logDisplay.logSearch}
                                         matchCount={logDisplay.matchCount}
-                                        isSearchActive={logDisplay.isSearchActive}
+                                        isSearchActive={logDisplay.isFilterActive}
+                                        jumpEnabled={logDisplay.isSearchActive}
                                         onToggle={onToggleExpand}
                                         onFilterHypothesis={onChangeHypothesis}
                                         onAutoScrollChange={onAutoScrollChange}
@@ -482,11 +492,13 @@ export function App(): React.ReactElement {
                                         <span className="text-white/25">dbg + task · live</span>
                                     </footer>
                                 </div>
+                                </LogLineJumpProvider>
                             </EntriesContext.Provider>
                         )}
                     </IconTooltipProvider>
                 </DirPathPrefixProvider>
             </SessionDeleteConfirmProvider>
+            </SessionPoolSettingsProvider>
         </DisplaySettingsProvider>
     );
 }

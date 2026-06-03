@@ -141,14 +141,18 @@ body {
 
 .dbg-log-line {
     display: grid;
-    grid-template-columns: 12ch minmax(0, 1fr);
+    grid-template-columns: minmax(12ch, max-content) minmax(0, 1fr);
     column-gap: 0.5rem;
-    align-items: baseline;
+    align-items: start;
     border-bottom: 1px solid var(--dbg-line-border);
     padding: 0 0.5rem;
 }
 
 .dbg-log-line__ts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.2rem 0.45rem;
     color: rgba(255, 255, 255, 0.35);
     font-size: inherit;
     line-height: inherit;
@@ -157,10 +161,57 @@ body {
     white-space: nowrap;
 }
 
+.dbg-log-line__id-btn {
+    font-size: inherit;
+    line-height: inherit;
+    padding: 0;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+}
+
+.dbg-log-line__id-jump {
+    padding: 0;
+    background: transparent;
+    cursor: pointer;
+}
+
+.dbg-log-line--jump,
+.entry-row--jump > .dbg-log-line {
+    animation: dbg-log-line-jump-blink 0.55s ease-in-out 4;
+}
+
+@keyframes dbg-log-line-jump-blink {
+    0%,
+    100% {
+        background-color: transparent;
+        box-shadow: none;
+    }
+
+    50% {
+        background-color: rgba(251, 191, 36, 0.14);
+        box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.5);
+    }
+}
+
 .dbg-log-line__body {
     min-width: 0;
-    overflow: hidden;
     line-height: inherit;
+}
+
+.dbg-log-wrap {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.dbg-log-line__id-rail .dbg-log-line__id-btn {
+    color: rgba(255, 255, 255, 0.32);
+}
+
+.dbg-log-line__id-rail:hover .dbg-log-line__id-btn,
+.dbg-log-line__id-rail[data-active="true"] .dbg-log-line__id-btn {
+    color: rgba(103, 232, 249, 0.9);
 }
 
 .dbg-log-line--match {
