@@ -1,12 +1,4 @@
-import {
-    createContext,
-    type ReactElement,
-    type ReactNode,
-    useContext,
-    useEffect,
-    useMemo,
-    useState,
-} from "react";
+import { createContext, type ReactElement, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import { loadPersistedSettings, savePersistedSettings } from "./persisted-settings";
 import type { SettingsStoreKind } from "./persisted-settings-store";
 

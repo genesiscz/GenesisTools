@@ -1,5 +1,9 @@
-export { createSettingsProvider, type CreateSettingsProviderConfig, type SettingsContextValue } from "./create-settings-provider";
-export { loadPersistedSettings, savePersistedSettings, type PersistedSettingsOptions } from "./persisted-settings";
+export {
+    type CreateSettingsProviderConfig,
+    createSettingsProvider,
+    type SettingsContextValue,
+} from "./create-settings-provider";
+export { loadPersistedSettings, type PersistedSettingsOptions, savePersistedSettings } from "./persisted-settings";
 export {
     createPersistedSettingsStorage,
     type PersistedSettingsStorage,
