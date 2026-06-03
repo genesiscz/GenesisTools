@@ -105,8 +105,12 @@ export function LogPreviewLine({
                         </>
                     )}
                 </span>
-                {hoverRail ? lineIndexRail : (
-                    <span className="dbg-log-meta text-white/45 tabular-nums shrink-0">{formatLogLineIndex(entry.index)}</span>
+                {hoverRail ? (
+                    lineIndexRail
+                ) : (
+                    <span className="dbg-log-meta text-white/45 tabular-nums shrink-0">
+                        {formatLogLineIndex(entry.index)}
+                    </span>
                 )}
             </div>
         </div>

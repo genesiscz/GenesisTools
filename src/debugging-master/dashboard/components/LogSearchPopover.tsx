@@ -1,5 +1,5 @@
-import { IconPopover } from "@ui/components/icon-button";
 import { Button } from "@ui/components/button";
+import { IconPopover } from "@ui/components/icon-button";
 import { Input } from "@ui/components/input";
 import { Slider } from "@ui/components/slider";
 import { Search } from "lucide-react";
@@ -18,8 +18,7 @@ export const DEFAULT_LOG_SEARCH: LogSearchState = {
     frozen: false,
 };
 
-export const LOG_SEARCH_FROZEN_TOOLTIP =
-    "Search frozen for line jump — open to unfreeze and restore filtering";
+export const LOG_SEARCH_FROZEN_TOOLTIP = "Search frozen for line jump — open to unfreeze and restore filtering";
 
 export function freezeLogSearch(state: LogSearchState): LogSearchState {
     if (!state.query.trim()) {
@@ -76,8 +75,8 @@ export function LogSearchPopover({ value, onChange, matchCount, lineCount }: Pro
                 {frozen ? (
                     <div className="rounded-md border border-amber-400/25 bg-amber-500/10 px-2.5 py-2 space-y-2">
                         <p className="dbg-ui-text-xs text-amber-100/90 leading-relaxed">
-                            Search is frozen so you can read full context around a jumped line. The query below is
-                            kept — unfreeze to apply filtering again.
+                            Search is frozen so you can read full context around a jumped line. The query below is kept
+                            — unfreeze to apply filtering again.
                         </p>
                         <button
                             type="button"

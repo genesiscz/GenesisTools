@@ -6,22 +6,22 @@ import { DirPathPrefixProvider } from "@ui/components/DirPath";
 import { IconTooltipProvider } from "@ui/components/icon-button";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DisplaySettingsProvider } from "@/components/DisplaySettingsProvider";
-import { SessionPoolSettingsProvider } from "@/components/SessionPoolSettingsProvider";
 import { EntryList, type EntryListHandle } from "@/components/EntryList";
-import { LogLineJumpProvider } from "@/components/LogLineJumpProvider";
 import { FilterBar, type SortDir } from "@/components/FilterBar";
 import { Header } from "@/components/Header";
+import { LogLineJumpProvider } from "@/components/LogLineJumpProvider";
+import { freezeLogSearch } from "@/components/LogSearchPopover";
+import { SessionPoolSettingsProvider } from "@/components/SessionPoolSettingsProvider";
 import { SessionsHome } from "@/components/SessionsHome";
 import { api } from "@/lib/api";
 import { EntriesContext } from "@/lib/entries-context";
 import { applyFilter, collectHypotheses, defaultFilterState, type FilterState } from "@/lib/filters";
 import { FILTER_ORDER } from "@/lib/levels";
-import { freezeLogSearch } from "@/components/LogSearchPopover";
-import { resetLogSearchState, useLogSearchDisplay } from "@/lib/use-log-search-display";
 import { mergeIndexedLogEntries } from "@/lib/merge-indexed-entries";
 import { collectSessionCwds } from "@/lib/session-run-context";
 import { type ConnectionStatus, connectStream } from "@/lib/sse";
 import { SessionDeleteConfirmProvider } from "@/lib/ui/SessionDeleteConfirm";
+import { resetLogSearchState, useLogSearchDisplay } from "@/lib/use-log-search-display";
 
 const FRESH_TTL_MS = 1500;
 const SESSIONS_REFRESH_MS = 5_000;
@@ -410,94 +410,94 @@ export function App(): React.ReactElement {
     return (
         <DisplaySettingsProvider>
             <SessionPoolSettingsProvider>
-            <SessionDeleteConfirmProvider onDeleteSession={onDeleteSession}>
-                <DirPathPrefixProvider paths={sessionDirSources}>
-                    <IconTooltipProvider>
-                        {view === "home" ? (
-                            <div className="h-full min-h-0 flex flex-col">
-                                <SessionsHome
-                                    sessions={sessions}
-                                    status={status}
-                                    onRefresh={refreshSessions}
-                                    onOpenSession={openSession}
-                                    onStatus={setStatus}
-                                />
-                            </div>
-                        ) : (
-                            <EntriesContext.Provider value={entries}>
-                                <LogLineJumpProvider
-                                    onBeforeJump={() => {
-                                        logDisplay.setLogSearch((prev) => freezeLogSearch(prev));
-                                    }}
-                                >
-                                <div className="h-full flex flex-col relative">
-                                    <Header
+                <SessionDeleteConfirmProvider onDeleteSession={onDeleteSession}>
+                    <DirPathPrefixProvider paths={sessionDirSources}>
+                        <IconTooltipProvider>
+                            {view === "home" ? (
+                                <div className="h-full min-h-0 flex flex-col">
+                                    <SessionsHome
                                         sessions={sessions}
-                                        activeSource={activeSource}
-                                        activeSession={activeSession}
-                                        onSelectSession={(source, name) => {
-                                            if (isLogSourceId(source)) {
-                                                openSession(source, name);
-                                            }
-                                        }}
                                         status={status}
-                                        entryCount={entries.length}
-                                        onClear={onClear}
-                                        onRefresh={() => {
-                                            void refreshSessions();
-                                        }}
-                                        onBack={goHome}
+                                        onRefresh={refreshSessions}
+                                        onOpenSession={openSession}
+                                        onStatus={setStatus}
                                     />
-
-                                    <FilterBar
-                                        state={filterState}
-                                        hypotheses={hypotheses}
-                                        paused={paused}
-                                        sortDir={sortDir}
-                                        session={activeSessionMeta}
-                                        latestLineTs={latestLineTs}
-                                        logSearch={logDisplay.logSearch}
-                                        onLogSearchChange={logDisplay.setLogSearch}
-                                        logMatchCount={logDisplay.matchCount}
-                                        logLineCount={logDisplay.lineCount}
-                                        onToggleLevel={onToggleLevel}
-                                        onToggleAll={onToggleAll}
-                                        onChangeHypothesis={onChangeHypothesis}
-                                        onTogglePause={onTogglePause}
-                                        onToggleSort={onToggleSort}
-                                    />
-
-                                    <EntryList
-                                        entries={displayed}
-                                        expandedIds={expandedIds}
-                                        freshIds={freshIds}
-                                        autoScroll={!paused && !logDisplay.isFilterActive}
-                                        sortDir={sortDir}
-                                        highlightTokens={logDisplay.highlightTokens}
-                                        hitByIndex={logDisplay.hitByIndex}
-                                        logSearch={logDisplay.logSearch}
-                                        matchCount={logDisplay.matchCount}
-                                        isSearchActive={logDisplay.isFilterActive}
-                                        jumpEnabled={logDisplay.isSearchActive}
-                                        onToggle={onToggleExpand}
-                                        onFilterHypothesis={onChangeHypothesis}
-                                        onAutoScrollChange={onAutoScrollChange}
-                                        resumeRef={entryListResumeRef}
-                                    />
-
-                                    <footer className="px-3 sm:px-5 py-1.5 border-t border-white/8 bg-black/30 text-[10px] text-white/40 flex items-center justify-between">
-                                        <span>
-                                            {displayed.length} / {filtered.length} / {entries.length}
-                                        </span>
-                                        <span className="text-white/25">dbg + task · live</span>
-                                    </footer>
                                 </div>
-                                </LogLineJumpProvider>
-                            </EntriesContext.Provider>
-                        )}
-                    </IconTooltipProvider>
-                </DirPathPrefixProvider>
-            </SessionDeleteConfirmProvider>
+                            ) : (
+                                <EntriesContext.Provider value={entries}>
+                                    <LogLineJumpProvider
+                                        onBeforeJump={() => {
+                                            logDisplay.setLogSearch((prev) => freezeLogSearch(prev));
+                                        }}
+                                    >
+                                        <div className="h-full flex flex-col relative">
+                                            <Header
+                                                sessions={sessions}
+                                                activeSource={activeSource}
+                                                activeSession={activeSession}
+                                                onSelectSession={(source, name) => {
+                                                    if (isLogSourceId(source)) {
+                                                        openSession(source, name);
+                                                    }
+                                                }}
+                                                status={status}
+                                                entryCount={entries.length}
+                                                onClear={onClear}
+                                                onRefresh={() => {
+                                                    void refreshSessions();
+                                                }}
+                                                onBack={goHome}
+                                            />
+
+                                            <FilterBar
+                                                state={filterState}
+                                                hypotheses={hypotheses}
+                                                paused={paused}
+                                                sortDir={sortDir}
+                                                session={activeSessionMeta}
+                                                latestLineTs={latestLineTs}
+                                                logSearch={logDisplay.logSearch}
+                                                onLogSearchChange={logDisplay.setLogSearch}
+                                                logMatchCount={logDisplay.matchCount}
+                                                logLineCount={logDisplay.lineCount}
+                                                onToggleLevel={onToggleLevel}
+                                                onToggleAll={onToggleAll}
+                                                onChangeHypothesis={onChangeHypothesis}
+                                                onTogglePause={onTogglePause}
+                                                onToggleSort={onToggleSort}
+                                            />
+
+                                            <EntryList
+                                                entries={displayed}
+                                                expandedIds={expandedIds}
+                                                freshIds={freshIds}
+                                                autoScroll={!paused && !logDisplay.isFilterActive}
+                                                sortDir={sortDir}
+                                                highlightTokens={logDisplay.highlightTokens}
+                                                hitByIndex={logDisplay.hitByIndex}
+                                                logSearch={logDisplay.logSearch}
+                                                matchCount={logDisplay.matchCount}
+                                                isSearchActive={logDisplay.isFilterActive}
+                                                jumpEnabled={logDisplay.isSearchActive}
+                                                onToggle={onToggleExpand}
+                                                onFilterHypothesis={onChangeHypothesis}
+                                                onAutoScrollChange={onAutoScrollChange}
+                                                resumeRef={entryListResumeRef}
+                                            />
+
+                                            <footer className="px-3 sm:px-5 py-1.5 border-t border-white/8 bg-black/30 text-[10px] text-white/40 flex items-center justify-between">
+                                                <span>
+                                                    {displayed.length} / {filtered.length} / {entries.length}
+                                                </span>
+                                                <span className="text-white/25">dbg + task · live</span>
+                                            </footer>
+                                        </div>
+                                    </LogLineJumpProvider>
+                                </EntriesContext.Provider>
+                            )}
+                        </IconTooltipProvider>
+                    </DirPathPrefixProvider>
+                </SessionDeleteConfirmProvider>
             </SessionPoolSettingsProvider>
         </DisplaySettingsProvider>
     );

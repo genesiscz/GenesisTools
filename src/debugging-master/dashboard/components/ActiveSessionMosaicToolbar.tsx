@@ -2,6 +2,7 @@ import type { DashboardSession } from "@app/utils/log-viewer/log-source";
 import type { ReactElement } from "react";
 import type { MultiplexLogEntry } from "@/lib/sse";
 import { AutoscrollToggle } from "./AutoscrollToggle";
+import { DisplaySettingsButton } from "./DisplaySettingsButton";
 import { LogSearchControl } from "./LogSearchControl";
 import type { LogSearchState } from "./LogSearchPopover";
 import { SessionDeleteButton, SessionRowBar } from "./SessionRowBar";
@@ -55,6 +56,7 @@ export function ActiveSessionMosaicToolbar({
                         matchCount={logMatchCount}
                         lineCount={logLineCount}
                     />
+                    <DisplaySettingsButton variant="log" />
                     {isLive ? <AutoscrollToggle paused={paused} onToggle={onTogglePause} /> : null}
                     <SessionDeleteButton session={session} onConfirmed={onDeleteConfirmed} />
                 </>

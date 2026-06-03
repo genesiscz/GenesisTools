@@ -100,7 +100,7 @@ export function loadDisplaySettings(): DisplaySettings {
             lineBoundaries: parsed.lineBoundaries === "hide" ? "hide" : "show",
             logFontFamily: parseLogFontFamily(parsed.logFontFamily),
             timestampMode: parseTimestampMode(parsed.timestampMode),
-            showLineId: parsed.showLineId === false ? false : true,
+            showLineId: parsed.showLineId !== false,
         };
     } catch {
         return DEFAULT_DISPLAY_SETTINGS;

@@ -1,7 +1,8 @@
 import type { DashboardSession } from "@app/utils/log-viewer/log-source";
+import { activeSessionRetentionMs, DEFAULT_SESSION_POOL_SETTINGS } from "@/lib/session-pool-settings";
 
-/** Matches task/debugging-master ACTIVE_THRESHOLD_MS (1 hour). */
-export const SESSION_ACTIVE_RETENTION_MS = 60 * 60 * 1000;
+/** Default retention (1 hour) — matches task/debugging-master ACTIVE_THRESHOLD_MS. */
+export const SESSION_ACTIVE_RETENTION_MS = activeSessionRetentionMs(DEFAULT_SESSION_POOL_SETTINGS);
 
 export function sessionEndedAt(session: DashboardSession): number {
     if (session.exitedAt !== undefined && session.exitedAt > 0) {
@@ -11,7 +12,11 @@ export function sessionEndedAt(session: DashboardSession): number {
     return session.lastActivityAt;
 }
 
-export function isSessionInActivePool(session: DashboardSession, now: number): boolean {
+export function isSessionInActivePool(
+    session: DashboardSession,
+    now: number,
+    retentionMs: number = SESSION_ACTIVE_RETENTION_MS
+): boolean {
     if (session.state === "active") {
         return true;
     }
@@ -22,5 +27,5 @@ export function isSessionInActivePool(session: DashboardSession, now: number): b
         return false;
     }
 
-    return now - endedAt < SESSION_ACTIVE_RETENTION_MS;
+    return now - endedAt < retentionMs;
 }
