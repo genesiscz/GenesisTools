@@ -1,12 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { decodeE2eResponse, encodeE2eRequest, type E2eRequest } from "@app/dev-dashboard/contract/e2e-request";
 import { encodeEnvelope } from "@app/dev-dashboard/contract/e2e-envelope";
-import { fromBase64, naclBoxCipher, toBase64 } from "@app/dev-dashboard/lib/e2e/box";
+import { decodeE2eResponse, type E2eRequest, encodeE2eRequest } from "@app/dev-dashboard/contract/e2e-request";
 import type { KeyPair } from "@app/dev-dashboard/lib/e2e/box";
+import { fromBase64, naclBoxCipher, toBase64 } from "@app/dev-dashboard/lib/e2e/box";
 import type { PulseSnapshot } from "@app/dev-dashboard/lib/system/types";
 import type { SystemCollector } from "@app/dev-dashboard/server/collector/SystemCollector";
 import { Router } from "@app/dev-dashboard/server/router";
-import { handleE2eRpc, type E2eRpcDeps } from "@app/dev-dashboard/server/transport/e2e-rpc";
+import { type E2eRpcDeps, handleE2eRpc } from "@app/dev-dashboard/server/transport/e2e-rpc";
 import { SafeJSON } from "@app/utils/json";
 
 const fakeCollector: SystemCollector = {

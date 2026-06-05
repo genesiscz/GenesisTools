@@ -204,8 +204,7 @@ export function createDashboardClient(opts: DashboardClientOptions) {
             add: (body: { title: string; listName?: string; due?: string; priority?: TodoPriority; notes?: string }) =>
                 post<{ reminderId: string }>(paths.todoAdd(), body),
             complete: (reminderId: string) => post<{ ok: true }>(paths.todoComplete(), { reminderId }),
-            requestAccess: () =>
-                post<{ granted?: boolean } & Record<string, unknown>>(paths.todosRequestAccess(), {}),
+            requestAccess: () => post<{ granted?: boolean } & Record<string, unknown>>(paths.todosRequestAccess(), {}),
         },
     };
 }

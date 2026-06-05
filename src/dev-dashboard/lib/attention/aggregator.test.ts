@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { buildAttentionItems, isAgentCommand } from "@app/dev-dashboard/lib/attention/aggregator";
-import type { QaRow } from "@app/question/lib/read-model";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
+import type { QaRow } from "@app/question/lib/read-model";
 
 // Fixed "now" — 2026-06-02 12:00 local. startOfDay = same date 00:00 local.
 const NOW = new Date(2026, 5, 2, 12, 0, 0, 0).getTime();
@@ -184,7 +184,9 @@ describe("buildAttentionItems — ordering & count", () => {
                 qaRow({ id: "newer", ts: TODAY_AM, tag: "action" }),
                 qaRow({ id: "tie", ts: TODAY_EARLIER, tag: "action" }),
             ],
-            ttydSessions: [ttyd({ id: "tieT", lastCommand: "claude", startedAt: new Date(TODAY_EARLIER).toISOString() })],
+            ttydSessions: [
+                ttyd({ id: "tieT", lastCommand: "claude", startedAt: new Date(TODAY_EARLIER).toISOString() }),
+            ],
             now: NOW,
         });
 

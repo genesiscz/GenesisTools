@@ -33,7 +33,7 @@ export interface RunLogTail {
 export function createRunLogTail(
     logFile: string,
     onEntry: (e: LogEntry) => void,
-    baseDir: string = getLogsBaseDir(),
+    baseDir: string = getLogsBaseDir()
 ): RunLogTail {
     const resolved = assertLogFileContained(logFile, baseDir);
     const t = new FileTailer<LogEntry>(resolved, { onLine: (e) => onEntry(e) });

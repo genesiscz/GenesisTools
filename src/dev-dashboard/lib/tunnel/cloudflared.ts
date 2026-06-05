@@ -95,10 +95,7 @@ export async function installCloudflared(): Promise<boolean> {
 /** Runs a cloudflared subcommand, returning {code, stdout, stderr}. */
 export async function runCloudflared(args: string[]): Promise<CloudflaredResult> {
     const proc = Bun.spawn(["cloudflared", ...args], { stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-    ]);
+    const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     await proc.exited;
     logger.info({ args, code: proc.exitCode }, "dev-dashboard: cloudflared command");
 
@@ -177,9 +174,7 @@ export interface ManagedSubdomainResult {
  * (D10). The Cloud API is built in plan 10 — this is the typed seam the wizard codes
  * against today. Do NOT invent endpoints here; plan 10 wires the real HTTP call.
  */
-export async function requestManagedSubdomain(
-    req: ManagedSubdomainRequest
-): Promise<ManagedSubdomainResult> {
+export async function requestManagedSubdomain(req: ManagedSubdomainRequest): Promise<ManagedSubdomainResult> {
     // TODO(plan-10): call the DevDashboard Cloud API to reserve `req.desiredName` against
     // the user's account (Cloudflare for SaaS custom hostnames or a vendor wildcard zone)
     // and return the reserved hostname + routing config. Endpoints are defined in plan 10.

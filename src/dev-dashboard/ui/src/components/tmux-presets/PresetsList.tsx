@@ -80,7 +80,9 @@ export function PresetsList({ presets, onRestore, onDelete, restoringName, delet
                         </div>
                         <div className="flex items-center justify-between">
                             <dt className="text-[var(--dd-text-muted)]">Captured</dt>
-                            <dd className="font-mono text-[var(--dd-text-secondary)]">{formatCapturedAt(preset.capturedAt)}</dd>
+                            <dd className="font-mono text-[var(--dd-text-secondary)]">
+                                {formatCapturedAt(preset.capturedAt)}
+                            </dd>
                         </div>
                         <div className="flex items-center justify-between">
                             <dt className="text-[var(--dd-text-muted)]">Size</dt>

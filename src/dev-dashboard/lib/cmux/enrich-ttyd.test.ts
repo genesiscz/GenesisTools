@@ -77,9 +77,7 @@ describe("enrichPanesWithTtyd", () => {
 
 describe("resolveTtydForCmuxSurface", () => {
     it("finds the ttyd id by the surface's pre-rename title (= tmux session name)", () => {
-        const snap = snapshot([
-            pane({ surfaces: [surface({ id: "surface:x", title: "dev-dashboard-abc12345" })] }),
-        ]);
+        const snap = snapshot([pane({ surfaces: [surface({ id: "surface:x", title: "dev-dashboard-abc12345" })] })]);
         const id = resolveTtydForCmuxSurface(snap, "surface:x", [
             { id: "ttyd-7", tmuxSessionName: "dev-dashboard-abc12345" },
         ]);
@@ -90,7 +88,9 @@ describe("resolveTtydForCmuxSurface", () => {
         const snap = snapshot([
             pane({ surfaces: [surface({ id: "surface:b", type: "browser", title: "dev-dashboard-abc12345" })] }),
         ]);
-        expect(resolveTtydForCmuxSurface(snap, "surface:b", [{ id: "ttyd-7", tmuxSessionName: "dev-dashboard-abc12345" }])).toBeNull();
+        expect(
+            resolveTtydForCmuxSurface(snap, "surface:b", [{ id: "ttyd-7", tmuxSessionName: "dev-dashboard-abc12345" }])
+        ).toBeNull();
     });
 
     it("returns null when no ttyd is bound to the surface's tmux session", () => {

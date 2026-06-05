@@ -1,5 +1,5 @@
-import { timelineRoutes } from "@app/dev-dashboard/server/routes/timeline";
 import { describe, expect, it } from "bun:test";
+import { timelineRoutes } from "@app/dev-dashboard/server/routes/timeline";
 
 describe("timelineRoutes", () => {
     it("registers GET /api/timeline", () => {

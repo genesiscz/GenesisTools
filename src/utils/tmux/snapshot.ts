@@ -95,10 +95,7 @@ export function captureTmuxSnapshot(opts: CaptureOptions = {}): TmuxSessionSnaps
     const result = spawnImpl([tmuxBin, "list-panes", "-a", "-F", PANE_LIST_FORMAT]);
 
     if (result.exitCode !== 0) {
-        logger.debug(
-            { exitCode: result.exitCode, stderr: result.stderr },
-            "captureTmuxSnapshot: list-panes failed"
-        );
+        logger.debug({ exitCode: result.exitCode, stderr: result.stderr }, "captureTmuxSnapshot: list-panes failed");
         return [];
     }
 

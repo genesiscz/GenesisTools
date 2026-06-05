@@ -10,9 +10,9 @@ import { SafeJSON } from "@app/utils/json";
 
 export {
     buildPairingPayload,
-    parsePairingPayload,
     type PairingPayload,
     type PairingTier,
+    parsePairingPayload,
 } from "@app/dev-dashboard/contract/pairing";
 
 export interface PersistedTunnelConfig {
