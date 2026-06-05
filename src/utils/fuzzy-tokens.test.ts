@@ -16,10 +16,20 @@ describe("fuzzy-tokens", () => {
     });
 
     test("multi-token query finds discrete spans", () => {
-        const tokens = tokenizeSearch("commit:1 commit:2");
-        const matches = findTokenMatches("see commit 1 and later commit 2", tokens);
+        const tokens = tokenizeSearch("alpha beta");
+        const matches = findTokenMatches("alpha then beta", tokens);
 
-        expect(matches.length).toBeGreaterThanOrEqual(4);
+        expect(matches.length).toBeGreaterThanOrEqual(2);
+    });
+
+    test("long pasted blob without spaces is one literal token", () => {
+        const blob =
+            "eutRXaItz0FjolTXkkK4um:APA91bHWGWIAINrQRw8XGvf_6-Pm4XPXThdi4i4Lin_m6L3fm5TXATIDt6AmBXBvM2VTpZJVChXfWfGYjZnYOH-LjwViz5Q3ckBPod8eWQ0bJ9XoREuYMF4";
+        const tokens = tokenizeSearch(blob);
+
+        expect(tokens).toHaveLength(1);
+        expect(scoreEntry('INFO "App has been run 35x times"', tokens)).toBe(0);
+        expect(scoreEntry(blob, tokens)).toBe(1);
     });
 
     test("scoreEntry requires all tokens", () => {
