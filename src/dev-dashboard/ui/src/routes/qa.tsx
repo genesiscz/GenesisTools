@@ -6,6 +6,7 @@ import { highlightMatchesInHtml } from "@app/utils/ui/helpers/highlight-matches.
 import { useScrollProgress } from "@app/utils/ui/hooks/useScrollProgress.client";
 import { hasNonEmptySelection } from "@app/utils/ui/hooks/useSelectionAware.client";
 import { useQuery } from "@tanstack/react-query";
+import { BlinkingBox } from "@ui/components/BlinkingBox";
 import { type KeyboardEvent, type MouseEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { QaClockProvider } from "@/components/QaClockProvider";
 import { QaCopyButtons } from "@/components/QaCopyButtons";
@@ -134,6 +135,7 @@ const QaCard = memo(function QaCard({
     readAt,
     viewMode,
     highlightTokens,
+    pinned,
     onSeen,
     onUnseen,
 }: {
@@ -142,16 +144,22 @@ const QaCard = memo(function QaCard({
     readAt: number | null;
     viewMode: QaViewMode;
     highlightTokens: string[];
+    pinned?: boolean;
     onSeen: (id: string) => void;
     onUnseen: (id: string) => void;
 }) {
-    const [open, setOpen] = useState(unread);
+    const [open, setOpen] = useState(unread || pinned === true);
 
     useEffect(() => {
+        if (pinned) {
+            setOpen(true);
+            return;
+        }
+
         if (!unread) {
             setOpen(false);
         }
-    }, [unread]);
+    }, [unread, pinned]);
     const [saveDialogOpen, setSaveDialogOpen] = useState(false);
     const truncated = isQaAnswerTruncated(entry.answerMd);
     const answerBase = open || !truncated ? entry.answerHtml : entry.answerHtmlPreview;
@@ -223,90 +231,102 @@ const QaCard = memo(function QaCard({
 
     const openSave = (): void => setSaveDialogOpen(true);
 
+    const card = (
+        <div
+            role="button"
+            tabIndex={0}
+            className={`dd-panel flex flex-col gap-3 p-4${unread ? " dd-qa-card--unread dd-qa-card--clickable" : " dd-qa-card--clickable"}`}
+            data-qa-id={entry.id}
+            data-qa-unread={unread ? "1" : "0"}
+            onMouseUp={handleCardMouseUp}
+            onKeyDown={(ev) => {
+                if (ev.key === "Enter" || ev.key === " ") {
+                    ev.preventDefault();
+
+                    if (unread) {
+                        setOpen(false);
+                        onSeen(entry.id);
+                    } else {
+                        onUnseen(entry.id);
+                    }
+                }
+            }}
+        >
+            <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--dd-text-muted)]">
+                {unread ? <span className="dd-qa-unread-badge">new</span> : null}
+                <span className="text-[var(--dd-text-secondary)]">{entry.project}</span>
+                <span>·</span>
+                <span>{entry.branch ?? "-"}</span>
+                <span className={`rounded-full border px-2 py-[1px] ${tagClass(entry.tag)}`}>{entry.tag}</span>
+                {truncated ? (
+                    <button
+                        type="button"
+                        className="dd-accent-text cursor-pointer transition-opacity hover:opacity-80"
+                        onClick={toggleOpen}
+                    >
+                        {open ? "Collapse" : "Expand"}
+                    </button>
+                ) : null}
+                <QaCopyButtons entry={entry} onSaveToObsidian={openSave} />
+                {!unread && readAt != null ? <QaReadTime readAt={readAt} /> : null}
+                <QaRecencyTime ts={entry.ts} />
+            </div>
+            <QaContextStrip entry={entry} />
+            <QaSectionHeading label="Question" />
+            {viewMode === "reading" ? (
+                <article
+                    className="dd-qa-section-body dd-markdown font-medium leading-relaxed text-[var(--dd-text-primary)]"
+                    dangerouslySetInnerHTML={{ __html: questionHtml }}
+                />
+            ) : (
+                <pre className="dd-qa-section-body text-xs whitespace-pre-wrap">{entry.question}</pre>
+            )}
+            <QaSectionHeading label="Answer" />
+            {viewMode === "reading" ? (
+                <article
+                    className="dd-qa-section-body dd-markdown text-sm"
+                    dangerouslySetInnerHTML={{ __html: answerHtml }}
+                />
+            ) : (
+                <pre className="dd-qa-section-body text-xs whitespace-pre-wrap">{entry.answerMd}</pre>
+            )}
+            {truncated ? (
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--dd-text-muted)]">
+                    <button
+                        type="button"
+                        className="dd-accent-text shrink-0 cursor-pointer transition-opacity hover:opacity-80"
+                        onClick={toggleOpen}
+                    >
+                        {open ? "▴ collapse" : "▾ expand full answer (rationale · refs · links)"}
+                    </button>
+                    <QaCopyButtons entry={entry} onSaveToObsidian={openSave} />
+                </div>
+            ) : null}
+            {entry.refs.length > 0 ? (
+                <div className="text-xs text-[var(--dd-text-muted)]">
+                    refs: {entry.refs.map((r) => `${r.type}:${r.value}`).join(" · ")}
+                </div>
+            ) : null}
+        </div>
+    );
+
     return (
         <>
-            <div
-                role="button"
-                tabIndex={0}
-                className={`dd-panel flex flex-col gap-3 p-4${unread ? " dd-qa-card--unread dd-qa-card--clickable" : " dd-qa-card--clickable"}`}
-                data-qa-id={entry.id}
-                data-qa-unread={unread ? "1" : "0"}
-                onMouseUp={handleCardMouseUp}
-                onKeyDown={(ev) => {
-                    if (ev.key === "Enter" || ev.key === " ") {
-                        ev.preventDefault();
-
-                        if (unread) {
-                            setOpen(false);
-                            onSeen(entry.id);
-                        } else {
-                            onUnseen(entry.id);
-                        }
-                    }
-                }}
-            >
-                <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--dd-text-muted)]">
-                    {unread ? <span className="dd-qa-unread-badge">new</span> : null}
-                    <span className="text-[var(--dd-text-secondary)]">{entry.project}</span>
-                    <span>·</span>
-                    <span>{entry.branch ?? "-"}</span>
-                    <span className={`rounded-full border px-2 py-[1px] ${tagClass(entry.tag)}`}>{entry.tag}</span>
-                    {truncated ? (
-                        <button
-                            type="button"
-                            className="dd-accent-text cursor-pointer transition-opacity hover:opacity-80"
-                            onClick={toggleOpen}
-                        >
-                            {open ? "Collapse" : "Expand"}
-                        </button>
-                    ) : null}
-                    <QaCopyButtons entry={entry} onSaveToObsidian={openSave} />
-                    {!unread && readAt != null ? <QaReadTime readAt={readAt} /> : null}
-                    <QaRecencyTime ts={entry.ts} />
-                </div>
-                <QaContextStrip entry={entry} />
-                <QaSectionHeading label="Question" />
-                {viewMode === "reading" ? (
-                    <article
-                        className="dd-qa-section-body dd-markdown font-medium leading-relaxed text-[var(--dd-text-primary)]"
-                        dangerouslySetInnerHTML={{ __html: questionHtml }}
-                    />
-                ) : (
-                    <pre className="dd-qa-section-body text-xs whitespace-pre-wrap">{entry.question}</pre>
-                )}
-                <QaSectionHeading label="Answer" />
-                {viewMode === "reading" ? (
-                    <article
-                        className="dd-qa-section-body dd-markdown text-sm"
-                        dangerouslySetInnerHTML={{ __html: answerHtml }}
-                    />
-                ) : (
-                    <pre className="dd-qa-section-body text-xs whitespace-pre-wrap">{entry.answerMd}</pre>
-                )}
-                {truncated ? (
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--dd-text-muted)]">
-                        <button
-                            type="button"
-                            className="dd-accent-text shrink-0 cursor-pointer transition-opacity hover:opacity-80"
-                            onClick={toggleOpen}
-                        >
-                            {open ? "▴ collapse" : "▾ expand full answer (rationale · refs · links)"}
-                        </button>
-                        <QaCopyButtons entry={entry} onSaveToObsidian={openSave} />
-                    </div>
-                ) : null}
-                {entry.refs.length > 0 ? (
-                    <div className="text-xs text-[var(--dd-text-muted)]">
-                        refs: {entry.refs.map((r) => `${r.type}:${r.value}`).join(" · ")}
-                    </div>
-                ) : null}
-            </div>
+            {pinned ? (
+                <BlinkingBox active variant="accent-glow" iterations={5} durationMs={700}>
+                    {card}
+                </BlinkingBox>
+            ) : (
+                card
+            )}
             <QaSaveToObsidianDialog entry={entry} open={saveDialogOpen} onOpenChange={setSaveDialogOpen} />
         </>
     );
 });
 
 export function QaRoute() {
+    const urlPinnedId = useMemo(() => new URLSearchParams(window.location.search).get("id"), []);
+    const [pinnedId] = useState<string | null>(urlPinnedId);
     const logQuery = useQuery({ queryKey: ["qa-log"], queryFn: fetchQaLog, retry: false });
     const [live, setLive] = useState<QaRow[]>([]);
     const [sseDown, setSseDown] = useState(false);
@@ -513,6 +533,40 @@ export function QaRoute() {
         return () => es.close();
     }, []);
 
+    const persisted = (logQuery.data ?? []).filter((r) => !seen.current.has(r.id));
+    const all = [...live, ...persisted];
+    const { entries: filtered, tokens: highlightTokens } = searchQa(all, query);
+    const displayEntries = useMemo(() => {
+        if (!pinnedId) {
+            return filtered;
+        }
+
+        const idx = filtered.findIndex((entry) => entry.id === pinnedId);
+
+        if (idx <= 0) {
+            return filtered;
+        }
+
+        const next = [...filtered];
+        const [pinned] = next.splice(idx, 1);
+        next.unshift(pinned);
+
+        return next;
+    }, [filtered, pinnedId]);
+    const showScrollNav = scrollY >= QA_SCROLL_NAV_OFFSET_PX && displayEntries.length > 0;
+
+    useEffect(() => {
+        if (!pinnedId || logQuery.isLoading || logQuery.isError) {
+            return;
+        }
+
+        const el = document.querySelector(`[data-qa-id="${pinnedId}"]`);
+
+        if (el) {
+            el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+    }, [pinnedId, displayEntries.length, logQuery.isLoading, logQuery.isError]);
+
     if (logQuery.isError) {
         return (
             <div className="dd-panel flex h-[calc(100vh-2rem)] flex-col items-center justify-center gap-2 text-center">
@@ -523,11 +577,6 @@ export function QaRoute() {
             </div>
         );
     }
-
-    const persisted = (logQuery.data ?? []).filter((r) => !seen.current.has(r.id));
-    const all = [...live, ...persisted];
-    const { entries: filtered, tokens: highlightTokens } = searchQa(all, query);
-    const showScrollNav = scrollY >= QA_SCROLL_NAV_OFFSET_PX && filtered.length > 0;
 
     return (
         <div className="relative flex flex-col gap-4">
@@ -540,14 +589,14 @@ export function QaRoute() {
 
             {logQuery.isLoading ? (
                 <div className="dd-panel py-8 text-center text-sm text-[var(--dd-text-muted)]">Loading Q&amp;A…</div>
-            ) : filtered.length === 0 ? (
+            ) : displayEntries.length === 0 ? (
                 <div className="dd-panel py-8 text-center text-sm text-[var(--dd-text-muted)]">
                     {all.length === 0 ? "No questions recorded yet." : "No matches for your search."}
                 </div>
             ) : (
                 <QaClockProvider>
                     <div className={`flex flex-col gap-3${showScrollNav ? " pr-0 lg:pr-68" : ""}`}>
-                        {filtered.map((entry) => (
+                        {displayEntries.map((entry) => (
                             <QaCard
                                 key={entry.id}
                                 entry={entry}
@@ -555,12 +604,13 @@ export function QaRoute() {
                                 readAt={readAtById.get(entry.id) ?? entry.readAt}
                                 viewMode={viewMode}
                                 highlightTokens={highlightTokens}
+                                pinned={entry.id === pinnedId}
                                 onSeen={markSeen}
                                 onUnseen={markUnseen}
                             />
                         ))}
                     </div>
-                    <QaScrollNav entries={filtered} seenIds={seenIds} visible={showScrollNav} />
+                    <QaScrollNav entries={displayEntries} seenIds={seenIds} visible={showScrollNav} />
                 </QaClockProvider>
             )}
         </div>

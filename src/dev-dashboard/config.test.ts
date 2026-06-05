@@ -1,6 +1,14 @@
 import { describe, expect, it } from "bun:test";
+import { getConfig } from "./config";
 import { resolveVaultRoot } from "@app/utils/obsidian/config";
 import { resolveDashboardVault } from "./config";
+
+describe("dev-dashboard config", () => {
+    it("defaults allowedHosts to an empty array", async () => {
+        const config = await getConfig();
+        expect(Array.isArray(config.allowedHosts)).toBe(true);
+    });
+});
 
 describe("dev-dashboard obsidian vault", () => {
     it("resolves via the shared src/utils/obsidian resolver, not a hardcoded schema default", () => {

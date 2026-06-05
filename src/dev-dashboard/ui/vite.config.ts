@@ -10,6 +10,8 @@ const { createPreviewIndexInjectMiddleware, createPreviewReloadSseMiddleware } =
     pathToFileURL(resolve(appRoot, "utils/DashboardApp/preview/reload.ts")).href
 );
 const { createDashboardViteConfig } = await import(pathToFileURL(resolve(appRoot, "utils/ui/vite.base.ts")).href);
+const { getConfig } = await import(pathToFileURL(resolve(appRoot, "dev-dashboard/config.ts")).href);
+const dashboardConfig = await getConfig();
 
 const config = createDashboardViteConfig({
     root: __dirname,
@@ -45,7 +47,7 @@ const publicPort = Number(process.env.DEV_DASHBOARD_PUBLIC_PORT) || 3042;
 
 config.server = {
     ...config.server,
-    allowedHosts: ["mac.foltyn.dev"],
+    ...(dashboardConfig.allowedHosts.length > 0 ? { allowedHosts: dashboardConfig.allowedHosts } : {}),
     hmr: { clientPort: publicPort },
 };
 
