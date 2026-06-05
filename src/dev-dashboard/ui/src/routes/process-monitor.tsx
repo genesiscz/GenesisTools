@@ -1,5 +1,5 @@
-import type { ProcessInfo, ProcessSort } from "@app/dev-dashboard/lib/system/types";
 import type { ProcessesRes } from "@app/dev-dashboard/contract/endpoints";
+import type { ProcessInfo, ProcessSort } from "@app/dev-dashboard/lib/system/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ProcessesTable } from "@/components/process-monitor/ProcessesTable";

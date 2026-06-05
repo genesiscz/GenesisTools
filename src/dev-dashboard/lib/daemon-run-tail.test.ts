@@ -31,7 +31,7 @@ describe("createRunLogTail", () => {
                     got.push(e.data);
                 }
             },
-            base,
+            base
         );
         appendFileSync(f, `${SafeJSON.stringify({ type: "stdout", ts: "t1", data: "live" })}\n`);
         await Bun.sleep(500);

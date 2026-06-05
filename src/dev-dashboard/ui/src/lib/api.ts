@@ -1,11 +1,5 @@
 import type { PublishedNote } from "@app/dev-dashboard/config";
 import type {
-    AttachTmuxResult,
-    CmuxLayoutTree,
-    CmuxSnapshot,
-    DashboardSendTarget,
-} from "@app/dev-dashboard/lib/cmux/types";
-import type {
     AttentionRes,
     CommandsRes,
     ProcessesRes,
@@ -13,10 +7,16 @@ import type {
     TmuxPresetSaveRes,
     TmuxPresetsRes,
 } from "@app/dev-dashboard/contract/endpoints";
+import type {
+    AttachTmuxResult,
+    CmuxLayoutTree,
+    CmuxSnapshot,
+    DashboardSendTarget,
+} from "@app/dev-dashboard/lib/cmux/types";
 import type { SavedCommand, SavedCommandInput } from "@app/dev-dashboard/lib/commands/types";
+import type { VaultEntry } from "@app/dev-dashboard/lib/obsidian/types";
 import type { KillPortResult, PortsResult } from "@app/dev-dashboard/lib/ports/types";
 import type { ProcessSort } from "@app/dev-dashboard/lib/system/types";
-import type { VaultEntry } from "@app/dev-dashboard/lib/obsidian/types";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import { SafeJSON } from "@app/utils/json";
 import type { TmuxScrollState } from "@app/utils/tmux/sessions";

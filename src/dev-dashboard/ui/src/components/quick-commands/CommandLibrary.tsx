@@ -89,11 +89,7 @@ export function CommandLibrary({
             ) : (
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     {commands.map((cmd) => (
-                        <div
-                            key={cmd.id}
-                            data-command-id={cmd.id}
-                            className="dd-panel flex flex-col gap-3 p-4"
-                        >
+                        <div key={cmd.id} data-command-id={cmd.id} className="dd-panel flex flex-col gap-3 p-4">
                             <div className="flex min-w-0 flex-col gap-1">
                                 <span className="dd-accent-text truncate text-sm font-semibold">{cmd.label}</span>
                                 <code className="truncate font-mono text-xs text-[var(--dd-text-muted)]">

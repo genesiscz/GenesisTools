@@ -132,7 +132,10 @@ export function LogStream({ logFile }: Props) {
 
     if (logFile === null) {
         return (
-            <div data-testid="build-log-tail-stream" className="dd-panel flex flex-1 items-center justify-center p-8 text-sm text-[var(--dd-text-muted)]">
+            <div
+                data-testid="build-log-tail-stream"
+                className="dd-panel flex flex-1 items-center justify-center p-8 text-sm text-[var(--dd-text-muted)]"
+            >
                 Pick a run to tail its log.
             </div>
         );
@@ -172,7 +175,10 @@ export function LogStream({ logFile }: Props) {
             </div>
 
             {lines.length === 0 ? (
-                <div data-testid="build-log-tail-empty" className="py-8 text-center text-sm text-[var(--dd-text-muted)]">
+                <div
+                    data-testid="build-log-tail-empty"
+                    className="py-8 text-center text-sm text-[var(--dd-text-muted)]"
+                >
                     No log output yet…
                 </div>
             ) : (
@@ -195,7 +201,9 @@ export function LogStream({ logFile }: Props) {
                                         rowRefs.current.delete(line.index);
                                     }
                                 }}
-                                data-testid={isError ? `build-log-tail-error-${line.index}` : `build-log-tail-line-${line.index}`}
+                                data-testid={
+                                    isError ? `build-log-tail-error-${line.index}` : `build-log-tail-line-${line.index}`
+                                }
                                 className="whitespace-pre-wrap font-mono text-xs"
                                 style={{ color: colorFor(line.cls), fontWeight: isError ? 700 : 400 }}
                             >

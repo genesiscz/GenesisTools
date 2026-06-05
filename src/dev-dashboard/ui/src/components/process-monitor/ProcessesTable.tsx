@@ -104,7 +104,9 @@ export function ProcessesTable({ processes, sort, onSortChange, onKill, killingP
                                     >
                                         {Math.round(p.cpuPct)}%
                                     </td>
-                                    <td className="px-2 py-2 text-[var(--dd-text-muted)]">{formatUptime(p.uptimeMs)}</td>
+                                    <td className="px-2 py-2 text-[var(--dd-text-muted)]">
+                                        {formatUptime(p.uptimeMs)}
+                                    </td>
                                     <td className="px-2 py-2 text-right">
                                         <button
                                             type="button"
@@ -121,9 +123,7 @@ export function ProcessesTable({ processes, sort, onSortChange, onKill, killingP
                         })}
                     </tbody>
                 </table>
-                {processes.length === 0 ? (
-                    <p className="px-2 py-4 text-[var(--dd-text-muted)]">No processes.</p>
-                ) : null}
+                {processes.length === 0 ? <p className="px-2 py-4 text-[var(--dd-text-muted)]">No processes.</p> : null}
             </div>
         </div>
     );

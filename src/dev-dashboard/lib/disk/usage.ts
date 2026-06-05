@@ -144,9 +144,7 @@ export async function collectDiskUsage(): Promise<DiskUsageResult> {
         })
     );
 
-    const entries = measured
-        .filter((e): e is DiskUsageEntry => e !== null)
-        .sort((a, b) => b.bytes - a.bytes);
+    const entries = measured.filter((e): e is DiskUsageEntry => e !== null).sort((a, b) => b.bytes - a.bytes);
 
     return { available: entries.length > 0, scannedAt, entries };
 }

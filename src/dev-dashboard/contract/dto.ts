@@ -10,15 +10,15 @@ export type { AccountUsage } from "@app/claude/lib/usage/api";
 export type { LogEntry, RunSummary } from "@app/daemon/lib/types";
 export type { PublishedNote } from "@app/dev-dashboard/config";
 export type {
-    BucketSeries,
-    MultiBucketHistoryResult,
-    UsageHistoryResult,
-} from "@app/dev-dashboard/lib/claude-usage/types";
-export type {
     AttentionDeepLink,
     AttentionItem,
     AttentionKind,
 } from "@app/dev-dashboard/lib/attention/types";
+export type {
+    BucketSeries,
+    MultiBucketHistoryResult,
+    UsageHistoryResult,
+} from "@app/dev-dashboard/lib/claude-usage/types";
 export type {
     AttachTmuxResult,
     CmuxLayoutTree,
@@ -43,6 +43,7 @@ export type {
     PulseSnapshot,
     TopProcess,
 } from "@app/dev-dashboard/lib/system/types";
+export type { TimelineEvent, TimelineEventType } from "@app/dev-dashboard/lib/timeline/types";
 export type {
     TodoGroup,
     TodoGroupBy,
@@ -50,7 +51,6 @@ export type {
     TodoStatusFilter,
     TodosResult,
 } from "@app/dev-dashboard/lib/todos/types";
-export type { TimelineEvent, TimelineEventType } from "@app/dev-dashboard/lib/timeline/types";
 export type { SplitNode, TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 export type { WeatherSnapshot } from "@app/dev-dashboard/lib/weather/types";
 

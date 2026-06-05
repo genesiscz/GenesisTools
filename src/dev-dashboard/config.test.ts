@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { getConfig } from "./config";
 import { resolveVaultRoot } from "@app/utils/obsidian/config";
-import { resolveDashboardVault } from "./config";
+import { getConfig, resolveDashboardVault } from "./config";
 
 describe("dev-dashboard config", () => {
     it("defaults allowedHosts to an empty array", async () => {

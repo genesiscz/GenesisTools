@@ -3,9 +3,7 @@ import { dispatchNotification } from "@app/utils/notifications";
 import type { QaEntry } from "../types";
 import { registerSink, type Sink } from "./registry-exports";
 
-export async function formatNotification(
-    e: QaEntry
-): Promise<{ title: string; message: string; open: string }> {
+export async function formatNotification(e: QaEntry): Promise<{ title: string; message: string; open: string }> {
     return {
         // Same header shape as `tools question log`/`tail`: project · branch [tag].
         title: `${e.project} · ${e.branch ?? "-"} [${e.tag}]`,

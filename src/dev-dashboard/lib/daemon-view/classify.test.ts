@@ -1,5 +1,5 @@
-import type { LogEntry } from "@app/daemon/lib/types";
 import { describe, expect, it } from "bun:test";
+import type { LogEntry } from "@app/daemon/lib/types";
 import { classifyLogLine } from "./classify";
 
 const meta: LogEntry = {

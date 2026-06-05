@@ -1,13 +1,9 @@
-import { routerToResponse } from "@app/dev-dashboard/server/adapters/bun-serve";
-import { createE2eShim } from "@app/dev-dashboard/server/transport/e2e-shim";
-import type { Router } from "@app/dev-dashboard/server/router";
-import type { RouteServices } from "@app/dev-dashboard/server/types";
+import { decodeE2eRequest, type E2eResponse, encodeE2eResponse } from "@app/dev-dashboard/contract/e2e-request";
 import type { BoxCipher, KeyPair } from "@app/dev-dashboard/lib/e2e/box";
-import {
-    decodeE2eRequest,
-    encodeE2eResponse,
-    type E2eResponse,
-} from "@app/dev-dashboard/contract/e2e-request";
+import { routerToResponse } from "@app/dev-dashboard/server/adapters/bun-serve";
+import type { Router } from "@app/dev-dashboard/server/router";
+import { createE2eShim } from "@app/dev-dashboard/server/transport/e2e-shim";
+import type { RouteServices } from "@app/dev-dashboard/server/types";
 import { SafeJSON } from "@app/utils/json";
 
 // The managed-tier `POST /api/e2e/rpc` handler, extracted as a PURE function so it is

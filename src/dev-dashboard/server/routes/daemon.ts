@@ -76,7 +76,7 @@ export function daemonRoutes(): RouteDef[] {
 
                         try {
                             tail = createRunLogTail(logFile, (entry) =>
-                                emit.data(SafeJSON.stringify({ ...entry, cls: classifyLogLine(entry) })),
+                                emit.data(SafeJSON.stringify({ ...entry, cls: classifyLogLine(entry) }))
                             );
                         } catch (err) {
                             // Containment guard rejected the path — surface one error frame, keep the SSE
@@ -85,7 +85,7 @@ export function daemonRoutes(): RouteDef[] {
                                 SafeJSON.stringify({
                                     type: "error",
                                     message: err instanceof Error ? err.message : String(err),
-                                }),
+                                })
                             );
                         }
 

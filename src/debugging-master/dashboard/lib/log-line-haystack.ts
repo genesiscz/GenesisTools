@@ -1,7 +1,9 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
 import { visibleLogText } from "@/lib/log-line-display";
 
-export function logLineHaystack(entry: Pick<IndexedLogEntry, "level" | "label" | "msg" | "msgAnsi" | "h" | "file">): string {
+export function logLineHaystack(
+    entry: Pick<IndexedLogEntry, "level" | "label" | "msg" | "msgAnsi" | "h" | "file">
+): string {
     const parts: string[] = [entry.level, visibleLogText(entry)];
 
     if (entry.label) {

@@ -42,7 +42,7 @@ export function timelineRoutes(): RouteDef[] {
                             ttyd: ttydSessions.length,
                             events: events.length,
                         },
-                        "dev-dashboard: timeline merged",
+                        "dev-dashboard: timeline merged"
                     );
 
                     return { kind: "json", status: 200, body: events };

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { sseBroadcaster } from "@app/debugging-master/core/sse-broadcaster";
-import type { IndexedLogEntry, LogEntry } from "@app/debugging-master/types";
+import type { LogEntry } from "@app/debugging-master/types";
 import { SafeJSON } from "@app/utils/json";
 import type { DashboardSession, LogSourceId } from "@app/utils/log-viewer/log-source";
 import { getAllLogSources, getLogSource } from "@app/utils/log-viewer/resolve-log-source";

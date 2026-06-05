@@ -237,9 +237,6 @@ async function emitPairing(input: EmitPairingInput): Promise<void> {
     out.println("Scan this QR in the DevDashboard mobile app to pair:\n");
     out.println(renderQr(pairingUri, { small: true }));
     out.println(`\nOr paste this pairing URI:\n  ${pairingUri}\n`);
-    note(
-        "Run the tunnel: `cloudflared tunnel run devdashboard` (or add it as a launchd/login service).",
-        "Next"
-    );
+    note("Run the tunnel: `cloudflared tunnel run devdashboard` (or add it as a launchd/login service).", "Next");
     outro("Tunnel ready.");
 }

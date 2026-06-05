@@ -1,10 +1,5 @@
 import { logger } from "@app/logger";
-import {
-    captureTmuxSnapshot,
-    restoreTmuxSession,
-    SNAPSHOT_VERSION,
-    type TmuxPreset,
-} from "@app/utils/tmux/snapshot";
+import { captureTmuxSnapshot, restoreTmuxSession, SNAPSHOT_VERSION, type TmuxPreset } from "@app/utils/tmux/snapshot";
 import { TmuxPresetStore, type TmuxPresetSummary } from "@app/utils/tmux/snapshot-store";
 
 export interface SavePresetInput {
@@ -52,7 +47,7 @@ export function savePreset(input: SavePresetInput, store?: TmuxPresetStore): Tmu
         throw new Error(
             input.prefix
                 ? `No tmux sessions match prefix "${input.prefix}".`
-                : "No tmux sessions to capture (is tmux running?).",
+                : "No tmux sessions to capture (is tmux running?)."
         );
     }
 

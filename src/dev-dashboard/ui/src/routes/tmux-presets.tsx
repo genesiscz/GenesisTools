@@ -56,7 +56,11 @@ export function TmuxPresetsRoute() {
     };
 
     const handleDelete = (name: string) => {
-        if (window.confirm(`Delete preset "${name}"? This removes the preset file (running tmux sessions are untouched).`)) {
+        if (
+            window.confirm(
+                `Delete preset "${name}"? This removes the preset file (running tmux sessions are untouched).`
+            )
+        ) {
             deleteMutation.mutate(name);
         }
     };

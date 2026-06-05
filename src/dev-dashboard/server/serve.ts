@@ -1,19 +1,19 @@
 import { hostname } from "node:os";
 import { getDashboardAuthCached } from "@app/dev-dashboard/config";
-import { fromBase64, loadOrCreateAgentKeys, naclBoxCipher } from "@app/dev-dashboard/lib/e2e/box";
-import { routerToResponse } from "@app/dev-dashboard/server/adapters/bun-serve";
-import { decideApiAuth } from "@app/dev-dashboard/server/auth-guard";
-import type { AuthResult } from "@app/dev-dashboard/server/auth-guard";
-import { defaultSystemCollector } from "@app/dev-dashboard/server/collector/SystemCollector";
-import { isLoopbackOnlyOrigin } from "@app/dev-dashboard/lib/front-proxy";
 import { LOCAL_ORIGIN_HEADER } from "@app/dev-dashboard/lib/auth";
+import type { KeyPair } from "@app/dev-dashboard/lib/e2e/box";
+import { fromBase64, loadOrCreateAgentKeys, naclBoxCipher } from "@app/dev-dashboard/lib/e2e/box";
+import { isLoopbackOnlyOrigin } from "@app/dev-dashboard/lib/front-proxy";
+import { routerToResponse } from "@app/dev-dashboard/server/adapters/bun-serve";
+import type { AuthResult } from "@app/dev-dashboard/server/auth-guard";
+import { decideApiAuth } from "@app/dev-dashboard/server/auth-guard";
+import { defaultSystemCollector } from "@app/dev-dashboard/server/collector/SystemCollector";
 import { createDashboardRouter, startBackgroundServices } from "@app/dev-dashboard/server/registry";
+import type { Router } from "@app/dev-dashboard/server/router";
 import { loadPeers } from "@app/dev-dashboard/server/routes/e2e";
 import { handleE2eRpc } from "@app/dev-dashboard/server/transport/e2e-rpc";
 import { startMdnsAdvertiser } from "@app/dev-dashboard/server/transport/mdns-advertiser";
-import type { KeyPair } from "@app/dev-dashboard/lib/e2e/box";
 import type { RouteServices } from "@app/dev-dashboard/server/types";
-import type { Router } from "@app/dev-dashboard/server/router";
 import { logger, out } from "@app/logger";
 
 export interface ServeAgentOptions {
@@ -57,7 +57,12 @@ function denyResponse(auth: AuthResult): Response | null {
  * epk, MAC fail) returns a GENERIC 403 with no detail — never reveal which check failed, or
  * the endpoint becomes a decryption oracle. The real reason is logged via `logger.warn`.
  */
-async function serveE2eRpc(req: Request, agentKeys: KeyPair, router: Router, services: RouteServices): Promise<Response> {
+async function serveE2eRpc(
+    req: Request,
+    agentKeys: KeyPair,
+    router: Router,
+    services: RouteServices
+): Promise<Response> {
     try {
         const rawEnvelope = await req.text();
         const peers = await loadPeers();

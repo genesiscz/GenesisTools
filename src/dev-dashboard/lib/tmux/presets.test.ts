@@ -1,11 +1,11 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { deletePreset, listPresets, savePreset } from "@app/dev-dashboard/lib/tmux/presets";
 import { setTmuxBinForTests } from "@app/utils/tmux/bin";
 import { setTmuxSnapshotSpawnForTests, type TmuxPreset } from "@app/utils/tmux/snapshot";
 import { TmuxPresetStore } from "@app/utils/tmux/snapshot-store";
-import { deletePreset, listPresets, savePreset } from "@app/dev-dashboard/lib/tmux/presets";
 
 // Two sessions: "alpha" has 1 window with 2 panes, "beta" has 2 windows with 1 pane each.
 // Columns (PANE_LIST_FORMAT order): session window_idx window_name pane_idx cwd cmd session_path attached
@@ -98,7 +98,11 @@ describe("dev-dashboard tmux presets lib", () => {
                     cwd: "/a",
                     attached: false,
                     windows: [
-                        { index: 0, name: "w0", panes: [{ index: 0, cwd: "/a", currentCommand: "zsh", lastShellCommand: undefined }] },
+                        {
+                            index: 0,
+                            name: "w0",
+                            panes: [{ index: 0, cwd: "/a", currentCommand: "zsh", lastShellCommand: undefined }],
+                        },
                         {
                             index: 1,
                             name: "w1",
@@ -113,7 +117,13 @@ describe("dev-dashboard tmux presets lib", () => {
                     name: "s2",
                     cwd: "/b",
                     attached: true,
-                    windows: [{ index: 0, name: "w0", panes: [{ index: 0, cwd: "/b", currentCommand: "bun", lastShellCommand: undefined }] }],
+                    windows: [
+                        {
+                            index: 0,
+                            name: "w0",
+                            panes: [{ index: 0, cwd: "/b", currentCommand: "bun", lastShellCommand: undefined }],
+                        },
+                    ],
                 },
             ],
         };

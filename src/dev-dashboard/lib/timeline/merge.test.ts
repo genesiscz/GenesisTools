@@ -1,7 +1,7 @@
+import { describe, expect, it } from "bun:test";
 import type { RunSummary } from "@app/daemon/lib/types";
 import { mergeTimeline, type TimelineQaEntry } from "@app/dev-dashboard/lib/timeline/merge";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
-import { describe, expect, it } from "bun:test";
 
 const run = (over: Partial<RunSummary>): RunSummary => ({
     taskName: "sync",

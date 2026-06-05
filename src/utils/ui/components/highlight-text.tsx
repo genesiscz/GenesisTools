@@ -1,6 +1,6 @@
 import { splitTextByHighlights } from "@app/utils/highlight-text-spans";
 import { cn } from "@ui/lib/utils";
-import { useMemo, type ReactElement } from "react";
+import { type ReactElement, useMemo } from "react";
 
 interface Props {
     text: string;
