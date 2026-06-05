@@ -2,11 +2,36 @@ import { similarityScore } from "./fuzzy-match";
 
 const SEP = /[\\\s\-:/,.;_]+/;
 
+/** Pasted IDs/tokens without spaces — do not split on `:`, `-`, `_` inside the blob. */
+const LITERAL_BLOB_MIN_LEN = 24;
+
+function isWeakToken(token: string): boolean {
+    if (token.length < 2) {
+        return true;
+    }
+
+    if (/^\d+$/.test(token) && token.length < 4) {
+        return true;
+    }
+
+    return false;
+}
+
 export function tokenizeSearch(input: string): string[] {
-    return input
+    const trimmed = input.trim();
+
+    if (trimmed.length === 0) {
+        return [];
+    }
+
+    if (!/\s/.test(trimmed) && trimmed.length >= LITERAL_BLOB_MIN_LEN) {
+        return [trimmed.toLowerCase()];
+    }
+
+    return trimmed
         .split(SEP)
         .map((t) => t.trim().toLowerCase())
-        .filter((t) => t.length > 0);
+        .filter((t) => !isWeakToken(t));
 }
 
 export interface TokenMatch {
@@ -28,6 +53,10 @@ export function findTokenMatches(haystack: string, tokens: string[], threshold =
         }
 
         if (spans.some((s) => s.token === token)) {
+            continue;
+        }
+
+        if (token.length < 5) {
             continue;
         }
 
