@@ -1,6 +1,11 @@
 import { type RefObject, useEffect } from "react";
 import type { LogSearchState } from "@/components/LogSearchPopover";
 
+/** Search inputs that should trigger a one-time jump to the first match (not live tail updates). */
+export function logMatchScrollEffectKey(logSearch: LogSearchState): string {
+    return `${logSearch.query}\0${logSearch.contextLines}`;
+}
+
 export function scrollToFirstLogMatch(container: HTMLElement | null): void {
     if (!container) {
         return;
@@ -19,11 +24,15 @@ export function useScrollToFirstLogMatch(
     matchCount: number,
     isSearchActive: boolean
 ): void {
+    const searchKey = logMatchScrollEffectKey(logSearch);
+
     useEffect(() => {
         if (!isSearchActive || matchCount === 0) {
             return;
         }
 
         scrollToFirstLogMatch(scrollRef.current);
-    }, [scrollRef, logSearch.query, logSearch.contextLines, matchCount, isSearchActive]);
+        // matchCount intentionally omitted: new live lines must not re-scroll to the first match.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [scrollRef, searchKey, isSearchActive]);
 }
