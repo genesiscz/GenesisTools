@@ -6,12 +6,13 @@ import { runTunnelSetup } from "@app/dev-dashboard/commands/tunnel";
 import { getConfig, saveConfig } from "@app/dev-dashboard/config";
 import { createBasicAuthCredentials } from "@app/dev-dashboard/lib/auth";
 import { generatePairingCode, savePairingCode } from "@app/dev-dashboard/lib/e2e/pairing-code";
+import { runConfigure, runFirstTimeSetup } from "@app/dev-dashboard/lib/setup";
 import { startFrontProxy } from "@app/dev-dashboard/lib/front-proxy";
 import { runPreviewUiServer } from "@app/dev-dashboard/lib/preview-ui-server";
 import { serveAgent } from "@app/dev-dashboard/server/serve";
 import { devDashboardUiApp } from "@app/dev-dashboard/ui/app";
 import { logger, out } from "@app/logger";
-import { runTool } from "@app/utils/cli";
+import { isInteractive, runTool } from "@app/utils/cli";
 import { stopUiServerOnPort } from "@app/utils/DashboardApp";
 import { openBrowserWhenDashboardEnv } from "@app/utils/DashboardApp/preview";
 import { waitForUrlReady } from "@app/utils/DashboardApp/readiness";
@@ -38,6 +39,10 @@ async function runUiServer(): Promise<void> {
         out.error(`Could not find Vite at ${viteEntry}`);
         out.error(`Run "bun install" in ${PROJECT_ROOT} first.`);
         process.exit(1);
+    }
+
+    if (isInteractive()) {
+        await runFirstTimeSetup();
     }
 
     const { port } = await getConfig();
@@ -177,6 +182,14 @@ program
     });
 
 program.addCommand(devDashboardUiApp.commanderCommand);
+
+program
+    .command("configure")
+    .alias("config")
+    .description("Configure dev-dashboard settings (allowed hosts, etc.)")
+    .action(async () => {
+        await runConfigure();
+    });
 
 const auth = program.command("auth").description("Manage dev-dashboard Basic Auth");
 

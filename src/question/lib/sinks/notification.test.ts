@@ -1,10 +1,15 @@
 import { describe, expect, it, mock } from "bun:test";
 
-const dispatched: { app: string; title?: string; message: string }[] = [];
+const dispatched: { app: string; title?: string; message: string; open?: string }[] = [];
+
 mock.module("@app/utils/notifications", () => ({
-    dispatchNotification: async (e: { app: string; title?: string; message: string }) => {
+    dispatchNotification: async (e: { app: string; title?: string; message: string; open?: string }) => {
         dispatched.push(e);
     },
+}));
+
+mock.module("@app/dev-dashboard/lib/qa-deep-link", () => ({
+    buildQaDeepLink: async (id: string) => `http://mac.foltyn.dev:3042/qa?id=${encodeURIComponent(id)}`,
 }));
 
 import type { QuestionConfig } from "../config";
@@ -12,7 +17,7 @@ import type { QaEntry } from "../types";
 import { formatNotification, notificationSink } from "./notification";
 
 const e: QaEntry = {
-    id: "1",
+    id: "abc-entry",
     ts: 1779000000000,
     sessionId: "s",
     sessionTitle: null,
@@ -46,16 +51,19 @@ describe("notificationSink", () => {
         );
     });
 
-    it("formats title+message and delegates to dispatchNotification with app=question", async () => {
-        const f = formatNotification(e);
+    it("formats title+message+open and delegates to dispatchNotification with app=question", async () => {
+        const f = await formatNotification(e);
         expect(f.title).toContain("GenesisTools");
         expect(f.message).toContain("why X?");
         expect(f.message).toContain("Because Y.");
+        expect(f.open).toBe("http://mac.foltyn.dev:3042/qa?id=abc-entry");
 
+        dispatched.length = 0;
         await notificationSink.emit(e, { ...baseCfg, sinks: { obsidian: true, sound: false, notify: true } });
         expect(dispatched.length).toBe(1);
         expect(dispatched[0].app).toBe("question");
         expect(dispatched[0].title).toContain("GenesisTools");
         expect(dispatched[0].message).toContain("Because Y.");
+        expect(dispatched[0].open).toBe("http://mac.foltyn.dev:3042/qa?id=abc-entry");
     });
 });

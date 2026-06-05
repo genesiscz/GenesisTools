@@ -56,6 +56,7 @@ const PulseConfigSchema = z.object({
 
 const DevDashboardConfigSchema = z.object({
     port: z.number().int().min(1).max(65535).default(3042),
+    allowedHosts: z.array(z.string()).default([]),
     obsidianVault: z.string().optional(),
     publishedNotes: z.array(PublishedNoteSchema).default([]),
     cmuxPollIntervalMs: z.number().int().min(250).default(2000),
