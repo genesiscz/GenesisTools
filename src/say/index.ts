@@ -398,8 +398,14 @@ async function speakCached(args: SpeakCachedArgs): Promise<void> {
         return;
     }
 
-    const { threshold, maxBytes, ttlMs } = await mgr.getCacheSettings();
-    const cache = new SayAudioCache({ dir: getSayStorage().getCacheDir(), threshold, maxBytes, ttlMs });
+    const { threshold, maxBytes, ttlMs, audioTtlMs } = await mgr.getCacheSettings();
+    const cache = new SayAudioCache({
+        dir: getSayStorage().getCacheDir(),
+        threshold,
+        maxBytes,
+        ttlMs,
+        audioTtlMs,
+    });
     const params = {
         text,
         provider,
