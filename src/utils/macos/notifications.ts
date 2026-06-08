@@ -263,8 +263,15 @@ function backendChain(preferred?: NotificationBackend): NotificationBackend[] {
 export async function sendNotification(opts: NotificationOptions): Promise<void> {
     const chain = backendChain(opts.preferred);
 
+    const hasClickAction = Boolean(opts.open || opts.execute);
+
     for (const backend of chain) {
         if (backend === NotificationBackend.DarwinKit) {
+            if (hasClickAction) {
+                logger.debug("DarwinKit skipped: open/execute actions don't survive sender exit");
+                continue;
+            }
+
             if (await sendViaDarwinKit(opts)) {
                 logger.debug(`Notification sent via DarwinKit: ${opts.message}`);
                 break;
