@@ -7,14 +7,16 @@
  * `src/utils/tmux/` with the dev-dashboard server.
  *
  * Usage:
- *   tools tmux sessions [--json] [--detailed] [--prefix <str>]
+ *   tools tmux sessions [--json] [--no-detailed] [--prefix <str>]
  *   tools tmux create [--name <n>] [--cwd <p>] [--command <sh>] [--attach]
+ *   tools tmux attach <id-or-substring>          (shortcut)
  *   tools tmux session reset <id> | --matching <pattern>
  *   tools tmux session attach <id-or-substring>
  *   tools tmux presets save|list|restore|delete
  */
 
 import { out } from "@app/logger";
+import { registerAttachCommand } from "@app/tmux/commands/attach";
 import { registerCreateCommand } from "@app/tmux/commands/create";
 import { registerPresetsCommand } from "@app/tmux/commands/presets";
 import { registerSessionCommand } from "@app/tmux/commands/session";
@@ -34,6 +36,7 @@ program
     .showHelpAfterError(true)
     .option("-v, --verbose", "Enable debug logging");
 
+registerAttachCommand(program);
 registerCreateCommand(program);
 registerSessionsCommand(program);
 registerSessionCommand(program);
