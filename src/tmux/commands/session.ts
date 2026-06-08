@@ -1,4 +1,5 @@
 import { out } from "@app/logger";
+import { runList } from "@app/tmux/commands/sessions";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import * as p from "@app/utils/prompts/p";
 import { resolveSessionQuery } from "@app/utils/tmux/match";
@@ -17,7 +18,14 @@ interface ResetCliFlags {
 }
 
 export function registerSessionCommand(program: Command): void {
-    const session = program.command("session").description("Operate on individual tmux sessions (reset / attach)");
+    const session = program
+        .command("session")
+        .description("Operate on individual tmux sessions (reset / attach)")
+        .action((_opts: unknown, cmd: Command) => {
+            runList({ detailed: true });
+            out.println("");
+            cmd.outputHelp();
+        });
 
     session
         .command("reset [sessionId]")
