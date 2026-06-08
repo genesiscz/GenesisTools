@@ -175,8 +175,8 @@ describe("SayAudioCache", () => {
         expect(texts).not.toContain("stale");
     });
 
-    it("deletes the persisted audio file when an entry expires by ttl", () => {
-        const c = new SayAudioCache({ dir, threshold: 1, ttlMs: 86_400_000 });
+    it("deletes the persisted audio file when an entry expires by audioTtlMs", () => {
+        const c = new SayAudioCache({ dir, threshold: 1, ttlMs: 86_400_000, audioTtlMs: 86_400_000 });
         c.recordMiss({ ...baseParams, text: "audio-old" }, Buffer.from([1, 2, 3]), "audio/mpeg");
         expect(c.get({ ...baseParams, text: "audio-old" })).not.toBeNull();
         expect(readdirSync(dir).filter((f) => f.endsWith(".mp3")).length).toBe(1);
@@ -186,6 +186,17 @@ describe("SayAudioCache", () => {
 
         expect(c.get({ ...baseParams, text: "audio-old" })).toBeNull();
         expect(readdirSync(dir).filter((f) => f.endsWith(".mp3")).length).toBe(0);
+    });
+
+    it("never ttl-prunes persisted audio by default", () => {
+        const c = new SayAudioCache({ dir, threshold: 1, ttlMs: 86_400_000 });
+        c.recordMiss({ ...baseParams, text: "cached-phrase" }, Buffer.from([1, 2, 3]), "audio/mpeg");
+        backdateAllEntries(365 * 24 * 60 * 60 * 1000); // a year old
+
+        c.recordMiss({ ...baseParams, text: "other" });
+
+        expect(c.get({ ...baseParams, text: "cached-phrase" })).not.toBeNull();
+        expect(readdirSync(dir).filter((f) => f.endsWith(".mp3")).length).toBe(1);
     });
 
     it("keeps a frequently-used entry alive because each access refreshes lastUsed", () => {

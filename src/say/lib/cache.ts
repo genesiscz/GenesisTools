@@ -66,12 +66,18 @@ export interface SayAudioCacheOptions {
      */
     maxBytes?: number;
     /**
-     * Max age in ms before an entry is pruned by `lastUsed`, regardless of
-     * size. Counter-only entries (one-off phrases that never reach `threshold`)
-     * are 0 bytes, so the byte-cap eviction never touches them — without a TTL
-     * the index grows unbounded. Default 24h; pass <= 0 to disable.
+     * Max age in ms before a counter-only entry (no persisted audio yet) is
+     * pruned by `lastUsed`. These are 0 bytes, so byte-cap eviction never
+     * touches them — without a TTL the index grows unbounded. Default 24h;
+     * pass <= 0 to disable.
      */
     ttlMs?: number;
+    /**
+     * Max age in ms before a persisted-audio entry is pruned by `lastUsed`.
+     * Default 0 (disabled) — cached audio is only removed by the byte-cap LRU.
+     * Set explicitly (e.g. 7d) to expire unused audio files.
+     */
+    audioTtlMs?: number;
 }
 
 /**
@@ -87,6 +93,7 @@ export class SayAudioCache {
     private readonly threshold: number;
     private readonly maxBytes: number;
     private readonly ttlMs: number;
+    private readonly audioTtlMs: number;
     private readonly indexPath: string;
 
     constructor(opts: SayAudioCacheOptions) {
@@ -94,6 +101,7 @@ export class SayAudioCache {
         this.threshold = opts.threshold ?? 5;
         this.maxBytes = opts.maxBytes ?? 50_000_000;
         this.ttlMs = opts.ttlMs ?? 86_400_000;
+        this.audioTtlMs = opts.audioTtlMs ?? 0;
         this.indexPath = join(this.dir, "index.json");
 
         if (!existsSync(this.dir)) {
@@ -270,22 +278,22 @@ export class SayAudioCache {
     }
 
     /**
-     * Remove entries whose `lastUsed` is older than `ttlMs`, deleting any
-     * persisted audio file. Unlike `evictIfOverCap` (byte-budget LRU), this
-     * also clears 0-byte counter entries, which otherwise accumulate forever.
-     * A frequently-spoken phrase keeps its `lastUsed` fresh on every hit/miss,
-     * so it survives; genuinely one-off phrases age out. Pass `ttlMs <= 0` to
-     * disable.
+     * Remove counter-only entries whose `lastUsed` exceeds `ttlMs` (default
+     * 24h). Persisted-audio entries are skipped unless `audioTtlMs` is set
+     * explicitly — cached phrases are kept until byte-cap LRU eviction.
      */
     private pruneExpired(idx: IndexShape, now: number): void {
-        if (!Number.isFinite(this.ttlMs) || this.ttlMs <= 0) {
-            return;
-        }
-
-        const cutoff = now - this.ttlMs;
         let pruned = 0;
 
         for (const [key, e] of Object.entries(idx.entries)) {
+            const ttl = e.audioPath ? this.audioTtlMs : this.ttlMs;
+
+            if (!Number.isFinite(ttl) || ttl <= 0) {
+                continue;
+            }
+
+            const cutoff = now - ttl;
+
             if (e.lastUsed >= cutoff) {
                 continue;
             }
@@ -303,7 +311,7 @@ export class SayAudioCache {
         }
 
         if (pruned > 0) {
-            logger.debug(`[say/cache] pruned ${pruned} entries older than ${this.ttlMs}ms`);
+            logger.debug(`[say/cache] pruned ${pruned} stale entries`);
         }
     }
 
