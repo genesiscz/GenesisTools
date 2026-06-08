@@ -101,14 +101,34 @@ describe("dev-dashboard tmux presets lib", () => {
                         {
                             index: 0,
                             name: "w0",
-                            panes: [{ index: 0, cwd: "/a", currentCommand: "zsh", lastShellCommand: undefined }],
+                            panes: [
+                                {
+                                    index: 0,
+                                    cwd: "/a",
+                                    currentCommand: "zsh",
+                                    lastShellCommand: undefined,
+                                    launchCommand: undefined,
+                                },
+                            ],
                         },
                         {
                             index: 1,
                             name: "w1",
                             panes: [
-                                { index: 0, cwd: "/a", currentCommand: "vim", lastShellCommand: undefined },
-                                { index: 1, cwd: "/a", currentCommand: "tail", lastShellCommand: undefined },
+                                {
+                                    index: 0,
+                                    cwd: "/a",
+                                    currentCommand: "vim",
+                                    lastShellCommand: undefined,
+                                    launchCommand: undefined,
+                                },
+                                {
+                                    index: 1,
+                                    cwd: "/a",
+                                    currentCommand: "tail",
+                                    lastShellCommand: undefined,
+                                    launchCommand: undefined,
+                                },
                             ],
                         },
                     ],
@@ -121,7 +141,15 @@ describe("dev-dashboard tmux presets lib", () => {
                         {
                             index: 0,
                             name: "w0",
-                            panes: [{ index: 0, cwd: "/b", currentCommand: "bun", lastShellCommand: undefined }],
+                            panes: [
+                                {
+                                    index: 0,
+                                    cwd: "/b",
+                                    currentCommand: "bun",
+                                    lastShellCommand: undefined,
+                                    launchCommand: undefined,
+                                },
+                            ],
                         },
                     ],
                 },
