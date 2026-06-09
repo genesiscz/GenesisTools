@@ -16,6 +16,10 @@ function signColor(n: number | undefined): (s: string) => string {
     return n > 0 ? pc.green : pc.red;
 }
 
+export function formatQuoteTable(snapshots: QuoteSnapshot[]): string {
+    return snapshots.map(formatQuoteLine).join("\n");
+}
+
 export function formatQuoteLine(snap: QuoteSnapshot): string {
     const v = snap.value;
     const label = v.short_name ?? parseProSymbol(snap.symbol);

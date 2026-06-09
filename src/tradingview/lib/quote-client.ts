@@ -1,8 +1,8 @@
 import { EventEmitter } from "node:events";
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import WebSocket from "ws";
 import { encodeFrame, genSessionId, isHeartbeat, parseFrames } from "./protocol";
-import { isWebSocketOpen, openTvWebSocket } from "./tv-websocket";
 import type { QuoteSnapshot, QuoteValue } from "./types";
 
 const DEFAULT_FIELDS = [
@@ -19,12 +19,22 @@ const DEFAULT_FIELDS = [
     "type",
 ];
 
+const TV_ORIGIN = "https://www.tradingview.com";
+
 interface QuoteClientOpts {
     authToken?: string;
     host?: string;
     fields?: string[];
 }
 
+export interface QuoteClient {
+    on(event: "quote", listener: (snap: QuoteSnapshot) => void): this;
+    on(event: "open", listener: () => void): this;
+    on(event: "error", listener: (err: Error) => void): this;
+    on(event: "close", listener: () => void): this;
+}
+
+// biome-ignore lint/suspicious/noUnsafeDeclarationMerging: typed EventEmitter events
 export class QuoteClient extends EventEmitter {
     private ws: WebSocket | null = null;
     private readonly sessionId = genSessionId("qs_");
@@ -44,20 +54,15 @@ export class QuoteClient extends EventEmitter {
     connect(): void {
         const url = `wss://${this.host}/socket.io/websocket?type=chart`;
         logger.debug({ url, host: this.host }, "tradingview: opening quote socket");
-        this.ws = openTvWebSocket(url);
-        this.ws.addEventListener("open", () => this.onOpen());
-        this.ws.addEventListener("message", (event) => this.onMessage(String(event.data)));
-        this.ws.addEventListener("error", (event: Event) => {
-            const wsEvent = event as ErrorEvent;
-            const err =
-                wsEvent.error instanceof Error ? wsEvent.error : new Error(wsEvent.message || "WebSocket error");
-            this.emit("error", err);
-        });
-        this.ws.addEventListener("close", () => this.emit("close"));
+        this.ws = new WebSocket(url, { origin: TV_ORIGIN, headers: { Origin: TV_ORIGIN } });
+        this.ws.on("open", () => this.onOpen());
+        this.ws.on("message", (data: WebSocket.RawData) => this.onMessage(String(data)));
+        this.ws.on("error", (err) => this.emit("error", err));
+        this.ws.on("close", () => this.emit("close"));
     }
 
     addSymbols(symbols: string[]): void {
-        if (!isWebSocketOpen(this.ws)) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
             this.pending.push(...symbols);
             return;
         }

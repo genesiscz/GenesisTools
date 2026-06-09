@@ -1,4 +1,5 @@
 import { logger } from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage";
 import type { TvSession } from "./types";
 
@@ -78,4 +79,19 @@ export async function fetchAuthToken(cookie: string): Promise<string> {
         return "unauthorized_user_token";
     }
     return m[1];
+}
+
+export function decodeJwt(jwt: string): Record<string, unknown> | null {
+    const parts = jwt.split(".");
+    if (parts.length < 2) {
+        return null;
+    }
+    try {
+        const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+        const padded = payload + "=".repeat((4 - (payload.length % 4)) % 4);
+        const decoded = Buffer.from(padded, "base64").toString("utf8");
+        return SafeJSON.parse(decoded) as Record<string, unknown>;
+    } catch {
+        return null;
+    }
 }

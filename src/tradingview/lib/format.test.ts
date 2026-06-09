@@ -1,5 +1,5 @@
-import { stripAnsi } from "@app/utils/string";
 import { describe, expect, it } from "bun:test";
+import { stripAnsi } from "@app/utils/string";
 import { formatAlertFire, formatAlertRow, formatQuoteLine } from "./format";
 import type { Alert, AlertFire, QuoteSnapshot } from "./types";
 
