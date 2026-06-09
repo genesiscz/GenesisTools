@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mapIndicatorList, mapTranslateResponse, parseScriptSpec, resolvePubScriptRef } from "./pine-facade";
+import { SignalDetector } from "./signals";
 
 /** Inline shape from plan — replaced by __fixtures__/translate-std-rsi.json when available. */
 const STD_RSI_FIXTURE = {
@@ -77,7 +78,8 @@ describe("resolvePubScriptRef", () => {
         expect(pub.scriptIdPart).toBe(hash);
     });
 
-    test("resolves publication slug PUB;AGFHDbJ2 to internal script id", async () => {
+    // Live-network test: hits pubscripts-suggest-json + the script page. Opt in with TV_NET_TESTS=1.
+    test.skipIf(!process.env.TV_NET_TESTS)("resolves publication slug PUB;AGFHDbJ2 to internal script id", async () => {
         const resolved = await resolvePubScriptRef("PUB;AGFHDbJ2");
         expect(resolved.scriptIdPart).toBe("PUB;0u4crLN8uj6zMzf6TJ0lhIuiKOKlHd7G");
         expect(resolved.version.length).toBeGreaterThan(0);
@@ -93,5 +95,38 @@ describe("mapTranslateResponse", () => {
         expect(meta.inputs.every((i) => !i.isFake)).toBe(true);
         expect(meta.plots.length).toBeGreaterThan(0);
         expect(meta.plots[0].title.length).toBeGreaterThan(0);
+    });
+
+    test("maps the captured MDX (protected PUB) translate fixture into StudyMeta", async () => {
+        const path = new URL("./__fixtures__/translate-pub-mdx.json", import.meta.url);
+        const mdx = await Bun.file(path).json();
+        const meta = mapTranslateResponse(mdx);
+
+        expect(meta.pineId).toBe("PUB;0u4crLN8uj6zMzf6TJ0lhIuiKOKlHd7G");
+        expect(meta.ilTemplate.length).toBeGreaterThan(100);
+        expect(meta.plots).toHaveLength(6);
+
+        const byTitle = new Map(meta.plots.map((p) => [p.title, p.type]));
+        expect(byTitle.get("Buy")).toBe("shapes");
+        expect(byTitle.get("Sell")).toBe("shapes");
+        expect(byTitle.get("Up Entry Arrow")).toBe("arrows");
+        expect(byTitle.get("Down Entry Arrow")).toBe("arrows");
+
+        const colorer = meta.plots.find((p) => p.type === "colorer");
+        expect(colorer?.id).toBe("plot_1");
+    });
+
+    test("MDX shape/arrow plots drive signals; colorer and line do not", async () => {
+        const path = new URL("./__fixtures__/translate-pub-mdx.json", import.meta.url);
+        const meta = mapTranslateResponse(await Bun.file(path).json());
+        const detector = new SignalDetector(meta.plots);
+        expect(detector.hasShapePlots()).toBe(true);
+
+        // values aligned to plots order: [ma slope(line), colorer, Buy, Sell, UpArrow, DownArrow]
+        const noSignal = detector.ingest([{ barIndex: 0, time: 1000, values: [1.5, 2, null, null, null, null] }]);
+        expect(noSignal).toEqual([]);
+
+        const buy = detector.ingest([{ barIndex: 1, time: 1060, values: [1.5, 2, 1, null, null, null] }]);
+        expect(buy.map((e) => e.plotTitle)).toEqual(["Buy"]);
     });
 });
