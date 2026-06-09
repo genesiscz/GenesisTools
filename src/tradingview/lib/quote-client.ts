@@ -1,8 +1,8 @@
 import { EventEmitter } from "node:events";
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
-import WebSocket from "ws";
 import { encodeFrame, genSessionId, isHeartbeat, parseFrames } from "./protocol";
+import { tvSocket } from "./ws";
 import type { QuoteSnapshot, QuoteValue } from "./types";
 
 const DEFAULT_FIELDS = [
@@ -19,8 +19,6 @@ const DEFAULT_FIELDS = [
     "type",
 ];
 
-const TV_ORIGIN = "https://www.tradingview.com";
-
 interface QuoteClientOpts {
     authToken?: string;
     host?: string;
@@ -29,6 +27,7 @@ interface QuoteClientOpts {
 
 export interface QuoteClient {
     on(event: "quote", listener: (snap: QuoteSnapshot) => void): this;
+    on(event: "symbolError", listener: (info: { symbol: string; errmsg: string }) => void): this;
     on(event: "open", listener: () => void): this;
     on(event: "error", listener: (err: Error) => void): this;
     on(event: "close", listener: () => void): this;
@@ -54,11 +53,11 @@ export class QuoteClient extends EventEmitter {
     connect(): void {
         const url = `wss://${this.host}/socket.io/websocket?type=chart`;
         logger.debug({ url, host: this.host }, "tradingview: opening quote socket");
-        this.ws = new WebSocket(url, { origin: TV_ORIGIN, headers: { Origin: TV_ORIGIN } });
-        this.ws.on("open", () => this.onOpen());
-        this.ws.on("message", (data: WebSocket.RawData) => this.onMessage(String(data)));
-        this.ws.on("error", (err) => this.emit("error", err));
-        this.ws.on("close", () => this.emit("close"));
+        this.ws = tvSocket(url);
+        this.ws.addEventListener("open", () => this.onOpen());
+        this.ws.addEventListener("message", (e) => this.onMessage(String(e.data)));
+        this.ws.addEventListener("error", () => this.emit("error", new Error("quote socket error")));
+        this.ws.addEventListener("close", () => this.emit("close"));
     }
 
     addSymbols(symbols: string[]): void {
@@ -107,8 +106,15 @@ export class QuoteClient extends EventEmitter {
         if (msg.m !== "qsd" || !Array.isArray(msg.p)) {
             return;
         }
-        const payload = msg.p[1] as { n?: string; s?: string; v?: QuoteValue } | undefined;
-        if (!payload?.n || payload.s !== "ok" || !payload.v) {
+        const payload = msg.p[1] as { n?: string; s?: string; errmsg?: string; v?: QuoteValue } | undefined;
+        if (!payload?.n) {
+            return;
+        }
+        if (payload.s === "error") {
+            this.emit("symbolError", { symbol: payload.n, errmsg: payload.errmsg ?? "unknown error" });
+            return;
+        }
+        if (payload.s !== "ok" || !payload.v) {
             return;
         }
         const merged = { ...(this.cache.get(payload.n) ?? {}), ...payload.v };

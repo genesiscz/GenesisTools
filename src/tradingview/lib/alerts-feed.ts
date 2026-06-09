@@ -1,11 +1,10 @@
 import { EventEmitter } from "node:events";
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
-import WebSocket from "ws";
+import { tvSocket } from "./ws";
 import type { Alert, AlertFire, TvSession } from "./types";
 
 const FEED_URL = "wss://pushstream.tradingview.com/message-pipe-ws/private_feed";
-const TV_ORIGIN = "https://www.tradingview.com";
 
 export interface AlertsFeed {
     on(event: "fired", listener: (fire: AlertFire) => void): this;
@@ -31,14 +30,11 @@ export class AlertsFeed extends EventEmitter {
 
     connect(): void {
         logger.debug("tradingview: opening alerts private_feed");
-        this.ws = new WebSocket(FEED_URL, {
-            origin: TV_ORIGIN,
-            headers: { Origin: TV_ORIGIN, cookie: this.session.cookie },
-        });
-        this.ws.on("open", () => this.emit("open"));
-        this.ws.on("message", (data: WebSocket.RawData) => this.onMessage(String(data)));
-        this.ws.on("error", (err) => this.emit("error", err));
-        this.ws.on("close", () => this.emit("close"));
+        this.ws = tvSocket(FEED_URL, { Cookie: this.session.cookie });
+        this.ws.addEventListener("open", () => this.emit("open"));
+        this.ws.addEventListener("message", (e) => this.onMessage(String(e.data)));
+        this.ws.addEventListener("error", () => this.emit("error", new Error("alerts feed error")));
+        this.ws.addEventListener("close", () => this.emit("close"));
     }
 
     close(): void {

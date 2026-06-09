@@ -35,6 +35,9 @@ export async function runQuotes(symbols: string[], opts: QuotesOpts): Promise<vo
 
     client.on("open", () => client.addSymbols(tickers));
     client.on("quote", (snap) => out.printlnErr(formatQuoteLine(snap)));
+    client.on("symbolError", ({ symbol, errmsg }) =>
+        out.printlnErr(pc.red(`✗ ${symbol}: ${errmsg === "no_such_symbol" ? "no such symbol (check the EXCHANGE:TICKER spelling)" : errmsg}`))
+    );
     client.on("error", (err) => logger.error({ err }, "tradingview: quote socket error"));
     client.on("close", () => out.printErr(pc.dim("\nConnection closed.")));
 
