@@ -1,6 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import { stripAnsi } from "@app/utils/string";
-import { formatAlertFire, formatAlertRow, formatQuoteLine } from "./format";
+import {
+    formatAlertFire,
+    formatAlertRow,
+    formatIndicatorHeader,
+    formatQuoteLine,
+    formatSignalLine,
+    formatStudyRow,
+} from "./format";
 import type { Alert, AlertFire, QuoteSnapshot } from "./types";
 
 describe("format", () => {
@@ -58,5 +65,33 @@ describe("format", () => {
         const banner = stripAnsi(formatAlertFire(fire));
         expect(banner).toContain("OANDA:SPX500USD");
         expect(banner).toContain("SPX Crossing 7385.6");
+    });
+});
+
+describe("indicator formatting", () => {
+    const plots = [
+        { id: "plot_0", type: "line", title: "RSI" },
+        { id: "plot_1", type: "shapes", title: "Buy" },
+    ];
+
+    it("study row renders time + numeric cells, em-dash for null", () => {
+        const row = stripAnsi(formatStudyRow({ barIndex: 1, time: 1781037360, values: [31.42, null] }, plots));
+        expect(row).toContain("31.42");
+        expect(row).toContain("—");
+    });
+
+    it("signal line includes title and symbol", () => {
+        const line = stripAnsi(
+            formatSignalLine(
+                { time: 1781037360, barIndex: 1, plotId: "plot_1", plotTitle: "Buy", value: 1, kind: "live" },
+                "BYBIT:BTCUSDT.P",
+            ),
+        );
+        expect(line).toContain("Buy");
+        expect(line).toContain("BYBIT:BTCUSDT.P");
+    });
+
+    it("header lists plot columns", () => {
+        expect(stripAnsi(formatIndicatorHeader(plots))).toContain("RSI");
     });
 });
