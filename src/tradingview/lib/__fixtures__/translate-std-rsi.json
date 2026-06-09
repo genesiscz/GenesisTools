@@ -1,0 +1,668 @@
+{
+  "success": true,
+  "reason2": {
+    "warnings": [
+      {
+        "code": "CW10002",
+        "ctx": {
+          "functionName": "_inRange"
+        },
+        "end": {
+          "column": 78,
+          "line": 76
+        },
+        "message": "The \"{functionName}()\" call inside the conditional expression might not execute on every bar, which can cause inconsistent calculations because the function depends on historical results. For consistency, assign the call's result to a global variable and use that variable in the expression instead.",
+        "start": {
+          "column": 59,
+          "line": 76
+        }
+      },
+      {
+        "code": "CW10002",
+        "ctx": {
+          "functionName": "_inRange"
+        },
+        "end": {
+          "column": 78,
+          "line": 86
+        },
+        "message": "The \"{functionName}()\" call inside the conditional expression might not execute on every bar, which can cause inconsistent calculations because the function depends on historical results. For consistency, assign the call's result to a global variable and use that variable in the expression instead.",
+        "start": {
+          "column": 59,
+          "line": 86
+        }
+      }
+    ]
+  },
+  "result": {
+    "IL": "bmI9Ks46_X3b+nb8X3XpD9x0mUCVdbA==_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",
+    "ilTemplate": "bmI9Ks46_liEqUBb9pE3Wwwsh6duMGw==_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",
+    "metaInfo": {
+      "TVScriptMetaInfoExprs": {
+        "patchMap": {
+          "defaults.filledAreasStyle.fill_3.visible": "rm_9",
+          "defaults.styles.plot_2.display": "rm_3",
+          "defaults.styles.plot_3.display": "rm_7",
+          "defaults.styles.plot_4.display": "rm_7",
+          "filledAreasStyle.fill_3.isHidden": "rm_10",
+          "inputs.8.active": "rm_1",
+          "inputs.9.active": "rm_2",
+          "styles.plot_11.isHidden": "rm_20",
+          "styles.plot_2.isHidden": "rm_4",
+          "styles.plot_3.isHidden": "rm_10",
+          "styles.plot_4.isHidden": "rm_10",
+          "styles.plot_6.isHidden": "rm_20",
+          "styles.plot_8.isHidden": "rm_20",
+          "styles.plot_9.isHidden": "rm_20"
+        },
+        "tree": "//@version=6\n##root(root_metainfo,rm_0,'price',\"const&&string\",indicator,format,'2_69_2_80')\ncalculateDivergence=##input(defval=false,type='INPUT_BOOL',##id='in_2')\nmaTypeInput=##input(defval='SMA',type='INPUT_STRING',##id='in_3')\nvar isBB=(maTypeInput=='SMA + Bollinger Bands')\n##root(root_metainfo,rm_1,##active('in_4',(maTypeInput!='None')),\"input&&bool\")\n##root(root_metainfo,rm_2,##active('in_5',isBB),\"input&&bool\")\nvar enableMA=(maTypeInput!='None')\n##root(root_metainfo,rm_3,(enableMA?display.all:display.none),\"cb&&input&&plot_display&&integer\",plot,display,'44_65_44_101')\n##root(root_metainfo,rm_4,(not enableMA),\"input&&bool\")\n##root(root_metainfo,rm_5,(isBB?display.all:display.none),\"cb&&input&&plot_display&&integer\",plot,display,'45_111_45_143')\n##root(root_metainfo,rm_6,(not isBB),\"input&&bool\")\n##root(root_metainfo,rm_7,(isBB?display.all:display.none),\"cb&&input&&plot_display&&integer\",plot,display,'46_111_46_143')\n##root(root_metainfo,rm_8,(not isBB),\"input&&bool\")\n##root(root_metainfo,rm_9,(isBB?display.all:display.none),\"cb&&input&&plot_simple_display&&bool\",fill,display,'47_130_47_162')\n##root(root_metainfo,rm_10,(not isBB),\"input&&bool\")\n##root(root_metainfo,rm_11,2,\"input&&integer\",plot,linewidth,'97_18_97_18')\n##root(root_metainfo,rm_12,(not calculateDivergence),\"input&&bool\")\n##root(root_metainfo,rm_13,'shape_label_up',\"input&&string\",plotshape,style,'107_18_107_30')\n##root(root_metainfo,rm_14,'Absolute',\"input&&string\",plotshape,location,'108_18_108_34')\n##root(root_metainfo,rm_15,(not calculateDivergence),\"input&&bool\")\n##root(root_metainfo,rm_16,2,\"input&&integer\",plot,linewidth,'118_18_118_18')\n##root(root_metainfo,rm_17,(not calculateDivergence),\"input&&bool\")\n##root(root_metainfo,rm_18,'shape_label_down',\"input&&string\",plotshape,style,'128_18_128_32')\n##root(root_metainfo,rm_19,'Absolute',\"input&&string\",plotshape,location,'129_18_129_34')\n##root(root_metainfo,rm_20,(not calculateDivergence),\"input&&bool\")\n"
+      },
+      "_metainfoVersion": 54,
+      "bands": [
+        {
+          "id": "hline_0",
+          "isHidden": false,
+          "name": "RSI Upper Band"
+        },
+        {
+          "id": "hline_1",
+          "isHidden": false,
+          "name": "RSI Middle Band"
+        },
+        {
+          "id": "hline_2",
+          "isHidden": false,
+          "name": "RSI Lower Band"
+        }
+      ],
+      "behind_chart": true,
+      "defaults": {
+        "bands": [
+          {
+            "color": "#787B86",
+            "linestyle": 2,
+            "linewidth": 1,
+            "value": 70,
+            "visible": true
+          },
+          {
+            "color": "rgba(120,123,134,0.5)",
+            "linestyle": 2,
+            "linewidth": 1,
+            "value": 50,
+            "visible": true
+          },
+          {
+            "color": "#787B86",
+            "linestyle": 2,
+            "linewidth": 1,
+            "value": 30,
+            "visible": true
+          }
+        ],
+        "filledAreasStyle": {
+          "fill_0": {
+            "color": "rgba(126,87,194,0.1)",
+            "visible": true
+          },
+          "fill_1": {
+            "bottomColor": "rgba(76,175,80,0)",
+            "bottomValue": 70,
+            "fillType": "gradient",
+            "topColor": "rgba(76,175,80,1)",
+            "topValue": 100,
+            "visible": true
+          },
+          "fill_2": {
+            "bottomColor": "rgba(242,54,69,1)",
+            "bottomValue": 0,
+            "fillType": "gradient",
+            "topColor": "rgba(242,54,69,0)",
+            "topValue": 30,
+            "visible": true
+          },
+          "fill_3": {
+            "color": "#2962ff",
+            "visible": false
+          }
+        },
+        "inputs": {
+          "__fast_calc": false,
+          "__profile": false,
+          "in_0": 14,
+          "in_1": "close",
+          "in_2": false,
+          "in_3": "SMA",
+          "in_4": 14,
+          "in_5": 2,
+          "in_6": "",
+          "in_7": true,
+          "pineFeatures": "{\"indicator\":1,\"plot\":1,\"ta\":1,\"math\":1,\"alertcondition\":1}",
+          "pineId": "",
+          "pineVersion": "",
+          "text": "bmI9Ks46_liEqUBb9pE3Wwwsh6duMGw==_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"
+        },
+        "palettes": {
+          "palette_0": {
+            "colors": {
+              "0": {
+                "color": "rgba(76,175,80,0.1)",
+                "style": 0,
+                "width": 1
+              }
+            }
+          },
+          "palette_1": {
+            "colors": {
+              "0": {
+                "color": "rgba(76,175,80,1)",
+                "style": 0,
+                "width": 2
+              },
+              "1": {
+                "color": "rgba(255,255,255,0)",
+                "style": 0,
+                "width": 2
+              }
+            }
+          },
+          "palette_2": {
+            "colors": {
+              "0": {
+                "color": "rgba(242,54,69,1)",
+                "style": 0,
+                "width": 2
+              },
+              "1": {
+                "color": "rgba(255,255,255,0)",
+                "style": 0,
+                "width": 2
+              }
+            }
+          }
+        },
+        "styles": {
+          "plot_0": {
+            "color": "#7E57C2",
+            "display": 4294967295,
+            "linestyle": 0,
+            "linewidth": 1,
+            "plottype": 0,
+            "trackPrice": false
+          },
+          "plot_1": {
+            "color": "rgba(0,0,0,0)",
+            "display": 0,
+            "linestyle": 0,
+            "linewidth": 1,
+            "plottype": 0,
+            "trackPrice": false
+          },
+          "plot_11": {
+            "color": "#F23645",
+            "display": 1,
+            "location": "Absolute",
+            "plottype": "shape_label_down",
+            "textColor": "#FFFFFF"
+          },
+          "plot_2": {
+            "color": "#FDD835",
+            "display": 4294967295,
+            "linestyle": 0,
+            "linewidth": 1,
+            "plottype": 0,
+            "trackPrice": false
+          },
+          "plot_3": {
+            "color": "#4CAF50",
+            "display": 0,
+            "linestyle": 0,
+            "linewidth": 1,
+            "plottype": 0,
+            "trackPrice": false
+          },
+          "plot_4": {
+            "color": "#4CAF50",
+            "display": 0,
+            "linestyle": 0,
+            "linewidth": 1,
+            "plottype": 0,
+            "trackPrice": false
+          },
+          "plot_6": {
+            "color": "#2962ff",
+            "display": 1,
+            "linestyle": 0,
+            "linewidth": 2,
+            "plottype": 0,
+            "trackPrice": false
+          },
+          "plot_8": {
+            "color": "#4CAF50",
+            "display": 1,
+            "location": "Absolute",
+            "plottype": "shape_label_up",
+            "textColor": "#FFFFFF"
+          },
+          "plot_9": {
+            "color": "#2962ff",
+            "display": 1,
+            "linestyle": 0,
+            "linewidth": 2,
+            "plottype": 0,
+            "trackPrice": false
+          }
+        }
+      },
+      "description": "Relative Strength Index",
+      "docs": "",
+      "filledAreas": [
+        {
+          "fillgaps": false,
+          "id": "fill_0",
+          "isHidden": false,
+          "objAId": "hline_0",
+          "objBId": "hline_2",
+          "title": "RSI Background Fill",
+          "type": "hline_hline"
+        },
+        {
+          "fillgaps": false,
+          "id": "fill_1",
+          "isHidden": false,
+          "objAId": "plot_0",
+          "objBId": "plot_1",
+          "title": "Overbought Gradient Fill",
+          "type": "plot_plot"
+        },
+        {
+          "fillgaps": false,
+          "id": "fill_2",
+          "isHidden": false,
+          "objAId": "plot_0",
+          "objBId": "plot_1",
+          "title": "Oversold Gradient Fill",
+          "type": "plot_plot"
+        },
+        {
+          "fillgaps": false,
+          "id": "fill_3",
+          "isHidden": false,
+          "objAId": "plot_3",
+          "objBId": "plot_4",
+          "palette": "palette_0",
+          "title": "Bollinger Bands Background Fill",
+          "type": "plot_plot"
+        }
+      ],
+      "filledAreasStyle": {
+        "fill_0": {
+          "isHidden": false
+        },
+        "fill_1": {
+          "isHidden": false
+        },
+        "fill_2": {
+          "isHidden": false
+        },
+        "fill_3": {
+          "isHidden": true
+        }
+      },
+      "format": {
+        "precision": 2,
+        "type": "price"
+      },
+      "id": "Script$STD;RSI@tv-scripting-101",
+      "inputs": [
+        {
+          "defval": "bmI9Ks46_liEqUBb9pE3Wwwsh6duMGw==_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",
+          "id": "text",
+          "isHidden": true,
+          "name": "ILScript",
+          "type": "text"
+        },
+        {
+          "defval": "",
+          "id": "pineId",
+          "isHidden": true,
+          "name": "pineId",
+          "type": "text"
+        },
+        {
+          "defval": "",
+          "id": "pineVersion",
+          "isHidden": true,
+          "name": "pineVersion",
+          "type": "text"
+        },
+        {
+          "defval": "{\"indicator\":1,\"plot\":1,\"ta\":1,\"math\":1,\"alertcondition\":1}",
+          "id": "pineFeatures",
+          "isFake": true,
+          "isHidden": true,
+          "name": "pineFeatures",
+          "type": "text"
+        },
+        {
+          "active": true,
+          "defval": 14,
+          "display": 4294967295,
+          "group": "RSI Settings",
+          "id": "in_0",
+          "isFake": true,
+          "max": 1000000000000,
+          "min": 1,
+          "name": "RSI Length",
+          "type": "integer"
+        },
+        {
+          "active": true,
+          "defval": "close",
+          "display": 4294967295,
+          "group": "RSI Settings",
+          "id": "in_1",
+          "isFake": true,
+          "name": "Source",
+          "options": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "hl2",
+            "hlc3",
+            "hlcc4",
+            "ohlc4"
+          ],
+          "type": "source"
+        },
+        {
+          "active": true,
+          "defval": false,
+          "display": 0,
+          "group": "RSI Settings",
+          "id": "in_2",
+          "isFake": true,
+          "name": "Calculate Divergence",
+          "tooltip": "Calculating divergences is needed in order for divergence alerts to fire.",
+          "type": "bool"
+        },
+        {
+          "active": true,
+          "defval": "SMA",
+          "display": 0,
+          "group": "Smoothing",
+          "id": "in_3",
+          "isFake": true,
+          "name": "Type",
+          "options": [
+            "None",
+            "SMA",
+            "SMA + Bollinger Bands",
+            "EMA",
+            "SMMA (RMA)",
+            "WMA",
+            "VWMA"
+          ],
+          "type": "text"
+        },
+        {
+          "active": true,
+          "defval": 14,
+          "display": 0,
+          "group": "Smoothing",
+          "id": "in_4",
+          "isFake": true,
+          "name": "Length",
+          "type": "integer"
+        },
+        {
+          "active": false,
+          "defval": 2,
+          "display": 0,
+          "group": "Smoothing",
+          "id": "in_5",
+          "isFake": true,
+          "max": 50,
+          "min": 0.001,
+          "name": "BB StdDev",
+          "step": 0.5,
+          "tooltip": "Only applies when 'SMA + Bollinger Bands' is selected. Determines the distance between the SMA and the bands.",
+          "type": "float"
+        },
+        {
+          "active": true,
+          "defval": "",
+          "group": "Calculation",
+          "id": "in_6",
+          "isFake": true,
+          "isMTFResolution": true,
+          "name": "Timeframe",
+          "solutionId": 43000591555,
+          "type": "resolution"
+        },
+        {
+          "active": true,
+          "defval": true,
+          "group": "Calculation",
+          "id": "in_7",
+          "isFake": true,
+          "isMTFGaps": true,
+          "name": "Wait for timeframe closes",
+          "type": "bool"
+        },
+        {
+          "active": true,
+          "defval": false,
+          "group": "Calculation",
+          "id": "__fast_calc",
+          "isFake": true,
+          "isHidden": true,
+          "migrate": true,
+          "name": "Fast calculation",
+          "tooltip": "Limits script calculation to the last 2K bars. Turns off automatically when chart loads more historical data.",
+          "type": "bool"
+        },
+        {
+          "active": true,
+          "defval": false,
+          "id": "__profile",
+          "isFake": true,
+          "isHidden": true,
+          "migrate": true,
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "isMTFGaps": true,
+      "isMTFResolution": true,
+      "isTVScript": true,
+      "isTVScriptStub": false,
+      "is_hidden_study": false,
+      "is_price_study": false,
+      "palettes": {
+        "palette_0": {
+          "addDefaultColor": true,
+          "colors": {
+            "0": {
+              "name": "Color 0"
+            }
+          },
+          "valToIndex": {
+            "0": 0
+          }
+        },
+        "palette_1": {
+          "colors": {
+            "0": {
+              "name": "Color 0"
+            },
+            "1": {
+              "name": "Color 1"
+            }
+          },
+          "valToIndex": {
+            "1": 0,
+            "2": 1
+          }
+        },
+        "palette_2": {
+          "colors": {
+            "0": {
+              "name": "Color 0"
+            },
+            "1": {
+              "name": "Color 1"
+            }
+          },
+          "valToIndex": {
+            "2": 1,
+            "3": 0
+          }
+        }
+      },
+      "pine": {
+        "digest": "e08569d15fd900de672ab33d626597636871ea5f",
+        "version": "45.0"
+      },
+      "plots": [
+        {
+          "id": "plot_0",
+          "type": "line"
+        },
+        {
+          "id": "plot_1",
+          "type": "line"
+        },
+        {
+          "id": "plot_2",
+          "type": "line"
+        },
+        {
+          "id": "plot_3",
+          "type": "line"
+        },
+        {
+          "id": "plot_4",
+          "type": "line"
+        },
+        {
+          "id": "plot_5",
+          "palette": "palette_0",
+          "target": "fill_3",
+          "type": "colorer"
+        },
+        {
+          "id": "plot_6",
+          "type": "line"
+        },
+        {
+          "id": "plot_7",
+          "palette": "palette_1",
+          "target": "plot_6",
+          "type": "colorer"
+        },
+        {
+          "id": "plot_8",
+          "type": "shapes"
+        },
+        {
+          "id": "plot_9",
+          "type": "line"
+        },
+        {
+          "id": "plot_10",
+          "palette": "palette_2",
+          "target": "plot_9",
+          "type": "colorer"
+        },
+        {
+          "id": "plot_11",
+          "type": "shapes"
+        },
+        {
+          "id": "plot_12",
+          "type": "alertcondition"
+        },
+        {
+          "id": "plot_13",
+          "type": "alertcondition"
+        }
+      ],
+      "scriptIdPart": "STD;RSI",
+      "shortDescription": "RSI",
+      "stats": {
+        "alertcondition": 2,
+        "plot": 7,
+        "plotshape": 2
+      },
+      "styles": {
+        "plot_0": {
+          "histogramBase": 0,
+          "isHidden": false,
+          "joinPoints": false,
+          "title": "RSI"
+        },
+        "plot_1": {
+          "histogramBase": 0,
+          "isHidden": true,
+          "joinPoints": false,
+          "title": "Plot"
+        },
+        "plot_11": {
+          "isHidden": true,
+          "text": " Bear ",
+          "title": "Regular Bearish Label"
+        },
+        "plot_12": {
+          "text": "Found a new Regular Bullish Divergence, `Pivot Lookback Right` number of bars to the left of the current bar.",
+          "title": "Regular Bullish Divergence"
+        },
+        "plot_13": {
+          "text": "Found a new Regular Bearish Divergence, `Pivot Lookback Right` number of bars to the left of the current bar.",
+          "title": "Regular Bearish Divergence"
+        },
+        "plot_2": {
+          "histogramBase": 0,
+          "isHidden": false,
+          "joinPoints": false,
+          "title": "RSI-based MA"
+        },
+        "plot_3": {
+          "histogramBase": 0,
+          "isHidden": true,
+          "joinPoints": false,
+          "title": "Upper Bollinger Band"
+        },
+        "plot_4": {
+          "histogramBase": 0,
+          "isHidden": true,
+          "joinPoints": false,
+          "title": "Lower Bollinger Band"
+        },
+        "plot_6": {
+          "histogramBase": 0,
+          "isHidden": true,
+          "joinPoints": false,
+          "title": "Regular Bullish"
+        },
+        "plot_8": {
+          "isHidden": true,
+          "text": " Bull ",
+          "title": "Regular Bullish Label"
+        },
+        "plot_9": {
+          "histogramBase": 0,
+          "isHidden": true,
+          "joinPoints": false,
+          "title": "Regular Bearish"
+        }
+      },
+      "usesPrivateLib": false,
+      "warnings": [
+        "{\"message\":\"The \\\"{functionName}()\\\" call inside the conditional expression might not execute on every bar, which can cause inconsistent calculations because the function depends on historical results. For consistency, assign the call's result to a global variable and use that variable in the expression instead.\",\"start\":{\"line\":76,\"column\":59},\"end\":{\"line\":76,\"column\":78},\"code\":\"CW10002\",\"ctx\":{\"functionName\":\"_inRange\"}}",
+        "{\"message\":\"The \\\"{functionName}()\\\" call inside the conditional expression might not execute on every bar, which can cause inconsistent calculations because the function depends on historical results. For consistency, assign the call's result to a global variable and use that variable in the expression instead.\",\"start\":{\"line\":86,\"column\":59},\"end\":{\"line\":86,\"column\":78},\"code\":\"CW10002\",\"ctx\":{\"functionName\":\"_inRange\"}}"
+      ]
+    }
+  }
+}
