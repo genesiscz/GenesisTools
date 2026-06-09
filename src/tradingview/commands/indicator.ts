@@ -7,7 +7,7 @@ import { getLayoutStudies } from "../lib/charts-storage";
 import { formatIndicatorHeader, formatSignalLine, formatStudyRow } from "../lib/format";
 import { fetchStandardList, resolveAlias } from "../lib/indicator-aliases";
 import { notifySignal } from "../lib/notify";
-import { isAuthToGet, parseScriptSpec, translateIndicator } from "../lib/pine-facade";
+import { parseScriptSpec, translateIndicator } from "../lib/pine-facade";
 import { SignalDetector } from "../lib/signals";
 import { buildStudyValues, buildStudyValuesFromLayout, parseInputFlags, type StudyValues } from "../lib/study";
 import { normalizeTicker } from "../lib/symbols";
@@ -133,17 +133,6 @@ async function runIndicatorInner(
                 version: layoutStudy.pineVersion ?? "last",
                 cookie: session.cookie,
             });
-            if (meta.pineId.startsWith("PUB;")) {
-                const allowed = await isAuthToGet({
-                    pineId: meta.pineId,
-                    version: meta.pineVersion,
-                    cookie: session.cookie,
-                });
-                if (!allowed) {
-                    out.error(`Your account cannot access ${meta.pineId} (${layoutStudy.name}).`);
-                    process.exit(1);
-                }
-            }
 
             const values = applyCliOverrides(buildStudyValuesFromLayout(meta, layoutStudy.inputs), meta, cliOverrides);
             pendingStudies.push({ meta, label: layoutStudy.name, values });
@@ -152,13 +141,6 @@ async function runIndicatorInner(
         heading = `${opts.fromChart} (${pendingStudies.length} studies) on ${ticker}`;
     } else {
         const meta = await resolveMeta(spec!, cookie);
-        if (meta.pineId.startsWith("PUB;")) {
-            const allowed = await isAuthToGet({ pineId: meta.pineId, version: meta.pineVersion, cookie });
-            if (!allowed) {
-                out.error(`Your account cannot access ${meta.pineId} (${meta.shortDescription || meta.description}).`);
-                process.exit(1);
-            }
-        }
 
         pendingStudies.push({
             meta,

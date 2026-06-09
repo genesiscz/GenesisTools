@@ -84,6 +84,108 @@ export function mapTranslateResponse(data: TranslateEnvelope): StudyMeta {
     };
 }
 
+interface PubScriptRef {
+    scriptIdPart: string;
+    version: string;
+}
+
+interface PubSearchRow {
+    imageUrl?: string;
+    scriptIdPart?: string;
+    version?: string;
+}
+
+/** Publication slugs (imageUrl) are short; internal scriptIdPart hashes are long. */
+function publicationSlugPart(pineId: string): string | null {
+    const match = pineId.match(/^PUB;([A-Za-z0-9]+)$/);
+    if (!match) {
+        return null;
+    }
+
+    const part = match[1];
+    if (part.length >= 24) {
+        return null;
+    }
+
+    return part;
+}
+
+async function searchPubScripts(query: string, cookie?: string): Promise<PubSearchRow[]> {
+    const url = `https://www.tradingview.com/pubscripts-suggest-json/?search=${encodeURIComponent(query)}`;
+    logger.debug({ url }, "tradingview: pubscripts search");
+    const res = await fetch(url, { headers: { origin: TV_ORIGIN, ...(cookie ? { cookie } : {}) } });
+    if (!res.ok) {
+        return [];
+    }
+
+    const data = SafeJSON.parse(await res.text(), { strict: true }) as { results?: PubSearchRow[] };
+    return data.results ?? [];
+}
+
+function uniquePubIds(html: string): string[] {
+    return [...new Set([...html.matchAll(/PUB;[A-Za-z0-9]+/g)].map((match) => match[0]))];
+}
+
+function titleSearchQuery(html: string): string | null {
+    const ogTitle = html.match(/property="og:title" content="([^"]+)"/)?.[1];
+    if (ogTitle) {
+        return ogTitle.split("—")[0]?.trim() ?? null;
+    }
+
+    const title = html.match(/<title>([^<]+)<\/title>/)?.[1];
+    if (title) {
+        return title.split("—")[0]?.trim() ?? null;
+    }
+
+    return null;
+}
+
+async function fetchScriptPage(slug: string, cookie?: string): Promise<string | null> {
+    const url = `https://www.tradingview.com/script/${slug}/`;
+    logger.debug({ url, slug }, "tradingview: fetching publication script page");
+    const res = await fetch(url, { headers: { origin: TV_ORIGIN, ...(cookie ? { cookie } : {}) } });
+    if (!res.ok) {
+        return null;
+    }
+
+    return res.text();
+}
+
+function pickSearchHit(slug: string, rows: PubSearchRow[]): PubSearchRow | undefined {
+    return rows.find((row) => row.imageUrl === slug);
+}
+
+/** Map PUB;{publication-slug} to the internal scriptIdPart used by pine-facade translate. */
+export async function resolvePubScriptRef(pineId: string, cookie?: string): Promise<PubScriptRef> {
+    const slug = publicationSlugPart(pineId);
+    if (!slug) {
+        return { scriptIdPart: pineId, version: "last" };
+    }
+
+    let hit = pickSearchHit(slug, await searchPubScripts(slug, cookie));
+    if (hit?.scriptIdPart) {
+        return { scriptIdPart: hit.scriptIdPart, version: hit.version ?? "last" };
+    }
+
+    const html = await fetchScriptPage(slug, cookie);
+    if (html) {
+        const loneId = uniquePubIds(html);
+        if (loneId.length === 1) {
+            return { scriptIdPart: loneId[0]!, version: "last" };
+        }
+
+        const query = titleSearchQuery(html);
+        if (query) {
+            hit = pickSearchHit(slug, await searchPubScripts(query, cookie));
+            if (hit?.scriptIdPart) {
+                return { scriptIdPart: hit.scriptIdPart, version: hit.version ?? "last" };
+            }
+        }
+    }
+
+    throw new Error(`Could not resolve publication slug PUB;${slug} to an internal script id`);
+}
+
 export async function translateIndicator({
     pineId,
     version = "last",
@@ -93,17 +195,28 @@ export async function translateIndicator({
     version?: string;
     cookie?: string;
 }): Promise<StudyMeta> {
-    const url = `${PINE_FACADE}/translate/${encodeURIComponent(pineId)}/${encodeURIComponent(version)}`;
-    logger.debug({ url }, "tradingview: pine-facade translate");
+    const slug = publicationSlugPart(pineId);
+    const resolved = await resolvePubScriptRef(pineId, cookie);
+    const translateVersion = version === "last" ? resolved.version : version;
+    const url = `${PINE_FACADE}/translate/${encodeURIComponent(resolved.scriptIdPart)}/${encodeURIComponent(translateVersion)}`;
+    logger.debug({ url, pineId, scriptIdPart: resolved.scriptIdPart }, "tradingview: pine-facade translate");
     const res = await fetch(url, {
         headers: { origin: TV_ORIGIN, ...(cookie ? { cookie } : {}) },
     });
+
     if (!res.ok) {
         throw new Error(`pine-facade translate HTTP ${res.status} for ${pineId}`);
     }
 
     const data = SafeJSON.parse(await res.text(), { strict: true }) as TranslateEnvelope;
-    return mapTranslateResponse(data);
+    const meta = mapTranslateResponse(data);
+
+    // create_study expects the publication slug the user passed, not the internal hash.
+    if (slug) {
+        return { ...meta, pineId };
+    }
+
+    return meta;
 }
 
 export async function isAuthToGet({
@@ -115,7 +228,9 @@ export async function isAuthToGet({
     version?: string;
     cookie?: string;
 }): Promise<boolean> {
-    const url = `${PINE_FACADE}/is_auth_to_get/${encodeURIComponent(pineId)}/${encodeURIComponent(version)}`;
+    const resolved = await resolvePubScriptRef(pineId, cookie);
+    const checkVersion = version === "last" ? resolved.version : version;
+    const url = `${PINE_FACADE}/is_auth_to_get/${encodeURIComponent(resolved.scriptIdPart)}/${encodeURIComponent(checkVersion)}`;
     const res = await fetch(url, { headers: { origin: TV_ORIGIN, ...(cookie ? { cookie } : {}) } });
     if (!res.ok) {
         logger.debug({ status: res.status, pineId }, "tradingview: is_auth_to_get non-OK");
