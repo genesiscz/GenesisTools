@@ -70,3 +70,54 @@ export type AlertEvent =
     | { kind: "fired"; fire: AlertFire }
     | { kind: "created"; alerts: Alert[] }
     | { kind: "updated"; alerts: Alert[] };
+
+export interface Bar {
+    time: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume?: number;
+}
+
+export interface PineInput {
+    id: string;
+    name: string;
+    type: string;
+    defval: unknown;
+    options?: string[];
+    isHidden?: boolean;
+    isFake?: boolean;
+}
+
+export interface PinePlot {
+    id: string;
+    type: string;
+    title: string;
+}
+
+export interface StudyMeta {
+    pineId: string;
+    pineVersion: string;
+    description: string;
+    shortDescription: string;
+    ilTemplate: string;
+    inputs: PineInput[];
+    plots: PinePlot[];
+}
+
+/** One bar's worth of study output: values aligned to StudyMeta.plots order. */
+export interface StudyPoint {
+    barIndex: number;
+    time: number;
+    values: Array<number | null>;
+}
+
+export interface SignalEvent {
+    time: number;
+    barIndex: number;
+    plotId: string;
+    plotTitle: string;
+    value: number;
+    kind: "history" | "live";
+}
