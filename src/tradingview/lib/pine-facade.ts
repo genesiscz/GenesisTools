@@ -219,6 +219,13 @@ export async function translateIndicator({
     return meta;
 }
 
+/**
+ * Whether the account may fetch the script's SOURCE (`pine-facade/get`).
+ * NOT an execution gate: protected scripts return `false` here yet still
+ * translate and run server-side via `create_study` (verified with MDX
+ * `PUB;AGFHDbJ2` on 2026-06-10). Do not block the indicator command on this;
+ * translate success is the real execution check.
+ */
 export async function isAuthToGet({
     pineId,
     version = "last",
