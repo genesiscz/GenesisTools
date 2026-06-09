@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mapIndicatorList, mapTranslateResponse, parseScriptSpec } from "./pine-facade";
+import { mapIndicatorList, mapTranslateResponse, parseScriptSpec, resolvePubScriptRef } from "./pine-facade";
 
 /** Inline shape from plan — replaced by __fixtures__/translate-std-rsi.json when available. */
 const STD_RSI_FIXTURE = {
@@ -64,6 +64,23 @@ describe("mapIndicatorList", () => {
             { scriptIdPart: "STD;RSI", scriptName: "Relative Strength Index", version: "last" },
             { scriptIdPart: "STD;MACD", scriptName: "MACD", version: "38.0" },
         ]);
+    });
+});
+
+describe("resolvePubScriptRef", () => {
+    test("passes through STD and long PUB hash ids", async () => {
+        const std = await resolvePubScriptRef("STD;RSI");
+        expect(std).toEqual({ scriptIdPart: "STD;RSI", version: "last" });
+
+        const hash = "PUB;0u4crLN8uj6zMzf6TJ0lhIuiKOKlHd7G";
+        const pub = await resolvePubScriptRef(hash);
+        expect(pub.scriptIdPart).toBe(hash);
+    });
+
+    test("resolves publication slug PUB;AGFHDbJ2 to internal script id", async () => {
+        const resolved = await resolvePubScriptRef("PUB;AGFHDbJ2");
+        expect(resolved.scriptIdPart).toBe("PUB;0u4crLN8uj6zMzf6TJ0lhIuiKOKlHd7G");
+        expect(resolved.version.length).toBeGreaterThan(0);
     });
 });
 

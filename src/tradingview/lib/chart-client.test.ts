@@ -1,11 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { ChartClient } from "./chart-client";
+import { ChartClient, toCell } from "./chart-client";
 import { isHeartbeat, parseFrames } from "./protocol";
 import type { Bar, StudyPoint } from "./types";
 
 function makeClient(): ChartClient {
     return new ChartClient({ authToken: "unauthorized_user_token" });
 }
+
+describe("toCell", () => {
+    test("treats 1e+100 sentinels as empty", () => {
+        expect(toCell(1e100)).toBeNull();
+        expect(toCell(1e99)).toBeNull();
+    });
+});
 
 describe("ChartClient frame handling", () => {
     test("series snapshot emits bars", () => {

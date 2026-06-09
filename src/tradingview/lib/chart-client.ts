@@ -34,9 +34,16 @@ export interface ChartClient {
     on(event: "close", listener: () => void): this;
 }
 
-/** Raw numeric cell from TV: numbers, null, or the literal string "NaN". */
-function toCell(value: unknown): number | null {
-    if (typeof value === "number" && Number.isFinite(value)) {
+/** TV uses 1e+100 (and similar huge magnitudes) as a no-plot sentinel. */
+const TV_EMPTY_SENTINEL = 1e99;
+
+/** Raw numeric cell from TV: numbers, null, the literal string "NaN", or 1e+100 sentinels. */
+export function toCell(value: unknown): number | null {
+    if (typeof value === "string" && (value === "NaN" || value === "nan")) {
+        return null;
+    }
+
+    if (typeof value === "number" && Number.isFinite(value) && Math.abs(value) < TV_EMPTY_SENTINEL) {
         return value;
     }
 
