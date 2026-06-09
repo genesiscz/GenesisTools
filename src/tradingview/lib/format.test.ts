@@ -84,8 +84,8 @@ describe("indicator formatting", () => {
         const line = stripAnsi(
             formatSignalLine(
                 { time: 1781037360, barIndex: 1, plotId: "plot_1", plotTitle: "Buy", value: 1, kind: "live" },
-                "BYBIT:BTCUSDT.P",
-            ),
+                "BYBIT:BTCUSDT.P"
+            )
         );
         expect(line).toContain("Buy");
         expect(line).toContain("BYBIT:BTCUSDT.P");

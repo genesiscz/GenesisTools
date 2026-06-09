@@ -26,7 +26,7 @@ export function notifySignal(
     event: SignalEvent,
     symbol: string,
     opts: NotifyOpts,
-    spawner: Spawner = defaultSpawner,
+    spawner: Spawner = defaultSpawner
 ): void {
     if (opts.say) {
         const short = symbol.includes(":") ? symbol.split(":")[1] : symbol;
