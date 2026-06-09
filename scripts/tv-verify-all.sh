@@ -86,7 +86,7 @@ if [[ $EC -eq 0 ]] && tail -15 /tmp/tv-verify-V2.1.log | rg -q "RSI" && ! rg -q 
 else record V2.1 "$CMD_LABEL" FAIL "exit=$EC"; fi
 
 CMD_LABEL="--bars 50"
-ROWS=$(timeout 60 bun run src/tradingview/index.ts indicator rsi NASDAQ:AAPL --once --bars 50 2>&1 | rg -c "^\d{4}-" || true)
+ROWS=$(timeout 60 bun run src/tradingview/index.ts indicator rsi NASDAQ:AAPL --once --bars 50 2>&1 | rg -c "^\[.+\] \d{4}-" || true)
 if [[ $ROWS -ge 30 && $ROWS -le 50 ]]; then record V2.2 "$CMD_LABEL" PASS "rows=$ROWS"
 else record V2.2 "$CMD_LABEL" FAIL "rows=$ROWS"; fi
 
@@ -131,7 +131,7 @@ if [[ $HAS_SESSION -eq 1 ]]; then
 
   CMD_LABEL="signals-only MDX"
   OUT=$(timeout 90 bun run src/tradingview/index.ts indicator "PUB;AGFHDbJ2" BYBIT:BTCUSDT.P --tf 15 --once --signals-only 2>&1)
-  if echo "$OUT" | rg -q "\[hist\]" && ! echo "$OUT" | rg -q "^\d{4}-\d{2}-\d{2} +\d"; then record V2.10 "$CMD_LABEL" PASS ""
+  if echo "$OUT" | rg -q "\[hist\]" && ! echo "$OUT" | rg -q "^\[.+\] \d{4}-"; then record V2.10 "$CMD_LABEL" PASS ""
   else record V2.10 "$CMD_LABEL" FAIL ""; fi
 else
   record V2.9 "MDX north star" SKIP "no session"

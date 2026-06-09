@@ -116,26 +116,39 @@ async function runIndicatorInner(
             process.exit(1);
         }
 
-        let layoutStudies = (await getLayoutStudies(session, opts.fromChart)).filter((study) => study.pineId);
+        const layoutStudies = (await getLayoutStudies(session, opts.fromChart)).filter((study) => study.pineId);
         if (layoutStudies.length === 0) {
             out.error(`Layout ${opts.fromChart} has no Pine/script studies to attach.`);
             process.exit(1);
         }
 
-        if (layoutStudies.length > MAX_CHART_STUDIES) {
-            out.warn(`Layout has ${layoutStudies.length} studies; attaching the first ${MAX_CHART_STUDIES}.`);
-            layoutStudies = layoutStudies.slice(0, MAX_CHART_STUDIES);
-        }
-
         for (const layoutStudy of layoutStudies) {
-            const meta = await translateIndicator({
-                pineId: layoutStudy.pineId!,
-                version: layoutStudy.pineVersion ?? "last",
-                cookie: session.cookie,
-            });
+            if (pendingStudies.length >= MAX_CHART_STUDIES) {
+                out.warn(`Layout has ${layoutStudies.length} studies; attaching the first ${MAX_CHART_STUDIES} that translate.`);
+                break;
+            }
+
+            let meta: StudyMeta;
+            try {
+                meta = await translateIndicator({
+                    pineId: layoutStudy.pineId!,
+                    version: layoutStudy.pineVersion ?? "last",
+                    cookie: session.cookie,
+                });
+            } catch (err) {
+                // built-ins like Volume Profile are not Pine scripts and have no translate body
+                logger.debug({ err, pineId: layoutStudy.pineId }, "tradingview: layout study not translatable");
+                out.warn(`Skipping "${layoutStudy.name}" (${layoutStudy.pineId}): not attachable headlessly.`);
+                continue;
+            }
 
             const values = applyCliOverrides(buildStudyValuesFromLayout(meta, layoutStudy.inputs), meta, cliOverrides);
             pendingStudies.push({ meta, label: layoutStudy.name, values });
+        }
+
+        if (pendingStudies.length === 0) {
+            out.error(`None of the ${layoutStudies.length} studies on layout ${opts.fromChart} could be attached.`);
+            process.exit(1);
         }
 
         heading = `${opts.fromChart} (${pendingStudies.length} studies) on ${ticker}`;
@@ -260,9 +273,8 @@ async function runIndicatorInner(
         process.exit(1);
     });
     client.on("symbolError", ({ symbol: sym, errmsg }) => {
-        out.error(
-            `✗ ${sym}: ${errmsg === "no_such_symbol" ? "no such symbol (check the EXCHANGE:TICKER spelling)" : errmsg}`
-        );
+        const badTicker = errmsg === "no_such_symbol" || errmsg === "invalid symbol";
+        out.error(`✗ ${sym}: ${badTicker ? `no such symbol (check the EXCHANGE:TICKER spelling)` : errmsg}`);
         client.dispose();
         process.exit(1);
     });

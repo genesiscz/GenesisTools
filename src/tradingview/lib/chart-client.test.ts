@@ -50,6 +50,18 @@ describe("ChartClient frame handling", () => {
         client.handleFrame('{"m":"du","p":["cs_t",{"st_1":{"st":[{"i":1,"v":[1781037420,"NaN",1]}]}}]}');
         expect(points[0].values).toEqual([null, 1]);
     });
+
+    test("symbol_error reports the requested ticker, not the symbol handle", () => {
+        // live frame shape (probed 2026-06-10): p = [sessionId, symbolHandle, message]
+        const client = makeClient();
+        client.setSymbol({ symbol: "NASDAQ:APPL", timeframe: "1D", barCount: 300 });
+        const events: Array<{ symbol: string; errmsg: string }> = [];
+        client.on("symbolError", (e) => events.push(e));
+        client.handleFrame(
+            '{"m":"symbol_error","p":["cs_t","sds_sym_1","invalid symbol"],"t":1781043474,"t_ms":1781043474094}'
+        );
+        expect(events).toEqual([{ symbol: "NASDAQ:APPL", errmsg: "invalid symbol" }]);
+    });
 });
 
 describe("reconnect", () => {
