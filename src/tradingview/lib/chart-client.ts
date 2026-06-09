@@ -234,7 +234,9 @@ export class ChartClient extends EventEmitter {
 
             const studyRows = (node as { st?: unknown[] }).st;
             if (key.startsWith("st_") && Array.isArray(studyRows)) {
-                const points = studyRows.map((row) => this.toStudyPoint(row)).filter((x): x is StudyPoint => x !== null);
+                const points = studyRows
+                    .map((row) => this.toStudyPoint(row))
+                    .filter((x): x is StudyPoint => x !== null);
                 if (points.length > 0) {
                     this.emit("studyData", { studyId: key, points });
                 }

@@ -13,7 +13,7 @@ describe("ChartClient frame handling", () => {
         const bars: Bar[] = [];
         client.on("bars", (b) => bars.push(...b));
         client.handleFrame(
-            '{"m":"timescale_update","p":["cs_t",{"sds_1":{"s":[{"i":0,"v":[1781037360,100,110,90,105,5000]}]}}]}',
+            '{"m":"timescale_update","p":["cs_t",{"sds_1":{"s":[{"i":0,"v":[1781037360,100,110,90,105,5000]}]}}]}'
         );
         expect(bars).toEqual([{ time: 1781037360, open: 100, high: 110, low: 90, close: 105, volume: 5000 }]);
     });
