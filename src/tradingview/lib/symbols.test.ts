@@ -1,17 +1,17 @@
-import { SafeJSON } from "@app/utils/json";
 import { describe, expect, it } from "bun:test";
+import { SafeJSON } from "@app/utils/json";
 import { normalizeTicker, parseProSymbol, toProSymbol } from "./symbols";
 
 describe("symbols", () => {
     it("wraps a bare ticker into a pro symbol spec", () => {
         expect(toProSymbol("NASDAQ:MSTR")).toBe(
-            `=${SafeJSON.stringify({ symbol: "NASDAQ:MSTR", adjustment: "splits" })}`,
+            `=${SafeJSON.stringify({ symbol: "NASDAQ:MSTR", adjustment: "splits" })}`
         );
     });
 
     it("includes session when provided", () => {
         expect(toProSymbol("OANDA:SPX500USD", { session: "regular" })).toBe(
-            `=${SafeJSON.stringify({ symbol: "OANDA:SPX500USD", adjustment: "splits", session: "regular" })}`,
+            `=${SafeJSON.stringify({ symbol: "OANDA:SPX500USD", adjustment: "splits", session: "regular" })}`
         );
     });
 

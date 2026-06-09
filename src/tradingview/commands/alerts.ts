@@ -34,19 +34,19 @@ export async function runAlerts(opts: AlertsOpts): Promise<void> {
     out.printErr(pc.dim("\nListening for live alert fires — Ctrl-C to stop\n"));
     const feed = new AlertsFeed(session);
     feed.on("fired", (fire) => out.printlnErr(formatAlertFire(fire)));
-    feed.on("created", (created) => {
-        for (const a of created) {
+    feed.on("created", (created) =>
+        created.forEach((a) => {
             out.printlnErr(pc.green(`+ created ${parseProSymbol(a.symbol)} — ${a.message}`));
-        }
-    });
-    feed.on("updated", (updated) => {
-        for (const a of updated) {
+        }),
+    );
+    feed.on("updated", (updated) =>
+        updated.forEach((a) => {
             const reason = a.last_stop_reason ? pc.dim(` (${a.last_stop_reason})`) : "";
             out.printlnErr(
-                pc.cyan(`~ updated ${parseProSymbol(a.symbol)} — ${a.active ? "active" : "inactive"}${reason}`),
+                pc.cyan(`~ updated ${parseProSymbol(a.symbol)} — ${a.active ? "active" : "inactive"}${reason}`)
             );
-        }
-    });
+        })
+    );
     feed.on("error", (err) => logger.error({ err }, "tradingview: alerts feed error"));
     feed.on("close", () => out.printErr(pc.dim("\nFeed closed.")));
 

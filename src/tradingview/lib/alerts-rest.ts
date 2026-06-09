@@ -51,6 +51,21 @@ export async function getRecentFires(session: TvSession, limit = 2000): Promise<
     return body.s === "ok" ? body.r : [];
 }
 
+export async function createAlert(session: TvSession, input: Record<string, unknown>): Promise<Alert | null> {
+    const url = `${BASE}/create_alert?log_username=${encodeURIComponent(session.username)}`;
+    const res = await fetch(url, {
+        method: "POST",
+        headers: headers(session),
+        body: SafeJSON.stringify({ payload: input }),
+    });
+    const body = (await res.json()) as ApiEnvelope<Alert>;
+    if (body.s !== "ok") {
+        logger.warn({ status: body.s }, "tradingview: create_alert non-ok");
+        return null;
+    }
+    return body.r;
+}
+
 export async function deleteAlerts(session: TvSession, alertIds: number[]): Promise<boolean> {
     const url = `${BASE}/delete_alerts?log_username=${encodeURIComponent(session.username)}`;
     const res = await fetch(url, {
