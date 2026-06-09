@@ -211,7 +211,7 @@ else record V5.2 "$CMD_LABEL" FAIL ""; fi
 
 CMD_LABEL="bad symbol"
 OUT=$(timeout 30 bun run src/tradingview/index.ts scan rsi --symbols NASDAQ:APPL 2>&1)
-if echo "$OUT" | rg -qi "error|no such|empty" && ! echo "$OUT" | rg -q "Unhandled"; then record V5.3 "$CMD_LABEL" PASS ""
+if echo "$OUT" | rg -qi "error|no such|not found|empty" && ! echo "$OUT" | rg -q "Unhandled"; then record V5.3 "$CMD_LABEL" PASS ""
 else record V5.3 "$CMD_LABEL" FAIL ""; fi
 
 echo "=== V6 Final ==="
