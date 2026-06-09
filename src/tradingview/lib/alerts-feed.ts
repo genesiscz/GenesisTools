@@ -1,8 +1,8 @@
 import { EventEmitter } from "node:events";
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
-import { tvSocket } from "./ws";
 import type { Alert, AlertFire, TvSession } from "./types";
+import { tvSocket } from "./ws";
 
 const FEED_URL = "wss://pushstream.tradingview.com/message-pipe-ws/private_feed";
 

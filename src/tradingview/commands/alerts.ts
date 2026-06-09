@@ -37,7 +37,7 @@ export async function runAlerts(opts: AlertsOpts): Promise<void> {
     feed.on("created", (created) =>
         created.forEach((a) => {
             out.printlnErr(pc.green(`+ created ${parseProSymbol(a.symbol)} — ${a.message}`));
-        }),
+        })
     );
     feed.on("updated", (updated) =>
         updated.forEach((a) => {
