@@ -1,4 +1,7 @@
+import { formatTable } from "@app/utils/table";
 import pc from "picocolors";
+import type { ChartLayout } from "./charts-storage";
+import type { ScanRow } from "./scanner";
 import { parseProSymbol } from "./symbols";
 import type { Alert, AlertFire, PinePlot, QuoteSnapshot, SignalEvent, StudyPoint } from "./types";
 
@@ -84,4 +87,31 @@ export function formatSignalLine(event: SignalEvent, symbol: string): string {
     const arrow = /sell|down|short/i.test(event.plotTitle) ? pc.red("▼") : pc.green("▲");
     const tag = event.kind === "live" ? pc.bgYellow(pc.black(" SIGNAL ")) : pc.dim("[hist]");
     return `${tag} ${arrow} ${pc.bold(event.plotTitle)}  ${symbol}  ${fmtTime(event.time)} (bar ${event.barIndex})`;
+}
+
+export function formatLayoutRow(layout: ChartLayout): string {
+    const studies = layout.studyCount === undefined ? pc.dim("—") : pc.dim(String(layout.studyCount));
+    return [
+        pc.bold(layout.id.padEnd(10)),
+        layout.name.padEnd(18),
+        layout.symbol.padEnd(20),
+        layout.resolution.padEnd(6),
+        layout.modified.padEnd(12),
+        studies,
+        "studies",
+    ].join("  ");
+}
+
+function fmtScanCell(value: number | null | undefined): string {
+    if (value === null || value === undefined || Number.isNaN(value)) {
+        return "—";
+    }
+
+    return Math.abs(value) >= 1000 ? value.toFixed(1) : value.toFixed(2);
+}
+
+export function formatScanTable(columns: string[], rows: ScanRow[]): string {
+    const headers = ["symbol", ...columns];
+    const data = rows.map((row) => [row.symbol, ...columns.map((column) => fmtScanCell(row.values[column]))]);
+    return formatTable(data, headers, { alignRight: columns.map((_, index) => index + 1) });
 }

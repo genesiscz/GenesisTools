@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mapTranslateResponse, parseScriptSpec } from "./pine-facade";
+import { mapIndicatorList, mapTranslateResponse, parseScriptSpec } from "./pine-facade";
 
 /** Inline shape from plan — replaced by __fixtures__/translate-std-rsi.json when available. */
 const STD_RSI_FIXTURE = {
@@ -50,6 +50,20 @@ describe("parseScriptSpec", () => {
 
     test("returns null for free-text (alias path handles it)", () => {
         expect(parseScriptSpec("rsi")).toBeNull();
+    });
+});
+
+describe("mapIndicatorList", () => {
+    test("maps pine-facade list entries to StandardScript rows", () => {
+        const list = mapIndicatorList([
+            { scriptIdPart: "STD;RSI", scriptName: "Relative Strength Index", version: "last" },
+            { scriptIdPart: "STD;MACD", scriptTitle: "MACD", version: "38.0" },
+            { scriptIdPart: "", scriptName: "skip me" },
+        ]);
+        expect(list).toEqual([
+            { scriptIdPart: "STD;RSI", scriptName: "Relative Strength Index", version: "last" },
+            { scriptIdPart: "STD;MACD", scriptName: "MACD", version: "38.0" },
+        ]);
     });
 });
 

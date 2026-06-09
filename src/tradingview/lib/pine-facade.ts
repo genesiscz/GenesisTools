@@ -1,5 +1,6 @@
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import type { StandardScript } from "./indicator-aliases";
 import type { PineInput, PinePlot, StudyMeta } from "./types";
 import { TV_ORIGIN } from "./ws";
 
@@ -123,4 +124,46 @@ export async function isAuthToGet({
 
     const body = (await res.text()).trim();
     return body === "true" || body.includes('"auth":true') || body.includes("true");
+}
+
+export type IndicatorFilter = "standard" | "saved" | "favorites";
+
+export function mapIndicatorList(raw: unknown): StandardScript[] {
+    if (!Array.isArray(raw)) {
+        return [];
+    }
+
+    return raw
+        .map((entry) => {
+            const row = entry as Record<string, unknown>;
+            return {
+                scriptIdPart: String(row.scriptIdPart ?? ""),
+                scriptName: String(row.scriptName ?? row.scriptTitle ?? ""),
+                version: String(row.version ?? "last"),
+            };
+        })
+        .filter((script) => script.scriptIdPart.length > 0);
+}
+
+export async function listIndicators({
+    filter = "standard",
+    cookie,
+}: {
+    filter?: IndicatorFilter;
+    cookie?: string;
+}): Promise<StandardScript[]> {
+    const url =
+        filter === "standard"
+            ? `${PINE_FACADE}/list/?filter=standard`
+            : `${PINE_FACADE}/list?filter=${encodeURIComponent(filter)}`;
+    logger.debug({ url, filter }, "tradingview: pine-facade list");
+    const res = await fetch(url, {
+        headers: { origin: TV_ORIGIN, ...(cookie ? { cookie } : {}) },
+    });
+    if (!res.ok) {
+        throw new Error(`pine-facade list HTTP ${res.status} for filter=${filter}`);
+    }
+
+    const data = SafeJSON.parse(await res.text(), { strict: true });
+    return mapIndicatorList(data);
 }
