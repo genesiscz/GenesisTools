@@ -1,6 +1,6 @@
 import pc from "picocolors";
 import { parseProSymbol } from "./symbols";
-import type { Alert, AlertFire, QuoteSnapshot } from "./types";
+import type { Alert, AlertFire, PinePlot, QuoteSnapshot, SignalEvent, StudyPoint } from "./types";
 
 function fmtNum(n: number | undefined, digits = 2): string {
     if (n === undefined || Number.isNaN(n)) {
@@ -49,4 +49,39 @@ export function formatAlertFire(fire: AlertFire): string {
     const time = new Date(fire.fire_time).toLocaleTimeString("en-US", { hour12: false });
     const head = pc.bgYellow(pc.black(" ALERT "));
     return `${head} ${pc.dim(time)}  ${pc.bold(pc.yellow(sym))}  ${fire.message}`;
+}
+
+function fmtTime(epochSeconds: number): string {
+    const d = new Date(epochSeconds * 1000);
+    return d.toISOString().replace("T", " ").slice(0, 16);
+}
+
+function fmtCell(value: number | null): string {
+    if (value === null) {
+        return "—";
+    }
+
+    return Math.abs(value) >= 1000 ? value.toFixed(1) : value.toFixed(2);
+}
+
+export function formatIndicatorHeader(plots: PinePlot[]): string {
+    const cols = plots.map((p) => p.title.padStart(10)).join(" ");
+    return pc.bold(`${"time".padEnd(16)} ${cols}`);
+}
+
+export function formatStudyRow(point: StudyPoint, plots: PinePlot[]): string {
+    const cells = point.values
+        .slice(0, plots.length)
+        .map((v, i) => {
+            const text = fmtCell(v).padStart(10);
+            return plots[i].type === "line" ? text : v === null ? pc.dim(text) : pc.yellow(text);
+        })
+        .join(" ");
+    return `${pc.dim(fmtTime(point.time))} ${cells}`;
+}
+
+export function formatSignalLine(event: SignalEvent, symbol: string): string {
+    const arrow = /sell|down|short/i.test(event.plotTitle) ? pc.red("▼") : pc.green("▲");
+    const tag = event.kind === "live" ? pc.bgYellow(pc.black(" SIGNAL ")) : pc.dim("[hist]");
+    return `${tag} ${arrow} ${pc.bold(event.plotTitle)}  ${symbol}  ${fmtTime(event.time)} (bar ${event.barIndex})`;
 }
