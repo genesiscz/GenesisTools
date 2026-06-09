@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { createLogger } from "@app/logger";
 import { getLogsBaseDir, getPidFile } from "./lib/config";
 import { runSchedulerLoop } from "./lib/scheduler";
@@ -7,7 +8,25 @@ const log = createLogger({ logToFile: false });
 
 export async function startDaemon(): Promise<void> {
     const pidFile = getPidFile();
-    writeFileSync(pidFile, String(process.pid));
+
+    try {
+        await writeFile(pidFile, String(process.pid), { flag: "wx" });
+    } catch (err) {
+        if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EEXIST") {
+            const existing = getDaemonPid();
+
+            if (existing !== null) {
+                log.error({ existingPid: existing }, "Another daemon is already running");
+                process.exit(1);
+            }
+
+            unlinkSync(pidFile);
+            await writeFile(pidFile, String(process.pid), { flag: "wx" });
+        } else {
+            throw err;
+        }
+    }
+
     log.info({ pid: process.pid }, "Daemon starting");
 
     const cleanup = () => {

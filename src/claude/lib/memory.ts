@@ -43,7 +43,6 @@ export function appendMemory(entry: string, cwd?: string): string {
     }
 
     const line = entry.startsWith("- ") ? entry : `- ${entry}`;
-    const prefix = existsSync(path) && !readFileSync(path, "utf-8").endsWith("\n") ? "\n" : "";
-    appendFileSync(path, `${prefix}${line}\n`);
+    appendFileSync(path, `\n${line}\n`);
     return path;
 }

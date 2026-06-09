@@ -17,6 +17,7 @@ export class SeenStore {
         }
 
         this.db = new Database(dbPath);
+        this.db.exec("PRAGMA journal_mode = WAL");
         this.db.run(`
             CREATE TABLE IF NOT EXISTS seen_messages (
                 rowid INTEGER PRIMARY KEY,

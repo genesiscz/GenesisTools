@@ -360,6 +360,7 @@ export async function main() {
     p.intro(pc.bgCyan(pc.black(" REAS Historical Backfill ")));
 
     const db = new Database(DB_PATH);
+    db.exec("PRAGMA journal_mode = WAL");
 
     // 1. Select district
     const district = await promptDistrict();

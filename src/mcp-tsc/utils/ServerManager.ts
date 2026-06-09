@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { logger } from "@app/logger";
 import type { ServerInfo } from "@app/mcp-tsc/core/interfaces.js";
@@ -6,6 +6,7 @@ import { LspServer } from "@app/mcp-tsc/providers/LspServer.js";
 import { ensureServersDir, getServerInfoPath, SERVERS_DIR } from "@app/mcp-tsc/utils/helpers.js";
 
 import { SafeJSON } from "@app/utils/json";
+import { atomicWriteFileSync } from "@app/utils/storage/storage";
 
 // Global map to store persistent LSP servers
 const persistentServers = new Map<string, LspServer>();
@@ -186,7 +187,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
         cwd,
         started: Date.now(),
     };
-    writeFileSync(infoPath, SafeJSON.stringify(serverInfo, null, 2));
+    atomicWriteFileSync(infoPath, SafeJSON.stringify(serverInfo, null, 2));
     logger.debug(
         {
             component: "mcp-tsc",

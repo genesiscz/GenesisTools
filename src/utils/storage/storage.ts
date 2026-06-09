@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { logger } from "@app/logger";
@@ -11,6 +11,31 @@ import { withFileLock as acquireFileLock, LockTimeoutError } from "./file-lock";
  * Examples: "5 days", "1 hour", "30 minutes", "1 week"
  */
 export type TTLString = string;
+
+/**
+ * Write data to a file atomically via write-to-sibling-tmp + renameSync.
+ * Safe under concurrent writers — each gets a unique tmp name and rename is atomic on POSIX.
+ */
+export function atomicWriteFileSync(filePath: string, data: string): void {
+    const dir = dirname(filePath);
+
+    if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+    }
+
+    const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync(tmp, data);
+
+    try {
+        renameSync(tmp, filePath);
+    } catch {
+        try {
+            unlinkSync(tmp);
+        } catch {}
+
+        throw new Error(`Atomic rename failed: ${tmp} → ${filePath}`);
+    }
+}
 
 export class Storage {
     private toolName: string;
@@ -168,7 +193,7 @@ export class Storage {
      */
     async setConfig<T extends object>(config: T): Promise<void> {
         await this.ensureDirs();
-        await this.atomicWriteFile(this.configPath, SafeJSON.stringify(config, null, 2));
+        this.atomicWrite(this.configPath, SafeJSON.stringify(config, null, 2));
         logger.debug(`Config saved`);
     }
 
@@ -394,19 +419,8 @@ export class Storage {
     // Safe I/O
     // ============================================
 
-    private async atomicWriteFile(filePath: string, data: string): Promise<void> {
-        const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-        await Bun.write(tmp, data);
-
-        try {
-            renameSync(tmp, filePath);
-        } catch {
-            try {
-                unlinkSync(tmp);
-            } catch {}
-
-            throw new Error(`Atomic rename failed: ${tmp} → ${filePath}`);
-        }
+    private atomicWrite(filePath: string, data: string): void {
+        atomicWriteFileSync(filePath, data);
     }
 
     // ============================================
@@ -497,7 +511,7 @@ export class Storage {
                     mkdirSync(dir, { recursive: true });
                 }
 
-                await this.atomicWriteFile(filePath, SafeJSON.stringify(updated, null, 2));
+                this.atomicWrite(filePath, SafeJSON.stringify(updated, null, 2));
                 logger.debug(`Atomic update complete: ${filePath}`);
 
                 return updated;
@@ -547,7 +561,7 @@ export class Storage {
                 }
 
                 updater(config);
-                await this.atomicWriteFile(this.configPath, SafeJSON.stringify(config, null, 2));
+                this.atomicWrite(this.configPath, SafeJSON.stringify(config, null, 2));
                 logger.debug("Atomic config update complete");
 
                 return config;

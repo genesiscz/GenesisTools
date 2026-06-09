@@ -1,4 +1,4 @@
-import { out } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { isVerbose, runTool } from "@app/utils/cli";
 import type { DetailedCommitInfo } from "@app/utils/git";
 import { createGit } from "@app/utils/git";
@@ -236,7 +236,9 @@ async function detectForkPoint(
                 bestForkSha = mb;
                 bestCommitCount = count;
             }
-        } catch {}
+        } catch (err) {
+            logger.debug({ candidate, err }, "Fork-point detection: candidate failed");
+        }
     }
 
     if (!bestBase || !bestForkSha) {

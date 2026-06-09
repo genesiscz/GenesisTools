@@ -21,7 +21,7 @@ import { SafeJSON } from "@app/utils/json";
 import { fuzzyResolveSession } from "@app/utils/log-session/fuzzy-resolver";
 import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
 import type { JsonlExitRecord, JsonlLineRecord, JsonlMetaRecord } from "@app/utils/log-session/types";
-import { Storage } from "@app/utils/storage/storage";
+import { atomicWriteFileSync, Storage } from "@app/utils/storage/storage";
 
 export type { ResolvedRunSession } from "@app/task/types";
 
@@ -79,8 +79,8 @@ export class TaskSessionStore {
         }
     }
 
-    async writeSessionMeta(meta: TaskSessionMeta): Promise<void> {
-        await Bun.write(metaPath(meta.name), SafeJSON.stringify(meta, null, "\t"));
+    writeSessionMeta(meta: TaskSessionMeta): void {
+        atomicWriteFileSync(metaPath(meta.name), SafeJSON.stringify(meta, null, "\t"));
     }
 
     async touchSession(name: string): Promise<void> {
@@ -129,7 +129,7 @@ export class TaskSessionStore {
         const kept = records.filter((record) => record.type !== "exit");
         const body = kept.map((record) => SafeJSON.stringify(record)).join("\n");
 
-        await Bun.write(path, body ? `${body}\n` : "");
+        atomicWriteFileSync(path, body ? `${body}\n` : "");
 
         const now = Date.now();
         const existing = await this.getSessionMeta(input.name);
@@ -145,7 +145,7 @@ export class TaskSessionStore {
             startedAt: existing?.startedAt ?? new Date(now).toISOString(),
         };
 
-        await this.writeSessionMeta(meta);
+        this.writeSessionMeta(meta);
         await this.setRecentSession(input.name);
     }
 
@@ -166,7 +166,7 @@ export class TaskSessionStore {
         const linesAfter = filterLineRecords(kept).length;
         const body = kept.map((record) => SafeJSON.stringify(record)).join("\n");
 
-        await Bun.write(canonicalPath, body ? `${body}\n` : "");
+        atomicWriteFileSync(canonicalPath, body ? `${body}\n` : "");
 
         if (existsSync(uiPath)) {
             const uiRecords = await readJsonlFile(uiPath);
@@ -178,7 +178,7 @@ export class TaskSessionStore {
                 return (record as JsonlLineRecord).seq > seq;
             });
             const uiBody = keptUi.map((record) => SafeJSON.stringify(record)).join("\n");
-            await Bun.write(uiPath, uiBody ? `${uiBody}\n` : "");
+            atomicWriteFileSync(uiPath, uiBody ? `${uiBody}\n` : "");
         }
 
         return linesBefore - linesAfter;
