@@ -44,15 +44,10 @@ export class TaskSessionStore {
         return (await this.storage.getConfig<TaskConfig>()) ?? {};
     }
 
-    async saveConfig(config: TaskConfig): Promise<void> {
-        await this.storage.ensureDirs();
-        await Bun.write(this.storage.getConfigPath(), SafeJSON.stringify(config, null, 2));
-    }
-
     async setRecentSession(name: string): Promise<void> {
-        const config = await this.loadConfig();
-        config.recentSession = name;
-        await this.saveConfig(config);
+        await this.storage.atomicConfigUpdate<TaskConfig>((config) => {
+            config.recentSession = name;
+        });
     }
 
     async listSessionNames(): Promise<string[]> {

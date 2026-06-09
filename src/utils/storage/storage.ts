@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { logger } from "@app/logger";
@@ -143,22 +143,22 @@ export class Storage {
      * @param value - The value to set
      */
     async setConfigValue<T>(key: string, value: T): Promise<void> {
-        await this.ensureDirs();
-        const config = (await this.getConfig<Record<string, unknown>>()) || {};
+        await this.atomicConfigUpdate<Record<string, unknown>>((config) => {
+            const keys = key.split(".");
+            let current = config;
 
-        // Support dot notation for nested keys
-        const keys = key.split(".");
-        let current = config;
-        for (let i = 0; i < keys.length - 1; i++) {
-            const k = keys[i];
-            if (!(k in current) || typeof current[k] !== "object") {
-                current[k] = {};
+            for (let i = 0; i < keys.length - 1; i++) {
+                const k = keys[i];
+
+                if (!(k in current) || typeof current[k] !== "object") {
+                    current[k] = {};
+                }
+
+                current = current[k] as Record<string, unknown>;
             }
-            current = current[k] as Record<string, unknown>;
-        }
-        current[keys[keys.length - 1]] = value;
 
-        await Bun.write(this.configPath, SafeJSON.stringify(config, null, 2));
+            current[keys[keys.length - 1]] = value;
+        });
         logger.debug(`Config updated: ${key}`);
     }
 
@@ -168,7 +168,7 @@ export class Storage {
      */
     async setConfig<T extends object>(config: T): Promise<void> {
         await this.ensureDirs();
-        await Bun.write(this.configPath, SafeJSON.stringify(config, null, 2));
+        await this.atomicWriteFile(this.configPath, SafeJSON.stringify(config, null, 2));
         logger.debug(`Config saved`);
     }
 
@@ -391,6 +391,25 @@ export class Storage {
     }
 
     // ============================================
+    // Safe I/O
+    // ============================================
+
+    private async atomicWriteFile(filePath: string, data: string): Promise<void> {
+        const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+        await Bun.write(tmp, data);
+
+        try {
+            renameSync(tmp, filePath);
+        } catch {
+            try {
+                unlinkSync(tmp);
+            } catch {}
+
+            throw new Error(`Atomic rename failed: ${tmp} → ${filePath}`);
+        }
+    }
+
+    // ============================================
     // Locking
     // ============================================
 
@@ -478,7 +497,7 @@ export class Storage {
                     mkdirSync(dir, { recursive: true });
                 }
 
-                await Bun.write(filePath, SafeJSON.stringify(updated, null, 2));
+                await this.atomicWriteFile(filePath, SafeJSON.stringify(updated, null, 2));
                 logger.debug(`Atomic update complete: ${filePath}`);
 
                 return updated;
@@ -528,7 +547,7 @@ export class Storage {
                 }
 
                 updater(config);
-                await Bun.write(this.configPath, SafeJSON.stringify(config, null, 2));
+                await this.atomicWriteFile(this.configPath, SafeJSON.stringify(config, null, 2));
                 logger.debug("Atomic config update complete");
 
                 return config;
