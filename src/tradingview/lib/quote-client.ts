@@ -2,8 +2,8 @@ import { EventEmitter } from "node:events";
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { encodeFrame, genSessionId, isHeartbeat, parseFrames } from "./protocol";
-import { tvSocket } from "./ws";
 import type { QuoteSnapshot, QuoteValue } from "./types";
+import { tvSocket } from "./ws";
 
 const DEFAULT_FIELDS = [
     "lp",
