@@ -1,3 +1,4 @@
+import { logger } from "@app/logger";
 import type { ExecResult } from "@app/utils/cli";
 import { Executor } from "@app/utils/cli";
 import type { BranchInfo, DetailedCommitInfo } from "./types";
@@ -383,7 +384,9 @@ export function createGit(options?: GitOptions) {
                     if (commitsAhead > 0) {
                         children.push({ name: branch.name, commitsAhead });
                     }
-                } catch {}
+                } catch (err) {
+                    logger.debug({ branch: branch.name, parentBranch, err }, "getChildBranches: ancestry check failed");
+                }
             }
 
             return children.sort((a, b) => a.name.localeCompare(b.name));

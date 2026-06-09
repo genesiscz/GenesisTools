@@ -98,10 +98,14 @@ export class FileWatcher {
         }
 
         const fd = openSync(this.options.filePath, "r");
-        const newBytes = Buffer.alloc(currentSize - this.offset);
-        readSync(fd, newBytes, 0, newBytes.length, this.offset);
-        closeSync(fd);
-        this.offset = currentSize;
-        this.options.onData(newBytes);
+
+        try {
+            const newBytes = Buffer.alloc(currentSize - this.offset);
+            readSync(fd, newBytes, 0, newBytes.length, this.offset);
+            this.offset = currentSize;
+            this.options.onData(newBytes);
+        } finally {
+            closeSync(fd);
+        }
     }
 }

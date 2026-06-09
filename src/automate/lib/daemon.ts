@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createLogger } from "@app/logger";
@@ -9,7 +10,25 @@ const PID_FILE = join(homedir(), ".genesis-tools", "automate", "daemon.pid");
 
 export async function startDaemon(): Promise<void> {
     const log = createLogger({ logToFile: false });
-    writeFileSync(PID_FILE, String(process.pid));
+
+    try {
+        await writeFile(PID_FILE, String(process.pid), { flag: "wx" });
+    } catch (err) {
+        if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EEXIST") {
+            const existing = getDaemonPid();
+
+            if (existing !== null) {
+                log.error({ existingPid: existing }, "Another automate daemon is already running");
+                process.exit(1);
+            }
+
+            unlinkSync(PID_FILE);
+            await writeFile(PID_FILE, String(process.pid), { flag: "wx" });
+        } else {
+            throw err;
+        }
+    }
+
     log.info({ pid: process.pid }, "Automate daemon starting");
 
     const db = getDb();

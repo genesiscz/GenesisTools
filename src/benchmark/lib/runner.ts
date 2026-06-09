@@ -57,8 +57,7 @@ export async function runBenchmark(suite: BenchmarkSuite, opts: RunOptions = {})
         commands = commands.filter((c) => c.label === opts.only);
 
         if (commands.length === 0) {
-            p.log.error(`No command with label "${opts.only}" in suite "${suite.name}"`);
-            process.exit(1);
+            throw new Error(`No command with label "${opts.only}" in suite "${suite.name}"`);
         }
     }
 

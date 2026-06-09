@@ -49,6 +49,7 @@ export class PulseHistoryDb {
         }
 
         this.db = new Database(dbPath);
+        this.db.exec("PRAGMA journal_mode = WAL");
         this.db.run(
             "CREATE TABLE IF NOT EXISTS pulse_points (metric TEXT NOT NULL, ts TEXT NOT NULL, value REAL NOT NULL)"
         );

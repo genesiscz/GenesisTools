@@ -3,6 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:f
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
+import { atomicWriteFileSync } from "@app/utils/storage/storage";
 import { nanoid } from "nanoid";
 import { captureContext } from "./context";
 import { parseReminders } from "./reminders";
@@ -84,12 +85,12 @@ export class TodoStore {
         return SafeJSON.parse(content) as Todo[];
     }
 
-    private async writeTodos(todos: Todo[]): Promise<void> {
+    private writeTodos(todos: Todo[]): void {
         this.ensureDir();
-        await Bun.write(this.todosPath, SafeJSON.stringify(todos, null, 2));
+        atomicWriteFileSync(this.todosPath, SafeJSON.stringify(todos, null, 2));
     }
 
-    private async writeMeta(todos: Todo[]): Promise<void> {
+    private writeMeta(todos: Todo[]): void {
         const meta: ProjectMeta = {
             projectRoot: this.projectRoot,
             name: basename(this.projectRoot),
@@ -97,7 +98,7 @@ export class TodoStore {
             todoCount: todos.length,
         };
 
-        await Bun.write(this.metaPath, SafeJSON.stringify(meta, null, 2));
+        atomicWriteFileSync(this.metaPath, SafeJSON.stringify(meta, null, 2));
     }
 
     async add(input: AddTodoInput): Promise<Todo> {
