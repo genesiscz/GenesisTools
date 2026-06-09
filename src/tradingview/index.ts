@@ -29,8 +29,8 @@ program
 program
     .command("indicator")
     .description("Stream an indicator's values and signal marks for a symbol (history, then live)")
-    .argument("[spec]", "Indicator: alias (rsi), name, STD;/PUB; id, or script URL")
-    .argument("<symbol>", "Symbol like NASDAQ:AAPL or BYBIT:BTCUSDT.P")
+    .argument("[spec]", "Indicator: alias (rsi), name, STD;/PUB; id, or script URL (omit with --from-chart)")
+    .argument("[symbol]", "Symbol like NASDAQ:AAPL or BYBIT:BTCUSDT.P")
     .option("--from-chart <layoutId>", "Attach studies from a saved chart layout")
     .option("--tf <resolution>", "Timeframe: 1, 5, 15, 60, 240, 1D, 1W…", "1D")
     .option("--bars <n>", "History bars to load", "300")
@@ -46,7 +46,14 @@ program
     .option("--notify", "Voice notification on live signals (tools say)")
     .option("--exec <cmd>", "Run shell command on live signals (signal JSON in $TV_SIGNAL)")
     .option("--cookie <cookie>", "TradingView session cookie string")
-    .action((spec: string | undefined, symbol: string, opts: IndicatorOpts) => runIndicator(spec, symbol, opts));
+    .action((spec: string | undefined, symbol: string | undefined, opts: IndicatorOpts) => {
+        // with --from-chart the lone positional is the symbol, not an indicator spec
+        if (opts.fromChart && spec && !symbol) {
+            return runIndicator(undefined, spec, opts);
+        }
+
+        return runIndicator(spec, symbol, opts);
+    });
 
 program
     .command("charts")

@@ -24,6 +24,16 @@ export async function runScan(indicatorsArg: string, opts: ScanOpts): Promise<vo
     }
 
     const { columns, rows } = await scan({ indicators, tickers });
+    const returned = new Set(rows.map((row) => row.symbol.toUpperCase()));
+    const missing = tickers.filter((ticker) => !returned.has(ticker.toUpperCase()));
+    for (const ticker of missing) {
+        out.error(`✗ ${ticker}: not found by the scanner (check the EXCHANGE:TICKER spelling)`);
+    }
+
+    if (rows.length === 0) {
+        process.exit(1);
+    }
+
     if (opts.json) {
         out.result(
             rows.map((row) => ({

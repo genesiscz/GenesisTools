@@ -209,7 +209,11 @@ export class ChartClient extends EventEmitter {
         }
 
         if (msg.m === "symbol_error") {
-            this.emit("symbolError", { symbol: String(msg.p[2] ?? ""), errmsg: String(msg.p[3] ?? "symbol error") });
+            // frame shape: ["cs_<id>", "<symbol handle>", "<message>"] — the handle is not the ticker
+            this.emit("symbolError", {
+                symbol: this.symbolSpec?.symbol ?? String(msg.p[1] ?? ""),
+                errmsg: String(msg.p[2] ?? "symbol error"),
+            });
             return;
         }
 
