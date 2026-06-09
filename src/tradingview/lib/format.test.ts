@@ -4,7 +4,9 @@ import {
     formatAlertFire,
     formatAlertRow,
     formatIndicatorHeader,
+    formatLayoutRow,
     formatQuoteLine,
+    formatScanTable,
     formatSignalLine,
     formatStudyRow,
 } from "./format";
@@ -93,5 +95,34 @@ describe("indicator formatting", () => {
 
     it("header lists plot columns", () => {
         expect(stripAnsi(formatIndicatorHeader(plots))).toContain("RSI");
+    });
+});
+
+describe("charts and scan formatting", () => {
+    it("layout row includes id, symbol, resolution, and modified", () => {
+        const row = stripAnsi(
+            formatLayoutRow({
+                id: "YLjdL7wq",
+                name: "Main",
+                symbol: "BATS:MSTR",
+                resolution: "1D",
+                modified: "2026-06-09",
+                studyCount: 12,
+            })
+        );
+        expect(row).toContain("YLjdL7wq");
+        expect(row).toContain("BATS:MSTR");
+        expect(row).toContain("1D");
+        expect(row).toContain("2026-06-09");
+        expect(row).toContain("12");
+    });
+
+    it("scan table renders symbol and indicator columns", () => {
+        const table = stripAnsi(
+            formatScanTable(["close", "RSI"], [{ symbol: "NASDAQ:AAPL", values: { close: 290.55, RSI: 42.64 } }])
+        );
+        expect(table).toContain("NASDAQ:AAPL");
+        expect(table).toContain("290.55");
+        expect(table).toContain("42.64");
     });
 });

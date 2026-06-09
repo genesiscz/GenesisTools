@@ -69,3 +69,15 @@ export function buildStudyValues(meta: StudyMeta, overrides: Record<string, stri
 
     return values;
 }
+
+/** Apply saved layout input values (in_0, in_1, …) onto translated study defaults. */
+export function buildStudyValuesFromLayout(meta: StudyMeta, layoutInputs: Record<string, unknown>): StudyValues {
+    const values = buildStudyValues(meta, {});
+    for (const input of meta.inputs) {
+        if (input.id in layoutInputs) {
+            values[input.id] = { v: layoutInputs[input.id], f: true, t: input.type };
+        }
+    }
+
+    return values;
+}
