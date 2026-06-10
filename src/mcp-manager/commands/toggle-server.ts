@@ -6,7 +6,8 @@ import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import type { MCPProviderName, PerProjectEnabledState } from "@app/mcp-manager/utils/types.js";
 
 export interface ToggleOptions {
-    provider?: string; // Provider name for non-interactive mode
+    provider?: string; // Provider name(s) for non-interactive mode ("all" or comma-separated)
+    project?: string[]; // Project path(s) for per-project enable/disable (providers with project support)
 }
 
 /**
@@ -51,15 +52,24 @@ export async function toggleServer(
 
     let selectedProviderNames: string[] | null;
     if (options.provider) {
-        // Filter to the specified provider
-        const matchedProvider = availableProviders.find(
-            (p) => p.getName().toLowerCase() === options.provider?.toLowerCase()
-        );
-        if (!matchedProvider) {
+        // Filter to the specified provider(s); supports "all" and comma-separated names
+        const requested = options.provider
+            .split(",")
+            .map((name) => name.trim().toLowerCase())
+            .filter(Boolean);
+
+        if (requested.includes("all")) {
+            selectedProviderNames = availableProviders.map((p) => p.getName());
+        } else {
+            selectedProviderNames = availableProviders
+                .filter((p) => requested.includes(p.getName().toLowerCase()))
+                .map((p) => p.getName());
+        }
+
+        if (selectedProviderNames.length === 0) {
             logger.warn(`Provider '${options.provider}' not found or has no config file.`);
             return;
         }
-        selectedProviderNames = [matchedProvider.getName()];
     } else {
         selectedProviderNames = await promptForProviders(
             availableProviders,
@@ -88,8 +98,16 @@ export async function toggleServer(
 
         if (projects.length > 0) {
             if (isNonInteractive) {
-                // Non-interactive: apply globally to all projects
-                projectChoices = [{ projectPath: null, displayName: "Global (all projects)" }];
+                if (options.project && options.project.length > 0) {
+                    // Non-interactive with explicit --project path(s)
+                    projectChoices = options.project.map((projectPath) => ({
+                        projectPath,
+                        displayName: projectPath,
+                    }));
+                } else {
+                    // Non-interactive: apply globally to all projects
+                    projectChoices = [{ projectPath: null, displayName: "Global (all projects)" }];
+                }
             } else {
                 // Interactive: prompt for selection
                 projectChoices = await promptForProjects(
@@ -102,7 +120,13 @@ export async function toggleServer(
                     continue;
                 }
             }
+        } else if (isNonInteractive && options.project && options.project.length > 0) {
+            logger.warn(`--project is not supported by ${providerName} — applying globally.`);
         }
+
+        // Pure per-project operation (no "Global" choice among the selections)
+        const isPerProjectOp =
+            !!projectChoices && projectChoices.length > 0 && projectChoices.every((c) => c.projectPath !== null);
 
         // Collect servers to toggle
         const serversToToggle: string[] = [];
@@ -134,8 +158,16 @@ export async function toggleServer(
                 continue;
             }
 
+            // A per-project operation on a globally-disabled server is an
+            // OVERRIDE: the provider manages a project-scope entry itself.
+            // Do NOT reinstall the server globally and leave _meta.enabled at
+            // `false` — the override is tracked solely by the presence of the
+            // project-scope entry in the provider config.
+            const isGlobalDisableOverride =
+                isPerProjectOp && serverConfig!._meta?.enabled?.[providerName as MCPProviderName] === false;
+
             try {
-                if (enabled) {
+                if (enabled && !isGlobalDisableOverride) {
                     // Strip _meta before syncing to provider
                     const configToSync = stripMeta(serverConfig!);
 
@@ -169,7 +201,11 @@ export async function toggleServer(
                 const isGlobalEnablement =
                     projectChoices && projectChoices.length === 1 && projectChoices[0].projectPath === null;
 
-                if (projects.length > 0 && !isGlobalEnablement) {
+                if (isGlobalDisableOverride) {
+                    // Keep _meta.enabled[provider] === false: the global state
+                    // stays "disabled"; the per-project override lives only in
+                    // the provider config (.projects[<path>].mcpServers).
+                } else if (projects.length > 0 && !isGlobalEnablement) {
                     // Provider supports projects and we have specific project selections - use project objects
                     const perProjectState: PerProjectEnabledState =
                         typeof enabledState === "object" && enabledState !== null && !Array.isArray(enabledState)

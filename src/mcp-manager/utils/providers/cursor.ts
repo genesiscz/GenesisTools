@@ -156,6 +156,18 @@ export class CursorProvider extends MCPProvider {
         return this.writeConfig(cursorConfig);
     }
 
+    async removeServers(serverNames: string[]): Promise<WriteResult> {
+        const config = await this.readConfig();
+
+        for (const serverName of serverNames) {
+            if (config.mcpServers?.[serverName]) {
+                delete config.mcpServers[serverName];
+            }
+        }
+
+        return this.writeConfig(config);
+    }
+
     async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<WriteResult> {
         const config = await this.readConfig();
 

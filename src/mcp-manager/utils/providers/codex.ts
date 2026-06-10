@@ -163,6 +163,23 @@ export class CodexProvider extends MCPProvider {
         return this.writeConfig(codexConfig);
     }
 
+    async removeServers(serverNames: string[]): Promise<WriteResult> {
+        const config = await this.readConfig();
+
+        for (const serverName of serverNames) {
+            if (config.mcp_servers?.[serverName]) {
+                // Deleting the parsed key drops the whole [mcp_servers.<name>]
+                // section including nested subsections ([...env],
+                // [...http_headers]); unrelated content like [projects.*] and
+                // [notice] is part of the same parsed object and survives the
+                // re-serialization untouched.
+                delete config.mcp_servers[serverName];
+            }
+        }
+
+        return this.writeConfig(config);
+    }
+
     async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<WriteResult> {
         const config = await this.readConfig();
 

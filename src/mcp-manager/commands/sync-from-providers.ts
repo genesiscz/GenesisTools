@@ -178,6 +178,18 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
                     enabledState = serverEnabledStates.get(serverName) ?? false;
                 }
 
+                // Guard: a globally-disabled server (unified _meta === false,
+                // provider still reports the global state as disabled) must
+                // STAY globally disabled. Its per-project override entries
+                // (e.g. Claude's .projects[<path>].mcpServers) live in the
+                // provider config itself and must not flip _meta to a
+                // per-project object — that would make the next sync reinstall
+                // the server globally.
+                const existingProviderState = existingConfig?._meta?.enabled?.[providerName as MCPProviderName];
+                if (existingProviderState === false && serverEnabledStates.get(serverName) === false) {
+                    enabledState = false;
+                }
+
                 if (existingConfig) {
                     // Preserve _meta from existing config
                     const preservedMeta = existingConfig._meta || { enabled: {} };

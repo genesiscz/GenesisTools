@@ -38,6 +38,12 @@ tools mcp-manager enable github
 # Disable a server in a provider
 tools mcp-manager disable github
 
+# Re-enable a globally-disabled server for ONE claude project (override)
+tools mcp-manager enable github -p claude --project /abs/path/to/project
+
+# Completely REMOVE server(s) everywhere (permanent — disable is reversible)
+tools mcp-manager remove github,old-server -y
+
 # Install a server from unified config to a provider
 tools mcp-manager install github
 
@@ -54,8 +60,9 @@ tools mcp-manager show github
 | `sync`                | Sync MCP servers from unified config to providers        |
 | `sync-from-providers` | Sync servers FROM providers TO unified config            |
 | `list`                | List all MCP servers across all providers                |
-| `enable`              | Enable an MCP server in a provider                       |
-| `disable`             | Disable an MCP server in a provider                      |
+| `enable`              | Enable an MCP server in a provider (`--project` for per-project) |
+| `disable`             | Disable an MCP server in a provider (`--project` for per-project) |
+| `remove` (`purge`)    | PERMANENTLY remove server(s) from unified config + all provider configs |
 | `install`             | Install/add an MCP server to a provider                  |
 | `show`                | Show full configuration of an MCP server                 |
 | `backup-all`          | Backup all configs for all providers                     |
@@ -177,6 +184,50 @@ mcp-manager therefore implements a TRUE global disable for Claude:
 -   **`sync-from-providers`** does not interpret the absence of a
     globally-disabled server as "user deleted it" — the unified config entry
     and its `_meta.enabled.claude = false` flag are preserved.
+
+#### Per-project enable override (claude)
+
+A global disable can be overridden for individual projects:
+
+```bash
+tools mcp-manager enable <server> -p claude --project /abs/path [--project /other] [-y]
+```
+
+-   Installs the server's claude-format config into
+    `.projects[<path>].mcpServers.<name>` in `~/.claude.json` — Claude Code
+    DOES honor project-scope entries there (it's the same storage
+    `claude mcp add -s local` uses) — and removes the name from that project's
+    `disabledMcpServers` list.
+-   The global state stays disabled: the server remains absent from the global
+    `mcpServers` and `_meta.enabled.claude` stays `false`. The override is
+    tracked solely by the presence of the project-scope entry — no extra
+    metadata.
+-   **Override-awareness:** the per-project sweep (global disable) and `sync`
+    SKIP projects that have a project-scope entry for that server — they never
+    re-add the name to that project's `disabledMcpServers` and never delete
+    the entry (its config is refreshed from the unified config on sync).
+    `sync-from-providers` keeps `_meta.enabled.claude === false` even though
+    the override projects report the server as enabled.
+-   `list` shows such servers as `disabled globally, enabled in N project(s)`.
+-   Undo with `tools mcp-manager disable <server> -p claude --project <path>` —
+    removes the project-scope entry and puts the name back on that project's
+    disabled list.
+-   `--project` is repeatable and accepts comma-separated paths; `-p all` is
+    also accepted for enable/disable and expands to all providers with configs.
+
+#### `remove` vs `disable`
+
+`disable` is reversible: the full server config stays in the unified config
+and `enable` can restore it anywhere. `remove` (alias `purge`) is PERMANENT:
+it deletes the server from the unified config (`mcpServers.<name>` and the
+`enabledMcpServers.<name>` mirror) and from every selected provider config —
+claude `~/.claude.json` `mcpServers` (global + project-scope entries; the
+per-project `disabledMcpServers` history lists are left as harmless
+leftovers), cursor `~/.cursor/mcp.json`, gemini `~/.gemini/settings.json`
+(`mcpServers` + `mcp.excluded`), and codex `~/.codex/config.toml`
+(`[mcp_servers.<name>]` including nested `.env`/`.http_headers` subsections,
+leaving `[projects.*]`/`[notice]` untouched). Each write shows the standard
+diff + confirmation and goes through the backup path; `-y` auto-confirms.
 
 ### Gemini Code Assist (`~/.gemini/settings.json`)
 

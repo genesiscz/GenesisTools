@@ -27,12 +27,26 @@ import {
     installServer,
     listServers,
     openConfig,
+    removeServers,
     renameServer,
     showServerConfig,
     syncFromProviders,
     syncServers,
 } from "./commands/index.js";
 import { setGlobalOptions } from "./utils/config.utils.js";
+
+/**
+ * Collect --project values: repeatable flag, each value may be comma-separated
+ */
+function collectProjects(value: string, previous: string[]): string[] {
+    return [
+        ...previous,
+        ...value
+            .split(",")
+            .map((p) => p.trim())
+            .filter(Boolean),
+    ];
+}
 
 // Include timestamps in console output. The console stream is now always
 // sync (pino-pretty sync:true in createLogger), so logs reliably appear
@@ -152,20 +166,51 @@ program
 program
     .command("enable [servers]")
     .description("Enable MCP server(s) in provider(s)")
-    .action(async (servers) => {
+    .option(
+        "--project <path>",
+        "Project path(s) for per-project enable (claude; repeatable or comma-separated). Overrides a global disable for that project.",
+        collectProjects,
+        []
+    )
+    .action(async (servers, cmdOptions) => {
         const opts = program.opts();
         const providers = parseProviderArg(opts.provider, getProviders());
-        await enableServer(servers, providers, { provider: opts.provider });
+        await enableServer(servers, providers, {
+            provider: opts.provider,
+            project: cmdOptions.project?.length > 0 ? cmdOptions.project : undefined,
+        });
     });
 
 // disable command
 program
     .command("disable [servers]")
     .description("Disable MCP server(s) in provider(s)")
+    .option(
+        "--project <path>",
+        "Project path(s) for per-project disable (claude; repeatable or comma-separated). Removes a per-project override.",
+        collectProjects,
+        []
+    )
+    .action(async (servers, cmdOptions) => {
+        const opts = program.opts();
+        const providers = parseProviderArg(opts.provider, getProviders());
+        await disableServer(servers, providers, {
+            provider: opts.provider,
+            project: cmdOptions.project?.length > 0 ? cmdOptions.project : undefined,
+        });
+    });
+
+// remove command (a.k.a. purge) — permanent, unlike disable
+program
+    .command("remove [servers]")
+    .alias("purge")
+    .description(
+        "Completely REMOVE MCP server(s) from the unified config and provider configs (permanent; 'disable' is the reversible alternative)"
+    )
     .action(async (servers) => {
         const opts = program.opts();
         const providers = parseProviderArg(opts.provider, getProviders());
-        await disableServer(servers, providers, { provider: opts.provider });
+        await removeServers(servers, providers, { provider: opts.provider });
     });
 
 // install command
@@ -266,6 +311,7 @@ program.action(async () => {
             { value: "enable", label: "Enable servers" },
             { value: "disable", label: "Disable servers" },
             { value: "install", label: "Install a server" },
+            { value: "remove", label: "Remove a server (permanent)" },
             { value: "show", label: "Show server configuration" },
             { value: "backupAll", label: "Backup all configs" },
             { value: "rename", label: "Rename a server" },
@@ -293,6 +339,9 @@ program.action(async () => {
             break;
         case "install":
             await installServer(undefined, undefined, providers);
+            break;
+        case "remove":
+            await removeServers(undefined, providers);
             break;
         case "show": {
             const serverName = (await p.text({
