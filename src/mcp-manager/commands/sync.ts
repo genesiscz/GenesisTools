@@ -75,12 +75,12 @@ export async function syncServers(providers: MCPProvider[], options: SyncOptions
             for (const [serverName, serverConfig] of Object.entries(config.mcpServers)) {
                 const existingServerConfig = await provider.getServerConfig(serverName);
                 if (!existingServerConfig) {
-                    // For providers without native disable (Cursor/Codex), only install if enabled
-                    if (!provider.supportsDisabledState()) {
-                        const isEnabled = provider.isServerEnabledInMeta(serverConfig);
-                        if (!isEnabled) {
-                            continue; // Skip - will be handled (deleted) by syncServers
-                        }
+                    // Skip servers that must stay absent from this provider's
+                    // config: Cursor/Codex have no disabled state (presence =
+                    // enabled), and Claude's only TRUE global disable is
+                    // absence from ~/.claude.json mcpServers.
+                    if (!provider.shouldBeInstalled(serverConfig)) {
+                        continue; // Skip - will be handled (deleted) by syncServers
                     }
                     logger.info(`  Installing '${serverName}' in ${providerName}...`);
                     const configToInstall = stripMeta(serverConfig);

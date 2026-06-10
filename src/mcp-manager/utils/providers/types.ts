@@ -204,6 +204,20 @@ export abstract class MCPProvider {
     abstract supportsDisabledState(): boolean;
 
     /**
+     * Whether a server should be present (installed) in this provider's config
+     * given its _meta.enabled state.
+     * - Providers WITH a native disabled state (e.g. Gemini) keep disabled
+     *   servers installed and mark them disabled.
+     * - Providers WITHOUT one (Cursor/Codex) only install enabled servers.
+     * - Claude overrides this: a globally-disabled server
+     *   (`_meta.enabled.claude === false`) must be ABSENT from ~/.claude.json,
+     *   because absence is the only global disable Claude Code honors.
+     */
+    shouldBeInstalled(serverConfig: UnifiedMCPServerConfig): boolean {
+        return this.supportsDisabledState() || this.isServerEnabledInMeta(serverConfig);
+    }
+
+    /**
      * Check if a server is enabled for this provider based on _meta.enabled state.
      * For providers with project support, checks if enabled globally or for a specific project.
      * @param serverConfig - Server configuration with _meta

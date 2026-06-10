@@ -142,8 +142,41 @@ The tool uses a unified configuration file at `~/.genesis-tools/mcp-manager/conf
 ### Claude Desktop (`~/.claude.json`)
 
 -   Supports global and project-specific server configurations
--   Uses `disabledMcpServers` array for disable state
 -   Supports stdio, SSE, and HTTP transports
+-   **Global disable = removal from `mcpServers`** (see below)
+
+#### Claude enable/disable semantics
+
+Verified against the Claude Code binary: Claude Code reads `disabledMcpServers`
+**only** from per-project entries (`.projects[<cwd>].disabledMcpServers`). The
+**top-level `disabledMcpServers` key is never read by Claude Code** — it is an
+mcp-manager-only marker. A per-project sweep covers only projects registered at
+sweep time; a project registered later would load the server again. The only
+mechanism Claude Code honors globally (including future projects) is the server
+**not existing in `mcpServers` at all**.
+
+mcp-manager therefore implements a TRUE global disable for Claude:
+
+-   **Global disable** (`tools mcp-manager disable <server> --provider claude`):
+    1. Preserves the server's full config in the unified config with
+       `_meta.enabled.claude = false` (imports it there first if missing —
+       the entry is never removed unless it is safely preserved).
+    2. Keeps the top-level marker + per-project sweep for back-compat.
+    3. **Removes the entry from `mcpServers`** in `~/.claude.json`.
+-   **Global enable** restores the entry into `mcpServers` from the unified
+    config and cleans the top-level + all per-project disabled lists.
+-   **Per-project disable** is unchanged: the entry stays in `mcpServers` and
+    the project's `disabledMcpServers` list is updated (this is the mechanism
+    Claude Code actually reads).
+-   **`list`** shows globally-disabled servers (absent from `~/.claude.json`)
+    as `disabled` for claude — sourced from the unified config — instead of
+    "not installed".
+-   **`sync`** treats `_meta.enabled.claude === false` as disabled-by-absence:
+    such servers are never (re)installed into `mcpServers`, and drifted
+    entries are removed.
+-   **`sync-from-providers`** does not interpret the absence of a
+    globally-disabled server as "user deleted it" — the unified config entry
+    and its `_meta.enabled.claude = false` flag are preserved.
 
 ### Gemini Code Assist (`~/.gemini/settings.json`)
 
