@@ -9,6 +9,7 @@ export { disableServer } from "./disable.js";
 export { enableServer } from "./enable.js";
 export { installServer } from "./install.js";
 export { listServers } from "./list.js";
+export { removeServers } from "./remove.js";
 export { renameServer } from "./rename.js";
 export { showServerConfig } from "./show.js";
 export { syncServers } from "./sync.js";

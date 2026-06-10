@@ -44,7 +44,17 @@ export async function listServers(providers: MCPProvider[]): Promise<void> {
 
         logger.info(`${status} ${chalk.bold(name)} (${statusText} in ${instances.length} provider(s))`);
         for (const instance of instances) {
-            const providerStatus = instance.enabled ? chalk.green("enabled") : chalk.red("disabled");
+            let providerStatus = instance.enabled ? chalk.green("enabled") : chalk.red("disabled");
+
+            // Claude: a globally-disabled server can be re-enabled per project
+            // via a project-scope override entry — surface that on the global row.
+            if (!instance.enabled && instance.provider === "claude") {
+                const overrideCount = instances.filter((s) => s.provider.startsWith("claude:") && s.enabled).length;
+                if (overrideCount > 0) {
+                    providerStatus = chalk.yellow(`disabled globally, enabled in ${overrideCount} project(s)`);
+                }
+            }
+
             logger.info(`  └─ ${instance.provider}: ${providerStatus}`);
         }
         logger.info("");

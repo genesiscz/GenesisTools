@@ -19,6 +19,7 @@ export class MockMCPProvider extends MCPProvider {
     public enableServersCalls: Array<{ serverNames: string[]; projectPath?: string | null }> = [];
     public disableServersCalls: Array<{ serverNames: string[]; projectPath?: string | null }> = [];
     public installServerCalls: Array<{ serverName: string; config: UnifiedMCPServerConfig }> = [];
+    public removeServersCalls: Array<{ serverNames: string[] }> = [];
     public syncServersCalls: Array<{ servers: Record<string, UnifiedMCPServerConfig> }> = [];
     public writeConfigCalls: unknown[] = [];
     public errors: Map<string, Error> = new Map();
@@ -118,6 +119,14 @@ export class MockMCPProvider extends MCPProvider {
         return WriteResult.Applied;
     }
 
+    async removeServers(serverNames: string[]): Promise<WriteResult> {
+        if (this.errors.has("removeServers")) {
+            throw this.errors.get("removeServers")!;
+        }
+        this.removeServersCalls.push({ serverNames });
+        return WriteResult.Applied;
+    }
+
     async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<WriteResult> {
         if (this.errors.has("syncServers")) {
             throw this.errors.get("syncServers")!;
@@ -160,6 +169,7 @@ export class MockMCPProvider extends MCPProvider {
         this.enableServersCalls = [];
         this.disableServersCalls = [];
         this.installServerCalls = [];
+        this.removeServersCalls = [];
         this.syncServersCalls = [];
         this.writeConfigCalls = [];
         this.errors.clear();

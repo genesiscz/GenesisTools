@@ -197,6 +197,14 @@ export abstract class MCPProvider {
     abstract installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<WriteResult>;
 
     /**
+     * Completely REMOVE servers from this provider's config. Unlike disable,
+     * this is permanent — the entries are gone from the provider config (and,
+     * when driven by the `remove` command, from the unified config too).
+     * @returns WriteResult indicating whether changes were applied, no changes needed, or rejected
+     */
+    abstract removeServers(serverNames: string[]): Promise<WriteResult>;
+
+    /**
      * Check if this provider supports a "disabled" state for servers.
      * - Claude/Gemini: true (have disabledMcpServers/mcp.excluded lists)
      * - Cursor/Codex: false (presence in config = enabled, no separate disabled state)
