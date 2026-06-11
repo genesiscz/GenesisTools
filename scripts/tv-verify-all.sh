@@ -3,7 +3,6 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
-TODAY=$(date +%F)
 RESULTS=()
 
 record() {

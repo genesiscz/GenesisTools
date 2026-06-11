@@ -245,7 +245,7 @@ export async function isAuthToGet({
     }
 
     const body = (await res.text()).trim();
-    return body === "true" || body.includes('"auth":true') || body.includes("true");
+    return body === "true" || body.includes('"auth":true');
 }
 
 export type IndicatorFilter = "standard" | "saved" | "favorites";

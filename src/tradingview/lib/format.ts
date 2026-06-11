@@ -49,7 +49,10 @@ export function formatAlertRow(alert: Alert): string {
 
 export function formatAlertFire(fire: AlertFire): string {
     const sym = parseProSymbol(fire.symbol);
-    const time = new Date(fire.fire_time).toLocaleTimeString("en-US", { hour12: false });
+    const parsed = new Date(fire.fire_time);
+    const time = Number.isNaN(parsed.getTime())
+        ? "—"
+        : parsed.toLocaleTimeString("en-US", { hour12: false });
     const head = pc.bgYellow(pc.black(" ALERT "));
     return `${head} ${pc.dim(time)}  ${pc.bold(pc.yellow(sym))}  ${fire.message}`;
 }
