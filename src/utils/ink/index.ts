@@ -22,5 +22,8 @@ export { useElapsedTimer } from "./hooks/use-elapsed-timer.js";
 export { useOperation } from "./hooks/use-operation.js";
 export { useTerminalSize } from "./hooks/use-terminal-size.js";
 
+// Lib
+export { renderFullScreen } from "./lib/fullscreen.js";
+
 // Theme
 export { colors, symbols } from "./lib/theme.js";

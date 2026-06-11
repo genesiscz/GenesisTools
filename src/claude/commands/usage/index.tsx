@@ -1,7 +1,7 @@
 import { logger, out } from "@app/logger";
+import { renderFullScreen } from "@app/utils/ink";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
-import { render } from "ink";
 import { App } from "./app";
 
 export function registerUsageCommand(program: Command): void {
@@ -67,7 +67,6 @@ export function registerUsageCommand(program: Command): void {
                 return;
             }
 
-            const { waitUntilExit } = render(<App accountFilter={accountFilter} />);
-            await waitUntilExit();
+            await renderFullScreen(<App accountFilter={accountFilter} />);
         });
 }

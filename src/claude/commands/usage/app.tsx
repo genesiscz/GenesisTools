@@ -40,7 +40,7 @@ interface DashboardProps {
 }
 
 function Dashboard({ config, accountFilter }: DashboardProps) {
-    useTerminalSize({ clearOnResize: true });
+    const { rows } = useTerminalSize({ clearOnResize: true });
     const { activeTab, tabs, activeIndex } = useTabNavigation(config.defaultTab);
 
     const [pollInterval, setPollInterval] = useState<PollInterval>(
@@ -83,13 +83,19 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
     }
 
     return (
-        <Box flexDirection="column">
+        // Clamp the frame STRICTLY below the viewport height: at >= rows Ink
+        // abandons in-place erasing for clear-terminal-and-rewrite (ink.js
+        // onRender), which scrolls overflow into scrollback and duplicates
+        // stale frames on every refresh. The active view clips instead.
+        <Box flexDirection="column" height={Math.max(4, rows - 1)}>
             <TabBar tabs={tabs} activeIndex={activeIndex} />
-            {activeTab === "overview" && <OverviewView results={results} config={config} />}
-            {activeTab === "timeline" && <TimelineView db={db} results={results} config={config} />}
-            {activeTab === "rates" && <RatesView db={db} results={results} dbVersion={dbVersion} />}
-            {activeTab === "history" && <HistoryView db={db} dbVersion={dbVersion} />}
-            {activeTab === "sessions" && <SessionsView notifications={notifications} />}
+            <Box flexDirection="column" flexGrow={1} overflowY="hidden">
+                {activeTab === "overview" && <OverviewView results={results} config={config} />}
+                {activeTab === "timeline" && <TimelineView db={db} results={results} config={config} />}
+                {activeTab === "rates" && <RatesView db={db} results={results} dbVersion={dbVersion} />}
+                {activeTab === "history" && <HistoryView db={db} dbVersion={dbVersion} />}
+                {activeTab === "sessions" && <SessionsView notifications={notifications} />}
+            </Box>
             <AlertBanner
                 alerts={notifications?.alerts ?? []}
                 onDismiss={() => {
