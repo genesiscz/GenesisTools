@@ -107,7 +107,9 @@ describe("scoped out + log.out/log.tee double-mirror rule", () => {
     //    `logger.scoped(component)` (a DIFFERENT child instance), so that
     //    spy would capture nothing. The real, render-verified discriminator
     //    is the component-tagged pino debug line: clack's step render does
-    //    NOT carry `component: "<name>"`; the single mirror debug line does.
+    //    NOT carry the inlined `[<component>]` tag; the single mirror debug
+    //    line does (component renders inline via messageFormat — the raw
+    //    `component: "x"` field line is console-ignored).
     //    Exactly-one occurrence == the no-double-mirror invariant.
     it("log.out.log.* emits EXACTLY ONE component-tagged debug line (mirrorToLogger=true)", async () => {
         const mod = await import("./logger");
@@ -125,7 +127,8 @@ describe("scoped out + log.out/log.tee double-mirror rule", () => {
         await Bun.sleep(20);
         process.stderr.write = oe;
         const stderr = chunks.join("");
-        expect((stderr.match(/component: "shops:crawler"/g) ?? []).length).toBe(1);
+        expect((stderr.match(/\[shops:crawler\]/g) ?? []).length).toBe(1);
+        expect(stderr).not.toContain('component: "shops:crawler"');
         expect(stderr).toContain("Crawling");
     });
 
@@ -142,7 +145,7 @@ describe("scoped out + log.out/log.tee double-mirror rule", () => {
 // Advisor-mandated (the plan's Task 13 test only exercises runTool's surface;
 // without these the eff()/setBaseBinding refactor ships untested).
 describe("setBaseBinding + eff() — Task 13", () => {
-    it("logger.info after setBaseBinding({tool}) renders the tool binding on stderr", async () => {
+    it("logger.info after setBaseBinding({tool}) carries the binding but does NOT echo it on console", async () => {
         const mod = await import("./logger");
         mod.setConsoleLevel("info");
         mod.setBaseBinding({ tool: "loggertest" });
@@ -156,11 +159,15 @@ describe("setBaseBinding + eff() — Task 13", () => {
         await Bun.sleep(20);
         process.stderr.write = oe;
         const stderr = chunks.join("");
-        expect(stderr).toContain('tool: "loggertest"');
+        // Binding is in the chain (file log gets it) — verified via child bindings.
+        expect(mod.logger.child({}).bindings()).toMatchObject({ tool: "loggertest" });
+        // Console must NOT echo ambient bindings as field lines (the
+        // `tool: "macos"` garbage-line bug when output is piped).
+        expect(stderr).not.toContain('tool: "loggertest"');
         expect(stderr).toContain("base-bound line");
     });
 
-    it("scoped() flows through eff() — renders BOTH tool and component", async () => {
+    it("scoped() flows through eff() — component inlined as [tag], tool suppressed", async () => {
         const mod = await import("./logger");
         mod.setConsoleLevel("debug");
         mod.setBaseBinding({ tool: "loggertest" });
@@ -175,7 +182,9 @@ describe("setBaseBinding + eff() — Task 13", () => {
         await Bun.sleep(20);
         process.stderr.write = oe;
         const stderr = chunks.join("");
-        expect(stderr).toContain('tool: "loggertest"');
-        expect(stderr).toContain('component: "scopecomp"');
+        expect(log.bindings()).toMatchObject({ tool: "loggertest", component: "scopecomp" });
+        expect(stderr).toContain("[scopecomp] scoped base-bound line");
+        expect(stderr).not.toContain('tool: "loggertest"');
+        expect(stderr).not.toContain('component: "scopecomp"');
     });
 });

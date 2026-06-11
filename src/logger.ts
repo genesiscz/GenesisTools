@@ -131,7 +131,12 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
             sync: true,
             colorize: process.stderr.isTTY === true,
             translateTime: timestampFormat,
-            ignore: showPid ? "hostname" : "pid,hostname",
+            // Ambient bindings (tool from runTool's setBaseBinding, component
+            // from scoped()) are file-log context, not console content —
+            // without ignoring them every console line echoes `tool: "x"` as
+            // an indented field line. component stays visible inline instead.
+            messageFormat: "{if component}[{component}] {end}{msg}",
+            ignore: showPid ? "hostname,tool,component" : "pid,hostname,tool,component",
         };
 
         // minimalLevels: hide level for info/debug/trace, colored WARN:/ERROR:.
