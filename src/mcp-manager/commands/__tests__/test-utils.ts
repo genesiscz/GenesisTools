@@ -123,7 +123,9 @@ export class MockMCPProvider extends MCPProvider {
         if (this.errors.has("removeServers")) {
             throw this.errors.get("removeServers")!;
         }
-        this.removeServersCalls.push({ serverNames });
+        // Copy — capturing the live reference would let later caller-side
+        // mutation rewrite recorded history.
+        this.removeServersCalls.push({ serverNames: [...serverNames] });
         return WriteResult.Applied;
     }
 

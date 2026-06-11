@@ -170,14 +170,25 @@ export class GeminiProvider extends MCPProvider {
 
     async removeServers(serverNames: string[]): Promise<WriteResult> {
         const config = await this.readConfig();
+        let changed = false;
 
         for (const serverName of serverNames) {
             if (config.mcpServers?.[serverName]) {
                 delete config.mcpServers[serverName];
+                changed = true;
             }
             if (config.mcp?.excluded) {
-                config.mcp.excluded = config.mcp.excluded.filter((name) => name !== serverName);
+                const filtered = config.mcp.excluded.filter((name) => name !== serverName);
+
+                if (filtered.length !== config.mcp.excluded.length) {
+                    config.mcp.excluded = filtered;
+                    changed = true;
+                }
             }
+        }
+
+        if (!changed) {
+            return WriteResult.NoChanges;
         }
 
         return this.writeConfig(config);

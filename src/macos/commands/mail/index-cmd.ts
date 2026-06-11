@@ -251,7 +251,8 @@ async function runCleanup(): Promise<void> {
 
         if (!meta) {
             p.log.error("Mail index not found. Run `tools macos mail index` first.");
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         }
 
         const sizeBefore = meta.stats.dbSizeBytes;
@@ -290,7 +291,8 @@ async function runCleanup(): Promise<void> {
         } catch (err) {
             spinner.stop("Cleanup failed");
             p.log.error(err instanceof Error ? err.message : String(err));
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         }
 
         p.outro("Done");

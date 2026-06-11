@@ -165,6 +165,7 @@ export class CodexProvider extends MCPProvider {
 
     async removeServers(serverNames: string[]): Promise<WriteResult> {
         const config = await this.readConfig();
+        let changed = false;
 
         for (const serverName of serverNames) {
             if (config.mcp_servers?.[serverName]) {
@@ -174,7 +175,12 @@ export class CodexProvider extends MCPProvider {
                 // [notice] is part of the same parsed object and survives the
                 // re-serialization untouched.
                 delete config.mcp_servers[serverName];
+                changed = true;
             }
+        }
+
+        if (!changed) {
+            return WriteResult.NoChanges;
         }
 
         return this.writeConfig(config);

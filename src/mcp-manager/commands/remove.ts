@@ -46,6 +46,8 @@ export async function removeServers(
     );
 
     // 1. Remove from every selected provider that has a config file
+    let providersNotRemoved = 0;
+
     for (const provider of providers) {
         const providerName = provider.getName();
         try {
@@ -57,15 +59,28 @@ export async function removeServers(
             if (result === WriteResult.Applied) {
                 logger.info(`✓ Removed from ${providerName}`);
             } else if (result === WriteResult.Rejected) {
+                providersNotRemoved++;
                 logger.info(`Skipped ${providerName} - user rejected confirmation`);
             } else {
                 logger.info(`→ Nothing to remove in ${providerName}`);
             }
         } catch (error) {
-            logger.error(
-                `✗ Failed to remove from ${providerName}: ${error instanceof Error ? error.message : String(error)}`
-            );
+            providersNotRemoved++;
+            logger.error({ providerName, error }, `✗ Failed to remove from ${providerName}`);
         }
+    }
+
+    // Keep the unified entries while any provider still holds the server —
+    // deleting them here would orphan the provider config (no unified record
+    // to retry/disable against) and break the "remove everywhere" contract.
+    if (providersNotRemoved > 0) {
+        logger.warn(
+            chalk.yellow(
+                `Keeping ${serverNames.length} server(s) in the unified config — ` +
+                    `${providersNotRemoved} provider(s) failed or were rejected. Re-run remove to retry.`
+            )
+        );
+        return;
     }
 
     // 2. Remove from the unified config (mcpServers + enabledMcpServers mirror;

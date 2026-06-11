@@ -158,11 +158,17 @@ export class CursorProvider extends MCPProvider {
 
     async removeServers(serverNames: string[]): Promise<WriteResult> {
         const config = await this.readConfig();
+        let changed = false;
 
         for (const serverName of serverNames) {
             if (config.mcpServers?.[serverName]) {
                 delete config.mcpServers[serverName];
+                changed = true;
             }
+        }
+
+        if (!changed) {
+            return WriteResult.NoChanges;
         }
 
         return this.writeConfig(config);
