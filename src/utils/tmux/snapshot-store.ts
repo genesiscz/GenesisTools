@@ -172,8 +172,8 @@ function summarize(preset: TmuxPreset, path: string): TmuxPresetSummary {
     let bytes = 0;
     try {
         bytes = statSync(path).size;
-    } catch {
-        // file may not exist yet; bytes stays 0
+    } catch (error) {
+        logger.debug({ error, path }, "[tmux-preset] stat failed while summarizing preset");
     }
 
     return {

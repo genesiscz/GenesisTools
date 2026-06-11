@@ -320,6 +320,14 @@ export interface RestoreOutcome {
     reason?: string;
 }
 
+function runTmux(tmuxBin: string, args: string[], op: string): string {
+    const result = spawnImpl([tmuxBin, ...args]);
+    if (result.exitCode !== 0) {
+        throw new Error(`tmux ${op} failed (exit ${result.exitCode}): ${result.stderr || "(no stderr)"}`);
+    }
+    return result.stdout;
+}
+
 export function restoreTmuxSession(snapshot: TmuxSessionSnapshot, opts: RestoreOptions = {}): RestoreOutcome {
     const tmuxBin = resolveTmuxBin();
     const targetName = resolveTargetName(snapshot.name, opts.nameSuffix);
@@ -341,7 +349,7 @@ export function restoreTmuxSession(snapshot: TmuxSessionSnapshot, opts: RestoreO
     createTmuxSession(targetName, firstCwd, process.env.SHELL ?? "/bin/zsh");
 
     if (firstWindow?.name) {
-        spawnImpl([tmuxBin, "rename-window", "-t", `${targetName}:0`, firstWindow.name]);
+        runTmux(tmuxBin, ["rename-window", "-t", `${targetName}:0`, firstWindow.name], "rename-window");
     }
 
     if (firstPane && !opts.skipReplay) {
@@ -354,7 +362,7 @@ export function restoreTmuxSession(snapshot: TmuxSessionSnapshot, opts: RestoreO
             continue;
         }
 
-        spawnImpl([tmuxBin, "split-window", "-t", `${targetName}:0`, "-c", pane.cwd ?? firstCwd]);
+        runTmux(tmuxBin, ["split-window", "-t", `${targetName}:0`, "-c", pane.cwd ?? firstCwd], "split-window");
 
         if (!opts.skipReplay) {
             replayPane(tmuxBin, `${targetName}:0.${pi}`, pane);
@@ -375,7 +383,7 @@ export function restoreTmuxSession(snapshot: TmuxSessionSnapshot, opts: RestoreO
             newWindowArgs.push("-n", window.name);
         }
 
-        spawnImpl([tmuxBin, ...newWindowArgs]);
+        runTmux(tmuxBin, newWindowArgs, "new-window");
 
         if (firstWindowPane && !opts.skipReplay) {
             replayPane(tmuxBin, `${targetName}:${wi}.0`, firstWindowPane);
@@ -387,7 +395,7 @@ export function restoreTmuxSession(snapshot: TmuxSessionSnapshot, opts: RestoreO
                 continue;
             }
 
-            spawnImpl([tmuxBin, "split-window", "-t", `${targetName}:${wi}`, "-c", pane.cwd ?? cwd]);
+            runTmux(tmuxBin, ["split-window", "-t", `${targetName}:${wi}`, "-c", pane.cwd ?? cwd], "split-window");
 
             if (!opts.skipReplay) {
                 replayPane(tmuxBin, `${targetName}:${wi}.${pi}`, pane);
@@ -404,14 +412,12 @@ export function restoreTmuxSession(snapshot: TmuxSessionSnapshot, opts: RestoreO
 }
 
 function replayPane(tmuxBin: string, target: string, pane: TmuxPaneSnapshot): void {
-    // Send the command WITHOUT Enter — user confirms with one Return so a stale
-    // resume id can't blast off automatically.
     const cmd = pane.lastShellCommand;
     if (!cmd) {
         return;
     }
 
-    spawnImpl([tmuxBin, "send-keys", "-t", target, cmd]);
+    runTmux(tmuxBin, ["send-keys", "-t", target, cmd], "send-keys");
 }
 
 function resolveTargetName(baseName: string, suffix?: string): string {

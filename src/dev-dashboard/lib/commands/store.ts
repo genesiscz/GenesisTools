@@ -42,7 +42,7 @@ async function readAll(): Promise<SavedCommand[]> {
         const parsed = SafeJSON.parse(raw, { strict: true });
         return Array.isArray(parsed) ? (parsed as SavedCommand[]) : [];
     } catch (err) {
-        logger.warn({ err, path }, "dev-dashboard commands: commands.json unreadable; treating as empty");
+        logger.warn({ error: err, path }, "dev-dashboard commands: commands.json unreadable; treating as empty");
         return [];
     }
 }

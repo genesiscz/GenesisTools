@@ -16,6 +16,6 @@ export function deriveNetStatus({ pulse, pingMs, activeTransport }: DeriveNetSta
         return { transport: activeTransport, latencyMs: null, quality: "down", ssid, publicIp };
     }
 
-    const quality = pingMs <= LATENCY_HEALTHY_MS ? "healthy" : "degraded";
+    const quality = pingMs <= LATENCY_HEALTHY_MS ? "healthy" : pingMs <= LATENCY_DEGRADED_MS ? "degraded" : "down";
     return { transport: activeTransport, latencyMs: pingMs, quality, ssid, publicIp };
 }

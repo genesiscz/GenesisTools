@@ -60,8 +60,7 @@ export function PortsTable({ result, onKill, killingPid }: PortsTableProps) {
                                         type="button"
                                         onClick={() => onKill(p)}
                                         disabled={killingPid === p.pid}
-                                        className="rounded-md border border-[var(--dd-border)] px-3 py-1 text-xs font-semibold transition-colors hover:border-[#f87171] disabled:opacity-50"
-                                        style={{ color: "#f87171" }}
+                                        className="rounded-md border border-[var(--dd-border)] px-3 py-1 text-xs font-semibold text-[var(--dd-danger)] transition-colors hover:border-[var(--dd-danger)] disabled:opacity-50"
                                     >
                                         {killingPid === p.pid ? "Killing…" : "Kill"}
                                     </button>

@@ -24,10 +24,10 @@ function qualityColor(quality: NetQuality): string {
     }
 
     if (quality === "degraded") {
-        return "#fbbf24";
+        return "var(--dd-warning)";
     }
 
-    return "#f87171";
+    return "var(--dd-danger)";
 }
 
 function transportLabel(transport: NetTransport): string {

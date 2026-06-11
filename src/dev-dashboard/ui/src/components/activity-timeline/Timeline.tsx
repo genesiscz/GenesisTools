@@ -15,7 +15,7 @@ export function Timeline({ events }: Props) {
     if (events.length === 0) {
         return (
             <div className="dd-panel p-4 text-sm text-[var(--dd-text-muted)]">
-                Nothing happened yet today. Runs, Q&amp;A, and terminals will appear here.
+                Nothing happened yet today. Runs, Q&A, and terminals will appear here.
             </div>
         );
     }

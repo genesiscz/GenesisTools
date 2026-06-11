@@ -15,7 +15,7 @@ function exitDisplay(exitCode: number | null): { text: string; color: string } {
         return { text: "exit 0", color: "var(--dd-text-muted)" };
     }
 
-    return { text: `exit ${exitCode}`, color: "#f87171" };
+    return { text: `exit ${exitCode}`, color: "var(--dd-danger)" };
 }
 
 /**
