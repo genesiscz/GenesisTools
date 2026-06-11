@@ -31,7 +31,7 @@ export function PortKillerRoute() {
                 <PortsTable
                     result={data}
                     onKill={handleKill}
-                    killingPid={killMutation.isPending ? killMutation.variables?.pid ?? null : null}
+                    killingPid={killMutation.isPending ? (killMutation.variables?.pid ?? null) : null}
                 />
             ) : (
                 <div className="dd-panel flex h-full items-center justify-center text-[var(--dd-text-muted)]">
