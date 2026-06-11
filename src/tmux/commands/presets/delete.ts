@@ -38,9 +38,7 @@ export async function runDeletePreset(name: string, flags: DeleteFlags): Promise
             return;
         }
 
-        const proceed = await withCancel(
-            p.confirm({ message: `Delete preset "${name}"?`, initialValue: false })
-        );
+        const proceed = await withCancel(p.confirm({ message: `Delete preset "${name}"?`, initialValue: false }));
 
         if (!proceed) {
             p.cancel("Aborted.");

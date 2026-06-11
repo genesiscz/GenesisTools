@@ -29,7 +29,11 @@ export function encodeE2eRequest(req: E2eRequest): string {
 export function decodeE2eRequest(raw: string): E2eRequest {
     const req = SafeJSON.parse(raw, { strict: true }) as E2eRequest;
 
-    if (typeof req.method !== "string" || typeof req.path !== "string" || (req.body !== undefined && typeof req.body !== "string")) {
+    if (
+        typeof req.method !== "string" ||
+        typeof req.path !== "string" ||
+        (req.body !== undefined && typeof req.body !== "string")
+    ) {
         throw new Error("invalid E2eRequest");
     }
 
@@ -43,7 +47,11 @@ export function encodeE2eResponse(res: E2eResponse): string {
 export function decodeE2eResponse(raw: string): E2eResponse {
     const res = SafeJSON.parse(raw, { strict: true }) as E2eResponse;
 
-    if (typeof res.status !== "number" || typeof res.body !== "string" || (res.contentType !== undefined && typeof res.contentType !== "string")) {
+    if (
+        typeof res.status !== "number" ||
+        typeof res.body !== "string" ||
+        (res.contentType !== undefined && typeof res.contentType !== "string")
+    ) {
         throw new Error("invalid E2eResponse");
     }
 
