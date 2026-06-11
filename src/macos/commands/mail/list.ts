@@ -1,6 +1,7 @@
 import { ALL_COLUMN_KEYS } from "@app/macos/lib/mail/columns";
 import {
     enrichWithBodies,
+    isStructuredFormat,
     needsRecipients,
     outputFormattedResults,
     resolveColumnsFromFlag,
@@ -8,6 +9,8 @@ import {
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
 import type { MailMessage } from "@app/macos/lib/mail/types";
+import { isQuietOutput } from "@app/utils/cli/output-mode";
+import { createQuietSpinner } from "@app/utils/cli/quiet-spinner";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -40,7 +43,10 @@ export function registerListCommand(program: Command): void {
                     return;
                 }
 
-                const spinner = p.spinner();
+                const format = options.format ?? "table";
+                // Clack renders on stdout — a real spinner would corrupt
+                // structured/piped output.
+                const spinner = isQuietOutput(options.format) ? createQuietSpinner() : p.spinner();
                 spinner.start(`Fetching latest ${limit} emails from ${targetMailbox}...`);
 
                 let rows = await db.listMessages(targetMailbox, limit);
@@ -56,6 +62,11 @@ export function registerListCommand(program: Command): void {
 
                 if (rows.length === 0) {
                     spinner.stop(`No messages found in ${targetMailbox}.`);
+
+                    if (isStructuredFormat(format)) {
+                        await outputFormattedResults({ messages: [], columns, format });
+                    }
+
                     return;
                 }
 
@@ -83,7 +94,7 @@ export function registerListCommand(program: Command): void {
                 await outputFormattedResults({
                     messages,
                     columns,
-                    format: options.format ?? "table",
+                    format,
                 });
             } catch (error) {
                 p.log.error(error instanceof Error ? error.message : String(error));

@@ -5,11 +5,13 @@ import {
     needsRecipients,
     outputFormattedResults,
     parseMailDate,
+    printStructured,
     resolveColumnsFromFlag,
 } from "@app/macos/lib/mail/command-helpers";
 import { resolveMailSearchMode, runMailSearch } from "@app/macos/lib/mail/search-runner";
 import type { SearchOptions } from "@app/macos/lib/mail/types";
 import { isQuietOutput } from "@app/utils/cli/output-mode";
+import { createQuietSpinner } from "@app/utils/cli/quiet-spinner";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -66,18 +68,6 @@ function buildSearchColumns({
     return result;
 }
 
-interface QuietSpinner {
-    start: (msg: string) => void;
-    stop: (msg: string) => void;
-}
-
-function createQuietSpinner(): QuietSpinner {
-    return {
-        start: (): void => {},
-        stop: (): void => {},
-    };
-}
-
 export function registerSearchCommand(program: Command): void {
     program
         .command("search <query>")
@@ -113,6 +103,12 @@ export function registerSearchCommand(program: Command): void {
             try {
                 if (options.helpReceivers) {
                     const receivers = await db.listReceivers();
+
+                    if (isStructuredOutput) {
+                        await printStructured(receivers, options.format ?? "json");
+                        return;
+                    }
+
                     announce("\nReceiver addresses (by message count):\n");
 
                     for (const r of receivers) {
@@ -162,6 +158,15 @@ export function registerSearchCommand(program: Command): void {
 
                 if (messages.length === 0) {
                     announce("No messages found matching your query.");
+
+                    if (isStructuredOutput) {
+                        await outputFormattedResults({
+                            messages: [],
+                            columns: baseColumns,
+                            format: options.format ?? "table",
+                        });
+                    }
+
                     return;
                 }
 

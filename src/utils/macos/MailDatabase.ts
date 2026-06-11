@@ -365,9 +365,13 @@ export class MailDatabase extends MacDatabase {
     }
 
     async listReceivers(): Promise<ReceiverInfo[]> {
+        // The Envelope Index never garbage-collects recipients/addresses rows
+        // after message deletion, so without the messages join this counts
+        // ghosts (~93% of recipients rows can be orphans).
         const rows = await this.k()
             .selectFrom("recipients as r")
             .innerJoin("addresses as a", "a.ROWID", "r.address")
+            .innerJoin("messages as m", "m.ROWID", "r.message")
             .select([
                 sql<string>`a.address`.as("address"),
                 sql<string | null>`a.comment`.as("name"),
