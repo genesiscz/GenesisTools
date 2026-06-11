@@ -2,9 +2,9 @@ import { lstatSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { logger, out } from "@app/logger";
 import { Executor, runTool } from "@app/utils/cli";
-import { formatDateTime } from "@app/utils/date";
-import { formatRelativeTime as _formatRelativeTime } from "@app/utils/format";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { formatDateTime } from "@gt/core/date";
+import { formatRelativeTime as _formatRelativeTime } from "@gt/core/format";
 import chalk from "chalk";
 import { Command } from "commander";
 

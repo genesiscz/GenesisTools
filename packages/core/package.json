@@ -1,0 +1,26 @@
+{
+    "name": "@gt/core",
+    "version": "0.0.0",
+    "private": true,
+    "type": "module",
+    "exports": {
+        "./array": { "bun": "./src/array.ts", "types": "./src/array.ts", "default": "./dist/array.js" },
+        "./date": { "bun": "./src/date.ts", "types": "./src/date.ts", "default": "./dist/date.js" },
+        "./format": { "bun": "./src/format.ts", "types": "./src/format.ts", "default": "./dist/format.js" },
+        "./json": { "bun": "./src/json.ts", "types": "./src/json.ts", "default": "./dist/json.js" },
+        "./math": { "bun": "./src/math.ts", "types": "./src/math.ts", "default": "./dist/math.js" },
+        "./object": { "bun": "./src/object.ts", "types": "./src/object.ts", "default": "./dist/object.js" },
+        "./paths": { "bun": "./src/paths.ts", "types": "./src/paths.ts", "default": "./dist/paths.js" },
+        "./paths.client": { "bun": "./src/paths.client.ts", "types": "./src/paths.client.ts", "default": "./dist/paths.client.js" },
+        "./string": { "bun": "./src/string.ts", "types": "./src/string.ts", "default": "./dist/string.js" },
+        "./Stopwatch": { "bun": "./src/Stopwatch.ts", "types": "./src/Stopwatch.ts", "default": "./dist/Stopwatch.js" }
+    },
+    "scripts": {
+        "typecheck": "tsgo -p tsconfig.json --noEmit",
+        "build": "tsup src/*.ts --format esm --dts --out-dir dist",
+        "lint": "biome check ."
+    },
+    "dependencies": {
+        "comment-json": "^4.6.2"
+    }
+}
