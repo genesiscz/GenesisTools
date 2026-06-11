@@ -25,6 +25,10 @@ export function tmuxPresetsRoutes(): RouteDef[] {
                 try {
                     const body = await ctx.readJson<{ name: string; note?: string; prefix?: string }>();
 
+                    if (!body.name?.trim()) {
+                        return { kind: "json", status: 400, body: { error: "name is required" } };
+                    }
+
                     return { kind: "json", status: 200, body: { preset: savePreset(body) } };
                 } catch (err) {
                     logger.warn({ err, route: "POST /api/tmux/presets/save" }, "tmux presets: save failed");
@@ -40,6 +44,10 @@ export function tmuxPresetsRoutes(): RouteDef[] {
                 try {
                     const body = await ctx.readJson<{ name: string }>();
 
+                    if (!body.name?.trim()) {
+                        return { kind: "json", status: 400, body: { error: "name is required" } };
+                    }
+
                     return { kind: "json", status: 200, body: { result: restorePreset(body.name) } };
                 } catch (err) {
                     logger.warn({ err, route: "POST /api/tmux/presets/restore" }, "tmux presets: restore failed");
@@ -54,6 +62,10 @@ export function tmuxPresetsRoutes(): RouteDef[] {
             handler: async (ctx) => {
                 try {
                     const body = await ctx.readJson<{ name: string }>();
+
+                    if (!body.name?.trim()) {
+                        return { kind: "json", status: 400, body: { error: "name is required" } };
+                    }
 
                     return { kind: "json", status: 200, body: deletePreset(body.name) };
                 } catch (err) {

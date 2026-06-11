@@ -1,6 +1,8 @@
 import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
+import { withCancel } from "@app/utils/prompts/clack/helpers";
 import { TmuxPresetStore } from "@app/utils/tmux/snapshot-store";
+import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -13,12 +15,12 @@ export function registerPresetDeleteCommand(parent: Command): void {
         .command("delete <name>")
         .description("Delete a saved tmux session preset")
         .option("-y, --yes", "Skip the confirmation prompt")
-        .action((name: string, flags: DeleteFlags) => {
-            runDeletePreset(name, flags);
+        .action(async (name: string, flags: DeleteFlags) => {
+            await runDeletePreset(name, flags);
         });
 }
 
-export function runDeletePreset(name: string, flags: DeleteFlags): void {
+export async function runDeletePreset(name: string, flags: DeleteFlags): Promise<void> {
     const store = new TmuxPresetStore();
 
     if (!store.exists(name)) {
@@ -36,9 +38,14 @@ export function runDeletePreset(name: string, flags: DeleteFlags): void {
             return;
         }
 
-        out.error(`Refusing to delete preset "${name}" without --yes`);
-        process.exitCode = 1;
-        return;
+        const proceed = await withCancel(
+            p.confirm({ message: `Delete preset "${name}"?`, initialValue: false })
+        );
+
+        if (!proceed) {
+            p.cancel("Aborted.");
+            return;
+        }
     }
 
     const removed = store.delete(name);

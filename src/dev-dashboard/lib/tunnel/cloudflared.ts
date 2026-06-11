@@ -142,7 +142,14 @@ export async function writeConfig(input: TunnelConfigInput): Promise<string> {
  */
 export function runTunnel(name: string, port: number): ReturnType<typeof Bun.spawn> {
     logger.info({ name, port }, "dev-dashboard: starting cloudflared tunnel run");
-    return Bun.spawn(["cloudflared", ...buildRunArgs(name, port)], { stdout: "inherit", stderr: "inherit" });
+    const proc = Bun.spawn({
+        cmd: ["cloudflared", ...buildRunArgs(name, port)],
+        stdout: "inherit",
+        stderr: "inherit",
+        detached: true,
+    });
+    proc.unref();
+    return proc;
 }
 
 // ── Managed (sub)domain (D10) — DevDashboard Cloud API (plan 10) ───────────────

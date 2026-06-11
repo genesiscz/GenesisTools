@@ -57,6 +57,7 @@ export function ttydRoutes(): RouteDef[] {
 
                     return { kind: "json", status: 200, body: { ok } };
                 } catch (err) {
+                    logger.warn({ error: err, route: "POST /api/ttyd/rename" }, "tmux hub: ttyd rename failed");
                     return errorResult(err);
                 }
             },

@@ -98,6 +98,11 @@ export function obsidianRoutes(): RouteDef[] {
             handler: async (ctx) => {
                 try {
                     const { path } = await ctx.readJson<{ path: string }>();
+
+                    if (!path?.trim()) {
+                        return { kind: "json", status: 400, body: { error: "path required" } };
+                    }
+
                     const note = await publishNote(path);
 
                     return { kind: "json", status: 200, body: { note } };
@@ -112,6 +117,11 @@ export function obsidianRoutes(): RouteDef[] {
             handler: async (ctx) => {
                 try {
                     const { slug } = await ctx.readJson<{ slug: string }>();
+
+                    if (!slug?.trim()) {
+                        return { kind: "json", status: 400, body: { error: "slug required" } };
+                    }
+
                     await unpublishNote(slug);
                     const remaining = await listPublished();
 

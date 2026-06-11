@@ -2,6 +2,7 @@ import { collectProcesses, killProcess, sortProcesses } from "@app/dev-dashboard
 import type { ProcessSort } from "@app/dev-dashboard/lib/system/types";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
+import { logger } from "@app/logger";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 500;
@@ -33,6 +34,7 @@ export function processesRoutes(): RouteDef[] {
 
                     return { kind: "json", status: 200, body: { sort, processes } };
                 } catch (err) {
+                    logger.warn({ error: err, route: "GET /api/processes" }, "process list collection failed");
                     return errorResult(err);
                 }
             },
@@ -50,6 +52,7 @@ export function processesRoutes(): RouteDef[] {
 
                     return { kind: "json", status: 200, body: { ok: killProcess(pid) } };
                 } catch (err) {
+                    logger.warn({ error: err, route: "POST /api/processes/kill" }, "process kill failed");
                     return errorResult(err);
                 }
             },
