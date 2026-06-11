@@ -1,9 +1,9 @@
 import { out } from "@app/logger";
+import { isStructuredFormat, printStructured } from "@app/macos/lib/mail/command-helpers";
 import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
 import { rowToMessage, truncateBody } from "@app/macos/lib/mail/transform";
 import { printLn } from "@app/utils/cli";
 import { formatBytes } from "@app/utils/format";
-import { SafeJSON } from "@app/utils/json";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import chalk from "chalk";
 import type { Command } from "commander";
@@ -13,6 +13,7 @@ type BodyFormat = "text" | "markdown" | "html" | "raw";
 interface ShowOptions {
     maxChars?: string;
     json?: boolean;
+    format?: string;
     bodyFormat?: BodyFormat;
 }
 
@@ -53,7 +54,8 @@ export function registerShowCommand(program: Command): void {
         .description("Show full email details including body")
         .option("--max-chars <n>", "Truncate body to N characters")
         .option("--body-format <format>", "Body format for human output: text, markdown, html, raw", "text")
-        .option("--json", "Output as JSON")
+        .option("-f, --format <type>", "Output format: text, json, toon", "text")
+        .option("--json", "Output as JSON (alias for --format json)")
         .action(async (messageIdArg: string, options: ShowOptions) => {
             const db = new MailDatabase();
 
@@ -97,20 +99,19 @@ export function registerShowCommand(program: Command): void {
                 msg.bodyMarkdown = bodyMarkdown;
                 msg.bodyRaw = bodyRaw;
 
-                if (options.json) {
-                    await printLn(
-                        SafeJSON.stringify(
-                            {
-                                ...msg,
-                                body: bodyText,
-                                bodyText,
-                                bodyHtml,
-                                bodyMarkdown,
-                                bodyRaw,
-                            },
-                            null,
-                            2
-                        )
+                const format = options.json ? "json" : (options.format ?? "text");
+
+                if (isStructuredFormat(format)) {
+                    await printStructured(
+                        {
+                            ...msg,
+                            body: bodyText,
+                            bodyText,
+                            bodyHtml,
+                            bodyMarkdown,
+                            bodyRaw,
+                        },
+                        format
                     );
                     return;
                 }

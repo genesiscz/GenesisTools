@@ -164,22 +164,15 @@ export function formatJsonOutput(messages: MailMessage[], columns: MailColumnKey
     return SafeJSON.stringify(data, null, 2);
 }
 
-export async function outputFormattedResults({
-    messages,
-    columns,
-    format,
-}: {
-    messages: MailMessage[];
-    columns: MailColumnKey[];
-    format: string;
-}): Promise<void> {
-    if (format === "json") {
-        await printLn(formatJsonOutput(messages, columns));
-        return;
-    }
+export function isStructuredFormat(format: string | undefined): boolean {
+    return format === "json" || format === "toon";
+}
+
+/** Print structured result data to stdout: as JSON, or as TOON via `tools json`. */
+export async function printStructured(data: unknown, format: string): Promise<void> {
+    const jsonStr = typeof data === "string" ? data : SafeJSON.stringify(data, null, 2);
 
     if (format === "toon") {
-        const jsonStr = formatJsonOutput(messages, columns);
         const proc = Bun.spawn(["tools", "json"], {
             stdin: new Blob([jsonStr]),
             stdout: "inherit",
@@ -192,6 +185,23 @@ export async function outputFormattedResults({
             await printLn(jsonStr);
         }
 
+        return;
+    }
+
+    await printLn(jsonStr);
+}
+
+export async function outputFormattedResults({
+    messages,
+    columns,
+    format,
+}: {
+    messages: MailMessage[];
+    columns: MailColumnKey[];
+    format: string;
+}): Promise<void> {
+    if (isStructuredFormat(format)) {
+        await printStructured(formatJsonOutput(messages, columns), format);
         return;
     }
 
