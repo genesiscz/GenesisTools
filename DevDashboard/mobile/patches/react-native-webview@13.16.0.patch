@@ -1,0 +1,19 @@
+diff --git a/apple/RNCWebViewManager.mm b/apple/RNCWebViewManager.mm
+index f8f375f23b12039b64b7900034c8978e0235a8e7..4b4545e9245e04594f6d9291b170c2846f70852f 100644
+--- a/apple/RNCWebViewManager.mm
++++ b/apple/RNCWebViewManager.mm
+@@ -42,7 +42,13 @@ RCT_EXPORT_MODULE(RNCWebView)
+ 
+ RCT_EXPORT_VIEW_PROPERTY(source, NSDictionary)
+ // New arch only
+-RCT_CUSTOM_VIEW_PROPERTY(newSource, NSDictionary, RNCWebViewImpl) {}
++RCT_CUSTOM_VIEW_PROPERTY(newSource, NSDictionary, RNCWebViewImpl) {
++  if (json == nil) {
++    [view setSource:@{}];
++  } else {
++    [view setSource:json];
++  }
++}
+ RCT_EXPORT_VIEW_PROPERTY(onFileDownload, RCTDirectEventBlock)
+ RCT_EXPORT_VIEW_PROPERTY(onLoadingStart, RCTDirectEventBlock)
+ RCT_EXPORT_VIEW_PROPERTY(onLoadingFinish, RCTDirectEventBlock)
