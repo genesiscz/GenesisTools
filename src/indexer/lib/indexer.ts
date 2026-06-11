@@ -223,6 +223,35 @@ export class Indexer extends IndexerEventEmitter {
         return this.embedUnembeddedChunks(callbacks);
     }
 
+    /**
+     * Maintenance-only pass: prune chunks whose backing source row no longer
+     * exists (for mail, messages deleted from the Envelope Index) and sweep
+     * orphan vectors — the same phases sync() runs, without the scan/embed
+     * work. Writes ONLY to the index store; the source DB stays read-only.
+     * With `vacuum`, compacts the index DB afterwards when anything was removed.
+     */
+    async cleanup(opts?: { vacuum?: boolean }): Promise<{ chunksPruned: number; vectorsHealed: number }> {
+        const tableName = sanitizeName(this.config.name);
+        let chunksPruned = 0;
+
+        if (typeof this.source.pruneStale === "function") {
+            const staleIds = await this.source.pruneStale(this.store.getDb(), tableName);
+
+            if (staleIds.length > 0) {
+                await this.store.removeChunks(staleIds);
+                chunksPruned = staleIds.length;
+            }
+        }
+
+        const { removed: vectorsHealed } = await this.store.removeOrphanVectors();
+
+        if (opts?.vacuum && (chunksPruned > 0 || vectorsHealed > 0)) {
+            this.store.getDb().exec("VACUUM");
+        }
+
+        return { chunksPruned, vectorsHealed };
+    }
+
     async search(
         query: string,
         opts?: Partial<SearchOptions> & { callbacks?: IndexerCallbacks }

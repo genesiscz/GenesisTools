@@ -33,7 +33,7 @@ function parseDate(str: string | undefined, label: string, endOfDay = false): Da
 }
 
 export function registerIndexCommand(program: Command): void {
-    program
+    const indexCmd = program
         .command("index")
         .description("Build/update a searchable index of your emails")
         .option("--model [id]", "Embedding model ID — omit value for interactive selection")
@@ -232,6 +232,71 @@ export function registerIndexCommand(program: Command): void {
                 p.outro("Done");
             }
         );
+
+    indexCmd
+        .command("cleanup")
+        .description(
+            "Prune index entries for messages deleted from Mail.app — writes ONLY to the GenesisTools index DB"
+        )
+        .action(runCleanup);
+}
+
+async function runCleanup(): Promise<void> {
+    p.intro(pc.bgCyan(pc.white(" mail index cleanup ")));
+
+    const manager = await IndexerManager.load();
+
+    try {
+        const meta = manager.listIndexes().find((m) => m.name === MAIL_INDEX_NAME);
+
+        if (!meta) {
+            p.log.error("Mail index not found. Run `tools macos mail index` first.");
+            process.exit(1);
+        }
+
+        const sizeBefore = meta.stats.dbSizeBytes;
+        p.log.info(
+            `Index: ${pc.bold(MAIL_INDEX_NAME)} — ${meta.stats.totalChunks.toLocaleString()} chunks, ` +
+                `${formatBytes(sizeBefore)}`
+        );
+        p.log.info("Mail.app's Envelope Index is opened read-only; cleanup never writes to it.");
+
+        const spinner = p.spinner();
+        spinner.start("Pruning chunks whose messages no longer exist in Mail.app...");
+
+        try {
+            const indexer = await manager.getIndex(MAIL_INDEX_NAME);
+            const result = await indexer.cleanup({ vacuum: true });
+            const sizeAfter = indexer.stats.dbSizeBytes;
+            spinner.stop("Cleanup complete");
+
+            if (result.chunksPruned === 0 && result.vectorsHealed === 0) {
+                p.log.info("Nothing to clean — the index matches Mail.app.");
+            } else {
+                if (result.chunksPruned > 0) {
+                    p.log.success(
+                        `Pruned ${pc.red(`-${result.chunksPruned.toLocaleString()}`)} chunks of deleted messages`
+                    );
+                }
+
+                if (result.vectorsHealed > 0) {
+                    p.log.success(`Healed ${pc.red(`-${result.vectorsHealed.toLocaleString()}`)} orphan vectors`);
+                }
+
+                if (sizeAfter < sizeBefore) {
+                    p.log.info(`DB size: ${formatBytes(sizeBefore)} → ${formatBytes(sizeAfter)} (vacuumed)`);
+                }
+            }
+        } catch (err) {
+            spinner.stop("Cleanup failed");
+            p.log.error(err instanceof Error ? err.message : String(err));
+            process.exit(1);
+        }
+
+        p.outro("Done");
+    } finally {
+        await manager.close();
+    }
 }
 
 const VALID_EMBEDDING_PROVIDERS: ReadonlySet<string> = getEmbeddingProviderTypes();
