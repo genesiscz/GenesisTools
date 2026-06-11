@@ -184,7 +184,6 @@ body {
 .dbg-log-wrap {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    word-break: break-word;
 }
 
 .dbg-log-line__id-rail .dbg-log-line__id-btn {

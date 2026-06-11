@@ -145,8 +145,8 @@ export class TodoStore {
 
         const todos = await this.readTodos();
         todos.push(todo);
-        await this.writeTodos(todos);
-        await this.writeMeta(todos);
+        this.writeTodos(todos);
+        this.writeMeta(todos);
 
         return todo;
     }
@@ -187,8 +187,8 @@ export class TodoStore {
         };
 
         todos[index] = updated;
-        await this.writeTodos(todos);
-        await this.writeMeta(todos);
+        this.writeTodos(todos);
+        this.writeMeta(todos);
 
         return updated;
     }
@@ -207,8 +207,8 @@ export class TodoStore {
             rmSync(todoAttachDir, { recursive: true, force: true });
         }
 
-        await this.writeTodos(filtered);
-        await this.writeMeta(filtered);
+        this.writeTodos(filtered);
+        this.writeMeta(filtered);
 
         return true;
     }
@@ -236,8 +236,8 @@ export class TodoStore {
         }
 
         todos.push(...toImport);
-        await this.writeTodos(todos);
-        await this.writeMeta(todos);
+        this.writeTodos(todos);
+        this.writeMeta(todos);
         return toImport.length;
     }
 

@@ -45,7 +45,12 @@ export function parseBasicAuthHeader(header: string | null): BasicAuthInput | nu
     }
 
     const encoded = header.replace(/^basic\s+/i, "").trim();
-    const decoded = fromBase64Utf8(encoded);
+    let decoded: string;
+    try {
+        decoded = fromBase64Utf8(encoded);
+    } catch {
+        return null;
+    }
     const separatorIndex = decoded.indexOf(":");
 
     if (separatorIndex < 1) {
