@@ -29,7 +29,10 @@ export function parseProSymbol(spec: string): string {
         return spec;
     }
     try {
-        const obj = SafeJSON.parse(spec.slice(1)) as { symbol: string };
+        const obj = SafeJSON.parse(spec.slice(1)) as Record<string, unknown>;
+        if (typeof obj?.symbol !== "string") {
+            return spec;
+        }
         return obj.symbol;
     } catch {
         return spec;
