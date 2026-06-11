@@ -241,13 +241,21 @@ export class Indexer extends IndexerEventEmitter {
                 await this.store.removeChunks(staleIds);
                 chunksPruned = staleIds.length;
             }
+        } else {
+            logger.debug(`[cleanup] ${this.config.name}: source has no pruneStale — skipping prune phase`);
         }
 
         const { removed: vectorsHealed } = await this.store.removeOrphanVectors();
+        const shouldVacuum = opts?.vacuum === true && (chunksPruned > 0 || vectorsHealed > 0);
 
-        if (opts?.vacuum && (chunksPruned > 0 || vectorsHealed > 0)) {
+        if (shouldVacuum) {
             this.store.getDb().exec("VACUUM");
         }
+
+        logger.debug(
+            `[cleanup] ${this.config.name}: pruned ${chunksPruned} stale chunks, ` +
+                `healed ${vectorsHealed} orphan vectors${shouldVacuum ? ", vacuumed" : ""}`
+        );
 
         return { chunksPruned, vectorsHealed };
     }

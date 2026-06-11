@@ -46,7 +46,7 @@ export function registerListCommand(program: Command): void {
                 const format = options.format ?? "table";
                 // Clack renders on stdout — a real spinner would corrupt
                 // structured/piped output.
-                const spinner = isQuietOutput(options.format) ? createQuietSpinner() : p.spinner();
+                const spinner = isQuietOutput(format) ? createQuietSpinner() : p.spinner();
                 spinner.start(`Fetching latest ${limit} emails from ${targetMailbox}...`);
 
                 let rows = await db.listMessages(targetMailbox, limit);

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setupStorageSandbox } from "@app/utils/storage/test-sandbox";
@@ -10,6 +10,7 @@ setupInquirerMock();
 setupStorageSandbox();
 
 const { ClaudeProvider } = await import("@app/mcp-manager/utils/providers/claude.js");
+const { CursorProvider } = await import("@app/mcp-manager/utils/providers/cursor.js");
 const { syncServers } = await import("../sync.js");
 const { syncFromProviders } = await import("../sync-from-providers.js");
 const { disableServer: disableCommand } = await import("../disable.js");
@@ -235,13 +236,28 @@ describe("claude per-project enable override for globally-disabled servers", () 
         writeClaudeJson(globallyDisabledFixture());
         await writeUnified(unifiedFixture());
 
+        // Second provider with a config in the sandbox HOME, so "all" has to
+        // expand beyond claude (a single-provider array can't prove expansion).
+        mkdirSync(join(homeDir, ".cursor"), { recursive: true });
+        writeFileSync(
+            join(homeDir, ".cursor", "mcp.json"),
+            SafeJSON.stringify({ mcpServers: { github: { command: "bunx", args: ["github-mcp"] } } }, null, 2)
+        );
+
         const provider = new ClaudeProvider();
-        await disableCommand("github", [provider], { provider: "all" });
+        const cursorProvider = new CursorProvider();
+        await disableCommand("github", [provider, cursorProvider], { provider: "all" });
 
         const claude = readClaudeJson();
         expect(claude.mcpServers?.github).toBeUndefined(); // globally disabled = removed
 
+        const cursor = SafeJSON.parse(readFileSync(join(homeDir, ".cursor", "mcp.json"), "utf-8")) as {
+            mcpServers?: Record<string, unknown>;
+        };
+        expect(cursor.mcpServers?.github).toBeUndefined(); // cursor disable = entry removed
+
         const unified = await readUnified();
         expect(unified.mcpServers.github._meta?.enabled?.claude).toBe(false);
+        expect(unified.mcpServers.github._meta?.enabled?.cursor).toBe(false);
     });
 });
