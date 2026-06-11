@@ -124,7 +124,9 @@ async function runIndicatorInner(
 
         for (const layoutStudy of layoutStudies) {
             if (pendingStudies.length >= MAX_CHART_STUDIES) {
-                out.warn(`Layout has ${layoutStudies.length} studies; attaching the first ${MAX_CHART_STUDIES} that translate.`);
+                out.warn(
+                    `Layout has ${layoutStudies.length} studies; attaching the first ${MAX_CHART_STUDIES} that translate.`
+                );
                 break;
             }
 
