@@ -238,6 +238,7 @@ const QaCard = memo(function QaCard({
             className={`dd-panel flex flex-col gap-3 p-4${unread ? " dd-qa-card--unread dd-qa-card--clickable" : " dd-qa-card--clickable"}`}
             data-qa-id={entry.id}
             data-qa-unread={unread ? "1" : "0"}
+            style={{ scrollMarginTop: "5rem" }}
             onMouseUp={handleCardMouseUp}
             onKeyDown={(ev) => {
                 if (ev.key === "Enter" || ev.key === " ") {
@@ -313,7 +314,7 @@ const QaCard = memo(function QaCard({
     return (
         <>
             {pinned ? (
-                <BlinkingBox active variant="accent-glow" iterations={5} durationMs={700}>
+                <BlinkingBox active variant="accent-glow" iterations={5} durationMs={700} className="rounded-lg">
                     {card}
                 </BlinkingBox>
             ) : (
