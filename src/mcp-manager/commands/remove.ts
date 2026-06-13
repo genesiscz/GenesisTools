@@ -1,7 +1,7 @@
 import { logger } from "@app/logger";
 import { getServerNames } from "@app/mcp-manager/utils/command.utils.js";
 import { readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
-import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
+import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import chalk from "chalk";
 
@@ -47,6 +47,7 @@ export async function removeServers(
 
     // 1. Remove from every selected provider that has a config file
     let providersNotRemoved = 0;
+    const providersSuccess = new Map<string, UnifiedMCPServerConfig[]>();
 
     for (const provider of providers) {
         const providerName = provider.getName();
@@ -58,6 +59,15 @@ export async function removeServers(
             const result = await provider.removeServers(serverNames);
             if (result === WriteResult.Applied) {
                 logger.info(`✓ Removed from ${providerName}`);
+                // Track successful removal with configs for potential rollback
+                const removedConfigs: UnifiedMCPServerConfig[] = [];
+                for (const serverName of serverNames) {
+                    const serverConfig = config.mcpServers[serverName];
+                    if (serverConfig) {
+                        removedConfigs.push(serverConfig);
+                    }
+                }
+                providersSuccess.set(providerName, removedConfigs);
             } else if (result === WriteResult.Rejected) {
                 providersNotRemoved++;
                 logger.info(`Skipped ${providerName} - user rejected confirmation`);
@@ -85,15 +95,48 @@ export async function removeServers(
 
     // 2. Remove from the unified config (mcpServers + enabledMcpServers mirror;
     //    writeUnifiedConfig also rebuilds the mirror from the remaining _meta)
+    const originalConfigs = new Map<string, UnifiedMCPServerConfig>();
     for (const serverName of serverNames) {
+        originalConfigs.set(serverName, config.mcpServers[serverName]);
         delete config.mcpServers[serverName];
         if (config.enabledMcpServers?.[serverName]) {
             delete config.enabledMcpServers[serverName];
         }
     }
 
-    const written = await writeUnifiedConfig(config);
-    if (written) {
-        logger.info(chalk.green(`✓ Removed ${serverNames.length} server(s) from unified config`));
+    let written: boolean;
+    try {
+        written = await writeUnifiedConfig(config);
+    } catch (error) {
+        logger.error({ error }, "Failed to write unified config - rolling back provider changes");
+        written = false;
     }
+
+    if (!written) {
+        // Rollback: restore servers to providers that successfully removed them
+        logger.warn(chalk.yellow("Rolling back provider changes..."));
+        for (const [providerName, removedConfigs] of providersSuccess.entries()) {
+            const provider = providers.find((p) => p.getName() === providerName);
+            if (!provider) {
+                continue;
+            }
+            try {
+                for (let i = 0; i < serverNames.length; i++) {
+                    const serverName = serverNames[i];
+                    const serverConfig = removedConfigs[i];
+                    if (serverConfig) {
+                        await provider.installServer(serverName, serverConfig);
+                    }
+                }
+                logger.info(`✓ Rolled back ${providerName}`);
+            } catch (error) {
+                providersNotRemoved++;
+                logger.error({ providerName, error }, `✗ Failed to rollback ${providerName}`);
+            }
+        }
+        logger.error(chalk.red("Failed to remove servers from unified config - all changes rolled back"));
+        return;
+    }
+
+    logger.info(chalk.green(`✓ Removed ${serverNames.length} server(s) from unified config`));
 }
