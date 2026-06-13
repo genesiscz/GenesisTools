@@ -334,10 +334,13 @@ export class ClaudeProvider extends MCPProvider {
      * project's `disabledMcpServers` list.
      */
     private applyProjectDisable(serverNames: string[], projectPath: string, config: ClaudeGenericConfig): void {
-        const projectConfig = config.projects?.[projectPath];
-        if (!projectConfig) {
-            return;
+        if (!config.projects) {
+            config.projects = {};
         }
+        if (!config.projects[projectPath]) {
+            config.projects[projectPath] = {};
+        }
+        const projectConfig = config.projects[projectPath];
 
         if (!projectConfig.disabledMcpServers) {
             projectConfig.disabledMcpServers = [];

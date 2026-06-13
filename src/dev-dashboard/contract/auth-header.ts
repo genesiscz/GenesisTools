@@ -3,6 +3,8 @@
 // (scrypt/hmac/timing-safe compare) stay in `lib/auth.ts`; only the encode/parse
 // pair lives here because the mobile client must build the `Authorization` header.
 
+import { logger } from "@app/logger";
+
 export interface BasicAuthInput {
     username: string;
     password: string;
@@ -48,7 +50,8 @@ export function parseBasicAuthHeader(header: string | null): BasicAuthInput | nu
     let decoded: string;
     try {
         decoded = fromBase64Utf8(encoded);
-    } catch {
+    } catch (err) {
+        logger.warn({ error: err, encoded, header }, "Failed to decode Basic auth header");
         return null;
     }
     const separatorIndex = decoded.indexOf(":");

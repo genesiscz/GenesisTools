@@ -87,7 +87,7 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
         // abandons in-place erasing for clear-terminal-and-rewrite (ink.js
         // onRender), which scrolls overflow into scrollback and duplicates
         // stale frames on every refresh. The active view clips instead.
-        <Box flexDirection="column" height={Math.max(4, rows - 1)}>
+        <Box flexDirection="column" height={Math.max(1, Math.min(rows - 1, 4))}>
             <TabBar tabs={tabs} activeIndex={activeIndex} />
             <Box flexDirection="column" flexGrow={1} overflowY="hidden">
                 {activeTab === "overview" && <OverviewView results={results} config={config} />}
