@@ -35,6 +35,7 @@ import {
     requireConfig,
 } from "@app/azure-devops/utils";
 import { logger, out } from "@app/logger";
+import { suggestCommand } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 
@@ -48,13 +49,19 @@ const log = (msg: string) => {
 
 // ============= Output Formatters =============
 
+interface FormatAIResult {
+    text: string;
+    truncated: boolean;
+}
+
 function formatWorkItemAI(
     item: WorkItemFull,
     taskPath: string,
     cacheTime?: Date,
     downloadedAttachments?: AttachmentInfo[],
-    inlineImages?: Map<string, string>
-): string {
+    inlineImages?: Map<string, string>,
+    full?: boolean
+): FormatAIResult {
     const lines: string[] = [];
 
     lines.push(`# Work Item #${item.id}`);
@@ -75,21 +82,41 @@ function formatWorkItemAI(
     lines.push(`- Created: ${item.created} by ${item.createdBy}`);
     lines.push(`- Last Changed: ${item.changed}`);
 
+    let truncated = false;
+
     if (item.description) {
         lines.push("");
         lines.push("## Description");
         const mdDesc = htmlToMarkdown(item.description);
-        lines.push(mdDesc.slice(0, 500) + (mdDesc.length > 500 ? "..." : ""));
+
+        if (full || mdDesc.length <= 500) {
+            lines.push(mdDesc);
+        } else {
+            lines.push(`${mdDesc.slice(0, 500)}...`);
+            truncated = true;
+        }
     }
 
     if (item.comments.length > 0) {
         lines.push("");
+        const shownComments = full ? item.comments : item.comments.slice(-5);
+
+        if (!full && item.comments.length > 5) {
+            truncated = true;
+        }
+
         lines.push(`## Comments (${item.comments.length})`);
-        for (const comment of item.comments.slice(-5)) {
+        for (const comment of shownComments) {
             lines.push("");
             lines.push(`**${comment.author}** (${new Date(comment.date).toLocaleDateString()}):`);
             const mdComment = htmlToMarkdown(comment.text);
-            lines.push(mdComment.slice(0, 300) + (mdComment.length > 300 ? "..." : ""));
+
+            if (full || mdComment.length <= 300) {
+                lines.push(mdComment);
+            } else {
+                lines.push(`${mdComment.slice(0, 300)}...`);
+                truncated = true;
+            }
         }
     }
 
@@ -152,7 +179,7 @@ function formatWorkItemAI(
         }
     }
 
-    return lines.join("\n");
+    return { text: lines.join("\n"), truncated };
 }
 
 function generateWorkItemMarkdown(item: WorkItemFull, imageMap?: Map<string, string>): string {
@@ -247,7 +274,8 @@ export async function handleWorkItem(
     queryMetadata?: Map<number, QueryItemMetadata>,
     fetchOptions?: { comments?: boolean; updates?: boolean },
     attachmentFilter?: AttachmentFilter,
-    downloadImages?: boolean
+    downloadImages?: boolean,
+    full?: boolean
 ): Promise<void> {
     silentMode = format === "json";
     logger.debug(
@@ -491,6 +519,8 @@ export async function handleWorkItem(
     }
 
     // Output
+    let anyTruncated = false;
+
     for (let i = 0; i < results.length; i++) {
         const item = results[i];
         const settings = settingsMap.get(item.id);
@@ -504,17 +534,23 @@ export async function handleWorkItem(
         }
 
         switch (format) {
-            case "ai":
-                out.println(
-                    formatWorkItemAI(
-                        item,
-                        taskPath,
-                        cacheTime,
-                        attachmentsMap.get(item.id),
-                        inlineImageMaps.get(item.id)
-                    )
+            case "ai": {
+                const result = formatWorkItemAI(
+                    item,
+                    taskPath,
+                    cacheTime,
+                    attachmentsMap.get(item.id),
+                    inlineImageMaps.get(item.id),
+                    full
                 );
+                out.println(result.text);
+
+                if (result.truncated) {
+                    anyTruncated = true;
+                }
+
                 break;
+            }
             case "md":
                 out.println(
                     `# ${item.title}\n\n${item.description || "No description"}\n\n## Comments\n${item.comments.map((c) => `- **${c.author}**: ${c.text}`).join("\n")}`
@@ -524,6 +560,11 @@ export async function handleWorkItem(
                 out.println(formatJSON(item));
                 break;
         }
+    }
+
+    if (anyTruncated) {
+        out.println("");
+        out.println(suggestCommand("tools azure-devops workitem", { add: ["--full"] }));
     }
 }
 
@@ -547,6 +588,7 @@ export function registerWorkitemCommand(program: Command): void {
         .option("--attachments-suffix <suffix>", "Only attachments ending with this (e.g. .har)")
         .option("--output-dir <path>", "Custom directory for downloaded attachments")
         .option("--images", "Download inline images from description and comments")
+        .option("--full", "Show full description and comments without truncation")
         .action(
             async (
                 input: string,
@@ -561,6 +603,7 @@ export function registerWorkitemCommand(program: Command): void {
                     attachmentsSuffix?: string;
                     outputDir?: string;
                     images?: boolean;
+                    full?: boolean;
                 }
             ) => {
                 const hasAttachmentFilter =
@@ -600,7 +643,8 @@ export function registerWorkitemCommand(program: Command): void {
                     undefined,
                     undefined,
                     attachmentFilter,
-                    options.images
+                    options.images,
+                    options.full
                 );
             }
         );

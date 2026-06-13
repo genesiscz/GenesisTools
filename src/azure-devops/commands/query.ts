@@ -192,7 +192,8 @@ export type WorkItemHandler = (
     queryMetadata?: Map<number, QueryItemMetadata>,
     fetchOptions?: { comments?: boolean; updates?: boolean },
     attachmentFilter?: AttachmentFilter,
-    downloadImages?: boolean
+    downloadImages?: boolean,
+    full?: boolean
 ) => Promise<void>;
 
 let workItemHandler: WorkItemHandler | null = null;
