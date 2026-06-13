@@ -3,8 +3,8 @@ import { formatHostsList, parseHostsList } from "./allowed-hosts";
 
 describe("parseHostsList", () => {
     it("splits comma-delimited input, trims, dedupes, and drops empty strings", () => {
-        expect(parseHostsList(" mac.foltyn.dev , mac.foltyn.dev , localhost ")).toEqual([
-            "mac.foltyn.dev",
+        expect(parseHostsList(" myhost.example.com , myhost.example.com , localhost ")).toEqual([
+            "myhost.example.com",
             "localhost",
         ]);
     });
@@ -16,6 +16,6 @@ describe("parseHostsList", () => {
 
 describe("formatHostsList", () => {
     it("joins hosts for display", () => {
-        expect(formatHostsList(["mac.foltyn.dev", "localhost"])).toBe("mac.foltyn.dev, localhost");
+        expect(formatHostsList(["myhost.example.com", "localhost"])).toBe("myhost.example.com, localhost");
     });
 });

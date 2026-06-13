@@ -22,7 +22,7 @@ import { Command } from "commander";
 
 const program = new Command()
     .name("dev-dashboard")
-    .description("Personal dev dashboard (ttyd, cmux, obsidian) at mac.foltyn.dev")
+    .description("Personal dev dashboard (ttyd, cmux, obsidian)")
     .version("0.1.0");
 
 async function runUiServer(): Promise<void> {

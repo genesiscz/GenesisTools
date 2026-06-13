@@ -9,7 +9,7 @@ mock.module("@app/utils/notifications", () => ({
 }));
 
 mock.module("@app/dev-dashboard/lib/qa-deep-link", () => ({
-    buildQaDeepLink: async (id: string) => `http://mac.foltyn.dev:3042/qa?id=${encodeURIComponent(id)}`,
+    buildQaDeepLink: async (id: string) => `http://myhost.example.com/qa?id=${encodeURIComponent(id)}`,
 }));
 
 import type { QuestionConfig } from "../config";
@@ -56,7 +56,7 @@ describe("notificationSink", () => {
         expect(f.title).toContain("GenesisTools");
         expect(f.message).toContain("why X?");
         expect(f.message).toContain("Because Y.");
-        expect(f.open).toBe("http://mac.foltyn.dev:3042/qa?id=abc-entry");
+        expect(f.open).toBe("http://myhost.example.com/qa?id=abc-entry");
 
         dispatched.length = 0;
         await notificationSink.emit(e, { ...baseCfg, sinks: { obsidian: true, sound: false, notify: true } });
@@ -64,6 +64,6 @@ describe("notificationSink", () => {
         expect(dispatched[0].app).toBe("question");
         expect(dispatched[0].title).toContain("GenesisTools");
         expect(dispatched[0].message).toContain("Because Y.");
-        expect(dispatched[0].open).toBe("http://mac.foltyn.dev:3042/qa?id=abc-entry");
+        expect(dispatched[0].open).toBe("http://myhost.example.com/qa?id=abc-entry");
     });
 });

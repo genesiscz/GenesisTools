@@ -40,7 +40,7 @@ describe("isLoopbackOnlyOrigin — locality comes from socket + Host only", () =
     });
 
     test("non-localhost Host from loopback (tunnel/LAN names) is not local", () => {
-        expect(isLoopbackOnlyOrigin(reqWith({ host: "mac.foltyn.dev" }), "127.0.0.1")).toBe(false);
+        expect(isLoopbackOnlyOrigin(reqWith({ host: "myhost.example.com" }), "127.0.0.1")).toBe(false);
         expect(isLoopbackOnlyOrigin(reqWith({ host: "192.168.0.15:3042" }), "127.0.0.1")).toBe(false);
         expect(isLoopbackOnlyOrigin(reqWith({ host: "evil.example" }), "127.0.0.1")).toBe(false);
     });
