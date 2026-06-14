@@ -8,9 +8,12 @@ const RECORD_SEP = "\x1e";
 
 async function runGit(args: string[], cwd: string): Promise<{ stdout: string; ok: boolean }> {
     const proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-    const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+    ]);
     if (exitCode !== 0) {
-        const stderr = await new Response(proc.stderr).text();
         logger.debug(`git ${args.join(" ")} exited ${exitCode}: ${stderr.trim()}`);
     }
 

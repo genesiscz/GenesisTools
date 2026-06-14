@@ -46,7 +46,13 @@ async function runIndex(options: IndexOptions): Promise<void> {
 
 async function loadQueryDiff(repo: string, options: CheckOptions): Promise<string> {
     if (options.diff) {
-        return Bun.file(options.diff).text();
+        const file = Bun.file(options.diff);
+        if (!(await file.exists())) {
+            out.log.error(`Diff file not found: ${options.diff}`);
+            process.exit(1);
+        }
+
+        return file.text();
     }
 
     if (options.staged) {
@@ -87,6 +93,11 @@ async function runCheck(options: CheckOptions): Promise<void> {
     }
 
     const threshold = Number.parseFloat(options.threshold);
+    if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+        out.log.error(`Invalid --threshold value: ${options.threshold} (expected a number 0-1).`);
+        process.exit(1);
+    }
+
     const topN = Math.max(1, Number.parseInt(options.top, 10) || 5);
     const scored = scoreQuery(queryText, index, topN).filter((m) => m.score >= threshold);
 

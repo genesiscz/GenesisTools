@@ -142,10 +142,12 @@ describe("scoreQuery (pure lexical ranking)", () => {
 describe("end-to-end index + check over a throwaway git repo", () => {
     let home: string;
     let repo: string;
+    let previousGenesisToolsHome: string | undefined;
 
     beforeAll(async () => {
         home = mkdtempSync(join(tmpdir(), "regret-home-"));
         repo = mkdtempSync(join(tmpdir(), "regret-repo-"));
+        previousGenesisToolsHome = process.env.GENESIS_TOOLS_HOME;
         process.env.GENESIS_TOOLS_HOME = home;
 
         await git(["init", "-q"], repo);
@@ -172,7 +174,12 @@ describe("end-to-end index + check over a throwaway git repo", () => {
     });
 
     afterAll(() => {
-        delete process.env.GENESIS_TOOLS_HOME;
+        if (previousGenesisToolsHome === undefined) {
+            delete process.env.GENESIS_TOOLS_HOME;
+        } else {
+            process.env.GENESIS_TOOLS_HOME = previousGenesisToolsHome;
+        }
+
         rmSync(home, { recursive: true, force: true });
         rmSync(repo, { recursive: true, force: true });
     });
