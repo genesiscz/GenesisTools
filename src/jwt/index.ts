@@ -31,12 +31,12 @@ function renderValue(value: unknown): string {
 }
 
 function describeIfTimeClaim(key: string, value: unknown, nowMs: number): string | null {
-    if (!TIME_CLAIMS.includes(key as TimeClaim) || typeof value !== "number") {
+    if (!TIME_CLAIMS.includes(key as TimeClaim) || typeof value !== "number" || !Number.isFinite(value)) {
         return null;
     }
 
     const claim = key as TimeClaim;
-    const verb = claim === "exp" ? "expires" : "issued";
+    const verb = claim === "exp" ? "expires" : claim === "iat" ? "issued" : "valid from";
     const local = formatLocalDateTime(new Date(value * 1000));
     return `${verb} ${local} — ${describeClaimTime(claim, value, nowMs)}`;
 }
@@ -114,7 +114,8 @@ async function main(): Promise<void> {
     printHumanized(result.header, result.payload, Date.now());
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
     out.error(`Unexpected error: ${error instanceof Error ? error.message : String(error)}`);
+    await out.flush();
     process.exit(1);
 });

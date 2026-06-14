@@ -1,3 +1,4 @@
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 
 export type JwtObject = Record<string, unknown>;
@@ -10,14 +11,16 @@ function decodeSegment(segment: string, label: "header" | "payload"): JwtObject 
     let decoded: string;
     try {
         decoded = Buffer.from(segment, "base64url").toString("utf-8");
-    } catch {
+    } catch (err) {
+        logger.debug({ err, label }, "jwt: base64url decode failed");
         return { error: `failed to base64url-decode the ${label} segment.` };
     }
 
     let parsed: unknown;
     try {
-        parsed = SafeJSON.parse(decoded);
-    } catch {
+        parsed = SafeJSON.parse(decoded, { strict: true });
+    } catch (err) {
+        logger.debug({ err, label }, "jwt: JSON parse failed");
         return { error: `the ${label} segment is not valid JSON.` };
     }
 
@@ -26,6 +29,10 @@ function decodeSegment(segment: string, label: "header" | "payload"): JwtObject 
     }
 
     return parsed as JwtObject;
+}
+
+function isErrorResult(result: JwtObject | { error: string }): result is { error: string } {
+    return typeof (result as { error?: unknown }).error === "string";
 }
 
 export function decodeJwt(token: string): DecodeResult {
@@ -41,12 +48,12 @@ export function decodeJwt(token: string): DecodeResult {
     const [headerSeg, payloadSeg, signature] = segments;
 
     const header = decodeSegment(headerSeg, "header");
-    if ("error" in header) {
+    if (isErrorResult(header)) {
         return { ok: false, error: header.error };
     }
 
     const payload = decodeSegment(payloadSeg, "payload");
-    if ("error" in payload) {
+    if (isErrorResult(payload)) {
         return { ok: false, error: payload.error };
     }
 
