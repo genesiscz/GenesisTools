@@ -161,11 +161,14 @@ export async function createTempWorktree(opts: {
 
     const cleanup = async (): Promise<void> => {
         // Best-effort, independent steps: a failure removing the registration
-        // must not prevent deleting the temp dir, and vice-versa.
-        try {
-            await runGit(["worktree", "remove", "--force", worktreePath], repoCwd);
-        } catch (err) {
-            logger.debug({ err, worktreePath }, "time-machine: worktree remove failed during cleanup");
+        // must not prevent deleting the temp dir, and vice-versa. `runGit`
+        // resolves a RunResult instead of throwing, so inspect the exit code.
+        const remove = await runGit(["worktree", "remove", "--force", worktreePath], repoCwd);
+        if (remove.exitCode !== 0) {
+            logger.debug(
+                { worktreePath, exitCode: remove.exitCode, stderr: remove.stderr },
+                "time-machine: worktree remove failed during cleanup"
+            );
         }
 
         try {
