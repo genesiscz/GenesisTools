@@ -1,4 +1,5 @@
 import { logger } from "@app/logger";
+import type { ChannelName } from "@app/utils/notifications";
 import { dispatchNotification } from "@app/utils/notifications";
 import type { Notifier } from "./types";
 
@@ -28,21 +29,27 @@ export function parseChannels(raw: string): NotifyChannel[] {
     return channels;
 }
 
+const CHANNEL_MAP: Record<NotifyChannel, ChannelName> = {
+    terminal: "system",
+    say: "say",
+    telegram: "telegram",
+};
+
 /**
  * Production notifier. `dispatchNotification` reads channel *config* from the
  * shared `notify` store; the `channels` filter here decides which channels we
- * actually want for THIS run. "terminal" maps to the system channel.
+ * actually want for THIS run. "terminal" maps to the system channel. The
+ * per-run selection is passed through as the dispatch `only` allow-list so a
+ * channel enabled in config but not requested for this run does NOT fire.
  * NOTE: channels disabled in `notify` config still won't fire even if requested —
  * the user must enable telegram/say there once. terminal (system) is on by default.
  */
 export function createNotifier(channels: NotifyChannel[]): Notifier {
-    const wantSystem = channels.includes("terminal");
-    const wantSay = channels.includes("say");
-    const wantTelegram = channels.includes("telegram");
+    const only = channels.map((c) => CHANNEL_MAP[c]);
 
     return {
         notify: async ({ title, message, subtitle }) => {
-            if (!wantSystem && !wantSay && !wantTelegram) {
+            if (only.length === 0) {
                 return;
             }
 
@@ -51,6 +58,7 @@ export function createNotifier(channels: NotifyChannel[]): Notifier {
                 title,
                 message,
                 subtitle,
+                only,
             });
         },
     };

@@ -30,7 +30,14 @@ export async function readWorkflowSnapshots(opts: ReadWorkflowOptions): Promise<
     }
 
     const snapshots: AgentSnapshot[] = [];
-    const projectDirs = readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory());
+    let projectDirs: import("node:fs").Dirent[] = [];
+
+    try {
+        projectDirs = readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory());
+    } catch (err) {
+        logger.debug({ err, root }, "could not list workflow projects root");
+        return [];
+    }
 
     for (const projDir of projectDirs) {
         const sessionsRoot = join(root, projDir.name);
@@ -65,23 +72,28 @@ export async function readWorkflowSnapshots(opts: ReadWorkflowOptions): Promise<
 
             for (const leaf of leaves) {
                 const leafPath = join(wfRoot, leaf);
-                const lastModified = statSync(leafPath).mtimeMs;
-                const state = classifyAgentState({
-                    events: [],
-                    lastModified,
-                    now: opts.now,
-                    stallTimeoutMs: opts.stallTimeoutMs,
-                    pidAlive: true,
-                });
 
-                snapshots.push({
-                    id: `workflows:${session}/${leaf}`,
-                    name: leaf,
-                    source: "workflows",
-                    state,
-                    lastOutputAt: lastModified,
-                    ageMs: opts.now - lastModified,
-                });
+                try {
+                    const lastModified = statSync(leafPath).mtimeMs;
+                    const state = classifyAgentState({
+                        events: [],
+                        lastModified,
+                        now: opts.now,
+                        stallTimeoutMs: opts.stallTimeoutMs,
+                        pidAlive: true,
+                    });
+
+                    snapshots.push({
+                        id: `workflows:${session}/${leaf}`,
+                        name: leaf,
+                        source: "workflows",
+                        state,
+                        lastOutputAt: lastModified,
+                        ageMs: opts.now - lastModified,
+                    });
+                } catch (err) {
+                    logger.debug({ err, leafPath }, "failed to stat workflow leaf; skipping");
+                }
             }
         }
     }

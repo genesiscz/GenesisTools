@@ -47,7 +47,14 @@ export async function readClaudeSnapshots(opts: ReadClaudeOptions): Promise<Agen
     }
 
     const snapshots: AgentSnapshot[] = [];
-    const projectDirs = readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory());
+    let projectDirs: import("node:fs").Dirent[] = [];
+
+    try {
+        projectDirs = readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory());
+    } catch (err) {
+        logger.debug({ err, root }, "could not list claude projects root");
+        return [];
+    }
 
     for (const projDir of projectDirs) {
         const projPath = join(root, projDir.name);

@@ -66,7 +66,15 @@ export async function readTaskSnapshots(opts: ReadTaskOptions): Promise<AgentSna
         return [];
     }
 
-    const files = readdirSync(dir).filter((f) => f.endsWith(".jsonl") && !f.endsWith(".ui.jsonl"));
+    let files: string[] = [];
+
+    try {
+        files = readdirSync(dir).filter((f) => f.endsWith(".jsonl") && !f.endsWith(".ui.jsonl"));
+    } catch (err) {
+        logger.warn({ err, dir }, "failed to read task session directory; skipping");
+        return [];
+    }
+
     const snapshots: AgentSnapshot[] = [];
 
     for (const file of files) {
@@ -75,6 +83,11 @@ export async function readTaskSnapshots(opts: ReadTaskOptions): Promise<AgentSna
 
         try {
             const buf = readFileSync(path);
+
+            if (buf.length === 0) {
+                continue;
+            }
+
             const records = parseJsonl<TaskLine>(buf);
             const events = records.map(lineToEvent).filter((e): e is AgentEvent => e !== undefined);
 
@@ -83,11 +96,14 @@ export async function readTaskSnapshots(opts: ReadTaskOptions): Promise<AgentSna
             let metaExitCode: number | undefined;
 
             if (existsSync(metaPath)) {
-                const meta = SafeJSON.parse(readFileSync(metaPath, "utf8")) as TaskMeta;
-                metaExitCode = meta.exitCode;
+                const meta = SafeJSON.parse(readFileSync(metaPath, "utf8")) as TaskMeta | null;
 
-                if (typeof meta.pid === "number" && meta.exitCode === undefined) {
-                    pidAlive = isProcessAlive(meta.pid);
+                if (meta) {
+                    metaExitCode = meta.exitCode;
+
+                    if (typeof meta.pid === "number" && meta.exitCode === undefined) {
+                        pidAlive = isProcessAlive(meta.pid);
+                    }
                 }
             }
 
@@ -103,7 +119,7 @@ export async function readTaskSnapshots(opts: ReadTaskOptions): Promise<AgentSna
             const lastEvent = events.at(-1);
             const exitEvent = events.find((e) => e.kind === "exit");
             const lastOutputAt = lastEvent?.ts ?? lastModified;
-            const lastLine = [...events].reverse().find((e) => e.text)?.text;
+            const lastLine = events.findLast((e) => e.text)?.text;
 
             snapshots.push({
                 id: `task:${name}`,

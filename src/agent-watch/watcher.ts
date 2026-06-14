@@ -118,6 +118,9 @@ export async function runWatch(opts: RunWatchOptions): Promise<void> {
 
     watcher.on("change", trigger);
     watcher.on("add", trigger);
+    watcher.on("error", (err) => {
+        logger.error({ err }, "watcher error");
+    });
 
     // Poll re-sweep: a STALL is the ABSENCE of file events, so chokidar never
     // wakes us for it — we must re-classify on a timer to catch stalls/dead pids.

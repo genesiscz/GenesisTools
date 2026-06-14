@@ -3,7 +3,7 @@ import { dispatchSystem } from "./channels/system";
 import { dispatchTelegram } from "./channels/telegram";
 import { dispatchWebhook } from "./channels/webhook";
 import { notificationsConfig } from "./config";
-import type { NotificationEvent, SayChannelConfig } from "./types";
+import type { ChannelName, NotificationEvent, SayChannelConfig } from "./types";
 
 async function dispatchSay(message: string, config: SayChannelConfig): Promise<void> {
     if (!config.enabled) {
@@ -30,13 +30,15 @@ async function dispatchSay(message: string, config: SayChannelConfig): Promise<v
 export async function dispatchNotification(event: NotificationEvent): Promise<void> {
     try {
         const channels = await notificationsConfig.getChannels(event.app);
+        const only = event.only;
+        const allows = (name: ChannelName): boolean => only === undefined || only.includes(name);
 
         const channelNames = ["system", "telegram", "webhook", "say"] as const;
         const results = await Promise.allSettled([
-            dispatchSystem(event, channels.system),
-            dispatchTelegram(event, channels.telegram),
-            dispatchWebhook(event, channels.webhook),
-            dispatchSay(event.message, channels.say),
+            allows("system") ? dispatchSystem(event, channels.system) : Promise.resolve(),
+            allows("telegram") ? dispatchTelegram(event, channels.telegram) : Promise.resolve(),
+            allows("webhook") ? dispatchWebhook(event, channels.webhook) : Promise.resolve(),
+            allows("say") ? dispatchSay(event.message, channels.say) : Promise.resolve(),
         ]);
 
         for (let i = 0; i < results.length; i++) {
