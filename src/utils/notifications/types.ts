@@ -65,4 +65,10 @@ export interface NotificationEvent {
     ignoreDnD?: boolean;
     /** Custom icon path/URL (terminal-notifier only) */
     appIcon?: string;
+    /**
+     * Per-call channel allow-list. When set, only these channels may fire for
+     * this event (still subject to each channel being enabled in config). When
+     * undefined, all config-enabled channels fire (default behaviour).
+     */
+    only?: ChannelName[];
 }
