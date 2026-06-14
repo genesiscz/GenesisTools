@@ -77,26 +77,28 @@ export function parseServerInput(
     host: string;
     port: number;
 } {
-    const trimmed = input.trim().replace(/^https?:\/\//i, "");
+    const trimmed = input.trim();
+    const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
 
-    if (!trimmed.includes(":")) {
-        return { host: trimmed, port: defaultPort };
+    try {
+        const url = new URL(candidate);
+        const host = url.hostname || "localhost";
+        const port = url.port ? Number.parseInt(url.port, 10) : defaultPort;
+
+        if (Number.isNaN(port) || port <= 0 || port > 65535) {
+            return { host, port: defaultPort };
+        }
+
+        return { host, port };
+    } catch {
+        return { host: "localhost", port: defaultPort };
     }
-
-    const [rawHost, rawPort] = trimmed.split(":");
-    const host = rawHost || "localhost";
-    const port = Number.parseInt(rawPort || String(defaultPort), 10);
-
-    if (Number.isNaN(port) || port <= 0 || port > 65535) {
-        return { host, port: defaultPort };
-    }
-
-    return { host, port };
 }
 
 export function formatServerAddress(host: string, port: number): string {
     const cleanHost = host.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
-    return `${cleanHost}:${port}`;
+    const printableHost = cleanHost.includes(":") && !cleanHost.startsWith("[") ? `[${cleanHost}]` : cleanHost;
+    return `${printableHost}:${port}`;
 }
 
 export function mergeRole(current: DeviceRole | undefined, desired: DeviceRole): DeviceRole {
