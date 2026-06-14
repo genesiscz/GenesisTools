@@ -1,7 +1,7 @@
 import { realpathSync } from "node:fs";
 import { logger } from "@app/logger";
 import { loadCoverageSet } from "./coverage";
-import { churnCountForFile, findRepoRoot } from "./git";
+import { findRepoRoot, getChurnCounts } from "./git";
 import { buildInboundImportCounts } from "./imports";
 import { evaluateLifecycle } from "./lifecycle";
 import { ApoptosisStateStore } from "./state";
@@ -40,6 +40,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanReport> {
     logger.debug(`apoptosis: scanning ${files.length} files under ${dir}`);
 
     const repoRoot = (await findRepoRoot(dir)) ?? dir;
+    const churnCounts = await getChurnCounts(opts.churnDays, repoRoot);
     const inbound = buildInboundImportCounts(files);
     const coverage = loadCoverageSet(opts.coveragePath);
 
@@ -50,9 +51,10 @@ export async function runScan(opts: ScanOptions): Promise<ScanReport> {
     let candidates = 0;
     let rescued = 0;
     let ready = 0;
+    let marksChanged = false;
 
     for (const file of files) {
-        const churnCount = await churnCountForFile(file, opts.churnDays, repoRoot);
+        const churnCount = churnCounts.get(file) ?? 0;
         const survival = scoreSurvival({
             churnCount,
             inboundImports: inbound.get(file) ?? 0,
@@ -71,12 +73,14 @@ export async function runScan(opts: ScanOptions): Promise<ScanReport> {
         if (status === "dying" && !existing) {
             firstMarked = new Date(opts.now).toISOString();
             if (opts.useState) {
-                await store.mark(dir, file, firstMarked);
+                marks[file] = { firstMarked };
+                marksChanged = true;
             }
         } else if (status === "rescued") {
             firstMarked = null;
-            if (opts.useState) {
-                await store.clear(dir, file);
+            if (opts.useState && marks[file]) {
+                delete marks[file];
+                marksChanged = true;
             }
         }
 
@@ -102,6 +106,10 @@ export async function runScan(opts: ScanOptions): Promise<ScanReport> {
         }
 
         reports.push({ path: file, survival, status, firstMarked, daysMarked, daysLeft });
+    }
+
+    if (opts.useState && marksChanged) {
+        await store.setMarks(dir, marks);
     }
 
     return {
