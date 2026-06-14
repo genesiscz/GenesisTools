@@ -1,3 +1,4 @@
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -45,6 +46,11 @@ function buildInterfaceOptions() {
 }
 
 export async function runRegisterFlow(storage: Storage): Promise<void> {
+    if (!isInteractive()) {
+        p.cancel(`Interactive mode required: ${suggestCommand("tools wakeup register")}`);
+        process.exit(1);
+    }
+
     p.intro("Register this device");
 
     const config = await readWakeupConfig(storage);

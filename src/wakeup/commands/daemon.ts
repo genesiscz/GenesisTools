@@ -90,7 +90,9 @@ export function registerDaemonCommands(program: Command): void {
                 log: logRequests,
             });
 
-            const created = await registerTask({
+            const existed = await isTaskRegistered(TASK_NAME);
+
+            await registerTask({
                 name: TASK_NAME,
                 command,
                 every: "every 1 minute",
@@ -99,10 +101,10 @@ export function registerDaemonCommands(program: Command): void {
                 overwrite: true,
             });
 
-            if (created) {
-                p.log.success(`Registered task ${pc.cyan(TASK_NAME)} (${port})`);
-            } else {
+            if (existed) {
                 p.log.info(`Updated task ${pc.cyan(TASK_NAME)} (${port})`);
+            } else {
+                p.log.success(`Registered task ${pc.cyan(TASK_NAME)} (${port})`);
             }
 
             const status = await getDaemonStatus();
