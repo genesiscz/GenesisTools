@@ -28,6 +28,11 @@ interface AssignState {
     mapping: Mapping;
     valueToToken: Map<string, string>;
     counters: Map<RedactType, number>;
+    reserved: Set<string>;
+}
+
+function isTaken(token: string, state: AssignState): boolean {
+    return state.reserved.has(token) || state.mapping[token] !== undefined;
 }
 
 function placeholderFor(span: Span, state: AssignState): string {
@@ -37,19 +42,39 @@ function placeholderFor(span: Span, state: AssignState): string {
         return existing;
     }
 
+    let token: string;
     if (span.type === "paths") {
-        const token = "[HOME]";
-        valueToToken.set(span.value, token);
-        mapping[token] = span.value;
-        return token;
+        token = "[HOME]";
+        let suffix = 1;
+        while (isTaken(token, state)) {
+            suffix += 1;
+            token = `[HOME_${suffix}]`;
+        }
+    } else {
+        let next = counters.get(span.type) ?? 0;
+        do {
+            next += 1;
+            token = `[${PREFIX[span.type]}_${next}]`;
+        } while (isTaken(token, state));
+
+        counters.set(span.type, next);
     }
 
-    const next = (counters.get(span.type) ?? 0) + 1;
-    counters.set(span.type, next);
-    const token = `[${PREFIX[span.type]}_${next}]`;
     valueToToken.set(span.value, token);
     mapping[token] = span.value;
     return token;
+}
+
+function collectExistingTokens(text: string): Set<string> {
+    const reserved = new Set<string>();
+    const rx = /\[[A-Z0-9_]+\]/g;
+    let m: RegExpExecArray | null = rx.exec(text);
+    while (m !== null) {
+        reserved.add(m[0]);
+        m = rx.exec(text);
+    }
+
+    return reserved;
 }
 
 export function redact(text: string, opts: RedactOptions): RedactResult {
@@ -58,6 +83,7 @@ export function redact(text: string, opts: RedactOptions): RedactResult {
         mapping: {},
         valueToToken: new Map<string, string>(),
         counters: new Map<RedactType, number>(),
+        reserved: collectExistingTokens(text),
     };
 
     let result = "";

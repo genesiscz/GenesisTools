@@ -1,4 +1,5 @@
 import { out } from "@app/logger";
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { readInput, writeOutput } from "../io";
 import { restore } from "../restore";
 import { loadLatestSession, loadMapFile } from "../session";
@@ -29,7 +30,14 @@ export async function runRestore(options: RestoreCmdOptions): Promise<void> {
         return;
     }
 
-    const wantsClipboardInput = Boolean(options.clipboard) && !options.out;
+    const wantsClipboardInput = Boolean(options.clipboard) && !options.in;
+    if (!options.in && !wantsClipboardInput && isInteractive()) {
+        out.log.error("No input: pass --in <file>, --clipboard, or pipe text on stdin.");
+        out.printlnErr(suggestCommand("tools redact restore", { add: ["--in", "<file>"] }));
+        process.exitCode = 1;
+        return;
+    }
+
     const text = await readInput({ inFile: options.in, clipboard: wantsClipboardInput });
     const restored = restore(text, mapping);
 
@@ -40,7 +48,7 @@ export async function runRestore(options: RestoreCmdOptions): Promise<void> {
 
     const dest = await writeOutput({
         outFile: options.out,
-        clipboard: Boolean(options.clipboard) && Boolean(options.out),
+        clipboard: Boolean(options.clipboard) && !options.out,
         text: restored,
     });
     if (dest === "stdout") {

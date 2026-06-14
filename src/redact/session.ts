@@ -13,7 +13,7 @@ function storage(): Storage {
 export interface BuildSessionArgs {
     mapping: Mapping;
     now: Date;
-    types: RedactType[];
+    types: readonly RedactType[];
 }
 
 export function buildSession({ mapping, now, types }: BuildSessionArgs): SessionRecord {
@@ -53,10 +53,20 @@ export async function loadLatestSession(): Promise<SessionRecord | null> {
 
 export async function loadMapFile(path: string): Promise<Mapping> {
     const content = await Bun.file(path).text();
-    const parsed: unknown = SafeJSON.parse(content);
-    if (parsed !== null && typeof parsed === "object" && "mapping" in parsed) {
-        return (parsed as SessionRecord).mapping;
+    const parsed: unknown = SafeJSON.parse(content, { strict: true });
+    const candidate: unknown =
+        parsed !== null && typeof parsed === "object" && "mapping" in parsed
+            ? (parsed as { mapping: unknown }).mapping
+            : parsed;
+
+    if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
+        throw new Error("Invalid mapping file: expected an object mapping placeholders to strings.");
     }
 
-    return (parsed ?? {}) as Mapping;
+    const entries = Object.entries(candidate as Record<string, unknown>);
+    if (entries.some(([, value]) => typeof value !== "string")) {
+        throw new Error("Invalid mapping file: all mapping values must be strings.");
+    }
+
+    return Object.fromEntries(entries) as Mapping;
 }

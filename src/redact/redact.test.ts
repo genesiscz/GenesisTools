@@ -120,6 +120,22 @@ describe("restore + round-trip", () => {
         expect(r.redacted).toBe("mine [HOME]/a and theirs /Users/other/b");
         expect(restore(r.redacted, r.mapping)).toBe("mine /Users/test/a and theirs /Users/other/b");
     });
+
+    it("does not collide with a literal placeholder token already in the input", () => {
+        const sample = "user [EMAIL_1] real a@b.com here";
+        const r = redact(sample, opts);
+        expect(r.mapping["[EMAIL_1]"]).toBeUndefined();
+        expect(r.mapping["[EMAIL_2]"]).toBe("a@b.com");
+        expect(restore(r.redacted, r.mapping)).toBe(sample);
+    });
+
+    it("does not collide with a literal [HOME] token already in the input", () => {
+        const sample = "config says [HOME] but home is /Users/test";
+        const r = redact(sample, opts);
+        expect(r.mapping["[HOME]"]).toBeUndefined();
+        expect(r.mapping["[HOME_2]"]).toBe("/Users/test");
+        expect(restore(r.redacted, r.mapping)).toBe(sample);
+    });
 });
 
 describe("session", () => {

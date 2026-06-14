@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { runTool } from "@app/utils/cli";
 import { Command } from "commander";
 import { type RedactCmdOptions, runRedact } from "./commands/redact";

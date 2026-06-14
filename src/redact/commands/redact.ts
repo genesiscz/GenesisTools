@@ -32,7 +32,7 @@ function parseTypes(raw: string | undefined, phones: boolean | undefined): Redac
 }
 
 export async function runRedact(options: RedactCmdOptions): Promise<void> {
-    const wantsClipboardInput = Boolean(options.clipboard) && !options.out;
+    const wantsClipboardInput = Boolean(options.clipboard) && !options.in;
     if (!options.in && !wantsClipboardInput && isInteractive()) {
         out.log.error("No input: pass --in <file>, --clipboard, or pipe text on stdin.");
         out.printlnErr(suggestCommand("tools redact", { add: ["--in", "<file>"] }));
@@ -58,7 +58,7 @@ export async function runRedact(options: RedactCmdOptions): Promise<void> {
     } else {
         const dest = await writeOutput({
             outFile: options.out,
-            clipboard: Boolean(options.clipboard) && Boolean(options.out),
+            clipboard: Boolean(options.clipboard) && !options.out,
             text: result.redacted,
         });
         if (dest === "stdout") {

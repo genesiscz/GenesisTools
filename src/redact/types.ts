@@ -1,8 +1,15 @@
 export type RedactType = "keys" | "tokens" | "emails" | "ips" | "paths" | "phones";
 
-export const DEFAULT_TYPES: RedactType[] = ["keys", "tokens", "emails", "ips", "paths"];
+export const DEFAULT_TYPES = ["keys", "tokens", "emails", "ips", "paths"] as const satisfies readonly RedactType[];
 
-export const ALL_TYPES: RedactType[] = ["keys", "tokens", "emails", "ips", "paths", "phones"];
+export const ALL_TYPES = [
+    "keys",
+    "tokens",
+    "emails",
+    "ips",
+    "paths",
+    "phones",
+] as const satisfies readonly RedactType[];
 
 export interface Span {
     start: number;
@@ -13,7 +20,7 @@ export interface Span {
 
 export interface RedactOptions {
     homeDir: string;
-    types: RedactType[];
+    types: readonly RedactType[];
 }
 
 export type Mapping = Record<string, string>;
@@ -25,6 +32,6 @@ export interface RedactResult {
 
 export interface SessionRecord {
     createdAt: string;
-    types: RedactType[];
+    types: readonly RedactType[];
     mapping: Mapping;
 }
