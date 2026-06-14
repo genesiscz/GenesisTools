@@ -4,7 +4,7 @@ import { EXT_TO_DYNAMIC_LANG } from "@app/indexer/lib/ast-languages";
 import { logger } from "@app/logger";
 import { countTokens } from "@app/utils/tokens";
 import { extractSymbols, isBuiltinLanguage, languageForFile } from "./extract";
-import type { ScannedFile } from "./types";
+import type { ExtractedSymbol, ScannedFile } from "./types";
 
 export interface ScannedFileWithTokens extends ScannedFile {
     tokens: number;
@@ -23,23 +23,30 @@ function toPosix(p: string): string {
 
 /** List candidate files via git (honors .gitignore) or null when not a git repo. */
 async function gitListFiles(dir: string): Promise<string[] | null> {
-    const proc = Bun.spawn(["git", "ls-files", "--cached", "--others", "--exclude-standard"], {
-        cwd: dir,
-        stdout: "pipe",
-        stderr: "ignore",
-    });
+    try {
+        const proc = Bun.spawn(["git", "ls-files", "--cached", "--others", "--exclude-standard"], {
+            cwd: dir,
+            stdout: "pipe",
+            stderr: "ignore",
+        });
 
-    const stdout = await new Response(proc.stdout).text();
-    await proc.exited;
+        const stdout = await new Response(proc.stdout).text();
+        await proc.exited;
 
-    if (proc.exitCode !== 0) {
+        if (proc.exitCode !== 0) {
+            return null;
+        }
+
+        return stdout
+            .split("\n")
+            .map((l) => l.trim())
+            .filter((l) => l.length > 0);
+    } catch (err) {
+        logger.debug(
+            `repo-map: git ls-files failed (git missing or not a repo): ${err instanceof Error ? err.message : String(err)}`
+        );
         return null;
     }
-
-    return stdout
-        .split("\n")
-        .map((l) => l.trim())
-        .filter((l) => l.length > 0);
 }
 
 const SUPPORTED_EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".py", ".go", ".rs"]);
@@ -62,7 +69,7 @@ function isSupported(rel: string, languages: Set<string> | null): boolean {
 /** Extract raw import module specifiers from TS/JS source (cheap regex). */
 function extractImports(source: string): string[] {
     const out: string[] = [];
-    const re = /(?:import|export)[^"']*?from\s*["']([^"']+)["']|require\(\s*["']([^"']+)["']\s*\)/g;
+    const re = /(?:import|export)[^"']*?from\s*["']([^"']+)["']|(?:require|import)\(\s*["']([^"']+)["']\s*\)/g;
     let m: RegExpExecArray | null = re.exec(source);
 
     while (m !== null) {
@@ -86,7 +93,12 @@ function resolveImport(fromRel: string, spec: string, knownPaths: Set<string>): 
 
     const baseDir = toPosix(join(fromRel, ".."));
     const target = toPosix(join(baseDir, spec));
-    const candidates = [target, ...[".ts", ".tsx", ".js", ".jsx"].map((e) => `${target}${e}`), `${target}/index.ts`];
+    const extensions = [".ts", ".tsx", ".js", ".jsx"];
+    const candidates = [
+        target,
+        ...extensions.map((e) => `${target}${e}`),
+        ...extensions.map((e) => `${target}/index${e}`),
+    ];
 
     for (const c of candidates) {
         if (knownPaths.has(c)) {
@@ -132,7 +144,15 @@ export async function scanRepo({
         const language = languageForFile(ext) ?? "unknown";
         const source = readFileSync(absPath, "utf-8");
         const stat = statSync(absPath);
-        const symbols = isBuiltinLanguage(ext) ? extractSymbols(source, language) : [];
+        let symbols: ExtractedSymbol[] = [];
+
+        if (isBuiltinLanguage(ext)) {
+            try {
+                symbols = extractSymbols(source, language);
+            } catch (err) {
+                logger.error({ rel, err }, "repo-map: failed to extract symbols");
+            }
+        }
 
         if (!isBuiltinLanguage(ext) && EXT_TO_DYNAMIC_LANG[ext]) {
             logger.debug(`repo-map: ${rel} is a dynamic-language file; symbol extraction is best-effort/skipped here`);

@@ -13,6 +13,7 @@ const BUILTIN_LANG: Record<string, Lang> = {
 /** declaration.kind() → our SymbolKind. */
 const DECL_KIND_TO_SYMBOL: Record<string, SymbolKind> = {
     function_declaration: "function",
+    generator_function_declaration: "function",
     class_declaration: "class",
     interface_declaration: "interface",
     type_alias_declaration: "type",
@@ -39,7 +40,7 @@ function collapse(text: string): string {
 function findBodyNode(declNode: SgNode): SgNode | null {
     const kind = declNode.kind();
 
-    if (kind === "function_declaration") {
+    if (kind === "function_declaration" || kind === "generator_function_declaration") {
         return getNodeField(declNode, "body");
     }
 

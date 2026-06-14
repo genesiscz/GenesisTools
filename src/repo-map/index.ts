@@ -111,9 +111,15 @@ async function main(dirArg: string | undefined, options: Options): Promise<void>
     const text = renderTree({ ...summary, included, elided, filesOnly: Boolean(options.filesOnly) });
 
     if (options.clipboard) {
-        await clipboardy.write(text);
-        out.log.success(`Copied repo map to clipboard (${included.length} files, ${packed.usedTokens} tok).`);
-        return;
+        try {
+            await clipboardy.write(text);
+            out.log.success(`Copied repo map to clipboard (${included.length} files, ${packed.usedTokens} tok).`);
+            return;
+        } catch (err) {
+            out.log.error(
+                `Failed to copy to clipboard, printing to stdout instead: ${err instanceof Error ? err.message : String(err)}`
+            );
+        }
     }
 
     out.result(text);
