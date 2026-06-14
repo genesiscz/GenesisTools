@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { type Dirent, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { logger } from "@app/logger";
 import { parseImports } from "./imports";
@@ -13,7 +13,7 @@ const RESOLVE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cts", ".mts"
 
 export interface AnalyzeOptions {
     dir: string;
-    /** Injected wall-clock epoch ms; never read internally. */
+    /** Injected wall-clock epoch ms used to calculate file age. */
     now: number;
     top: number;
 }
@@ -43,9 +43,9 @@ function walk(root: string): string[] {
             continue;
         }
 
-        let entries: ReturnType<typeof readdirSync>;
+        let entries: Dirent<string>[];
         try {
-            entries = readdirSync(current, { withFileTypes: true });
+            entries = readdirSync(current, { withFileTypes: true, encoding: "utf8" });
         } catch (err) {
             logger.warn({ dir: current, err }, "monster: failed to read directory");
             continue;
@@ -85,51 +85,54 @@ function toPosix(p: string): string {
 /** Run one `git log` to get the most-recent commit epoch-ms per file. Empty map if git unavailable. */
 async function gitLastCommitTimes(dir: string): Promise<Map<string, number>> {
     const times = new Map<string, number>();
-    const proc = Bun.spawn(["git", "log", "--name-only", "--pretty=format:%H%x09%at"], {
-        cwd: dir,
-        stdio: ["ignore", "pipe", "pipe"],
-    });
-    const stdout = await new Response(proc.stdout).text();
-    const exit = await proc.exited;
-    if (exit !== 0) {
-        logger.warn({ dir, exit }, "monster: git log unavailable; age scoring disabled");
-        return times;
-    }
-
-    let currentTs = 0;
-    for (const line of stdout.split("\n")) {
-        if (line.length === 0) {
-            continue;
+    try {
+        const proc = Bun.spawn(["git", "log", "--relative", "--name-only", "--pretty=format:%H%x09%at"], {
+            cwd: dir,
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+        const stdout = await new Response(proc.stdout).text();
+        const exit = await proc.exited;
+        if (exit !== 0) {
+            logger.warn({ dir, exit }, "monster: git log unavailable; age scoring disabled");
+            return times;
         }
 
-        const tab = line.indexOf("\t");
-        if (tab >= 0) {
-            currentTs = Number.parseInt(line.slice(tab + 1), 10) * 1000;
-            continue;
-        }
+        let currentTs = 0;
+        for (const line of stdout.split("\n")) {
+            if (line.length === 0) {
+                continue;
+            }
 
-        const rel = toPosix(line.trim());
-        if (rel.length > 0 && !times.has(rel)) {
-            times.set(rel, currentTs);
+            const tab = line.indexOf("\t");
+            if (tab >= 0) {
+                currentTs = Number.parseInt(line.slice(tab + 1), 10) * 1000;
+                continue;
+            }
+
+            const rel = toPosix(line.trim());
+            if (rel.length > 0 && !times.has(rel)) {
+                times.set(rel, currentTs);
+            }
         }
+    } catch (err) {
+        logger.warn({ dir, err }, "monster: git log failed to run; age scoring disabled");
     }
 
     return times;
 }
 
-function resolveSpecifier(from: RawFile, spec: string, byRel: Map<string, RawFile>): string | null {
+function resolveSpecifier(from: RawFile, spec: string, byAbs: Map<string, RawFile>): string | null {
     const fromDirAbs = from.abs.slice(0, from.abs.lastIndexOf("/") + 1);
-    const baseAbs = resolve(fromDirAbs, spec);
+    const baseAbs = toPosix(resolve(fromDirAbs, spec));
     const candidates = [
         baseAbs,
         ...RESOLVE_EXTENSIONS.map((e) => baseAbs + e),
         ...RESOLVE_EXTENSIONS.map((e) => `${baseAbs}/index${e}`),
     ];
     for (const cand of candidates) {
-        for (const f of byRel.values()) {
-            if (f.abs === cand) {
-                return f.rel;
-            }
+        const found = byAbs.get(cand);
+        if (found) {
+            return found.rel;
         }
     }
 
@@ -137,9 +140,9 @@ function resolveSpecifier(from: RawFile, spec: string, byRel: Map<string, RawFil
 }
 
 function buildGraph(files: RawFile[]): { fanIn: Map<string, number>; fanOut: Map<string, number> } {
-    const byRel = new Map<string, RawFile>();
+    const byAbs = new Map<string, RawFile>();
     for (const f of files) {
-        byRel.set(f.rel, f);
+        byAbs.set(f.abs, f);
     }
 
     const fanIn = new Map<string, number>();
@@ -156,7 +159,7 @@ function buildGraph(files: RawFile[]): { fanIn: Map<string, number>; fanOut: Map
                 continue;
             }
 
-            const target = resolveSpecifier(f, spec, byRel);
+            const target = resolveSpecifier(f, spec, byAbs);
             if (target === null) {
                 continue;
             }

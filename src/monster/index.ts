@@ -24,7 +24,8 @@ program
         const top = Number.parseInt(options.top, 10);
         if (!Number.isInteger(top) || top < 1) {
             out.error(`--top must be a positive integer (got "${options.top}").`);
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         }
 
         const absDir = resolve(process.cwd(), dir);
