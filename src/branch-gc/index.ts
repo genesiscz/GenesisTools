@@ -71,7 +71,7 @@ async function deleteBranch(cwd: string, name: string): Promise<boolean> {
 
     const res = await runGit(cwd, ["branch", "-D", name]);
     if (res.code === 0) {
-        log.out.success(`Deleted ${pc.bold(name)} ${pc.dim(`(restore: git branch ${name} ${sha})`)}`);
+        log.out.log.success(`Deleted ${pc.bold(name)} ${pc.dim(`(restore: git branch ${name} ${sha})`)}`);
         return true;
     }
 
@@ -135,7 +135,7 @@ async function main(): Promise<void> {
     const nowEpoch = Math.floor(Date.now() / 1000);
 
     const branches = await classifyBranches({ cwd, base, current, nowEpoch, staleDays });
-    log.info("classified branches", { count: branches.length, base, current, staleDays });
+    log.info({ count: branches.length, base, current, staleDays }, "classified branches");
 
     if (opts.json) {
         out.result(branches);
