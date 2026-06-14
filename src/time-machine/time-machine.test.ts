@@ -113,7 +113,12 @@ describe("runTimeMachine (integration, tmp git repo)", () => {
 
             const proc = Bun.spawn(["git", "rev-parse", "HEAD"], { cwd: dir, env, stdout: "pipe", stderr: "pipe" });
             const sha = (await new Response(proc.stdout).text()).trim();
-            await proc.exited;
+            const exitCode = await proc.exited;
+            if (exitCode !== 0) {
+                const stderr = await new Response(proc.stderr).text();
+                throw new Error(`git rev-parse HEAD failed: ${stderr}`);
+            }
+
             shas.push(sha);
         }
 

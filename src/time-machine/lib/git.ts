@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { logger } from "@app/logger";
 
 export interface CommitInfo {
     sha: string;
@@ -129,6 +130,10 @@ export async function getCommitInfo(sha: string, cwd: string): Promise<CommitInf
  */
 export async function getCommitDiff(sha: string, cwd: string): Promise<string> {
     const result = await runGit(["show", "--no-color", sha], cwd);
+    if (result.exitCode !== 0) {
+        throw new Error(`git show ${sha} failed: ${result.stderr.trim() || `exit ${result.exitCode}`}`);
+    }
+
     return result.stdout;
 }
 
@@ -155,10 +160,19 @@ export async function createTempWorktree(opts: {
     }
 
     const cleanup = async (): Promise<void> => {
-        // Best-effort: remove the registration first so git forgets it, then
-        // delete the temp dir even if the registration removal failed.
-        await runGit(["worktree", "remove", "--force", worktreePath], repoCwd);
-        await rm(base, { recursive: true, force: true });
+        // Best-effort, independent steps: a failure removing the registration
+        // must not prevent deleting the temp dir, and vice-versa.
+        try {
+            await runGit(["worktree", "remove", "--force", worktreePath], repoCwd);
+        } catch (err) {
+            logger.debug({ err, worktreePath }, "time-machine: worktree remove failed during cleanup");
+        }
+
+        try {
+            await rm(base, { recursive: true, force: true });
+        } catch (err) {
+            logger.debug({ err, base }, "time-machine: temp dir removal failed during cleanup");
+        }
     };
 
     return { path: worktreePath, cleanup };
@@ -174,6 +188,15 @@ export async function checkoutInWorktree(sha: string, worktreePath: string): Pro
     const result = await runGit(["checkout", "--detach", "--force", "--quiet", sha], worktreePath);
     if (result.exitCode !== 0) {
         throw new Error(`git checkout ${sha} failed: ${result.stderr.trim() || `exit ${result.exitCode}`}`);
+    }
+
+    // Remove untracked files/dirs (incl. gitignored build output such as
+    // node_modules / coverage) left behind by the previous probe so each probe
+    // sees a pristine tree. The verdict is the command's exit code, so stray
+    // artifacts could otherwise flip it.
+    const clean = await runGit(["clean", "-fdx"], worktreePath);
+    if (clean.exitCode !== 0) {
+        throw new Error(`git clean failed: ${clean.stderr.trim() || `exit ${clean.exitCode}`}`);
     }
 }
 
