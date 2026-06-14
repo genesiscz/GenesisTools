@@ -167,7 +167,11 @@ export async function runTimeMachine(command: string[], options: TimeMachineOpti
             probes,
         };
     } finally {
-        await worktree.cleanup();
+        try {
+            await worktree.cleanup();
+        } catch (err) {
+            logger.warn({ err }, "time-machine: failed to clean up temporary worktree");
+        }
     }
 }
 
