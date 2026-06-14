@@ -22,8 +22,8 @@ function isAllowlisted(secret: string, line: string, config: ScanConfig): boolea
     return false;
 }
 
-function buildPreview(line: string, secret: string, masked: string): string {
-    const replaced = line.replace(secret, masked).trim();
+function buildPreview(line: string, start: number, length: number, masked: string): string {
+    const replaced = `${line.slice(0, start)}${masked}${line.slice(start + length)}`.trim();
     if (replaced.length <= PREVIEW_MAX) {
         return replaced;
     }
@@ -55,7 +55,8 @@ export function scanContent({ content, file, config }: ScanContentArgs): Finding
             while (match !== null) {
                 const groupIndex = detector.secretGroup ?? 0;
                 const secret = match[groupIndex] ?? match[0];
-                const column = (groupIndex === 0 ? match.index : line.indexOf(secret, match.index)) + 1;
+                const secretStart = groupIndex === 0 ? match.index : match.index + match[0].lastIndexOf(secret);
+                const column = secretStart + 1;
                 const accepted = detector.accept ? detector.accept(secret, config) : true;
                 const dedupeKey = `${i + 1}:${column}:${secret}`;
 
@@ -68,7 +69,7 @@ export function scanContent({ content, file, config }: ScanContentArgs): Finding
                         column,
                         detector: detector.name,
                         masked,
-                        preview: buildPreview(line, secret, masked),
+                        preview: buildPreview(line, secretStart, secret.length, masked),
                     });
                 }
 

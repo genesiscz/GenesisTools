@@ -99,6 +99,16 @@ describe("scanContent", () => {
         expect(f.preview).not.toContain("AKIAIOSFODNN7EXAMPLE");
     });
 
+    test("preview masks the flagged span even when the value appears earlier on the line", () => {
+        const secret = "aB3xZ9qLkP2mWvT7uYrEoNcDfGhJ";
+        const content = `// example ${secret} -> apiKey = "${secret}"`;
+        const findings = scanContent({ content, file: "a.ts", config: cfg });
+
+        expect(findings).toHaveLength(1);
+        const masked = maskSecret(secret);
+        expect(findings[0].preview).toContain(`"${masked}"`);
+    });
+
     test("an inline secret-scan:ignore comment suppresses findings on that line", () => {
         const content = 'const key = "AKIAIOSFODNN7EXAMPLE"; // secret-scan:ignore';
         expect(scanContent({ content, file: "a.ts", config: cfg })).toHaveLength(0);

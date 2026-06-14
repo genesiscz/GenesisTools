@@ -29,7 +29,10 @@ export function formatHuman(result: ScanResult): string {
             : `${result.findingCount} ${fileWord} in ${distinctFiles} file${distinctFiles === 1 ? "" : "s"} ` +
               `(${result.scannedFiles} files scanned, ${result.skippedFiles} skipped)`;
 
-    lines.push("");
+    if (lines.length > 0) {
+        lines.push("");
+    }
+
     lines.push(summary);
     return lines.join("\n");
 }

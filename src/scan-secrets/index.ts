@@ -68,15 +68,24 @@ async function main(dirArg: string | undefined, options: Options): Promise<void>
         process.exit(2);
     }
 
-    if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+    let isDirectory = false;
+    try {
+        isDirectory = existsSync(dir) && statSync(dir).isDirectory();
+    } catch (err) {
+        logger.warn({ err, dir }, "scan-secrets: directory stat failed");
+    }
+
+    if (!isDirectory) {
         out.error(`Not a directory: ${dir}`);
         out.error(suggestCommand("tools scan-secrets", { add: ["<dir>"] }));
         await out.flush();
         process.exit(2);
     }
 
-    const maxSizeKb = Number.parseInt(options.maxSize, 10);
-    if (!Number.isFinite(maxSizeKb) || maxSizeKb <= 0) {
+    const maxSizeText = options.maxSize.trim();
+    const maxSizeKb = Number(maxSizeText);
+
+    if (!/^\d+$/.test(maxSizeText) || !Number.isSafeInteger(maxSizeKb) || maxSizeKb <= 0) {
         out.error("--max-size must be a positive integer (KB).");
         await out.flush();
         process.exit(2);
@@ -99,7 +108,7 @@ async function main(dirArg: string | undefined, options: Options): Promise<void>
     if (options.json) {
         out.result(SafeJSON.stringify(toJsonResult(result), null, 2));
     } else {
-        out.println(formatHuman(result));
+        out.result(formatHuman(result));
     }
 
     await out.flush();

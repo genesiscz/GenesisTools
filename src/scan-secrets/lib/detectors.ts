@@ -1,7 +1,7 @@
 import { shannonEntropy } from "./entropy";
 import type { Detector } from "./types";
 
-const ASSIGN = `(?:key|secret|password|passwd|pwd|token|api[_-]?key|access[_-]?key|auth)`;
+const ASSIGN = `(?:(?<![A-Za-z])key(?![A-Za-z])|secret|password|passwd|pwd|token|api[_-]?key|access[_-]?key|auth)`;
 
 export const DETECTORS: Detector[] = [
     {
