@@ -7,11 +7,13 @@ export interface GitResult {
 /**
  * Thin git runner. Shells out via `Bun.spawn(["git", "-C", cwd, ...args])`,
  * decoding stdout/stderr. No logging — callers decide what to do with the result.
+ * `env` is merged over the inherited environment (e.g. to sandbox object writes).
  */
-export async function runGit(cwd: string, args: string[]): Promise<GitResult> {
+export async function runGit(cwd: string, args: string[], env?: Record<string, string>): Promise<GitResult> {
     const proc = Bun.spawn(["git", "-C", cwd, ...args], {
         stdout: "pipe",
         stderr: "pipe",
+        env: env ? { ...process.env, ...env } : undefined,
     });
 
     const [stdout, stderr, code] = await Promise.all([

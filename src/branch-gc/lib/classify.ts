@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { gitOk, runGit } from "./git";
 
 export type BranchStatus = "current" | "base" | "merged" | "squash-merged" | "gone" | "stale" | "active";
@@ -157,7 +160,7 @@ export async function isSquashMerged(cwd: string, base: string, branch: string):
     }
 
     const countRes = await runGit(cwd, ["rev-list", "--count", `${mb}..${branch}`]);
-    if (Number.parseInt(countRes.stdout.trim(), 10) === 0) {
+    if (countRes.code !== 0 || Number.parseInt(countRes.stdout.trim(), 10) === 0) {
         return false;
     }
 
@@ -167,18 +170,39 @@ export async function isSquashMerged(cwd: string, base: string, branch: string):
     }
 
     const tree = treeRes.stdout.trim();
-    const squashRes = await runGit(cwd, ["commit-tree", tree, "-p", mb, "-m", "_"]);
-    if (squashRes.code !== 0) {
+
+    // `commit-tree` writes a loose commit object into the object store. Sandbox
+    // that write into a throwaway dir (with the real repo as a read-only
+    // alternate) so this read-only classification leaves no litter in .git/objects.
+    // Resolve the real objects dir via git so worktrees / custom GIT_DIR work.
+    const objectsRes = await runGit(cwd, ["rev-parse", "--path-format=absolute", "--git-path", "objects"]);
+    if (objectsRes.code !== 0) {
         return false;
     }
 
-    const squashed = squashRes.stdout.trim();
-    const cherryRes = await runGit(cwd, ["cherry", base, squashed]);
-    const firstLine = cherryRes.stdout
-        .split("\n")
-        .find((l) => l.trim().length > 0)
-        ?.trim();
-    return firstLine?.startsWith("-") ?? false;
+    const objectsDir = objectsRes.stdout.trim();
+    const sandboxDir = mkdtempSync(join(tmpdir(), "branch-gc-objs-"));
+    const sandboxEnv: Record<string, string> = {
+        GIT_OBJECT_DIRECTORY: sandboxDir,
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: objectsDir,
+    };
+
+    try {
+        const squashRes = await runGit(cwd, ["commit-tree", tree, "-p", mb, "-m", "_"], sandboxEnv);
+        if (squashRes.code !== 0) {
+            return false;
+        }
+
+        const squashed = squashRes.stdout.trim();
+        const cherryRes = await runGit(cwd, ["cherry", base, squashed], sandboxEnv);
+        const firstLine = cherryRes.stdout
+            .split("\n")
+            .find((l) => l.trim().length > 0)
+            ?.trim();
+        return firstLine?.startsWith("-") ?? false;
+    } finally {
+        rmSync(sandboxDir, { recursive: true, force: true });
+    }
 }
 
 async function classifyOne(branch: string, opts: ClassifyOptions, gone: Set<string>): Promise<BranchInfo> {
@@ -221,7 +245,7 @@ async function classifyOne(branch: string, opts: ClassifyOptions, gone: Set<stri
             return "gone";
         }
 
-        if (age > staleDays) {
+        if (age >= staleDays) {
             return "stale";
         }
 

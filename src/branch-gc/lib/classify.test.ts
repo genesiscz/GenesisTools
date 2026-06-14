@@ -12,8 +12,8 @@ const ANCHOR_EPOCH = 1_700_000_000;
 // fixed identity. Bun.spawn snapshots env at process start and ignores later
 // process.env mutations, so we MUST pass this explicitly on every spawn — the
 // repo-building git() helper below does exactly that.
-const BASE_GIT_ENV: Record<string, string> = {
-    ...(process.env as Record<string, string>),
+const BASE_GIT_ENV = {
+    ...process.env,
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_SYSTEM: "/dev/null",
     GIT_AUTHOR_NAME: "Test",
@@ -194,6 +194,38 @@ describe("classifyBranches", () => {
         }
     });
 
+    it("classifies a branch whose upstream was deleted as `gone`", async () => {
+        const remote = mkdtempSync(join(tmpdir(), "branch-gc-remote-"));
+        const dir = await makeRepo();
+        try {
+            await git(remote, ["init", "-q", "--bare", "-b", "master"]);
+            await git(dir, ["remote", "add", "origin", remote]);
+            await git(dir, ["push", "-q", "origin", "master"]);
+
+            // Branch with a tracked, then deleted, upstream.
+            await git(dir, ["checkout", "-q", "-b", "feat/gone"]);
+            await commit(dir, "g.txt", "gone\n", ANCHOR_EPOCH + 10);
+            await git(dir, ["push", "-q", "-u", "origin", "feat/gone"]);
+            await git(dir, ["checkout", "-q", "master"]);
+            await git(dir, ["push", "-q", "origin", "--delete", "feat/gone"]);
+            await git(dir, ["fetch", "-q", "--prune", "origin"]);
+
+            const infos = await classifyBranches({
+                cwd: dir,
+                base: "master",
+                current: "master",
+                nowEpoch: ANCHOR_EPOCH + 20,
+                staleDays: 90,
+            });
+            const feat = infos.find((b) => b.name === "feat/gone");
+            expect(feat?.status).toBe("gone");
+            expect(feat?.deletable).toBe(true);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+            rmSync(remote, { recursive: true, force: true });
+        }
+    });
+
     it("reports ahead/behind matching git rev-list --left-right --count", async () => {
         const dir = await makeRepo();
         try {
@@ -236,6 +268,40 @@ describe("detectBase / getCurrentBranch", () => {
         const dir = await makeRepo();
         try {
             await expect(detectBase(dir, "nope")).rejects.toThrow(/does not exist/);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("auto-detects main when there is no master", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "branch-gc-"));
+        try {
+            await git(dir, ["init", "-q", "-b", "main"]);
+            await commit(dir, "base.txt", "base\n", ANCHOR_EPOCH);
+            expect(await detectBase(dir)).toBe("main");
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("throws BaseNotFoundError when neither master nor main exists", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "branch-gc-"));
+        try {
+            await git(dir, ["init", "-q", "-b", "trunk"]);
+            await commit(dir, "base.txt", "base\n", ANCHOR_EPOCH);
+            await expect(detectBase(dir)).rejects.toThrow(/auto-detect a base branch/);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("returns '' for getCurrentBranch on a detached HEAD", async () => {
+        const dir = await makeRepo();
+        try {
+            await commit(dir, "second.txt", "second\n", ANCHOR_EPOCH + 10);
+            const head = await git(dir, ["rev-parse", "HEAD"]);
+            await git(dir, ["checkout", "-q", head]);
+            expect(await getCurrentBranch(dir)).toBe("");
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }

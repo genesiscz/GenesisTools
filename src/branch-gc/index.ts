@@ -209,6 +209,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-    out.error(String(err));
+    log.error({ error: err }, "branch-gc failed");
+    out.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
 });
