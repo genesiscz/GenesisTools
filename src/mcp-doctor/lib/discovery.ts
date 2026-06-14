@@ -42,6 +42,17 @@ function normalizeOne(name: string, def: RawServerDef, source: ConfigSource): No
     }
 
     if (typeof def.url === "string" && def.url.length > 0) {
+        try {
+            new URL(def.url);
+        } catch {
+            return {
+                name,
+                transport: "stdio",
+                source,
+                invalidReason: `invalid URL: "${def.url}"`,
+            };
+        }
+
         const transport = def.type === "sse" ? "sse" : "http";
         return { name, transport, source, url: def.url };
     }
@@ -64,7 +75,7 @@ export function mergeServers(blobs: ConfigBlobs): NormalizedServer[] {
 
     for (const { config, source } of layers) {
         const map = config?.mcpServers;
-        if (!map) {
+        if (!map || typeof map !== "object" || Array.isArray(map)) {
             continue;
         }
 

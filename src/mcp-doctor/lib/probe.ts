@@ -58,7 +58,6 @@ export async function probeServer(server: NormalizedServer, opts: ProbeOptions):
     }
 
     const client = new Client(CLIENT_INFO);
-    const transport = buildTransport(server);
     const startedAt = Date.now();
     let finishedAt: number | null = null;
     let error: string | null = null;
@@ -68,6 +67,7 @@ export async function probeServer(server: NormalizedServer, opts: ProbeOptions):
     let serverInfo: { name: string; version: string } | null = null;
 
     try {
+        const transport = buildTransport(server);
         await withTimeout(client.connect(transport), opts.timeoutMs);
         finishedAt = Date.now();
 

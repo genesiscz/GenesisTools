@@ -47,6 +47,15 @@ async function discover(opts: SharedOpts): Promise<NormalizedServer[]> {
 async function probeAll(servers: NormalizedServer[], opts: SharedOpts): Promise<ProbeResult[]> {
     const timeoutMs = Number(opts.timeout);
     const slowThresholdMs = Number(opts.slow);
+
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+        throw new Error(`Invalid --timeout value: "${opts.timeout}". Must be a positive number.`);
+    }
+
+    if (!Number.isFinite(slowThresholdMs) || slowThresholdMs <= 0) {
+        throw new Error(`Invalid --slow value: "${opts.slow}". Must be a positive number.`);
+    }
+
     return Promise.all(servers.map((server) => probeServer(server, { timeoutMs, slowThresholdMs })));
 }
 

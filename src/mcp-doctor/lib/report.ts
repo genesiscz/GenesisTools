@@ -18,6 +18,12 @@ export interface Classification {
 
 export function classifyResult(input: ClassifyInput): Classification {
     if (input.error) {
+        const lower = input.error.toLowerCase();
+        const isTimeout = lower.includes("timeout") || lower.includes("timed out");
+        if (isTimeout && input.finishedAt === null) {
+            return { status: "timeout", latencyMs: null };
+        }
+
         const latency = input.finishedAt === null ? null : input.finishedAt - input.startedAt;
         return { status: "error", latencyMs: latency };
     }
@@ -70,7 +76,7 @@ export function buildReport(results: ProbeResult[]): DoctorReport {
         ok: count("ok"),
         slow: count("slow"),
         timeout: count("timeout"),
-        error: count("error"),
+        error: count("error") + count("invalid"),
         duplicateTools: duplicates.length,
     };
 
@@ -90,7 +96,9 @@ export function formatHealthTable(report: DoctorReport, slowThresholdMs = 3_000)
 
     const lines: string[] = [];
     const s = report.summary;
-    lines.push(`mcp-doctor — ${s.total} servers (${s.ok} ok · ${s.slow} slow · ${s.error} error)`);
+    lines.push(
+        `mcp-doctor — ${s.total} servers (${s.ok} ok · ${s.slow} slow · ${s.timeout} timeout · ${s.error} error)`
+    );
     lines.push("");
     lines.push(formatTable(rows, headers));
 
