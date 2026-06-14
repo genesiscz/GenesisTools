@@ -13,6 +13,14 @@ export class ApoptosisStateStore {
         return state?.[dir] ?? {};
     }
 
+    async setMarks(dir: string, marks: Record<string, { firstMarked: string }>): Promise<void> {
+        await this.storage.atomicUpdate<ApoptosisState>(STATE_FILE, (current) => {
+            const next: ApoptosisState = current ?? {};
+            next[dir] = marks;
+            return next;
+        });
+    }
+
     async mark(dir: string, file: string, firstMarked: string): Promise<void> {
         await this.storage.atomicUpdate<ApoptosisState>(STATE_FILE, (current) => {
             const next: ApoptosisState = current ?? {};

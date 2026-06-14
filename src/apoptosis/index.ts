@@ -30,10 +30,21 @@ function splitList(value: string): string[] {
 }
 
 function buildScanOptions(dirArg: string | undefined, options: RootOptions): ScanOptions {
+    const churnDays = Number.parseInt(options.days ?? "90", 10);
+    const graceDays = Number.parseInt(options.grace ?? "14", 10);
+
+    if (Number.isNaN(churnDays) || churnDays <= 0) {
+        throw new Error("Churn lookback window (--days) must be a positive integer.");
+    }
+
+    if (Number.isNaN(graceDays) || graceDays <= 0) {
+        throw new Error("Grace period (--grace) must be a positive integer.");
+    }
+
     return {
         dir: resolve(dirArg ?? process.cwd()),
-        churnDays: Number.parseInt(options.days ?? "90", 10),
-        graceDays: Number.parseInt(options.grace ?? "14", 10),
+        churnDays,
+        graceDays,
         exts: splitList(options.ext ?? DEFAULT_EXTS),
         ignore: splitList(options.ignore ?? DEFAULT_IGNORE),
         coveragePath: options.coverage ? resolve(options.coverage) : undefined,
