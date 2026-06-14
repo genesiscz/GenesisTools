@@ -43,6 +43,14 @@ describe("renderSchema", () => {
         expect(out).toContain("interface Profile {"); // nested name untouched
     });
 
+    it("name: does not rename fields/properties literally named 'Root'", () => {
+        const sampleWithRootField = '{"Root":"value","nested":{"Root":true}}';
+        const out = renderSchema({ text: sampleWithRootField, format: "typescript", name: "User" });
+        expect(out).toContain("interface User {");
+        expect(out).toContain("Root: string;");
+        expect(out).toContain("Root: boolean;");
+    });
+
     it("name: is a no-op for skeleton format", () => {
         const named = renderSchema({ text: SAMPLE, format: "skeleton", name: "User" });
         const plain = renderSchema({ text: SAMPLE, format: "skeleton", name: "Root" });

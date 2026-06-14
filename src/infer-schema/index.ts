@@ -25,13 +25,22 @@ program
     .option("-n, --name <RootName>", "Root interface name (typescript only)", "Root")
     .option("-c, --clipboard", "Copy the result to the clipboard")
     .action(async (file: string | undefined, options: Options) => {
+        if (options.format === "typescript" && !/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(options.name)) {
+            out.error(`Invalid root interface name: "${options.name}". It must be a valid TypeScript identifier.`);
+            process.exit(1);
+        }
+
         try {
             const { text } = await resolveInput({ arg: file, isTTY: process.stdin.isTTY === true });
             const result = renderSchema({ text, format: options.format, name: options.name });
 
             if (options.clipboard) {
-                await clipboardy.write(result);
-                out.log.success("Copied to clipboard");
+                try {
+                    await clipboardy.write(result);
+                    out.log.success("Copied to clipboard");
+                } catch (err) {
+                    logger.warn({ err }, "infer-schema: failed to copy to clipboard");
+                }
             }
 
             out.result(result);

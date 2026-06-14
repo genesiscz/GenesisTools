@@ -44,13 +44,15 @@ export function renderSchema({ text, format, name }: RenderOptions): string {
  * formats (their formatters have no named root). The util assigns the
  * unsuffixed "Root" to the actual root FIRST via its `uniqueName` counter —
  * a nested key literally named "root" becomes "Root2" — so `\bRoot\b` matches
- * the root token only. (A field literally named "Root" would also be renamed,
- * but that is an unsupported edge.)
+ * the root token only. The negative lookahead skips matches followed by a
+ * (possibly optional) colon — i.e. property keys literally named "Root" — so
+ * those are preserved while the `interface Root` declaration and any `: Root;`
+ * type-reference are still renamed.
  */
 function applyRootName(output: string, format: OutputFormat, name: string): string {
     if (format !== "typescript" || name === "Root") {
         return output;
     }
 
-    return output.replace(/\bRoot\b/g, () => name);
+    return output.replace(/\bRoot\b(?!\s*\??\s*:)/g, () => name);
 }
