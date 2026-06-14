@@ -21,10 +21,19 @@ function parseValue(rawValue: string): string {
     }
 
     const first = trimmed[0];
-    if (first === '"' || first === "'") {
-        const closing = trimmed.indexOf(first, 1);
-        if (closing !== -1) {
-            return trimmed.slice(1, closing);
+    if (first === '"') {
+        const match = /^"((?:[^"\\]|\\.)*)"/.exec(trimmed);
+        if (match) {
+            return match[1].replace(/\\(["\\])/g, "$1");
+        }
+
+        return trimmed.slice(1);
+    }
+
+    if (first === "'") {
+        const match = /^'((?:[^'\\]|\\.)*)'/.exec(trimmed);
+        if (match) {
+            return match[1];
         }
 
         return trimmed.slice(1);
