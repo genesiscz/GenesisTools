@@ -21,7 +21,7 @@ export interface JsonShape {
 }
 
 function shown(value: string, showValues: boolean): string {
-    if (showValues) {
+    if (showValues || value === "") {
         return value;
     }
 

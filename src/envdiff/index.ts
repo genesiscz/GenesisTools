@@ -37,14 +37,14 @@ program
             now: new Date(),
         });
 
-        for (const line of result.status) {
-            out.log.warn(line);
-        }
-
         if (result.exitCode === 2) {
             out.error(result.status[0] ?? "envdiff failed.");
             process.exitCode = 2;
             return;
+        }
+
+        for (const line of result.status) {
+            out.log.warn(line);
         }
 
         if (result.stdout.length > 0) {

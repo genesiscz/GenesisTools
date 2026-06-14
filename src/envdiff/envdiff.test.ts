@@ -57,6 +57,11 @@ describe("parseEnv", () => {
         expect(parsed.map.get("DUP")).toBe("two");
         expect(parsed.keys).toEqual(["DUP"]);
     });
+
+    it("keeps escaped quotes inside double-quoted values", () => {
+        const parsed = parseEnv(`${String.raw`A="value with \"escaped\" quotes"`}\n`);
+        expect(parsed.map.get("A")).toBe(`value with "escaped" quotes`);
+    });
 });
 
 describe("diffEnv", () => {
@@ -131,6 +136,20 @@ describe("buildSyncedContent", () => {
         expect(result).toContain("A=1\n");
         expect(result).toContain("B=2");
     });
+
+    it("round-trips a synced value containing # and spaces", () => {
+        const example = parseEnv('SECRET="pass word#1"\n');
+        const diff = diffEnv(parseEnv(""), example);
+        const synced = buildSyncedContent({ actualContent: "", diff, now: fixedNow });
+        expect(parseEnv(synced).map.get("SECRET")).toBe("pass word#1");
+    });
+
+    it("does not prepend a blank line when the file is empty", () => {
+        const diff = diffEnv(parseEnv(""), parseEnv("A=1\n"));
+        const result = buildSyncedContent({ actualContent: "", diff, now: fixedNow });
+        expect(result.startsWith("\n")).toBe(false);
+        expect(result.startsWith("#")).toBe(true);
+    });
 });
 
 describe("renderDiff", () => {
@@ -179,6 +198,20 @@ describe("renderDiff", () => {
         });
 
         expect(text.toLowerCase()).toContain("in sync");
+    });
+
+    it("does not mask empty values", () => {
+        const d = diffEnv(parseEnv(""), parseEnv("EMPTY=\n"));
+        const text = renderDiff({
+            diff: d,
+            actualLabel: ".env",
+            exampleLabel: ".env.example",
+            showValues: false,
+            color: false,
+        });
+
+        expect(text).toContain("EMPTY = ");
+        expect(text).not.toContain(`EMPTY = ${maskValue()}`);
     });
 });
 
