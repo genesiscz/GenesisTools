@@ -23,12 +23,11 @@ export function zoneOffsetMinutes(epochMs: number, timeZone: string): number {
         minute: "2-digit",
         second: "2-digit",
     });
-    const hour = p.hour === "24" ? 0 : Number(p.hour);
     const asUTC = Date.UTC(
         Number(p.year),
         Number(p.month) - 1,
         Number(p.day),
-        hour,
+        Number(p.hour),
         Number(p.minute),
         Number(p.second)
     );

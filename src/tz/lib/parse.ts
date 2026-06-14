@@ -25,8 +25,13 @@ function splitExpression(expr: string): SplitResult {
     let head = trimmed;
     let target: string | undefined;
     if (targetMatch && typeof targetMatch.index === "number") {
-        target = resolveZone(targetMatch[1]);
-        head = trimmed.slice(0, targetMatch.index).trim();
+        try {
+            target = resolveZone(targetMatch[1]);
+            head = trimmed.slice(0, targetMatch.index).trim();
+        } catch (err) {
+            logger.debug({ error: err, candidate: targetMatch[1] }, "tz: trailing 'in/to' token is not a target zone");
+            target = undefined;
+        }
     }
 
     // A trailing token that resolves to a zone (and is not consumed by chrono as
@@ -39,7 +44,7 @@ function splitExpression(expr: string): SplitResult {
             sourceZone = resolveZone(lastToken);
             head = tokens.slice(0, -1).join(" ");
         } catch (err) {
-            logger.debug({ err, lastToken }, "tz: trailing token is not a source zone");
+            logger.debug({ error: err, lastToken }, "tz: trailing token is not a source zone");
             sourceZone = undefined;
         }
     }
@@ -67,10 +72,19 @@ export function parseExpression({ expr, nowMs, localZone }: ParseInput): ParseRe
         return { epochMs: start.date().getTime(), sourceLabel, target };
     }
 
-    // Branch (b): a date-only input with no certain clock hour — fall back to the
-    // reference instant rather than guessing midnight.
+    // Branch (b): a date-only input with no certain clock hour — default to midnight
+    // (00:00) of the parsed date in the source zone if given, else the local zone.
     if (!start.isCertain("hour")) {
-        return { epochMs: reference.getTime(), sourceLabel, target };
+        const zone = sourceZone ?? localZone;
+        const epochMs = epochFromWallClockInZone(
+            start.get("year") ?? reference.getFullYear(),
+            start.get("month") ?? reference.getMonth() + 1,
+            start.get("day") ?? reference.getDate(),
+            0,
+            0,
+            zone
+        );
+        return { epochMs, sourceLabel, target };
     }
 
     // Branch (c): a wall-clock time with no certain zone. Read the TYPED
@@ -78,9 +92,9 @@ export function parseExpression({ expr, nowMs, localZone }: ParseInput): ParseRe
     // was given, else the local zone.
     const zone = sourceZone ?? localZone;
     const epochMs = epochFromWallClockInZone(
-        start.get("year") ?? reference.getUTCFullYear(),
-        start.get("month") ?? 1,
-        start.get("day") ?? 1,
+        start.get("year") ?? reference.getFullYear(),
+        start.get("month") ?? reference.getMonth() + 1,
+        start.get("day") ?? reference.getDate(),
         start.get("hour") ?? 0,
         start.get("minute") ?? 0,
         zone

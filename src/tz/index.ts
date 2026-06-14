@@ -31,7 +31,7 @@ program
         try {
             result = convert({ expr, nowMs, localZone, to });
         } catch (err) {
-            logger.debug({ err, expr }, "tz conversion failed");
+            logger.debug({ error: err, expr }, "tz conversion failed");
             out.error(err instanceof Error ? err.message : String(err));
             process.exit(1);
         }
