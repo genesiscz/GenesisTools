@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
@@ -29,6 +30,11 @@ registerSendCommand(program, storage);
 registerDaemonCommands(program);
 
 program.action(async () => {
+    if (!isInteractive()) {
+        p.cancel(`Interactive mode required: ${suggestCommand("tools wakeup", { add: ["wake"] })}`);
+        process.exit(1);
+    }
+
     let config = await readWakeupConfig(storage);
 
     if (!config.role) {

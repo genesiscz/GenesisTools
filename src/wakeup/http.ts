@@ -18,10 +18,15 @@ export class WakeupHttpError extends Error {
 
 function buildUrl(target: ServerTarget, path: string): string {
     const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-    const base =
-        target.host.startsWith("http://") || target.host.startsWith("https://")
-            ? target.host.replace(/\/+$/, "")
-            : `http://${formatServerAddress(target.host, target.port)}`;
+    let base: string;
+
+    if (target.host.startsWith("http://") || target.host.startsWith("https://")) {
+        const url = new URL(target.host);
+        url.port = String(target.port);
+        base = url.origin;
+    } else {
+        base = `http://${formatServerAddress(target.host, target.port)}`;
+    }
 
     return `${base}${normalizedPath}`;
 }
@@ -41,7 +46,7 @@ export async function postJson<T>(target: ServerTarget, path: string, body: Reco
     });
 
     const text = await response.text();
-    const data = text ? SafeJSON.parse(text) : {};
+    const data = text ? SafeJSON.parse(text, { strict: true }) : {};
     const message = typeof data?.error === "string" ? data.error : response.statusText;
 
     if (!response.ok) {

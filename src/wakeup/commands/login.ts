@@ -1,3 +1,4 @@
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -36,6 +37,11 @@ function requireValue<T>(value: T, message: string): T {
 }
 
 export async function runLoginFlow(storage: Storage): Promise<void> {
+    if (!isInteractive()) {
+        p.cancel(`Interactive mode required: ${suggestCommand("tools wakeup login")}`);
+        process.exit(1);
+    }
+
     p.intro("Login to wakeup server");
     const config = await readWakeupConfig(storage);
     const serverHost = config.server?.host ?? config.client?.serverHost ?? "localhost";

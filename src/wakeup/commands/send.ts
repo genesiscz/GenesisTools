@@ -1,3 +1,4 @@
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -25,6 +26,11 @@ function ensureValue<T>(value: T, message: string): T {
 }
 
 export async function runSendFlow(storage: Storage): Promise<void> {
+    if (!isInteractive()) {
+        p.cancel(`Interactive mode required: ${suggestCommand("tools wakeup send")}`);
+        process.exit(1);
+    }
+
     p.intro("Send a magic packet");
     const config = await readWakeupConfig(storage);
     const iface = getDefaultInterface();
@@ -51,8 +57,13 @@ export async function runSendFlow(storage: Storage): Promise<void> {
                     message: "UDP port",
                     initialValue: String(config.client?.wolPort ?? DEFAULT_WOL_PORT),
                     validate: (value) => {
-                        const port = Number.parseInt(value ?? "", 10);
-                        if (Number.isNaN(port) || port <= 0 || port > 65535) {
+                        const raw = (value ?? "").trim();
+                        if (!/^\d+$/.test(raw)) {
+                            return "Enter a valid port (1-65535)";
+                        }
+
+                        const port = Number(raw);
+                        if (port <= 0 || port > 65535) {
                             return "Enter a valid port (1-65535)";
                         }
                     },
@@ -74,7 +85,7 @@ export async function runSendFlow(storage: Storage): Promise<void> {
 
     const mac = String(ensureValue(answers.mac, "MAC required")).trim();
     const broadcast = String(ensureValue(answers.broadcast, "Broadcast required")).trim();
-    const port = Number.parseInt(String(ensureValue(answers.port, "Port required")), 10);
+    const port = Number(String(ensureValue(answers.port, "Port required")).trim());
     const password =
         typeof answers.password === "string" && answers.password.trim().length > 0 ? answers.password : undefined;
 

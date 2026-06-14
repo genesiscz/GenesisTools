@@ -77,7 +77,7 @@ export function parseServerInput(
     host: string;
     port: number;
 } {
-    const trimmed = input.trim();
+    const trimmed = input.trim().replace(/^https?:\/\//i, "");
 
     if (!trimmed.includes(":")) {
         return { host: trimmed, port: defaultPort };
@@ -95,11 +95,8 @@ export function parseServerInput(
 }
 
 export function formatServerAddress(host: string, port: number): string {
-    if (host.startsWith("http://") || host.startsWith("https://")) {
-        return `${host.replace(/\/+$/, "")}:${port}`;
-    }
-
-    return `${host}:${port}`;
+    const cleanHost = host.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+    return `${cleanHost}:${port}`;
 }
 
 export function mergeRole(current: DeviceRole | undefined, desired: DeviceRole): DeviceRole {

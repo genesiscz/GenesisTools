@@ -20,7 +20,7 @@ All prompts use `@clack/prompts`; sensible defaults come from your network inter
 - `POST /login` — `{ name, password }` → confirms the client exists
 - `POST /wake` — `{ name, password }` (uses registered client) or `{ mac, broadcast?, port?, password? }`
 
-If a server token is configured, requests must include `Authorization: Bearer <token>` (or `?token=` for GET).
+If a server token is configured, requests must include an `Authorization: Bearer <token>` header or a `?token=` query parameter.
 
 ## Keep the relay running (daemon)
 
@@ -41,4 +41,4 @@ tools wakeup daemon unregister
 ## Notes
 
 - Works best when the target Mac has "Wake for network access" enabled and is on a network that forwards broadcast packets to the interface.
-- SecureOn passwords are supported in `tools wakeup send` and `/wake` via the optional `password` field (6-byte hex).
+- SecureOn passwords are supported in `tools wakeup send` and `/wake` via the optional `password` field (6-byte hex, e.g. `AABBCCDDEE00`).

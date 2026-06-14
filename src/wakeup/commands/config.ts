@@ -1,3 +1,4 @@
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -7,6 +8,11 @@ import { runRegisterFlow } from "./register";
 import { runServerSetup } from "./server";
 
 export async function runConfigurationMenu(storage: Storage): Promise<void> {
+    if (!isInteractive()) {
+        p.cancel(`Interactive mode required: ${suggestCommand("tools wakeup config")}`);
+        process.exit(1);
+    }
+
     p.intro("Wakeup configuration");
 
     const config = await readWakeupConfig(storage);
@@ -40,6 +46,11 @@ export async function runConfigurationMenu(storage: Storage): Promise<void> {
         ],
         initialValue: "done",
     });
+
+    if (p.isCancel(next)) {
+        p.cancel("Cancelled");
+        process.exit(0);
+    }
 
     if (next === "server") {
         await runServerSetup(storage);

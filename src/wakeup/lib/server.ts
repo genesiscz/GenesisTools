@@ -56,7 +56,8 @@ async function readBody(req: Request): Promise<WakeRequestBody | null> {
     if (contentType.includes("application/json")) {
         try {
             return (await req.json()) as WakeRequestBody;
-        } catch {
+        } catch (err) {
+            console.debug("[wakeup] failed to parse JSON body", err);
             return null;
         }
     }
@@ -65,6 +66,7 @@ async function readBody(req: Request): Promise<WakeRequestBody | null> {
         const text = await req.text();
         const params = new URLSearchParams(text);
         return {
+            name: params.get("name") ?? undefined,
             mac: params.get("mac") ?? undefined,
             broadcast: params.get("broadcast") ?? undefined,
             port: params.get("port") ? Number(params.get("port")) : undefined,
@@ -80,8 +82,9 @@ async function readBody(req: Request): Promise<WakeRequestBody | null> {
             return null;
         }
 
-        return SafeJSON.parse(text) as WakeRequestBody;
-    } catch {
+        return SafeJSON.parse(text, { strict: true }) as WakeRequestBody;
+    } catch (err) {
+        console.debug("[wakeup] failed to parse body as JSON", err);
         return null;
     }
 }
@@ -217,7 +220,7 @@ export async function runWakeServer(opts: WakeServerOptions): Promise<void> {
                 await persistClients(opts.storage, clients, opts);
                 logRequest("registered client", opts, { name, mac: record.mac, broadcast: record.broadcast });
 
-                return json({ ok: true, client: record });
+                return json({ ok: true, client: { ...record, password: undefined } });
             }
 
             if (url.pathname === "/login") {
@@ -276,7 +279,7 @@ export async function runWakeServer(opts: WakeServerOptions): Promise<void> {
                         mac: packetMac,
                         broadcast: packetBroadcast,
                         port: packetPort,
-                        password,
+                        password: name ? undefined : password,
                     });
                     logRequest("sent magic packet", opts, { ...result });
                     return json({ ok: true, ...result });

@@ -1,3 +1,4 @@
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -110,6 +111,11 @@ async function promptServerSettings(storage: Storage): Promise<ServerSetupResult
 }
 
 export async function runServerSetup(storage: Storage): Promise<void> {
+    if (!isInteractive()) {
+        p.cancel(`Interactive mode required: ${suggestCommand("tools wakeup server")}`);
+        process.exit(1);
+    }
+
     p.intro("Wakeup server");
     const settings = await promptServerSettings(storage);
 
