@@ -27,20 +27,29 @@ function num(value: number | undefined): number {
     return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+function isRawLine(value: unknown): value is RawLine {
+    return typeof value === "object" && value !== null;
+}
+
 export function parseTranscriptLine(line: string): UsageEvent | null {
     const trimmed = line.trim();
     if (!trimmed) {
         return null;
     }
 
-    let raw: RawLine;
+    let rawUnknown: unknown;
     try {
-        raw = SafeJSON.parse(trimmed) as RawLine;
+        rawUnknown = SafeJSON.parse(trimmed, { strict: true });
     } catch (err) {
         logger.debug({ err }, "ai-spend: skipping malformed transcript line");
         return null;
     }
 
+    if (!isRawLine(rawUnknown)) {
+        return null;
+    }
+
+    const raw = rawUnknown;
     if (raw.type !== "assistant") {
         return null;
     }

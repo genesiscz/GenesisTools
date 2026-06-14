@@ -12,14 +12,35 @@ export function findTranscriptFiles(homeDir: string): string[] {
         return [];
     }
 
+    let entries: string[];
+    try {
+        entries = readdirSync(root);
+    } catch (err) {
+        logger.warn({ err, root }, "ai-spend: failed to read Claude Code projects dir");
+        return [];
+    }
+
     const out: string[] = [];
-    for (const entry of readdirSync(root)) {
+    for (const entry of entries) {
         const dir = join(root, entry);
-        if (!statSync(dir).isDirectory()) {
+        try {
+            if (!statSync(dir).isDirectory()) {
+                continue;
+            }
+        } catch (err) {
+            logger.warn({ err, dir }, "ai-spend: failed to stat project entry");
             continue;
         }
 
-        for (const file of readdirSync(dir)) {
+        let files: string[];
+        try {
+            files = readdirSync(dir);
+        } catch (err) {
+            logger.warn({ err, dir }, "ai-spend: failed to read project dir");
+            continue;
+        }
+
+        for (const file of files) {
             if (file.endsWith(".jsonl")) {
                 out.push(join(dir, file));
             }

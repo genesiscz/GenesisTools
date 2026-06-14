@@ -14,5 +14,16 @@ export async function loadPricing(storage: Storage): Promise<PricingTable> {
     }
 
     logger.debug({ models: Object.keys(config.pricing) }, "ai-spend: merging user pricing overrides");
-    return { ...DEFAULT_PRICING, ...config.pricing };
+    const merged: PricingTable = { ...DEFAULT_PRICING };
+    for (const [model, override] of Object.entries(config.pricing)) {
+        const base = merged[model];
+        merged[model] = {
+            input: override.input ?? base?.input ?? 0,
+            output: override.output ?? base?.output ?? 0,
+            cacheWrite: override.cacheWrite ?? base?.cacheWrite ?? 0,
+            cacheRead: override.cacheRead ?? base?.cacheRead ?? 0,
+        };
+    }
+
+    return merged;
 }
