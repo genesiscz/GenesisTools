@@ -29,11 +29,24 @@ async function hashFile(algo: HashAlgo, path: string): Promise<string> {
     return hashChunks({ algo, chunks: fileChunks(path) });
 }
 
+function hasGlobMagic(pattern: string): boolean {
+    return /[*?[\]{}]/.test(pattern);
+}
+
 async function expandGlobs(patterns: string[]): Promise<string[]> {
     const seen = new Set<string>();
     const result: string[] = [];
 
     for (const pattern of patterns) {
+        if (!hasGlobMagic(pattern)) {
+            if (!seen.has(pattern)) {
+                seen.add(pattern);
+                result.push(pattern);
+            }
+
+            continue;
+        }
+
         const matches = await glob(pattern, { nodir: true });
         matches.sort();
         for (const match of matches) {
@@ -100,6 +113,13 @@ async function runCheck(algo: HashAlgo, checkFile: string, quiet: boolean): Prom
     const entries = parseChecksumFile(text);
     if (entries.length === 0) {
         out.error(`hash: no checksum entries found in ${checkFile}`);
+        return 1;
+    }
+
+    const expectedLength = algo === "md5" ? 32 : algo === "sha1" ? 40 : algo === "sha512" ? 128 : 64;
+    if (entries.some((e) => e.hex.length !== expectedLength)) {
+        out.error(`hash: checksum hash length does not match the selected algorithm (${algo})`);
+        logger.warn({ algo, expectedLength, checkFile }, "hash: algorithm/length mismatch in checksum file");
         return 1;
     }
 
