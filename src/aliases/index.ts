@@ -52,7 +52,7 @@ interface AnalyzeReport {
     history: string;
     scannedAt: string;
     params: ScanParams;
-    counts: { lines: number; sequences: number; hot: number };
+    counts: { lines: number; hot: number };
     paths: ReportPath[];
 }
 
@@ -118,6 +118,10 @@ function daysSince(lastSeen: string, now: number): number {
     return Math.max(0, (now - then) / DAY_MS);
 }
 
+function escapeForSingleQuote(s: string): string {
+    return s.replace(/'/g, "'\\''");
+}
+
 /**
  * Mine history, extract hot paths, and update myelination state (unless
  * `noState`). Returns the report plus the raw command count.
@@ -141,42 +145,59 @@ async function runAnalysis(opts: {
     });
 
     const nowIso = new Date(opts.now).toISOString();
-    const prior = opts.noState ? emptyState() : await readState();
     const taken = new Set<string>();
 
-    const reportPaths: ReportPath[] = hot.map((path: HotPath) => {
-        const key = path.commands.join(" ");
-        const priorPath = prior.paths[key];
-        const level = updateMyelination({
-            level: priorPath?.level ?? 0,
-            reused: true,
-            daysSince: priorPath ? daysSince(priorPath.lastSeen, opts.now) : 0,
+    let reportPaths: ReportPath[];
+
+    if (opts.noState) {
+        reportPaths = hot.map((path: HotPath) => {
+            const key = path.commands.join(" ");
+            const level = updateMyelination({ level: 0, reused: true, daysSince: 0 });
+            const alias = suggestAlias(path.commands, taken);
+
+            return {
+                key,
+                commands: path.commands,
+                count: path.count,
+                score: path.score,
+                level: Math.round(level * 100) / 100,
+                alias,
+            };
         });
-        const alias = suggestAlias(path.commands, taken);
-
-        return {
-            key,
-            commands: path.commands,
-            count: path.count,
-            score: path.score,
-            level: Math.round(level * 100) / 100,
-            alias,
-        };
-    });
-
-    if (!opts.noState) {
-        await storage.atomicUpdate<MyelinState>(STATE_FILE, (current) => {
+    } else {
+        const nextState = await storage.atomicUpdate<MyelinState>(STATE_FILE, (current) => {
             const next: MyelinState = current?.paths ? current : emptyState();
-            for (const rp of reportPaths) {
-                next.paths[rp.key] = {
-                    commands: rp.commands,
-                    level: rp.level,
+            for (const path of hot) {
+                const key = path.commands.join(" ");
+                const priorPath = next.paths[key];
+                const level = updateMyelination({
+                    level: priorPath?.level ?? 0,
+                    reused: true,
+                    daysSince: priorPath ? daysSince(priorPath.lastSeen, opts.now) : 0,
+                });
+                next.paths[key] = {
+                    commands: path.commands,
+                    level: Math.round(level * 100) / 100,
                     lastSeen: nowIso,
-                    count: rp.count,
+                    count: path.count,
                 };
             }
 
             return next;
+        });
+
+        reportPaths = hot.map((path: HotPath) => {
+            const key = path.commands.join(" ");
+            const alias = suggestAlias(path.commands, taken);
+
+            return {
+                key,
+                commands: path.commands,
+                count: path.count,
+                score: path.score,
+                level: nextState.paths[key].level,
+                alias,
+            };
         });
     }
 
@@ -192,7 +213,7 @@ async function runAnalysis(opts: {
         history: opts.historyFile,
         scannedAt: nowIso,
         params: opts.params,
-        counts: { lines: commands.length, sequences: hot.length, hot: hot.length },
+        counts: { lines: commands.length, hot: hot.length },
         paths: reportPaths,
     };
 }
@@ -208,9 +229,7 @@ function renderHuman(report: AnalyzeReport, minLevel: number): string {
         `aliases — ${report.history} (n=${report.params.minN}..${report.params.maxN}, threshold ${report.params.threshold})`
     );
     lines.push("");
-    lines.push(
-        `mined ${report.counts.lines} lines · ${report.counts.sequences} sequences · ${report.counts.hot} hot paths`
-    );
+    lines.push(`mined ${report.counts.lines} lines · ${report.counts.hot} hot paths`);
     lines.push("");
 
     if (report.paths.length === 0) {
@@ -231,7 +250,7 @@ function renderHuman(report: AnalyzeReport, minLevel: number): string {
         lines.push("");
         lines.push(`SUGGESTED ALIASES (level >= ${minLevel})`);
         for (const path of suggested) {
-            lines.push(`  alias ${path.alias.name}='${path.alias.command}'`);
+            lines.push(`  alias ${path.alias.name}='${escapeForSingleQuote(path.alias.command)}'`);
         }
 
         lines.push("");
@@ -306,7 +325,7 @@ async function applyAction(flags: ApplyFlags): Promise<void> {
     });
 
     const chosen = report.paths.filter((p) => p.level >= minLevel);
-    const blockBody = chosen.map((p) => `alias ${p.alias.name}='${p.alias.command}'`).join("\n");
+    const blockBody = chosen.map((p) => `alias ${p.alias.name}='${escapeForSingleQuote(p.alias.command)}'`).join("\n");
 
     if (flags.print) {
         const block =

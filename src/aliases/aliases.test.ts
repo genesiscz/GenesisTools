@@ -144,14 +144,21 @@ describe("upsertManagedBlock", () => {
 
 describe("integration (hermetic state + rc round-trips)", () => {
     let home: string;
+    let previousGenesisToolsHome: string | undefined;
 
     beforeEach(() => {
+        previousGenesisToolsHome = process.env.GENESIS_TOOLS_HOME;
         home = mkdtempSync(join(tmpdir(), "aliases-test-"));
         process.env.GENESIS_TOOLS_HOME = home;
     });
 
     afterEach(() => {
-        process.env.GENESIS_TOOLS_HOME = undefined;
+        if (previousGenesisToolsHome === undefined) {
+            delete process.env.GENESIS_TOOLS_HOME;
+        } else {
+            process.env.GENESIS_TOOLS_HOME = previousGenesisToolsHome;
+        }
+
         rmSync(home, { recursive: true, force: true });
     });
 
@@ -265,7 +272,7 @@ describe("integration (hermetic state + rc round-trips)", () => {
             history: "/tmp/synthetic_history",
             scannedAt: "2026-06-02T00:00:00.000Z",
             params: { minN: 2, maxN: 4, threshold: 3, top: 20 },
-            counts: { lines: commands.length, sequences: hot.length, hot: hot.length },
+            counts: { lines: commands.length, hot: hot.length },
             paths: hot.map((h) => ({
                 key: h.commands.join(" "),
                 commands: h.commands,
