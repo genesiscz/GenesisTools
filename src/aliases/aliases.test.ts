@@ -140,6 +140,12 @@ describe("upsertManagedBlock", () => {
         const twice = upsertManagedBlock(once, body);
         expect(twice).toBe(once);
     });
+
+    test("refuses to rewrite an rc file with duplicate managed blocks", () => {
+        const once = upsertManagedBlock("# rc\n", body);
+        const doubled = `${once}\n${BLOCK_START}\nalias stale='echo stale'\n${BLOCK_END}\n`;
+        expect(() => upsertManagedBlock(doubled, body)).toThrow(/multiple managed block markers/);
+    });
 });
 
 describe("integration (hermetic state + rc round-trips)", () => {

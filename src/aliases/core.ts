@@ -288,11 +288,20 @@ export function upsertManagedBlock(
 
     const startIdx = rcContents.indexOf(start);
     const endIdx = rcContents.indexOf(end);
+    const lastStartIdx = rcContents.lastIndexOf(start);
+    const lastEndIdx = rcContents.lastIndexOf(end);
 
     if ((startIdx === -1) !== (endIdx === -1)) {
         throw new Error(
             "aliases: managed block markers are mismatched (only one of start/end found). " +
                 "Fix or remove the stray marker in your rc file before re-applying."
+        );
+    }
+
+    if ((startIdx !== -1 && startIdx !== lastStartIdx) || (endIdx !== -1 && endIdx !== lastEndIdx)) {
+        throw new Error(
+            "aliases: multiple managed block markers found; refusing to rewrite ambiguous rc file. " +
+                "Remove the duplicate aliases managed block in your rc file before re-applying."
         );
     }
 
