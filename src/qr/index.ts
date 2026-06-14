@@ -76,9 +76,9 @@ program
             hidden: options.hidden ?? false,
         });
 
-        logger.debug({ payload }, "qr: rendering wifi payload");
+        logger.debug({ ssid, security, hidden: options.hidden ?? false }, "qr: rendering wifi payload");
         const matrix = renderQr(payload, { small: options.small ?? false });
-        out.log.step(`WIFI payload: ${payload}`);
+        out.log.step(`QR for WiFi network: ${ssid}`);
         out.print(matrix);
     });
 
