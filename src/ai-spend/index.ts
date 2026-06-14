@@ -35,7 +35,8 @@ async function buildReport(opts: SharedOpts, view: View): Promise<Report> {
         sinceDay = resolveSince(opts.since ?? DEFAULT_SINCE, now) ?? resolveSince(DEFAULT_SINCE, now);
     }
 
-    const top = opts.top ? Number.parseInt(opts.top, 10) : 10;
+    const parsedTop = opts.top ? Number.parseInt(opts.top, 10) : 10;
+    const top = Number.isInteger(parsedTop) && parsedTop > 0 ? parsedTop : 10;
     return aggregate({ events, pricing, now, sinceDay, model: opts.model, project: opts.project, top });
 }
 

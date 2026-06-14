@@ -1,4 +1,4 @@
-import { costOf, priceFor } from "./pricing";
+import { priceFor } from "./pricing";
 import type {
     DayBreakdown,
     Filters,
@@ -53,29 +53,18 @@ function passesFilters(ev: UsageEvent, f: Filters): boolean {
     return true;
 }
 
-function eventsCost(events: UsageEvent[], pricing: PricingTable): number {
-    let cost = 0;
-    for (const ev of events) {
-        const price = priceFor(ev.model, pricing);
-        if (!price) {
-            continue;
-        }
-
-        cost +=
-            (ev.inputTokens * price.input +
-                ev.outputTokens * price.output +
-                ev.cacheCreationTokens * price.cacheWrite +
-                ev.cacheReadTokens * price.cacheRead) /
-            1_000_000;
+function eventCost(ev: UsageEvent, pricing: PricingTable): number {
+    const price = priceFor(ev.model, pricing);
+    if (!price) {
+        return 0;
     }
 
-    return cost;
-}
-
-function dayCost(events: UsageEvent[], day: string, pricing: PricingTable): number {
-    return eventsCost(
-        events.filter((e) => dayOf(e.timestamp) === day),
-        pricing
+    return (
+        (ev.inputTokens * price.input +
+            ev.outputTokens * price.output +
+            ev.cacheCreationTokens * price.cacheWrite +
+            ev.cacheReadTokens * price.cacheRead) /
+        1_000_000
     );
 }
 
@@ -97,30 +86,46 @@ export function aggregate(args: AggregateArgs): Report {
     }
 
     const totalTokens = emptyTotals();
-    const byModel = new Map<string, { tokens: TokenTotals; priced: boolean }>();
-    const byDay = new Map<string, TokenTotals>();
-    const byProject = new Map<string, { tokens: TokenTotals; sessions: Set<string> }>();
-    const bySession = new Map<string, { tokens: TokenTotals; project: string; lastDay: string }>();
+    let totalCost = 0;
+    const byModel = new Map<string, { tokens: TokenTotals; cost: number; priced: boolean }>();
+    const byDay = new Map<string, { tokens: TokenTotals; cost: number }>();
+    const byProject = new Map<string, { tokens: TokenTotals; cost: number; sessions: Set<string> }>();
+    const bySession = new Map<string, { tokens: TokenTotals; cost: number; project: string; lastDay: string }>();
 
     for (const ev of kept) {
+        const evCost = eventCost(ev, pricing);
+        totalCost += evCost;
         addTokens(totalTokens, ev);
 
-        const model = byModel.get(ev.model) ?? { tokens: emptyTotals(), priced: priceFor(ev.model, pricing) !== null };
+        const model = byModel.get(ev.model) ?? {
+            tokens: emptyTotals(),
+            cost: 0,
+            priced: priceFor(ev.model, pricing) !== null,
+        };
         addTokens(model.tokens, ev);
+        model.cost += evCost;
         byModel.set(ev.model, model);
 
         const day = dayOf(ev.timestamp);
-        const dayTok = byDay.get(day) ?? emptyTotals();
-        addTokens(dayTok, ev);
-        byDay.set(day, dayTok);
+        const dayAgg = byDay.get(day) ?? { tokens: emptyTotals(), cost: 0 };
+        addTokens(dayAgg.tokens, ev);
+        dayAgg.cost += evCost;
+        byDay.set(day, dayAgg);
 
-        const proj = byProject.get(ev.project) ?? { tokens: emptyTotals(), sessions: new Set<string>() };
+        const proj = byProject.get(ev.project) ?? { tokens: emptyTotals(), cost: 0, sessions: new Set<string>() };
         addTokens(proj.tokens, ev);
+        proj.cost += evCost;
         proj.sessions.add(ev.sessionId);
         byProject.set(ev.project, proj);
 
-        const sess = bySession.get(ev.sessionId) ?? { tokens: emptyTotals(), project: ev.project, lastDay: day };
+        const sess = bySession.get(ev.sessionId) ?? {
+            tokens: emptyTotals(),
+            cost: 0,
+            project: ev.project,
+            lastDay: day,
+        };
         addTokens(sess.tokens, ev);
+        sess.cost += evCost;
         if (day > sess.lastDay) {
             sess.lastDay = day;
         }
@@ -129,20 +134,17 @@ export function aggregate(args: AggregateArgs): Report {
     }
 
     const models: ModelBreakdown[] = [...byModel.entries()]
-        .map(([model, v]) => {
-            const price = priceFor(model, pricing);
-            return {
-                model,
-                priced: v.priced,
-                tokens: v.tokens,
-                totalTokens: sumTokens(v.tokens),
-                cost: price ? costOf(v.tokens, price) : 0,
-            };
-        })
+        .map(([model, v]) => ({
+            model,
+            priced: v.priced,
+            tokens: v.tokens,
+            totalTokens: sumTokens(v.tokens),
+            cost: v.cost,
+        }))
         .sort((a, b) => b.cost - a.cost || b.totalTokens - a.totalTokens);
 
     const days: DayBreakdown[] = [...byDay.entries()]
-        .map(([day, tokens]) => ({ day, totalTokens: sumTokens(tokens), cost: dayCost(kept, day, pricing) }))
+        .map(([day, v]) => ({ day, totalTokens: sumTokens(v.tokens), cost: v.cost }))
         .sort((a, b) => a.day.localeCompare(b.day));
 
     const projects: ProjectBreakdown[] = [...byProject.entries()]
@@ -150,10 +152,7 @@ export function aggregate(args: AggregateArgs): Report {
             project,
             sessions: v.sessions.size,
             totalTokens: sumTokens(v.tokens),
-            cost: eventsCost(
-                kept.filter((e) => e.project === project),
-                pricing
-            ),
+            cost: v.cost,
         }))
         .sort((a, b) => b.cost - a.cost || b.totalTokens - a.totalTokens)
         .slice(0, top);
@@ -164,10 +163,7 @@ export function aggregate(args: AggregateArgs): Report {
             project: v.project,
             lastDay: v.lastDay,
             totalTokens: sumTokens(v.tokens),
-            cost: eventsCost(
-                kept.filter((e) => e.sessionId === sessionId),
-                pricing
-            ),
+            cost: v.cost,
         }))
         .sort((a, b) => b.cost - a.cost || b.totalTokens - a.totalTokens)
         .slice(0, top);
@@ -183,7 +179,7 @@ export function aggregate(args: AggregateArgs): Report {
         total: {
             tokens: totalTokens,
             totalTokens: sumTokens(totalTokens),
-            cost: eventsCost(kept, pricing),
+            cost: totalCost,
             cacheHitRate: cacheHitDenom === 0 ? 0 : totalTokens.cacheRead / cacheHitDenom,
         },
         days,

@@ -13,7 +13,12 @@ export function resolveSince(input: string, now: Date): string | undefined {
     }
 
     if (ISO_DAY_PATTERN.test(trimmed)) {
-        return trimmed;
+        const parsed = new Date(`${trimmed}T00:00:00.000Z`);
+        if (!Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === trimmed) {
+            return trimmed;
+        }
+
+        return undefined;
     }
 
     return undefined;

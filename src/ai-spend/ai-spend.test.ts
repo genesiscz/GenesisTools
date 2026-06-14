@@ -58,6 +58,10 @@ describe("parseTranscriptLine", () => {
         expect(parseTranscriptLine("{not json")).toBeNull();
         expect(parseTranscriptLine("")).toBeNull();
     });
+
+    it("returns null for a bare null line instead of throwing", () => {
+        expect(parseTranscriptLine("null")).toBeNull();
+    });
 });
 
 describe("pricing", () => {
@@ -98,6 +102,11 @@ describe("resolveSince", () => {
 
     it("defaults nonsense to undefined (caller applies its own default)", () => {
         expect(resolveSince("garbage", now)).toBeUndefined();
+    });
+
+    it("rejects shape-valid but impossible dates", () => {
+        expect(resolveSince("2026-02-30", now)).toBeUndefined();
+        expect(resolveSince("2026-13-01", now)).toBeUndefined();
     });
 });
 
