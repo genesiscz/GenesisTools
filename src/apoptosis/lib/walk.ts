@@ -3,7 +3,7 @@ import { extname, join } from "node:path";
 
 /**
  * Recursively list files under `dir` whose extension is in `exts`, skipping any
- * path containing one of the `ignore` substrings. Returns absolute paths.
+ * path whose segments match one of the `ignore` entries. Returns absolute paths.
  */
 export function listSourceFiles(dir: string, exts: string[], ignore: string[]): string[] {
     const suffixes = new Set(exts.map((e) => (e.startsWith(".") ? e : `.${e}`)));
@@ -19,7 +19,12 @@ export function listSourceFiles(dir: string, exts: string[], ignore: string[]): 
 
         for (const entry of entries) {
             const full = join(current, entry.name);
-            if (ignore.some((needle) => full.includes(needle))) {
+            const normalizedFull = full.replace(/\\/g, "/");
+            const ignored = ignore.some((needle) => {
+                const cleanNeedle = needle.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+                return `/${normalizedFull}/`.includes(`/${cleanNeedle}/`);
+            });
+            if (ignored) {
                 continue;
             }
 

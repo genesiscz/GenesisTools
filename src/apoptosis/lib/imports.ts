@@ -53,8 +53,12 @@ export function buildInboundImportCounts(files: string[]): Map<string, number> {
             continue;
         }
 
+        // Heuristic strip of // and /* */ comments so commented-out imports don't
+        // count as inbound references. Not a full lexer; good enough for this signal.
+        const cleanSource = source.replace(/\/\*[\s\S]*?\*\/|([^:]|^)\/\/.*$/gm, "$1");
+
         const targets = new Set<string>();
-        for (const spec of extractSpecifiers(source)) {
+        for (const spec of extractSpecifiers(cleanSource)) {
             const resolved = resolveSpecifier(spec, importer, known);
             if (resolved && resolved !== importer) {
                 targets.add(resolved);
