@@ -76,19 +76,19 @@ function classifyLine({ trimmed, linePrefixes, block, activeBlock }: ClassifyLin
             continue;
         }
 
-        const rest = trimmed.slice(cursor);
-
-        if (rest.trim().length === 0) {
-            break;
+        const char = trimmed[cursor];
+        if (char === " " || char === "\t" || char === "\r" || char === "\n") {
+            cursor += 1;
+            continue;
         }
 
-        const linePrefix = linePrefixes.find((p) => rest.startsWith(p));
+        const linePrefix = linePrefixes.find((p) => trimmed.startsWith(p, cursor));
         if (linePrefix) {
             sawComment = true;
             break;
         }
 
-        const blockStart = block.find((b) => rest.startsWith(b.open));
+        const blockStart = block.find((b) => trimmed.startsWith(b.open, cursor));
         if (blockStart) {
             sawComment = true;
             open = { close: blockStart.close };

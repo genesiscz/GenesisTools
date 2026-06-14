@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { type Dirent, existsSync, readFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { logger } from "@app/logger";
@@ -23,11 +23,15 @@ function toPosix(p: string): string {
 function loadGitignore(root: string): Ignore | null {
     const gitignorePath = join(root, ".gitignore");
 
-    if (!existsSync(gitignorePath)) {
-        return null;
+    try {
+        if (existsSync(gitignorePath)) {
+            return ignore().add(readFileSync(gitignorePath, "utf-8"));
+        }
+    } catch (err) {
+        logger.warn({ gitignorePath, error: err }, "loc: failed to read .gitignore");
     }
 
-    return ignore().add(readFileSync(gitignorePath, "utf-8"));
+    return null;
 }
 
 async function collectFiles(input: ScanInput): Promise<string[]> {
@@ -36,7 +40,13 @@ async function collectFiles(input: ScanInput): Promise<string[]> {
     const files: string[] = [];
 
     async function walk(dir: string): Promise<void> {
-        const entries = await readdir(dir, { withFileTypes: true });
+        let entries: Dirent[];
+        try {
+            entries = await readdir(dir, { withFileTypes: true });
+        } catch (err) {
+            logger.debug({ dir, error: err }, "loc: skipped unreadable directory");
+            return;
+        }
 
         for (const entry of entries) {
             const name = entry.name;

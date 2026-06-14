@@ -60,6 +60,7 @@ const C_LIKE = new Set([
     "jsx",
     "mjs",
     "cjs",
+    "jsonc",
     "go",
     "rs",
     "java",

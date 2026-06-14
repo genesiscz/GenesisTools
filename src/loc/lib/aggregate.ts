@@ -40,7 +40,7 @@ export function buildReport({ root, by, files, now, top }: BuildReportInput): Re
     const total: Totals = { files: 0, lines: 0, code: 0, comment: 0, blank: 0 };
 
     for (const file of files) {
-        const key = by === "ext" ? file.ext : file.language;
+        const key = by === "ext" ? file.ext || "(no ext)" : file.language;
         const lines = file.counts.code + file.counts.comment + file.counts.blank;
         const row = groups.get(key) ?? { name: key, files: 0, lines: 0, code: 0, comment: 0, blank: 0 };
 
