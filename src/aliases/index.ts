@@ -1,3 +1,5 @@
+#!/usr/bin/env bun
+
 import { registerAnalyzeCommand } from "@app/aliases/commands/analyze";
 import { registerApplyCommand } from "@app/aliases/commands/apply";
 import { registerDecayCommand } from "@app/aliases/commands/decay";

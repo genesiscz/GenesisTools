@@ -41,8 +41,7 @@ export const BLOCK_END = "# <<< aliases managed block <<<";
  *
  * Pure: does not read the filesystem or the clock.
  */
-export function parseHistory(raw: string, opts: { format?: HistoryFormat } = {}): string[] {
-    const format = opts.format ?? "auto";
+export function parseHistory(raw: string, _opts: { format?: HistoryFormat } = {}): string[] {
     const out: string[] = [];
 
     for (const rawLine of raw.split("\n")) {
@@ -67,12 +66,7 @@ export function parseHistory(raw: string, opts: { format?: HistoryFormat } = {})
             continue;
         }
 
-        // In strict zsh mode a non-prefixed, non-blank line is still a command.
-        // `format` is currently only used to opt out of bash-marker handling
-        // when zsh is forced; bash markers are harmless to strip in both.
-        if (format === "zsh" || format === "bash" || format === "auto") {
-            out.push(line);
-        }
+        out.push(line);
     }
 
     return out;

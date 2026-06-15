@@ -277,11 +277,16 @@ export function renderHuman(report: AnalyzeReport, minLevel: number): string {
 }
 
 export function parseParams(flags: AnalyzeFlags): ScanParams {
+    const minN = flags.minN ? Number.parseInt(flags.minN, 10) : 2;
+    const maxN = flags.maxN ? Number.parseInt(flags.maxN, 10) : 4;
+    const threshold = flags.threshold ? Number.parseInt(flags.threshold, 10) : 3;
+    const top = flags.top ? Number.parseInt(flags.top, 10) : 20;
+
     return {
-        minN: flags.minN ? Number.parseInt(flags.minN, 10) : 2,
-        maxN: flags.maxN ? Number.parseInt(flags.maxN, 10) : 4,
-        threshold: flags.threshold ? Number.parseInt(flags.threshold, 10) : 3,
-        top: flags.top ? Number.parseInt(flags.top, 10) : 20,
+        minN: Number.isNaN(minN) ? 2 : minN,
+        maxN: Number.isNaN(maxN) ? 4 : maxN,
+        threshold: Number.isNaN(threshold) ? 3 : threshold,
+        top: Number.isNaN(top) ? 20 : top,
     };
 }
 

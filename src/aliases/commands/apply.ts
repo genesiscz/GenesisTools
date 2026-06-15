@@ -22,7 +22,14 @@ async function applyAction(flags: ApplyFlags): Promise<void> {
         return;
     }
 
-    const minLevel = flags.minLevel ? Number.parseFloat(flags.minLevel) : 2;
+    const minLevelRaw = flags.minLevel ?? "2";
+    const minLevel = Number.parseFloat(minLevelRaw);
+    if (!Number.isFinite(minLevel) || minLevel < 0) {
+        out.error(`Invalid --min-level "${minLevelRaw}". Expected a non-negative number.`);
+        process.exitCode = 1;
+        return;
+    }
+
     const report = await runAnalysis({
         historyFile,
         params: parseParams(flags),
@@ -36,7 +43,7 @@ async function applyAction(flags: ApplyFlags): Promise<void> {
     if (flags.print) {
         const block =
             blockBody.length > 0 ? `${BLOCK_START}\n${blockBody}\n${BLOCK_END}` : `${BLOCK_START}\n${BLOCK_END}`;
-        out.print(`${block}\n`);
+        out.result(block);
         return;
     }
 
