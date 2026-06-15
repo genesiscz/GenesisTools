@@ -111,6 +111,8 @@ export async function runWatch(opts: RunWatchOptions): Promise<void> {
 
         try {
             await sweep(opts, prevStates);
+        } catch (err) {
+            logger.warn({ err }, "agent-watch sweep failed");
         } finally {
             sweeping = false;
         }

@@ -28,12 +28,12 @@ async function main(): Promise<void> {
             process.exit(0);
         }
 
-        logger.error(`Error: ${message}`);
+        logger.error({ error, tool: "agent-watch" }, "agent-watch failed");
         process.exit(1);
     }
 }
 
-main().catch((err) => {
-    logger.error(`Unexpected error: ${err}`);
+main().catch((error) => {
+    logger.error({ error, tool: "agent-watch" }, "agent-watch crashed unexpectedly");
     process.exit(1);
 });

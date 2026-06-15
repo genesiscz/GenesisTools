@@ -20,7 +20,7 @@ export function registerListCommand(program: Command): void {
             }
 
             for (const r of rows) {
-                out.println(`${r.source.padEnd(10)} ${r.id}`);
+                out.printlnErr(`${r.source.padEnd(10)} ${r.id}`);
             }
 
             await out.flush();

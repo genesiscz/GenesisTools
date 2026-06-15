@@ -209,8 +209,11 @@ describe("readTaskSnapshots", () => {
     });
 
     it("returns [] for a non-existent dir without throwing", async () => {
+        const missingTaskRoot = join(tmpdir(), `agent-watch-missing-${process.pid}-${Date.now()}-task`);
+        rmSync(missingTaskRoot, { recursive: true, force: true });
+
         const snaps = await readTaskSnapshots({
-            dir: join(tmpdir(), "agent-watch-does-not-exist-xyz"),
+            dir: missingTaskRoot,
             now: T0,
             stallTimeoutMs: 120_000,
         });
@@ -220,7 +223,8 @@ describe("readTaskSnapshots", () => {
 
 describe("claude/workflows adapters tolerate a missing root", () => {
     it("return [] when their root does not exist", async () => {
-        const missing = join(tmpdir(), "agent-watch-missing-root-abc");
+        const missing = join(tmpdir(), `agent-watch-missing-${process.pid}-${Date.now()}-root`);
+        rmSync(missing, { recursive: true, force: true });
         expect(await readClaudeSnapshots({ root: missing, now: T0, stallTimeoutMs: 120_000 })).toEqual([]);
         expect(await readWorkflowSnapshots({ root: missing, now: T0, stallTimeoutMs: 120_000 })).toEqual([]);
     });
