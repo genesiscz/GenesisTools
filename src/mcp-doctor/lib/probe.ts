@@ -19,10 +19,18 @@ interface ProbeOptions {
 function buildTransport(server: Exclude<NormalizedServer, { invalidReason: string }>): Transport {
     if (server.transport === "stdio") {
         const stdio = server as StdioServer;
+        const mergedEnv = { ...process.env, ...stdio.env };
+        const env: Record<string, string> = {};
+        for (const [key, value] of Object.entries(mergedEnv)) {
+            if (value !== undefined) {
+                env[key] = value;
+            }
+        }
+
         return new StdioClientTransport({
             command: stdio.command,
             args: stdio.args,
-            env: { ...process.env, ...stdio.env } as Record<string, string>,
+            env,
             cwd: stdio.cwd,
             stderr: "ignore",
         });
