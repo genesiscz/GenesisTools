@@ -7,7 +7,6 @@
  */
 
 import {
-    BaseNotFoundError,
     type BranchInfo,
     type BranchStatus,
     classifyBranches,
@@ -16,7 +15,7 @@ import {
 } from "@app/git/lib/branch-gc/classify";
 import { logger, out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { createGit } from "@app/utils/git";
+import { BaseNotFoundError, createGit } from "@app/utils/git";
 import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";

@@ -9,6 +9,13 @@ export interface GitOptions {
     debug?: boolean;
 }
 
+export class BaseNotFoundError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "BaseNotFoundError";
+    }
+}
+
 export function createGit(options?: GitOptions) {
     const executor = new Executor({
         prefix: "git",
@@ -439,6 +446,156 @@ export function createGit(options?: GitOptions) {
                     const [hash, shortHash, author, date, ...rest] = line.split("\0");
                     return { hash, shortHash, author, date, message: rest.join("\0") };
                 });
+        },
+
+        /**
+         * List local branch short-names via `for-each-ref refs/heads`.
+         */
+        async listLocalBranchNames(): Promise<string[]> {
+            const { stdout } = await executor.exec(["for-each-ref", "--format=%(refname:short)", "refs/heads"]);
+            return stdout
+                .split("\n")
+                .map((l) => l.trim())
+                .filter((l) => l.length > 0);
+        },
+
+        /**
+         * Set of branch names whose upstream tracking branch is gone (`[gone]`).
+         */
+        async upstreamGoneBranches(): Promise<Set<string>> {
+            const { stdout } = await executor.exec([
+                "for-each-ref",
+                "--format=%(refname:short)\t%(upstream:track)",
+                "refs/heads",
+            ]);
+
+            const gone = new Set<string>();
+            for (const line of stdout.split("\n")) {
+                const [name, track] = line.split("\t");
+                if (name && track?.includes("gone")) {
+                    gone.add(name.trim());
+                }
+            }
+
+            return gone;
+        },
+
+        /**
+         * Committer epoch (seconds) of a branch tip via `log -1 --format=%ct`.
+         */
+        async lastCommitEpoch(branch: string): Promise<number> {
+            const { stdout, success } = await executor.exec(["log", "-1", "--format=%ct", branch]);
+            if (!success) {
+                return 0;
+            }
+
+            const epoch = Number.parseInt(stdout, 10);
+            return Number.isNaN(epoch) ? 0 : epoch;
+        },
+
+        /**
+         * Ahead/behind vs base via `rev-list --left-right --count base...branch`
+         * (left=behind, right=ahead).
+         */
+        async aheadBehind(base: string, branch: string): Promise<{ ahead: number; behind: number }> {
+            const { stdout, success } = await executor.exec([
+                "rev-list",
+                "--left-right",
+                "--count",
+                `${base}...${branch}`,
+            ]);
+            if (!success) {
+                return { ahead: 0, behind: 0 };
+            }
+
+            const [behindStr, aheadStr] = stdout.split(/\s+/);
+            const behind = Number.parseInt(behindStr ?? "0", 10);
+            const ahead = Number.parseInt(aheadStr ?? "0", 10);
+            return { ahead: Number.isNaN(ahead) ? 0 : ahead, behind: Number.isNaN(behind) ? 0 : behind };
+        },
+
+        /**
+         * Resolve a base branch: honour `explicit` if given, else prefer local
+         * `master`, then `main`. Verifies the chosen base exists locally; throws
+         * BaseNotFoundError otherwise.
+         */
+        async detectBase(explicit?: string): Promise<string> {
+            if (explicit) {
+                if (await this.branchExists(explicit)) {
+                    return explicit;
+                }
+
+                throw new BaseNotFoundError(`Base branch "${explicit}" does not exist locally.`);
+            }
+
+            for (const candidate of ["master", "main"]) {
+                if (await this.branchExists(candidate)) {
+                    return candidate;
+                }
+            }
+
+            throw new BaseNotFoundError(
+                "Could not auto-detect a base branch (no local master/main). Pass --base <branch>."
+            );
+        },
+
+        /**
+         * Squash-merge detection via tree synthesis (NOT per-commit `git cherry`, which
+         * misses squashes):
+         *   mb       = merge-base base branch
+         *   squashed = commit-tree branch^{tree} -p mb -m _
+         *   cherry   = git cherry base squashed  →  leading "-" means base already
+         *              contains the combined patch.
+         * Returns false on unrelated histories or when the branch has no commits ahead of mb.
+         */
+        async isSquashMerged(base: string, branch: string): Promise<boolean> {
+            const mbRes = await executor.exec(["merge-base", base, branch]);
+            if (!mbRes.success) {
+                return false;
+            }
+
+            const mb = mbRes.stdout;
+            if (!mb) {
+                return false;
+            }
+
+            const countRes = await executor.exec(["rev-list", "--count", `${mb}..${branch}`]);
+            if (!countRes.success || Number.parseInt(countRes.stdout, 10) === 0) {
+                return false;
+            }
+
+            const treeRes = await executor.exec(["rev-parse", `${branch}^{tree}`]);
+            if (!treeRes.success) {
+                return false;
+            }
+
+            const tree = treeRes.stdout;
+
+            // Synthesize a commit of the branch's full tree on top of the merge-base,
+            // then ask `git cherry` whether base already contains the equivalent patch
+            // (leading "-"). This catches squash-merges that per-commit `git cherry`
+            // misses. The synthetic commit is unreachable and pruned by routine `git gc`.
+            // A fixed identity keeps `commit-tree` deterministic on machines/CI that
+            // have no configured git user (otherwise the result is environment-dependent).
+            const identityEnv: Record<string, string> = {
+                GIT_AUTHOR_NAME: "branch-gc",
+                GIT_AUTHOR_EMAIL: "branch-gc@local",
+                GIT_COMMITTER_NAME: "branch-gc",
+                GIT_COMMITTER_EMAIL: "branch-gc@local",
+            };
+
+            const squashRes = await executor.exec(["commit-tree", tree, "-p", mb, "-m", "_"], { env: identityEnv });
+            if (!squashRes.success) {
+                return false;
+            }
+
+            const squashed = squashRes.stdout;
+            const cherryRes = await executor.exec(["cherry", base, squashed]);
+            const firstLine = cherryRes.stdout
+                .split("\n")
+                .find((l) => l.trim().length > 0)
+                ?.trim();
+            return firstLine?.startsWith("-") ?? false;
         },
     };
 }
