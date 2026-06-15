@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import { runTool } from "@app/utils/cli";
 import { Command } from "commander";
-import { type RedactCmdOptions, runRedact } from "./commands/redact";
-import { type RestoreCmdOptions, runRestore } from "./commands/restore";
+import { type RedactCmdOptions, runRedactCommand } from "./commands/redact";
+import { type RestoreCmdOptions, runRestoreCommand } from "./commands/restore";
 
 const program = new Command();
 
@@ -17,7 +17,7 @@ program
     .option("--phones", "Also redact phone numbers")
     .option("--json", "Emit { redacted, mapping } as JSON")
     .action(async (options: RedactCmdOptions) => {
-        await runRedact(options);
+        await runRedactCommand(options);
     });
 
 program
@@ -29,7 +29,7 @@ program
     .option("-m, --map <file>", "Mapping file to restore from (default: latest session)")
     .option("--json", "Emit { restored } as JSON")
     .action(async (options: RestoreCmdOptions) => {
-        await runRestore(options);
+        await runRestoreCommand(options);
     });
 
 await runTool(program, { tool: "redact" });

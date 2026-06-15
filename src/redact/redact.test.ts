@@ -3,11 +3,11 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import { detectAll } from "./detectors";
-import { redact } from "./redact";
-import { restore } from "./restore";
-import { buildSession, loadLatestSession, loadMapFile, saveSession } from "./session";
-import { DEFAULT_TYPES } from "./types";
+import { detectAll } from "./lib/detectors";
+import { redact } from "./lib/redact";
+import { restore } from "./lib/restore";
+import { buildSession, loadLatestSession, loadMapFile, saveSession } from "./lib/session";
+import { DEFAULT_TYPES } from "./lib/types";
 
 const opts = { homeDir: "/Users/test", types: DEFAULT_TYPES };
 

@@ -1,59 +1,7 @@
-import { out } from "@app/logger";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { readInput, writeOutput } from "../io";
-import { restore } from "../restore";
-import { loadLatestSession, loadMapFile } from "../session";
-import type { Mapping } from "../types";
+import { type RunRestoreArgs, runRestore } from "@app/redact/lib/run-restore";
 
-export interface RestoreCmdOptions {
-    in?: string;
-    clipboard?: boolean;
-    out?: string;
-    map?: string;
-    json?: boolean;
-}
+export type RestoreCmdOptions = RunRestoreArgs;
 
-async function resolveMapping(mapPath: string | undefined): Promise<Mapping | null> {
-    if (mapPath) {
-        return loadMapFile(mapPath);
-    }
-
-    const latest = await loadLatestSession();
-    return latest ? latest.mapping : null;
-}
-
-export async function runRestore(options: RestoreCmdOptions): Promise<void> {
-    const mapping = await resolveMapping(options.map);
-    if (mapping === null) {
-        out.log.error("No mapping found: pass --map <file> or run `tools redact` first.");
-        process.exitCode = 1;
-        return;
-    }
-
-    const wantsClipboardInput = Boolean(options.clipboard) && !options.in;
-    if (!options.in && !wantsClipboardInput && isInteractive()) {
-        out.log.error("No input: pass --in <file>, --clipboard, or pipe text on stdin.");
-        out.printlnErr(suggestCommand("tools redact restore", { add: ["--in", "<file>"] }));
-        process.exitCode = 1;
-        return;
-    }
-
-    const text = await readInput({ inFile: options.in, clipboard: wantsClipboardInput });
-    const restored = restore(text, mapping);
-
-    if (options.json) {
-        out.result({ restored });
-        return;
-    }
-
-    const dest = await writeOutput({
-        outFile: options.out,
-        clipboard: Boolean(options.clipboard) && !options.out,
-        text: restored,
-    });
-    if (dest === "stdout") {
-        out.print(restored);
-    } else {
-        out.log.success(`restored text written to ${dest}`);
-    }
+export async function runRestoreCommand(options: RestoreCmdOptions): Promise<void> {
+    await runRestore(options);
 }
