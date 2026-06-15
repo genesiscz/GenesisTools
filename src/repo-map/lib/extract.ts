@@ -86,21 +86,20 @@ function signatureOf(exportNode: SgNode, declNode: SgNode): string {
     return collapse(head);
 }
 
-/** Resolve the exported name from a declaration node. */
-function nameOf(declNode: SgNode): string | undefined {
+/** Resolve the exported names from a declaration node (multiple for multi-declarator statements). */
+function namesOf(declNode: SgNode): string[] {
     const kind = declNode.kind();
 
     if (kind === "lexical_declaration" || kind === "variable_declaration") {
-        const declarator = declNode.children().find((c) => c.kind() === "variable_declarator");
-
-        if (declarator) {
-            return getNodeField(declarator, "name")?.text();
-        }
-
-        return undefined;
+        return declNode
+            .children()
+            .filter((c) => c.kind() === "variable_declarator")
+            .map((d) => getNodeField(d, "name")?.text())
+            .filter((n): n is string => Boolean(n));
     }
 
-    return getNodeField(declNode, "name")?.text();
+    const name = getNodeField(declNode, "name")?.text();
+    return name ? [name] : [];
 }
 
 /**
@@ -131,13 +130,17 @@ export function extractSymbols(source: string, language: string): ExtractedSymbo
             continue;
         }
 
-        const name = nameOf(decl);
+        const names = namesOf(decl);
 
-        if (!name) {
+        if (names.length === 0) {
             continue;
         }
 
-        out.push({ kind, name, signature: signatureOf(exportNode, decl) });
+        const signature = signatureOf(exportNode, decl);
+
+        for (const name of names) {
+            out.push({ kind, name, signature });
+        }
     }
 
     return out;

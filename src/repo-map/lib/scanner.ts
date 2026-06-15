@@ -93,7 +93,7 @@ function resolveImport(fromRel: string, spec: string, knownPaths: Set<string>): 
 
     const baseDir = toPosix(join(fromRel, ".."));
     const target = toPosix(join(baseDir, spec));
-    const extensions = [".ts", ".tsx", ".js", ".jsx"];
+    const extensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"];
     const candidates = [
         target,
         ...extensions.map((e) => `${target}${e}`),
@@ -175,12 +175,18 @@ export async function scanRepo({
     const fanIn: Record<string, number> = {};
 
     for (const file of built) {
+        const importedTargets = new Set<string>();
+
         for (const spec of file.imports) {
             const target = resolveImport(file.path, spec, knownPaths);
 
             if (target) {
-                fanIn[target] = (fanIn[target] ?? 0) + 1;
+                importedTargets.add(target);
             }
+        }
+
+        for (const target of importedTargets) {
+            fanIn[target] = (fanIn[target] ?? 0) + 1;
         }
     }
 

@@ -31,24 +31,33 @@ const LANG_ALIAS: Record<string, string> = {
 };
 
 /** Normalize --lang values (comma-separated and/or repeated) to a set of names. */
-function parseLanguages(values: string[] | undefined): Set<string> | null {
+function parseLanguages(values: string[] | undefined): { languages: Set<string> | null; unknown: string[] } {
     if (!values || values.length === 0) {
-        return null;
+        return { languages: null, unknown: [] };
     }
 
     const set = new Set<string>();
+    const unknown = new Set<string>();
 
     for (const raw of values) {
         for (const part of raw.split(",")) {
             const key = part.trim().toLowerCase();
 
-            if (key && LANG_ALIAS[key]) {
-                set.add(LANG_ALIAS[key]);
+            if (!key) {
+                continue;
+            }
+
+            const mapped = LANG_ALIAS[key];
+
+            if (mapped) {
+                set.add(mapped);
+            } else {
+                unknown.add(key);
             }
         }
     }
 
-    return set.size > 0 ? set : null;
+    return { languages: set, unknown: [...unknown] };
 }
 
 async function main(dirArg: string | undefined, options: Options): Promise<void> {
@@ -62,12 +71,36 @@ async function main(dirArg: string | undefined, options: Options): Promise<void>
         return;
     }
 
-    const languages = parseLanguages(options.lang);
+    const { languages, unknown } = parseLanguages(options.lang);
+
+    if (unknown.length > 0) {
+        logger.error(`Unsupported --lang value(s): ${unknown.join(", ")}`);
+        logger.info(suggestCommand("tools repo-map", { add: ["--lang", "ts,py,go,rust"] }));
+        process.exitCode = 1;
+        return;
+    }
+
     const scan = await scanRepo({ dir, languages });
 
     if (scan.files.length === 0) {
         out.log.warn("No supported source files found.");
-        out.result(options.json ? { root: scan.root, files: [], elided: [] } : "");
+
+        if (options.json) {
+            out.result(
+                renderJson({
+                    root: scan.root,
+                    budget,
+                    usedTokens: 0,
+                    filesIncluded: 0,
+                    filesTotal: 0,
+                    included: [],
+                    elided: [],
+                })
+            );
+        } else {
+            out.result("");
+        }
+
         return;
     }
 
