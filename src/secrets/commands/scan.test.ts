@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DETECTORS } from "@app/secrets/lib/detectors";
 import { shannonEntropy } from "@app/secrets/lib/entropy";
 import { maskSecret } from "@app/secrets/lib/mask";
+import { isPlaceholderSecret } from "@app/secrets/lib/placeholders";
 import { formatHuman, toJsonResult } from "@app/secrets/lib/report";
 import { scanContent } from "@app/secrets/lib/scan-content";
 import { scanDirectory } from "@app/secrets/lib/scan-dir";
@@ -258,5 +259,78 @@ describe("report", () => {
         expect(json.findingCount).toBe(1);
         expect(json.findings[0].detector).toBe("aws-access-key-id");
         expect(json.scannedAt).toBe("2026-06-02T12:00:00.000Z");
+    });
+
+    test("long file paths keep a column gutter (do not collide with the detector)", () => {
+        const longPath = "src/some/very/deeply/nested/area/that/is/long/component.test.ts";
+        const wide: ScanResult = {
+            ...result,
+            findings: [{ ...result.findings[0], file: longPath, line: 1234 }],
+        };
+        const row = formatHuman(wide)
+            .split("\n")
+            .find((l) => l.includes(`${longPath}:1234`));
+        expect(row).toBeDefined();
+        // the location and detector must be separated by whitespace, never abut
+        expect(row).toMatch(new RegExp(`${longPath.replace(/[/.$]/g, "\\$&")}:1234\\s{2,}aws-access-key-id`));
+    });
+});
+
+describe("isPlaceholderSecret", () => {
+    test("rejects template interpolation and format strings", () => {
+        expect(isPlaceholderSecret("${provider}/${model}")).toBe(true);
+        expect(isPlaceholderSecret("{{API_TOKEN}}")).toBe(true);
+        expect(isPlaceholderSecret("prefix-%s-suffix")).toBe(true);
+    });
+
+    test("rejects angle-bracket / ellipsis fill-ins and xxx runs", () => {
+        expect(isPlaceholderSecret("<your-api-key-here>")).toBe(true);
+        expect(isPlaceholderSecret("abcdefghijkl...")).toBe(true);
+        expect(isPlaceholderSecret("test-key-xxxx")).toBe(true);
+    });
+
+    test("rejects single-character runs and common placeholder words", () => {
+        expect(isPlaceholderSecret("aaaaaaaaaaaaaaaa")).toBe(true);
+        expect(isPlaceholderSecret("your-secret-value")).toBe(true);
+        expect(isPlaceholderSecret("oauth-placeholder")).toBe(true);
+        expect(isPlaceholderSecret("EXAMPLE_TOKEN_HERE")).toBe(true);
+    });
+
+    test("accepts a real-looking high-entropy token", () => {
+        expect(isPlaceholderSecret("aB3xZ9qLkP2mWvT7uYrEoNcDfGhJ")).toBe(false);
+        expect(isPlaceholderSecret("hunter2VeryLongPassword99")).toBe(false);
+    });
+});
+
+describe("false-positive hardening", () => {
+    const cfg = defaultScanConfig();
+
+    function detectorsOn(content: string): string[] {
+        return scanContent({ content, file: "a.ts", config: cfg }).map((f) => f.detector);
+    }
+
+    test("bare `key:` object properties no longer trip generic-assignment", () => {
+        expect(detectorsOn('{ key: "daysOnMarket", label: "Days on Market" }')).toHaveLength(0);
+        expect(detectorsOn('const CACHE_KEY = "usage-shared-cache";')).toHaveLength(0);
+    });
+
+    test("template-literal and placeholder values are not flagged", () => {
+        expect(detectorsOn("const key = `${provider}/${model}`;")).toHaveLength(0);
+        expect(detectorsOn('apiKey: "oauth-placeholder"')).toHaveLength(0);
+        expect(detectorsOn('process.env.BRAVE_API_KEY = "test-key-xxx";')).toHaveLength(0);
+    });
+
+    test("values containing whitespace (prose / labels) are not flagged", () => {
+        expect(detectorsOn('password = "this is just a sentence not a secret"')).toHaveLength(0);
+    });
+
+    test("a genuine credential-shaped assignment is still flagged", () => {
+        const hits = detectorsOn('password = "hunter2VeryLongPassword99"');
+        expect(hits).toContain("generic-assignment");
+    });
+
+    test("named credential identifiers still match after dropping bare `key`", () => {
+        expect(detectorsOn('const apiKey = "aB3xZ9qLkP2mWvT7uYrEoNcDfGhJ";')).not.toHaveLength(0);
+        expect(detectorsOn('privateKey = "aB3xZ9qLkP2mWvT7uYrEoNcDfGhJ"')).not.toHaveLength(0);
     });
 });

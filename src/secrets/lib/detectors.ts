@@ -1,7 +1,12 @@
 import { shannonEntropy } from "./entropy";
+import { isPlaceholderSecret } from "./placeholders";
 import type { Detector } from "./types";
 
-const ASSIGN = `(?:(?<![A-Za-z])key(?![A-Za-z])|secret|password|passwd|pwd|token|api[_-]?key|access[_-]?key|auth)`;
+// Secret-ish identifier prefixes. Bare `key` is deliberately excluded: it is
+// overwhelmingly object-property / cache-key noise (`{ key: "daysOnMarket" }`,
+// `CACHE_KEY = "..."`). Real credentials are named api[_-]key, secretKey,
+// accessKey, privateKey, token, password, auth — all still covered below.
+const ASSIGN = `(?:secret|password|passwd|pwd|token|api[_-]?key|access[_-]?key|private[_-]?key|auth)`;
 
 export const DETECTORS: Detector[] = [
     {
@@ -25,10 +30,12 @@ export const DETECTORS: Detector[] = [
         regex: /\beyJ[0-9A-Za-z_-]{10,}\.[0-9A-Za-z_-]{10,}\.[0-9A-Za-z_-]{10,}\b/g,
     },
     {
-        // identifier containing a secret-ish word, assigned to a quoted string
+        // identifier containing a secret-ish word, assigned to a single quoted
+        // token (no whitespace — real credentials never contain spaces)
         name: "generic-assignment",
-        regex: new RegExp(`${ASSIGN}["'\`]?\\s*[:=]\\s*["'\`]([^"'\`\\n]{12,})["'\`]`, "gi"),
+        regex: new RegExp(`${ASSIGN}["'\`]?\\s*[:=]\\s*["'\`]([^"'\`\\n\\s]{12,})["'\`]`, "gi"),
         secretGroup: 1,
+        accept: (secret) => !isPlaceholderSecret(secret),
     },
     {
         // assignment to a long base64-ish blob; gated by entropy in `accept`
@@ -36,7 +43,7 @@ export const DETECTORS: Detector[] = [
         regex: new RegExp(`${ASSIGN}["'\`]?\\s*[:=]\\s*["'\`]([A-Za-z0-9+/=_-]{20,})["'\`]`, "gi"),
         secretGroup: 1,
         accept: (secret, config) => {
-            if (config.disableEntropy) {
+            if (config.disableEntropy || isPlaceholderSecret(secret)) {
                 return false;
             }
 
