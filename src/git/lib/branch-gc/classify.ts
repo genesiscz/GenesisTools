@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gitOk, runGit } from "./git";
+import { createGit } from "@app/utils/git";
 
 export type BranchStatus = "current" | "base" | "merged" | "squash-merged" | "gone" | "stale" | "active";
 
@@ -43,7 +43,8 @@ export class BaseNotFoundError extends Error {
 
 /** Local branch short-names via `for-each-ref refs/heads`. */
 export async function listLocalBranches(cwd: string): Promise<string[]> {
-    const { stdout } = await runGit(cwd, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]);
+    const { executor } = createGit({ cwd });
+    const { stdout } = await executor.exec(["for-each-ref", "--format=%(refname:short)", "refs/heads"]);
     return stdout
         .split("\n")
         .map((l) => l.trim())
@@ -52,7 +53,9 @@ export async function listLocalBranches(cwd: string): Promise<string[]> {
 
 /** True if a local branch with this name exists. */
 export async function localBranchExists(cwd: string, name: string): Promise<boolean> {
-    return gitOk(cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${name}`]);
+    const { executor } = createGit({ cwd });
+    const { success } = await executor.exec(["show-ref", "--verify", "--quiet", `refs/heads/${name}`]);
+    return success;
 }
 
 /**
@@ -79,17 +82,19 @@ export async function detectBase(cwd: string, explicit?: string): Promise<string
 
 /** Current branch short-name, or "" on detached HEAD. */
 export async function getCurrentBranch(cwd: string): Promise<string> {
-    const { stdout, code } = await runGit(cwd, ["symbolic-ref", "--short", "-q", "HEAD"]);
-    if (code !== 0) {
+    const { executor } = createGit({ cwd });
+    const { stdout, success } = await executor.exec(["symbolic-ref", "--short", "-q", "HEAD"]);
+    if (!success) {
         return "";
     }
 
-    return stdout.trim();
+    return stdout;
 }
 
 /** Set of branch names whose upstream tracking branch is gone (`[gone]`). */
 export async function getUpstreamGone(cwd: string): Promise<Set<string>> {
-    const { stdout } = await runGit(cwd, [
+    const { executor } = createGit({ cwd });
+    const { stdout } = await executor.exec([
         "for-each-ref",
         "--format=%(refname:short)\t%(upstream:track)",
         "refs/heads",
@@ -112,12 +117,13 @@ export async function aheadBehind(
     base: string,
     branch: string
 ): Promise<{ ahead: number; behind: number }> {
-    const { stdout, code } = await runGit(cwd, ["rev-list", "--left-right", "--count", `${base}...${branch}`]);
-    if (code !== 0) {
+    const { executor } = createGit({ cwd });
+    const { stdout, success } = await executor.exec(["rev-list", "--left-right", "--count", `${base}...${branch}`]);
+    if (!success) {
         return { ahead: 0, behind: 0 };
     }
 
-    const [behindStr, aheadStr] = stdout.trim().split(/\s+/);
+    const [behindStr, aheadStr] = stdout.split(/\s+/);
     const behind = Number.parseInt(behindStr ?? "0", 10);
     const ahead = Number.parseInt(aheadStr ?? "0", 10);
     return { ahead: Number.isNaN(ahead) ? 0 : ahead, behind: Number.isNaN(behind) ? 0 : behind };
@@ -125,18 +131,21 @@ export async function aheadBehind(
 
 /** Committer epoch (seconds) of the branch tip via `log -1 --format=%ct`. */
 export async function lastCommitEpoch(cwd: string, branch: string): Promise<number> {
-    const { stdout, code } = await runGit(cwd, ["log", "-1", "--format=%ct", branch]);
-    if (code !== 0) {
+    const { executor } = createGit({ cwd });
+    const { stdout, success } = await executor.exec(["log", "-1", "--format=%ct", branch]);
+    if (!success) {
         return 0;
     }
 
-    const epoch = Number.parseInt(stdout.trim(), 10);
+    const epoch = Number.parseInt(stdout, 10);
     return Number.isNaN(epoch) ? 0 : epoch;
 }
 
 /** True if `branch`'s tip is an ancestor of `base` (catches real merges and fast-forwards). */
 export async function isAncestor(cwd: string, branch: string, base: string): Promise<boolean> {
-    return gitOk(cwd, ["merge-base", "--is-ancestor", branch, base]);
+    const { executor } = createGit({ cwd });
+    const { success } = await executor.exec(["merge-base", "--is-ancestor", branch, base]);
+    return success;
 }
 
 /**
@@ -149,38 +158,40 @@ export async function isAncestor(cwd: string, branch: string, base: string): Pro
  * Returns false on unrelated histories or when the branch has no commits ahead of mb.
  */
 export async function isSquashMerged(cwd: string, base: string, branch: string): Promise<boolean> {
-    const mbRes = await runGit(cwd, ["merge-base", base, branch]);
-    if (mbRes.code !== 0) {
+    const { executor } = createGit({ cwd });
+
+    const mbRes = await executor.exec(["merge-base", base, branch]);
+    if (!mbRes.success) {
         return false;
     }
 
-    const mb = mbRes.stdout.trim();
+    const mb = mbRes.stdout;
     if (!mb) {
         return false;
     }
 
-    const countRes = await runGit(cwd, ["rev-list", "--count", `${mb}..${branch}`]);
-    if (countRes.code !== 0 || Number.parseInt(countRes.stdout.trim(), 10) === 0) {
+    const countRes = await executor.exec(["rev-list", "--count", `${mb}..${branch}`]);
+    if (!countRes.success || Number.parseInt(countRes.stdout, 10) === 0) {
         return false;
     }
 
-    const treeRes = await runGit(cwd, ["rev-parse", `${branch}^{tree}`]);
-    if (treeRes.code !== 0) {
+    const treeRes = await executor.exec(["rev-parse", `${branch}^{tree}`]);
+    if (!treeRes.success) {
         return false;
     }
 
-    const tree = treeRes.stdout.trim();
+    const tree = treeRes.stdout;
 
     // `commit-tree` writes a loose commit object into the object store. Sandbox
     // that write into a throwaway dir (with the real repo as a read-only
     // alternate) so this read-only classification leaves no litter in .git/objects.
     // Resolve the real objects dir via git so worktrees / custom GIT_DIR work.
-    const objectsRes = await runGit(cwd, ["rev-parse", "--path-format=absolute", "--git-path", "objects"]);
-    if (objectsRes.code !== 0) {
+    const objectsRes = await executor.exec(["rev-parse", "--path-format=absolute", "--git-path", "objects"]);
+    if (!objectsRes.success) {
         return false;
     }
 
-    const objectsDir = objectsRes.stdout.trim();
+    const objectsDir = objectsRes.stdout;
     const sandboxDir = mkdtempSync(join(tmpdir(), "branch-gc-objs-"));
     const sandboxEnv: Record<string, string> = {
         GIT_OBJECT_DIRECTORY: sandboxDir,
@@ -188,13 +199,13 @@ export async function isSquashMerged(cwd: string, base: string, branch: string):
     };
 
     try {
-        const squashRes = await runGit(cwd, ["commit-tree", tree, "-p", mb, "-m", "_"], sandboxEnv);
-        if (squashRes.code !== 0) {
+        const squashRes = await executor.exec(["commit-tree", tree, "-p", mb, "-m", "_"], { env: sandboxEnv });
+        if (!squashRes.success) {
             return false;
         }
 
-        const squashed = squashRes.stdout.trim();
-        const cherryRes = await runGit(cwd, ["cherry", base, squashed], sandboxEnv);
+        const squashed = squashRes.stdout;
+        const cherryRes = await executor.exec(["cherry", base, squashed], { env: sandboxEnv });
         const firstLine = cherryRes.stdout
             .split("\n")
             .find((l) => l.trim().length > 0)

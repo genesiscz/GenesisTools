@@ -9,6 +9,7 @@
  *   tools git configure-workitem-patterns [--list|--add|--remove|--suggest]
  */
 
+import { registerBranchGcCommand } from "@app/git/commands/branch-gc";
 import { registerCommitsCommand } from "@app/git/commands/commits";
 import { registerConfigureAuthorsCommand } from "@app/git/commands/configure-authors";
 import { registerConfigureWorkitemPatternsCommand } from "@app/git/commands/configure-workitem-patterns";
@@ -24,7 +25,7 @@ const program = new Command();
 
 program
     .name("git")
-    .description("Git analysis tool — commits, authors, and workitem pattern management")
+    .description("Git analysis tool — commits, authors, workitem patterns, and branch cleanup")
     .version("1.0.0")
     .option("-v, --verbose", "Enable verbose debug logging")
     .option("-?, --help-full", "Show detailed help with examples")
@@ -38,6 +39,7 @@ registerCommitsCommand(program, storage);
 registerConfigureAuthorsCommand(program, storage);
 registerConfigureWorkitemPatternsCommand(program, storage);
 registerMonsterCommand(program, storage);
+registerBranchGcCommand(program, storage);
 enhanceHelp(program);
 
 function showHelpFull(): void {
@@ -52,6 +54,7 @@ Commands:
   configure-authors            Manage author identities for commit filtering
   configure-workitem-patterns  Manage regex patterns for workitem ID extraction
   monster                      Repo health as a feedable ASCII monster (scariest file leaderboard)
+  branch-gc                    Clean up stale & merged local branches (squash-aware)
 
 Commits Options:
   --from <YYYY-MM-DD>          Start date (required)
@@ -74,6 +77,14 @@ Configure-Workitem-Patterns Options:
   --suggest                    Suggest patterns from repo history
   --repo <path>                Repository path for suggest (default: cwd)
   (no flags)                   Interactive management
+
+Branch-GC Options:
+  -b, --base <branch>          Branch to measure 'merged into' against (auto-detect master/main)
+  -d, --stale-days <n>         Stale threshold in days (default: 90)
+  --no-dry-run                 Opt into interactive deletion in a TTY (default: list only)
+  --yes                        Non-interactive: delete every merged + squash-merged + gone branch
+  --json                       Emit the classification array as JSON (implies no deletion)
+  -C, --cwd <path>             Run against the git repo at this path
 
 Examples:
   # Query commits for a date range
@@ -100,6 +111,12 @@ Examples:
 
   # Show the repo's scariest files as an ASCII monster
   tools git monster src --top 10
+
+  # List stale & merged local branches (no deletion)
+  tools git branch-gc
+
+  # Delete all merged + squash-merged + gone branches non-interactively
+  tools git branch-gc --yes
 
 Storage:
   Config: ~/.genesis-tools/git/config.json
