@@ -1,380 +1,44 @@
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { out } from "@app/logger";
+#!/usr/bin/env bun
+
+/**
+ * JSON/TOON tool
+ *
+ * Usage:
+ *   tools json [file]            Convert between JSON and TOON (default command)
+ *   tools json schema [file]     Infer a TypeScript interface, JSON Schema, or skeleton
+ */
+
+import { registerConvertCommand } from "@app/json/commands/convert";
+import { registerSchemaCommand } from "@app/json/commands/schema";
+import { logger } from "@app/logger";
 import { runTool } from "@app/utils/cli";
-import { SafeJSON } from "@app/utils/json";
-import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
-import { fromToon as decode, toToon as encode } from "./lib/toon";
 
-// Handle --readme flag early (before Commander parses)
-handleReadmeFlag(import.meta.url);
+const program = new Command();
 
-type Format = "json" | "jsonl" | "toon" | "embedded-json" | "unknown";
+program
+    .name("json")
+    .description("JSON/TOON converter - Convert data between JSON and TOON formats, or infer a schema from JSON");
 
-function parseJSONL(input: string): unknown[] | null {
-    const trimmed = input.trim();
-    if (!trimmed) {
-        return null;
-    }
-
-    // First, try parsing as a single JSON object/array
-    try {
-        SafeJSON.parse(trimmed, { strict: true });
-        return null; // It's regular JSON, not JSONL
-    } catch {
-        // Not a single JSON, try JSONL
-    }
-
-    // Try to parse as JSONL - multiple JSON objects separated by newlines
-    // Handle both single-line and multi-line JSON objects
-    const objects: unknown[] = [];
-    let currentObject = "";
-    let depth = 0;
-    let inString = false;
-    let escapeNext = false;
-
-    for (let i = 0; i < trimmed.length; i++) {
-        const char = trimmed[i];
-        currentObject += char;
-
-        if (escapeNext) {
-            escapeNext = false;
-            continue;
-        }
-
-        if (char === "\\") {
-            escapeNext = true;
-            continue;
-        }
-
-        if (char === '"') {
-            inString = !inString;
-            continue;
-        }
-
-        if (inString) {
-            continue;
-        }
-
-        if (char === "{" || char === "[" || char === "(") {
-            depth++;
-        } else if (char === "}" || char === "]" || char === ")") {
-            depth--;
-            if (depth === 0) {
-                // Found a complete JSON object
-                try {
-                    const parsed = SafeJSON.parse(currentObject.trim(), { strict: true });
-                    objects.push(parsed);
-                    currentObject = "";
-                    // Skip whitespace and newlines before next object
-                    while (i + 1 < trimmed.length && /\s/.test(trimmed[i + 1])) {
-                        i++;
-                    }
-                } catch {
-                    // Not valid JSON, continue accumulating
-                }
-            }
-        }
-    }
-
-    // If we found at least one object, it's JSONL
-    return objects.length > 0 ? objects : null;
-}
-
-/**
- * Try to extract a JSON object/array from mixed text input (e.g. "Error 400: {...}").
- * Returns the extracted JSON string or null if none found.
- */
-function extractEmbeddedJson(input: string): string | null {
-    // Find the first { or [ that could start a JSON value
-    for (const startChar of ["{", "["]) {
-        const startIdx = input.indexOf(startChar);
-
-        if (startIdx < 0) {
-            continue;
-        }
-
-        const endChar = startChar === "{" ? "}" : "]";
-        // Find the matching closing bracket from the end
-        const endIdx = input.lastIndexOf(endChar);
-
-        if (endIdx <= startIdx) {
-            continue;
-        }
-
-        const candidate = input.slice(startIdx, endIdx + 1);
-
-        try {
-            SafeJSON.parse(candidate, { strict: true });
-            return candidate;
-        } catch {
-            // Not valid JSON, try next
-        }
-    }
-
-    return null;
-}
-
-function detectFormat(input: string): Format {
-    // Try JSON first
-    try {
-        SafeJSON.parse(input, { strict: true });
-        return "json";
-    } catch {
-        // Try JSONL (newline-delimited JSON)
-        const jsonlData = parseJSONL(input);
-        if (jsonlData && jsonlData.length > 0) {
-            return "jsonl";
-        }
-        // Try extracting embedded JSON from mixed text
-        // (before TOON, since TOON's colon syntax produces false positives
-        // on text like "API 400: {"success": false}")
-        if (extractEmbeddedJson(input)) {
-            return "embedded-json";
-        }
-
-        // Not JSON or JSONL or embedded JSON, try TOON
-        try {
-            decode(input);
-            return "toon";
-        } catch {
-            return "unknown";
-        }
-    }
-}
-
-async function readInput(filePath?: string): Promise<string> {
-    if (filePath) {
-        const resolvedPath = resolve(filePath);
-        if (!existsSync(resolvedPath)) {
-            out.error(`Error: File not found: ${resolvedPath}`);
-            process.exit(1);
-        }
-        return readFileSync(resolvedPath, "utf-8").trim();
-    }
-
-    // Read from stdin - use Bun.stdin.text() which properly waits for all data
-    const input = await Bun.stdin.text();
-    return input.trim();
-}
-
-function calculateSize(str: string): number {
-    return Buffer.byteLength(str, "utf8");
-}
-
-function calculateSavings(original: number, compressed: number): { percentage: number; bytes: number } {
-    const bytes = original - compressed;
-    const percentage = original > 0 ? (bytes / original) * 100 : 0;
-    return { percentage, bytes };
-}
-
-/**
- * Compare TOON vs compact JSON sizes, log to stderr if verbose, return the winner.
- */
-function logSizeComparison(toonOutput: string, jsonData: unknown, verbose: boolean): "toon" | "json" {
-    const compactJson = SafeJSON.stringify(jsonData);
-    const toonSize = calculateSize(toonOutput);
-    const jsonSize = calculateSize(compactJson);
-    const toonWins = toonSize < jsonSize;
-
-    if (verbose) {
-        out.error(`Compact JSON size: ${jsonSize} bytes`);
-        out.error(`TOON size: ${toonSize} bytes`);
-
-        if (toonWins) {
-            const savings = calculateSavings(jsonSize, toonSize);
-            out.error(`✓ TOON is ${savings.percentage.toFixed(1)}% smaller (${savings.bytes} bytes saved)`);
-        } else {
-            const savings = calculateSavings(toonSize, jsonSize);
-            out.error(`⚠ Compact JSON is ${savings.percentage.toFixed(1)}% smaller (${savings.bytes} bytes saved)`);
-        }
-    }
-
-    return toonWins ? "toon" : "json";
-}
-
-/**
- * Convert JSON data to the smallest format (TOON or compact JSON) and output it.
- */
-function outputSmallestFormat(jsonData: unknown, verbose: boolean): void {
-    const toonOutput = encode(jsonData);
-    const winner = logSizeComparison(toonOutput, jsonData, verbose);
-
-    if (winner === "toon") {
-        if (verbose) {
-            out.error(`Returning TOON format`);
-        }
-
-        out.println(toonOutput);
-    } else {
-        if (verbose) {
-            out.error(`Returning compact JSON format`);
-        }
-
-        out.println(SafeJSON.stringify(jsonData));
-    }
-}
-
-/**
- * Decode TOON input and return pretty-printed JSON.
- */
-function toonToJson(input: string): string {
-    const decoded = decode(input);
-    return SafeJSON.stringify(decoded, null, 2);
-}
+registerConvertCommand(program);
+registerSchemaCommand(program);
 
 async function main(): Promise<void> {
-    const program = new Command()
-        .name("json")
-        .description(
-            "JSON/TOON converter - Convert data between JSON and TOON (Token-Oriented Object Notation) formats"
-        )
-        .argument("[file]", "Input file path (optional if reading from stdin)")
-        .option("-t, --to-toon", "Force conversion to TOON format")
-        .option("-j, --to-json", "Force conversion to JSON format")
-        .option("-v, --verbose", "Enable verbose logging (shows format detection, size comparison, etc.)")
-        .option("--validate", "Error on invalid JSON/TOON input (default: passthrough)");
-
-    await runTool(program, { tool: "json" });
-
-    const options = program.opts();
-    const args = program.args;
-
-    const forceToToon = options.toToon || false;
-    const forceToJson = options.toJson || false;
-    const verbose = options.verbose || false;
-    const validate = options.validate || false;
-
-    // Validate flags
-    if (forceToToon && forceToJson) {
-        out.error("Error: Cannot specify both --to-toon and --to-json. Choose one.");
-        process.exit(1);
-    }
-
     try {
-        // Get input file path (first positional argument)
-        const inputPath = args[0];
-        const input = await readInput(inputPath);
-
-        if (!input) {
-            out.error("Error: No input provided. Provide a file path or pipe data via stdin.");
-            process.exit(1);
-        }
-
-        // Detect format
-        const detectedFormat = detectFormat(input);
-
-        if (detectedFormat === "unknown") {
-            if (validate) {
-                out.error(
-                    "Error: Input is neither valid JSON, JSONL, nor TOON format. Please check your input and try again."
-                );
-                process.exit(1);
-            }
-            // Passthrough: output original input unchanged
-            out.println(input);
-            return;
-        }
-
-        // Normalize JSONL to JSON array for processing
-        let jsonData: unknown;
-
-        if (detectedFormat === "jsonl") {
-            const jsonlData = parseJSONL(input);
-
-            if (!jsonlData) {
-                out.error("Error: Failed to parse JSONL input.");
-                process.exit(1);
-            }
-
-            jsonData = jsonlData;
-        } else if (detectedFormat === "embedded-json") {
-            const extracted = extractEmbeddedJson(input);
-            jsonData = SafeJSON.parse(extracted!, { strict: true });
-        } else if (detectedFormat === "json") {
-            jsonData = SafeJSON.parse(input, { strict: true });
-        }
-
-        const formatLabel =
-            detectedFormat === "jsonl"
-                ? "JSONL"
-                : detectedFormat === "toon"
-                  ? "TOON"
-                  : detectedFormat === "embedded-json"
-                    ? "Embedded JSON"
-                    : "JSON";
-
-        // Handle forced conversion to TOON
-        if (forceToToon) {
-            if (detectedFormat === "toon") {
-                out.error(
-                    "Error: Input is already in TOON format. Use --to-json to convert to JSON, or omit flags for auto-detection."
-                );
-                process.exit(1);
-            }
-
-            const toonOutput = encode(jsonData);
-
-            if (verbose) {
-                out.error(`Input format: ${formatLabel}`);
-                out.error(`Output format: TOON`);
-            }
-
-            const winner = logSizeComparison(toonOutput, jsonData, verbose);
-
-            if (verbose && winner === "json") {
-                out.error(`Returning TOON format as requested by --to-toon flag`);
-            }
-
-            out.println(toonOutput);
-            return;
-        }
-
-        // Handle forced conversion to JSON
-        if (forceToJson) {
-            if (verbose) {
-                out.error(`Input format: ${formatLabel}`);
-                out.error(`Output format: JSON`);
-            }
-
-            if (detectedFormat === "toon") {
-                out.println(toonToJson(input));
-            } else {
-                out.println(SafeJSON.stringify(jsonData, null, 2));
-            }
-
-            return;
-        }
-
-        // Auto-detect: TOON input → JSON, JSON/JSONL input → smallest format
-        if (detectedFormat === "toon") {
-            if (verbose) {
-                out.error(`Detected format: TOON`);
-                out.error(`Output format: JSON`);
-            }
-
-            out.println(toonToJson(input));
-        } else {
-            if (verbose) {
-                out.error(`Detected format: ${formatLabel}`);
-            }
-
-            outputSmallestFormat(jsonData, verbose);
-        }
+        await runTool(program, { tool: "json" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        out.error(`Error: ${message}`);
+        logger.error(`Error: ${message}`);
 
-        if (verbose && error instanceof Error) {
-            out.error(error.stack);
+        if (error instanceof Error && error.stack) {
+            logger.debug(error.stack);
         }
 
         process.exit(1);
     }
 }
 
-main().catch((error) => {
-    out.error(`Unexpected error: ${error}`);
+main().catch((err) => {
+    logger.error(`Unexpected error: ${err}`);
     process.exit(1);
 });

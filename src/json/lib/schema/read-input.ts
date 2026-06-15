@@ -27,7 +27,7 @@ export async function resolveInput({ arg, isTTY }: ResolveInputOptions): Promise
     }
 
     if (arg === undefined) {
-        const hint = suggestCommand("tools infer-schema", { add: ["<file.json>"] });
+        const hint = suggestCommand("tools json schema", { add: ["<file.json>"] });
         throw new Error(`No input. Pass a JSON file, "-", or pipe JSON in.\n${hint}`);
     }
 

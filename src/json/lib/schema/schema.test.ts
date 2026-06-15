@@ -3,8 +3,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import { resolveInput } from "./lib/read-input";
-import { renderSchema } from "./lib/render";
+import { resolveInput } from "./read-input";
+import { renderSchema } from "./render";
 
 const SAMPLE = '{"id":42,"name":"Ada","active":true,"roles":["admin","editor"],"profile":{"bio":"hi","age":36}}';
 
