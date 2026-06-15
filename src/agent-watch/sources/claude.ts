@@ -90,7 +90,7 @@ export async function readClaudeSnapshots(opts: ReadClaudeOptions): Promise<Agen
                 const lastOutputAt = events.at(-1)?.ts ?? lastModified;
 
                 snapshots.push({
-                    id: `claude:${name}`,
+                    id: `claude:${projDir.name}:${name}`,
                     name,
                     source: "claude",
                     state,

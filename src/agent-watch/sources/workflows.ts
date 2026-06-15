@@ -84,7 +84,7 @@ export async function readWorkflowSnapshots(opts: ReadWorkflowOptions): Promise<
                     });
 
                     snapshots.push({
-                        id: `workflows:${session}/${leaf}`,
+                        id: `workflows:${projDir.name}/${session}/${leaf}`,
                         name: leaf,
                         source: "workflows",
                         state,
