@@ -41,6 +41,6 @@ export function registerHealthCommand(parent: Command, _storage: Storage): void 
                 return;
             }
 
-            out.println(renderHealth(report));
+            out.result(renderHealth(report));
         });
 }
