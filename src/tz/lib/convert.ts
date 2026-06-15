@@ -1,54 +1,8 @@
+import { partsInZone, resolveZone } from "@app/utils/timezone";
 import { parseExpression } from "./parse";
 import type { ConvertInput, ConvertResult, ZoneLine } from "./types";
-import { resolveZone } from "./zones";
 
 const DEFAULT_ZONES = ["UTC", "America/New_York", "Europe/London", "Europe/Prague", "Asia/Tokyo"];
-
-function partsInZone(epochMs: number, timeZone: string, options: Intl.DateTimeFormatOptions): Record<string, string> {
-    const dtf = new Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", ...options });
-    const parts: Record<string, string> = {};
-    for (const part of dtf.formatToParts(new Date(epochMs))) {
-        parts[part.type] = part.value;
-    }
-
-    return parts;
-}
-
-export function zoneOffsetMinutes(epochMs: number, timeZone: string): number {
-    const p = partsInZone(epochMs, timeZone, {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-    });
-    const asUTC = Date.UTC(
-        Number(p.year),
-        Number(p.month) - 1,
-        Number(p.day),
-        Number(p.hour),
-        Number(p.minute),
-        Number(p.second)
-    );
-    return Math.round((asUTC - epochMs) / 60000);
-}
-
-export function epochFromWallClockInZone(
-    year: number,
-    month: number,
-    day: number,
-    hour: number,
-    minute: number,
-    timeZone: string
-): number {
-    const guess = Date.UTC(year, month - 1, day, hour, minute, 0);
-    let offset = zoneOffsetMinutes(guess, timeZone);
-    let epoch = guess - offset * 60000;
-    offset = zoneOffsetMinutes(epoch, timeZone);
-    epoch = guess - offset * 60000;
-    return epoch;
-}
 
 export function renderZone(epochMs: number, zone: string, label: string): ZoneLine {
     const p = partsInZone(epochMs, zone, {

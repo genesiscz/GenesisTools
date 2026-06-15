@@ -1,8 +1,7 @@
 import { logger } from "@app/logger";
+import { epochFromWallClockInZone, resolveZone } from "@app/utils/timezone";
 import * as chrono from "chrono-node";
-import { epochFromWallClockInZone } from "./convert";
 import type { ParseResult } from "./types";
-import { resolveZone } from "./zones";
 
 interface ParseInput {
     expr: string;
