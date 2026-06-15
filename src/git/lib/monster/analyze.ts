@@ -1,6 +1,7 @@
 import { type Dirent, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { logger } from "@app/logger";
+import { createGit } from "@app/utils/git";
 import { parseImports } from "./imports";
 import { roar } from "./roar";
 import { scariness } from "./score";
@@ -86,19 +87,15 @@ function toPosix(p: string): string {
 async function gitLastCommitTimes(dir: string): Promise<Map<string, number>> {
     const times = new Map<string, number>();
     try {
-        const proc = Bun.spawn(["git", "log", "--relative", "--name-only", "--pretty=format:%H%x09%at"], {
-            cwd: dir,
-            stdio: ["ignore", "pipe", "pipe"],
-        });
-        const stdout = await new Response(proc.stdout).text();
-        const exit = await proc.exited;
-        if (exit !== 0) {
-            logger.warn({ dir, exit }, "monster: git log unavailable; age scoring disabled");
+        const git = createGit({ cwd: dir });
+        const res = await git.executor.exec(["log", "--relative", "--name-only", "--pretty=format:%H%x09%at"]);
+        if (!res.success) {
+            logger.warn({ dir, exit: res.exitCode }, "monster: git log unavailable; age scoring disabled");
             return times;
         }
 
         let currentTs = 0;
-        for (const line of stdout.split("\n")) {
+        for (const line of res.stdout.split("\n")) {
             if (line.length === 0) {
                 continue;
             }

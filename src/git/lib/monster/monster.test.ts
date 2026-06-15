@@ -3,12 +3,12 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { analyze } from "./lib/analyze";
-import { parseImports } from "./lib/imports";
-import { render } from "./lib/render";
-import { roar } from "./lib/roar";
-import { scariness } from "./lib/score";
-import { faceForTier, tierForScore, tierName } from "./lib/tier";
+import { analyze } from "./analyze";
+import { parseImports } from "./imports";
+import { render } from "./render";
+import { roar } from "./roar";
+import { scariness } from "./score";
+import { faceForTier, tierForScore, tierName } from "./tier";
 
 describe("scariness", () => {
     const base = { lines: 100, ageDays: 30, fanIn: 2, fanOut: 3 };

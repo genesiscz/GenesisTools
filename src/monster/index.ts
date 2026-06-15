@@ -1,9 +1,9 @@
 import { resolve } from "node:path";
+import { analyze } from "@app/git/lib/monster/analyze";
+import { render } from "@app/git/lib/monster/render";
 import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { Command } from "commander";
-import { analyze } from "./lib/analyze";
-import { render } from "./lib/render";
 
 interface Options {
     top: string;
