@@ -1,4 +1,5 @@
 import { logger } from "@app/logger";
+import { createGit } from "@app/utils/git";
 import { isBugFixSubject } from "./tokenize";
 import type { RawCommit } from "./types";
 
@@ -6,18 +7,20 @@ import type { RawCommit } from "./types";
 const FIELD_SEP = "\x1f";
 const RECORD_SEP = "\x1e";
 
+/**
+ * Run a git command in {@link cwd} via the shared git executor.
+ *
+ * Returns the trimmed stdout and an `ok` flag derived from the exit code
+ * (the shared executor exposes `success`/`exitCode`; we map `ok = success`).
+ */
 async function runGit(args: string[], cwd: string): Promise<{ stdout: string; ok: boolean }> {
-    const proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-    ]);
-    if (exitCode !== 0) {
-        logger.debug(`git ${args.join(" ")} exited ${exitCode}: ${stderr.trim()}`);
+    const git = createGit({ cwd });
+    const result = await git.executor.exec(args);
+    if (!result.success) {
+        logger.debug(`git ${args.join(" ")} exited ${result.exitCode}: ${result.stderr}`);
     }
 
-    return { stdout, ok: exitCode === 0 };
+    return { stdout: result.stdout, ok: result.success };
 }
 
 /** True when {@link cwd} is inside a git work tree. */
