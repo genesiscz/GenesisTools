@@ -24,7 +24,7 @@ const SINGLE_CHAR_RUN_RE = /^(.)\1+$/;
  * real high-entropy secret that merely contains these letters as a substring.
  */
 const PLACEHOLDER_WORD_RE =
-    /(?:^|[^a-z0-9])(?:your|my|example|examples|sample|samples|placeholder|dummy|changeme|change|redacted|fake|todo|tbd|lorem|ipsum|test|testing|foobar|insert|replace|none)(?:[^a-z0-9]|$)/i;
+    /(?:^|[^a-z0-9])(?:your|example|examples|sample|samples|placeholder|dummy|changeme|redacted|fake|todo|tbd|lorem|ipsum|testing|foobar|insert|replace)(?:[^a-z0-9]|$)/i;
 
 /** True when `value` is almost certainly a placeholder rather than a real secret. */
 export function isPlaceholderSecret(value: string): boolean {
