@@ -363,7 +363,9 @@ export function registerConvertCommand(program: Command): void {
         .argument("[file]", "Input file path (optional if reading from stdin)")
         .option("-t, --to-toon", "Force conversion to TOON format")
         .option("-j, --to-json", "Force conversion to JSON format")
-        .option("-v, --verbose", "Enable verbose logging (shows format detection, size comparison, etc.)")
         .option("--validate", "Error on invalid JSON/TOON input (default: passthrough)")
-        .action(handleConvert);
+        .action((file: string | undefined, options: ConvertOptions, command: Command) => {
+            const globals = command.optsWithGlobals<{ verbose?: boolean | number }>();
+            return handleConvert(file, { ...options, verbose: Boolean(globals.verbose) });
+        });
 }
