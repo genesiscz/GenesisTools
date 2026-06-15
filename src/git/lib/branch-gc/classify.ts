@@ -1,6 +1,3 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { createGit } from "@app/utils/git";
 
 export type BranchStatus = "current" | "base" | "merged" | "squash-merged" | "gone" | "stale" | "active";
@@ -182,38 +179,31 @@ export async function isSquashMerged(cwd: string, base: string, branch: string):
 
     const tree = treeRes.stdout;
 
-    // `commit-tree` writes a loose commit object into the object store. Sandbox
-    // that write into a throwaway dir (with the real repo as a read-only
-    // alternate) so this read-only classification leaves no litter in .git/objects.
-    // Resolve the real objects dir via git so worktrees / custom GIT_DIR work.
-    const objectsRes = await executor.exec(["rev-parse", "--path-format=absolute", "--git-path", "objects"]);
-    if (!objectsRes.success) {
+    // Synthesize a commit of the branch's full tree on top of the merge-base,
+    // then ask `git cherry` whether base already contains the equivalent patch
+    // (leading "-"). This catches squash-merges that per-commit `git cherry`
+    // misses. The synthetic commit is unreachable and pruned by routine `git gc`.
+    // A fixed identity keeps `commit-tree` deterministic on machines/CI that
+    // have no configured git user (otherwise the result is environment-dependent).
+    const identityEnv: Record<string, string> = {
+        GIT_AUTHOR_NAME: "branch-gc",
+        GIT_AUTHOR_EMAIL: "branch-gc@local",
+        GIT_COMMITTER_NAME: "branch-gc",
+        GIT_COMMITTER_EMAIL: "branch-gc@local",
+    };
+
+    const squashRes = await executor.exec(["commit-tree", tree, "-p", mb, "-m", "_"], { env: identityEnv });
+    if (!squashRes.success) {
         return false;
     }
 
-    const objectsDir = objectsRes.stdout;
-    const sandboxDir = mkdtempSync(join(tmpdir(), "branch-gc-objs-"));
-    const sandboxEnv: Record<string, string> = {
-        GIT_OBJECT_DIRECTORY: sandboxDir,
-        GIT_ALTERNATE_OBJECT_DIRECTORIES: objectsDir,
-    };
-
-    try {
-        const squashRes = await executor.exec(["commit-tree", tree, "-p", mb, "-m", "_"], { env: sandboxEnv });
-        if (!squashRes.success) {
-            return false;
-        }
-
-        const squashed = squashRes.stdout;
-        const cherryRes = await executor.exec(["cherry", base, squashed], { env: sandboxEnv });
-        const firstLine = cherryRes.stdout
-            .split("\n")
-            .find((l) => l.trim().length > 0)
-            ?.trim();
-        return firstLine?.startsWith("-") ?? false;
-    } finally {
-        rmSync(sandboxDir, { recursive: true, force: true });
-    }
+    const squashed = squashRes.stdout;
+    const cherryRes = await executor.exec(["cherry", base, squashed]);
+    const firstLine = cherryRes.stdout
+        .split("\n")
+        .find((l) => l.trim().length > 0)
+        ?.trim();
+    return firstLine?.startsWith("-") ?? false;
 }
 
 async function classifyOne(branch: string, opts: ClassifyOptions, gone: Set<string>): Promise<BranchInfo> {
