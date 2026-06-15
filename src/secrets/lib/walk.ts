@@ -26,7 +26,7 @@ function loadGitignore(dir: string): Ignore | null {
     try {
         return ignore().add(readFileSync(gitignorePath, "utf-8"));
     } catch (err) {
-        logger.warn({ err, gitignorePath }, "scan-secrets: failed to read .gitignore");
+        logger.warn({ err, gitignorePath }, "secrets: failed to read .gitignore");
         return null;
     }
 }
@@ -51,7 +51,7 @@ export function walkFiles({ dir, respectGitignore, maxSizeKb }: WalkArgs): Walke
         try {
             entries = readdirSync(current, { withFileTypes: true });
         } catch (err) {
-            logger.debug({ err, current }, "scan-secrets: readdir failed");
+            logger.debug({ err, current }, "secrets: readdir failed");
             return;
         }
 
@@ -82,11 +82,11 @@ export function walkFiles({ dir, respectGitignore, maxSizeKb }: WalkArgs): Walke
 
             try {
                 if (statSync(abs).size > maxBytes) {
-                    logger.debug({ rel }, "scan-secrets: skip (too large)");
+                    logger.debug({ rel }, "secrets: skip (too large)");
                     continue;
                 }
             } catch (err) {
-                logger.debug({ err, rel }, "scan-secrets: stat failed");
+                logger.debug({ err, rel }, "secrets: stat failed");
                 continue;
             }
 

@@ -2,14 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DETECTORS } from "./lib/detectors";
-import { shannonEntropy } from "./lib/entropy";
-import { maskSecret } from "./lib/mask";
-import { formatHuman, toJsonResult } from "./lib/report";
-import { scanContent } from "./lib/scan-content";
-import { scanDirectory } from "./lib/scan-dir";
-import { defaultScanConfig, type ScanResult } from "./lib/types";
-import { walkFiles } from "./lib/walk";
+import { DETECTORS } from "@app/secrets/lib/detectors";
+import { shannonEntropy } from "@app/secrets/lib/entropy";
+import { maskSecret } from "@app/secrets/lib/mask";
+import { formatHuman, toJsonResult } from "@app/secrets/lib/report";
+import { scanContent } from "@app/secrets/lib/scan-content";
+import { scanDirectory } from "@app/secrets/lib/scan-dir";
+import { defaultScanConfig, type ScanResult } from "@app/secrets/lib/types";
+import { walkFiles } from "@app/secrets/lib/walk";
 
 describe("maskSecret", () => {
     test("keeps first 4 and last 4 with ellipsis for long secrets", () => {
@@ -151,7 +151,7 @@ describe("scanContent", () => {
 
 describe("walkFiles", () => {
     function makeRepo(): string {
-        const dir = mkdtempSync(join(tmpdir(), "scan-secrets-walk-"));
+        const dir = mkdtempSync(join(tmpdir(), "secrets-walk-"));
         writeFileSync(join(dir, "keep.ts"), 'const x = "ok";');
         writeFileSync(join(dir, ".gitignore"), "ignored.ts\n");
         writeFileSync(join(dir, "ignored.ts"), 'const y = "ok";');
@@ -182,7 +182,7 @@ describe("scanDirectory", () => {
     const NOW = new Date("2026-06-02T12:00:00.000Z");
 
     function makeRepo(): string {
-        const dir = mkdtempSync(join(tmpdir(), "scan-secrets-dir-"));
+        const dir = mkdtempSync(join(tmpdir(), "secrets-dir-"));
         writeFileSync(join(dir, "leak.ts"), 'const key = "AKIAIOSFODNN7EXAMPLE";');
         writeFileSync(join(dir, "clean.ts"), 'const greeting = "hello world";');
         writeFileSync(join(dir, "blob.bin"), Buffer.from([0x00, 0x41, 0x4b, 0x49, 0x41]));
@@ -209,7 +209,7 @@ describe("scanDirectory", () => {
     });
 
     test("a clean dir yields zero findings", () => {
-        const dir = mkdtempSync(join(tmpdir(), "scan-secrets-clean-"));
+        const dir = mkdtempSync(join(tmpdir(), "secrets-clean-"));
         writeFileSync(join(dir, "ok.ts"), 'const a = "totally fine";');
 
         const result = scanDirectory({

@@ -50,7 +50,7 @@ export function scanDirectory(args: ScanDirectoryArgs): ScanResult {
         try {
             raw = readFileSync(file.absPath);
         } catch (err) {
-            logger.debug({ err, rel: file.relPath }, "scan-secrets: read failed");
+            logger.debug({ err, rel: file.relPath }, "secrets: read failed");
             skips.push({ file: file.relPath, reason: "read-error" });
             continue;
         }
