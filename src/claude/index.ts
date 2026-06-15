@@ -23,6 +23,7 @@ import { registerMcpCommand } from "./commands/mcp";
 import { registerMemoryCommand } from "./commands/memory";
 import { registerMigrateCommand } from "./commands/migrate";
 import { registerResumeCommand } from "./commands/resume";
+import { registerSpendingCommand } from "./commands/spending";
 import { registerStartCommand } from "./commands/start";
 import { registerSummarizeCommand } from "./commands/summarize";
 import { registerTailCommand } from "./commands/tail";
@@ -55,6 +56,7 @@ registerMcpCommand(program);
 registerLoginLongCommand(program);
 registerLoginSecondaryCommand(program);
 registerLogoutCommand(program);
+registerSpendingCommand(program);
 registerStartCommand(program);
 
 addGlobalVerboseOption(program);
