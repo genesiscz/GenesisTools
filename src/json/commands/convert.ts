@@ -59,9 +59,9 @@ function parseJSONL(input: string): unknown[] | null {
             continue;
         }
 
-        if (char === "{" || char === "[" || char === "(") {
+        if (char === "{" || char === "[") {
             depth++;
-        } else if (char === "}" || char === "]" || char === ")") {
+        } else if (char === "}" || char === "]") {
             depth--;
             if (depth === 0) {
                 // Found a complete JSON object
@@ -154,6 +154,11 @@ async function readInput(filePath?: string): Promise<string> {
             process.exit(1);
         }
         return readFileSync(resolvedPath, "utf-8").trim();
+    }
+
+    if (process.stdin.isTTY) {
+        out.error("Error: No input provided. Provide a file path or pipe data via stdin.");
+        process.exit(1);
     }
 
     // Read from stdin - use Bun.stdin.text() which properly waits for all data
