@@ -82,11 +82,11 @@ async function deleteBranch(cwd: string, name: string): Promise<boolean> {
 
     const res = await executor.exec(["branch", "-D", name]);
     if (res.success) {
-        log.out.log.success(`Deleted ${pc.bold(name)} ${pc.dim(`(restore: git branch ${name} ${sha})`)}`);
+        out.log.success(`Deleted ${pc.bold(name)} ${pc.dim(`(restore: git branch ${name} ${sha})`)}`);
         return true;
     }
 
-    log.out.error(`Failed to delete ${name}: ${res.stderr || "unknown git error"}`);
+    out.error(`Failed to delete ${name}: ${res.stderr || "unknown git error"}`);
     return false;
 }
 
