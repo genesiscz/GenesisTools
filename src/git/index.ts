@@ -12,6 +12,7 @@
 import { registerCommitsCommand } from "@app/git/commands/commits";
 import { registerConfigureAuthorsCommand } from "@app/git/commands/configure-authors";
 import { registerConfigureWorkitemPatternsCommand } from "@app/git/commands/configure-workitem-patterns";
+import { registerMonsterCommand } from "@app/git/commands/monster";
 import { logger, out } from "@app/logger";
 import { enhanceHelp, runTool } from "@app/utils/cli";
 import { Storage } from "@app/utils/storage";
@@ -36,6 +37,7 @@ program
 registerCommitsCommand(program, storage);
 registerConfigureAuthorsCommand(program, storage);
 registerConfigureWorkitemPatternsCommand(program, storage);
+registerMonsterCommand(program, storage);
 enhanceHelp(program);
 
 function showHelpFull(): void {
@@ -49,6 +51,7 @@ Commands:
   commits                      Query commits by date range with workitem extraction
   configure-authors            Manage author identities for commit filtering
   configure-workitem-patterns  Manage regex patterns for workitem ID extraction
+  monster                      Repo health as a feedable ASCII monster (scariest file leaderboard)
 
 Commits Options:
   --from <YYYY-MM-DD>          Start date (required)
@@ -94,6 +97,9 @@ Examples:
 
   # Add a custom pattern
   tools git configure-workitem-patterns --add 'col-(\\d+)'
+
+  # Show the repo's scariest files as an ASCII monster
+  tools git monster src --top 10
 
 Storage:
   Config: ~/.genesis-tools/git/config.json
