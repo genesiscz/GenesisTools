@@ -29,7 +29,14 @@ program
     .action(async (dir: string, options: Options) => {
         const root = resolve(dir);
 
-        if (!existsSync(root) || !statSync(root).isDirectory()) {
+        let isDirectory = false;
+        try {
+            isDirectory = existsSync(root) && statSync(root).isDirectory();
+        } catch (err) {
+            logger.debug({ root, error: err }, "loc: failed to stat target path");
+        }
+
+        if (!isDirectory) {
             out.error(`Not a directory: ${root}`);
             process.exit(1);
         }
@@ -58,8 +65,13 @@ function parseTop(value: string | undefined): number | undefined {
         return undefined;
     }
 
-    const n = Number.parseInt(value, 10);
-    if (Number.isNaN(n) || n < 1) {
+    if (!/^\d+$/.test(value)) {
+        out.error(`--top must be a positive integer, got: ${value}`);
+        process.exit(1);
+    }
+
+    const n = Number(value);
+    if (n < 1) {
         out.error(`--top must be a positive integer, got: ${value}`);
         process.exit(1);
     }
