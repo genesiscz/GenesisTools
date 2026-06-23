@@ -1,6 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { Api } from "@app/azure-devops/api";
 import { AzureDevOpsCacheManager } from "@app/azure-devops/cache-manager";
+import {
+    normalizeTimelogEntries,
+    readEntryWorkItemTitle,
+    setEntryWorkItemTitle,
+} from "@app/azure-devops/lib/timelog/entry-fields";
 import { convertToMinutes, formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
 import { updateWorkItemEffort } from "@app/azure-devops/timelog-effort";
 import type { AllowedTypeConfig, TimeLogImportFile } from "@app/azure-devops/types";
@@ -50,6 +55,7 @@ export function registerImportSubcommand(parent: Command): void {
             const errors: string[] = [];
             const validEntries: Array<{
                 workItemId: number;
+                workItemTitle?: string;
                 minutes: number;
                 timeType: string;
                 date: string;
@@ -98,11 +104,20 @@ export function registerImportSubcommand(parent: Command): void {
 
                 validEntries.push({
                     workItemId: entry.workItemId,
+                    workItemTitle: readEntryWorkItemTitle(entry),
                     minutes,
                     timeType: exactType!.description,
                     date: entry.date,
                     comment: entry.comment || "",
                 });
+            }
+
+            const workitemTitles = new Map<number, string>();
+
+            for (const entry of validEntries) {
+                if (entry.workItemTitle) {
+                    workitemTitles.set(entry.workItemId, entry.workItemTitle);
+                }
             }
 
             // Report validation errors
@@ -131,7 +146,6 @@ export function registerImportSubcommand(parent: Command): void {
                 : undefined;
 
             let precheckPassed: typeof validEntries = [];
-            const workitemTitles = new Map<number, string>();
             const precheckRedirected: Array<{
                 original: number;
                 originalTitle: string;
@@ -228,6 +242,25 @@ export function registerImportSubcommand(parent: Command): void {
             }
 
             if (options.dryRun) {
+                const serializedBefore = SafeJSON.stringify(data.entries, null, 2);
+                data.entries = normalizeTimelogEntries(
+                    data.entries.map((entry) => {
+                        const title = workitemTitles.get(entry.workItemId) ?? readEntryWorkItemTitle(entry);
+
+                        if (title) {
+                            return setEntryWorkItemTitle(entry, title);
+                        }
+
+                        return entry;
+                    })
+                );
+                const serializedAfter = SafeJSON.stringify(data.entries, null, 2);
+
+                if (serializedBefore !== serializedAfter) {
+                    await Bun.write(file, `${serializedAfter}\n`);
+                    out.println(pc.dim(`Updated ${file} with resolved workItemTitle values.\n`));
+                }
+
                 out.println("\u2714 Dry run complete. Valid entries:");
 
                 for (const e of precheckPassed) {
