@@ -19,6 +19,7 @@ interface Props {
     activeSession: string | null;
     onSelectSession: (source: string, name: string) => void;
     status: ConnectionStatus;
+    refreshing?: boolean;
     entryCount: number;
     onClear: () => void;
     onRefresh: () => void;
@@ -44,6 +45,7 @@ export function Header({
     activeSession,
     onSelectSession,
     status,
+    refreshing = false,
     entryCount,
     onClear,
     onRefresh,
@@ -77,7 +79,7 @@ export function Header({
                         ← sessions
                     </button>
                     <span className="brand-title">▓▓▓ LOG VIEWER</span>
-                    <StatusPill status={status} />
+                    <StatusPill status={status} refreshing={refreshing} />
                 </div>
 
                 <div className="flex flex-1 min-w-0 items-center gap-3">

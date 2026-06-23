@@ -25,6 +25,7 @@ export interface ActiveStreamHandlers {
 
 const RECONNECT_DELAY_MS = 1500;
 const MAX_RECONNECT_DELAY_MS = 15_000;
+const OFFLINE_RETRY_MS = 10_000;
 
 export function connectStream(source: LogSourceId, sessionName: string, handlers: SseHandlers): () => void {
     let es: EventSource | null = null;
@@ -65,12 +66,15 @@ export function connectStream(source: LogSourceId, sessionName: string, handlers
             es?.close();
             es = null;
             attempt++;
-            handlers.onStatus(attempt > 4 ? "down" : "reconnecting");
+            handlers.onStatus("reconnecting");
             if (reconnectTimer) {
                 clearTimeout(reconnectTimer);
                 reconnectTimer = null;
             }
-            const delay = Math.min(MAX_RECONNECT_DELAY_MS, RECONNECT_DELAY_MS * 2 ** Math.min(attempt - 1, 4));
+            const delay =
+                attempt > 4
+                    ? OFFLINE_RETRY_MS
+                    : Math.min(MAX_RECONNECT_DELAY_MS, RECONNECT_DELAY_MS * 2 ** Math.min(attempt - 1, 4));
             reconnectTimer = setTimeout(() => {
                 reconnectTimer = null;
                 open();
@@ -86,7 +90,6 @@ export function connectStream(source: LogSourceId, sessionName: string, handlers
             clearTimeout(reconnectTimer);
         }
         es?.close();
-        handlers.onStatus("down");
     };
 }
 
@@ -143,12 +146,15 @@ export function connectActiveStream(handlers: ActiveStreamHandlers): () => void 
             es?.close();
             es = null;
             attempt++;
-            handlers.onStatus(attempt > 4 ? "down" : "reconnecting");
+            handlers.onStatus("reconnecting");
             if (reconnectTimer) {
                 clearTimeout(reconnectTimer);
                 reconnectTimer = null;
             }
-            const delay = Math.min(MAX_RECONNECT_DELAY_MS, RECONNECT_DELAY_MS * 2 ** Math.min(attempt - 1, 4));
+            const delay =
+                attempt > 4
+                    ? OFFLINE_RETRY_MS
+                    : Math.min(MAX_RECONNECT_DELAY_MS, RECONNECT_DELAY_MS * 2 ** Math.min(attempt - 1, 4));
             reconnectTimer = setTimeout(() => {
                 reconnectTimer = null;
                 open();
@@ -164,6 +170,5 @@ export function connectActiveStream(handlers: ActiveStreamHandlers): () => void 
             clearTimeout(reconnectTimer);
         }
         es?.close();
-        handlers.onStatus("down");
     };
 }

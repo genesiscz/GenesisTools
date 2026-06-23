@@ -1,7 +1,11 @@
 import { IconPopover } from "@ui/components/icon-button";
 import { Wrench } from "lucide-react";
 import type { ReactElement } from "react";
-import { MAX_ACTIVE_SESSION_LIMIT_MINUTES, MIN_ACTIVE_SESSION_LIMIT_MINUTES } from "@/lib/session-pool-settings";
+import {
+    formatActiveSessionLimit,
+    MAX_ACTIVE_SESSION_LIMIT_SECONDS,
+    MIN_ACTIVE_SESSION_LIMIT_SECONDS,
+} from "@/lib/session-pool-settings";
 import { useSessionPoolSettings } from "./SessionPoolSettingsProvider";
 
 export function SessionPoolSettingsButton(): ReactElement {
@@ -32,17 +36,17 @@ export function SessionPoolSettingsButton(): ReactElement {
                 <div className="flex items-center gap-2">
                     <input
                         type="range"
-                        min={MIN_ACTIVE_SESSION_LIMIT_MINUTES}
-                        max={MAX_ACTIVE_SESSION_LIMIT_MINUTES}
-                        step={5}
-                        value={settings.activeSessionLimitMinutes}
+                        min={MIN_ACTIVE_SESSION_LIMIT_SECONDS}
+                        max={MAX_ACTIVE_SESSION_LIMIT_SECONDS}
+                        step={1}
+                        value={settings.activeSessionLimitSeconds}
                         onChange={(event) => {
-                            updateSettings({ activeSessionLimitMinutes: Number(event.target.value) });
+                            updateSettings({ activeSessionLimitSeconds: Number(event.target.value) });
                         }}
                         className="flex-1 accent-cyan-400"
                     />
-                    <span className="dbg-ui-text-sm text-white/70 w-14 text-right tabular-nums">
-                        {settings.activeSessionLimitMinutes}m
+                    <span className="dbg-ui-text-sm text-white/70 w-20 text-right tabular-nums shrink-0">
+                        {formatActiveSessionLimit(settings.activeSessionLimitSeconds)}
                     </span>
                 </div>
                 <p className="dbg-ui-text-xs text-white/35 leading-relaxed">

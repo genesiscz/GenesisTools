@@ -1,4 +1,5 @@
 import type { LogEntry } from "@app/debugging-master/types";
+import { startWakefulInterval, type WakefulInterval } from "@app/utils/async";
 import { SafeJSON } from "@app/utils/json";
 import type { LogSourceId } from "@app/utils/log-viewer/log-source";
 import { parseSessionKey } from "@app/utils/log-viewer/session-key";
@@ -29,7 +30,7 @@ export class SSEBroadcaster {
     private multiplexSubscribers = new Set<MultiplexSubscriber>();
     private tailers = new Map<string, ReturnType<typeof createSourceTailer>>();
     private nextId = 1;
-    private heartbeat: ReturnType<typeof setInterval> | null = null;
+    private heartbeat: WakefulInterval | null = null;
 
     subscribe(
         source: LogSourceId,
@@ -238,7 +239,7 @@ export class SSEBroadcaster {
         }
         this.tailers.clear();
         if (this.heartbeat) {
-            clearInterval(this.heartbeat);
+            this.heartbeat.stop();
             this.heartbeat = null;
         }
     }
@@ -325,7 +326,7 @@ export class SSEBroadcaster {
         }
 
         if (this.subscribers.size === 0 && this.multiplexSubscribers.size === 0 && this.heartbeat) {
-            clearInterval(this.heartbeat);
+            this.heartbeat.stop();
             this.heartbeat = null;
         }
     }
@@ -343,7 +344,7 @@ export class SSEBroadcaster {
         }
 
         if (this.subscribers.size === 0 && this.multiplexSubscribers.size === 0 && this.heartbeat) {
-            clearInterval(this.heartbeat);
+            this.heartbeat.stop();
             this.heartbeat = null;
         }
     }
@@ -385,27 +386,30 @@ export class SSEBroadcaster {
             return;
         }
 
-        this.heartbeat = setInterval(() => {
-            const ping = encoder.encode(`: ping\n\n`);
-            for (const bucket of this.subscribers.values()) {
-                for (const sub of [...bucket]) {
+        this.heartbeat = startWakefulInterval(
+            HEARTBEAT_INTERVAL_MS,
+            () => {
+                const ping = encoder.encode(`: ping\n\n`);
+                for (const bucket of this.subscribers.values()) {
+                    for (const sub of [...bucket]) {
+                        try {
+                            sub.controller.enqueue(ping);
+                        } catch {
+                            this.removeSubscriber(sub);
+                        }
+                    }
+                }
+
+                for (const sub of [...this.multiplexSubscribers]) {
                     try {
                         sub.controller.enqueue(ping);
                     } catch {
-                        this.removeSubscriber(sub);
+                        this.removeMultiplexSubscriber(sub);
                     }
                 }
-            }
-
-            for (const sub of [...this.multiplexSubscribers]) {
-                try {
-                    sub.controller.enqueue(ping);
-                } catch {
-                    this.removeMultiplexSubscriber(sub);
-                }
-            }
-        }, HEARTBEAT_INTERVAL_MS);
-        this.heartbeat.unref?.();
+            },
+            { leading: false }
+        );
     }
 }
 
