@@ -1,3 +1,4 @@
+import { isUsageBucket } from "@app/claude/lib/usage/api";
 import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
@@ -36,7 +37,7 @@ async function main(): Promise<void> {
             }
 
             for (const [bucket, data] of Object.entries(account.usage)) {
-                if (!data || typeof data !== "object" || !("utilization" in data)) {
+                if (!isUsageBucket(data)) {
                     continue;
                 }
 
@@ -45,9 +46,12 @@ async function main(): Promise<void> {
                 }
 
                 try {
-                    notifManager.processUsage(account.accountName, bucket, data.utilization, data.resets_at);
-                } catch {
-                    // Notification failure should not interrupt polling
+                    await notifManager.processUsage(account.accountName, bucket, data.utilization, data.resets_at);
+                } catch (err) {
+                    logger.warn(
+                        { err, account: account.accountName, bucket },
+                        "[claude-usage] usage notification failed"
+                    );
                 }
             }
         }
@@ -85,11 +89,12 @@ async function main(): Promise<void> {
 }
 
 if (import.meta.main) {
-    main()
-        .then(() => process.exit(0))
-        .catch((err) => {
-            logger.error({ error: err }, "[claude-usage] daemon poll failed");
-            out.error(err);
-            process.exit(1);
-        });
+    try {
+        await main();
+        process.exit(0);
+    } catch (err) {
+        logger.error({ error: err }, "[claude-usage] daemon poll failed");
+        out.error(err);
+        process.exit(1);
+    }
 }

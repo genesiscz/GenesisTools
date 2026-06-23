@@ -42,7 +42,7 @@ export function AlertBanner({ alerts, onDismiss }: AlertBannerProps) {
     }
 
     return (
-        <Box flexDirection="column" paddingX={1}>
+        <Box flexDirection="column" flexShrink={0} paddingX={1}>
             {alerts.map((alert, i) => {
                 const bgColor = alert.severity === "critical" ? "red" : "yellow";
                 const isLast = i === alerts.length - 1;

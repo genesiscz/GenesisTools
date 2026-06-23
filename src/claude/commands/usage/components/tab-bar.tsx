@@ -9,7 +9,7 @@ interface TabBarProps {
 
 export function TabBar({ tabs, activeIndex }: TabBarProps) {
     return (
-        <Box>
+        <Box flexShrink={0}>
             <Text dimColor>{"← "}</Text>
             {tabs.map((tab, i) => (
                 <Fragment key={tab.id}>

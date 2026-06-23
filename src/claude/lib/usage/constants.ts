@@ -4,6 +4,7 @@ export const BUCKET_LABELS: Record<string, string> = {
     seven_day_opus: "Weekly (Opus)",
     seven_day_sonnet: "Weekly (Sonnet)",
     seven_day_oauth_apps: "Weekly (OAuth)",
+    extra_usage: "Extra usage",
 };
 
 export const BUCKET_PERIODS_MS: Record<string, number> = {

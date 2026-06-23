@@ -1,6 +1,8 @@
 import { formatDateTime } from "@app/utils/date";
 import pc from "picocolors";
 import type { AccountUsage } from "./api";
+import { isUsageBucket } from "./api";
+import { resolveExtraUsageOverview } from "./extra-usage-tracker";
 
 const BAR_WIDTH = 40;
 const BLOCK_FULL = "\u2588"; // █
@@ -40,6 +42,7 @@ const BUCKET_LABELS: Record<string, string> = {
     seven_day_opus: "Current week (Opus only)",
     seven_day_sonnet: "Current week (Sonnet only)",
     seven_day_oauth_apps: "Current week (OAuth apps)",
+    extra_usage: "Extra usage",
 };
 
 function bucketLabel(key: string): string {
@@ -123,9 +126,14 @@ export function renderAccountUsage(account: AccountUsage): string {
     }
 
     for (const [key, bucket] of Object.entries(account.usage)) {
-        if (!bucket || typeof bucket !== "object" || !("utilization" in bucket)) {
+        if (key === "extra_usage" || !isUsageBucket(bucket)) {
             continue;
         }
+
+        if (bucket.utilization === null || bucket.utilization === undefined) {
+            continue;
+        }
+
         lines.push(`${bucketLabel(key)}`);
         lines.push(renderBar(bucket.utilization));
 
@@ -143,6 +151,23 @@ export function renderAccountUsage(account: AccountUsage): string {
         if (parts.length > 0) {
             lines.push(pc.dim(parts[0]) + (parts[1] ? `  ${parts[1]}` : ""));
         }
+        lines.push("");
+    }
+
+    if (account.usage.extra_usage) {
+        const overview = resolveExtraUsageOverview(account.usage.extra_usage);
+        lines.push(bucketLabel("extra_usage"));
+
+        if (!overview.enabled) {
+            lines.push(pc.dim("  off"));
+        } else {
+            lines.push(renderBar(overview.utilization));
+
+            if (overview.balance) {
+                lines.push(pc.dim(`  ${overview.balance}`));
+            }
+        }
+
         lines.push("");
     }
 

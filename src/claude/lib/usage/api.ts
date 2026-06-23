@@ -19,13 +19,24 @@ export interface UsageBucket {
     resets_at: string | null;
 }
 
+export interface ExtraUsageBucket {
+    is_enabled: boolean;
+    monthly_limit: number | null;
+    used_credits: number | null;
+    utilization: number | null;
+    currency?: string | null;
+    decimal_places?: number | null;
+    disabled_reason?: string | null;
+}
+
 export interface UsageResponse {
     five_hour: UsageBucket;
     seven_day: UsageBucket;
     seven_day_opus?: UsageBucket | null;
     seven_day_sonnet?: UsageBucket | null;
     seven_day_oauth_apps?: UsageBucket | null;
-    [key: string]: UsageBucket | null | undefined;
+    extra_usage?: ExtraUsageBucket | null;
+    [key: string]: UsageBucket | ExtraUsageBucket | null | undefined;
 }
 
 export interface AccountUsage {
@@ -33,6 +44,14 @@ export interface AccountUsage {
     label?: string;
     usage?: UsageResponse;
     error?: string;
+}
+
+export function isUsageBucket(value: UsageBucket | ExtraUsageBucket | null | undefined): value is UsageBucket {
+    if (value === null || value === undefined) {
+        return false;
+    }
+
+    return "resets_at" in value;
 }
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";

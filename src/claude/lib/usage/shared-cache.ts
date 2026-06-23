@@ -1,9 +1,10 @@
 import { join } from "node:path";
+import { processExtraUsageNotifications } from "@app/claude/lib/usage/extra-usage-notify";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { getClaudeUsageStorage } from "@app/claude/lib/usage/storage";
 import { logger } from "@app/logger";
 import type { AccountUsage } from "./api";
-import { fetchAllAccountsUsage } from "./api";
+import { fetchAllAccountsUsage, isUsageBucket } from "./api";
 
 export const DB_FRESH_MS = 10_000;
 export const API_MIN_INTERVAL_MS = 30_000;
@@ -22,6 +23,7 @@ interface Deps {
     putCache: (key: string, value: Cached) => void | Promise<void>;
     withLock: <T>(key: string, fn: () => Promise<T>) => Promise<T>;
     record: (accounts: AccountUsage[]) => void;
+    notifyExtraUsage?: (accounts: AccountUsage[]) => void | Promise<void>;
 }
 
 export interface SharedUsageOpts {
@@ -49,7 +51,7 @@ function recordAll(accounts: AccountUsage[]): void {
         }
 
         for (const [bucket, data] of Object.entries(account.usage)) {
-            if (data && typeof data.utilization === "number") {
+            if (isUsageBucket(data) && typeof data.utilization === "number") {
                 db.recordIfChanged(account.accountName, bucket, data.utilization, data.resets_at ?? null);
             }
         }
@@ -82,6 +84,14 @@ export function __makeSharedUsage(deps: Deps) {
                 logger.warn({ err }, "usage history record failed; returning fetched usage anyway");
             }
 
+            if (deps.notifyExtraUsage) {
+                try {
+                    await deps.notifyExtraUsage(fresh);
+                } catch (err) {
+                    logger.warn({ err }, "extra usage notification pass failed; returning fetched usage anyway");
+                }
+            }
+
             return filterAccounts(fresh, opts.accountFilter);
         });
     };
@@ -102,6 +112,7 @@ const realGetShared = __makeSharedUsage({
             timeout: 10_000,
         }),
     record: recordAll,
+    notifyExtraUsage: processExtraUsageNotifications,
 });
 
 export function getSharedAccountsUsage(opts: SharedUsageOpts = {}): Promise<AccountUsage[]> {
