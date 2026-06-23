@@ -20,8 +20,25 @@ const PREPARE_IMPORT_ENTRY_ORDER = [
 
 const IMPORT_ENTRY_ORDER = ["workItemId", "workItemTitle", "date", "hours", "minutes", "timeType", "comment"] as const;
 
+function normalizeTitleField(value: unknown): string | undefined {
+    if (typeof value !== "string") {
+        return undefined;
+    }
+
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+        return undefined;
+    }
+
+    return trimmed;
+}
+
 export function readEntryWorkItemTitle(entry: TimelogEntryTitleFields): string | undefined {
-    const title = entry.workItemTitle?.trim() || entry.workItemName?.trim() || entry._workitemTitle?.trim();
+    const title =
+        normalizeTitleField(entry.workItemTitle) ??
+        normalizeTitleField(entry.workItemName) ??
+        normalizeTitleField(entry._workitemTitle);
 
     if (!title) {
         return undefined;

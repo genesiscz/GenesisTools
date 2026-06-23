@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { logger } from "@app/logger";
 import {
     getTaskSessionsDir,
     jsonlPath,
@@ -112,10 +113,13 @@ export class TaskSessionStore {
         const tail = await file.slice(tailStart).text();
         const lines = tail.split("\n");
 
-        // If we sliced mid-file, the first line is likely a partial JSON
-        // object — drop it before parsing.
+        // Drop first row only when slice truly starts mid-line.
         if (tailStart > 0) {
-            lines.shift();
+            const prevChar = await file.slice(tailStart - 1, tailStart).text();
+
+            if (prevChar !== "\n") {
+                lines.shift();
+            }
         }
 
         for (let i = lines.length - 1; i >= 0; i--) {
@@ -131,9 +135,21 @@ export class TaskSessionStore {
                 if (record?.type === "line" && typeof record.seq === "number") {
                     return record.seq;
                 }
-            } catch {
-                // Last line of a crashed writer may be a partial JSON object —
-                // skip and keep walking backwards.
+            } catch (err) {
+                logger.debug(
+                    { err, path, tailStart, lineIndex: i },
+                    "TaskSessionStore.getLastLineSeq skipped unparsable JSONL tail line"
+                );
+            }
+        }
+
+        const records = await readJsonlFile(path);
+
+        for (let i = records.length - 1; i >= 0; i--) {
+            const record = records[i];
+
+            if (record.type === "line" && typeof (record as JsonlLineRecord).seq === "number") {
+                return (record as JsonlLineRecord).seq;
             }
         }
 

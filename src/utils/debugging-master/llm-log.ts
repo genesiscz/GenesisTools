@@ -66,9 +66,11 @@ function getBase(): Promise<string> {
 }
 
 function send(entry: Record<string, unknown>): void {
+    const sessionName = currentSession;
+
     getBase()
         .then((base) =>
-            fetch(`${base}/log/${encodeURIComponent(currentSession)}`, {
+            fetch(`${base}/log/${encodeURIComponent(sessionName)}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 // biome-ignore lint/style/noRestrictedGlobals: self-contained file — no external deps

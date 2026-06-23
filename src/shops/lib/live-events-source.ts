@@ -239,9 +239,9 @@ export function ensureLiveEventPoller(db: ShopsDatabase = getShopsDatabase()): v
                 return;
             }
 
-            void pollOnce(db).catch((err) => log.warn({ err }, "live-events poll error"));
+            return pollOnce(db).catch((err) => log.warn({ err }, "live-events poll error"));
         },
-        { leading: false }
+        { leading: false, unref: true }
     );
 }
 

@@ -112,12 +112,13 @@ export class SseBroadcaster {
                 for (const sub of [...this.subscribers]) {
                     try {
                         sub.controller.enqueue(ping);
-                    } catch {
+                    } catch (err) {
+                        log.debug({ subId: sub.id, error: err }, "heartbeat ping failed; removing subscriber");
                         this.removeSubscriber(sub);
                     }
                 }
             },
-            { leading: false }
+            { leading: false, unref: true }
         );
     }
 }

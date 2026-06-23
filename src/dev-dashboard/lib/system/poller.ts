@@ -95,6 +95,11 @@ async function tick(): Promise<void> {
 }
 
 export function startPulsePolling(intervalMs: number): void {
+    if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+        logger.warn({ intervalMs }, "pulse polling not started: invalid interval");
+        return;
+    }
+
     if (handle) {
         return;
     }

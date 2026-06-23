@@ -452,7 +452,7 @@ git stash drop stash@{0}          # discard when truly done
 What cleanup does NOT do:
 - Delete sessions from config (use the sessions CLI for that)
 - Permanently delete log data — `--clean-logs` archives, never `rm`
-- Touch files with non-debug changes
+- Leave unrelated edits untouched in files that contain `@dbg` blocks — note that `--blocks` stashes whole files, so any non-debug edits in those files move into the stash too
 - Find or stash any ingest line that's missing its `// #region @dbg` markers (this is the failure mode the wrap-mandate prevents)
 
 ## Token Efficiency Tips
