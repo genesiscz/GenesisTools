@@ -1,4 +1,5 @@
 import { logger } from "@app/logger";
+import { startWakefulInterval, type WakefulInterval } from "@app/utils/async";
 import { SafeJSON } from "@app/utils/json";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -13,7 +14,7 @@ interface Subscriber {
 export class SseBroadcaster {
     private subscribers = new Set<Subscriber>();
     private nextId = 1;
-    private heartbeat: ReturnType<typeof setInterval> | null = null;
+    private heartbeat: WakefulInterval | null = null;
 
     subscribe(opts?: { initialEvents?: ReadonlyArray<{ event: string; data: unknown }> }): {
         stream: ReadableStream<Uint8Array>;
@@ -86,7 +87,7 @@ export class SseBroadcaster {
         }
         this.subscribers.clear();
         if (this.heartbeat) {
-            clearInterval(this.heartbeat);
+            this.heartbeat.stop();
             this.heartbeat = null;
         }
     }
@@ -94,7 +95,7 @@ export class SseBroadcaster {
     private removeSubscriber(sub: Subscriber): void {
         this.subscribers.delete(sub);
         if (this.subscribers.size === 0 && this.heartbeat) {
-            clearInterval(this.heartbeat);
+            this.heartbeat.stop();
             this.heartbeat = null;
         }
     }
@@ -104,17 +105,20 @@ export class SseBroadcaster {
             return;
         }
 
-        this.heartbeat = setInterval(() => {
-            const ping = encoder.encode(`: ping\n\n`);
-            for (const sub of [...this.subscribers]) {
-                try {
-                    sub.controller.enqueue(ping);
-                } catch {
-                    this.removeSubscriber(sub);
+        this.heartbeat = startWakefulInterval(
+            HEARTBEAT_INTERVAL_MS,
+            () => {
+                const ping = encoder.encode(`: ping\n\n`);
+                for (const sub of [...this.subscribers]) {
+                    try {
+                        sub.controller.enqueue(ping);
+                    } catch {
+                        this.removeSubscriber(sub);
+                    }
                 }
-            }
-        }, HEARTBEAT_INTERVAL_MS);
-        this.heartbeat.unref?.();
+            },
+            { leading: false }
+        );
     }
 }
 

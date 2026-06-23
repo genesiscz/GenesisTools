@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { startWakefulInterval, type WakefulInterval } from "@app/utils/async";
 import { SafeJSON } from "@app/utils/json";
 import type { KillResult, PortProcess, PortSnapshot, ProcessSnapshot, ProcessStatus } from "./types";
 
@@ -1215,7 +1216,7 @@ function killProcessesWindows(pids: number[]): Promise<KillResult[]> {
 export function watchPorts(
     callback: (event: "new" | "removed", snapshot: PortSnapshot) => void,
     options?: { includeSystem?: boolean; intervalMs?: number }
-): ReturnType<typeof setInterval> {
+): WakefulInterval {
     const includeSystem = options?.includeSystem ?? false;
     const intervalMs = options?.intervalMs ?? DEFAULT_WATCH_INTERVAL_MS;
     let previous = new Map<number, PortSnapshot>();
@@ -1247,6 +1248,5 @@ export function watchPorts(
         previous = current;
     };
 
-    collect();
-    return setInterval(collect, intervalMs);
+    return startWakefulInterval(intervalMs, collect);
 }

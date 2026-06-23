@@ -1,9 +1,10 @@
 import { fetchSnapshot } from "@app/dev-dashboard/lib/cmux/client";
 import type { CmuxSnapshot } from "@app/dev-dashboard/lib/cmux/types";
 import { logger } from "@app/logger";
+import { startWakefulInterval, type WakefulInterval } from "@app/utils/async";
 
 let cached: CmuxSnapshot | null = null;
-let timer: ReturnType<typeof setInterval> | null = null;
+let handle: WakefulInterval | null = null;
 
 export function getCachedSnapshot(): CmuxSnapshot {
     if (cached) {
@@ -24,22 +25,20 @@ export function startPolling(intervalMs: number): void {
         return;
     }
 
-    if (timer) {
+    if (handle) {
         return;
     }
 
-    timer = setInterval(() => {
-        refreshOnce().catch((err) => logger.debug({ err }, "cmux poll failed"));
-    }, intervalMs);
-
-    refreshOnce().catch((err) => logger.debug({ err }, "cmux initial poll failed"));
+    handle = startWakefulInterval(intervalMs, async () => {
+        await refreshOnce();
+    });
 }
 
 export function stopPolling(): void {
-    if (!timer) {
+    if (!handle) {
         return;
     }
 
-    clearInterval(timer);
-    timer = null;
+    handle.stop();
+    handle = null;
 }
