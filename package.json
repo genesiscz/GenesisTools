@@ -23,7 +23,7 @@
     },
     "devDependencies": {
         "@anthropic-ai/claude-code": "^2.1.45",
-        "@biomejs/biome": "^2.3.12",
+        "@biomejs/biome": "^2.5.0",
         "@playwright/test": "1.57.0",
         "@radix-ui/react-dialog": "^1.1.15",
         "@radix-ui/react-scroll-area": "^1.2.10",

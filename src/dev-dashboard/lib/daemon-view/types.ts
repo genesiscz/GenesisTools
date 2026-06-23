@@ -5,4 +5,4 @@ export interface DaemonOverview {
     tasks: DaemonTask[];
 }
 
-export type { DaemonTask, RunSummary, LogEntry };
+export type { DaemonTask, LogEntry, RunSummary };

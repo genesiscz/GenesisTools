@@ -526,7 +526,7 @@ export function CelebrationSettingsPanel({ className }: CelebrationSettingsProps
                   settings.mode === mode.value
                       ? "bg-purple-500/20 border-purple-500/50 border"
                       : "bg-card border border-border hover:bg-accent"
-              }
+}
             `}
                     >
                         <div className="font-medium text-sm">{mode.label}</div>

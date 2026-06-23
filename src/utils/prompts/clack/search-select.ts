@@ -10,6 +10,7 @@ import { Writable } from "node:stream";
 import pc from "picocolors";
 
 import type { SearchItem } from "./search-multiselect.js";
+
 export type { SearchItem };
 
 // Silent writable stream to prevent readline from echoing input

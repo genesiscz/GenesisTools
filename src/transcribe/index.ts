@@ -35,7 +35,7 @@ const SUPPORTED_AUDIO_EXTENSIONS = new Set([
 ]);
 
 // Re-export for backwards compat (tests import from here)
-export { formatOutput, formatTimestamp, toSRT, toVTT, type OutputFormat };
+export { formatOutput, formatTimestamp, type OutputFormat, toSRT, toVTT };
 
 // ============================================
 // Core transcription logic

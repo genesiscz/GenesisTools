@@ -32,7 +32,7 @@ const client = new TimelyApiClient(storage);
 const service = new TimelyService(client, storage);
 
 // Export dependencies for subcommands
-export { storage, client, service };
+export { client, service, storage };
 
 function showHelpFull(): void {
     out.println(`

@@ -4,7 +4,7 @@ import type { EnrichedQaEntry } from "@app/dev-dashboard/lib/qa-types";
 import type { QaEntry } from "@app/question/lib/types";
 
 export type { EnrichedQaEntry };
-export { QA_ANSWER_PREVIEW_LINES, isQaAnswerTruncated };
+export { isQaAnswerTruncated, QA_ANSWER_PREVIEW_LINES };
 
 const noopWikilink = { resolveWikilink: () => null };
 

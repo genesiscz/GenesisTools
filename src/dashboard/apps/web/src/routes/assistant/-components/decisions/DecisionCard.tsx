@@ -332,4 +332,4 @@ export function DecisionCard({
     );
 }
 
-export { statusConfig, impactAreaConfig };
+export { impactAreaConfig, statusConfig };

@@ -69,6 +69,5 @@ const closeOnce = (() => {
 process.once("SIGTERM", () => setTimeout(closeOnce, 3000));
 process.once("SIGINT", closeOnce);
 
-export { sqlite };
-
 export * from "./schema";
+export { sqlite };

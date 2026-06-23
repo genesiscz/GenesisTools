@@ -331,5 +331,5 @@ export function useSessions({ active, notifications }: SessionsOptions) {
     };
 }
 
-export { CACHE_TTL_MS, COOLING_THRESHOLD_MS, CRITICAL_THRESHOLD_MS };
 export type { TimeFilter };
+export { CACHE_TTL_MS, COOLING_THRESHOLD_MS, CRITICAL_THRESHOLD_MS };

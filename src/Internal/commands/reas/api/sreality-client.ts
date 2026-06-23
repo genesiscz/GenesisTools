@@ -9,7 +9,6 @@ import type {
 import { parseSrealityName, SrealityClient } from "@app/Internal/commands/reas/api/SrealityClient";
 import type { AnalysisFilters, SaleListing, SrealityRental } from "@app/Internal/commands/reas/types";
 
-export { parseSrealityName, SrealityClient };
 export type {
     SrealityCluster,
     SrealityGeometry,
@@ -18,6 +17,7 @@ export type {
     SrealityV1QueryParams,
     SuggestResult,
 };
+export { parseSrealityName, SrealityClient };
 
 export const srealityClient = new SrealityClient();
 

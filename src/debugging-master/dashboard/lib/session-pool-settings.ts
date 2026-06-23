@@ -52,4 +52,4 @@ function clampActiveSessionLimitMinutes(value: unknown): number {
     return Math.min(MAX_ACTIVE_SESSION_LIMIT_MINUTES, Math.max(MIN_ACTIVE_SESSION_LIMIT_MINUTES, Math.round(value)));
 }
 
-export { MIN_ACTIVE_SESSION_LIMIT_MINUTES, MAX_ACTIVE_SESSION_LIMIT_MINUTES };
+export { MAX_ACTIVE_SESSION_LIMIT_MINUTES, MIN_ACTIVE_SESSION_LIMIT_MINUTES };
