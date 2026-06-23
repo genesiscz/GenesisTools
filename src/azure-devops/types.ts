@@ -475,6 +475,7 @@ export interface TimeLogListOptions {
 export interface TimeLogImportFile {
     entries: Array<{
         workItemId: number;
+        workItemTitle?: string;
         hours?: number;
         minutes?: number;
         timeType: string;

@@ -153,10 +153,12 @@ tools azure-devops timelog import .genesis-tools/azure-devops/cache/prepare-impo
 
 This workflow:
 - Validates each entry as it's added (Zod schema + workitem type precheck)
+- Backfills `workItemTitle` via precheck — do not guess titles in `--entry` JSON
 - Allows user to review before committing
 - Generates a name automatically from date range (e.g., `2026-02-01.2026-02-08`)
 - Entries can be removed or modified before import
-- Import supports `--dry-run` for final verification
+- Import `--dry-run` validates and writes backfilled titles to the file
+- Run from the repo with `.claude/azure/config.json` (e.g. `col-fe/`)
 
 ### Step 8: Execute Approved Entries (Alternative for Single Entries)
 
@@ -312,9 +314,11 @@ Fields:
 - `minutes` (optional): Additional minutes (use instead of decimal hours if preferred)
 - `comment` (optional): Description of work done
 
+`workItemTitle` is **not** an input field — precheck adds it on `prepare-import add` / `list` or `import --dry-run`. Do not invent titles when authoring JSON.
+
 Commands:
 ```bash
-# Validate without creating entries
+# Validate and backfill workItemTitle (run from project with .claude/azure/config.json)
 tools azure-devops timelog import <file.json> --dry-run
 
 # Actually import

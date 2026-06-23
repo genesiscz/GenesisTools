@@ -1,3 +1,9 @@
+import {
+    normalizeTimelogEntries,
+    readEntryWorkItemTitle,
+    setEntryWorkItemTitle,
+    workItemTitleFromPrecheck,
+} from "@app/azure-devops/lib/timelog/entry-fields";
 import { convertToMinutes, formatMinutes } from "@app/azure-devops/timelog-api";
 import type { AllowedTypeConfig } from "@app/azure-devops/types";
 import { requireTimeLogConfig } from "@app/azure-devops/utils";
@@ -13,6 +19,8 @@ import { z } from "zod";
 const TimelogEntrySchema = z
     .object({
         workItemId: z.number().int().positive(),
+        workItemTitle: z.string().optional(),
+        workItemName: z.string().optional(),
         date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         hours: z.number().min(0).optional(),
         minutes: z.number().int().min(0).optional(),
@@ -28,8 +36,10 @@ type TimelogEntryInput = z.infer<typeof TimelogEntrySchema>;
 interface StoredEntry {
     _id: string;
     _status: "pending";
-    _workitemTitle?: string;
     workItemId: number;
+    workItemTitle: string;
+    workItemName?: string;
+    _workitemTitle?: string;
     date: string;
     hours?: number;
     minutes?: number;
@@ -90,9 +100,65 @@ function computeTotalMinutes(entry: StoredEntry): number {
     return h * 60 + m;
 }
 
+async function backfillMissingWorkItemTitles(
+    entries: StoredEntry[],
+    org: string,
+    allowedTypeConfig: AllowedTypeConfig | undefined
+): Promise<boolean> {
+    let mutated = false;
+
+    for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        const existing = readEntryWorkItemTitle(entry);
+
+        if (!existing) {
+            continue;
+        }
+
+        if (!entry.workItemTitle || entry.workItemName || entry._workitemTitle) {
+            entries[i] = setEntryWorkItemTitle(entry, existing);
+            mutated = true;
+        }
+    }
+
+    const idsMissingTitle = [...new Set(entries.filter((e) => !readEntryWorkItemTitle(e)).map((e) => e.workItemId))];
+
+    if (idsMissingTitle.length === 0 || !allowedTypeConfig) {
+        return mutated;
+    }
+
+    for (const id of idsMissingTitle) {
+        const result = await precheckWorkItem(id, org, allowedTypeConfig);
+        const title = workItemTitleFromPrecheck(result);
+
+        if (!title) {
+            continue;
+        }
+
+        for (let i = 0; i < entries.length; i++) {
+            const entry = entries[i];
+
+            if (entry.workItemId === id && !readEntryWorkItemTitle(entry)) {
+                entries[i] = setEntryWorkItemTitle(entry, title);
+                mutated = true;
+            }
+        }
+    }
+
+    const before = SafeJSON.stringify(entries);
+    entries.splice(0, entries.length, ...normalizeTimelogEntries(entries));
+
+    if (!mutated && SafeJSON.stringify(entries) !== before) {
+        mutated = true;
+    }
+
+    return mutated;
+}
+
 function printEntry(entry: StoredEntry): void {
     const totalMin = computeTotalMinutes(entry);
-    const wiLabel = entry._workitemTitle ? `#${entry.workItemId} ${entry._workitemTitle}` : `#${entry.workItemId}`;
+    const title = readEntryWorkItemTitle(entry);
+    const wiLabel = title ? `#${entry.workItemId} ${title}` : `#${entry.workItemId}`;
     const parts = [wiLabel, formatMinutes(totalMin), entry.timeType, entry.date];
 
     if (entry.comment) {
@@ -103,12 +169,24 @@ function printEntry(entry: StoredEntry): void {
     out.println(`  ${parts.join(" | ")}`);
 }
 
+function buildAllowedTypeConfig(config: ReturnType<typeof requireTimeLogConfig>): AllowedTypeConfig | undefined {
+    if (!config.timelog?.allowedWorkItemTypes?.length) {
+        return undefined;
+    }
+
+    return {
+        allowedWorkItemTypes: config.timelog.allowedWorkItemTypes,
+        allowedStatesPerType: config.timelog.allowedStatesPerType,
+        deprioritizedStates: config.timelog.deprioritizedStates,
+        defaultUserName: config.timelog.defaultUser?.userName,
+    };
+}
+
 // ============= Subcommand Actions =============
 
 async function handleAdd(options: TimelogAddOptions): Promise<void> {
     const fileName = resolveFileName(options);
 
-    // Parse and validate entry JSON
     let rawEntry: unknown;
 
     try {
@@ -132,7 +210,6 @@ async function handleAdd(options: TimelogAddOptions): Promise<void> {
 
     const validated: TimelogEntryInput = parseResult.data;
 
-    // Validate time converts properly
     try {
         convertToMinutes(validated.hours, validated.minutes);
     } catch (e) {
@@ -140,17 +217,8 @@ async function handleAdd(options: TimelogAddOptions): Promise<void> {
         process.exit(1);
     }
 
-    // Precheck work item
     const config = requireTimeLogConfig();
-    const allowedTypeConfig: AllowedTypeConfig | undefined = config.timelog?.allowedWorkItemTypes?.length
-        ? {
-              allowedWorkItemTypes: config.timelog.allowedWorkItemTypes,
-              allowedStatesPerType: config.timelog.allowedStatesPerType,
-              deprioritizedStates: config.timelog.deprioritizedStates,
-              defaultUserName: config.timelog.defaultUser?.userName,
-          }
-        : undefined;
-
+    const allowedTypeConfig = buildAllowedTypeConfig(config);
     const precheck = await precheckWorkItem(validated.workItemId, config.org, allowedTypeConfig);
 
     let effectiveWorkItemId = validated.workItemId;
@@ -174,17 +242,13 @@ async function handleAdd(options: TimelogAddOptions): Promise<void> {
         effectiveWorkItemId = precheck.redirectId!;
     }
 
-    const workitemTitle =
-        precheck.status === "redirect"
-            ? (precheck.redirectTitle ?? `${precheck.originalTitle} (redirected → #${precheck.redirectId})`)
-            : precheck.originalTitle;
+    const resolvedWorkItemTitle = readEntryWorkItemTitle(validated) || workItemTitleFromPrecheck(precheck) || "";
 
-    // Build stored entry
     const storedEntry: StoredEntry = {
         _id: crypto.randomUUID(),
         _status: "pending",
-        _workitemTitle: workitemTitle,
         workItemId: effectiveWorkItemId,
+        workItemTitle: resolvedWorkItemTitle,
         date: validated.date,
         hours: validated.hours,
         minutes: validated.minutes,
@@ -192,7 +256,6 @@ async function handleAdd(options: TimelogAddOptions): Promise<void> {
         comment: validated.comment ?? "",
     };
 
-    // Atomic append
     await storage.atomicUpdate<PrepareImportFile>(cacheKey(fileName), (current) => {
         if (current) {
             return { ...current, entries: [...current.entries, storedEntry] };
@@ -238,12 +301,18 @@ async function handleList(options: TimelogListOptions): Promise<void> {
         process.exit(1);
     }
 
+    const config = requireTimeLogConfig();
+    const backfilled = await backfillMissingWorkItemTitles(data.entries, config.org, buildAllowedTypeConfig(config));
+
+    if (backfilled) {
+        await storage.atomicUpdate<PrepareImportFile>(key, () => data);
+    }
+
     if (options.format === "json") {
         out.println(SafeJSON.stringify(data, null, 2));
         return;
     }
 
-    // Table format (default)
     out.println(`Prepare-import: ${data.name}`);
     out.println(`Created: ${data.createdAt}`);
     out.println(`Entries: ${data.entries.length}\n`);
@@ -253,12 +322,10 @@ async function handleList(options: TimelogListOptions): Promise<void> {
         return;
     }
 
-    // Print entries
     for (const entry of data.entries) {
         printEntry(entry);
     }
 
-    // Totals per day
     const dailyTotals = new Map<string, number>();
     const workitemTotals = new Map<number, number>();
 
@@ -278,19 +345,21 @@ async function handleList(options: TimelogListOptions): Promise<void> {
 
     out.println("\nTotals per work item:");
 
-    const workitemNames = new Map<number, string>();
+    const workitemTitles = new Map<number, string>();
 
     for (const entry of data.entries) {
-        if (entry._workitemTitle) {
-            workitemNames.set(entry.workItemId, entry._workitemTitle);
+        const title = readEntryWorkItemTitle(entry);
+
+        if (title) {
+            workitemTitles.set(entry.workItemId, title);
         }
     }
 
     const sortedItems = [...workitemTotals.entries()].sort(([a], [b]) => a - b);
 
     for (const [id, mins] of sortedItems) {
-        const name = workitemNames.get(id);
-        const label = name ? `#${id} ${name}` : `#${id}`;
+        const title = workitemTitles.get(id);
+        const label = title ? `#${id} ${title}` : `#${id}`;
         out.println(`  ${label}: ${formatMinutes(mins)}`);
     }
 

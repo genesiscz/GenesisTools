@@ -474,6 +474,8 @@ tools azure-devops timelog prepare-import clear --name 2026-02-01.2026-02-08
 
 The name is auto-generated from `--from` and `--to` as `<from>.<to>` (e.g., `2026-02-01.2026-02-08`). Each entry is validated with Zod schema and runs workitem type precheck before being added.
 
+Do **not** include `workItemTitle` in staged `--entry` JSON unless you already have the exact ADO title. Precheck backfills it on `prepare-import add`; `prepare-import list` and `import --dry-run` fill any still-missing titles. Run from the project directory that has `.claude/azure/config.json` (e.g. `col-fe/`).
+
 ### Import Time Logs
 
 ```bash
@@ -483,9 +485,11 @@ tools azure-devops timelog import .genesis-tools/azure-devops/cache/prepare-impo
 # Or import from custom JSON file
 tools azure-devops timelog import entries.json
 
-# Dry run to validate without creating entries
+# Dry run — validates, backfills workItemTitle into the file, does not create entries
 tools azure-devops timelog import entries.json --dry-run
 ```
+
+Omit `workItemTitle` when authoring import JSON. Precheck resolves titles (single ADO fetch per work item) and `--dry-run` writes them back to the source file.
 
 The import command runs workitem type precheck for each entry before creating it. After import, the command shows a precheck summary with counts of passed/redirected/failed entries. The cache is automatically evicted after successful imports.
 
