@@ -24,7 +24,7 @@ import { SessionDeleteConfirmProvider } from "@/lib/ui/SessionDeleteConfirm";
 import { resetLogSearchState, useLogSearchDisplay } from "@/lib/use-log-search-display";
 
 const FRESH_TTL_MS = 1500;
-const SESSIONS_REFRESH_MS = 5_000;
+const SESSIONS_REFRESH_MS = 10_000;
 
 type AppView = "home" | "detail";
 
@@ -79,6 +79,8 @@ export function App(): React.ReactElement {
     const [activeSession, setActiveSession] = useState<string | null>(initial.session);
     const [entries, setEntries] = useState<IndexedLogEntry[]>([]);
     const [status, setStatus] = useState<ConnectionStatus>("connecting");
+    const [serverReachable, setServerReachable] = useState<boolean | null>(null);
+    const [refreshing, setRefreshing] = useState(false);
     const [filterState, setFilterState] = useState<FilterState>(defaultFilterState);
     const [paused, setPaused] = useState(false);
     const [sortDir, setSortDir] = useState<SortDir>(() => {
@@ -130,9 +132,16 @@ export function App(): React.ReactElement {
         }
 
         const run = async (): Promise<void> => {
+            setRefreshing(true);
+
             try {
                 const { sessions: list } = await api.listSessions();
                 setSessions(sortSessionsByRecency(list));
+                setServerReachable(true);
+
+                if (activeRef.current.view === "home") {
+                    setStatus("live");
+                }
 
                 const { view: currentView, source, session } = activeRef.current;
 
@@ -156,8 +165,13 @@ export function App(): React.ReactElement {
 
                 goHome();
             } catch {
-                setStatus("down");
+                setServerReachable(false);
+
+                if (activeRef.current.view === "home") {
+                    setStatus("reconnecting");
+                }
             } finally {
+                setRefreshing(false);
                 refreshInFlightRef.current = null;
             }
         };
@@ -407,6 +421,9 @@ export function App(): React.ReactElement {
 
     const sessionDirSources = useMemo(() => collectSessionCwds(sessions), [sessions]);
 
+    const homeConnectionStatus: ConnectionStatus =
+        serverReachable === null ? "connecting" : serverReachable ? "live" : "reconnecting";
+
     return (
         <DisplaySettingsProvider>
             <SessionPoolSettingsProvider>
@@ -417,7 +434,8 @@ export function App(): React.ReactElement {
                                 <div className="h-full min-h-0 flex flex-col">
                                     <SessionsHome
                                         sessions={sessions}
-                                        status={status}
+                                        status={homeConnectionStatus}
+                                        refreshing={refreshing}
                                         onRefresh={refreshSessions}
                                         onOpenSession={openSession}
                                         onStatus={setStatus}
@@ -441,6 +459,7 @@ export function App(): React.ReactElement {
                                                     }
                                                 }}
                                                 status={status}
+                                                refreshing={refreshing}
                                                 entryCount={entries.length}
                                                 onClear={onClear}
                                                 onRefresh={() => {

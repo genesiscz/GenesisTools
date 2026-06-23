@@ -74,6 +74,7 @@ function mergePreviewLines(
 interface Props {
     sessions: DashboardSession[];
     status: ConnectionStatus;
+    refreshing?: boolean;
     onRefresh: () => Promise<void>;
     onOpenSession: (source: LogSourceId, name: string) => void;
     onStatus: (status: ConnectionStatus) => void;
@@ -310,14 +311,21 @@ function ActiveSessionMosaicPane({
     );
 }
 
-export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onStatus }: Props): React.ReactElement {
+export function SessionsHome({
+    sessions,
+    status,
+    refreshing = false,
+    onRefresh,
+    onOpenSession,
+    onStatus,
+}: Props): React.ReactElement {
     const { settings } = useDisplaySettings();
     const { settings: poolSettings } = useSessionPoolSettings();
     const pathPrefix = useDirPathPrefix();
     const now = useNowTick(1000);
     const activeRetentionMs = useMemo(
         () => activeSessionRetentionMs(poolSettings),
-        [poolSettings.activeSessionLimitMinutes]
+        [poolSettings.activeSessionLimitSeconds]
     );
     const maxMosaicTiles = poolSettings.keepAllAlive ? Number.MAX_SAFE_INTEGER : MAX_ACTIVE_TILES;
     const [liveLines, setLiveLines] = useState<Map<string, MultiplexLogEntry[]>>(new Map());
@@ -520,13 +528,8 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
     }, [mosaicEntryCountsSig, prefetchSessionTail]);
 
     useEffect(() => {
-        // Re-open the multiplex SSE whenever the SET of active pool keys changes
-        // (not just mosaic tiles). subscribeActive snapshots server targets once
-        // at connect time; mosaic-only deps left new actives without live tail.
-        if (allActiveKeys.length === 0) {
-            return;
-        }
-
+        // Multiplex SSE for live tail — keep open even with zero active sessions so
+        // the home view still shows "connected" when the server is reachable.
         const dispose = connectActiveStream({
             onStatus: onStatus,
             onEntry: (entry) => {
@@ -565,7 +568,6 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
         });
 
         return dispose;
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [onStatus, allActiveKeysSig]);
 
     const toggleArchiveRow = useCallback(
@@ -637,7 +639,7 @@ export function SessionsHome({ sessions, status, onRefresh, onOpenSession, onSta
                 <div className="px-3 sm:px-5 py-2.5 flex flex-wrap items-center gap-3">
                     <div className="flex items-center gap-3 mr-auto">
                         <span className="brand-title">▓▓▓ SESSIONS</span>
-                        <StatusPill status={status} />
+                        <StatusPill status={status} refreshing={refreshing} />
                         <span className="dbg-ui-text-sm text-emerald-400/70">
                             {allActiveSessions.length} live
                             {hiddenActiveCount > 0 ? ` · ${mosaicActiveKeys.length} in mosaic` : ""}
