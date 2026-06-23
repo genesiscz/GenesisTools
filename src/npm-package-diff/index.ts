@@ -8,6 +8,7 @@ import { resolvePathWithTilde } from "@app/utils";
 import { isVerbose, runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { handleReadmeFlag } from "@app/utils/readme";
+import * as TOML from "@iarna/toml";
 import boxen from "boxen";
 import chalk from "chalk";
 import chokidar, { type FSWatcher } from "chokidar";
@@ -95,6 +96,83 @@ const loadConfig = (configPath?: string): Record<string, unknown> => {
         }
     }
     return {};
+};
+
+// Walk up from startDir to the filesystem root, returning the first existing file
+// among `names`. Mirrors how npm/pnpm/yarn/bun discover project config — the temp
+// install dir lives in os.tmpdir() with no such ancestry, so we re-create it.
+const findNearestConfig = (startDir: string, names: string[]): string | null => {
+    let dir = startDir;
+    while (true) {
+        for (const name of names) {
+            const candidate = path.join(dir, name);
+            if (fs.existsSync(candidate)) {
+                return candidate;
+            }
+        }
+
+        const parent = path.dirname(dir);
+        if (parent === dir) {
+            return null;
+        }
+
+        dir = parent;
+    }
+};
+
+// Resolve relative cafile/certfile/keyfile values against the config's own
+// directory. Once copied into os.tmpdir(), a "./certs/ca.pem" would otherwise
+// resolve against the temp dir and fail with a confusing cert error.
+const PATH_VALUED_KEYS = ["cafile", "certfile", "keyfile"];
+
+const resolveConfigPath = (value: string, sourceDir: string): string => {
+    if (!value || path.isAbsolute(value) || value.startsWith("~") || /^[a-z]+:\/\//i.test(value)) {
+        return value;
+    }
+    return path.resolve(sourceDir, value);
+};
+
+const rewriteNpmrcPaths = (content: string, sourceDir: string): string => {
+    const keys = PATH_VALUED_KEYS.join("|");
+    const re = new RegExp(`^(\\s*(?:${keys})\\s*=\\s*)(.+)$`, "gim");
+    return content.replace(re, (_full, prefix: string, rawValue: string) => {
+        return `${prefix}${resolveConfigPath(rawValue.trim(), sourceDir)}`;
+    });
+};
+
+// Build the bunfig.toml for the temp install dir by mirroring the nearest project
+// bunfig (so corp cafile / linker / scopes carry over), but always forcing
+// minimumReleaseAge = 0 — diffing targets brand-new releases that the project's
+// supply-chain age gate would otherwise refuse to resolve.
+const buildTempBunfig = (cwd: string): string => {
+    const source = findNearestConfig(cwd, ["bunfig.toml", ".bunfig.toml"]);
+    if (source) {
+        try {
+            const parsed = TOML.parse(fs.readFileSync(source, "utf8"));
+            const install: TOML.JsonMap =
+                parsed.install && typeof parsed.install === "object" ? (parsed.install as TOML.JsonMap) : {};
+
+            const sourceDir = path.dirname(source);
+            for (const key of PATH_VALUED_KEYS) {
+                const v = install[key];
+                if (typeof v === "string") {
+                    install[key] = resolveConfigPath(v, sourceDir);
+                }
+            }
+
+            install.minimumReleaseAge = 0;
+            delete install.minimumReleaseAgeExcludes;
+            logger.debug(`Mirrored bunfig [install] from ${source} (minimumReleaseAge forced to 0)`);
+
+            // Only the [install] table is relevant; preload/test/run paths reference
+            // files that don't exist in the temp dir.
+            return TOML.stringify({ install });
+        } catch (error) {
+            logger.warn(`Failed to parse bunfig at ${source}, using minimal config: ${error}`);
+        }
+    }
+
+    return "[install]\nminimumReleaseAge = 0\n";
 };
 
 const program = new Command()
@@ -274,7 +352,9 @@ interface FileMetadata {
 
 interface DiffResult {
     file: string;
-    status: "added" | "removed" | "modified" | "identical";
+    status: "added" | "removed" | "modified" | "identical" | "renamed";
+    oldPath?: string;
+    newPath?: string;
     oldSize?: number;
     newSize?: number;
     additions?: number;
@@ -297,6 +377,7 @@ class EnhancedPackageComparison {
     private packageManager: PackageManager;
     private pagerProcess?: ReturnType<typeof spawn>;
     private outputBuffer: string[] = [];
+    private tempBunfigContent?: string;
 
     constructor(
         private packageName: string,
@@ -371,21 +452,33 @@ class EnhancedPackageComparison {
         fs.mkdirSync(this.dir1, { recursive: true });
         fs.mkdirSync(this.dir2, { recursive: true });
 
-        // Copy .npmrc if specified
+        // Mirror the nearest .npmrc into both temp dirs so private-scope registries
+        // and auth tokens resolve exactly as they would in the user's project.
+        // Explicit --npmrc wins; otherwise walk up from cwd. ~/.npmrc is already read
+        // globally by every package manager, so only the project-local one is missing.
+        let npmrcSource: string | null = null;
         if (this.options.npmrc) {
-            const npmrcPath = resolvePathWithTilde(this.options.npmrc);
-
-            if (fs.existsSync(npmrcPath)) {
-                try {
-                    const npmrcContent = fs.readFileSync(npmrcPath, "utf8");
-                    fs.writeFileSync(path.join(this.dir1, ".npmrc"), npmrcContent);
-                    fs.writeFileSync(path.join(this.dir2, ".npmrc"), npmrcContent);
-                    logger.debug(`\nCopied .npmrc from ${npmrcPath}`);
-                } catch (error) {
-                    logger.error(`\nError copying .npmrc from ${npmrcPath}: ${error}`);
-                }
+            const explicit = resolvePathWithTilde(this.options.npmrc);
+            if (fs.existsSync(explicit)) {
+                npmrcSource = explicit;
             } else {
-                logger.warn(`\nSpecified .npmrc file not found: ${npmrcPath}`);
+                logger.warn(`\nSpecified .npmrc file not found: ${explicit}`);
+            }
+        } else {
+            npmrcSource = findNearestConfig(process.cwd(), [".npmrc"]);
+        }
+
+        if (npmrcSource) {
+            try {
+                const content = rewriteNpmrcPaths(fs.readFileSync(npmrcSource, "utf8"), path.dirname(npmrcSource));
+                fs.writeFileSync(path.join(this.dir1, ".npmrc"), content);
+                fs.writeFileSync(path.join(this.dir2, ".npmrc"), content);
+                logger.debug(`Mirrored .npmrc from ${npmrcSource}`);
+                if (this.options.keep) {
+                    logger.warn(`--keep leaves a copy of ${npmrcSource} (incl. any auth tokens) in ${this.tempDir}`);
+                }
+            } catch (error) {
+                logger.error(`Error copying .npmrc from ${npmrcSource}: ${error}`);
             }
         }
 
@@ -458,6 +551,13 @@ class EnhancedPackageComparison {
         await new Promise((resolve) => setTimeout(resolve, 1000));
     }
 
+    private getTempBunfig(): string {
+        if (this.tempBunfigContent === undefined) {
+            this.tempBunfigContent = buildTempBunfig(process.cwd());
+        }
+        return this.tempBunfigContent;
+    }
+
     private async installPackageInDirectory(pkg: string, version: string, dir: string): Promise<void> {
         logger.debug(`Installing ${pkg}@${version} in ${dir} using ${this.packageManager}`);
 
@@ -478,35 +578,56 @@ class EnhancedPackageComparison {
 
         fs.writeFileSync(path.join(dir, "package.json"), SafeJSON.stringify(packageJson, null, 2));
 
+        // Diffing often targets brand-new releases. Mirror the nearest project
+        // bunfig (corp cafile / linker / scopes) but force minimumReleaseAge = 0 so
+        // the age gate never blocks the requested version. Falls back to a minimal
+        // config when no project bunfig exists.
+        if (this.packageManager === "bun") {
+            fs.writeFileSync(path.join(dir, "bunfig.toml"), this.getTempBunfig());
+        }
+
         // Prepare install command based on package manager
         let installCmd: string;
         let installArgs: string[];
 
+        // --ignore-scripts on every manager: we install arbitrary, untrusted
+        // package versions purely to read their files. No pre/post/install
+        // lifecycle script may ever execute in the temp dir.
         switch (this.packageManager) {
             case "bun":
                 installCmd = "bun";
-                installArgs = ["install"];
+                installArgs = ["install", "--ignore-scripts"];
                 break;
             case "pnpm":
                 installCmd = "pnpm";
-                installArgs = ["install", "--no-lockfile"];
+                installArgs = ["install", "--no-lockfile", "--ignore-scripts"];
                 break;
             case "yarn":
                 installCmd = "yarn";
-                installArgs = ["install", "--no-lockfile"];
+                installArgs = ["install", "--no-lockfile", "--ignore-scripts"];
                 break;
             default:
                 installCmd = "npm";
-                installArgs = ["install", "--no-package-lock"];
+                installArgs = ["install", "--no-package-lock", "--ignore-scripts"];
                 break;
         }
 
         // Run install with timeout
         return new Promise((resolve, reject) => {
+            const verbose = isVerbose();
             const installProcess = spawn(installCmd, installArgs, {
                 cwd: dir,
-                stdio: isVerbose() ? "inherit" : "pipe",
+                stdio: verbose ? "inherit" : "pipe",
             });
+
+            // When not verbose the streams are piped (and would otherwise be silently
+            // discarded). Capture them so a non-zero exit can report WHY it failed
+            // (404 / auth / cert) instead of an opaque "failed with code 1".
+            const captured: string[] = [];
+            if (!verbose) {
+                installProcess.stdout?.on("data", (d: Buffer) => captured.push(d.toString()));
+                installProcess.stderr?.on("data", (d: Buffer) => captured.push(d.toString()));
+            }
 
             let timedOut = false;
             const timeout = setTimeout(() => {
@@ -525,7 +646,21 @@ class EnhancedPackageComparison {
                     logger.debug(`Successfully installed ${pkg}@${version} to ${dir}`);
                     resolve();
                 } else {
-                    reject(new Error(`${this.packageManager} install failed with code ${code} for ${pkg}@${version}`));
+                    const detail = captured.join("").trim();
+                    const tail = detail.length > 1600 ? `…${detail.slice(-1600)}` : detail;
+                    const needsAuth = /E404|404|ENEEDAUTH|E401|401|403|no permission|not found|authenticate/i.test(
+                        detail
+                    );
+                    const hint = needsAuth
+                        ? "\n  Hint: looks like a private/authenticated package. npm-package-diff mirrors the nearest .npmrc/bunfig.toml from your cwd — run it from inside the project tree (and on VPN if the registry is internal), or pass --npmrc <path>."
+                        : "";
+                    reject(
+                        new Error(
+                            `${this.packageManager} install failed with code ${code} for ${pkg}@${version}${
+                                tail ? `\n${tail}` : ""
+                            }${hint}`
+                        )
+                    );
                 }
             });
 
@@ -577,101 +712,223 @@ class EnhancedPackageComparison {
         const files1Map = new Map(filteredFiles1.map((f) => [f.relativePath, f]));
         const files2Map = new Map(filteredFiles2.map((f) => [f.relativePath, f]));
 
-        // Get all unique file paths
-        const allPaths = new Set([...files1Map.keys(), ...files2Map.keys()]);
+        // Partition into common / only-in-v1 / only-in-v2.
+        const inBoth: string[] = [];
+        const onlyIn1: string[] = [];
+        const onlyIn2: string[] = [];
+        for (const filePath of new Set([...files1Map.keys(), ...files2Map.keys()])) {
+            const in1 = files1Map.has(filePath);
+            const in2 = files2Map.has(filePath);
+            if (in1 && in2) {
+                inBoth.push(filePath);
+            } else if (in1) {
+                onlyIn1.push(filePath);
+            } else {
+                onlyIn2.push(filePath);
+            }
+        }
 
-        for (const filePath of Array.from(allPaths).sort()) {
+        // Pair relocated files (e.g. apis/X.d.ts -> dist/apis/X.d.ts) so they
+        // render as a rename WITH a side-by-side diff instead of an unrelated
+        // delete + add pair.
+        const { pairs, removed, added } = this.detectRenames(onlyIn1, onlyIn2);
+
+        for (const filePath of inBoth.sort()) {
             const file1 = files1Map.get(filePath);
             const file2 = files2Map.get(filePath);
-
             if (file1 && file2) {
                 await this.compareTwoFiles(file1, file2);
-            } else if (file1 && !file2) {
-                // For removed files, read the content and create a diff showing all lines as deletions
-                try {
-                    const content1 = fs.readFileSync(file1.absolutePath, "utf8");
-                    const lines = content1.split("\n");
-                    // Remove last empty line if present
-                    if (lines[lines.length - 1] === "") {
-                        lines.pop();
-                    }
-                    const lineCount = lines.length;
+            }
+        }
 
-                    const changes = [{ removed: true, added: false, value: content1, count: lineCount }];
+        for (const [oldPath, newPath] of pairs) {
+            const file1 = files1Map.get(oldPath);
+            const file2 = files2Map.get(newPath);
+            if (file1 && file2) {
+                this.emitRenamedFile(file1, file2, oldPath, newPath);
+            }
+        }
 
-                    // Generate patch for removed file
-                    const patch = diff.createTwoFilesPatch(
-                        filePath,
-                        filePath,
-                        content1,
-                        "",
-                        `v${this.version1}`,
-                        `v${this.version2}`,
-                        { context: this.options.context }
-                    );
+        for (const filePath of removed.sort()) {
+            const file1 = files1Map.get(filePath);
+            if (file1) {
+                this.emitRemovedFile(file1, filePath);
+            }
+        }
 
-                    this.results.push({
-                        file: filePath,
-                        status: "removed",
-                        oldSize: file1.size,
-                        additions: 0,
-                        deletions: lineCount,
-                        changes,
-                        patch,
-                    });
-                } catch (error) {
-                    logger.error(`Error reading removed file ${filePath}: ${error}`);
-                    this.results.push({
-                        file: filePath,
-                        status: "removed",
-                        oldSize: file1.size,
-                    });
-                }
-            } else if (!file1 && file2) {
-                // For added files, read the content and create a diff showing all lines as additions
-                try {
-                    const content2 = fs.readFileSync(file2.absolutePath, "utf8");
-                    const lines = content2.split("\n");
-                    // Remove last empty line if present
-                    if (lines[lines.length - 1] === "") {
-                        lines.pop();
-                    }
-                    const lineCount = lines.length;
-
-                    const changes = [{ added: true, removed: false, value: content2, count: lineCount }];
-
-                    // Generate patch for added file
-                    const patch = diff.createTwoFilesPatch(
-                        filePath,
-                        filePath,
-                        "",
-                        content2,
-                        `v${this.version1}`,
-                        `v${this.version2}`,
-                        { context: this.options.context }
-                    );
-
-                    this.results.push({
-                        file: filePath,
-                        status: "added",
-                        newSize: file2.size,
-                        additions: lineCount,
-                        deletions: 0,
-                        changes,
-                        patch,
-                    });
-                } catch (error) {
-                    logger.error(`Error reading added file ${filePath}: ${error}`);
-                    this.results.push({
-                        file: filePath,
-                        status: "added",
-                        newSize: file2.size,
-                    });
-                }
+        for (const filePath of added.sort()) {
+            const file2 = files2Map.get(filePath);
+            if (file2) {
+                this.emitAddedFile(file2, filePath);
             }
         }
 
         this.spinner?.succeed(`Comparison complete`);
+    }
+
+    // Trailing path segments two paths share, e.g. apis/X.d.ts vs dist/apis/X.d.ts → 2.
+    private commonSuffixSegments(a: string[], b: string[]): number {
+        let n = 0;
+        let i = a.length - 1;
+        let j = b.length - 1;
+        while (i >= 0 && j >= 0 && a[i] === b[j]) {
+            n++;
+            i--;
+            j--;
+        }
+        return n;
+    }
+
+    private detectRenames(
+        onlyIn1: string[],
+        onlyIn2: string[]
+    ): { pairs: [string, string][]; removed: string[]; added: string[] } {
+        const pairs: [string, string][] = [];
+        const usedAdded = new Set<string>();
+        const usedRemoved = new Set<string>();
+
+        // Longest paths first so the most specific removed file claims its match
+        // before a shorter, more ambiguous one does.
+        for (const removed of [...onlyIn1].sort((a, b) => b.length - a.length)) {
+            const rSeg = removed.split("/");
+            let best: string | null = null;
+            let bestLen = 0;
+            let ambiguous = false;
+
+            for (const added of onlyIn2) {
+                if (usedAdded.has(added)) {
+                    continue;
+                }
+
+                const len = this.commonSuffixSegments(rSeg, added.split("/"));
+                if (len === 0) {
+                    continue;
+                }
+
+                if (len > bestLen) {
+                    bestLen = len;
+                    best = added;
+                    ambiguous = false;
+                } else if (len === bestLen) {
+                    ambiguous = true;
+                }
+            }
+
+            // Require a basename match (bestLen >= 1) that is unambiguously the closest.
+            if (!best || ambiguous) {
+                continue;
+            }
+
+            pairs.push([removed, best]);
+            usedAdded.add(best);
+            usedRemoved.add(removed);
+            logger.debug(`Detected rename: ${removed} -> ${best} (common suffix ${bestLen})`);
+        }
+
+        return {
+            pairs,
+            removed: onlyIn1.filter((p) => !usedRemoved.has(p)),
+            added: onlyIn2.filter((p) => !usedAdded.has(p)),
+        };
+    }
+
+    private emitRenamedFile(file1: FileMetadata, file2: FileMetadata, oldPath: string, newPath: string): void {
+        try {
+            const content1 = fs.readFileSync(file1.absolutePath, "utf8");
+            const content2 = fs.readFileSync(file2.absolutePath, "utf8");
+
+            const changes = this.options.wordDiff
+                ? diff.diffWords(content1, content2)
+                : diff.diffLines(content1, content2, { ignoreWhitespace: false, newlineIsToken: true });
+
+            let additions = 0;
+            let deletions = 0;
+            changes.forEach((change) => {
+                if (change.added) {
+                    additions += change.count || 0;
+                } else if (change.removed) {
+                    deletions += change.count || 0;
+                }
+            });
+
+            // Different old/new paths + real hunks → diff2html renders a rename with diff.
+            const patch = diff.createTwoFilesPatch(oldPath, newPath, content1, content2, undefined, undefined, {
+                context: this.options.context,
+            });
+
+            this.results.push({
+                file: `${oldPath} → ${newPath}`,
+                status: "renamed",
+                oldPath,
+                newPath,
+                oldSize: file1.size,
+                newSize: file2.size,
+                additions,
+                deletions,
+                changes,
+                patch,
+            });
+        } catch (error) {
+            logger.error(`Error comparing renamed files ${oldPath} -> ${newPath}: ${error}`);
+        }
+    }
+
+    private emitRemovedFile(file1: FileMetadata, filePath: string): void {
+        try {
+            const content1 = fs.readFileSync(file1.absolutePath, "utf8");
+            const lines = content1.split("\n");
+            if (lines[lines.length - 1] === "") {
+                lines.pop();
+            }
+
+            const lineCount = lines.length;
+            const changes = [{ removed: true, added: false, value: content1, count: lineCount }];
+            const patch = diff.createTwoFilesPatch(filePath, filePath, content1, "", undefined, undefined, {
+                context: this.options.context,
+            });
+
+            this.results.push({
+                file: filePath,
+                status: "removed",
+                oldSize: file1.size,
+                additions: 0,
+                deletions: lineCount,
+                changes,
+                patch,
+            });
+        } catch (error) {
+            logger.error(`Error reading removed file ${filePath}: ${error}`);
+            this.results.push({ file: filePath, status: "removed", oldSize: file1.size });
+        }
+    }
+
+    private emitAddedFile(file2: FileMetadata, filePath: string): void {
+        try {
+            const content2 = fs.readFileSync(file2.absolutePath, "utf8");
+            const lines = content2.split("\n");
+            if (lines[lines.length - 1] === "") {
+                lines.pop();
+            }
+
+            const lineCount = lines.length;
+            const changes = [{ added: true, removed: false, value: content2, count: lineCount }];
+            const patch = diff.createTwoFilesPatch(filePath, filePath, "", content2, undefined, undefined, {
+                context: this.options.context,
+            });
+
+            this.results.push({
+                file: filePath,
+                status: "added",
+                newSize: file2.size,
+                additions: lineCount,
+                deletions: 0,
+                changes,
+                patch,
+            });
+        } catch (error) {
+            logger.error(`Error reading added file ${filePath}: ${error}`);
+            this.results.push({ file: filePath, status: "added", newSize: file2.size });
+        }
     }
 
     private async compareTwoFiles(file1: FileMetadata, file2: FileMetadata): Promise<void> {
@@ -708,15 +965,18 @@ class EnhancedPackageComparison {
                 }
             });
 
-            // Generate patch if needed
+            // No version header: it leaks into the diff2html filename and makes
+            // same-path modifications render as bogus "renames". Version is in the title.
             const patch = diff.createTwoFilesPatch(
                 file1.relativePath,
                 file2.relativePath,
                 content1,
                 content2,
-                `v${this.version1}`,
-                `v${this.version2}`,
-                { context: this.options.context }
+                undefined,
+                undefined,
+                {
+                    context: this.options.context,
+                }
             );
 
             this.results.push({
@@ -803,6 +1063,12 @@ class EnhancedPackageComparison {
             this.write(chalk.green(`   Status: Added (${filesize(result.newSize || 0)})`));
         } else if (result.status === "removed") {
             this.write(chalk.red(`   Status: Removed (${filesize(result.oldSize || 0)})`));
+        } else if (result.status === "renamed") {
+            this.write(chalk.magenta(`   Status: Renamed (${result.oldPath} → ${result.newPath})`));
+            this.write(chalk.gray(`   Size: ${filesize(result.oldSize || 0)} → ${filesize(result.newSize || 0)}`));
+            this.write(
+                `${chalk.green(`   +${result.additions} additions`)} ${chalk.red(`-${result.deletions} deletions`)}`
+            );
         } else if (result.status === "modified") {
             this.write(chalk.yellow(`   Status: Modified`));
             this.write(chalk.gray(`   Size: ${filesize(result.oldSize || 0)} → ${filesize(result.newSize || 0)}`));
@@ -814,7 +1080,10 @@ class EnhancedPackageComparison {
 
         if (
             result.changes &&
-            (result.status === "modified" || result.status === "added" || result.status === "removed")
+            (result.status === "modified" ||
+                result.status === "added" ||
+                result.status === "removed" ||
+                result.status === "renamed")
         ) {
             if (this.options.format === "side-by-side") {
                 this.outputSideBySideDiff(result);
@@ -1221,6 +1490,7 @@ class EnhancedPackageComparison {
                 total: this.results.length,
                 added: this.results.filter((r) => r.status === "added").length,
                 removed: this.results.filter((r) => r.status === "removed").length,
+                renamed: this.results.filter((r) => r.status === "renamed").length,
                 modified: this.results.filter((r) => r.status === "modified").length,
                 identical: this.results.filter((r) => r.status === "identical").length,
             },
@@ -1299,6 +1569,7 @@ class EnhancedPackageComparison {
             total: this.results.length,
             added: this.results.filter((r) => r.status === "added").length,
             removed: this.results.filter((r) => r.status === "removed").length,
+            renamed: this.results.filter((r) => r.status === "renamed").length,
             modified: this.results.filter((r) => r.status === "modified").length,
             identical: this.results.filter((r) => r.status === "identical").length,
         };
@@ -1308,6 +1579,7 @@ class EnhancedPackageComparison {
                 `Total files analyzed: ${chalk.cyan(stats.total)}\n` +
                 `Files added: ${chalk.green(`+${stats.added}`)}\n` +
                 `Files removed: ${chalk.red(`-${stats.removed}`)}\n` +
+                `Files renamed: ${chalk.magenta(`→${stats.renamed}`)}\n` +
                 `Files modified: ${chalk.yellow(`~${stats.modified}`)}\n` +
                 `Files unchanged: ${chalk.gray(stats.identical)}`,
             {
@@ -1341,6 +1613,7 @@ class EnhancedPackageComparison {
                 const status = {
                     added: chalk.green("Added"),
                     removed: chalk.red("Removed"),
+                    renamed: chalk.magenta("Renamed"),
                     modified: chalk.yellow("Modified"),
                     identical: chalk.gray("Identical"),
                 }[result.status];
