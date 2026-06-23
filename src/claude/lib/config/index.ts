@@ -24,6 +24,8 @@ export interface NotificationConfig {
     weeklyThresholds: number[];
     channels: NotificationChannels;
     watchInterval: number;
+    /** Hidden JSON-only toggle — alerts when extra usage enables and every +5%. Default off. */
+    extraUsage?: boolean;
 }
 
 export interface WarmupSchedule {

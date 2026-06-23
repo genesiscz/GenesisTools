@@ -1,5 +1,6 @@
-import type { AccountUsage, UsageBucket } from "@app/claude/lib/usage/api";
+import type { AccountUsage, ExtraUsageBucket, UsageBucket } from "@app/claude/lib/usage/api";
 import { BUCKET_LABELS, BUCKET_PERIODS_MS, colorForPct } from "@app/claude/lib/usage/constants";
+import { resolveExtraUsageOverview } from "@app/claude/lib/usage/extra-usage-tracker";
 import { useTerminalSize } from "@app/utils/ink/hooks/use-terminal-size";
 import { Box, Text } from "ink";
 import { useEffect, useState } from "react";
@@ -114,6 +115,41 @@ function BucketRow({ bucketKey, bucket, barWidth }: BucketRowProps) {
     );
 }
 
+interface ExtraUsageRowProps {
+    bucket: ExtraUsageBucket;
+    barWidth: number;
+}
+
+function ExtraUsageRow({ bucket, barWidth }: ExtraUsageRowProps) {
+    const overview = resolveExtraUsageOverview(bucket);
+    const label = BUCKET_LABELS.extra_usage;
+
+    if (!overview.enabled) {
+        return (
+            <Box flexDirection="column">
+                <Box>
+                    <Text>{label.padEnd(NAME_WIDTH)}</Text>
+                    <Text dimColor>{"off"}</Text>
+                </Box>
+            </Box>
+        );
+    }
+
+    const pct = Math.round(Math.max(0, Math.min(overview.utilization, 100)));
+
+    return (
+        <Box flexDirection="column">
+            <Box>
+                <Text>{label.padEnd(NAME_WIDTH)}</Text>
+                <UsageBar utilization={overview.utilization} width={barWidth} />
+                <Text bold>{`${pct}%`.padStart(PCT_WIDTH)}</Text>
+                <Text>{" ".repeat(PROJ_WIDTH)}</Text>
+            </Box>
+            {overview.balance ? <Text dimColor>{`${" ".repeat(NAME_WIDTH)}${overview.balance}`}</Text> : null}
+        </Box>
+    );
+}
+
 interface AccountSectionProps {
     account: AccountUsage;
     prominentBuckets: string[];
@@ -143,9 +179,15 @@ export function AccountSection({ account, prominentBuckets }: AccountSectionProp
         );
     }
 
-    const allEntries = Object.entries(account.usage).filter(
-        ([, v]) => v && typeof v === "object" && "utilization" in v
-    ) as Array<[string, UsageBucket]>;
+    const extraUsage = account.usage.extra_usage ?? null;
+
+    const allEntries = Object.entries(account.usage).filter(([key, v]) => {
+        if (key === "extra_usage") {
+            return false;
+        }
+
+        return v && typeof v === "object" && "utilization" in v;
+    }) as Array<[string, UsageBucket]>;
 
     const sessionAt100 = allEntries.some(([k, b]) => k === "five_hour" && b.utilization >= 100);
     const weeklyAt100 = allEntries.some(([k, b]) => k === "seven_day" && b.utilization >= 100);
@@ -167,6 +209,7 @@ export function AccountSection({ account, prominentBuckets }: AccountSectionProp
             {entries.map(([key, bucket]) => (
                 <BucketRow key={key} bucketKey={key} bucket={bucket} barWidth={barWidth} />
             ))}
+            {extraUsage ? <ExtraUsageRow bucket={extraUsage} barWidth={barWidth} /> : null}
         </Box>
     );
 }

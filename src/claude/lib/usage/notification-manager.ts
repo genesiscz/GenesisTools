@@ -2,6 +2,7 @@ import { dispatchNotification } from "@app/utils/notifications";
 import type { Storage } from "@app/utils/storage/storage";
 import { BUCKET_LABELS, BUCKET_THRESHOLD_MAP } from "./constants";
 import type { UsageDashboardConfig } from "./dashboard-config";
+import type { ExtraUsageTrackerState } from "./extra-usage-tracker";
 
 const NOTIFICATION_POLL_TRACKER_CONFIG_KEY = "notificationPollTracker";
 
@@ -12,6 +13,7 @@ interface TrackerState {
 
 interface PersistedState {
     trackers: Record<string, TrackerState>;
+    extraUsageTrackers?: Record<string, ExtraUsageTrackerState>;
     savedAt: string;
 }
 
@@ -104,7 +106,12 @@ export class NotificationManager {
         return this._alerts.filter((a) => !a.dismissed);
     }
 
-    processUsage(accountName: string, bucket: string, utilization: number, resetsAt: string | null): void {
+    async processUsage(
+        accountName: string,
+        bucket: string,
+        utilization: number,
+        resetsAt: string | null
+    ): Promise<void> {
         if (!this.config.enabled) {
             return;
         }
@@ -143,10 +150,11 @@ export class NotificationManager {
                 });
             }
 
-            dispatchNotification({
+            await dispatchNotification({
                 app: "claude",
                 title: "Claude Usage Alert",
                 message,
+                group: "claude-usage",
             });
         }
     }
@@ -189,7 +197,13 @@ export class NotificationManager {
 
         const snapshot = Object.fromEntries([...this.trackers.entries()].map(([k, t]) => [k, t.getState()]));
         await storage.atomicConfigUpdate<Record<string, unknown>>((c) => {
-            c[NOTIFICATION_POLL_TRACKER_CONFIG_KEY] = { trackers: snapshot, savedAt: new Date().toISOString() };
+            const prev = c[NOTIFICATION_POLL_TRACKER_CONFIG_KEY] as PersistedState | undefined;
+
+            c[NOTIFICATION_POLL_TRACKER_CONFIG_KEY] = {
+                trackers: snapshot,
+                extraUsageTrackers: prev?.extraUsageTrackers,
+                savedAt: new Date().toISOString(),
+            };
         });
         this.dirty = false;
     }

@@ -2,6 +2,7 @@ import type { NotificationConfig } from "@app/claude/lib/config";
 import { out } from "@app/logger";
 import { dispatchNotification } from "@app/utils/notifications";
 import type { AccountUsage } from "./api";
+import { isUsageBucket } from "./api";
 import { renderAllAccounts } from "./display";
 import { getSharedAccountsUsage } from "./shared-cache";
 
@@ -107,8 +108,8 @@ class UsageWatcher {
     /**
      * Process usage results and return notifications to send
      */
-    processResults(results: AccountUsage[]): Array<{ message: string; reason: string }> {
-        const notifications: Array<{ message: string; reason: string }> = [];
+    processResults(results: AccountUsage[]): Array<{ message: string; reason: string; title: string }> {
+        const notifications: Array<{ message: string; reason: string; title: string }> = [];
 
         for (const account of results) {
             if (!account.usage) {
@@ -116,9 +117,10 @@ class UsageWatcher {
             }
 
             for (const [bucket, data] of Object.entries(account.usage)) {
-                if (!data || typeof data !== "object" || !("utilization" in data)) {
+                if (!isUsageBucket(data)) {
                     continue;
                 }
+
                 if (data.utilization === null || data.utilization === undefined) {
                     continue;
                 }
@@ -144,6 +146,7 @@ class UsageWatcher {
                     notifications.push({
                         message: `${account.accountName}: ${tracker.label} ${Math.round(data.utilization)}%`,
                         reason,
+                        title: "Claude Usage Alert",
                     });
                 }
             }
@@ -193,11 +196,10 @@ export async function watchUsage(accountFilter?: string, notifications?: Notific
         if (pending.length > 0) {
             const initNotifs = pending.filter((n) => n.reason === "INIT");
             const increaseNotifs = pending.filter((n) => n.reason === "+5%");
-
             for (const notif of initNotifs) {
                 dispatchNotification({
                     app: "claude",
-                    title: "Claude Usage Alert",
+                    title: notif.title,
                     message: `[INIT] ${notif.message}`,
                 });
             }
@@ -206,7 +208,7 @@ export async function watchUsage(accountFilter?: string, notifications?: Notific
                 const first = increaseNotifs[0];
                 dispatchNotification({
                     app: "claude",
-                    title: "Claude Usage Alert",
+                    title: first.title,
                     message:
                         increaseNotifs.length > 1
                             ? `[+5%] ${first.message} (+${increaseNotifs.length - 1} more)`

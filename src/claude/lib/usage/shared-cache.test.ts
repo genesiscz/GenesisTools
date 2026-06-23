@@ -82,6 +82,29 @@ describe("getSharedAccountsUsage", () => {
         expect(fetches).toBe(1);
     });
 
+    test("invokes extra-usage notify only on a live fetch", async () => {
+        let notifyCalls = 0;
+        const store: CacheStore = new Map();
+        store.set("usage-shared", { fetchedAt: Date.now() - 5_000, accounts: [acct("a", 11)] });
+        const get = __makeSharedUsage({
+            fetchAll: async () => [acct("a", 42)],
+            getCache: (k) => store.get(k) ?? null,
+            putCache: (k, v) => void store.set(k, v),
+            withLock: async (_k, fn) => fn(),
+            record: () => {},
+            notifyExtraUsage: async () => {
+                notifyCalls++;
+            },
+        });
+
+        await get({});
+        expect(notifyCalls).toBe(0);
+
+        store.set("usage-shared", { fetchedAt: Date.now() - 60_000, accounts: [acct("a", 11)] });
+        await get({});
+        expect(notifyCalls).toBe(1);
+    });
+
     test("accountFilter narrows the returned set", async () => {
         const store: CacheStore = new Map();
         store.set("usage-shared", { fetchedAt: Date.now(), accounts: [acct("a", 1), acct("b", 2)] });

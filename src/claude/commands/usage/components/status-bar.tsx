@@ -31,6 +31,7 @@ export function StatusBar({ lastRefresh, nextRefresh, paused, pollingLabel, poll
     return (
         <Box
             flexDirection="column"
+            flexShrink={0}
             borderStyle="single"
             borderTop
             borderBottom={false}

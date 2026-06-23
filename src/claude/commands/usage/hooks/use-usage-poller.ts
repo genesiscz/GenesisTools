@@ -1,5 +1,6 @@
 import { refreshAccountLabels } from "@app/claude/lib/config";
 import type { AccountUsage } from "@app/claude/lib/usage/api";
+import { isUsageBucket } from "@app/claude/lib/usage/api";
 import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
@@ -62,7 +63,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
                 }
 
                 for (const [bucket, data] of Object.entries(account.usage)) {
-                    if (!data || typeof data !== "object" || !("utilization" in data)) {
+                    if (!isUsageBucket(data)) {
                         continue;
                     }
 

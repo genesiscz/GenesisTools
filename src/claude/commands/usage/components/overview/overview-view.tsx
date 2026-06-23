@@ -37,7 +37,7 @@ export function OverviewView({ results, config }: OverviewViewProps) {
     }
 
     return (
-        <Box flexDirection="column" paddingX={1} paddingY={1}>
+        <Box flexDirection="column" flexShrink={0} paddingX={1} paddingY={1}>
             {results.accounts.map((account) => (
                 <AccountSection
                     key={account.accountName}
