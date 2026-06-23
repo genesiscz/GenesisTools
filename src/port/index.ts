@@ -276,7 +276,7 @@ async function watchPortActivity(options: { all?: boolean; interval?: string }):
 
     await new Promise<void>((resolve) => {
         process.on("SIGINT", () => {
-            clearInterval(timer);
+            timer.stop();
             out.println();
             p.outro(pc.dim("Stopped watching."));
             resolve();

@@ -1,4 +1,5 @@
 import { logger } from "@app/logger";
+import { startWakefulInterval, type WakefulInterval } from "@app/utils/async";
 import { SafeJSON } from "@app/utils/json";
 import { collectPulse } from "./collector";
 import { PulseHistoryDb } from "./history-db";
@@ -11,7 +12,7 @@ interface IpifyResponse {
     ip?: string;
 }
 
-let timer: ReturnType<typeof setInterval> | null = null;
+let handle: WakefulInterval | null = null;
 let polling = false;
 let db: PulseHistoryDb | null = null;
 let lastSnapshot: PulseSnapshot | null = null;
@@ -94,14 +95,20 @@ async function tick(): Promise<void> {
 }
 
 export function startPulsePolling(intervalMs: number): void {
-    if (timer) {
+    if (handle) {
         return;
     }
 
-    void tick();
-    timer = setInterval(() => {
-        void tick();
-    }, intervalMs);
+    handle = startWakefulInterval(intervalMs, () => tick());
+}
+
+export function stopPulsePolling(): void {
+    if (!handle) {
+        return;
+    }
+
+    handle.stop();
+    handle = null;
 }
 
 export function configureRetention(hours: number): void {

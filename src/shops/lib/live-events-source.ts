@@ -3,6 +3,7 @@ import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { sseBroadcaster } from "@app/shops/lib/sse-broadcaster";
 import type { LiveCrawlProgressEvent, LiveHttpRequestEvent } from "@app/shops/types";
+import { startWakefulInterval } from "@app/utils/async";
 
 const POLL_INTERVAL_MS = 2_000;
 const HTTP_BACKFILL_LIMIT = 100;
@@ -231,15 +232,17 @@ export function ensureLiveEventPoller(db: ShopsDatabase = getShopsDatabase()): v
         }
     })();
 
-    const interval = setInterval(() => {
-        if (sseBroadcaster.subscriberCount() === 0) {
-            return;
-        }
+    startWakefulInterval(
+        POLL_INTERVAL_MS,
+        () => {
+            if (sseBroadcaster.subscriberCount() === 0) {
+                return;
+            }
 
-        void pollOnce(db).catch((err) => log.warn({ err }, "live-events poll error"));
-    }, POLL_INTERVAL_MS);
-
-    interval.unref?.();
+            void pollOnce(db).catch((err) => log.warn({ err }, "live-events poll error"));
+        },
+        { leading: false }
+    );
 }
 
 /**

@@ -98,14 +98,46 @@ export class TaskSessionStore {
     }
 
     async getLastLineSeq(name: string): Promise<number> {
-        const records = await readJsonlFile(jsonlPath(name));
-        const lines = filterLineRecords(records);
+        const path = jsonlPath(name);
 
-        if (lines.length === 0) {
+        if (!existsSync(path)) {
             return 0;
         }
 
-        return Math.max(...lines.map((line) => line.seq));
+        // Read just the tail. The writer appends line records with monotonic
+        // seq, so the last line in the file carries the max. Reading the whole
+        // file would be O(file size) — Metro/Vite sessions can be gigabytes.
+        const file = Bun.file(path);
+        const tailStart = Math.max(0, file.size - 64 * 1024);
+        const tail = await file.slice(tailStart).text();
+        const lines = tail.split("\n");
+
+        // If we sliced mid-file, the first line is likely a partial JSON
+        // object — drop it before parsing.
+        if (tailStart > 0) {
+            lines.shift();
+        }
+
+        for (let i = lines.length - 1; i >= 0; i--) {
+            const line = lines[i].trim();
+
+            if (!line) {
+                continue;
+            }
+
+            try {
+                const record = SafeJSON.parse(line, { strict: true }) as JsonlLineRecord | null;
+
+                if (record?.type === "line" && typeof record.seq === "number") {
+                    return record.seq;
+                }
+            } catch {
+                // Last line of a crashed writer may be a partial JSON object —
+                // skip and keep walking backwards.
+            }
+        }
+
+        return 0;
     }
 
     async clearSessionLogs(name: string): Promise<void> {

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { logger } from "@app/logger";
 import { findModel } from "@app/utils/ai/ModelRegistry";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
+import { startWakefulInterval, type WakefulInterval } from "@app/utils/async";
 import type { WatcherSubscription } from "@app/utils/fs/watcher";
 import { Stopwatch } from "@app/utils/Stopwatch";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
@@ -78,7 +79,7 @@ export class Indexer extends IndexerEventEmitter {
     private config: IndexConfig;
     private source: IndexerSource;
     private embedder: Embedder | null = null;
-    private watchTimer: ReturnType<typeof setInterval> | null = null;
+    private watchTimer: WakefulInterval | null = null;
     private watchSubscription: WatcherSubscription | null = null;
     private isSyncing = false;
     private cancellationRequested = false;
@@ -406,21 +407,25 @@ export class Indexer extends IndexerEventEmitter {
     private startPollingWatch(callbacks?: IndexerCallbacks): void {
         const interval = this.config.watch?.interval ?? DEFAULT_WATCH_INTERVAL_MS;
 
-        this.watchTimer = setInterval(async () => {
-            if (this.isSyncing) {
-                return;
-            }
+        this.watchTimer = startWakefulInterval(
+            interval,
+            async () => {
+                if (this.isSyncing) {
+                    return;
+                }
 
-            this.isSyncing = true;
+                this.isSyncing = true;
 
-            try {
-                await this.sync(callbacks);
-            } catch {
-                // Watch sync errors are non-fatal
-            } finally {
-                this.isSyncing = false;
-            }
-        }, interval);
+                try {
+                    await this.sync(callbacks);
+                } catch {
+                    // Watch sync errors are non-fatal
+                } finally {
+                    this.isSyncing = false;
+                }
+            },
+            { leading: false }
+        );
     }
 
     async stopWatch(): Promise<void> {
@@ -430,7 +435,7 @@ export class Indexer extends IndexerEventEmitter {
         }
 
         if (this.watchTimer) {
-            clearInterval(this.watchTimer);
+            this.watchTimer.stop();
             this.watchTimer = null;
         }
 

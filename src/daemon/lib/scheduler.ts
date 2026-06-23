@@ -1,5 +1,6 @@
 import { logger as appLogger, createLogger } from "@app/logger";
 import { dispatchNotification } from "@app/utils/notifications";
+import { wakefulSleep } from "@app/utils/wakeful";
 import { loadConfig } from "./config";
 import { computeNextRunAt, parseInterval } from "./interval";
 import { listRunsForTask } from "./log-reader";
@@ -69,7 +70,15 @@ export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
 
         const sleepMs = getNextWakeupMs(taskStates, config.tasks);
         log.debug({ sleepMs, activeTasks: activeRuns.size }, "Sleeping");
-        await Bun.sleep(sleepMs);
+        await wakefulSleep(sleepMs, {
+            shouldAbort: () => !running,
+            onWallClockJump: ({ elapsedMs, expectedMs }) => {
+                appLogger.info(
+                    { elapsedMs, expectedMs },
+                    "[daemon] wall-clock jumped (likely wake from sleep/hibernate); resuming scheduler"
+                );
+            },
+        });
     }
 
     if (activeRuns.size > 0) {
