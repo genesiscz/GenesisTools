@@ -7,9 +7,10 @@ description: Hypothesis-driven runtime debugging with temporary, auto-cleanable 
 
 Runtime data beats static analysis. Instead of guessing, instrument code with targeted logging, reproduce the bug, and analyze real runtime data.
 
-## Critical Rule
+## Critical Rules
 
-**NEVER guess at runtime values or execution flow.** Instrument, reproduce, analyze. One `dbg.dump()` is worth a hundred lines of static reasoning.
+1. **NEVER guess at runtime values or execution flow.** Instrument, reproduce, analyze. One `dbg.dump()` is worth a hundred lines of static reasoning.
+2. **EVERY ingest call MUST be wrapped in `// #region @dbg` / `// #endregion @dbg` markers — no exceptions.** This is what makes cleanup and the git-stash-and-reapply workflow work. A bare `dbg.info(...)` / `LlmLog::info(...)` / `fetch('http://.../log/...')` outside markers is a bug: cleanup cannot find it, cannot stash it, cannot remove it, and it WILL get committed by accident. Wrap **every single ingest line** (imports, requires, fetch posts, every `dbg.*` / `LlmLog::*` call) in its own region block. Use `tools debugging-master snippet <type> <label>` to generate ready-to-paste, correctly wrapped blocks instead of hand-writing them.
 
 ## Quick Reference
 
@@ -55,19 +56,19 @@ The `start` command:
 
 ### Rules
 
-1. **Always wrap in region markers** - enables automated cleanup:
+1. **MANDATORY: every ingest call MUST be wrapped in `// #region @dbg` / `// #endregion @dbg` markers.** No exceptions — not for imports, not for one-liners, not for `fetch('/log/...')` HTTP posts, not even for "I'll remove it manually in a second" debug lines. The stash and cleanup tooling is ONLY able to see / move / restore lines that live inside these markers. An un-wrapped ingest line is a leak waiting to be committed.
    ```ts
    // #region @dbg
    import { dbg } from '../utils/llm-log';
    // #endregion @dbg
    ```
-2. **Every debug line gets its own region block** - granular removal:
+2. **Every debug line gets its OWN region block** — granular stash + removal, and so a partial cleanup can drop one call without disturbing the others:
    ```ts
    // #region @dbg
    dbg.dump('userData', userData);
    // #endregion @dbg
    ```
-3. Use `tools debugging-master snippet <type> <label>` to generate ready-to-paste blocks with correct imports and markers.
+3. **Prefer `tools debugging-master snippet <type> <label>`** to generate blocks — it always emits the markers correctly so you cannot forget them. Hand-written ingest calls are the #1 source of orphan logs that survive cleanup.
 
 ### API Methods
 
@@ -400,31 +401,59 @@ PHP HTTP mode auto-detects Guzzle. If installed, uses Guzzle; otherwise falls ba
 
 ## Cleanup Checklist
 
-Always clean up after debugging is resolved:
+Cleanup is **opt-in** — `tools debugging-master cleanup` with no flags just prints help and exits. You MUST pick an action:
 
 ```bash
-# 1. Remove all @dbg blocks from project files, archive logs to /tmp
-tools debugging-master cleanup
+# Remove @dbg blocks (stashes them into git first, so you can re-apply later)
+tools debugging-master cleanup --blocks
 
-# 2. If cleanup reports formatting-only diffs, fix them:
-tools debugging-master cleanup --repair-formatting
+# Archive session logs out of the sessions dir (moves to /tmp by default)
+tools debugging-master cleanup --clean-logs
 
-# 3. If you want to keep logs permanently:
-tools debugging-master cleanup --keep-logs ./debug-logs/
+# Do both in one shot — the typical "I'm done debugging" command
+tools debugging-master cleanup --blocks --clean-logs
+
+# Block removal + skip the git stash (rare; means you really want them gone)
+tools debugging-master cleanup --blocks --no-stash
+
+# Block removal + custom stash message (default is auto-timestamped)
+tools debugging-master cleanup --blocks --stash-message "auth bug investigation"
+
+# Archive logs to a permanent path instead of /tmp
+tools debugging-master cleanup --clean-logs ./debug-logs/
+
+# Fix formatting-only diffs left by block removal
+tools debugging-master cleanup --blocks --repair-formatting
 ```
 
-What cleanup does:
-- Scans all project files for `// #region @dbg` ... `// #endregion @dbg` blocks
-- Removes those blocks
-- Archives session logs to `/tmp/<datetime>-llmlog-<session>.jsonl`
-- Reports files with formatting-only diffs (blank lines left by block removal)
-- `--repair-formatting` runs `git checkout` on files with only whitespace diffs
-- `--keep-logs <path>` moves archived logs to a permanent location
+What `--blocks` does:
+- Scans all project files for `// #region @dbg` ... `// #endregion @dbg` blocks (this is why **every** ingest line MUST be wrapped — see Critical Rules)
+- **Stashes** the @dbg blocks + the `llm-log.{ts,php}` snippet into git first (default; `--no-stash` to skip)
+- Removes the blocks from working tree
+- Reports any formatting-only diffs; `--repair-formatting` `git checkout`s those files
+- `--stash-message <msg>` attaches a custom note to the stash entry
+
+What `--clean-logs` does:
+- Moves the active session jsonl + meta out of `~/.genesis-tools/debugging-master/sessions/`
+- Default destination is `/tmp/<datetime>-llmlog-<session>.jsonl` (cleared on reboot)
+- Pass a path to keep them permanently: `--clean-logs ./debug-logs/`
+
+### Re-applying a stash
+
+The stash is the recovery mechanism. Recommend `apply` (NOT `pop`) so the stash sticks around for repeated re-application:
+
+```bash
+git stash list                    # find the stash index
+git stash apply stash@{0}         # re-insert @dbg blocks + snippet
+git stash show -p stash@{0}       # preview the diff
+git stash drop stash@{0}          # discard when truly done
+```
 
 What cleanup does NOT do:
-- Delete sessions from config
-- Permanently delete log data (always archives first)
+- Delete sessions from config (use the sessions CLI for that)
+- Permanently delete log data — `--clean-logs` archives, never `rm`
 - Touch files with non-debug changes
+- Find or stash any ingest line that's missing its `// #region @dbg` markers (this is the failure mode the wrap-mandate prevents)
 
 ## Token Efficiency Tips
 

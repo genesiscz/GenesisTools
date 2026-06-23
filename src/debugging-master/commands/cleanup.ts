@@ -80,6 +80,24 @@ async function checkGitDiff(filePath: string): Promise<{ hasOnlyWhitespace: bool
     return { hasOnlyWhitespace, diff };
 }
 
+async function stashInstrumentation(files: string[], message: string, projectPath: string): Promise<boolean> {
+    // `-u` includes untracked files (e.g. freshly-copied llm-log.ts).
+    // Don't combine with `git add -N` — intent-to-add entries make `stash -u` fail with
+    // "Entry 'X' not uptodate. Cannot merge."
+    const stashProc = Bun.spawn(["git", "stash", "push", "-u", "-m", message, "--", ...files], {
+        cwd: projectPath,
+        stdout: "pipe",
+        stderr: "pipe",
+    });
+    const stderr = await new Response(stashProc.stderr).text();
+    const exitCode = await stashProc.exited;
+    if (exitCode !== 0) {
+        throw new Error(`git stash failed (exit ${exitCode}): ${stderr.trim()}`);
+    }
+    const stdout = await new Response(stashProc.stdout).text();
+    return /Saved working directory|Created stash/i.test(stdout);
+}
+
 async function repairFile(filePath: string): Promise<void> {
     const proc = Bun.spawn(["git", "checkout", filePath], {
         stdout: "pipe",
@@ -95,152 +113,272 @@ async function repairFile(filePath: string): Promise<void> {
 export function registerCleanupCommand(program: Command): void {
     program
         .command("cleanup")
-        .description("Remove debug instrumentation and archive logs")
-        .option("--repair-formatting", "Auto-fix formatting-only diffs after block removal")
-        .option("--keep-logs [path]", "Keep logs at specified path instead of /tmp")
-        .action(async (opts: { repairFormatting?: boolean; keepLogs?: string | true }) => {
-            const globalOpts = program.opts<{ session?: string }>();
-            const sm = new SessionManager();
-            const projectPath = process.cwd();
+        .description(
+            "Remove debug instrumentation and/or archive session logs (opt-in: pick --blocks, --clean-logs, or both)"
+        )
+        .option("--blocks", "Remove @dbg instrumentation blocks from source files")
+        .option(
+            "--clean-logs [path]",
+            "Archive the active session jsonl + meta out of the sessions dir (default destination: /tmp; pass a path to keep them permanently)"
+        )
+        .option("--repair-formatting", "Auto-fix formatting-only diffs after block removal (implies --blocks)")
+        .option(
+            "--no-stash",
+            "Skip stashing @dbg blocks into git before removing them (stash is on by default with --blocks)"
+        )
+        .option(
+            "--stash-message <msg>",
+            "Custom message to attach to the git stash (default: auto-generated timestamp)"
+        )
+        .action(
+            async (
+                opts: {
+                    blocks?: boolean;
+                    cleanLogs?: string | boolean;
+                    repairFormatting?: boolean;
+                    stash?: boolean;
+                    stashMessage?: string;
+                },
+                cmd: Command
+            ) => {
+                // Modifier flags imply their owning action so old muscle-memory keeps working.
+                const removeBlocksRequested = opts.blocks === true || opts.repairFormatting === true;
+                const cleanLogsRequested = opts.cleanLogs !== undefined && opts.cleanLogs !== false;
+                const cleanLogsPath = typeof opts.cleanLogs === "string" ? opts.cleanLogs : undefined;
 
-            // --- A. Scan for @dbg blocks ---
-            const patterns = ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.php"];
-            const ignore = ["**/node_modules/**", "**/vendor/**", "**/.git/**", "**/dist/**", "**/build/**"];
-
-            const files = await glob(patterns, { cwd: projectPath, ignore, absolute: true });
-
-            const fileBlockMap = new Map<string, BlockRange[]>();
-            let totalBlocks = 0;
-            const allWarnings: { file: string; warning: string }[] = [];
-
-            for (const file of files) {
-                const content = readFileSync(file, "utf-8");
-                const { blocks, warnings } = findBlocks(content);
-
-                for (const w of warnings) {
-                    allWarnings.push({ file, warning: w });
+                if (!removeBlocksRequested && !cleanLogsRequested) {
+                    cmd.help();
+                    return;
                 }
 
-                if (blocks.length === 0) {
-                    continue;
+                const globalOpts = program.opts<{ session?: string }>();
+                const sm = new SessionManager();
+                const projectPath = process.cwd();
+                const ignore = ["**/node_modules/**", "**/vendor/**", "**/.git/**", "**/dist/**", "**/build/**"];
+
+                // ─── BLOCK REMOVAL (gated on --blocks / --repair-formatting) ───────────────
+                if (removeBlocksRequested) {
+                    await runBlockRemoval({ projectPath, ignore, opts });
                 }
 
+                // ─── LOG ARCHIVE (gated on --clean-logs) ───────────────────────────────────
+                if (cleanLogsRequested) {
+                    await runLogArchive({ sm, sessionOverride: globalOpts.session, keepPath: cleanLogsPath });
+                }
+            }
+        );
+}
+
+interface BlockRemovalArgs {
+    projectPath: string;
+    ignore: string[];
+    opts: { repairFormatting?: boolean; stash?: boolean; stashMessage?: string };
+}
+
+async function runBlockRemoval({ projectPath, ignore, opts }: BlockRemovalArgs): Promise<void> {
+    // --- A. Scan for @dbg blocks ---
+    const patterns = ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.php"];
+    const files = await glob(patterns, { cwd: projectPath, ignore, absolute: true });
+
+    const fileBlockMap = new Map<string, BlockRange[]>();
+    let totalBlocks = 0;
+    const allWarnings: { file: string; warning: string }[] = [];
+
+    for (const file of files) {
+        const content = readFileSync(file, "utf-8");
+        const { blocks, warnings } = findBlocks(content);
+
+        for (const w of warnings) {
+            allWarnings.push({ file, warning: w });
+        }
+
+        if (blocks.length === 0) {
+            continue;
+        }
+
+        fileBlockMap.set(file, blocks);
+        totalBlocks += blocks.length;
+    }
+
+    if (allWarnings.length > 0) {
+        out.println(pc.yellow(`\n${allWarnings.length} unclosed/orphan @dbg region(s) found:`));
+        for (const { file, warning } of allWarnings) {
+            out.println(`  ${pc.dim(relative(projectPath, file))}: ${warning}`);
+        }
+        out.println(pc.dim("\nThese regions were skipped. Fix the markers manually, then re-run cleanup."));
+    }
+
+    // --- B.0 Stash (default-on; runs BEFORE block removal so the stash captures @dbg blocks) ---
+    if (opts.stash !== false) {
+        const snippetFiles = await glob(["**/llm-log.ts", "**/llm-log.php"], {
+            cwd: projectPath,
+            ignore,
+            absolute: true,
+        });
+        const stashTargets = Array.from(new Set([...fileBlockMap.keys(), ...snippetFiles]));
+
+        if (stashTargets.length === 0) {
+            out.println(pc.dim("\nNothing to stash (no @dbg blocks and no llm-log snippet found)."));
+        } else {
+            const note = opts.stashMessage ?? "";
+            const ts = new Date().toISOString().slice(0, 16).replace("T", " ");
+            const message = note ? `@dbg instrumentation: ${note} (${ts})` : `@dbg instrumentation (${ts})`;
+
+            try {
+                const stashed = await stashInstrumentation(stashTargets, message, projectPath);
+                if (stashed) {
+                    out.println(pc.green(`\nStashed @dbg instrumentation across ${stashTargets.length} file(s):`));
+                    out.println(`  ${pc.dim("message:")} ${message}`);
+                    out.println("");
+                    out.println(pc.bold("To re-apply later (recommend apply, NOT pop — keeps the stash):"));
+                    out.println(
+                        `  ${pc.cyan("git stash list")}                    ${pc.dim("# find the stash index")}`
+                    );
+                    out.println(
+                        `  ${pc.cyan("git stash apply stash@{0}")}         ${pc.dim("# re-insert @dbg blocks + snippet")}`
+                    );
+                    out.println(`  ${pc.cyan("git stash show -p stash@{0}")}       ${pc.dim("# preview the diff")}`);
+                    out.println(`  ${pc.cyan("git stash drop stash@{0}")}          ${pc.dim("# discard when done")}`);
+                    out.println("");
+                } else {
+                    out.println(
+                        pc.yellow("\nNo changes to stash — files already match HEAD (nothing to re-apply later).")
+                    );
+                }
+            } catch (err) {
+                out.println(pc.red(`\nStash failed: ${(err as Error).message}`));
+                out.println(pc.dim("Skipping removal — re-run without --stash if you want to proceed."));
+                return;
+            }
+        }
+
+        // Re-scan after stash: working tree may have reverted to HEAD; any remaining @dbg
+        // blocks (e.g. committed instrumentation) still need removal below.
+        fileBlockMap.clear();
+        totalBlocks = 0;
+        for (const file of files) {
+            if (!existsSync(file)) {
+                continue;
+            }
+            const { blocks } = findBlocks(readFileSync(file, "utf-8"));
+            if (blocks.length > 0) {
                 fileBlockMap.set(file, blocks);
                 totalBlocks += blocks.length;
             }
+        }
+    }
 
-            if (allWarnings.length > 0) {
-                out.println(pc.yellow(`\n${allWarnings.length} unclosed/orphan @dbg region(s) found:`));
-                for (const { file, warning } of allWarnings) {
-                    out.println(`  ${pc.dim(relative(projectPath, file))}: ${warning}`);
-                }
-                out.println(pc.dim("\nThese regions were skipped. Fix the markers manually, then re-run cleanup."));
+    // --- B. Remove blocks ---
+    const modifiedFiles: string[] = [];
+
+    for (const [file, blocks] of fileBlockMap) {
+        const content = readFileSync(file, "utf-8");
+        const cleaned = removeBlocks(content, blocks);
+        writeFileSync(file, cleaned);
+        modifiedFiles.push(file);
+    }
+
+    if (totalBlocks > 0) {
+        out.println(pc.green(`Removed ${totalBlocks} @dbg block(s) from ${modifiedFiles.length} file(s):`));
+        for (const file of modifiedFiles) {
+            const blocks = fileBlockMap.get(file)!;
+            out.println(
+                `  ${pc.dim(relative(projectPath, file))} (${blocks.length} block${blocks.length > 1 ? "s" : ""})`
+            );
+        }
+    } else {
+        out.println(pc.dim("No @dbg blocks found."));
+    }
+
+    // --- C. Git diff check ---
+    if (modifiedFiles.length > 0) {
+        const formatOnlyFiles: string[] = [];
+        const realDiffFiles: { file: string; diff: string }[] = [];
+
+        for (const file of modifiedFiles) {
+            const { hasOnlyWhitespace, diff } = await checkGitDiff(file);
+            if (hasOnlyWhitespace && diff) {
+                formatOnlyFiles.push(file);
+            } else if (diff) {
+                realDiffFiles.push({ file, diff });
             }
+        }
 
-            // --- B. Remove blocks ---
-            const modifiedFiles: string[] = [];
-
-            for (const [file, blocks] of fileBlockMap) {
-                const content = readFileSync(file, "utf-8");
-                const cleaned = removeBlocks(content, blocks);
-                writeFileSync(file, cleaned);
-                modifiedFiles.push(file);
+        if (realDiffFiles.length > 0) {
+            out.println(`\n${pc.yellow(`${realDiffFiles.length} file(s) have real diffs remaining:`)}`);
+            for (const { file } of realDiffFiles) {
+                out.println(`  ${relative(projectPath, file)}`);
             }
+        }
 
-            if (totalBlocks > 0) {
-                out.println(pc.green(`Removed ${totalBlocks} @dbg block(s) from ${modifiedFiles.length} file(s):`));
-                for (const file of modifiedFiles) {
-                    const blocks = fileBlockMap.get(file)!;
-                    out.println(
-                        `  ${pc.dim(relative(projectPath, file))} (${blocks.length} block${blocks.length > 1 ? "s" : ""})`
-                    );
+        if (formatOnlyFiles.length > 0) {
+            if (opts.repairFormatting) {
+                for (const file of formatOnlyFiles) {
+                    await repairFile(file);
                 }
+                out.println(pc.green(`\nRepaired formatting in ${formatOnlyFiles.length} file(s).`));
             } else {
-                out.println(pc.dim("No @dbg blocks found."));
-            }
-
-            // --- C. Git diff check ---
-            if (modifiedFiles.length > 0) {
-                const formatOnlyFiles: string[] = [];
-                const realDiffFiles: { file: string; diff: string }[] = [];
-
-                for (const file of modifiedFiles) {
-                    const { hasOnlyWhitespace, diff } = await checkGitDiff(file);
-                    if (hasOnlyWhitespace && diff) {
-                        formatOnlyFiles.push(file);
-                    } else if (diff) {
-                        realDiffFiles.push({ file, diff });
-                    }
+                out.println(`\n${pc.yellow(`${formatOnlyFiles.length} file(s) have formatting-only diffs:`)}`);
+                for (const file of formatOnlyFiles) {
+                    out.println(`  ${pc.dim(relative(projectPath, file))}`);
                 }
-
-                if (realDiffFiles.length > 0) {
-                    out.println(`\n${pc.yellow(`${realDiffFiles.length} file(s) have real diffs remaining:`)}`);
-                    for (const { file } of realDiffFiles) {
-                        out.println(`  ${relative(projectPath, file)}`);
-                    }
-                }
-
-                if (formatOnlyFiles.length > 0) {
-                    if (opts.repairFormatting) {
-                        for (const file of formatOnlyFiles) {
-                            await repairFile(file);
-                        }
-                        out.println(pc.green(`\nRepaired formatting in ${formatOnlyFiles.length} file(s).`));
-                    } else {
-                        out.println(`\n${pc.yellow(`${formatOnlyFiles.length} file(s) have formatting-only diffs:`)}`);
-                        for (const file of formatOnlyFiles) {
-                            out.println(`  ${pc.dim(relative(projectPath, file))}`);
-                        }
-                        out.println(`\n${pc.dim("Tip:")} ${suggestCommand(TOOL, { add: ["--repair-formatting"] })}`);
-                    }
-                }
+                out.println(`\n${pc.dim("Tip:")} ${suggestCommand(TOOL, { add: ["--repair-formatting"] })}`);
             }
+        }
+    }
+}
 
-            // --- D. Archive logs ---
-            let sessionName: string | undefined;
-            try {
-                sessionName = await sm.resolveSession(globalOpts.session);
-            } catch {
-                // No active session to archive
-            }
+interface LogArchiveArgs {
+    sm: SessionManager;
+    sessionOverride: string | undefined;
+    /** Destination directory. `undefined` → archive to /tmp (cleared on reboot). */
+    keepPath: string | undefined;
+}
 
-            if (sessionName) {
-                const sessionPath = await sm.getSessionPath(sessionName);
-                const metaPath = sessionPath.replace(".jsonl", ".meta.json");
-                const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+async function runLogArchive({ sm, sessionOverride, keepPath }: LogArchiveArgs): Promise<void> {
+    let sessionName: string | undefined;
+    try {
+        sessionName = await sm.resolveSession(sessionOverride);
+    } catch {
+        // No active session to archive
+    }
 
-                if (existsSync(sessionPath)) {
-                    let archivePath: string;
+    if (!sessionName) {
+        out.println(pc.dim("\nNo active session found — skipping log archival."));
+        return;
+    }
 
-                    if (opts.keepLogs) {
-                        const keepDir =
-                            typeof opts.keepLogs === "string" ? resolve(opts.keepLogs) : resolve("debug-logs");
-                        if (!existsSync(keepDir)) {
-                            mkdirSync(keepDir, { recursive: true });
-                        }
-                        archivePath = join(keepDir, `${timestamp}-llmlog-${sessionName}.jsonl`);
-                        copyFileSync(sessionPath, archivePath);
-                        unlinkSync(sessionPath);
-                    } else {
-                        archivePath = join(tmpdir(), `${timestamp}-llmlog-${sessionName}.jsonl`);
-                        renameSync(sessionPath, archivePath);
-                    }
+    const sessionPath = await sm.getSessionPath(sessionName);
+    const metaPath = sessionPath.replace(".jsonl", ".meta.json");
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 
-                    if (existsSync(metaPath)) {
-                        unlinkSync(metaPath);
-                    }
+    if (!existsSync(sessionPath)) {
+        out.println(pc.dim("\nNo session log file to archive."));
+        return;
+    }
 
-                    out.println(`\n${pc.green("Logs archived to:")} ${archivePath}`);
-                    if (!opts.keepLogs) {
-                        out.println(
-                            `${pc.dim("Tip: Keep logs permanently →")} ${suggestCommand(TOOL, { add: ["--keep-logs", "./debug-logs/"] })}`
-                        );
-                    }
-                } else {
-                    out.println(pc.dim("\nNo session log file to archive."));
-                }
-            } else {
-                out.println(pc.dim("\nNo active session found — skipping log archival."));
-            }
-        });
+    let archivePath: string;
+    if (keepPath) {
+        const keepDir = resolve(keepPath);
+        if (!existsSync(keepDir)) {
+            mkdirSync(keepDir, { recursive: true });
+        }
+        archivePath = join(keepDir, `${timestamp}-llmlog-${sessionName}.jsonl`);
+        copyFileSync(sessionPath, archivePath);
+        unlinkSync(sessionPath);
+    } else {
+        archivePath = join(tmpdir(), `${timestamp}-llmlog-${sessionName}.jsonl`);
+        renameSync(sessionPath, archivePath);
+    }
+
+    if (existsSync(metaPath)) {
+        unlinkSync(metaPath);
+    }
+
+    out.println(`\n${pc.green("Logs archived to:")} ${archivePath}`);
+    if (!keepPath) {
+        out.println(
+            `${pc.dim("Tip: Keep logs permanently →")} ${suggestCommand(TOOL, { add: ["cleanup", "--clean-logs", "./debug-logs/"] })}`
+        );
+    }
 }
