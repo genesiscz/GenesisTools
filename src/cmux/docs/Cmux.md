@@ -165,8 +165,8 @@ print(json.loads(buf.decode())["result"]["windows"][0])'
 
 | Operation | CLI | Raw RPC | Notes |
 |-----------|-----|---------|-------|
-| List in current window | `cmux list-workspaces` | `workspace.list` | Without `--params.window`, returns only the focused window's workspaces. |
-| List in specific window | n/a | `workspace.list {"window":"window:N"}` | Use this for multi-window snapshots. |
+| List in current window | `cmux list-workspaces` | `workspace.list` | Without `window_id`, returns only the focused window's workspaces. |
+| List in specific window | n/a | `workspace.list {"window_id":"window:N"}` | Use this for multi-window snapshots. |
 | New | `cmux new-workspace [--name X] [--cwd PATH] [--command CMD]` returns `OK <ref>` (plain text) | `workspace.create` returns `{workspace_ref, workspace_id, window_ref, window_id}` | The `name` arg is **best-effort** — cmux frequently overrides it with an auto-generated `user@host:cwd` title. Always follow up with `rename-workspace`. |
 | Rename | `cmux rename-workspace [--workspace <ref>] "<title>"` | `workspace.rename` | Sticks. Use this. |
 | Select (focus) | `cmux select-workspace --workspace <ref>` | `workspace.select` | **Steals user focus**. The 400 ms after the call is when geometry settles. |
@@ -485,7 +485,7 @@ cmux --version                                  # for cmux_version field
 # Discover (raw socket — CLI strips refs from list-windows)
 RPC window.list                                 # → [{ref, id, index, ...}]
 for each window:
-  RPC workspace.list { window: <ref> }          # → workspaces with current_directory
+  RPC workspace.list { window_id: <ref> }          # → workspaces with current_directory
 
 # Per workspace (sequential):
   cmux select-workspace --workspace <ref>       # FOCUS FLICKER (~400ms)

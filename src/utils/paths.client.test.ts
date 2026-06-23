@@ -1,5 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { collapsePathForDisplay, longestCommonPathPrefix, shortenPathWithPrefix, toPosixPath } from "./paths.client";
+import {
+    collapsePathForDisplay,
+    longestCommonPathPrefix,
+    resolveDirPathDisplayPrefix,
+    shortenPathWithPrefix,
+    toPosixPath,
+} from "./paths.client";
 
 describe("paths.client", () => {
     it("normalizes backslashes", () => {
@@ -42,5 +48,25 @@ describe("paths.client", () => {
         expect(shortenPathWithPrefix("~/Tresors/Projects/CEZ/col-fe/col-mobile", prefix)).toBe("CEZ/col-fe/col-mobile");
         expect(shortenPathWithPrefix("~/Tresors/Projects/GenesisTools", prefix)).toBe("GenesisTools");
         expect(shortenPathWithPrefix("~/Tresors/Projects", prefix)).toBe(".");
+    });
+
+    it("keeps worktree folders visible when siblings share a repo", () => {
+        const paths = [
+            "~/Tresors/Projects/CEZ/col-fe/.claude/worktrees/wt-a",
+            "~/Tresors/Projects/CEZ/col-fe/.claude/worktrees/wt-b",
+        ];
+        const prefix = resolveDirPathDisplayPrefix(paths);
+
+        expect(prefix).toBe("~/Tresors/Projects");
+        expect(shortenPathWithPrefix(paths[0], prefix)).toBe("CEZ/col-fe/.claude/worktrees/wt-a");
+        expect(shortenPathWithPrefix(paths[1], prefix)).toBe("CEZ/col-fe/.claude/worktrees/wt-b");
+    });
+
+    it("supports .worktrees/ sibling paths", () => {
+        const paths = ["~/Projects/app/.worktrees/feature-a", "~/Projects/app/.worktrees/feature-b"];
+        const prefix = resolveDirPathDisplayPrefix(paths);
+
+        expect(prefix).toBe("~/Projects");
+        expect(shortenPathWithPrefix(paths[0], prefix)).toBe("app/.worktrees/feature-a");
     });
 });

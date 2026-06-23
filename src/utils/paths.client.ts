@@ -66,6 +66,58 @@ function joinPathSegments(segments: string[]): string {
     return `/${segments.join("/")}`;
 }
 
+const WORKTREE_MARKERS = ["/.claude/worktrees/", "/.worktrees/"] as const;
+
+function pathContainsWorktree(path: string): boolean {
+    const normalized = collapsePathForDisplay(toPosixPath(path.trim()));
+
+    return WORKTREE_MARKERS.some((marker) => normalized.includes(marker));
+}
+
+function worktreeRepoRoot(path: string): string | null {
+    const normalized = collapsePathForDisplay(toPosixPath(path.trim()));
+
+    for (const marker of WORKTREE_MARKERS) {
+        const idx = normalized.indexOf(marker);
+
+        if (idx !== -1) {
+            return normalized.slice(0, idx);
+        }
+    }
+
+    return null;
+}
+
+function truncatePrefixBeforeWorktreeMarker(prefix: string): string {
+    const normalized = collapsePathForDisplay(toPosixPath(prefix.trim()));
+
+    if (!normalized) {
+        return normalized;
+    }
+
+    for (const marker of ["/.claude/worktrees", "/.worktrees"]) {
+        const idx = normalized.indexOf(marker);
+
+        if (idx !== -1) {
+            return normalized.slice(0, idx);
+        }
+    }
+
+    return normalized;
+}
+
+function shallowerPathPrefix(a: string, b: string): string {
+    if (!a) {
+        return b;
+    }
+
+    if (!b) {
+        return a;
+    }
+
+    return splitPathSegments(a).length <= splitPathSegments(b).length ? a : b;
+}
+
 /** Longest shared directory prefix across paths (collapsed, no trailing slash). Empty when not shared. */
 export function longestCommonPathPrefix(paths: readonly string[]): string {
     const normalized = [
@@ -99,6 +151,67 @@ export function longestCommonPathPrefix(paths: readonly string[]): string {
     }
 
     return joinPathSegments(first.slice(0, sharedSegmentCount));
+}
+
+function resolveSameRepoWorktreePrefix(repoRoot: string, normalized: readonly string[]): string | null {
+    const segments = splitPathSegments(repoRoot);
+
+    if (segments.length < 2) {
+        return null;
+    }
+
+    const dropParents = normalized.some((path) => path.includes("/.claude/worktrees/")) ? 2 : 1;
+    const len = Math.max(2, segments.length - dropParents);
+    const ancestor = joinPathSegments(segments.slice(0, len));
+    const tails = new Set(normalized.map((path) => shortenPathWithPrefix(path, ancestor)));
+
+    if (tails.size !== normalized.length) {
+        return null;
+    }
+
+    const sample = shortenPathWithPrefix(normalized[0], ancestor);
+
+    if (sample.startsWith(".claude") || sample.startsWith(".worktrees")) {
+        return null;
+    }
+
+    return ancestor;
+}
+
+/**
+ * Prefix for dashboard cwd display. When paths sit under `.claude/worktrees/`
+ * or `.worktrees/`, avoid absorbing the worktree folder into the shared prefix
+ * so siblings stay distinguishable (e.g. `CEZ/col-fe/.claude/worktrees/wt-a`).
+ */
+export function resolveDirPathDisplayPrefix(paths: readonly string[]): string {
+    const normalized = [
+        ...new Set(paths.map((path) => collapsePathForDisplay(toPosixPath(path.trim()))).filter(Boolean)),
+    ];
+
+    if (normalized.length < 2) {
+        return "";
+    }
+
+    const standard = longestCommonPathPrefix(normalized);
+
+    if (!normalized.some(pathContainsWorktree)) {
+        return standard;
+    }
+
+    const capped = truncatePrefixBeforeWorktreeMarker(standard);
+    const repoRoots = [...new Set(normalized.map(worktreeRepoRoot).filter((root): root is string => Boolean(root)))];
+
+    if (repoRoots.length === 1) {
+        const sameRepoPrefix = resolveSameRepoWorktreePrefix(repoRoots[0], normalized);
+
+        if (sameRepoPrefix) {
+            return sameRepoPrefix;
+        }
+    }
+
+    const anchoredPrefix = longestCommonPathPrefix(normalized.map((path) => worktreeRepoRoot(path) ?? path));
+
+    return shallowerPathPrefix(capped, anchoredPrefix);
 }
 
 export function shortenPathWithPrefix(path: string, prefix: string): string {

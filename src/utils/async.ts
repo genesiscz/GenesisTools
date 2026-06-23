@@ -192,6 +192,16 @@ export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> 
     });
 }
 
+export {
+    startWakefulInterval,
+    WAKEFUL_JUMP_THRESHOLD_MS,
+    WAKEFUL_TICK_MS,
+    type WakefulInterval,
+    type WakefulIntervalOptions,
+    type WakefulSleepOptions,
+    wakefulSleep,
+} from "./wakeful";
+
 // ============= AsyncOpQueue =============
 
 /**

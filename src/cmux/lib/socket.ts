@@ -162,10 +162,10 @@ export interface WorkspaceListResponse {
     workspaces: WorkspaceEntry[];
 }
 
-export async function workspaceList(windowRef?: string): Promise<WorkspaceListResponse> {
+export async function workspaceList(windowId?: string): Promise<WorkspaceListResponse> {
     const params: Record<string, unknown> = {};
-    if (windowRef) {
-        params.window = windowRef;
+    if (windowId) {
+        params.window_id = windowId;
     }
     return rpc<WorkspaceListResponse>("workspace.list", params);
 }
@@ -194,7 +194,7 @@ export async function workspaceCreate(
         params.command = opts.command;
     }
     if (opts.window) {
-        params.window = opts.window;
+        params.window_id = opts.window;
     }
     return rpc<WorkspaceCreateResult>("workspace.create", params);
 }
