@@ -6,6 +6,18 @@ export const WAKEFUL_JUMP_THRESHOLD_MS = WAKEFUL_TICK_MS * 5;
 export interface WakefulSleepOptions {
     shouldAbort?: () => boolean;
     onWallClockJump?: (ctx: { elapsedMs: number; expectedMs: number }) => void;
+    /** When true, timers do not keep the process alive (matches `setInterval().unref()`). */
+    unref?: boolean;
+}
+
+function delayMs(ms: number, unref: boolean): Promise<void> {
+    return new Promise((resolve) => {
+        const timer = setTimeout(resolve, ms);
+
+        if (unref) {
+            timer.unref();
+        }
+    });
 }
 
 /**
@@ -14,6 +26,7 @@ export interface WakefulSleepOptions {
  */
 export async function wakefulSleep(totalMs: number, options: WakefulSleepOptions = {}): Promise<void> {
     const shouldAbort = options.shouldAbort ?? (() => false);
+    const unref = options.unref ?? false;
     const deadline = Date.now() + totalMs;
     let lastTickAt = Date.now();
 
@@ -24,7 +37,13 @@ export async function wakefulSleep(totalMs: number, options: WakefulSleepOptions
             return;
         }
 
-        await Bun.sleep(Math.min(WAKEFUL_TICK_MS, remaining));
+        const tickMs = Math.min(WAKEFUL_TICK_MS, remaining);
+
+        if (unref) {
+            await delayMs(tickMs, true);
+        } else {
+            await Bun.sleep(tickMs);
+        }
 
         const now = Date.now();
         const elapsed = now - lastTickAt;
@@ -55,6 +74,8 @@ export interface WakefulIntervalOptions {
      */
     leading?: boolean;
     onWallClockJump?: WakefulSleepOptions["onWallClockJump"];
+    /** When true, the interval does not keep the process alive. */
+    unref?: boolean;
 }
 
 /**
@@ -77,6 +98,7 @@ export function startWakefulInterval(
         await wakefulSleep(intervalMs, {
             shouldAbort: () => !running,
             onWallClockJump: options.onWallClockJump,
+            unref: options.unref,
         });
     };
 

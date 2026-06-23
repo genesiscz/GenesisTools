@@ -1,4 +1,5 @@
 import type { LogEntry } from "@app/debugging-master/types";
+import { logger } from "@app/logger";
 import { startWakefulInterval, type WakefulInterval } from "@app/utils/async";
 import { SafeJSON } from "@app/utils/json";
 import type { LogSourceId } from "@app/utils/log-viewer/log-source";
@@ -372,7 +373,11 @@ export class SSEBroadcaster {
                     for (const sub of [...bucket]) {
                         try {
                             sub.controller.enqueue(ping);
-                        } catch {
+                        } catch (err) {
+                            logger.debug(
+                                { error: err, subId: sub.id, key: sub.key },
+                                "SSE heartbeat enqueue failed; removing subscriber"
+                            );
                             this.removeSubscriber(sub);
                         }
                     }
@@ -381,12 +386,16 @@ export class SSEBroadcaster {
                 for (const sub of [...this.multiplexSubscribers]) {
                     try {
                         sub.controller.enqueue(ping);
-                    } catch {
+                    } catch (err) {
+                        logger.debug(
+                            { error: err, subId: sub.id, keyCount: sub.keys.size },
+                            "SSE heartbeat enqueue failed; removing multiplex subscriber"
+                        );
                         this.removeMultiplexSubscriber(sub);
                     }
                 }
             },
-            { leading: false }
+            { leading: false, unref: true }
         );
     }
 }

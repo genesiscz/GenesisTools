@@ -370,15 +370,22 @@ async function runLogArchive({ sm, sessionOverride, keepPath }: LogArchiveArgs):
             mkdirSync(keepDir, { recursive: true });
         }
         archivePath = join(keepDir, `${timestamp}-llmlog-${sessionName}.jsonl`);
+        const archiveMetaPath = join(keepDir, `${timestamp}-llmlog-${sessionName}.meta.json`);
         copyFileSync(sessionPath, archivePath);
         unlinkSync(sessionPath);
+
+        if (existsSync(metaPath)) {
+            copyFileSync(metaPath, archiveMetaPath);
+            unlinkSync(metaPath);
+        }
     } else {
         archivePath = join(tmpdir(), `${timestamp}-llmlog-${sessionName}.jsonl`);
+        const archiveMetaPath = join(tmpdir(), `${timestamp}-llmlog-${sessionName}.meta.json`);
         renameSync(sessionPath, archivePath);
-    }
 
-    if (existsSync(metaPath)) {
-        unlinkSync(metaPath);
+        if (existsSync(metaPath)) {
+            renameSync(metaPath, archiveMetaPath);
+        }
     }
 
     out.println(`\n${pc.green("Logs archived to:")} ${archivePath}`);

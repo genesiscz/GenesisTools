@@ -407,6 +407,18 @@ export class Indexer extends IndexerEventEmitter {
     private startPollingWatch(callbacks?: IndexerCallbacks): void {
         const interval = this.config.watch?.interval ?? DEFAULT_WATCH_INTERVAL_MS;
 
+        if (!Number.isFinite(interval) || interval <= 0) {
+            this.emitAndDispatch(
+                "sync:error",
+                {
+                    indexName: this.config.name,
+                    error: `Invalid watch interval: ${String(interval)}`,
+                },
+                callbacks
+            );
+            return;
+        }
+
         this.watchTimer = startWakefulInterval(
             interval,
             async () => {
@@ -418,8 +430,8 @@ export class Indexer extends IndexerEventEmitter {
 
                 try {
                     await this.sync(callbacks);
-                } catch {
-                    // Watch sync errors are non-fatal
+                } catch (err) {
+                    logger.debug({ error: err, indexName: this.config.name }, "polling watch sync failed");
                 } finally {
                     this.isSyncing = false;
                 }

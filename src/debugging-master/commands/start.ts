@@ -126,13 +126,15 @@ export function registerStartCommand(program: Command): void {
 
             copyFileSync(snippetSrc, snippetDest);
 
-            // Substitute __LAN_IP__ placeholder so cross-device logging works out of the box.
-            const lanIp = getLocalIpv4();
-            if (lanIp) {
-                const snippetContent = readFileSync(snippetDest, "utf-8");
-                if (snippetContent.includes("__LAN_IP__")) {
-                    writeFileSync(snippetDest, snippetContent.replaceAll("__LAN_IP__", lanIp));
-                }
+            const lanIp = getLocalIpv4() ?? "__LAN_IP__";
+            const snippetContent = readFileSync(snippetDest, "utf-8");
+            const rewrittenSnippetContent = snippetContent
+                .replaceAll("__LAN_IP__", lanIp)
+                .replace("const PORT = 7243;", `const PORT = ${port};`)
+                .replace("private const PORT = 7243;", `private const PORT = ${port};`);
+
+            if (rewrittenSnippetContent !== snippetContent) {
+                writeFileSync(snippetDest, rewrittenSnippetContent);
             }
 
             // --- Create session ---

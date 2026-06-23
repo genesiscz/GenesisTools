@@ -46,7 +46,7 @@ class LlmLog
 			$base = "http://$host:" . self::PORT;
 			$ch = curl_init("$base/health");
 			curl_setopt_array($ch, [
-				CURLOPT_NOBODY => true,
+				CURLOPT_HTTPGET => true,
 				CURLOPT_RETURNTRANSFER => true,
 				CURLOPT_TIMEOUT_MS => self::TIMEOUT_MS,
 				CURLOPT_CONNECTTIMEOUT_MS => self::TIMEOUT_MS,
@@ -79,6 +79,7 @@ class LlmLog
 		curl_multi_close($mh);
 
 		if ($winner === null) {
+			self::$probed = false;
 			fwrite(STDERR, "[dbg] ingest unreachable on " . implode(', ', $candidates) . ":" . self::PORT . "\n");
 			return null;
 		}

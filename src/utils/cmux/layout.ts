@@ -1,6 +1,6 @@
 import { runCmuxJSON } from "@app/cmux/lib/cli";
 import { redactTerminalPreview } from "@app/cmux/lib/live-snapshot";
-import { rpc, type WorkspaceEntry, windowList } from "@app/cmux/lib/socket";
+import { type WorkspaceEntry, windowList, workspaceList } from "@app/cmux/lib/socket";
 import { logger } from "@app/logger";
 import type {
     CmuxLayoutPane,
@@ -166,9 +166,7 @@ export async function fetchCmuxFullLayout(options: FetchCmuxLayoutOptions = {}):
 
         const layoutWindows: CmuxLayoutWindow[] = await Promise.all(
             windows.map(async (window) => {
-                const wsResponse = await rpc<{
-                    workspaces?: WorkspaceEntry[];
-                }>("workspace.list", { window_id: window.ref });
+                const wsResponse = await workspaceList(window.ref);
 
                 const workspaces: CmuxLayoutWorkspace[] = await Promise.all(
                     (wsResponse.workspaces ?? []).map(async (workspace) => ({
