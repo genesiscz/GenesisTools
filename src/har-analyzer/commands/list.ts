@@ -3,8 +3,8 @@ import { filterEntries } from "@app/har-analyzer/core/query-engine";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { EntryFilter, OutputOptions } from "@app/har-analyzer/types";
 import { out } from "@app/logger";
-import { formatBytes, formatDuration } from "@app/utils/format";
 import { formatTable } from "@app/utils/table";
+import { formatBytes, formatDuration } from "@gt/utils/format";
 import type { Command } from "commander";
 
 interface ListOptions {

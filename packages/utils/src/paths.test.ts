@@ -282,50 +282,50 @@ describe("escapeShellArg: Windows (cross-spawn compatible, two-phase)", () => {
 
     it("wraps in ^-escaped double quotes on Windows", async () => {
         mockWindows();
-        const { escapeShellArg } = await import("../utils/string");
+        const { escapeShellArg } = await import("./string");
         expect(escapeShellArg("hello")).toBe('^"hello^"');
     });
 
     it("escapes inner double quotes (Phase 1) then ^-escapes them (Phase 2)", async () => {
         mockWindows();
-        const { escapeShellArg } = await import("../utils/string");
+        const { escapeShellArg } = await import("./string");
         expect(escapeShellArg('say "hi"')).toBe('^"say^ \\^"hi\\^"^"');
     });
 
     it("doubles trailing backslashes (Phase 1)", async () => {
         mockWindows();
-        const { escapeShellArg } = await import("../utils/string");
+        const { escapeShellArg } = await import("./string");
         expect(escapeShellArg("C:\\path\\")).toBe('^"C:\\path\\\\^"');
     });
 
     it("doubles backslashes before a quote (Phase 1)", async () => {
         mockWindows();
-        const { escapeShellArg } = await import("../utils/string");
+        const { escapeShellArg } = await import("./string");
         expect(escapeShellArg('a\\"b')).toBe('^"a\\\\\\^"b^"');
     });
 
     it("leaves mid-string backslashes alone", async () => {
         mockWindows();
-        const { escapeShellArg } = await import("../utils/string");
+        const { escapeShellArg } = await import("./string");
         expect(escapeShellArg("C:\\Users\\Martin")).toBe('^"C:\\Users\\Martin^"');
     });
 
     it("^-escapes % for cmd.exe variable expansion (Phase 2)", async () => {
         mockWindows();
-        const { escapeShellArg } = await import("../utils/string");
+        const { escapeShellArg } = await import("./string");
         expect(escapeShellArg("100%")).toBe('^"100^%^"');
         expect(escapeShellArg("%PATH%")).toBe('^"^%PATH^%^"');
     });
 
     it("^-escapes & and | to prevent command injection (Phase 2)", async () => {
         mockWindows();
-        const { escapeShellArg } = await import("../utils/string");
+        const { escapeShellArg } = await import("./string");
         expect(escapeShellArg("foo & bar")).toBe('^"foo^ ^&^ bar^"');
     });
 
     it.skipIf(skip.onWindows)("uses single quotes on Unix (default)", async () => {
         restorePlatform();
-        const { escapeShellArg } = await import("../utils/string");
+        const { escapeShellArg } = await import("./string");
         expect(escapeShellArg("hello")).toBe("'hello'");
     });
 });

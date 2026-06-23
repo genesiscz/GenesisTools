@@ -1,5 +1,5 @@
 import type { EntryFilter, HarSession, IndexedEntry } from "@app/har-analyzer/types.ts";
-import { matchGlob } from "@app/utils/string";
+import { matchGlob } from "@gt/utils/string";
 
 export function parseEntryIndex(entry: string): number {
     const cleaned = entry.startsWith("e") ? entry.slice(1) : entry;

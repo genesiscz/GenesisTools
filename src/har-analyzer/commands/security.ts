@@ -2,7 +2,7 @@ import { printFormatted, truncatePath } from "@app/har-analyzer/core/formatter";
 import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { HarEntry, HarHeader, OutputOptions } from "@app/har-analyzer/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@gt/utils/json";
 import type { Command } from "commander";
 
 type Severity = "HIGH" | "MEDIUM" | "LOW";

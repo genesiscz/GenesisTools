@@ -202,6 +202,9 @@
         "typescript": "^5.0.0",
       },
     },
+    "packages/utils": {
+      "name": "@gt/utils",
+    },
   },
   "patchedDependencies": {
     "@opentui/solid@0.1.100": "patches/@opentui%2Fsolid@0.1.100.patch",
@@ -497,6 +500,8 @@
     "@gitbeaker/rest": ["@gitbeaker/rest@43.5.0", "", { "dependencies": { "@gitbeaker/core": "^43.5.0", "@gitbeaker/requester-utils": "^43.5.0" } }, "sha512-HJgzKSBtdHrfpbH3vHj+1qSyH9RR0L/zMDCwvo4NE2Fg9P2nkWMfj2AzhytENHGTtL6gcfSPOS16HLLTQ4uVeg=="],
 
     "@grammyjs/types": ["@grammyjs/types@3.24.0", "", {}, "sha512-qQIEs4lN5WqUdr4aT8MeU6UFpMbGYAvcvYSW1A4OO1PABGJQHz/KLON6qvpf+5RxaNDQBxiY2k2otIhg/AG7RQ=="],
+
+    "@gt/utils": ["@gt/utils@workspace:packages/utils"],
 
     "@hlidac-shopu/actors-common": ["@hlidac-shopu/actors-common@3.2.5", "", { "dependencies": { "@hlidac-shopu/lib": "1.5.3", "@thi.ng/atom": "5.3.52", "linkedom": "0.18.12", "rollbar": "2.26.5" }, "peerDependencies": { "apify": "^3.2.0" } }, "sha512-iFF5h1L2gTwlvxCXWXEdOvbLxWhGNv7BUL689mdEuD17ZXuuWf76Im46TpHqTK/7lOANMI7qJt98w2hFfN6QMg=="],
 

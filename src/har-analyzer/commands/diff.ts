@@ -6,7 +6,7 @@ import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { HarEntry, HarHeader, OutputOptions } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
 import { out } from "@app/logger";
-import { formatBytes, formatDuration } from "@app/utils/format";
+import { formatBytes, formatDuration } from "@gt/utils/format";
 import type { Command } from "commander";
 
 function headerMap(headers: HarHeader[]): Map<string, string> {

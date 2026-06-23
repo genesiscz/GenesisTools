@@ -38,6 +38,7 @@
         // Path aliases
         "paths": {
             "@app/*": ["./src/*"],
+            "@gt/utils/*": ["./packages/utils/src/*"],
             "@ask/*": ["./src/ask/*"],
             "@ui/*": ["./src/utils/ui/*"],
             "@ui": ["./src/utils/ui/index.ts"],
@@ -47,5 +48,5 @@
             "@ext": ["./src/youtube/extension/index.ts"]
         }
     },
-    "include": ["src/**/*", "./test-*.ts"]
+    "include": ["src/**/*", "packages/*/src/**/*", "./test-*.ts"]
 }

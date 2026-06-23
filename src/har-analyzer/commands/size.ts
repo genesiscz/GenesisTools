@@ -1,8 +1,8 @@
 import { printFormatted } from "@app/har-analyzer/core/formatter";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
-import { formatBytes } from "@app/utils/format";
 import { formatTable } from "@app/utils/table";
+import { formatBytes } from "@gt/utils/format";
 import type { Command } from "commander";
 
 interface MimeBucket {

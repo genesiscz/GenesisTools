@@ -6,7 +6,7 @@ import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { HarEntry, IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
 import { out } from "@app/logger";
-import { formatDuration } from "@app/utils/format";
+import { formatDuration } from "@gt/utils/format";
 import type { Command } from "commander";
 
 export function registerErrorsCommand(program: Command): void {

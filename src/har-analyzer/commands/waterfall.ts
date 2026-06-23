@@ -3,7 +3,7 @@ import { filterEntries } from "@app/har-analyzer/core/query-engine";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { EntryFilter, IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
 import { out } from "@app/logger";
-import { formatDuration } from "@app/utils/format";
+import { formatDuration } from "@gt/utils/format";
 import type { Command } from "commander";
 
 const BAR_WIDTH = 40;

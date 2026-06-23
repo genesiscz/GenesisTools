@@ -2,12 +2,12 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { resolve } from "node:path";
 import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
-import { formatDuration, parseDuration } from "@app/utils/format";
 import { isProcessAlive as canonicalIsProcessAlive } from "@app/utils/process-alive";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import { Storage } from "@app/utils/storage/storage";
 import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
+import { formatDuration, parseDuration } from "@gt/utils/format";
 import { Command } from "commander";
 import pc from "picocolors";
 
