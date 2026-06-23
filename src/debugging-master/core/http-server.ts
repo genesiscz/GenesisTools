@@ -60,7 +60,9 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
     const corsHeaders: Record<string, string> = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Expose-Headers": "*",
+        "Access-Control-Max-Age": "86400",
     };
 
     const server = Bun.serve({

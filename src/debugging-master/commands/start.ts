@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import { ensureDashboardBuilt } from "@app/debugging-master/commands/dashboard";
 import { startServer } from "@app/debugging-master/core/http-server";
@@ -125,6 +125,15 @@ export function registerStartCommand(program: Command): void {
             }
 
             copyFileSync(snippetSrc, snippetDest);
+
+            // Substitute __LAN_IP__ placeholder so cross-device logging works out of the box.
+            const lanIp = getLocalIpv4();
+            if (lanIp) {
+                const snippetContent = readFileSync(snippetDest, "utf-8");
+                if (snippetContent.includes("__LAN_IP__")) {
+                    writeFileSync(snippetDest, snippetContent.replaceAll("__LAN_IP__", lanIp));
+                }
+            }
 
             // --- Create session ---
             const sm = new SessionManager();
