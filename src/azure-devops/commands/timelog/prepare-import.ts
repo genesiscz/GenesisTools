@@ -1,3 +1,4 @@
+import { buildAllowedTypeConfig } from "@app/azure-devops/lib/timelog/allowed-type-config";
 import {
     normalizeTimelogEntries,
     readEntryWorkItemTitle,
@@ -9,6 +10,7 @@ import type { AllowedTypeConfig } from "@app/azure-devops/types";
 import { requireTimeLogConfig } from "@app/azure-devops/utils";
 import { precheckWorkItem } from "@app/azure-devops/workitem-precheck";
 import { out } from "@app/logger";
+import { concurrentMap } from "@app/utils/async";
 import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage";
 import type { Command } from "commander";
@@ -127,8 +129,13 @@ async function backfillMissingWorkItemTitles(
         return mutated;
     }
 
-    for (const id of idsMissingTitle) {
-        const result = await precheckWorkItem(id, org, allowedTypeConfig);
+    const precheckById = await concurrentMap({
+        items: idsMissingTitle,
+        fn: (id) => precheckWorkItem(id, org, allowedTypeConfig),
+        concurrency: 5,
+    });
+
+    for (const [id, result] of precheckById) {
         const title = workItemTitleFromPrecheck(result);
 
         if (!title) {
@@ -167,19 +174,6 @@ function printEntry(entry: StoredEntry): void {
 
     parts.push(`[${entry._id.substring(0, 8)}]`);
     out.println(`  ${parts.join(" | ")}`);
-}
-
-function buildAllowedTypeConfig(config: ReturnType<typeof requireTimeLogConfig>): AllowedTypeConfig | undefined {
-    if (!config.timelog?.allowedWorkItemTypes?.length) {
-        return undefined;
-    }
-
-    return {
-        allowedWorkItemTypes: config.timelog.allowedWorkItemTypes,
-        allowedStatesPerType: config.timelog.allowedStatesPerType,
-        deprioritizedStates: config.timelog.deprioritizedStates,
-        defaultUserName: config.timelog.defaultUser?.userName,
-    };
 }
 
 // ============= Subcommand Actions =============

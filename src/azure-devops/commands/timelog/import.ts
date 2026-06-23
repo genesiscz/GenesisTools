@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { Api } from "@app/azure-devops/api";
 import { AzureDevOpsCacheManager } from "@app/azure-devops/cache-manager";
+import { buildAllowedTypeConfig } from "@app/azure-devops/lib/timelog/allowed-type-config";
 import {
     normalizeTimelogEntries,
     readEntryWorkItemTitle,
@@ -8,10 +9,11 @@ import {
 } from "@app/azure-devops/lib/timelog/entry-fields";
 import { convertToMinutes, formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
 import { updateWorkItemEffort } from "@app/azure-devops/timelog-effort";
-import type { AllowedTypeConfig, TimeLogImportFile } from "@app/azure-devops/types";
+import type { TimeLogImportFile } from "@app/azure-devops/types";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import { precheckWorkItem } from "@app/azure-devops/workitem-precheck";
 import { logger, out } from "@app/logger";
+import { concurrentMap } from "@app/utils/async";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -114,12 +116,6 @@ export function registerImportSubcommand(parent: Command): void {
 
             const workitemTitles = new Map<number, string>();
 
-            for (const entry of validEntries) {
-                if (entry.workItemTitle) {
-                    workitemTitles.set(entry.workItemId, entry.workItemTitle);
-                }
-            }
-
             // Report validation errors
             if (errors.length > 0) {
                 out.error("Validation errors:");
@@ -136,14 +132,7 @@ export function registerImportSubcommand(parent: Command): void {
             }
 
             // ---- Precheck phase: validate work item types ----
-            const allowedTypeConfig: AllowedTypeConfig | undefined = config.timelog?.allowedWorkItemTypes?.length
-                ? {
-                      allowedWorkItemTypes: config.timelog?.allowedWorkItemTypes,
-                      allowedStatesPerType: config.timelog?.allowedStatesPerType,
-                      deprioritizedStates: config.timelog?.deprioritizedStates,
-                      defaultUserName: config.timelog?.defaultUser?.userName,
-                  }
-                : undefined;
+            const allowedTypeConfig = buildAllowedTypeConfig(config);
 
             let precheckPassed: typeof validEntries = [];
             const precheckRedirected: Array<{
@@ -162,17 +151,22 @@ export function registerImportSubcommand(parent: Command): void {
                     pc.yellow("Note: allowedWorkItemTypes not configured — skipping work item type precheck.\n")
                 );
                 precheckPassed = validEntries;
+
+                for (const entry of validEntries) {
+                    if (entry.workItemTitle) {
+                        workitemTitles.set(entry.workItemId, entry.workItemTitle);
+                    }
+                }
             } else {
                 out.println("Pre-checking work item types...");
 
                 // Deduplicate work item IDs to avoid redundant API calls
                 const uniqueWorkItemIds = [...new Set(validEntries.map((e) => e.workItemId))];
-                const precheckResults = new Map<number, Awaited<ReturnType<typeof precheckWorkItem>>>();
-
-                for (const workItemId of uniqueWorkItemIds) {
-                    const result = await precheckWorkItem(workItemId, config.org, allowedTypeConfig);
-                    precheckResults.set(workItemId, result);
-                }
+                const precheckResults = await concurrentMap({
+                    items: uniqueWorkItemIds,
+                    fn: (workItemId) => precheckWorkItem(workItemId, config.org, allowedTypeConfig),
+                    concurrency: 5,
+                });
 
                 for (const entry of validEntries) {
                     const result = precheckResults.get(entry.workItemId)!;

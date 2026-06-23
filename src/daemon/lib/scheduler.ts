@@ -1,6 +1,6 @@
 import { logger as appLogger, createLogger } from "@app/logger";
+import { wakefulSleep } from "@app/utils/async";
 import { dispatchNotification } from "@app/utils/notifications";
-import { wakefulSleep } from "@app/utils/wakeful";
 import { loadConfig } from "./config";
 import { computeNextRunAt, parseInterval } from "./interval";
 import { listRunsForTask } from "./log-reader";

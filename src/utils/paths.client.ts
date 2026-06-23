@@ -28,6 +28,10 @@ export function collapsePathForDisplay(p: string): string {
     return normalized;
 }
 
+function normalizePathsForDisplay(paths: readonly string[]): string[] {
+    return [...new Set(paths.map((path) => collapsePathForDisplay(toPosixPath(path.trim()))).filter(Boolean))];
+}
+
 function splitPathSegments(path: string): string[] {
     const normalized = collapsePathForDisplay(toPosixPath(path.trim()));
 
@@ -95,8 +99,9 @@ function truncatePrefixBeforeWorktreeMarker(prefix: string): string {
         return normalized;
     }
 
-    for (const marker of ["/.claude/worktrees", "/.worktrees"]) {
-        const idx = normalized.indexOf(marker);
+    for (const marker of WORKTREE_MARKERS) {
+        const bare = marker.slice(0, -1);
+        const idx = normalized.indexOf(bare);
 
         if (idx !== -1) {
             return normalized.slice(0, idx);
@@ -120,9 +125,7 @@ function shallowerPathPrefix(a: string, b: string): string {
 
 /** Longest shared directory prefix across paths (collapsed, no trailing slash). Empty when not shared. */
 export function longestCommonPathPrefix(paths: readonly string[]): string {
-    const normalized = [
-        ...new Set(paths.map((path) => collapsePathForDisplay(toPosixPath(path.trim()))).filter(Boolean)),
-    ];
+    const normalized = normalizePathsForDisplay(paths);
 
     if (normalized.length < 2) {
         return "";
@@ -184,9 +187,7 @@ function resolveSameRepoWorktreePrefix(repoRoot: string, normalized: readonly st
  * so siblings stay distinguishable (e.g. `CEZ/col-fe/.claude/worktrees/wt-a`).
  */
 export function resolveDirPathDisplayPrefix(paths: readonly string[]): string {
-    const normalized = [
-        ...new Set(paths.map((path) => collapsePathForDisplay(toPosixPath(path.trim()))).filter(Boolean)),
-    ];
+    const normalized = normalizePathsForDisplay(paths);
 
     if (normalized.length < 2) {
         return "";
