@@ -119,28 +119,7 @@ export class SSEBroadcaster {
         const payload = SafeJSON.stringify({ source, session: sessionName });
         const frame = encoder.encode(`event: removed\ndata: ${payload}\n\n`);
 
-        const bucket = this.subscribers.get(key);
-        if (bucket) {
-            for (const sub of [...bucket]) {
-                try {
-                    sub.controller.enqueue(frame);
-                } catch {
-                    this.removeSubscriber(sub);
-                }
-            }
-        }
-
-        for (const sub of [...this.multiplexSubscribers]) {
-            if (!sub.keys.has(key)) {
-                continue;
-            }
-
-            try {
-                sub.controller.enqueue(frame);
-            } catch {
-                this.removeMultiplexSubscriber(sub);
-            }
-        }
+        this.broadcastFrame(key, frame);
 
         const tailer = this.tailers.get(key);
         if (tailer) {
@@ -179,28 +158,7 @@ export class SSEBroadcaster {
         const payload = SafeJSON.stringify({ source, session: sessionName });
         const frame = encoder.encode(`event: cleared\ndata: ${payload}\n\n`);
 
-        const bucket = this.subscribers.get(key);
-        if (bucket) {
-            for (const sub of [...bucket]) {
-                try {
-                    sub.controller.enqueue(frame);
-                } catch {
-                    this.removeSubscriber(sub);
-                }
-            }
-        }
-
-        for (const sub of [...this.multiplexSubscribers]) {
-            if (!sub.keys.has(key)) {
-                continue;
-            }
-
-            try {
-                sub.controller.enqueue(frame);
-            } catch {
-                this.removeMultiplexSubscriber(sub);
-            }
-        }
+        this.broadcastFrame(key, frame);
     }
 
     subscriberCount(key?: string): number {
@@ -274,6 +232,16 @@ export class SSEBroadcaster {
             const payload = SafeJSON.stringify({ ...entry, index: entryIndex });
             const frame = encoder.encode(`event: entry\ndata: ${payload}\n\n`);
 
+            this.broadcastFrame(key, frame);
+        }
+
+        this.fanOutMultiplex(key, entry, entryIndex);
+    }
+
+    private broadcastFrame(key: string, frame: Uint8Array): void {
+        const bucket = this.subscribers.get(key);
+
+        if (bucket) {
             for (const sub of [...bucket]) {
                 try {
                     sub.controller.enqueue(frame);
@@ -283,7 +251,17 @@ export class SSEBroadcaster {
             }
         }
 
-        this.fanOutMultiplex(key, entry, entryIndex);
+        for (const sub of [...this.multiplexSubscribers]) {
+            if (!sub.keys.has(key)) {
+                continue;
+            }
+
+            try {
+                sub.controller.enqueue(frame);
+            } catch {
+                this.removeMultiplexSubscriber(sub);
+            }
+        }
     }
 
     private fanOutMultiplex(key: string, entry: LogEntry, entryIndex: number): void {

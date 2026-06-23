@@ -295,8 +295,14 @@ async function runBlockRemoval({ projectPath, ignore, opts }: BlockRemovalArgs):
         const formatOnlyFiles: string[] = [];
         const realDiffFiles: { file: string; diff: string }[] = [];
 
-        for (const file of modifiedFiles) {
-            const { hasOnlyWhitespace, diff } = await checkGitDiff(file);
+        const diffResults = await Promise.all(
+            modifiedFiles.map(async (file) => ({
+                file,
+                ...(await checkGitDiff(file)),
+            }))
+        );
+
+        for (const { file, hasOnlyWhitespace, diff } of diffResults) {
             if (hasOnlyWhitespace && diff) {
                 formatOnlyFiles.push(file);
             } else if (diff) {
