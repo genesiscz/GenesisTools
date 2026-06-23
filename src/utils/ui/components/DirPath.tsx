@@ -1,4 +1,4 @@
-import { formatPathForDisplay, longestCommonPathPrefix } from "@app/utils/paths.client";
+import { formatPathForDisplay, resolveDirPathDisplayPrefix } from "@app/utils/paths.client";
 import { createContext, type ReactElement, type ReactNode, useContext, useMemo } from "react";
 
 const DirPathPrefixContext = createContext<string>("");
@@ -9,7 +9,7 @@ interface DirPathPrefixProviderProps {
 }
 
 export function DirPathPrefixProvider({ paths, children }: DirPathPrefixProviderProps): ReactElement {
-    const prefix = useMemo(() => longestCommonPathPrefix(paths), [paths]);
+    const prefix = useMemo(() => resolveDirPathDisplayPrefix(paths), [paths]);
 
     return <DirPathPrefixContext.Provider value={prefix}>{children}</DirPathPrefixContext.Provider>;
 }

@@ -168,7 +168,7 @@ export async function fetchCmuxFullLayout(options: FetchCmuxLayoutOptions = {}):
             windows.map(async (window) => {
                 const wsResponse = await rpc<{
                     workspaces?: WorkspaceEntry[];
-                }>("workspace.list", { window: window.ref });
+                }>("workspace.list", { window_id: window.ref });
 
                 const workspaces: CmuxLayoutWorkspace[] = await Promise.all(
                     (wsResponse.workspaces ?? []).map(async (workspace) => ({
