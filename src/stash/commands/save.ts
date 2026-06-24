@@ -167,7 +167,10 @@ function stripApplyMarkersFromPatchFiles(args: { patch: string }): string {
     const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/;
 
     const lines = args.patch.split("\n");
-    const dropCloseFor = new Set<string>();
+    // PR #222 t27: per-name depth counter, not a Set. Two nested apply-time openers with the same
+    // stash name would otherwise share one Set entry — deleting on the first close would leave the
+    // second close unmatched in the output. Counts increment on opener, decrement on close.
+    const dropCloseDepth = new Map<string, number>();
     // Buffer per hunk so we can rewrite the header after counting dropped `+` lines.
     let currentHeader: { oldStart: number; oldLines: number; newStart: number; newLines: number; ctx: string } | null =
         null;
@@ -211,16 +214,24 @@ function stripApplyMarkersFromPatchFiles(args: { patch: string }): string {
         }
         const openMatch = APPLY_OPEN_WITH_NAME.exec(line);
         if (openMatch?.[1]) {
-            dropCloseFor.add(openMatch[1]);
+            const name = openMatch[1];
+            dropCloseDepth.set(name, (dropCloseDepth.get(name) ?? 0) + 1);
             droppedInHunk++;
             continue;
         }
         const closeMatch = CLOSE_WITH_NAME.exec(line);
-        if (closeMatch?.[1] && dropCloseFor.has(closeMatch[1])) {
-            // Only one drop per opener — supports nested same-named regions (uncommon but correct).
-            dropCloseFor.delete(closeMatch[1]);
-            droppedInHunk++;
-            continue;
+        if (closeMatch?.[1]) {
+            const name = closeMatch[1];
+            const depth = dropCloseDepth.get(name) ?? 0;
+            if (depth > 0) {
+                if (depth === 1) {
+                    dropCloseDepth.delete(name);
+                } else {
+                    dropCloseDepth.set(name, depth - 1);
+                }
+                droppedInHunk++;
+                continue;
+            }
         }
         currentBody.push(line);
     }

@@ -24,13 +24,14 @@ export function pickExclusive(flags: Record<string, unknown>, names: readonly st
 }
 
 /**
- * Commander option parser for positive integers. Replaces ad-hoc `(v) => Number(v)` which silently
- * yields `NaN` for "abc" or `0` for "" and propagates as "latest"/missing — both confusing.
+ * Commander option parser for positive integers. Strict decimal-only — `Number()` would otherwise
+ * accept hex (`0x10`), scientific (`1e2`), binary (`0b11`), and signed forms, none of which make
+ * sense as a CLI version pin. PR #222 t30: `--at 1e2` quietly became v100; now it errors.
  */
 export function parsePositiveInt(v: string): number {
-    const n = Number(v);
-    if (!Number.isInteger(n) || n < 1) {
-        throw new InvalidArgumentError(`must be a positive integer (got "${v}")`);
+    const trimmed = v.trim();
+    if (!/^[1-9]\d*$/.test(trimmed)) {
+        throw new InvalidArgumentError(`must be a positive decimal integer (got "${v}")`);
     }
-    return n;
+    return Number.parseInt(trimmed, 10);
 }

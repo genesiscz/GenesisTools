@@ -5,6 +5,15 @@ import type { Decision } from "./unapply-session";
 
 const { log } = logger.scoped("stash:decisions");
 
+/**
+ * Outcome of attempting to apply a decision to a file region.
+ * - `applied`: marker was found and the region was removed (or no-op for `skip`)
+ * - `marker-missing`: marker not found at the requested hunkIndex — caller must treat the
+ *   application as still active for that region (PR #222 t28: prevents DB from claiming the stash
+ *   is unapplied while the user's code still has the wrapped block).
+ */
+export type DecisionOutcome = "applied" | "marker-missing";
+
 export async function applyDecisionToCode(args: {
     filePath: string;
     regionName: string;
@@ -16,9 +25,9 @@ export async function applyDecisionToCode(args: {
      */
     hunkIndex: number;
     decision: Exclude<Decision, null>;
-}): Promise<void> {
+}): Promise<DecisionOutcome> {
     if (args.decision === "skip") {
-        return;
+        return "applied";
     }
     const content = await readFile(args.filePath, "utf8");
     const markers = parseMarkers(content);
@@ -29,10 +38,11 @@ export async function applyDecisionToCode(args: {
             { filePath: args.filePath, regionName: args.regionName, hunkIndex: args.hunkIndex, found: byName.length },
             "no marker at requested hunkIndex; file may have been edited externally"
         );
-        return;
+        return "marker-missing";
     }
     const lines = content.split("\n");
     const before = lines.slice(0, m.startLine - 1);
     const after = lines.slice(m.endLine);
     await writeFile(args.filePath, [...before, ...after].join("\n"));
+    return "applied";
 }

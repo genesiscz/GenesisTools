@@ -95,12 +95,48 @@ describe("applyDecisionToCode", () => {
         );
     });
 
-    test("unknown hunkIndex is a logged no-op (does not throw)", async () => {
+    test("unknown hunkIndex returns 'marker-missing' (does not throw, file unchanged)", async () => {
         const f = join(dir, "a.ts");
         const before = ["before", `// #region @stash:x {"v":1}`, "c", "// #endregion @stash:x", "after"].join("\n");
         await writeFile(f, before);
-        // hunkIndex 5 in a file with one marker — should not throw, file unchanged.
-        await applyDecisionToCode({ filePath: f, regionName: "x", hunkIndex: 5, decision: "auto-remove" });
+        // PR #222 t28: caller (unapply) uses the return value to keep the application 'active'
+        // rather than falsely marking it 'unapplied' when markers are gone.
+        const outcome = await applyDecisionToCode({
+            filePath: f,
+            regionName: "x",
+            hunkIndex: 5,
+            decision: "auto-remove",
+        });
+        expect(outcome).toBe("marker-missing");
+        expect(await readFile(f, "utf8")).toBe(before);
+    });
+
+    test("successful removal returns 'applied'", async () => {
+        const f = join(dir, "a.ts");
+        await writeFile(
+            f,
+            ["before", `// #region @stash:x {"v":1}`, "c", "// #endregion @stash:x", "after"].join("\n")
+        );
+        const outcome = await applyDecisionToCode({
+            filePath: f,
+            regionName: "x",
+            hunkIndex: 1,
+            decision: "discard",
+        });
+        expect(outcome).toBe("applied");
+    });
+
+    test("skip decision returns 'applied' without touching the file", async () => {
+        const f = join(dir, "a.ts");
+        const before = "untouched\n";
+        await writeFile(f, before);
+        const outcome = await applyDecisionToCode({
+            filePath: f,
+            regionName: "x",
+            hunkIndex: 1,
+            decision: "skip",
+        });
+        expect(outcome).toBe("applied");
         expect(await readFile(f, "utf8")).toBe(before);
     });
 

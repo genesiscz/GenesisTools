@@ -74,8 +74,6 @@ export function renderDiff(args: { before: string; after: string; label: string 
     } catch {
         return fallbackLineDiff(args);
     } finally {
-        // PR #222 t15: previously unlinked the two files but left the empty mkdtemp dir behind.
-        // rmSync({recursive, force}) removes both files and the dir in one shot.
         rmSync(dir, { recursive: true, force: true });
     }
 }

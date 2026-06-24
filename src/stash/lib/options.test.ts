@@ -32,4 +32,17 @@ describe("parsePositiveInt", () => {
     test("rejects floats", () => {
         expect(() => parsePositiveInt("1.5")).toThrow(InvalidArgumentError);
     });
+    test("rejects non-decimal forms (hex / scientific / binary)", () => {
+        // PR #222 t30: previous `Number()` impl silently accepted these.
+        expect(() => parsePositiveInt("0x10")).toThrow(InvalidArgumentError);
+        expect(() => parsePositiveInt("1e2")).toThrow(InvalidArgumentError);
+        expect(() => parsePositiveInt("0b11")).toThrow(InvalidArgumentError);
+    });
+    test("rejects signed forms", () => {
+        expect(() => parsePositiveInt("+1")).toThrow(InvalidArgumentError);
+        expect(() => parsePositiveInt(" 1")).not.toThrow(); // trimmed first
+    });
+    test("rejects leading zero (no octal-by-accident)", () => {
+        expect(() => parsePositiveInt("01")).toThrow(InvalidArgumentError);
+    });
 });

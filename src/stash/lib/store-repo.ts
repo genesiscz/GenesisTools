@@ -70,18 +70,38 @@ export class StoreRepo {
     }
 
     /**
-     * Best-effort ref delete. A missing ref is fine (drop flow may race or re-run); other failures
-     * still bubble so a genuine git problem isn't silently swallowed.
+     * Best-effort ref delete. A missing ref is fine (drop flow may race or re-run); any other
+     * failure — repo corruption, permission denied, transient I/O — must bubble so the drop flow
+     * can't silently desync (DB row deleted while store ref still present). PR #222 t31: using
+     * resolveRef() as the existence probe is too permissive — it returns null for ANY git error,
+     * so corruption would look like "already absent". Instead, scan for-each-ref output, which
+     * succeeds even when the ref doesn't exist (empty output = missing; throw = real failure).
      */
     async deleteRef(ref: string): Promise<void> {
         try {
             await this.git(["update-ref", "-d", ref]);
         } catch (err) {
-            const exists = await this.resolveRef(ref);
-            if (exists) {
+            const present = await this.refExistsStrict(ref, err);
+            if (present) {
                 throw err;
             }
             log.debug({ ref }, "deleteRef: already absent (ignored)");
+        }
+    }
+
+    /**
+     * Strict existence probe used by deleteRef's fallback. `for-each-ref <ref>` exits 0 whether
+     * the ref exists or not (matching ref → prints it; no match → empty output). A non-zero exit
+     * means the repo itself can't be read — in that case rethrow the ORIGINAL delete error so the
+     * caller sees the actionable message, not the probe's.
+     */
+    private async refExistsStrict(ref: string, originalErr: unknown): Promise<boolean> {
+        try {
+            const out = await this.git(["for-each-ref", "--format=%(refname)", ref]);
+            return out.trim().length > 0;
+        } catch (probeErr) {
+            log.debug({ err: probeErr, ref }, "refExistsStrict probe failed; rethrowing original deleteRef error");
+            throw originalErr;
         }
     }
 

@@ -71,6 +71,15 @@ export async function dropCommand(opts: {
         "destructive drop starting"
     );
 
+    // PR #222 t25: an explicit `--at v` for a non-existent version must NOT proceed into the
+    // BEGIN block — otherwise `--orphan-active` would still flip every active application to
+    // 'orphaned' even though no version was dropped.
+    if (opts.version && versionsToDelete.length === 0) {
+        ui.err(`stash "${opts.name}" has no v${opts.version}`);
+        db.close();
+        process.exit(1);
+    }
+
     // Wrap the destructive sequence in a SQLite transaction so a half-failure rolls back the DB
     // side. Store-repo ref deletes happen alongside (no transactional join with git), but
     // deleteRef is missing-safe (it logs+ignores already-absent refs), so a retry converges.
@@ -101,8 +110,11 @@ export async function dropCommand(opts: {
     } catch (err) {
         try {
             db.run("ROLLBACK");
-        } catch {
-            // Transaction may already have been rolled back by SQLite after a DDL/constraint failure.
+        } catch (rollbackErr) {
+            // SQLite often auto-rolls-back after DDL/constraint failure; the explicit ROLLBACK then
+            // throws "cannot rollback - no transaction is active". Log it so a genuinely failing
+            // rollback (lock contention, etc.) isn't invisible.
+            log.debug({ err: rollbackErr, stashId: stash.id }, "rollback after drop error failed (often benign)");
         }
         db.close();
         throw err;

@@ -142,17 +142,32 @@ export async function unapplyCommand(opts: UnapplyOptions): Promise<void> {
 
     const stats = await executeAllDecisions({ session, projectRoot: project.rootPath, storage, db, stash });
 
-    const now = new Date().toISOString();
-    db.run(
-        "UPDATE applications SET state = 'unapplied', unapplied_at = ? WHERE stash_id = ? AND project_path = ? AND state = 'active'",
-        [now, stash.id, project.rootPath]
-    );
-
-    await session.complete();
-
-    ui.ok(
-        `unapplied "${opts.name}" — ${stats.removed} removed, ${stats.updated} captured to v${stats.newVersion ?? "(none)"}, ${stats.skipped} skipped`
-    );
+    // PR #222 t28: only mark the application as 'unapplied' if every region was actually cleaned
+    // up. A `marker-missing` outcome means the user's file may still carry wrapped code; flipping
+    // the DB to 'unapplied' would falsely claim the stash is gone. Keep the application 'active'
+    // and surface the failed files so the user can audit + retry.
+    if (stats.failedToFind === 0) {
+        const now = new Date().toISOString();
+        db.run(
+            "UPDATE applications SET state = 'unapplied', unapplied_at = ? WHERE stash_id = ? AND project_path = ? AND state = 'active'",
+            [now, stash.id, project.rootPath]
+        );
+        await session.complete();
+        ui.ok(
+            `unapplied "${opts.name}" — ${stats.removed} removed, ${stats.updated} captured to v${stats.newVersion ?? "(none)"}, ${stats.skipped} skipped`
+        );
+    } else {
+        // Persist the session so the user can re-run (`--continue`) after they investigate. Do NOT
+        // call session.complete() — that would discard the state.
+        await session.persist();
+        ui.err(`partial unapply: ${stats.failedToFind} region(s) had no matching marker; application kept ACTIVE`);
+        for (const f of stats.failedFiles) {
+            ui.warn(`  marker missing in: ${f}`);
+        }
+        ui.info(
+            "either restore the missing markers manually and re-run 'unapply --continue', or 'unapply --abort' to discard the session"
+        );
+    }
 
     db.close();
     log.debug({ stashId: stash.id, stats }, "stash unapplied");
@@ -367,6 +382,15 @@ interface ExecStats {
     updated: number;
     skipped: number;
     newVersion: number | null;
+    /**
+     * Regions whose marker couldn't be found at execute time (file edited out-of-band between
+     * bootstrap and execute, or already cleaned up manually). PR #222 t28: when > 0, the caller
+     * must NOT mark the application as 'unapplied' — the user's file may still contain wrapped
+     * code that the DB would otherwise claim is gone.
+     */
+    failedToFind: number;
+    /** Files where a marker lookup failed — surfaced to the user so they can audit. */
+    failedFiles: string[];
 }
 
 async function executeAllDecisions(args: {
@@ -376,7 +400,7 @@ async function executeAllDecisions(args: {
     db: Database;
     stash: StashRow;
 }): Promise<ExecStats> {
-    const stats: ExecStats = { removed: 0, updated: 0, skipped: 0, newVersion: null };
+    const stats: ExecStats = { removed: 0, updated: 0, skipped: 0, newVersion: null, failedToFind: 0, failedFiles: [] };
     // Snapshot "update"-bound regions in their original order so capturedUpdatesAsNewVersion sees
     // their stored/current content before we start mutating files. The capture itself is purely
     // in-memory (it reads from r.storedContent/r.currentContent), so order doesn't matter for
@@ -404,12 +428,18 @@ async function executeAllDecisions(args: {
             if (r.decision !== "discard" && r.decision !== "update") {
                 continue;
             }
-            await applyDecisionToCode({
+            const outcome = await applyDecisionToCode({
                 filePath: join(args.projectRoot, r.filePath),
                 regionName: args.session.snapshot().stashName,
                 hunkIndex: r.hunkIndex,
                 decision: r.decision,
             });
+            if (outcome === "marker-missing") {
+                stats.failedToFind++;
+                if (!stats.failedFiles.includes(r.filePath)) {
+                    stats.failedFiles.push(r.filePath);
+                }
+            }
         }
     }
     if (updatedRegions.length) {
