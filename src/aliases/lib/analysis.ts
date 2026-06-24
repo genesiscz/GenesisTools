@@ -303,19 +303,23 @@ export function renderHuman(report: AnalyzeReport, minLevel: number): string {
 }
 
 export function parseParams(flags: AnalyzeFlags): ScanParams {
-    const minN = flags.minN ? Number.parseInt(flags.minN, 10) : 1;
-    const maxN = flags.maxN ? Number.parseInt(flags.maxN, 10) : 4;
-    const threshold = flags.threshold ? Number.parseInt(flags.threshold, 10) : 3;
-    const chainThreshold = flags.chainThreshold ? Number.parseInt(flags.chainThreshold, 10) : 2;
-    const top = flags.top ? Number.parseInt(flags.top, 10) : 20;
+    // Mirror the clamping rules inside `extractHotPaths` so the report params
+    // describe what the scan ACTUALLY ran — without this, e.g. `--min-n 5
+    // --max-n 2` would be reported as `5..2` even though extraction silently
+    // executes 5..5.
+    const rawMinN = flags.minN ? Number.parseInt(flags.minN, 10) : 1;
+    const rawMaxN = flags.maxN ? Number.parseInt(flags.maxN, 10) : 4;
+    const rawThreshold = flags.threshold ? Number.parseInt(flags.threshold, 10) : 3;
+    const rawChainThreshold = flags.chainThreshold ? Number.parseInt(flags.chainThreshold, 10) : 2;
+    const rawTop = flags.top ? Number.parseInt(flags.top, 10) : 20;
 
-    return {
-        minN: Number.isNaN(minN) ? 1 : minN,
-        maxN: Number.isNaN(maxN) ? 4 : maxN,
-        threshold: Number.isNaN(threshold) ? 3 : threshold,
-        chainThreshold: Number.isNaN(chainThreshold) ? 2 : chainThreshold,
-        top: Number.isNaN(top) ? 20 : top,
-    };
+    const minN = Math.max(1, Number.isNaN(rawMinN) ? 1 : rawMinN);
+    const maxN = Math.max(minN, Number.isNaN(rawMaxN) ? 4 : rawMaxN);
+    const threshold = Math.max(1, Number.isNaN(rawThreshold) ? 3 : rawThreshold);
+    const chainThreshold = Math.max(1, Number.isNaN(rawChainThreshold) ? 2 : rawChainThreshold);
+    const top = Math.max(0, Number.isNaN(rawTop) ? 20 : rawTop);
+
+    return { minN, maxN, threshold, chainThreshold, top };
 }
 
 export function defaultRcFile(): string {

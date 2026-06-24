@@ -50,6 +50,14 @@ export function parseHistory(raw: string, _opts: { format?: HistoryFormat } = {}
     const merged: string[] = [];
     let buffer: string | null = null;
 
+    // NOTE: a "smart" odd-count-trailing-backslash check (so `echo \\` isn't
+    // treated as a continuation) was tried and reverted — zsh stores embedded
+    // newlines as `\\\n` (TWO backslashes + LF byte), so an even count of
+    // trailing backslashes is the normal continuation case in this file
+    // format, not the literal-backslash exception. Treating any trailing `\`
+    // as continuation is the empirically-correct rule for both zsh ext-history
+    // and the same-shape encoding bash uses.
+
     for (const rawLine of raw.split("\n")) {
         if (buffer !== null) {
             // We're inside a continuation. The previous buffer ends with `\`,
@@ -261,10 +269,10 @@ export function updateLevel(input: {
  * `command` joins the chain with ` && `. `name` is a short mnemonic built from
  * the first alnum of each token: for regular tokens we use the first alnum
  * directly; for flag tokens (`-x`, `--foo`) we use the first alnum of the flag
- * NAME (after the dashes) — so `ccc --resume` aliases to `ccr`, not just `c`.
- * Empty result falls back to `m<index>`. Uniqueness is enforced against the
- * optional `taken` set by appending an incrementing digit. Deterministic for
- * the same input.
+ * NAME (after the dashes) — so `ccc --resume` aliases to `cr` (not just `c`,
+ * which would happen if the flag were skipped). Empty result falls back to
+ * `m<index>`. Uniqueness is enforced against the optional `taken` set by
+ * appending an incrementing digit. Deterministic for the same input.
  */
 export function suggestAlias(commands: string[], taken?: Set<string>, index = 0): AliasSuggestion {
     const command = commands.join(" && ");
