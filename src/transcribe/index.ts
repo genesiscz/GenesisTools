@@ -440,5 +440,6 @@ try {
     await main();
 } catch (err) {
     out.error(err instanceof Error ? err.message : String(err));
+    await out.flush();
     process.exit(1);
 }
