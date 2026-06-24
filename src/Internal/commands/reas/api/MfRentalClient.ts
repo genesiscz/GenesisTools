@@ -128,7 +128,7 @@ export class MfRentalClient {
         const sheetName = workbook.SheetNames.find((name) => name.includes("Cenov")) ?? workbook.SheetNames[0];
         const sheet = workbook.Sheets[sheetName];
 
-        if (!sheet || !sheet["!ref"]) {
+        if (!sheet?.["!ref"]) {
             throw new Error(`MF XLSX: sheet "${sheetName}" is empty or missing`);
         }
 

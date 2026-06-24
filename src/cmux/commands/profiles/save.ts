@@ -247,7 +247,7 @@ async function resolveName(rawName: string | undefined, scope: ProfileScope, int
             placeholder: defaultName(scope),
             defaultValue: defaultName(scope),
             validate: (input) => {
-                if (!input || !input.trim()) {
+                if (!input?.trim()) {
                     return "Name cannot be empty";
                 }
                 if (!NAME_PATTERN.test(input)) {

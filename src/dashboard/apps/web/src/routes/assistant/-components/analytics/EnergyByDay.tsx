@@ -121,7 +121,7 @@ interface TooltipPayload {
 }
 
 function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: TooltipPayload }> }) {
-    if (!active || !payload || !payload.length) {
+    if (!active || !payload?.length) {
         return null;
     }
 

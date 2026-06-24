@@ -392,7 +392,7 @@ export class WatchSession {
         const mode = modelParts[0];
         const modelSpec = modelParts[1];
 
-        if (!modelSpec || !modelSpec.includes("/")) {
+        if (!modelSpec?.includes("/")) {
             return { handled: true, output: "Usage: /model <mode> <provider>/<model>" };
         }
 

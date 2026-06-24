@@ -633,7 +633,7 @@ async function promptRenamePath(targetPath: string): Promise<string | null> {
         placeholder: suggested,
         defaultValue: suggested,
         validate: (value) => {
-            if (!value || !value.trim()) {
+            if (!value?.trim()) {
                 return "Path is required";
             }
 

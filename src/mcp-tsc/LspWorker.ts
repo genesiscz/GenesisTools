@@ -448,7 +448,7 @@ export class LspWorker {
         const content = readFileSync(file, "utf-8");
         const state = this.getFileState(uri);
 
-        if (!state || !state.isOpen) {
+        if (!state?.isOpen) {
             await this.openFile(file);
             return;
         }
@@ -476,7 +476,7 @@ export class LspWorker {
         const uri = `file://${file}`;
         const state = this.getFileState(uri);
 
-        if (!state || !state.isOpen) {
+        if (!state?.isOpen) {
             return true;
         }
 
@@ -571,7 +571,7 @@ export class LspWorker {
             for (const file of filesToProcess) {
                 const uri = `file://${file}`;
                 const state = this.getFileState(uri);
-                if (!state || !state.isOpen) {
+                if (!state?.isOpen) {
                     await this.openFile(file);
                 } else {
                     await this.updateFile(file);
@@ -785,7 +785,7 @@ export class LspWorker {
 
         // Ensure file is open
         const state = this.getFileState(uri);
-        if (!state || !state.isOpen) {
+        if (!state?.isOpen) {
             await this.openFile(file);
             // Give LSP a moment to process
             await new Promise((r) => setTimeout(r, 100));

@@ -343,7 +343,7 @@ function normalizeListedVideo(entry: RawListedVideo, tab: ChannelTab): ListedVid
 }
 
 function normalizeUploadDate(uploadDate?: string): string | null {
-    if (!uploadDate || uploadDate.length !== 8) {
+    if (uploadDate?.length !== 8) {
         return null;
     }
 

@@ -190,7 +190,7 @@ function extractProductLinks(document: ReturnType<typeof parseHTML>["document"])
     const out: string[] = [];
     for (const item of Array.from(document.querySelectorAll(".product-list__item"))) {
         const href = item.querySelector("a")?.getAttribute("href");
-        if (!href || !href.startsWith("/")) {
+        if (!href?.startsWith("/")) {
             continue;
         }
 

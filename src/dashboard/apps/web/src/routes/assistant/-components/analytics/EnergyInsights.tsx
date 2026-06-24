@@ -42,7 +42,7 @@ function formatHourRange(hour: number): string {
  * Get peak focus time range description
  */
 function getPeakTimeDescription(data: EnergyHeatmapData | null): string {
-    if (!data || !data.peakTime) {
+    if (!data?.peakTime) {
         return "Not enough data";
     }
 
@@ -84,7 +84,7 @@ function getPeakTimeDescription(data: EnergyHeatmapData | null): string {
  * Get low energy time description
  */
 function getLowTimeDescription(data: EnergyHeatmapData | null): string {
-    if (!data || !data.lowTime) {
+    if (!data?.lowTime) {
         return "Not enough data";
     }
 
