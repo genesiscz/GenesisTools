@@ -32,16 +32,13 @@ describe("parseHistory", () => {
 
     test("merges zsh multi-line entries (trailing backslash is a continuation marker)", () => {
         const raw = [
-            ": 1700000000:0;php -r \"\\",
+            ': 1700000000:0;php -r "\\',
             "require 'vendor/autoload.php';\\",
             "echo 'ok';\\",
-            "\"",
+            '"',
             ": 1700000005:0;ls",
         ].join("\n");
-        expect(parseHistory(raw)).toEqual([
-            `php -r " require 'vendor/autoload.php'; echo 'ok'; "`,
-            "ls",
-        ]);
+        expect(parseHistory(raw)).toEqual([`php -r " require 'vendor/autoload.php'; echo 'ok'; "`, "ls"]);
     });
 
     test("a pasted multi-line block becomes ONE entry (not N continuation-line fakes)", () => {
@@ -107,18 +104,7 @@ describe("extractHotPaths", () => {
     test("applies separate threshold for single commands vs chains", () => {
         // `ccc` appears 6× — passes singles threshold (3). `ccc → resume` chain
         // appears only 2× — needs the chain threshold (2) to be admitted.
-        const commands = [
-            "ccc",
-            "ccc",
-            "ccc",
-            "ccc",
-            "ccc",
-            "ccc",
-            "z",
-            "ccc resume",
-            "z",
-            "ccc resume",
-        ];
+        const commands = ["ccc", "ccc", "ccc", "ccc", "ccc", "ccc", "z", "ccc resume", "z", "ccc resume"];
         const hot = extractHotPaths({ commands, minN: 1, maxN: 2, threshold: 3, chainThreshold: 2 });
         const keys = hot.map((h) => h.commands.join(" "));
         expect(keys).toContain("ccc");

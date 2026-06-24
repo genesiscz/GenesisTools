@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
 import { addScanFlags } from "@app/aliases/commands/shared";
-import { isWorthAliasing, upsertManagedBlock } from "@app/aliases/lib/core";
 import {
     type ApplyFlags,
     BLOCK_END,
@@ -11,6 +10,7 @@ import {
     resolveHistoryFile,
     runAnalysis,
 } from "@app/aliases/lib/analysis";
+import { isWorthAliasing, upsertManagedBlock } from "@app/aliases/lib/core";
 import { logger, out } from "@app/logger";
 import type { Command } from "commander";
 
