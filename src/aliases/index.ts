@@ -15,7 +15,7 @@ const program = new Command();
 program
     .name("aliases")
     .description(
-        "Use-dependent command-path compiler: mines shell history for hot command chains (activity-dependent myelination) and proposes compiled aliases."
+        "Mine shell history for hot command chains and single commands you reuse, and propose aliases for them."
     );
 
 registerAnalyzeCommand(program);

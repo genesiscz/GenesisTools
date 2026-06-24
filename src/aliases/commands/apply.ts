@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { addScanFlags } from "@app/aliases/commands/shared";
-import { upsertManagedBlock } from "@app/aliases/lib/core";
+import { isWorthAliasing, upsertManagedBlock } from "@app/aliases/lib/core";
 import {
     type ApplyFlags,
     BLOCK_END,
@@ -10,7 +10,7 @@ import {
     parseParams,
     resolveHistoryFile,
     runAnalysis,
-} from "@app/aliases/lib/myelin";
+} from "@app/aliases/lib/analysis";
 import { logger, out } from "@app/logger";
 import type { Command } from "commander";
 
@@ -37,7 +37,9 @@ async function applyAction(flags: ApplyFlags): Promise<void> {
         now: Date.now(),
     });
 
-    const chosen = report.paths.filter((p) => p.level >= minLevel);
+    const chosen = report.paths.filter(
+        (p) => p.level >= minLevel && isWorthAliasing({ commands: p.commands, aliasName: p.alias.name })
+    );
     const blockBody = chosen.map((p) => `alias ${p.alias.name}='${escapeForSingleQuote(p.alias.command)}'`).join("\n");
 
     if (flags.print) {
@@ -58,7 +60,7 @@ async function applyAction(flags: ApplyFlags): Promise<void> {
 export function registerApplyCommand(program: Command): void {
     addScanFlags(program.command("apply").description("Write suggested aliases into the managed rc block (or print)"))
         .option("--rc <file>", "Target rc file (default: auto-detect ~/.zshrc or ~/.bashrc)")
-        .option("--min-level <n>", "Only emit paths whose myelination level >= n", "2")
+        .option("--min-level <n>", "Only emit paths whose alias level >= n", "2")
         .option("--print", "Print the alias block to stdout instead of writing the rc")
         .action(applyAction);
 }
