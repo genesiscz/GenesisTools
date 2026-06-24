@@ -1,5 +1,12 @@
+import {
+    type AliasState,
+    type DecayFlags,
+    daysSince,
+    emptyState,
+    STATE_FILE,
+    storage,
+} from "@app/aliases/lib/analysis";
 import { updateLevel } from "@app/aliases/lib/core";
-import { type DecayFlags, daysSince, emptyState, type AliasState, STATE_FILE, storage } from "@app/aliases/lib/analysis";
 import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";

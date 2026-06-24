@@ -1,4 +1,4 @@
-import { emptyState, type AliasState, STATE_FILE, storage } from "@app/aliases/lib/analysis";
+import { type AliasState, emptyState, STATE_FILE, storage } from "@app/aliases/lib/analysis";
 import { out } from "@app/logger";
 import type { Command } from "commander";
 

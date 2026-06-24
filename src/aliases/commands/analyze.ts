@@ -1,5 +1,11 @@
 import { addScanFlags } from "@app/aliases/commands/shared";
-import { type AnalyzeFlags, parseParams, renderHuman, resolveHistoryFile, runAnalysis } from "@app/aliases/lib/analysis";
+import {
+    type AnalyzeFlags,
+    parseParams,
+    renderHuman,
+    resolveHistoryFile,
+    runAnalysis,
+} from "@app/aliases/lib/analysis";
 import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
