@@ -24,7 +24,8 @@ export interface VersionRow {
 export interface ApplicationRow {
     id: string;
     stash_id: string;
-    version_id: string;
+    /** Nullable: set NULL when the referenced version is dropped (audit row survives). */
+    version_id: string | null;
     project_path: string;
     project_origin: string | null;
     project_sha_at_apply: string | null;

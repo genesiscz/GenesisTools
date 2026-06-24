@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
@@ -74,12 +74,8 @@ export function renderDiff(args: { before: string; after: string; label: string 
     } catch {
         return fallbackLineDiff(args);
     } finally {
-        for (const f of [oldFile, newFile]) {
-            try {
-                unlinkSync(f);
-            } catch {
-                // ignore
-            }
-        }
+        // PR #222 t15: previously unlinked the two files but left the empty mkdtemp dir behind.
+        // rmSync({recursive, force}) removes both files and the dir in one shot.
+        rmSync(dir, { recursive: true, force: true });
     }
 }

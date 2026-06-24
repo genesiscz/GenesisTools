@@ -11,6 +11,10 @@ export async function runGitIn(repoDir: string, args: string[], opts?: { stdin?:
         stdout: "pipe",
         stderr: "pipe",
     });
+    // Start the stdout/stderr/exit readers BEFORE writing stdin. Without this, a streaming git
+    // subcommand or input larger than the OS pipe buffer (~16-64 KB on macOS) deadlocks because
+    // stdin.end() waits for the pipe to drain while no reader is consuming stdout.
+    const drain = Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
     if (opts?.stdin) {
         // `proc.stdin` is typed as a union because Bun.spawn's return type depends on the literal
         // `stdin` option (which we set conditionally). The `stdin: "pipe"` branch guarantees a
@@ -22,11 +26,7 @@ export async function runGitIn(repoDir: string, args: string[], opts?: { stdin?:
         sink.write(opts.stdin);
         await sink.end();
     }
-    const [stdout, stderr, exit] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-    ]);
+    const [stdout, stderr, exit] = await drain;
     if (exit !== 0) {
         // Log at debug — every caller catches and either bubbles up as an `out.log.error` or
         // intentionally swallows (e.g. probing HEAD in an empty repo). Warning here was noise.

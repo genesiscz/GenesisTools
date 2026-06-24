@@ -148,34 +148,84 @@ export async function saveCommand(opts: SaveOptions): Promise<void> {
 
 /**
  * Strip apply-time region markers from the patch (so a save of an applied stash doesn't re-include
- * the wrapper). The contract: drop opener lines that carry a JSON metadata blob (apply-time form)
- * AND their matching `#endregion @stash:NAME` closer with the same name; preserve bare author
- * markers (no JSON) so manually annotated regions round-trip cleanly.
+ * the wrapper) AND fix up the surrounding `@@ -a,b +c,d @@` hunk counts. The contract: drop opener
+ * lines that carry a JSON metadata blob (apply-time form) AND their matching `#endregion @stash:NAME`
+ * closer with the same name; preserve bare author markers (no JSON) so manually annotated regions
+ * round-trip cleanly.
+ *
+ * Hunk-count fix-up (PR #222 t10): every dropped `+` line decrements the hunk's new-side count.
+ * Without this, the stored PATCH.diff becomes unparseable — `git apply` (and `--3way`) parse @@
+ * headers strictly and reject any mismatch between declared added-line count and actual body.
  */
 function stripApplyMarkersFromPatchFiles(args: { patch: string }): string {
-    const lines = args.patch.split("\n");
     // Apply-time opener: added line matches `#region @stash:NAME {...json...}`. The JSON brace is
     // what distinguishes it from a bare author marker, which has no metadata and must be kept.
     const APPLY_OPEN_WITH_NAME = /^\+.*#region\s+@stash:([\w.-]+)\s+\{.*\}/;
     // Any added closer — used only to drop closers whose paired opener was an apply-time opener.
     const CLOSE_WITH_NAME = /^\+.*#endregion\s+@stash:([\w.-]+)/;
+    // Unified-diff hunk header: `@@ -oldStart,oldLines +newStart,newLines @@ <optional ctx>`.
+    const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/;
+
+    const lines = args.patch.split("\n");
     const dropCloseFor = new Set<string>();
-    const kept: string[] = [];
+    // Buffer per hunk so we can rewrite the header after counting dropped `+` lines.
+    let currentHeader: { oldStart: number; oldLines: number; newStart: number; newLines: number; ctx: string } | null =
+        null;
+    let currentBody: string[] = [];
+    let droppedInHunk = 0;
+    const out: string[] = [];
+
+    const flushHunk = () => {
+        if (!currentHeader) {
+            return;
+        }
+        const newLinesAdjusted = currentHeader.newLines - droppedInHunk;
+        // Emit corrected header. If `,N` was originally absent (single-line hunk), still write it
+        // when the adjusted value is no longer 1 — that's the only safe normalization.
+        const oldPart = `${currentHeader.oldStart},${currentHeader.oldLines}`;
+        const newPart = `${currentHeader.newStart},${newLinesAdjusted}`;
+        out.push(`@@ -${oldPart} +${newPart} @@${currentHeader.ctx}`);
+        out.push(...currentBody);
+        currentHeader = null;
+        currentBody = [];
+        droppedInHunk = 0;
+    };
+
     for (const line of lines) {
+        const hm = HUNK_RE.exec(line);
+        if (hm) {
+            flushHunk();
+            currentHeader = {
+                oldStart: Number(hm[1]),
+                oldLines: Number(hm[2] ?? "1"),
+                newStart: Number(hm[3]),
+                newLines: Number(hm[4] ?? "1"),
+                ctx: hm[5] ?? "",
+            };
+            continue;
+        }
+        // File-level headers, index headers, etc. — flush any open hunk and pass through.
+        if (!currentHeader) {
+            out.push(line);
+            continue;
+        }
         const openMatch = APPLY_OPEN_WITH_NAME.exec(line);
         if (openMatch?.[1]) {
             dropCloseFor.add(openMatch[1]);
+            droppedInHunk++;
             continue;
         }
         const closeMatch = CLOSE_WITH_NAME.exec(line);
         if (closeMatch?.[1] && dropCloseFor.has(closeMatch[1])) {
             // Only one drop per opener — supports nested same-named regions (uncommon but correct).
             dropCloseFor.delete(closeMatch[1]);
+            droppedInHunk++;
             continue;
         }
-        kept.push(line);
+        currentBody.push(line);
     }
-    return kept.join("\n");
+    flushHunk();
+    return out.join("\n");
 }
 
 function countAuthorRegionsInPatch(patch: string): number {

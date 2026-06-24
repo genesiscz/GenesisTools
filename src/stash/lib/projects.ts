@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { logger } from "@app/logger";
+import { concurrentMap } from "@app/utils/async";
 import { runGitIn } from "./patch";
 
 const log = logger.scoped("stash:projects").log;
@@ -62,19 +63,25 @@ export async function findSiblingClones(projectPath: string): Promise<string[]> 
     }
     const parent = dirname(project.rootPath);
     const entries = await readdir(parent, { withFileTypes: true });
+    // Sync filter first: drop non-dirs, self, and anything without a `.git` (so we don't pay 2-3
+    // git-subprocess spawns on directories that obviously aren't clones).
+    const candidates = entries
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => join(parent, entry.name))
+        .filter((candidate) => candidate !== project.rootPath && existsSync(join(candidate, ".git")));
+
+    // PR #222 t19: parallelize the per-candidate `detectProject` (each spawns up to 3 git subprocesses).
+    // Bounded at 8 — naked `Promise.all` on 50+ siblings has previously caused FD/vnode pressure on
+    // this machine; concurrentMap (Promise.allSettled-based) drops failures silently so one bad
+    // candidate doesn't kill the whole sweep.
+    const detected = await concurrentMap({
+        items: candidates,
+        concurrency: 8,
+        fn: async (candidate) => detectProject(candidate),
+        onError: (candidate, err) => log.debug({ err, candidate }, "sibling detect failed (skipped)"),
+    });
     const out: string[] = [];
-    for (const entry of entries) {
-        if (!entry.isDirectory()) {
-            continue;
-        }
-        const candidate = join(parent, entry.name);
-        if (candidate === project.rootPath) {
-            continue;
-        }
-        if (!existsSync(join(candidate, ".git"))) {
-            continue;
-        }
-        const other = await detectProject(candidate);
+    for (const [candidate, other] of detected) {
         if (other?.origin === project.origin) {
             out.push(candidate);
         }

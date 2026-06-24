@@ -10,6 +10,8 @@ import { unapplyCommand } from "./commands/unapply";
 import { updateCommand } from "./commands/update";
 import { versionsCommand } from "./commands/versions";
 import { whereCommand } from "./commands/where";
+import { parsePositiveInt, pickExclusive } from "./lib/options";
+import type { SaveMode } from "./lib/patch";
 
 const program = new Command();
 program.name("tools stash").description("Global cross-project code-overlay manager").version("0.1.0");
@@ -27,7 +29,7 @@ program
             name: string,
             opts: { staged?: boolean; unstaged?: boolean; all?: boolean; tag: string[]; desc?: string }
         ) => {
-            const mode = opts.staged ? "staged" : opts.unstaged ? "unstaged" : opts.all ? "all" : undefined;
+            const mode = pickExclusive(opts, ["staged", "unstaged", "all"]) as SaveMode | undefined;
             await saveCommand({ name, mode, tags: opts.tag, description: opts.desc });
         }
     );
@@ -35,7 +37,7 @@ program
 program
     .command("apply <name>")
     .description("Apply a stash into the current project")
-    .option("--at <version>", "pin to specific version (default: latest)", (v) => Number(v))
+    .option("--at <version>", "pin to specific version (default: latest)", parsePositiveInt)
     .option("--verbose-markers", "include source/applied metadata in markers")
     .action(async (name: string, opts: { at?: number; verboseMarkers?: boolean }) => {
         await applyCommand({ name, version: opts.at, verboseMarkers: !!opts.verboseMarkers });
@@ -83,12 +85,13 @@ program
 program
     .command("show <name>")
     .description("Show stash details")
-    .option("--at <version>", "specific version", (v) => Number(v))
+    .option("--at <version>", "specific version", parsePositiveInt)
     .option("--diff", "show patch content")
     .option("--meta", "show only metadata")
     .option("--regions", "show region inventory")
     .action(async (name: string, opts: { at?: number; diff?: boolean; meta?: boolean; regions?: boolean }) => {
-        const mode: "diff" | "meta" | "regions" = opts.diff ? "diff" : opts.meta ? "meta" : "regions";
+        const picked = pickExclusive(opts, ["diff", "meta", "regions"]);
+        const mode: "diff" | "meta" | "regions" = (picked as "diff" | "meta" | "regions" | undefined) ?? "regions";
         await showCommand({ name, version: opts.at, mode });
     });
 
@@ -99,7 +102,7 @@ program
     .option("--unstaged", "save unstaged only")
     .option("--all", "save everything (default)")
     .action(async (name: string, opts: { staged?: boolean; unstaged?: boolean; all?: boolean }) => {
-        const mode = opts.staged ? "staged" : opts.unstaged ? "unstaged" : "all";
+        const mode = (pickExclusive(opts, ["staged", "unstaged", "all"]) as SaveMode | undefined) ?? "all";
         await updateCommand({ name, mode });
     });
 
@@ -113,7 +116,7 @@ program
 program
     .command("drop <name>")
     .description("Delete a stash version")
-    .option("--at <version>", "specific version", (v) => Number(v))
+    .option("--at <version>", "specific version", parsePositiveInt)
     .option("--all-versions", "delete all versions")
     .option("--orphan-active", "drop even with active applications")
     .action(async (name: string, opts: { at?: number; allVersions?: boolean; orphanActive?: boolean }) => {

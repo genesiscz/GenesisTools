@@ -92,6 +92,7 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
         ui.warn(
             "apply-conflict state machine deferred to v1.1; resolve conflicts manually and re-run with --resume (future)"
         );
+        db.close();
         process.exit(1);
     }
 
@@ -169,6 +170,12 @@ async function decorateAppliedRegions(args: {
             if (!hunk) {
                 continue;
             }
+            // PR #222 t3: pure-deletion hunks (no `+` lines, newLines === 0) have nothing to wrap.
+            // Emitting a marker pair here would produce an empty `// #region … // #endregion …`
+            // sandwich with no body, which `parseMarkers` would then "find" with a zero-line span.
+            if (hunk.newLines === 0 || hunk.addedCount === 0) {
+                continue;
+            }
             const meta: Record<string, unknown> = { id: shortId(args.stashId), v: args.version };
             if (args.verbose) {
                 meta.hunk = h + 1;
@@ -223,7 +230,9 @@ function parseDiffHunks(patch: string): Record<string, DiffHunk[]> {
             result[currentFile].push(currentHunk);
             continue;
         }
-        if (currentHunk && line.startsWith("+") && !line.startsWith("+++")) {
+        // `+++ b/path` file headers always appear BEFORE the first `@@`, so currentHunk is null
+        // there and we never reach this branch — no startsWith("+++") guard needed.
+        if (currentHunk && line.startsWith("+")) {
             currentHunk.addedCount++;
         }
     }

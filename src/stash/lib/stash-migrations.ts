@@ -35,7 +35,12 @@ const INITIAL_SCHEMA_SQL = `
             CREATE TABLE applications (
                 id TEXT PRIMARY KEY,
                 stash_id TEXT NOT NULL REFERENCES stashes(id) ON DELETE CASCADE,
-                version_id TEXT NOT NULL REFERENCES versions(id),
+                -- version_id is nullable with ON DELETE SET NULL so audit rows survive a version
+                -- drop (drop --all-versions --orphan-active). The drop loop deletes versions while
+                -- applications still reference them; without SET NULL the FK fires and the drop
+                -- partially completes. The audit intent is preserved — application history sticks
+                -- around — but the pointer is nulled rather than dangling.
+                version_id TEXT REFERENCES versions(id) ON DELETE SET NULL,
                 project_path TEXT NOT NULL,
                 project_origin TEXT,
                 project_sha_at_apply TEXT,

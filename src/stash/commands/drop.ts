@@ -71,26 +71,41 @@ export async function dropCommand(opts: {
         "destructive drop starting"
     );
 
-    // Orphan FIRST. If we delete versions first while applications still reference them via
-    // applications.version_id, the FK fires (no ON DELETE CASCADE on that FK by design — we want apps
-    // to outlive their version row as audit history).
-    if (opts.orphanActive) {
-        db.run("UPDATE applications SET state = 'orphaned' WHERE stash_id = ? AND state = 'active'", [stash.id]);
-    }
+    // Wrap the destructive sequence in a SQLite transaction so a half-failure rolls back the DB
+    // side. Store-repo ref deletes happen alongside (no transactional join with git), but
+    // deleteRef is missing-safe (it logs+ignores already-absent refs), so a retry converges.
+    // Orphan FIRST: flip application state to 'orphaned' so the audit row survives. The FK is
+    // now ON DELETE SET NULL (PR #222 t21), so deleting versions also nulls version_id; this
+    // explicit flip preserves the user-visible state transition.
+    db.run("BEGIN");
+    try {
+        if (opts.orphanActive) {
+            db.run("UPDATE applications SET state = 'orphaned' WHERE stash_id = ? AND state = 'active'", [stash.id]);
+        }
 
-    for (const v of versionsToDelete) {
-        await repo.deleteRef(v.patch_ref);
-        await repo.deleteRef(`refs/baselines/${stash.id}/v${v.version}`);
-        db.run("DELETE FROM versions WHERE id = ?", [v.id]);
-        log.debug({ version: v.version, patch_ref: v.patch_ref }, "version dropped");
-    }
+        for (const v of versionsToDelete) {
+            await repo.deleteRef(v.patch_ref);
+            await repo.deleteRef(`refs/baselines/${stash.id}/v${v.version}`);
+            db.run("DELETE FROM versions WHERE id = ?", [v.id]);
+            log.debug({ version: v.version, patch_ref: v.patch_ref }, "version dropped");
+        }
 
-    const remaining =
-        db.query<{ c: number }, [string]>("SELECT COUNT(*) as c FROM versions WHERE stash_id = ?").get(stash.id)?.c ??
-        0;
-    if (remaining === 0) {
-        db.run("DELETE FROM stashes WHERE id = ?", [stash.id]);
-        log.debug({ stashId: stash.id, name: stash.name }, "stash row dropped (no remaining versions)");
+        const remaining =
+            db.query<{ c: number }, [string]>("SELECT COUNT(*) as c FROM versions WHERE stash_id = ?").get(stash.id)
+                ?.c ?? 0;
+        if (remaining === 0) {
+            db.run("DELETE FROM stashes WHERE id = ?", [stash.id]);
+            log.debug({ stashId: stash.id, name: stash.name }, "stash row dropped (no remaining versions)");
+        }
+        db.run("COMMIT");
+    } catch (err) {
+        try {
+            db.run("ROLLBACK");
+        } catch {
+            // Transaction may already have been rolled back by SQLite after a DDL/constraint failure.
+        }
+        db.close();
+        throw err;
     }
 
     ui.ok(`dropped ${versionsToDelete.length} version(s)`);

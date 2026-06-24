@@ -21,7 +21,7 @@ describe("applyDecisionToCode", () => {
                 "\n"
             )
         );
-        await applyDecisionToCode({ filePath: f, regionName: "x", decision: "auto-remove" });
+        await applyDecisionToCode({ filePath: f, regionName: "x", hunkIndex: 1, decision: "auto-remove" });
         expect(await readFile(f, "utf8")).toBe("before\nafter");
     });
 
@@ -37,7 +37,7 @@ describe("applyDecisionToCode", () => {
                 "after",
             ].join("\n")
         );
-        await applyDecisionToCode({ filePath: f, regionName: "x", decision: "update" });
+        await applyDecisionToCode({ filePath: f, regionName: "x", hunkIndex: 1, decision: "update" });
         expect(await readFile(f, "utf8")).toBe("before\nafter");
     });
 
@@ -51,7 +51,56 @@ describe("applyDecisionToCode", () => {
             "after",
         ].join("\n");
         await writeFile(f, before);
-        await applyDecisionToCode({ filePath: f, regionName: "x", decision: "skip" });
+        await applyDecisionToCode({ filePath: f, regionName: "x", hunkIndex: 1, decision: "skip" });
+        expect(await readFile(f, "utf8")).toBe(before);
+    });
+
+    test("multi-region file: hunkIndex picks the Nth marker, not the first", async () => {
+        // Regression for PR #222 t1+t2: apply wraps every hunk with the same stash name, so a file
+        // with two hunks has two identical markers. The old find()-based impl always picked the
+        // first, corrupting the file when the second region was decided. Verify processing back-to-
+        // front (hunkIndex 2 then 1) removes both correctly.
+        const f = join(dir, "multi.ts");
+        await writeFile(
+            f,
+            [
+                "// region A before",
+                `// #region @stash:x {"id":"abc","v":1}`,
+                "A content",
+                "// #endregion @stash:x",
+                "// between regions",
+                `// #region @stash:x {"id":"abc","v":1}`,
+                "B content",
+                "// #endregion @stash:x",
+                "// region B after",
+            ].join("\n")
+        );
+        // Back-to-front: remove hunk 2 first.
+        await applyDecisionToCode({ filePath: f, regionName: "x", hunkIndex: 2, decision: "auto-remove" });
+        const afterFirst = await readFile(f, "utf8");
+        expect(afterFirst).toBe(
+            [
+                "// region A before",
+                `// #region @stash:x {"id":"abc","v":1}`,
+                "A content",
+                "// #endregion @stash:x",
+                "// between regions",
+                "// region B after",
+            ].join("\n")
+        );
+        // Then remove what's now the only remaining marker (hunkIndex 1).
+        await applyDecisionToCode({ filePath: f, regionName: "x", hunkIndex: 1, decision: "auto-remove" });
+        expect(await readFile(f, "utf8")).toBe(
+            ["// region A before", "// between regions", "// region B after"].join("\n")
+        );
+    });
+
+    test("unknown hunkIndex is a logged no-op (does not throw)", async () => {
+        const f = join(dir, "a.ts");
+        const before = ["before", `// #region @stash:x {"v":1}`, "c", "// #endregion @stash:x", "after"].join("\n");
+        await writeFile(f, before);
+        // hunkIndex 5 in a file with one marker — should not throw, file unchanged.
+        await applyDecisionToCode({ filePath: f, regionName: "x", hunkIndex: 5, decision: "auto-remove" });
         expect(await readFile(f, "utf8")).toBe(before);
     });
 
@@ -67,7 +116,7 @@ describe("applyDecisionToCode", () => {
                 "after",
             ].join("\n")
         );
-        await applyDecisionToCode({ filePath: f, regionName: "x", decision: "discard" });
+        await applyDecisionToCode({ filePath: f, regionName: "x", hunkIndex: 1, decision: "discard" });
         expect(await readFile(f, "utf8")).toBe("before\nafter");
     });
 });

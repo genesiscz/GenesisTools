@@ -68,4 +68,21 @@ describe("markers", () => {
         const src = ["// #region someOtherRegion", "x", "// #endregion someOtherRegion"].join("\n");
         expect(stripMarkers(src)).toBe(src);
     });
+
+    test("CSS round-trip: emit → parse → strip re-emits the same body (PR #222 t17)", () => {
+        // Regression: OPEN_RE's tail used `\/\*` (block-open) but CSS emits `*/` (block-close), so
+        // markers in .css/.scss/.less files silently failed to parse and were never stripped.
+        const cssSyntax = { line: null, block: { open: "/*", close: "*/" } };
+        const meta: MarkerMeta = { id: "abc", v: 1 };
+        const opener = emitOpenMarker({ name: "x", meta, syntax: cssSyntax });
+        const closer = emitCloseMarker({ name: "x", syntax: cssSyntax });
+        expect(opener).toBe(`/* #region @stash:x {"id":"abc","v":1} */`);
+        expect(closer).toBe(`/* #endregion @stash:x */`);
+        const src = [".body { color: red; }", opener, ".inside { color: blue; }", closer, ".after {}"].join("\n");
+        const found = parseMarkers(src);
+        expect(found).toHaveLength(1);
+        expect(found[0]?.name).toBe("x");
+        expect(found[0]?.meta.id).toBe("abc");
+        expect(stripMarkers(src)).toBe([".body { color: red; }", ".inside { color: blue; }", ".after {}"].join("\n"));
+    });
 });

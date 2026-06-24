@@ -1,5 +1,8 @@
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { CommentSyntax } from "./languages";
+
+const { log } = logger.scoped("stash:markers");
 
 export interface MarkerMeta {
     id?: string;
@@ -18,8 +21,11 @@ export interface ParsedMarker {
     contentEndLine: number;
 }
 
-// Match `#region @stash:<name>` optionally followed by `{json}` metadata, tolerating trailing HTML/CSS close fragments.
-const OPEN_RE = /#region\s+@stash:([\w.-]+)(?:\s+(\{.*?\}))?(?:\s*(?:-->|\/\*))?$/;
+// Match `#region @stash:<name>` optionally followed by `{json}` metadata, tolerating trailing
+// HTML/CSS close fragments. PR #222 t17: the CSS tail was `\/\*` (block-OPEN) but `emitOpenMarker`
+// for CSS-family files emits a trailing `*/` (block-CLOSE) — so `.css/.scss/.less` markers never
+// matched and were silently ignored. Now matches `*/` correctly.
+const OPEN_RE = /#region\s+@stash:([\w.-]+)(?:\s+(\{.*?\}))?(?:\s*(?:-->|\*\/))?$/;
 // Match `#endregion @stash:<name>` — name is kebab/dot/underscore.
 const CLOSE_RE = /#endregion\s+@stash:([\w.-]+)/;
 
@@ -62,7 +68,11 @@ export function parseMarkers(source: string): ParsedMarker[] {
             if (json) {
                 try {
                     meta = SafeJSON.parse(json) as MarkerMeta;
-                } catch {
+                } catch (err) {
+                    // Don't swallow — surface in trace logs so corrupt markers are diagnosable
+                    // without re-running. Default to {} so the marker is still recognized
+                    // structurally even if the metadata is unreadable.
+                    log.debug({ err, json, line: i + 1 }, "marker meta parse failed; defaulting to {}");
                     meta = {};
                 }
             }

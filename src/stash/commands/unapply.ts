@@ -55,10 +55,12 @@ export async function unapplyCommand(opts: UnapplyOptions): Promise<void> {
         const s = await UnapplySession.load({ stashId: stash.id, projectHash, stateDir: storage.stateDir() });
         if (!s) {
             ui.warn("no in-progress unapply session");
+            db.close();
             return;
         }
         await s.abort();
         ui.ok("aborted");
+        db.close();
         return;
     }
 
@@ -66,11 +68,13 @@ export async function unapplyCommand(opts: UnapplyOptions): Promise<void> {
         const s = await UnapplySession.load({ stashId: stash.id, projectHash, stateDir: storage.stateDir() });
         if (!s) {
             ui.info("no in-progress session");
+            db.close();
             return;
         }
         const p = s.progress();
         const cur = s.currentRegion();
         ui.info(`${p.decided}/${p.total} decided; current: ${cur?.filePath ?? "(none)"} hunk ${cur?.hunkIndex ?? "?"}`);
+        db.close();
         return;
     }
 
@@ -168,11 +172,18 @@ async function bootstrapSession(args: {
         .get(args.stash.id, args.project.rootPath);
     if (!app) {
         ui.err(`"${args.stash.name}" is not applied here`);
+        args.db.close();
+        process.exit(1);
+    }
+    if (!app.version_id) {
+        ui.err("application row has no version (orphaned by drop); cannot unapply");
+        args.db.close();
         process.exit(1);
     }
     const version = args.db.query<VersionRow, [string]>("SELECT * FROM versions WHERE id = ?").get(app.version_id);
     if (!version) {
         ui.err("version row missing");
+        args.db.close();
         process.exit(1);
     }
     const repo = new StoreRepo(args.storage.storeRepoDir());
@@ -245,8 +256,13 @@ function collectRegionsFromPatch(patch: string): PatchRegion[] {
             flush();
             continue;
         }
-        // Added (`+`) lines accumulate into the current region buffer (stripping the `+` prefix); context/removal lines terminate it.
-        if (line.startsWith("+") && !line.startsWith("+++")) {
+        // Added (`+`) lines accumulate into the current region buffer (stripping the `+` prefix).
+        // The `+++ b/path` file header is handled above (it sets currentFile and flushes), so we
+        // never see `+++` here — no extra startsWith guard required.
+        // Context/removal lines terminate the buffer. We DON'T flush on `\` lines (e.g.
+        // `\ No newline at end of file`) — those don't end a hunk, so flushing on them would
+        // truncate the region prematurely.
+        if (line.startsWith("+")) {
             buffer.push(line.slice(1));
         } else if (buffer.length && (line.startsWith(" ") || line.startsWith("-"))) {
             flush();
@@ -257,15 +273,31 @@ function collectRegionsFromPatch(patch: string): PatchRegion[] {
 }
 
 async function processAutoRemoves(args: { session: UnapplySession; projectRoot: string }): Promise<void> {
-    for (const r of args.session.regions()) {
-        if (r.decision === "auto-remove") {
-            await applyDecisionToCode({
-                filePath: join(args.projectRoot, r.filePath),
-                regionName: args.session.snapshot().stashName,
-                decision: "auto-remove",
-            });
+    // Group by filePath and walk each file's regions back-to-front (highest hunkIndex first).
+    // Each removal shifts subsequent line numbers, so descending hunkIndex order keeps the
+    // markers.filter(...)[hunkIndex-1] lookup in decisions.ts consistent as we go.
+    for (const regions of groupRegionsByFileDescending(args.session.regions())) {
+        for (const r of regions) {
+            if (r.decision === "auto-remove") {
+                await applyDecisionToCode({
+                    filePath: join(args.projectRoot, r.filePath),
+                    regionName: args.session.snapshot().stashName,
+                    hunkIndex: r.hunkIndex,
+                    decision: "auto-remove",
+                });
+            }
         }
     }
+}
+
+function groupRegionsByFileDescending(regions: SessionRegion[]): SessionRegion[][] {
+    const byFile = new Map<string, SessionRegion[]>();
+    for (const r of regions) {
+        const arr = byFile.get(r.filePath) ?? [];
+        arr.push(r);
+        byFile.set(r.filePath, arr);
+    }
+    return [...byFile.values()].map((arr) => [...arr].sort((a, b) => b.hunkIndex - a.hunkIndex));
 }
 
 async function walkInteractive(args: { session: UnapplySession; projectRoot: string }): Promise<void> {
@@ -345,24 +377,39 @@ async function executeAllDecisions(args: {
     stash: StashRow;
 }): Promise<ExecStats> {
     const stats: ExecStats = { removed: 0, updated: 0, skipped: 0, newVersion: null };
-    const updatedRegions: SessionRegion[] = [];
+    // Snapshot "update"-bound regions in their original order so capturedUpdatesAsNewVersion sees
+    // their stored/current content before we start mutating files. The capture itself is purely
+    // in-memory (it reads from r.storedContent/r.currentContent), so order doesn't matter for
+    // correctness — we just don't want stats accounting to depend on the mutation order below.
+    const updatedRegions: SessionRegion[] = args.session.regions().filter((r) => r.decision === "update");
     for (const r of args.session.regions()) {
         if (r.decision === "skip") {
             stats.skipped++;
             ui.warn(`region ${r.filePath} hunk ${r.hunkIndex}: kept (stash and code now diverged)`);
-            continue;
-        }
-        if (r.decision === "update") {
-            updatedRegions.push(r);
-            stats.updated++;
-        }
-        await applyDecisionToCode({
-            filePath: join(args.projectRoot, r.filePath),
-            regionName: args.session.snapshot().stashName,
-            decision: r.decision ?? "auto-remove",
-        });
-        if (r.decision === "auto-remove" || r.decision === "discard" || r.decision === "update") {
+        } else if (r.decision === "auto-remove" || r.decision === "discard" || r.decision === "update") {
+            if (r.decision === "update") {
+                stats.updated++;
+            }
             stats.removed++;
+        }
+    }
+    // Apply file mutations per-file, back-to-front. Each removal shifts subsequent marker line
+    // numbers; processing in descending hunkIndex order keeps decisions.ts's
+    // markers.filter(...)[hunkIndex-1] lookup correct for the still-pending regions.
+    // NOTE: `auto-remove` regions were already stripped from disk by processAutoRemoves() at
+    // bootstrap, so calling applyDecisionToCode on them again would log a spurious "no marker"
+    // warn. Only mutate for discard/update here.
+    for (const regions of groupRegionsByFileDescending(args.session.regions())) {
+        for (const r of regions) {
+            if (r.decision !== "discard" && r.decision !== "update") {
+                continue;
+            }
+            await applyDecisionToCode({
+                filePath: join(args.projectRoot, r.filePath),
+                regionName: args.session.snapshot().stashName,
+                hunkIndex: r.hunkIndex,
+                decision: r.decision,
+            });
         }
     }
     if (updatedRegions.length) {

@@ -37,7 +37,7 @@ describe("discoverRegionsInTree", () => {
         expect(names).toEqual(["bar", "foo", "foo"]);
     });
 
-    test("respects .gitignore (no node_modules walk)", async () => {
+    test("skips well-known build/dep dirs (SKIP_DIRS)", async () => {
         await mkdir(join(dir, "node_modules"));
         await writeFile(
             join(dir, "node_modules", "x.ts"),
