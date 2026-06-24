@@ -1,5 +1,5 @@
-import { updateMyelination } from "@app/aliases/lib/core";
-import { type DecayFlags, daysSince, emptyState, type MyelinState, STATE_FILE, storage } from "@app/aliases/lib/myelin";
+import { updateLevel } from "@app/aliases/lib/core";
+import { type DecayFlags, daysSince, emptyState, type AliasState, STATE_FILE, storage } from "@app/aliases/lib/analysis";
 import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
@@ -9,12 +9,12 @@ async function decayAction(flags: DecayFlags): Promise<void> {
     let decayed = 0;
     let pruned = 0;
 
-    const next = await storage.atomicUpdate<MyelinState>(STATE_FILE, (current) => {
-        const state: MyelinState = current?.paths ? current : emptyState();
+    const next = await storage.atomicUpdate<AliasState>(STATE_FILE, (current) => {
+        const state: AliasState = current?.paths ? current : emptyState();
         const result = emptyState();
 
         for (const [key, path] of Object.entries(state.paths)) {
-            const level = updateMyelination({
+            const level = updateLevel({
                 level: path.level,
                 reused: false,
                 daysSince: daysSince(path.lastSeen, now),

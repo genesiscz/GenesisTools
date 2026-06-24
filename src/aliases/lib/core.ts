@@ -1,6 +1,5 @@
 /**
- * Pure, testable cores for the `aliases` tool (the use-dependent
- * command-path compiler that models activity-dependent myelination).
+ * Pure, testable cores for the `aliases` tool.
  *
  * Everything in this file is a pure function: no filesystem, no clock, no
  * environment. The clock-dependent value (`daysSince`, `now`) is always
@@ -36,15 +35,48 @@ export const BLOCK_END = "# <<< aliases managed block <<<";
  *   without the prefix are kept verbatim.
  * - bash lines are one command per line; `HISTTIMEFORMAT` timestamp lines
  *   (a leading `#` followed by only digits) are dropped.
+ * - Multi-line zsh entries (a trailing `\` on a line is the continuation
+ *   marker; the next physical line is part of the same command) are coalesced
+ *   into a single entry. Each embedded newline is replaced with a space so the
+ *   result is a single command string. Without this, pasted multi-line content
+ *   (crash traces, heredocs, jq filter chains) gets shredded into fake
+ *   "commands" whose continuation lines repeat across pastes and pollute the
+ *   n-gram hot-path detection.
  * - Blank lines are skipped; leading/trailing whitespace is trimmed.
- * - Multi-line entries are out of scope: each physical line is one entry.
  *
  * Pure: does not read the filesystem or the clock.
  */
 export function parseHistory(raw: string, _opts: { format?: HistoryFormat } = {}): string[] {
-    const out: string[] = [];
+    const merged: string[] = [];
+    let buffer: string | null = null;
 
     for (const rawLine of raw.split("\n")) {
+        if (buffer !== null) {
+            // We're inside a continuation. The previous buffer ends with `\`,
+            // which encodes an embedded newline; drop it and join with a space
+            // so the result stays single-line.
+            buffer = `${buffer.slice(0, -1)} ${rawLine}`;
+        } else {
+            buffer = rawLine;
+        }
+
+        if (buffer.endsWith("\\")) {
+            continue;
+        }
+
+        merged.push(buffer);
+        buffer = null;
+    }
+
+    if (buffer !== null) {
+        // File ended mid-continuation; keep whatever we have without the
+        // dangling backslash.
+        merged.push(buffer.endsWith("\\") ? buffer.slice(0, -1) : buffer);
+    }
+
+    const out: string[] = [];
+
+    for (const rawLine of merged) {
         const line = rawLine.trim();
         if (line.length === 0) {
             continue;
@@ -102,7 +134,7 @@ function isContiguousSlice(outer: string[], inner: string[]): boolean {
 }
 
 /**
- * Extract frequently-repeated consecutive command n-grams ("hot axons").
+ * Extract frequently-repeated consecutive command n-grams ("hot commands").
  *
  * For every window length n in [minN, maxN], slide over the ordered command
  * array, count distinct consecutive n-grams, keep those with count >=
@@ -116,13 +148,17 @@ export function extractHotPaths(input: {
     commands: string[];
     minN?: number;
     maxN?: number;
+    /** Minimum count for single-command (n=1) candidates. */
     threshold?: number;
+    /** Minimum count for chain (n>=2) candidates. Defaults to `threshold`. */
+    chainThreshold?: number;
     top?: number;
 }): HotPath[] {
     const commands = input.commands;
     const minN = Math.max(1, input.minN ?? 2);
     const maxN = Math.max(minN, input.maxN ?? 4);
     const threshold = Math.max(1, input.threshold ?? 3);
+    const chainThreshold = Math.max(1, input.chainThreshold ?? threshold);
     const top = Math.max(0, input.top ?? 20);
 
     const counts = new Map<string, { commands: string[]; count: number }>();
@@ -146,7 +182,8 @@ export function extractHotPaths(input: {
 
     const hot: HotPath[] = [];
     for (const entry of counts.values()) {
-        if (entry.count >= threshold) {
+        const minCount = entry.commands.length === 1 ? threshold : chainThreshold;
+        if (entry.count >= minCount) {
             hot.push({
                 commands: entry.commands,
                 count: entry.count,
@@ -191,7 +228,7 @@ export function extractHotPaths(input: {
 }
 
 /**
- * Update a path's myelination level given whether it was reused this scan and
+ * Update a path's alias level given whether it was reused this scan and
  * how many days have passed since it was last seen.
  *
  * Decay for idle time is applied first, then growth (if reused). The level is
@@ -199,7 +236,7 @@ export function extractHotPaths(input: {
  * never reads the clock. A level decaying to 0 marks the path dead (the caller
  * decides whether to prune).
  */
-export function updateMyelination(input: {
+export function updateLevel(input: {
     level: number;
     reused: boolean;
     daysSince: number;
@@ -222,10 +259,12 @@ export function updateMyelination(input: {
  * Synthesize an alias for a chain of commands.
  *
  * `command` joins the chain with ` && `. `name` is a short mnemonic built from
- * the first letter of each significant token (flags starting with `-` skipped),
- * lowercased and alnum-only; empty falls back to `m<index>`. Uniqueness is
- * enforced against the optional `taken` set by appending an incrementing digit.
- * Deterministic for the same input.
+ * the first alnum of each token: for regular tokens we use the first alnum
+ * directly; for flag tokens (`-x`, `--foo`) we use the first alnum of the flag
+ * NAME (after the dashes) — so `ccc --resume` aliases to `ccr`, not just `c`.
+ * Empty result falls back to `m<index>`. Uniqueness is enforced against the
+ * optional `taken` set by appending an incrementing digit. Deterministic for
+ * the same input.
  */
 export function suggestAlias(commands: string[], taken?: Set<string>, index = 0): AliasSuggestion {
     const command = commands.join(" && ");
@@ -233,11 +272,13 @@ export function suggestAlias(commands: string[], taken?: Set<string>, index = 0)
     let base = "";
     for (const cmd of commands) {
         for (const token of cmd.split(/\s+/)) {
-            if (token.length === 0 || token.startsWith("-")) {
+            if (token.length === 0) {
                 continue;
             }
 
-            const firstAlnum = token.toLowerCase().replace(/[^a-z0-9]/g, "")[0];
+            // Strip leading dashes so flag NAMES contribute their first letter.
+            const stem = token.replace(/^-+/, "");
+            const firstAlnum = stem.toLowerCase().replace(/[^a-z0-9]/g, "")[0];
             if (firstAlnum) {
                 base += firstAlnum;
             }
@@ -260,6 +301,24 @@ export function suggestAlias(commands: string[], taken?: Set<string>, index = 0)
     }
 
     return { name, command };
+}
+
+/**
+ * Decide whether an alias is actually worth showing.
+ *
+ * Single-command suggestions are only useful if the alias saves real typing —
+ * skip the suggestion when the savings are trivial (e.g. `cd ..` → `c..` or
+ * `ccc` → `c`). For multi-command chains we always keep the suggestion because
+ * chaining commands is intrinsically worth aliasing.
+ */
+export function isWorthAliasing(input: { commands: string[]; aliasName: string }): boolean {
+    if (input.commands.length >= 2) {
+        return true;
+    }
+
+    const original = input.commands[0] ?? "";
+    const savings = original.length - input.aliasName.length;
+    return original.length >= 6 && savings >= 3;
 }
 
 /**

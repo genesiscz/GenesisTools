@@ -6,9 +6,10 @@ import {
     BLOCK_START,
     extractHotPaths,
     type HotPath,
+    isWorthAliasing,
     parseHistory,
     suggestAlias,
-    updateMyelination,
+    updateLevel,
 } from "@app/aliases/lib/core";
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
@@ -24,7 +25,7 @@ export interface PathState {
     count: number;
 }
 
-export interface MyelinState {
+export interface AliasState {
     paths: Record<string, PathState>;
 }
 
@@ -32,6 +33,7 @@ export interface ScanParams {
     minN: number;
     maxN: number;
     threshold: number;
+    chainThreshold: number;
     top: number;
 }
 
@@ -57,6 +59,7 @@ export interface AnalyzeFlags {
     minN?: string;
     maxN?: string;
     threshold?: string;
+    chainThreshold?: string;
     top?: string;
     state?: boolean;
     json?: boolean;
@@ -78,11 +81,11 @@ function statePath(): string {
     return join(storage.getCacheDir(), STATE_FILE);
 }
 
-export function emptyState(): MyelinState {
+export function emptyState(): AliasState {
     return { paths: {} };
 }
 
-export async function readState(): Promise<MyelinState> {
+export async function readState(): Promise<AliasState> {
     const file = statePath();
     if (!existsSync(file)) {
         return emptyState();
@@ -90,7 +93,7 @@ export async function readState(): Promise<MyelinState> {
 
     try {
         const text = await Bun.file(file).text();
-        const parsed = SafeJSON.parse(text) as MyelinState;
+        const parsed = SafeJSON.parse(text) as AliasState;
         return parsed.paths ? parsed : emptyState();
     } catch (error) {
         logger.warn({ error, file }, "aliases: failed to read state, starting fresh");
@@ -139,7 +142,7 @@ export function escapeForSingleQuote(s: string): string {
 }
 
 /**
- * Mine history, extract hot paths, and update myelination state (unless
+ * Mine history, extract hot paths, and update alias-level state (unless
  * `noState`). Returns the report plus the raw command count.
  */
 export async function runAnalysis(opts: {
@@ -152,11 +155,17 @@ export async function runAnalysis(opts: {
     const commands = parseHistory(raw);
     logger.debug({ historyFile: opts.historyFile, commands: commands.length }, "aliases: parsed history");
 
+    // Single commands need to repeat more (default 3) to be worth aliasing,
+    // but chains are inherently rarer and a lower threshold (default 2)
+    // surfaces useful ones we'd otherwise miss. Single call so subsumption
+    // (drop `z genesistools` when `z genesistools && ccc` has the same count)
+    // still works.
     const hot = extractHotPaths({
         commands,
         minN: opts.params.minN,
         maxN: opts.params.maxN,
         threshold: opts.params.threshold,
+        chainThreshold: opts.params.chainThreshold,
         top: opts.params.top,
     });
 
@@ -168,7 +177,7 @@ export async function runAnalysis(opts: {
     if (opts.noState) {
         reportPaths = hot.map((path: HotPath) => {
             const key = path.commands.join(" ");
-            const level = updateMyelination({ level: 0, reused: true, daysSince: 0 });
+            const level = updateLevel({ level: 0, reused: true, daysSince: 0 });
             const alias = suggestAlias(path.commands, taken);
 
             return {
@@ -181,12 +190,12 @@ export async function runAnalysis(opts: {
             };
         });
     } else {
-        const nextState = await storage.atomicUpdate<MyelinState>(STATE_FILE, (current) => {
-            const next: MyelinState = current?.paths ? current : emptyState();
+        const nextState = await storage.atomicUpdate<AliasState>(STATE_FILE, (current) => {
+            const next: AliasState = current?.paths ? current : emptyState();
             for (const path of hot) {
                 const key = path.commands.join(" ");
                 const priorPath = next.paths[key];
-                const level = updateMyelination({
+                const level = updateLevel({
                     level: priorPath?.level ?? 0,
                     reused: true,
                     daysSince: priorPath ? daysSince(priorPath.lastSeen, opts.now) : 0,
@@ -244,48 +253,67 @@ export function renderHuman(report: AnalyzeReport, minLevel: number): string {
     lines.push(
         `aliases — ${report.history} (n=${report.params.minN}..${report.params.maxN}, threshold ${report.params.threshold})`
     );
-    lines.push("");
-    lines.push(`mined ${report.counts.lines} lines · ${report.counts.hot} hot paths`);
+    const worth = report.paths.filter((p) => isWorthAliasing({ commands: p.commands, aliasName: p.alias.name }));
+    const trivial = report.paths.length - worth.length;
+    const trivialNote = trivial > 0 ? ` (${trivial} skipped as too short to alias)` : "";
+    lines.push(`mined ${report.counts.lines.toLocaleString("en")} lines · ${worth.length} hot commands${trivialNote}`);
     lines.push("");
 
-    if (report.paths.length === 0) {
-        lines.push("No hot command sequences found above the threshold.");
+    if (worth.length === 0) {
+        lines.push("No hot command sequences worth aliasing.");
         return lines.join("\n");
     }
 
-    lines.push("HOT AXONS (ranked by activity score)");
-    for (const path of report.paths) {
-        const chain = path.commands.join("  →  ");
-        lines.push(
-            `  ${bar(path.level)}  ${chain}  ×${path.count}  level ${path.level.toFixed(1)}  alias: ${path.alias.name}`
-        );
+    const suggested = worth.filter((p) => p.level >= minLevel);
+
+    // Column widths from the worth-aliasing rows (which dominate the display).
+    const chainStrings = worth.map((p) => p.commands.join(" && "));
+    const maxChain = chainStrings.reduce((max, s) => Math.max(max, s.length), 0);
+    const maxCount = worth.reduce((max, p) => Math.max(max, String(p.count).length), 0);
+    const maxAlias = worth.reduce((max, p) => Math.max(max, p.alias.name.length), 0);
+
+    lines.push("HOT COMMANDS (sorted by reuse × chain length)");
+    for (const path of worth) {
+        const chain = path.commands.join(" && ").padEnd(maxChain);
+        const count = `×${String(path.count).padStart(maxCount)}`;
+        const level = `lvl ${path.level.toFixed(1)}`;
+        const alias = path.level >= minLevel ? `→ ${path.alias.name.padEnd(maxAlias)} ★` : `→ ${path.alias.name}`;
+        lines.push(`  ${bar(path.level)}  ${chain}  ${count}  ${level}  ${alias}`.trimEnd());
     }
 
-    const suggested = report.paths.filter((p) => p.level >= minLevel);
+    lines.push("");
+
     if (suggested.length > 0) {
-        lines.push("");
-        lines.push(`SUGGESTED ALIASES (level >= ${minLevel})`);
+        lines.push(`READY TO APPLY (level ≥ ${minLevel}, marked ★ above)`);
         for (const path of suggested) {
             lines.push(`  alias ${path.alias.name}='${escapeForSingleQuote(path.alias.command)}'`);
         }
 
         lines.push("");
-        lines.push(`Run \`tools aliases apply\` to write ${suggested.length} aliases to your rc (managed block).`);
+        lines.push(
+            `Run \`tools aliases apply\` to write ${suggested.length} alias${suggested.length === 1 ? "" : "es"} to your rc.`
+        );
+    } else if (worth.length > 0) {
+        lines.push(
+            `No aliases at level ≥ ${minLevel} yet — re-run \`tools aliases\` after using these more to raise levels.`
+        );
     }
 
     return lines.join("\n");
 }
 
 export function parseParams(flags: AnalyzeFlags): ScanParams {
-    const minN = flags.minN ? Number.parseInt(flags.minN, 10) : 2;
+    const minN = flags.minN ? Number.parseInt(flags.minN, 10) : 1;
     const maxN = flags.maxN ? Number.parseInt(flags.maxN, 10) : 4;
     const threshold = flags.threshold ? Number.parseInt(flags.threshold, 10) : 3;
+    const chainThreshold = flags.chainThreshold ? Number.parseInt(flags.chainThreshold, 10) : 2;
     const top = flags.top ? Number.parseInt(flags.top, 10) : 20;
 
     return {
-        minN: Number.isNaN(minN) ? 2 : minN,
+        minN: Number.isNaN(minN) ? 1 : minN,
         maxN: Number.isNaN(maxN) ? 4 : maxN,
         threshold: Number.isNaN(threshold) ? 3 : threshold,
+        chainThreshold: Number.isNaN(chainThreshold) ? 2 : chainThreshold,
         top: Number.isNaN(top) ? 20 : top,
     };
 }
