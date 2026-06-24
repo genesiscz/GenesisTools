@@ -160,7 +160,9 @@ async function handleCommandAction(cmd: CommandDef, sub: Command, actionArgs: un
 
     try {
         const result = await cmd.run(args);
-        out.println(formatOutput(result, format));
+        const output = formatOutput(result, format);
+        out.println(output);
+        await out.flush();
     } catch (error) {
         if (process.stdout.isTTY) {
             p.log.error(error instanceof Error ? error.message : String(error));
@@ -203,7 +205,9 @@ async function main(): Promise<void> {
     }
 }
 
-main().catch((err) => {
+try {
+    await main();
+} catch (err) {
     if (process.stdout.isTTY) {
         p.log.error(err instanceof Error ? err.message : String(err));
     } else {
@@ -212,4 +216,4 @@ main().catch((err) => {
 
     closeDarwinKit();
     process.exit(1);
-});
+}
