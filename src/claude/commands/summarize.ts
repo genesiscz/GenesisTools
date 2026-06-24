@@ -199,7 +199,7 @@ async function runInteractiveFlow(session: ClaudeSession, opts: SummarizeCommand
             message: "Enter your custom summarization prompt:",
             placeholder: "e.g., Focus on the error handling patterns used...",
             validate: (val) => {
-                if (!val || !val.trim()) {
+                if (!val?.trim()) {
                     return "Prompt cannot be empty for custom mode.";
                 }
             },

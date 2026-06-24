@@ -1009,7 +1009,7 @@ describe("DynamicPricingManager", () => {
 
             for (const modelId of popularModelIds) {
                 const model = openRouterProvider?.models.find((m) => m.id === modelId);
-                if (!model || !model.pricing) {
+                if (!model?.pricing) {
                     _skippedCount++;
                     continue;
                 }

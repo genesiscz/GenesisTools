@@ -167,7 +167,7 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
     }
 
     function pause() {
-        if (!effectiveUserId || !timer || !timer.isRunning) {
+        if (!effectiveUserId || !timer?.isRunning) {
             return;
         }
 
@@ -191,7 +191,7 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
     }
 
     function addLap() {
-        if (!effectiveUserId || !timer || !timer.isRunning) {
+        if (!effectiveUserId || !timer?.isRunning) {
             return;
         }
 

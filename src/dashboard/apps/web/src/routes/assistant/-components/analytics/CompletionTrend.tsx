@@ -124,7 +124,7 @@ function CustomTooltip({
     payload?: Array<{ payload: TooltipPayload }>;
     label?: string;
 }) {
-    if (!active || !payload || !payload.length) {
+    if (!active || !payload?.length) {
         return null;
     }
 

@@ -156,7 +156,7 @@ async function resolveInput(
         message: "Enter YouTube URL or video ID:",
         placeholder: "https://www.youtube.com/watch?v=...",
         validate: (value) => {
-            if (!value || !value.trim()) {
+            if (!value?.trim()) {
                 return "URL is required";
             }
 

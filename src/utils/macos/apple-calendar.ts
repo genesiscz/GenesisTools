@@ -132,7 +132,7 @@ export class MacCalendar {
         const dk = getDarwinKit();
         const existing = await dk.calendar.event({ identifier: eventId });
 
-        if (!existing || !existing.identifier) {
+        if (!existing?.identifier) {
             throw new Error(`Event not found: ${eventId}`);
         }
 

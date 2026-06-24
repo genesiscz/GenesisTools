@@ -86,7 +86,7 @@ export class PulseHistoryDb {
     getPublicIp(maxAgeMs: number): string | null {
         const row = this.db.prepare("SELECT v, updated_at FROM pulse_kv WHERE k = 'public_ip'").get() as KvRow | null;
 
-        if (!row || !row.v) {
+        if (!row?.v) {
             return null;
         }
 
