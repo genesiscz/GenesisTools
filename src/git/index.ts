@@ -13,6 +13,7 @@ import { registerBranchGcCommand } from "@app/git/commands/branch-gc";
 import { registerCommitsCommand } from "@app/git/commands/commits";
 import { registerConfigureAuthorsCommand } from "@app/git/commands/configure-authors";
 import { registerConfigureWorkitemPatternsCommand } from "@app/git/commands/configure-workitem-patterns";
+import { registerHealthCommand } from "@app/git/commands/health";
 import { registerMonsterCommand } from "@app/git/commands/monster";
 import { logger, out } from "@app/logger";
 import { enhanceHelp, runTool } from "@app/utils/cli";
@@ -39,6 +40,7 @@ registerCommitsCommand(program, storage);
 registerConfigureAuthorsCommand(program, storage);
 registerConfigureWorkitemPatternsCommand(program, storage);
 registerMonsterCommand(program, storage);
+registerHealthCommand(program, storage);
 registerBranchGcCommand(program, storage);
 enhanceHelp(program);
 
@@ -54,6 +56,7 @@ Commands:
   configure-authors            Manage author identities for commit filtering
   configure-workitem-patterns  Manage regex patterns for workitem ID extraction
   monster                      Repo health as a feedable ASCII monster (scariest file leaderboard)
+  health                       Repo health as a clean report (ranked file leaderboard table)
   branch-gc                    Clean up stale & merged local branches (squash-aware)
 
 Commits Options:
@@ -111,6 +114,9 @@ Examples:
 
   # Show the repo's scariest files as an ASCII monster
   tools git monster src --top 10
+
+  # Show the same analysis as a clean health report
+  tools git health --top 10
 
   # List stale & merged local branches (no deletion)
   tools git branch-gc

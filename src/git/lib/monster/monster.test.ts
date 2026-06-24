@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { analyze } from "./analyze";
 import { parseImports } from "./imports";
-import { render } from "./render";
+import { render, renderHealth } from "./render";
 import { roar } from "./roar";
 import { scariness } from "./score";
 import { faceForTier, tierForScore, tierName } from "./tier";
@@ -162,6 +162,73 @@ describe("render", () => {
     it("renders a clean-repo message when there are no files", () => {
         const report = { dir: "/tmp/x", fileCount: 0, repoMonsterSize: 0, scariest: null, leaderboard: [] };
         expect(render(report)).toContain("No monsters here");
+    });
+});
+
+describe("renderHealth", () => {
+    const report = {
+        dir: "/tmp/x",
+        fileCount: 2,
+        repoMonsterSize: 120.5,
+        scariest: {
+            path: "src/old.ts",
+            score: 100,
+            tier: 3 as const,
+            tierName: "kraken",
+            lines: 400,
+            ageDays: 300,
+            fanIn: 3,
+            fanOut: 0,
+            roar: "I am 400 lines old and 3 modules depend on me. I have not changed in 300 days.",
+        },
+        leaderboard: [
+            {
+                path: "src/old.ts",
+                score: 100,
+                tier: 3 as const,
+                tierName: "kraken",
+                lines: 400,
+                ageDays: 300,
+                fanIn: 3,
+                fanOut: 0,
+            },
+            {
+                path: "src/a.ts",
+                score: 20.5,
+                tier: 1 as const,
+                tierName: "imp",
+                lines: 2,
+                ageDays: 0,
+                fanIn: 0,
+                fanOut: 1,
+            },
+        ],
+    };
+
+    it("renders a clean leaderboard table with the top file, score, and column headers", () => {
+        const text = renderHealth(report);
+        expect(text).toContain("src/old.ts");
+        expect(text).toContain("100.0");
+        expect(text).toContain("Lines");
+        expect(text).toContain("Score");
+        expect(text).toContain("Summary:");
+        expect(text).toContain("Totals:");
+    });
+
+    it("contains no ASCII-art faces or roar quotes", () => {
+        const text = renderHealth(report);
+        for (const face of [faceForTier(0), faceForTier(1), faceForTier(2), faceForTier(3)]) {
+            expect(text).not.toContain(face);
+        }
+
+        expect(text).not.toContain(report.scariest.roar);
+        expect(text).not.toContain("KRAKEN");
+        expect(text).not.toContain("Repo monster size");
+    });
+
+    it("renders a clean-repo message when there are no files", () => {
+        const empty = { dir: "/tmp/x", fileCount: 0, repoMonsterSize: 0, scariest: null, leaderboard: [] };
+        expect(renderHealth(empty)).toContain("clean");
     });
 });
 
