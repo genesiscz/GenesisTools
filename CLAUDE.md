@@ -78,6 +78,10 @@ GenesisTools is a TypeScript-based CLI toolkit that runs on Bun. The architectur
 
 When spawning tools from shell hooks, always background (`&`) — 86ms Bun startup is invisible when async.
 
+### Environment variables
+
+Never read `process.env` directly in application code — use `import { env } from "@app/utils/env"`. Values: `env.getXAIApiKey()` or `env.x.getApiKey()`; resolved key names (for config metadata): `env.getXAIApiEnvKey()` or `env.x.getApiEnvKey()`. Grouped domains: `env.tools`, `env.ai.*`, `env.github`, `env.log`, `env.paths`, `env.device`, `env.test`, etc. Tests that need overrides: `env.testing.set()` / `env.testing.withOverrides()`.
+
 ### Utility Convention
 
 When creating a new tool and writing helper functions, check if the utility is **general-purpose** (usable by other tools). If so, place it in `src/utils/` instead of inside the tool directory:
