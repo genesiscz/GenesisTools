@@ -8,6 +8,7 @@ import {
     verifyBasicAuthHeader,
     verifySessionToken,
 } from "@app/dev-dashboard/lib/auth";
+import { isPublicShareRequest } from "@app/dev-dashboard/lib/share-auth";
 import { handleWithRouter } from "@app/dev-dashboard/server/adapters/node-connect";
 import { defaultSystemCollector } from "@app/dev-dashboard/server/collector/SystemCollector";
 import { createDashboardRouter, startBackgroundServices } from "@app/dev-dashboard/server/registry";
@@ -23,13 +24,8 @@ import type { Connect } from "vite";
 
 let loggedGeneratedPassword = false;
 
-// Only an exact single-segment /share/<slug> GET bypasses auth. URL already
-// normalizes "..", but matching the precise shape (not a startsWith prefix)
-// makes the bypass intent explicit and refactor-proof.
-const SHARE_BYPASS_RE = /^\/share\/[^/]+$/;
-
 async function requireDashboardAuth(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
-    if (req.method === "GET" && SHARE_BYPASS_RE.test(url.pathname)) {
+    if (isPublicShareRequest(req.method ?? "GET", url.pathname)) {
         return true;
     }
 

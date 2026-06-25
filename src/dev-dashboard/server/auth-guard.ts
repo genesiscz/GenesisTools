@@ -8,8 +8,7 @@ import {
     verifyBasicAuthHeader,
     verifySessionToken,
 } from "@app/dev-dashboard/lib/auth";
-
-const SHARE_BYPASS_RE = /^\/share\/[^/]+$/;
+import { isPublicShareRequest } from "@app/dev-dashboard/lib/share-auth";
 
 export interface AuthInput {
     method: string;
@@ -30,7 +29,7 @@ export interface AuthResult {
 export function decideApiAuth(input: AuthInput): AuthResult {
     const { method, pathname, headers, provision } = input;
 
-    if (method === "GET" && SHARE_BYPASS_RE.test(pathname)) {
+    if (isPublicShareRequest(method, pathname)) {
         return { decision: "allow" };
     }
 
