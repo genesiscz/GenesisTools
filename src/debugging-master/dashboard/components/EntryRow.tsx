@@ -25,6 +25,7 @@ interface Props {
     highlightTokens?: string[];
     isMatch?: boolean;
     isContext?: boolean;
+    fullJsonContext?: boolean;
     onToggle: (index: number) => void;
     onFilterHypothesis?: (h: string) => void;
 }
@@ -39,6 +40,7 @@ function EntryRowImpl({
     highlightTokens = [],
     isMatch = false,
     isContext = false,
+    fullJsonContext = false,
     onToggle,
     onFilterHypothesis,
 }: Props): React.ReactElement {
@@ -52,6 +54,16 @@ function EntryRowImpl({
     const inline: InlinePayload = expandable && !expanded ? getInlinePayload(entry) : null;
     const showLevelChip = !entry.msgAnsi;
 
+    const handleToggle = () => {
+        const selection = window.getSelection();
+
+        if (selection && selection.type === "Range" && selection.toString().length > 0) {
+            return;
+        }
+
+        onToggle(entry.index);
+    };
+
     return (
         <div
             className="entry-row"
@@ -61,7 +73,7 @@ function EntryRowImpl({
             data-expandable={expandable ? "true" : "false"}
             data-log-index={entry.index}
             data-log-match={isMatch ? "true" : undefined}
-            onClick={expandable ? () => onToggle(entry.index) : undefined}
+            onClick={expandable ? handleToggle : undefined}
             onKeyDown={
                 expandable
                     ? (e) => {
@@ -144,15 +156,28 @@ function EntryRowImpl({
                 </div>
             </BlinkingBox>
             {inline ? (
-                <div className="json-tree px-3 sm:px-4 pb-1.5 pl-[5.5rem] sm:pl-[6.5rem] text-[11px] truncate-mono">
+                <div
+                    className={`json-tree px-3 sm:px-4 pb-1.5 pl-[5.5rem] sm:pl-[6.5rem] text-[11px] select-text${fullJsonContext ? " dbg-json-inline-full" : " truncate-mono"}`}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                    }}
+                >
                     {inline.kind === "json" ? (
-                        <InlineJsonPreview value={inline.value} maxChars={200} />
+                        <InlineJsonPreview value={inline.value} maxChars={200} unlimited={fullJsonContext} />
                     ) : (
                         <span className="text-rose-200/70">{inline.value}</span>
                     )}
                 </div>
             ) : null}
-            {expanded && expandable ? <ExpandedView entry={entry} /> : null}
+            {expanded && expandable ? (
+                <div
+                    onClick={(event) => {
+                        event.stopPropagation();
+                    }}
+                >
+                    <ExpandedView entry={entry} />
+                </div>
+            ) : null}
         </div>
     );
 }

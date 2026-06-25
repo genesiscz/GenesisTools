@@ -3,6 +3,7 @@ import { useAutoScroll } from "@app/utils/ui/hooks/useAutoScroll";
 import { memo, useEffect, useImperativeHandle, useMemo } from "react";
 import { DEFAULT_LOG_SEARCH, type LogSearchState } from "@/components/LogSearchPopover";
 import { filterDisplayLogLines, shouldShowLogTimestamp } from "@/lib/log-line-display";
+import { usePaneWrapLongLines } from "@/lib/use-pane-wrap-long-lines";
 import { useScrollToFirstLogMatch } from "@/lib/use-scroll-to-first-log-match";
 import { useDisplaySettings } from "./DisplaySettingsProvider";
 import { EntryRow } from "./EntryRow";
@@ -25,6 +26,7 @@ interface Props {
     matchCount?: number;
     isSearchActive?: boolean;
     jumpEnabled?: boolean;
+    paneKey?: string;
     onToggle: (index: number) => void;
     onFilterHypothesis: (h: string) => void;
     onAutoScrollChange: (enabled: boolean) => void;
@@ -43,12 +45,14 @@ function EntryListImpl({
     matchCount = 0,
     isSearchActive = false,
     jumpEnabled = false,
+    paneKey,
     onToggle,
     onFilterHypothesis,
     onAutoScrollChange,
     resumeRef,
 }: Props): React.ReactElement {
     const { settings } = useDisplaySettings();
+    const { effective: wrapLongLines } = usePaneWrapLongLines(paneKey);
     const { registerScrollContainer } = useLogLineJump();
     const edge = sortDir === "desc" ? "top" : "bottom";
     const visibleEntries = useMemo(() => filterDisplayLogLines(entries), [entries]);
@@ -85,7 +89,12 @@ function EntryListImpl({
     }
 
     return (
-        <div ref={ref} onScroll={onScroll} className="flex-1 overflow-y-auto overflow-x-auto dbg-log-text font-mono">
+        <div
+            ref={ref}
+            onScroll={onScroll}
+            className="flex-1 overflow-y-auto overflow-x-auto dbg-log-text font-mono"
+            data-dbg-wrap-lines={wrapLongLines ? "true" : "false"}
+        >
             {visibleEntries.map((e, index) => {
                 const previousTs = index > 0 ? visibleEntries[index - 1]?.ts : undefined;
                 const showTimestamp = shouldShowLogTimestamp({
@@ -108,6 +117,7 @@ function EntryListImpl({
                         highlightTokens={highlightTokens}
                         isMatch={hit?.isMatch}
                         isContext={hit?.isContext}
+                        fullJsonContext={settings.fullJsonContext}
                         onToggle={onToggle}
                         onFilterHypothesis={onFilterHypothesis}
                     />

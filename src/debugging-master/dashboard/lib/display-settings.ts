@@ -52,6 +52,8 @@ export interface DisplaySettings {
     logFontFamily: LogFontFamily;
     timestampMode: TimestampMode;
     showLineId: boolean;
+    wrapLongLines: boolean;
+    fullJsonContext: boolean;
 }
 
 export const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {
@@ -62,12 +64,19 @@ export const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {
     logFontFamily: "default",
     timestampMode: "every",
     showLineId: true,
+    wrapLongLines: true,
+    fullJsonContext: false,
 };
 
-export const DEFAULT_LOG_DISPLAY_SETTINGS: Pick<DisplaySettings, "timestampMode" | "lineBoundaries" | "showLineId"> = {
+export const DEFAULT_LOG_DISPLAY_SETTINGS: Pick<
+    DisplaySettings,
+    "timestampMode" | "lineBoundaries" | "showLineId" | "wrapLongLines" | "fullJsonContext"
+> = {
     timestampMode: DEFAULT_DISPLAY_SETTINGS.timestampMode,
     lineBoundaries: DEFAULT_DISPLAY_SETTINGS.lineBoundaries,
     showLineId: DEFAULT_DISPLAY_SETTINGS.showLineId,
+    wrapLongLines: DEFAULT_DISPLAY_SETTINGS.wrapLongLines,
+    fullJsonContext: DEFAULT_DISPLAY_SETTINGS.fullJsonContext,
 };
 
 export const DEFAULT_TYPOGRAPHY_SETTINGS: Pick<
@@ -107,6 +116,8 @@ export function parseDisplaySettings(raw: unknown): DisplaySettings {
         logFontFamily: parseLogFontFamily(parsed.logFontFamily),
         timestampMode: parseTimestampMode(parsed.timestampMode),
         showLineId: parsed.showLineId !== false,
+        wrapLongLines: parsed.wrapLongLines !== false,
+        fullJsonContext: parsed.fullJsonContext === true,
     };
 }
 
@@ -184,4 +195,5 @@ export function applyDisplaySettings(settings: DisplaySettings): void {
     root.dataset.dbgLineBoundaries = settings.lineBoundaries;
     root.dataset.dbgTimestampMode = settings.timestampMode;
     root.dataset.dbgShowLineId = settings.showLineId ? "true" : "false";
+    root.dataset.dbgWrapLines = settings.wrapLongLines ? "true" : "false";
 }

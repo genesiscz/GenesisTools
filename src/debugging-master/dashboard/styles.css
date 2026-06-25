@@ -186,6 +186,24 @@ body {
     overflow-wrap: anywhere;
 }
 
+[data-dbg-wrap-lines="false"] .dbg-log-wrap,
+[data-dbg-wrap-lines="false"] .ansi-log {
+    white-space: pre;
+    overflow-wrap: normal;
+}
+
+.entry-row[data-expandable="true"] .dbg-log-wrap,
+.entry-row .dbg-json-inline-full,
+.entry-row .json-tree.select-text {
+    user-select: text;
+}
+
+.dbg-json-inline-full {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
 .dbg-log-line__id-rail .dbg-log-line__id-btn {
     color: rgba(255, 255, 255, 0.32);
 }

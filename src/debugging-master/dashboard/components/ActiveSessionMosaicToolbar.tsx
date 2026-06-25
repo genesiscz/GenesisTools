@@ -3,6 +3,7 @@ import type { ReactElement } from "react";
 import type { MultiplexLogEntry } from "@/lib/sse";
 import { AutoscrollToggle } from "./AutoscrollToggle";
 import { DisplaySettingsButton } from "./DisplaySettingsButton";
+import { FullJsonContextToggle } from "./FullJsonContextToggle";
 import { LogSearchControl } from "./LogSearchControl";
 import type { LogSearchState } from "./LogSearchPopover";
 import { SessionDeleteButton, SessionRowBar } from "./SessionRowBar";
@@ -10,12 +11,15 @@ import { SessionDeleteButton, SessionRowBar } from "./SessionRowBar";
 interface Props {
     session: DashboardSession;
     lines: MultiplexLogEntry[];
+    paneKey: string;
     logSearch: LogSearchState;
     onLogSearchChange: (next: LogSearchState) => void;
     logMatchCount: number;
     logLineCount: number;
     paused: boolean;
     onTogglePause: () => void;
+    fullJsonContext: boolean;
+    onToggleFullJsonContext: () => void;
     onOpen: () => void;
     onDeleteConfirmed?: () => void;
 }
@@ -31,12 +35,15 @@ function latestLineTimestamp(lines: MultiplexLogEntry[]): number | undefined {
 export function ActiveSessionMosaicToolbar({
     session,
     lines,
+    paneKey,
     logSearch,
     onLogSearchChange,
     logMatchCount,
     logLineCount,
     paused,
     onTogglePause,
+    fullJsonContext,
+    onToggleFullJsonContext,
     onOpen,
     onDeleteConfirmed,
 }: Props): ReactElement {
@@ -56,8 +63,9 @@ export function ActiveSessionMosaicToolbar({
                         matchCount={logMatchCount}
                         lineCount={logLineCount}
                     />
-                    <DisplaySettingsButton variant="log" />
+                    <DisplaySettingsButton variant="log" paneKey={paneKey} />
                     {isLive ? <AutoscrollToggle paused={paused} onToggle={onTogglePause} /> : null}
+                    <FullJsonContextToggle enabled={fullJsonContext} onToggle={onToggleFullJsonContext} />
                     <SessionDeleteButton session={session} onConfirmed={onDeleteConfirmed} />
                 </>
             }
