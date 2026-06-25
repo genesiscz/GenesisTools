@@ -16,4 +16,27 @@ describe("renderSharePage", () => {
         expect(page).toContain("# Hello\\n\\nWorld");
         expect(page).toContain("Show raw markdown source");
     });
+
+    test("SRI-pins the Mermaid ESM entry when the note uses mermaid", () => {
+        const page = renderSharePage({
+            title: "Diagram",
+            rendered: { html: '<div class="mermaid">graph TD; A-->B</div>', hasMath: false, hasMermaid: true, tags: [] },
+            source: "```mermaid\ngraph TD; A-->B\n```",
+        });
+
+        expect(page).toContain('rel="modulepreload"');
+        expect(page).toContain("mermaid@11.15.0/dist/mermaid.esm.min.mjs");
+        expect(page).toMatch(/integrity="sha384-[A-Za-z0-9+/=]+"/);
+        expect(page).toContain('crossorigin="anonymous"');
+    });
+
+    test("does not emit the Mermaid preload when the note has no mermaid", () => {
+        const page = renderSharePage({
+            title: "Plain",
+            rendered: { html: "<p>plain</p>", hasMath: false, hasMermaid: false, tags: [] },
+            source: "plain",
+        });
+
+        expect(page).not.toContain("mermaid.esm.min.mjs");
+    });
 });

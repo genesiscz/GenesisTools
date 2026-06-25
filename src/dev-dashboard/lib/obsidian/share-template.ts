@@ -14,6 +14,11 @@ const HLJS_CSS_SRI = "sha384-oaMLBGEzBOJx3UHwac0cVndtX5fxGQIfnAeFZ35RTgqPcYlbprH
 const KATEX_CSS_URL = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css";
 const KATEX_CSS_SRI = "sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03BU6SQNC66uf4l5+";
 const MERMAID_JS_URL = "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
+// SRI for the Mermaid ESM entry. Update whenever MERMAID_JS_URL's version
+// changes (regenerate via `openssl dgst -sha384 -binary <file> | openssl base64
+// -A`). Covers the ~28 KB entry only; lazy-loaded diagram chunks ship from the
+// same CDN unprotected — a full seal needs self-hosting.
+const MERMAID_JS_SRI = "sha384-whY2DyvhZRFfs9hvtGdZaKcgbETgqMlDN+KNlWnXEL2QDa2XQkBOApUT7arfftO9";
 const INTER_FONT_URL =
     "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Lora:ital,wght@0,400;0,600;1,400&display=swap";
 
@@ -509,6 +514,12 @@ export function renderSharePage(options: ShareTemplateOptions): string {
     if (rendered.hasMath) {
         headExtras.push(
             `<link rel="stylesheet" href="${KATEX_CSS_URL}" integrity="${KATEX_CSS_SRI}" crossorigin="anonymous">`
+        );
+    }
+
+    if (rendered.hasMermaid) {
+        headExtras.push(
+            `<link rel="modulepreload" href="${MERMAID_JS_URL}" integrity="${MERMAID_JS_SRI}" crossorigin="anonymous">`
         );
     }
 
