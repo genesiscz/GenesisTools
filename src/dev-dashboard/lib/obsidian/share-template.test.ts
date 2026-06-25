@@ -20,7 +20,12 @@ describe("renderSharePage", () => {
     test("SRI-pins the Mermaid ESM entry when the note uses mermaid", () => {
         const page = renderSharePage({
             title: "Diagram",
-            rendered: { html: '<div class="mermaid">graph TD; A-->B</div>', hasMath: false, hasMermaid: true, tags: [] },
+            rendered: {
+                html: '<div class="mermaid">graph TD; A-->B</div>',
+                hasMath: false,
+                hasMermaid: true,
+                tags: [],
+            },
             source: "```mermaid\ngraph TD; A-->B\n```",
         });
 
