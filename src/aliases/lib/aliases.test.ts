@@ -63,20 +63,19 @@ describe("parseHistory", () => {
         expect(parseHistory(raw)).toEqual(["echo a b"]);
     });
 
-    test("any trailing backslash is a continuation (regardless of how many)", () => {
+    test("any trailing backslash is a continuation (regardless of how many) — no stray \\ leaks through", () => {
         // zsh ext-history stores embedded newlines as `\\\n` (double backslash
         // + LF), so the parser must NOT use an odd-count check — even-count
         // trailing backslashes are the *normal* continuation case in this
-        // format. Pasted curl exports / jq chains rely on this.
-        const raw = [": 1700000000:0;curl -X GET \\\\", "-H 'foo: bar' \\\\", "-H 'baz: qux'", ": 1700000005:0;ls"].join(
-            "\n"
-        );
-        const parsed = parseHistory(raw);
-        expect(parsed).toHaveLength(2);
-        expect(parsed[0]).toContain("curl -X GET");
-        expect(parsed[0]).toContain("-H 'foo: bar'");
-        expect(parsed[0]).toContain("-H 'baz: qux'");
-        expect(parsed[1]).toBe("ls");
+        // format. Pasted curl exports / jq chains rely on this. Exact-equality
+        // assertion guarantees no stray backslash leaks through the join.
+        const raw = [
+            ": 1700000000:0;curl -X GET \\\\",
+            "-H 'foo: bar' \\\\",
+            "-H 'baz: qux'",
+            ": 1700000005:0;ls",
+        ].join("\n");
+        expect(parseHistory(raw)).toEqual(["curl -X GET -H 'foo: bar' -H 'baz: qux'", "ls"]);
     });
 });
 

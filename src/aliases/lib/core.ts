@@ -60,10 +60,11 @@ export function parseHistory(raw: string, _opts: { format?: HistoryFormat } = {}
 
     for (const rawLine of raw.split("\n")) {
         if (buffer !== null) {
-            // We're inside a continuation. The previous buffer ends with `\`,
-            // which encodes an embedded newline; drop it and join with a space
-            // so the result stays single-line.
-            buffer = `${buffer.slice(0, -1)} ${rawLine}`;
+            // We're inside a continuation. The previous buffer ends in one or
+            // two trailing `\` (zsh encodes the embedded newline as `\\\n`,
+            // bash as `\\n`); strip ALL trailing backslashes and any leftover
+            // whitespace so the join doesn't leak stray `\` into the command.
+            buffer = `${buffer.replace(/\\+$/, "").trimEnd()} ${rawLine}`;
         } else {
             buffer = rawLine;
         }
@@ -78,8 +79,8 @@ export function parseHistory(raw: string, _opts: { format?: HistoryFormat } = {}
 
     if (buffer !== null) {
         // File ended mid-continuation; keep whatever we have without the
-        // dangling backslash.
-        merged.push(buffer.endsWith("\\") ? buffer.slice(0, -1) : buffer);
+        // dangling backslash(es).
+        merged.push(buffer.endsWith("\\") ? buffer.replace(/\\+$/, "").trimEnd() : buffer);
     }
 
     const out: string[] = [];
