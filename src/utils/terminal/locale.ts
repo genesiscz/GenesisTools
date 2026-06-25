@@ -64,12 +64,23 @@ export function resolveUtf8Locale(): string {
 export function buildTerminalSpawnEnv(base: NodeJS.ProcessEnv = env.getProcessEnv()): NodeJS.ProcessEnv {
     const locale = resolveUtf8Locale();
 
-    // NO_COLOR (no-color.org) forces chalk/supports-color to level 0 and overrides
-    // everything else. Some parents (Claude Code subprocess paths, captured tmux
-    // server globals) set it to keep ANSI out of captured output — but for a
-    // terminal we OWN it's poison. Strip it so the child app can decide.
+    // Color env vars come in two shapes: "force monochrome" (NO_COLOR, FORCE_COLOR=0,
+    // CLICOLOR_FORCE=0, CARGO_TERM_COLOR=never, PIP_NO_COLOR=1) and "force color"
+    // (FORCE_COLOR=1, CLICOLOR=1, CLICOLOR_FORCE=1). Parents like Claude Code
+    // subprocess paths or a stale tmux server's captured global env commonly inject
+    // the monochrome variants to keep ANSI out of captured tool output — and once a
+    // tmux server captures them in its global env they outlive every dashboard
+    // restart, making Claude TUI and other coloured CLIs render monochrome forever.
+    // For a terminal we OWN we want colours, so strip the monochrome vars and
+    // overlay positives below. Strips intentionally include FORCE_COLOR/CLICOLOR_FORCE
+    // even though we re-set them — the parent's value may be "0", and a later spread
+    // would otherwise resurrect it.
     const childEnv: NodeJS.ProcessEnv = { ...base };
     delete childEnv.NO_COLOR;
+    delete childEnv.FORCE_COLOR;
+    delete childEnv.CLICOLOR_FORCE;
+    delete childEnv.CARGO_TERM_COLOR;
+    delete childEnv.PIP_NO_COLOR;
 
     return {
         ...childEnv,
@@ -82,6 +93,9 @@ export function buildTerminalSpawnEnv(base: NodeJS.ProcessEnv = env.getProcessEn
         // Claude Code clamps to 256-color whenever $TMUX is set unless this is
         // present at process launch (settings.json is too late — module load time).
         CLAUDE_CODE_TMUX_TRUECOLOR: base.CLAUDE_CODE_TMUX_TRUECOLOR || "1",
+        FORCE_COLOR: "1",
+        CLICOLOR: "1",
+        CLICOLOR_FORCE: "1",
     };
 }
 

@@ -13,7 +13,16 @@ export function buildTmuxSpawnEnv(): NodeJS.ProcessEnv {
     return buildTerminalSpawnEnv();
 }
 
-const TMUX_SESSION_ENV_KEYS = ["LANG", "LC_ALL", "LC_CTYPE", "COLORTERM", "CLAUDE_CODE_TMUX_TRUECOLOR"] as const;
+const TMUX_SESSION_ENV_KEYS = [
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "COLORTERM",
+    "CLAUDE_CODE_TMUX_TRUECOLOR",
+    "FORCE_COLOR",
+    "CLICOLOR",
+    "CLICOLOR_FORCE",
+] as const;
 
 function resolveLoginShell(shell: string): string {
     const trimmed = shell.trim();
@@ -227,13 +236,16 @@ export function createTmuxSession(sessionName: string, cwd: string, command: str
  * uses tmux as a session daemon that must outlive restarts, so force the durable
  * options on every time it touches the server.
  *
- * The env scrub fixes a separate bug: if the founder process had `NO_COLOR=1`
- * (Claude Code subprocesses commonly do) or `COLORTERM=""`, tmux captures it in
- * the SERVER GLOBAL env and seeds EVERY new session's shell with the same vars
- * — making Claude TUI render monochrome inside ttyd panes. `-gu NO_COLOR` unsets
- * it for the whole server; setting COLORTERM=truecolor on the global ensures new
- * sessions don't inherit an empty value either. All set-options are idempotent
- * and safe.
+ * The env scrub fixes a separate bug: tmux captures its founder process's env
+ * in the SERVER GLOBAL env and seeds EVERY new session's shell with the same
+ * vars — including any chalk/supports-color poison the founder happened to
+ * carry (NO_COLOR=1, FORCE_COLOR=0, CLICOLOR_FORCE=0, CARGO_TERM_COLOR=never,
+ * PIP_NO_COLOR=1; Claude Code subprocess paths set these to keep ANSI out of
+ * captured tool output, and once tmux freezes them in its global env they
+ * outlive every dashboard restart). `-gu` unsets the monochrome vars for the
+ * whole server, `-g` forces the positive ones, and once a server has been
+ * touched by this function its global env is colour-clean regardless of who
+ * bootstrapped it. All set-options are idempotent and safe.
  */
 export function ensureTmuxServerPersists(tmuxBin?: string): void {
     let bin: string;
@@ -250,7 +262,12 @@ export function ensureTmuxServerPersists(tmuxBin?: string): void {
     // → next createTmuxSession) gets the clean env.
     const setOptionArgs: string[][] = [
         ["set-environment", "-gu", "NO_COLOR"],
+        ["set-environment", "-gu", "CARGO_TERM_COLOR"],
+        ["set-environment", "-gu", "PIP_NO_COLOR"],
         ["set-environment", "-g", "COLORTERM", "truecolor"],
+        ["set-environment", "-g", "FORCE_COLOR", "1"],
+        ["set-environment", "-g", "CLICOLOR", "1"],
+        ["set-environment", "-g", "CLICOLOR_FORCE", "1"],
         ["set-option", "-s", "exit-empty", "off"],
         ["set-option", "-g", "destroy-unattached", "off"],
     ];
