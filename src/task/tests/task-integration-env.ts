@@ -3,6 +3,7 @@ import { type SpawnOptions, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { env } from "@app/utils/env";
 
 const TASK_TOOL = resolve(import.meta.dir, "../../../tools");
 
@@ -22,7 +23,7 @@ export interface TaskIntegrationEnv {
 
 export function setupTaskIntegrationHome(): TaskIntegrationEnv {
     const homeDir = mkdtempSync(join(tmpdir(), "gt-task-int-"));
-    const childEnv = { ...process.env, GENESIS_TOOLS_HOME: homeDir };
+    const childEnv = { ...env.getProcessEnv(), GENESIS_TOOLS_HOME: homeDir };
 
     afterAll(() => {
         rmSync(homeDir, { recursive: true, force: true });

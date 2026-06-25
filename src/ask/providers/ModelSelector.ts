@@ -1,5 +1,6 @@
 import { logger } from "@app/logger";
 import type { TranscriptionCapableProvider } from "@app/utils/ai/types";
+import { env } from "@app/utils/env";
 import type { SearchItem } from "@app/utils/prompts/clack";
 import { searchSelect, searchSelectCancelSymbol } from "@app/utils/prompts/clack";
 import { providerManager } from "@ask/providers/ProviderManager";
@@ -254,7 +255,7 @@ export class ModelSelector {
             if (fileSize && fileSize > prov.maxFileSize) {
                 return false;
             }
-            return process.env[prov.envKey];
+            return env.ai.getByEnvKey(prov.envKey);
         });
 
         if (availableProviders.length === 0) {
@@ -279,7 +280,7 @@ export class ModelSelector {
                 case "openrouter": {
                     const { createOpenAI } = await import("@ai-sdk/openai");
                     providerInstance = createOpenAI({
-                        apiKey: process.env.OPENROUTER_API_KEY,
+                        apiKey: env.ai.openrouter.getKey(),
                         baseURL: "https://openrouter.ai/api/v1",
                     });
                     break;

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, w
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { logger } from "@app/logger";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { withFileLock as acquireFileLock, LockTimeoutError } from "./file-lock";
 
@@ -54,7 +55,7 @@ export class Storage {
         // tmp dir so the suite can never write a user's real ~/.genesis-tools
         // (bun's spyOn is process-global with no reliable cross-file restore,
         // so per-test mocks alone are not a safe sandbox).
-        const root = process.env.GENESIS_TOOLS_HOME || homedir();
+        const root = env.tools.getHome() || homedir();
         this.baseDir = join(root, ".genesis-tools", toolName);
         this.cacheDir = join(this.baseDir, "cache");
         this.configPath = join(this.baseDir, "config.json");

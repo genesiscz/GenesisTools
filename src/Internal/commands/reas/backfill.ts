@@ -11,6 +11,7 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { out } from "@app/logger";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
@@ -22,7 +23,7 @@ const CLIENT_ID = "6988cb437c5b9d2963280369";
 const BASE_URL = "https://catalog.reas.cz/catalog";
 const PAGE_LIMIT = 200;
 const MAX_PAGES = 1000;
-const DB_PATH = join(process.env.HOME || "/root", ".genesis-tools", "internal", "reas", "reas.sqlite");
+const DB_PATH = join(env.paths.getHome() || "/root", ".genesis-tools", "internal", "reas", "reas.sqlite");
 
 const ALL_YEARS = [2020, 2021, 2022, 2023, 2024, 2025];
 

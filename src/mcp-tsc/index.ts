@@ -8,6 +8,7 @@ import { KillServerCommand } from "@app/mcp-tsc/cli/commands/KillServerCommand.j
 import { McpCommand } from "@app/mcp-tsc/cli/commands/McpCommand.js";
 import type { TSServer } from "@app/mcp-tsc/core/interfaces.js";
 import { getPersistentServer } from "@app/mcp-tsc/utils/ServerManager.js";
+import { env } from "@app/utils/env";
 import { handleReadmeFlag } from "@app/utils/readme";
 
 // Handle --readme flag early (before Commander parses)
@@ -188,7 +189,7 @@ async function main() {
                 } else {
                     // Use persistent LSP server
                     logger.debug({ component: "mcp-tsc", pid: process.pid, cwd }, "Retrieving persistent LSP server");
-                    tsServer = await getPersistentServer(cwd, process.env.DEBUG === "1");
+                    tsServer = await getPersistentServer(cwd, env.log.isDebugEnabled());
                     logger.debug({ component: "mcp-tsc", pid: process.pid }, "Persistent LSP server retrieved");
                 }
 
@@ -212,7 +213,7 @@ async function main() {
                     { component: "mcp-tsc", pid: process.pid, cwd },
                     "Retrieving persistent LSP server for hover"
                 );
-                const tsServer = await getPersistentServer(cwd, process.env.DEBUG === "1");
+                const tsServer = await getPersistentServer(cwd, env.log.isDebugEnabled());
                 logger.debug({ component: "mcp-tsc", pid: process.pid }, "Persistent LSP server retrieved for hover");
 
                 const hoverCommand = new HoverCommand(tsServer, cwd);
@@ -236,7 +237,7 @@ main().catch((err) => {
         "main() caught error"
     );
     out.error(`\nError: ${err.message}`);
-    if (process.env.DEBUG === "1") {
+    if (env.log.isDebugEnabled()) {
         out.error(err.stack);
     }
     logger.info({ component: "mcp-tsc", pid: process.pid, exitCode: 2 }, "Exiting due to error");

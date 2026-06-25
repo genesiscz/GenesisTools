@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { env } from "@app/utils/env";
 
 const TOOLS_PATH = resolve(import.meta.dir, "..", "..", "..", "tools");
 
@@ -32,7 +33,7 @@ export async function execTool(args: string[], timeoutMs = 15_000): Promise<RunR
     const proc = Bun.spawn(["bun", "run", TOOLS_PATH, ...args], {
         stdout: "pipe",
         stderr: "pipe",
-        env: { ...process.env, NO_COLOR: "1" },
+        env: { ...env.getProcessEnv(), NO_COLOR: "1" },
     });
 
     const timeout = setTimeout(() => proc.kill(), timeoutMs);

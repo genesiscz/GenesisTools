@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { deriveNetStatus, LATENCY_DEGRADED_MS, LATENCY_HEALTHY_MS } from "@app/dev-dashboard/lib/net/status";
 
-const PULSE = { wifiSsid: "Foltyn-5G", publicIp: "203.0.113.7" };
+const PULSE = { wifiSsid: "ExampleNet-5G", publicIp: "203.0.113.7" };
 
 describe("deriveNetStatus", () => {
     it("low latency on a live transport = healthy, passes SSID + IP through", () => {
@@ -10,7 +10,7 @@ describe("deriveNetStatus", () => {
             transport: "lan",
             latencyMs: 40,
             quality: "healthy",
-            ssid: "Foltyn-5G",
+            ssid: "ExampleNet-5G",
             publicIp: "203.0.113.7",
         });
     });
@@ -43,7 +43,7 @@ describe("deriveNetStatus", () => {
         expect(s.transport).toBe("none");
         expect(s.quality).toBe("down");
         expect(s.latencyMs).toBeNull();
-        expect(s.ssid).toBe("Foltyn-5G");
+        expect(s.ssid).toBe("ExampleNet-5G");
     });
 
     it("missing pulse → null ssid + ip without throwing", () => {

@@ -2,26 +2,27 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@app/utils/env";
 import { ensureExtensionCapableSQLite } from "@app/utils/search/stores/sqlite-vec-loader";
 import { _resetIndexerStorageForTesting, wipeAllTestIndexes } from "./storage";
 import { createIndexStore } from "./store";
 
 ensureExtensionCapableSQLite();
 
-const ORIG_HOME = process.env.HOME;
+const ORIG_HOME = env.get("HOME");
 let tmpHome: string;
 
 beforeAll(() => {
     tmpHome = mkdtempSync(join(tmpdir(), "vacuum-test-"));
-    process.env.HOME = tmpHome;
+    env.testing.set("HOME", tmpHome);
     _resetIndexerStorageForTesting();
 });
 
 afterAll(() => {
     if (ORIG_HOME !== undefined) {
-        process.env.HOME = ORIG_HOME;
+        env.testing.set("HOME", ORIG_HOME);
     } else {
-        delete process.env.HOME;
+        env.testing.unset("HOME");
     }
 
     _resetIndexerStorageForTesting();

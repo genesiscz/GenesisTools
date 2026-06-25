@@ -1,3 +1,4 @@
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import type { AIEmbeddingProvider, AIProvider, AITask, EmbeddingResult, EmbedOptions } from "../types";
 
@@ -47,18 +48,14 @@ export class AIGoogleProvider implements AIProvider, AIEmbeddingProvider {
     constructor(options?: AIGoogleProviderOptions) {
         this.model = options?.model ?? "gemini-embedding-001";
         this.maxChars = Math.floor((options?.maxTokens ?? GOOGLE_MAX_TOKENS) * CHARS_PER_TOKEN_ESTIMATE);
-        const envRateLimitRaw = process.env.GOOGLE_RATE_LIMIT_MS;
-        const envRateLimitParsed = envRateLimitRaw === undefined ? Number.NaN : Number.parseInt(envRateLimitRaw, 10);
+        const envRateLimitMs = env.google.getRateLimitMs();
 
         this.rateLimitDelayMs =
-            options?.rateLimitMs ??
-            (Number.isFinite(envRateLimitParsed) && envRateLimitParsed >= 0
-                ? envRateLimitParsed
-                : GOOGLE_RATE_LIMIT_DELAY_MS);
+            options?.rateLimitMs ?? (envRateLimitMs >= 0 ? envRateLimitMs : GOOGLE_RATE_LIMIT_DELAY_MS);
     }
 
     async isAvailable(): Promise<boolean> {
-        return !!process.env.GOOGLE_API_KEY;
+        return !!env.google.getKey();
     }
 
     supports(task: AITask): boolean {
@@ -80,7 +77,7 @@ export class AIGoogleProvider implements AIProvider, AIEmbeddingProvider {
             return [];
         }
 
-        const apiKey = process.env.GOOGLE_API_KEY;
+        const apiKey = env.google.getKey();
 
         if (!apiKey) {
             throw new Error(

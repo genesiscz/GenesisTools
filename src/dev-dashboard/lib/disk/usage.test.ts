@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { env } from "@app/utils/env";
 import { DEFAULT_DU_TIMEOUT_MS, duTimeoutMs, parseDuOutput, shortLabel } from "./usage";
 
 // `du -sk` prints one row per path: "<kilobytes>\t<path>". macOS du uses a tab; we tolerate any whitespace run.
@@ -40,25 +41,25 @@ describe("parseDuOutput", () => {
 
 describe("duTimeoutMs", () => {
     afterEach(() => {
-        delete process.env.DD_DISK_DU_TIMEOUT_MS;
+        env.testing.unset("DD_DISK_DU_TIMEOUT_MS");
     });
 
     test("defaults when env is unset", () => {
-        delete process.env.DD_DISK_DU_TIMEOUT_MS;
+        env.testing.unset("DD_DISK_DU_TIMEOUT_MS");
         expect(duTimeoutMs()).toBe(DEFAULT_DU_TIMEOUT_MS);
     });
 
     test("honors a valid positive override", () => {
-        process.env.DD_DISK_DU_TIMEOUT_MS = "1500";
+        env.testing.set("DD_DISK_DU_TIMEOUT_MS", "1500");
         expect(duTimeoutMs()).toBe(1500);
     });
 
     test("falls back to the default on a non-positive or garbage override", () => {
-        process.env.DD_DISK_DU_TIMEOUT_MS = "0";
+        env.testing.set("DD_DISK_DU_TIMEOUT_MS", "0");
         expect(duTimeoutMs()).toBe(DEFAULT_DU_TIMEOUT_MS);
-        process.env.DD_DISK_DU_TIMEOUT_MS = "-5";
+        env.testing.set("DD_DISK_DU_TIMEOUT_MS", "-5");
         expect(duTimeoutMs()).toBe(DEFAULT_DU_TIMEOUT_MS);
-        process.env.DD_DISK_DU_TIMEOUT_MS = "abc";
+        env.testing.set("DD_DISK_DU_TIMEOUT_MS", "abc");
         expect(duTimeoutMs()).toBe(DEFAULT_DU_TIMEOUT_MS);
     });
 });

@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 
 const DARWINKIT_PATH = resolve(import.meta.dir, "../index.ts");
@@ -12,7 +13,7 @@ export async function runDarwinKit(...args: string[]): Promise<any> {
     const proc = Bun.spawn(["bun", "run", DARWINKIT_PATH, ...args, "--format", "json"], {
         stdout: "pipe",
         stderr: "pipe",
-        env: { ...process.env, NO_COLOR: "1" },
+        env: { ...env.getProcessEnv(), NO_COLOR: "1" },
     });
 
     const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
@@ -41,7 +42,7 @@ export async function runDarwinKitRaw(
     const proc = Bun.spawn(["bun", "run", DARWINKIT_PATH, ...args], {
         stdout: "pipe",
         stderr: "pipe",
-        env: { ...process.env, NO_COLOR: "1" },
+        env: { ...env.getProcessEnv(), NO_COLOR: "1" },
     });
 
     const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);

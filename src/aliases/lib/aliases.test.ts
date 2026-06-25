@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import {
     BLOCK_END,
@@ -238,16 +239,16 @@ describe("integration (hermetic state + rc round-trips)", () => {
     let previousGenesisToolsHome: string | undefined;
 
     beforeEach(() => {
-        previousGenesisToolsHome = process.env.GENESIS_TOOLS_HOME;
+        previousGenesisToolsHome = env.get("GENESIS_TOOLS_HOME");
         home = mkdtempSync(join(tmpdir(), "aliases-test-"));
-        process.env.GENESIS_TOOLS_HOME = home;
+        env.testing.set("GENESIS_TOOLS_HOME", home);
     });
 
     afterEach(() => {
         if (previousGenesisToolsHome === undefined) {
-            delete process.env.GENESIS_TOOLS_HOME;
+            env.testing.unset("GENESIS_TOOLS_HOME");
         } else {
-            process.env.GENESIS_TOOLS_HOME = previousGenesisToolsHome;
+            env.testing.set("GENESIS_TOOLS_HOME", previousGenesisToolsHome);
         }
 
         rmSync(home, { recursive: true, force: true });

@@ -7,10 +7,11 @@ import { UserOrdersRepository } from "@app/shops/db/UserOrdersRepository";
 import { UserProvidersRepository } from "@app/shops/db/UserProvidersRepository";
 import { resetCryptoForTest } from "@app/shops/lib/crypto";
 import { type AuthClientFactory, syncProvider } from "@app/shops/lib/order-sync";
+import { env } from "@app/utils/env";
 
 async function fixture(): Promise<{ db: ShopsDatabase; userProviderId: number }> {
     const dir = mkdtempSync(join(tmpdir(), "shops-sync-"));
-    process.env.SHOPS_SECRET_KEY_PATH = join(dir, ".secret-key");
+    env.testing.set("SHOPS_SECRET_KEY_PATH", join(dir, ".secret-key"));
     resetCryptoForTest();
     const db = new ShopsDatabase(join(dir, "test.db"));
     setShopsDatabaseSingletonForTest(db);

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { skip } from "@app/utils/test/skip";
 import { AIGoogleProvider } from "./AIGoogleProvider";
@@ -15,17 +16,17 @@ describe("AIGoogleProvider", () => {
 
     beforeEach(() => {
         originalFetch = globalThis.fetch;
-        originalEnv = process.env.GOOGLE_API_KEY;
-        process.env.GOOGLE_API_KEY = "test-api-key";
+        originalEnv = env.google.getKey();
+        env.testing.set("GOOGLE_API_KEY", "test-api-key");
     });
 
     afterEach(() => {
         globalThis.fetch = originalFetch;
 
         if (originalEnv !== undefined) {
-            process.env.GOOGLE_API_KEY = originalEnv;
+            env.testing.set("GOOGLE_API_KEY", originalEnv);
         } else {
-            delete process.env.GOOGLE_API_KEY;
+            env.testing.unset("GOOGLE_API_KEY");
         }
     });
 
@@ -49,7 +50,7 @@ describe("AIGoogleProvider", () => {
     });
 
     test("isAvailable returns false when GOOGLE_API_KEY is missing", async () => {
-        delete process.env.GOOGLE_API_KEY;
+        env.testing.unset("GOOGLE_API_KEY");
         const provider = new AIGoogleProvider();
         expect(await provider.isAvailable()).toBe(false);
     });

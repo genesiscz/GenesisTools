@@ -1,8 +1,10 @@
+import { env } from "@app/utils/env";
+
 const BASE_URL = "https://api.x.ai/v1";
 const WS_BASE_URL = "wss://api.x.ai/v1";
 
 export class XAIClient {
-    constructor(private readonly apiKey: string = process.env.X_AI_API_KEY ?? "") {}
+    constructor(private readonly apiKey: string = env.x.getApiKey() ?? "") {}
 
     isConfigured(): boolean {
         return !!this.apiKey;

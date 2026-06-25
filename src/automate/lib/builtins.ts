@@ -1,5 +1,6 @@
 // src/automate/lib/builtins.ts
 
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
 import { resolveExpression, resolveParams } from "./expressions.ts";
@@ -119,7 +120,7 @@ async function handleShell(step: PresetStep, ctx: ExecutionContext, start: numbe
     const proc = Bun.spawn(["bash", "-c", command], {
         cwd,
         stdio: step.interactive ? ["inherit", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
-        env: { ...process.env },
+        env: { ...env.getProcessEnv() },
     });
 
     let timer: ReturnType<typeof setTimeout> | undefined;

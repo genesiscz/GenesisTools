@@ -1,3 +1,4 @@
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 
@@ -18,10 +19,7 @@ export async function handleMetaRoute(_req: Request, url: URL, opts: MetaRouteOp
     }
 
     if (url.pathname === "/api/v1/version") {
-        return Response.json(
-            { version: "2.0.0", gitSha: process.env.YOUTUBE_GIT_SHA ?? null },
-            { headers: CORS_HEADERS }
-        );
+        return Response.json({ version: "2.0.0", gitSha: env.youtube.getGitSha() ?? null }, { headers: CORS_HEADERS });
     }
 
     if (url.pathname === "/api/v1/openapi.json") {

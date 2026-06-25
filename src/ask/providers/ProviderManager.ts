@@ -5,6 +5,7 @@ import {
     SUBSCRIPTION_BETAS,
     SUBSCRIPTION_SYSTEM_PREFIX,
 } from "@app/utils/claude/subscription-billing";
+import { env } from "@app/utils/env";
 import { askUI } from "@ask/output/AskUILogger";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
@@ -58,7 +59,7 @@ export class ProviderManager {
                 continue;
             }
 
-            const apiKey = process.env[config.envKey];
+            const apiKey = env.ai.getByEnvKey(config.envKey);
             if (!apiKey) {
                 continue;
             }
@@ -234,7 +235,7 @@ export class ProviderManager {
     }
 
     private async detectAnthropicEnvKeyFallback(detected: DetectedProvider[]): Promise<void> {
-        const envKey = process.env.ANTHROPIC_API_KEY;
+        const envKey = env.ai.anthropic.getKey();
 
         if (!envKey) {
             return;
@@ -297,7 +298,7 @@ export class ProviderManager {
                 case "openai-compatible": {
                     const { createOpenAI } = await import("@ai-sdk/openai");
                     return createOpenAI({
-                        apiKey: process.env[config.envKey],
+                        apiKey: env.ai.getByEnvKey(config.envKey),
                         baseURL: config.baseURL,
                     });
                 }
@@ -462,7 +463,7 @@ export class ProviderManager {
 
     private async getOpenAIModels(): Promise<ModelInfo[]> {
         try {
-            const apiKey = process.env.OPENAI_API_KEY;
+            const apiKey = env.ai.openai.getKey();
             if (!apiKey) {
                 throw new Error("OpenAI API key not found");
             }
@@ -623,7 +624,7 @@ export class ProviderManager {
 
     private async getOpenRouterModels(): Promise<ModelInfo[]> {
         try {
-            const apiKey = process.env.OPENROUTER_API_KEY;
+            const apiKey = env.ai.openrouter.getKey();
             if (!apiKey) {
                 throw new Error("OpenRouter API key not found");
             }

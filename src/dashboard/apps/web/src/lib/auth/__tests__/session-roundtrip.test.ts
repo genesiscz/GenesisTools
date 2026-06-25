@@ -1,3 +1,4 @@
+import { env } from "@app/utils/env";
 import { sessionEncryption } from "@workos/authkit-session";
 import { describe, expect, test } from "vitest";
 import { encryptSession, type Session } from "../../auth-server";
@@ -8,7 +9,7 @@ import { encryptSession, type Session } from "../../auth-server";
 // password-signed-in user gets 401 from requireUserId() and login is dead.
 describe("iron-session ⇄ AuthKit session encryption", () => {
     test("encryptSession output roundtrips through AuthKit's unsealData", async () => {
-        process.env.WORKOS_COOKIE_PASSWORD = "test-cookie-password-at-least-32-chars-long";
+        env.testing.set("WORKOS_COOKIE_PASSWORD", "test-cookie-password-at-least-32-chars-long");
 
         const session = {
             accessToken: "access-token",
@@ -28,7 +29,7 @@ describe("iron-session ⇄ AuthKit session encryption", () => {
 
         const encrypted = await encryptSession(session);
         const decrypted = await sessionEncryption.unsealData(encrypted, {
-            password: process.env.WORKOS_COOKIE_PASSWORD,
+            password: env.workos.getCookiePassword(),
         });
 
         expect(decrypted).toEqual(session);

@@ -8,6 +8,7 @@ import type {
     ShopConfig,
     ThemeChoice,
 } from "@app/shops/types";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 
 const log = logger.child({ component: "SettingsRepository" });
@@ -232,7 +233,7 @@ let _singleton: SettingsRepository | null = null;
 
 export function getSettingsRepository(): SettingsRepository {
     if (!_singleton) {
-        const home = process.env.HOME ?? process.env.USERPROFILE ?? "/tmp";
+        const home = env.paths.getHome() ?? env.paths.getUserProfile() ?? "/tmp";
         _singleton = new SettingsRepository(`${home}/.genesis-tools/shops/settings`);
     }
 

@@ -10,6 +10,7 @@ import { ModelManager } from "@app/utils/ai/ModelManager.ts";
 import type { AIProviderType, AITask } from "@app/utils/ai/types.ts";
 import { runTool } from "@app/utils/cli";
 import { copyToClipboard, readFromClipboard } from "@app/utils/clipboard.ts";
+import { env } from "@app/utils/env";
 import { formatBytes } from "@app/utils/format.ts";
 import { classifyText } from "@app/utils/macos/classification.ts";
 import { detectLanguage } from "@app/utils/macos/nlp.ts";
@@ -184,7 +185,7 @@ interface ImageFlags {
 
 async function cmdImage(prompt: string, opts: ImageFlags): Promise<void> {
     const config = await AIConfig.load();
-    const token = config.getHfToken() ?? process.env.HUGGINGFACE_TOKEN;
+    const token = config.getHfToken() ?? env.hf.getKey();
 
     if (!token) {
         out.error(pc.red("Hugging Face token required."));

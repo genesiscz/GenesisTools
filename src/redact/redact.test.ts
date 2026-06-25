@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { detectAll } from "./lib/detectors";
 import { redact } from "./lib/redact";
@@ -143,16 +144,16 @@ describe("session", () => {
     let sandbox: string;
 
     beforeEach(() => {
-        prevHome = process.env.GENESIS_TOOLS_HOME;
+        prevHome = env.get("GENESIS_TOOLS_HOME");
         sandbox = mkdtempSync(join(tmpdir(), "redact-test-"));
-        process.env.GENESIS_TOOLS_HOME = sandbox;
+        env.testing.set("GENESIS_TOOLS_HOME", sandbox);
     });
 
     afterEach(() => {
         if (prevHome === undefined) {
-            delete process.env.GENESIS_TOOLS_HOME;
+            env.testing.unset("GENESIS_TOOLS_HOME");
         } else {
-            process.env.GENESIS_TOOLS_HOME = prevHome;
+            env.testing.set("GENESIS_TOOLS_HOME", prevHome);
         }
     });
 

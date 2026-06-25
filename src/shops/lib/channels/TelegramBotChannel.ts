@@ -1,6 +1,7 @@
 import { logger } from "@app/logger";
 import type { DispatchResult, NotificationChannel, NotificationPayload } from "@app/shops/lib/channels/types";
 import { TelegramBotClient } from "@app/shops/lib/telegram-bot-client";
+import { env as appEnv } from "@app/utils/env";
 
 const log = logger.child({ component: "TelegramBotChannel" });
 
@@ -32,9 +33,9 @@ export class TelegramBotChannel implements NotificationChannel {
         this.client = config.client;
     }
 
-    static fromEnv(env: Record<string, string | undefined> = process.env): TelegramBotChannel | null {
-        const chatId = env.TELEGRAM_CHAT_ID;
-        const client = TelegramBotClient.fromEnv(env);
+    static fromEnv(processEnv: Record<string, string | undefined> = appEnv.getProcessEnv()): TelegramBotChannel | null {
+        const chatId = processEnv.TELEGRAM_CHAT_ID;
+        const client = TelegramBotClient.fromEnv(processEnv);
         if (!chatId || !client) {
             return null;
         }

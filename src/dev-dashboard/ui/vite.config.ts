@@ -1,7 +1,8 @@
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { env } from "@app/utils/env";
 
-const projectRoot = process.env.GENESIS_TOOLS_ROOT ?? process.cwd();
+const projectRoot = env.tools.getRoot() ?? process.cwd();
 const appRoot = resolve(projectRoot, "src");
 const { attachDevDashboardMiddleware } = await import(
     pathToFileURL(resolve(appRoot, "dev-dashboard/ui/vite-middleware.ts")).href
@@ -43,7 +44,7 @@ const distDir = resolve(__dirname, "dist");
 // Vite runs on a private port behind the Bun.serve front proxy. Tell the HMR
 // client to connect to the public port so the proxy can bridge the HMR socket
 // (Bun's node:http upgrade is broken; the proxy owns all WebSockets).
-const publicPort = Number(process.env.DEV_DASHBOARD_PUBLIC_PORT) || 3042;
+const publicPort = Number(env.dashboard.getPublicPort()) || 3042;
 
 config.server = {
     ...config.server,

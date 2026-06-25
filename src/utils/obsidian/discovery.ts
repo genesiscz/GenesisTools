@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { logger } from "@app/logger";
+import { env as appEnv } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 
 const log = logger.child({ component: "obsidian:discovery" });
@@ -35,7 +36,7 @@ export function configCandidates(env: NodeJS.ProcessEnv): string[] {
     return out;
 }
 
-export function discoverVaults(env: NodeJS.ProcessEnv = process.env): ObsidianVault[] {
+export function discoverVaults(env: NodeJS.ProcessEnv = appEnv.getProcessEnv()): ObsidianVault[] {
     for (const candidate of configCandidates(env)) {
         if (!existsSync(candidate)) {
             continue;
@@ -59,7 +60,7 @@ export function discoverVaults(env: NodeJS.ProcessEnv = process.env): ObsidianVa
     return [];
 }
 
-export function resolveActiveVault(env: NodeJS.ProcessEnv = process.env): string | null {
+export function resolveActiveVault(env: NodeJS.ProcessEnv = appEnv.getProcessEnv()): string | null {
     const vaults = discoverVaults(env);
     if (vaults.length === 0) {
         return null;

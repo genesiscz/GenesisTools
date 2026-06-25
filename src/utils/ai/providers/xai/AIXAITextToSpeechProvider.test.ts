@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { AIXAITextToSpeechProvider } from "./AIXAITextToSpeechProvider";
 
@@ -20,7 +21,7 @@ describe("AIXAITextToSpeechProvider", () => {
     test("isAvailable reflects X_AI_API_KEY", async () => {
         const provider = new AIXAITextToSpeechProvider();
         const available = await provider.isAvailable();
-        expect(available).toBe(!!process.env.X_AI_API_KEY);
+        expect(available).toBe(env.x.hasApiKey());
     });
 
     test("synthesize() rejects text over 15k chars", async () => {
@@ -32,7 +33,7 @@ describe("AIXAITextToSpeechProvider", () => {
 
     // Live integration: hits the real xAI voices endpoint when X_AI_API_KEY is set.
     // Uses forceFreshVoices: true to bypass the 7-day Storage cache.
-    test.skipIf(!process.env.X_AI_API_KEY)(
+    test.skipIf(!env.x.getApiKey())(
         "listVoices() returns voices from real /v1/tts/voices endpoint (requires X_AI_API_KEY)",
         async () => {
             const provider = new AIXAITextToSpeechProvider({ forceFreshVoices: true });
@@ -53,7 +54,7 @@ describe("AIXAITextToSpeechProvider", () => {
         }
     );
 
-    test.skipIf(!process.env.X_AI_API_KEY)("listVoices() second call hits cache (requires X_AI_API_KEY)", async () => {
+    test.skipIf(!env.x.getApiKey())("listVoices() second call hits cache (requires X_AI_API_KEY)", async () => {
         // First call (cached, possibly fresh) — just to seed the cache.
         const seed = new AIXAITextToSpeechProvider();
         await seed.listVoices();

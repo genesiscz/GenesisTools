@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { env } from "@app/utils/env";
 import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
 import { devtools } from "@tanstack/devtools-vite";
@@ -15,7 +16,7 @@ const nitroConfig: NitroConfig = {
     },
     // Quieter in prod (warn+), verbose in dev. Server-side console.* lines are
     // subsystem-prefixed ([db]/[ai]/[bookmarks]/[events]) for greppable triage.
-    logLevel: process.env.NODE_ENV === "production" ? 3 : 0,
+    logLevel: env.node.isProduction() ? 3 : 0,
     // Scan server/routes directory for API and WebSocket handlers
     scanDirs: ["./server"],
 };
@@ -23,7 +24,7 @@ const nitroConfig: NitroConfig = {
 const dashboardDependency = (specifier: string) =>
     fileURLToPath(new URL(`./node_modules/${specifier}`, import.meta.url));
 
-const bindHost = process.env.DASHBOARD_BIND_HOST;
+const bindHost = env.dashboard.getBindHost();
 
 const config = defineConfig({
     server: {
@@ -33,7 +34,7 @@ const config = defineConfig({
         },
     },
     plugins: [
-        ...(process.env.DASHBOARD_DEVTOOLS === "1" ? [devtools()] : []),
+        ...(env.dashboard.isDevtoolsEnabled() ? [devtools()] : []),
         nitro(nitroConfig),
         // this is the plugin that enables path aliases
         viteTsConfigPaths({

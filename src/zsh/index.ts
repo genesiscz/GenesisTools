@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
+import { env } from "@app/utils/env";
 import { Storage } from "@app/utils/storage/storage.ts";
 import { formatTable } from "@app/utils/table.ts";
 import * as p from "@clack/prompts";
@@ -45,7 +46,7 @@ program
 
         if (rcPaths.length === 0) {
             p.log.warn("No shell rc files found. Will create default locations.");
-            const home = process.env.HOME || homedir();
+            const home = env.paths.getHome() || homedir();
             rcPaths = [join(home, ".zshrc"), join(home, ".bashrc")];
         }
 

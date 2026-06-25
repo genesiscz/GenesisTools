@@ -12,6 +12,7 @@ const { openConfig } = await import("@app/mcp-manager/commands/config.js");
 
 import { logger } from "@app/logger";
 import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
+import { env } from "@app/utils/env";
 import { Storage } from "@app/utils/storage";
 
 describe("openConfig", () => {
@@ -69,8 +70,10 @@ describe("openConfig", () => {
     });
 
     it("should use EDITOR environment variable", async () => {
-        const originalEditor = process.env.EDITOR;
-        process.env.EDITOR = "vim";
+        const originalVisual = env.editor.getVisual();
+        const originalEditor = env.editor.getEditor();
+        env.testing.unset("VISUAL");
+        env.testing.set("EDITOR", "vim");
 
         const mockConfigPath = "/mock/config.json";
         spyOn(Storage.prototype, "ensureDirs").mockResolvedValue(undefined);
@@ -93,16 +96,62 @@ describe("openConfig", () => {
             })
         );
 
-        if (originalEditor) {
-            process.env.EDITOR = originalEditor;
+        if (originalVisual) {
+            env.testing.set("VISUAL", originalVisual);
         } else {
-            delete process.env.EDITOR;
+            env.testing.unset("VISUAL");
+        }
+        if (originalEditor) {
+            env.testing.set("EDITOR", originalEditor);
+        } else {
+            env.testing.unset("EDITOR");
+        }
+    });
+
+    it("should prefer VISUAL over EDITOR", async () => {
+        const originalVisual = env.editor.getVisual();
+        const originalEditor = env.editor.getEditor();
+        env.testing.set("VISUAL", "emacs");
+        env.testing.set("EDITOR", "vim");
+
+        const mockConfigPath = "/mock/config.json";
+        spyOn(Storage.prototype, "ensureDirs").mockResolvedValue(undefined);
+        spyOn(Storage.prototype, "getConfig").mockResolvedValue({ mcpServers: {} });
+        spyOn(configUtils, "getUnifiedConfigPath").mockReturnValue(mockConfigPath);
+        spyOn(logger, "info");
+
+        const mockSpawn = spyOn(Bun, "spawn").mockImplementation(
+            () =>
+                ({
+                    exited: Promise.resolve({ exitCode: 0 }),
+                }) as unknown as ReturnType<typeof Bun.spawn>
+        );
+
+        await openConfig();
+
+        expect(mockSpawn).toHaveBeenCalledWith(
+            expect.objectContaining({
+                cmd: expect.arrayContaining(["emacs", mockConfigPath]),
+            })
+        );
+
+        if (originalVisual) {
+            env.testing.set("VISUAL", originalVisual);
+        } else {
+            env.testing.unset("VISUAL");
+        }
+        if (originalEditor) {
+            env.testing.set("EDITOR", originalEditor);
+        } else {
+            env.testing.unset("EDITOR");
         }
     });
 
     it("should handle editor command with arguments", async () => {
-        const originalEditor = process.env.EDITOR;
-        process.env.EDITOR = "code --wait";
+        const originalVisual = env.editor.getVisual();
+        const originalEditor = env.editor.getEditor();
+        env.testing.unset("VISUAL");
+        env.testing.set("EDITOR", "code --wait");
 
         const mockConfigPath = "/mock/config.json";
         spyOn(Storage.prototype, "ensureDirs").mockResolvedValue(undefined);
@@ -125,10 +174,15 @@ describe("openConfig", () => {
             })
         );
 
-        if (originalEditor) {
-            process.env.EDITOR = originalEditor;
+        if (originalVisual) {
+            env.testing.set("VISUAL", originalVisual);
         } else {
-            delete process.env.EDITOR;
+            env.testing.unset("VISUAL");
+        }
+        if (originalEditor) {
+            env.testing.set("EDITOR", originalEditor);
+        } else {
+            env.testing.unset("EDITOR");
         }
     });
 });

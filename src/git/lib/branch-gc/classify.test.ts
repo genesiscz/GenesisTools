@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@app/utils/env";
 import { classifyBranches, detectBase, getCurrentBranch } from "./classify";
 
 const SECONDS_PER_DAY = 86_400;
@@ -13,7 +14,7 @@ const ANCHOR_EPOCH = 1_700_000_000;
 // process.env mutations, so we MUST pass this explicitly on every spawn — the
 // repo-building git() helper below does exactly that.
 const BASE_GIT_ENV = {
-    ...process.env,
+    ...env.getProcessEnv(),
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_SYSTEM: "/dev/null",
     GIT_AUTHOR_NAME: "Test",

@@ -2,6 +2,7 @@ import { logger } from "@app/logger";
 import type { AITask, AITextToSpeechProvider, TTSOptions, TTSResult, TTSVoice } from "@app/utils/ai/types";
 import { rateLimitAwareDelay, retry } from "@app/utils/async";
 import type { AIProviderType } from "@app/utils/config/ai.types";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 
 const BASE_URL = "https://api.openai.com/v1";
@@ -47,7 +48,7 @@ function pickContentType(format?: TTSOptions["format"]): string {
 }
 
 function readApiKey(): string {
-    const key = process.env.OPENAI_API_KEY;
+    const key = env.ai.openai.getKey();
 
     if (!key) {
         throw new Error("OPENAI_API_KEY environment variable is not set.");
@@ -64,7 +65,7 @@ export class AIOpenAITextToSpeechProvider implements AITextToSpeechProvider {
     readonly type: AIProviderType = "openai";
 
     async isAvailable(): Promise<boolean> {
-        return !!process.env.OPENAI_API_KEY;
+        return env.ai.openai.hasKey();
     }
 
     supports(task: AITask): boolean {

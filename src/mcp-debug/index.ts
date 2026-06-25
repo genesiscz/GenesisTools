@@ -1,4 +1,5 @@
 import { Executor, runTool } from "@app/utils/cli";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { Command } from "commander";
 
@@ -111,7 +112,7 @@ async function main() {
 
     // Get command and arguments
     const commandArgs = program.args;
-    const commandsEnv = process.env.COMMANDS;
+    const commandsEnv = env.tools.getCommands();
     const useEnv = options.env;
 
     // Check if we have either a command argument, COMMANDS env var, or --env flag
@@ -126,7 +127,7 @@ async function main() {
 
     // Log what we're about to execute (to stderr only)
     debugLog(`Working directory: ${process.cwd()}`);
-    debugLog(`Environment variables: ${SafeJSON.stringify(process.env, null, 2)}`);
+    debugLog(`Environment variables: ${SafeJSON.stringify(env.getProcessEnv(), null, 2)}`);
 
     // Build list of commands to execute
     const commandsToExecute: string[] = [];
@@ -135,7 +136,7 @@ async function main() {
     if (useEnv) {
         //commandsToExecute.push("env");
         debugLog(`--env flag set, will execute 'env' command`);
-        debugLog(SafeJSON.stringify(process.env, null, 2));
+        debugLog(SafeJSON.stringify(env.getProcessEnv(), null, 2));
     }
 
     // Add primary command if provided
@@ -185,7 +186,7 @@ async function main() {
         success: overallSuccess,
         exitCode: overallExitCode,
         cwd: process.cwd(),
-        env: process.env,
+        env: env.getProcessEnv(),
         commands: results,
     };
 

@@ -1,3 +1,4 @@
+import { env } from "@app/utils/env";
 import { redirect } from "@tanstack/react-router";
 import { getAuth, getAuthkit } from "@workos/authkit-tanstack-react-start";
 
@@ -46,9 +47,8 @@ export async function getUserIdFromRequest(request: Request): Promise<string | n
  * sameSite=lax, so this closes the residual cross-site POST vector.
  */
 export function isSameOrigin(request: Request): boolean {
-    const appOrigin = process.env.WORKOS_REDIRECT_URI
-        ? new URL(process.env.WORKOS_REDIRECT_URI).origin
-        : new URL(request.url).origin;
+    const redirectUri = env.workos.getRedirectUri();
+    const appOrigin = redirectUri ? new URL(redirectUri).origin : new URL(request.url).origin;
 
     const origin = request.headers.get("origin");
     if (origin) {

@@ -10,7 +10,7 @@ export * from "./types";
 
 import { createReadStream, existsSync } from "node:fs";
 import { createInterface } from "node:readline";
-
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 
 /**
@@ -50,7 +50,7 @@ export async function parseJsonlTranscript<T = Record<string, unknown>>(filePath
  * and verifies the command is actually Claude (not e.g. the C compiler for `cc`).
  */
 export async function findClaudeCommand(): Promise<string> {
-    const shell = process.env.SHELL || "/bin/sh";
+    const shell = env.paths.getShell("/bin/sh");
 
     for (const candidate of ["ccc", "cc", "claude"]) {
         try {

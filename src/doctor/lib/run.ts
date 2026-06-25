@@ -1,3 +1,4 @@
+import { env } from "@app/utils/env";
 export interface RunResult {
     status: number;
     stdout: string;
@@ -21,7 +22,7 @@ export async function run(cmd: string, args: string[] = [], opts: RunOpts = {}):
             stdout: "pipe",
             stderr: "pipe",
             cwd: opts.cwd,
-            env: opts.env ? { ...process.env, ...opts.env } : undefined,
+            env: opts.env ? { ...env.getProcessEnv(), ...opts.env } : undefined,
         });
     } catch {
         return { status: 127, stdout: "", stderr: "", timedOut: false };
@@ -56,7 +57,7 @@ export async function runInherit(cmd: string, args: string[] = [], opts: RunOpts
             stdout: "inherit",
             stderr: "inherit",
             cwd: opts.cwd,
-            env: opts.env ? { ...process.env, ...opts.env } : undefined,
+            env: opts.env ? { ...env.getProcessEnv(), ...opts.env } : undefined,
         });
         return await proc.exited;
     } catch {

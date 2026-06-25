@@ -8,16 +8,17 @@ import {
     jsonlPath,
     sessionNameFromJsonlFilename,
 } from "@app/task/lib/paths";
+import { env } from "@app/utils/env";
 
 describe("task paths", () => {
-    const originalHome = process.env.GENESIS_TOOLS_HOME;
+    const originalHome = env.get("GENESIS_TOOLS_HOME");
     const dirs: string[] = [];
 
     afterEach(() => {
         if (originalHome === undefined) {
-            delete process.env.GENESIS_TOOLS_HOME;
+            env.testing.unset("GENESIS_TOOLS_HOME");
         } else {
-            process.env.GENESIS_TOOLS_HOME = originalHome;
+            env.testing.set("GENESIS_TOOLS_HOME", originalHome);
         }
 
         for (const dir of dirs.splice(0)) {
@@ -28,7 +29,7 @@ describe("task paths", () => {
     it("resolves sessions dir from GENESIS_TOOLS_HOME at call time", () => {
         const sandbox = mkdtempSync(join(tmpdir(), "gt-paths-"));
         dirs.push(sandbox);
-        process.env.GENESIS_TOOLS_HOME = sandbox;
+        env.testing.set("GENESIS_TOOLS_HOME", sandbox);
 
         expect(getTaskSessionsDir()).toBe(join(sandbox, ".genesis-tools", "task", "sessions"));
         expect(jsonlPath("foo")).toBe(join(sandbox, ".genesis-tools", "task", "sessions", "foo.jsonl"));
@@ -39,10 +40,10 @@ describe("task paths", () => {
         const second = mkdtempSync(join(tmpdir(), "gt-paths-b-"));
         dirs.push(first, second);
 
-        process.env.GENESIS_TOOLS_HOME = first;
+        env.testing.set("GENESIS_TOOLS_HOME", first);
         expect(getTaskSessionsDir()).toBe(join(first, ".genesis-tools", "task", "sessions"));
 
-        process.env.GENESIS_TOOLS_HOME = second;
+        env.testing.set("GENESIS_TOOLS_HOME", second);
         expect(getTaskSessionsDir()).toBe(join(second, ".genesis-tools", "task", "sessions"));
     });
 

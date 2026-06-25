@@ -14,9 +14,10 @@ import { describe, expect, it } from "bun:test";
 import { logger } from "@app/logger";
 import { __resetInitState, initShopRegistry } from "@app/shops/api/registry-init";
 import { ShopRegistry } from "@app/shops/api/ShopRegistry";
+import { env } from "@app/utils/env";
 
 const log = logger.child({ component: "live-smoke-phase2" });
-const RUN = process.env.RUN_LIVE_SMOKE === "1";
+const RUN = env.test.shouldRunLiveSmoke();
 const PHASE_2_SHOPS = ["lidl.cz", "albert.cz", "billa.cz", "dm.cz", "tetadrogerie.cz"] as const;
 
 if (RUN) {

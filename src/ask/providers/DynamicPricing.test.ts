@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { env } from "@app/utils/env";
 import { DynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
 import { providerManager } from "@ask/providers/ProviderManager";
@@ -249,7 +250,7 @@ describe("DynamicPricingManager", () => {
         });
     });
 
-    describe.skipIf(!process.env.RUN_NETWORK_TESTS)("LiteLLM Integration", () => {
+    describe.skipIf(!env.test.shouldRunNetworkTests())("LiteLLM Integration", () => {
         it("should fetch real pricing from LiteLLM GitHub repository", async () => {
             // Real API call - fetches from LiteLLM's GitHub JSON
             const pricing = await liteLLMPricingFetcher.getModelPricing("openrouter/openai/gpt-4o");
@@ -314,7 +315,7 @@ describe("DynamicPricingManager", () => {
         });
     });
 
-    describe.skipIf(!process.env.RUN_NETWORK_TESTS)("OpenRouter Integration", () => {
+    describe.skipIf(!env.test.shouldRunNetworkTests())("OpenRouter Integration", () => {
         it("should fetch real pricing from OpenRouter API", async () => {
             // Real API call to OpenRouter - tests actual integration
             // This will be used as fallback if LiteLLM doesn't have the model
@@ -348,7 +349,7 @@ describe("DynamicPricingManager", () => {
         });
     });
 
-    describe.skipIf(!process.env.RUN_NETWORK_TESTS)("Stress Tests - LiteLLM + OpenRouter", () => {
+    describe.skipIf(!env.test.shouldRunNetworkTests())("Stress Tests - LiteLLM + OpenRouter", () => {
         it("should handle multiple concurrent real API requests", async () => {
             // Real concurrent API calls - tests caching and rate limiting
             const models = [
@@ -891,12 +892,12 @@ describe("DynamicPricingManager", () => {
         });
     });
 
-    describe.skipIf(!process.env.RUN_NETWORK_TESTS)("ProviderManager vs LiteLLM Pricing Comparison", () => {
+    describe.skipIf(!env.test.shouldRunNetworkTests())("ProviderManager vs LiteLLM Pricing Comparison", () => {
         // Note: These tests may fail if cache is stale or if OpenRouter/LiteLLM pricing data differs
         // This is expected behavior - the tests verify that both sources return similar pricing
 
         it("should match ProviderManager OpenRouter GPT-4o pricing with LiteLLM", async () => {
-            if (!process.env.OPENROUTER_API_KEY) {
+            if (!env.ai.openrouter.getKey()) {
                 console.log("Skipping test: OPENROUTER_API_KEY not set");
                 return;
             }
@@ -941,7 +942,7 @@ describe("DynamicPricingManager", () => {
         });
 
         it("should match ProviderManager OpenRouter Claude pricing with LiteLLM", async () => {
-            if (!process.env.OPENROUTER_API_KEY) {
+            if (!env.ai.openrouter.getKey()) {
                 console.log("Skipping test: OPENROUTER_API_KEY not set");
                 return;
             }
@@ -983,7 +984,7 @@ describe("DynamicPricingManager", () => {
         });
 
         it("should match ProviderManager OpenRouter pricing for multiple popular models", async () => {
-            if (!process.env.OPENROUTER_API_KEY) {
+            if (!env.ai.openrouter.getKey()) {
                 console.log("Skipping test: OPENROUTER_API_KEY not set");
                 return;
             }
@@ -1042,7 +1043,7 @@ describe("DynamicPricingManager", () => {
         });
 
         it("should have consistent pricing structure between ProviderManager and LiteLLM for OpenRouter models", async () => {
-            if (!process.env.OPENROUTER_API_KEY) {
+            if (!env.ai.openrouter.getKey()) {
                 console.log("Skipping test: OPENROUTER_API_KEY not set");
                 return;
             }
@@ -1096,7 +1097,7 @@ describe("DynamicPricingManager", () => {
         });
 
         it("should verify ProviderManager OpenRouter models have valid pricing conversion", async () => {
-            if (!process.env.OPENROUTER_API_KEY) {
+            if (!env.ai.openrouter.getKey()) {
                 console.log("Skipping test: OPENROUTER_API_KEY not set");
                 return;
             }

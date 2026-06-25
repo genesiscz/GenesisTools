@@ -3,21 +3,22 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
+import { env } from "@app/utils/env";
 import { addCommand, deleteCommand, listCommands, validateCommandInput } from "./store";
 
 let prevHome: string | undefined;
 
 beforeEach(() => {
-    prevHome = process.env.GENESIS_TOOLS_HOME;
-    process.env.GENESIS_TOOLS_HOME = mkdtempSync(join(tmpdir(), "dd-commands-"));
+    prevHome = env.get("GENESIS_TOOLS_HOME");
+    env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "dd-commands-")));
     resetDevDashboardStorage();
 });
 
 afterEach(() => {
     if (prevHome === undefined) {
-        delete process.env.GENESIS_TOOLS_HOME;
+        env.testing.unset("GENESIS_TOOLS_HOME");
     } else {
-        process.env.GENESIS_TOOLS_HOME = prevHome;
+        env.testing.set("GENESIS_TOOLS_HOME", prevHome);
     }
 
     resetDevDashboardStorage();

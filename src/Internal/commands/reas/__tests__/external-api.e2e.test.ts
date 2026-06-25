@@ -15,8 +15,9 @@ import { ReasClient } from "@app/Internal/commands/reas/api/ReasClient";
 import { SrealityClient } from "@app/Internal/commands/reas/api/SrealityClient";
 import { getDistrict } from "@app/Internal/commands/reas/data/districts";
 import type { AnalysisFilters, DateRange } from "@app/Internal/commands/reas/types";
+import { env } from "@app/utils/env";
 
-const SKIP = !process.env.E2E;
+const SKIP = !env.test.shouldRunE2E();
 
 function buildFilters(districtName = "Praha 3", opts?: { disposition?: string; daysBack?: number }): AnalysisFilters {
     const district = getDistrict(districtName);

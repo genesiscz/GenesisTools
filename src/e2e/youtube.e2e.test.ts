@@ -2,6 +2,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { execTool, extractJson } from "@app/utils/e2e/helpers";
+import { env } from "@app/utils/env";
 
 const OUTPUT_FILE = "/tmp/yt-e2e-test.txt";
 
@@ -29,7 +30,7 @@ describe("tools youtube", () => {
         });
     });
 
-    describe.skipIf(!process.env.RUN_NETWORK_TESTS)("transcribe with captions", () => {
+    describe.skipIf(!env.test.shouldRunNetworkTests())("transcribe with captions", () => {
         it("fetches captions as text", async () => {
             const r = await execTool(["youtube", "transcribe", "dQw4w9WgXcQ"]);
             expect(r.exitCode).toBe(0);
@@ -64,7 +65,7 @@ describe("tools youtube", () => {
         }, 30_000);
     });
 
-    describe.skipIf(!process.env.RUN_NETWORK_TESTS)("output to file", () => {
+    describe.skipIf(!env.test.shouldRunNetworkTests())("output to file", () => {
         it("writes output to file", async () => {
             const r = await execTool(["youtube", "transcribe", "dQw4w9WgXcQ", "-o", OUTPUT_FILE]);
             expect(r.exitCode).toBe(0);
@@ -74,7 +75,7 @@ describe("tools youtube", () => {
         }, 30_000);
     });
 
-    describe.skipIf(!process.env.RUN_NETWORK_TESTS)("error handling", () => {
+    describe.skipIf(!env.test.shouldRunNetworkTests())("error handling", () => {
         it("invalid video ID shows error", async () => {
             const r = await execTool(["youtube", "transcribe", "xxxxxxxxxxxxxxxxxxx"]);
             expect(r.exitCode).toBe(1);

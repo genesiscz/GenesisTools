@@ -1,4 +1,5 @@
 import { logger } from "@app/logger";
+import { env } from "@app/utils/env";
 import type { SearchResult, WebSearchOptions } from "@ask/types";
 import { z } from "zod";
 
@@ -7,7 +8,7 @@ export class WebSearchTool {
     private baseURL = "https://api.search.brave.com/res/v1";
 
     constructor() {
-        this.apiKey = process.env.BRAVE_API_KEY;
+        this.apiKey = env.brave.getKey();
         if (!this.apiKey) {
             logger.warn("BRAVE_API_KEY not found. Web search functionality will be disabled.");
         }
@@ -237,7 +238,7 @@ export class WebSearchTool {
     getApiInfo(): { available: boolean; keyPresent: boolean; validated?: boolean } {
         return {
             available: this.isAvailable(),
-            keyPresent: !!process.env.BRAVE_API_KEY,
+            keyPresent: !!env.brave.getKey(),
         };
     }
 }

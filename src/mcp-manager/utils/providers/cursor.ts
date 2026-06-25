@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { logger } from "@app/logger";
 import { stripMeta } from "@app/mcp-manager/utils/config.utils.js";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import type { CursorGenericConfig, CursorMCPServerConfig } from "./cursor.types.js";
@@ -19,7 +20,7 @@ export class CursorProvider extends MCPProvider {
     constructor() {
         // Cursor uses workspace storage, but we'll use a global config location
         // In practice, this might need to be workspace-specific
-        const homeDir = process.env.HOME || process.env.USERPROFILE || "~";
+        const homeDir = env.paths.getHome() || env.paths.getUserProfile() || "~";
         super(path.join(homeDir, ".cursor", "mcp.json"), "cursor");
     }
 

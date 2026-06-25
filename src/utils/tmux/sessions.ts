@@ -1,4 +1,5 @@
 import { logger } from "@app/logger";
+import { env } from "@app/utils/env";
 import { buildTerminalSpawnEnv } from "@app/utils/terminal/locale";
 import { resolveTmuxBin } from "@app/utils/tmux/bin";
 import type { TmuxSessionInfo } from "@app/utils/tmux/types";
@@ -21,7 +22,7 @@ function resolveLoginShell(shell: string): string {
         return trimmed;
     }
 
-    const fromEnv = process.env.SHELL?.trim();
+    const fromEnv = env.paths.getShell()?.trim();
 
     if (fromEnv && fromEnv.length > 0 && !fromEnv.includes("=")) {
         return fromEnv;

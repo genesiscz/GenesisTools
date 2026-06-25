@@ -1,3 +1,4 @@
+import { env } from "@app/utils/env";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { establishAuthSession } from "./auth/session";
@@ -115,7 +116,7 @@ export const signInFn = createServerFn({ method: "POST" })
             return data as AuthError;
         }
 
-        const clientId = process.env.WORKOS_CLIENT_ID;
+        const clientId = env.workos.getClientId();
         if (!clientId) {
             return { code: "config_error", message: "Client ID not configured" };
         }
@@ -157,7 +158,7 @@ export const signUpFn = createServerFn({ method: "POST" })
             return data as AuthError;
         }
 
-        const clientId = process.env.WORKOS_CLIENT_ID;
+        const clientId = env.workos.getClientId();
         if (!clientId) {
             return { code: "config_error", message: "Client ID not configured" };
         }
@@ -208,7 +209,7 @@ export const verifyEmailFn = createServerFn({ method: "POST" })
             return data as AuthError;
         }
 
-        const clientId = process.env.WORKOS_CLIENT_ID;
+        const clientId = env.workos.getClientId();
         if (!clientId) {
             return { code: "config_error", message: "Client ID not configured" };
         }
@@ -236,8 +237,8 @@ export const verifyEmailFn = createServerFn({ method: "POST" })
 export const getOAuthUrlFn = createServerFn({ method: "GET" })
     .inputValidator((data: { provider: "GoogleOAuth" | "GitHubOAuth" }) => data)
     .handler(async ({ data }) => {
-        const clientId = process.env.WORKOS_CLIENT_ID;
-        const redirectUri = process.env.WORKOS_REDIRECT_URI;
+        const clientId = env.workos.getClientId();
+        const redirectUri = env.workos.getRedirectUri();
 
         if (!clientId || !redirectUri) {
             throw new Error("OAuth configuration missing");

@@ -5,10 +5,11 @@ import { join } from "node:path";
 import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { UserProvidersRepository } from "@app/shops/db/UserProvidersRepository";
 import { resetCryptoForTest } from "@app/shops/lib/crypto";
+import { env } from "@app/utils/env";
 
 function fresh(): UserProvidersRepository {
     const dir = mkdtempSync(join(tmpdir(), "shops-up-"));
-    process.env.SHOPS_SECRET_KEY_PATH = join(dir, ".secret-key");
+    env.testing.set("SHOPS_SECRET_KEY_PATH", join(dir, ".secret-key"));
     resetCryptoForTest();
     const db = new ShopsDatabase(join(dir, "test.db"));
     db.raw().exec(

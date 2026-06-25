@@ -1,12 +1,13 @@
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { env } from "@app/utils/env";
 import { DockerContainer, type DockerProgressCallback } from "./docker-container";
 
 const QDRANT_IMAGE = "qdrant/qdrant:v1.17.0";
 const QDRANT_CONTAINER_NAME = "genesis-tools-qdrant";
-const QDRANT_PORT = parsePort(process.env.GENESIS_QDRANT_PORT, 16335);
-const QDRANT_GRPC_PORT = parsePort(process.env.GENESIS_QDRANT_GRPC_PORT, 16336);
+const QDRANT_PORT = parsePort(String(env.tools.getQdrantPort()), 16335);
+const QDRANT_GRPC_PORT = parsePort(String(env.tools.getQdrantGrpcPort()), 16336);
 
 function parsePort(envValue: string | undefined, defaultPort: number): number {
     if (!envValue) {

@@ -1,5 +1,6 @@
 import { performance } from "node:perf_hooks";
 import { out } from "@app/logger";
+import { env } from "@app/utils/env";
 import { AIXAITextToSpeechProvider } from "./AIXAITextToSpeechProvider";
 
 const SAMPLE = [
@@ -9,7 +10,7 @@ const SAMPLE = [
     "The compiler hums a steady tune; the bug, once feared, departs by noon.",
 ].join(" ");
 
-if (!process.env.X_AI_API_KEY) {
+if (!env.x.getApiKey()) {
     out.error("X_AI_API_KEY not set — skipping benchmark.");
     process.exit(1);
 }

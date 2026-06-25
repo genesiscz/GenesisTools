@@ -21,6 +21,7 @@ import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
 import { setGlobalOptions } from "@app/mcp-manager/utils/config.utils.js";
 import type { ClaudeGenericConfig } from "@app/mcp-manager/utils/providers/claude.types.js";
 import type { UnifiedMCPConfig, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage";
 
@@ -85,9 +86,9 @@ describe("claude provider TRUE global disable", () => {
         // writeUnifiedConfig) without restoring; bun runs all files in one
         // process, so restore everything BEFORE installing our own spies.
         mock.restore();
-        prevHome = process.env.HOME;
+        prevHome = env.get("HOME");
         homeDir = mkdtempSync(join(tmpdir(), "mcp-claude-global-"));
-        process.env.HOME = homeDir;
+        env.testing.set("HOME", homeDir);
         setGlobalOptions({ yes: true });
         spyOn(logger, "info").mockImplementation(() => {});
         spyOn(logger, "warn").mockImplementation(() => {});
@@ -97,7 +98,11 @@ describe("claude provider TRUE global disable", () => {
 
     afterEach(() => {
         mock.restore();
-        process.env.HOME = prevHome;
+        if (prevHome) {
+            env.testing.set("HOME", prevHome);
+        } else {
+            env.testing.unset("HOME");
+        }
         setGlobalOptions({});
         rmSync(homeDir, { recursive: true, force: true });
     });

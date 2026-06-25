@@ -4,6 +4,7 @@ import { out } from "@app/logger";
 import { discoverTools } from "@app/tools/lib/discovery";
 import { getAgentRuntimeContext } from "@app/utils/agent-runtime";
 import { runTool } from "@app/utils/cli";
+import { env } from "@app/utils/env";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -12,7 +13,7 @@ const program = new Command()
     .name("update")
     .description("Update GenesisTools to the latest version")
     .action(async () => {
-        const genesisPath = process.env.GENESIS_TOOLS_PATH || resolve(import.meta.dir, "../..");
+        const genesisPath = env.tools.getPath() || resolve(import.meta.dir, "../..");
         const srcDir = join(genesisPath, "src");
 
         out.println(pc.cyan("\n  Updating GenesisTools...\n"));

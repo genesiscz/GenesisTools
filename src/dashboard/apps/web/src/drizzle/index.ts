@@ -1,13 +1,14 @@
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { env } from "@app/utils/env";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import * as schema from "./schema";
 
-const isProd = process.env.NODE_ENV === "production";
+const isProd = env.node.isProduction();
 
-const rawPath = process.env.SQLITE_PATH ?? ".data/dashboard.sqlite";
+const rawPath = env.db.getSqlitePath();
 if (isProd && !isAbsolute(rawPath)) {
     throw new Error(
         `SQLITE_PATH must be an absolute path in production (got "${rawPath}"). ` +
@@ -34,7 +35,7 @@ export const db = drizzle(sqlite, { schema });
 // here, so this guarantees the schema is current before the first query.
 // Absolute MIGRATIONS_DIR is required in prod (same cwd hazard as SQLITE_PATH);
 // dev resolves the source folder relative to this file.
-const MIGRATIONS_DIR = process.env.MIGRATIONS_DIR ?? fileURLToPath(new URL("./migrations", import.meta.url));
+const MIGRATIONS_DIR = env.db.getMigrationsDir() ?? fileURLToPath(new URL("./migrations", import.meta.url));
 try {
     console.log(`[db] applying migrations from ${MIGRATIONS_DIR}`);
     migrate(db, { migrationsFolder: MIGRATIONS_DIR });

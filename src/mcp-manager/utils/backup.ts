@@ -3,6 +3,7 @@ import { copyFile } from "node:fs/promises";
 import path from "node:path";
 import { logger } from "@app/logger";
 import { DiffUtil } from "@app/utils/diff";
+import { env } from "@app/utils/env";
 import * as p from "@app/utils/prompts/p";
 import chalk from "chalk";
 import { getGlobalOptions } from "./config.utils.js";
@@ -14,7 +15,7 @@ export class BackupManager {
     private backupDir: string;
 
     constructor() {
-        const homeDir = process.env.HOME || process.env.USERPROFILE || "~";
+        const homeDir = env.paths.getHome() || env.paths.getUserProfile() || "~";
         this.backupDir = path.join(homeDir, ".mcp-manager", "backups");
         this.ensureBackupDir();
     }

@@ -4,6 +4,7 @@ import { getConfig, saveTtydSessions } from "@app/dev-dashboard/config";
 import { makeTtydTmuxSessionName } from "@app/dev-dashboard/lib/tmux/naming";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import { logger } from "@app/logger";
+import { env } from "@app/utils/env";
 import { findFreePort } from "@app/utils/net/free-port";
 import { buildTerminalSpawnEnv } from "@app/utils/terminal/locale";
 import { resolveTmuxBin } from "@app/utils/tmux/bin";
@@ -197,7 +198,7 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
     }
 
     const tmuxBin = resolveTmuxBin();
-    const rawCommand = opts.command ?? process.env.SHELL ?? "/bin/zsh";
+    const rawCommand = opts.command ?? env.paths.getShell("/bin/zsh");
     const command = rawCommand.trim().length > 0 && !rawCommand.includes("=") ? rawCommand.trim() : "/bin/zsh";
     const cwd = opts.cwd ?? process.cwd();
     const port = await findFreePort();

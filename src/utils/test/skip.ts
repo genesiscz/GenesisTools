@@ -1,3 +1,5 @@
+import { env } from "@app/utils/env";
+
 /**
  * Centralized test skip gates.
  *
@@ -31,10 +33,8 @@
  * (RUN_NETWORK_TESTS, RUN_LIVE, …) so existing CI/local muscle memory holds.
  */
 
-const env = process.env;
-
 function flag(name: string): boolean {
-    const v = env[name];
+    const v = env.get(name);
     return v != null && v !== "" && v !== "0" && v.toLowerCase() !== "false";
 }
 

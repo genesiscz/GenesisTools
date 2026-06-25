@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { logger } from "@app/logger";
 import { type AIProviderType, isCloudProvider } from "@app/utils/config/ai.types";
+import { env } from "@app/utils/env";
 import { formatBytes } from "@app/utils/format";
 import { ensurePackage } from "@app/utils/packages";
 import { getModelsByProvider } from "./ModelRegistry";
@@ -26,14 +27,14 @@ function toModelInfo(entry: ModelEntry): ModelInfo {
 function getCloudTranscriptionModels(): ModelInfo[] {
     const models: ModelInfo[] = [];
 
-    if (process.env.GROQ_API_KEY) {
+    if (env.ai.groq.getKey()) {
         models.push(
             { id: "whisper-large-v3-turbo", name: "Groq whisper-large-v3-turbo", description: "fast" },
             { id: "whisper-large-v3", name: "Groq whisper-large-v3", description: "high quality" }
         );
     }
 
-    if (process.env.OPENAI_API_KEY) {
+    if (env.ai.openai.getKey()) {
         models.push({ id: "whisper-1", name: "OpenAI whisper-1", description: "reliable" });
     }
 
@@ -41,7 +42,7 @@ function getCloudTranscriptionModels(): ModelInfo[] {
 }
 
 function getXAITranscriptionModels(): ModelInfo[] {
-    if (!process.env.X_AI_API_KEY) {
+    if (!env.x.getApiKey()) {
         return [];
     }
 

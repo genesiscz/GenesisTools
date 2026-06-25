@@ -12,6 +12,7 @@ import { handleReadmeFlag } from "@app/utils/readme";
 p.setBackend(inquirerBackend);
 
 import { out } from "@app/logger";
+import { env } from "@app/utils/env";
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -24,7 +25,7 @@ const logger = {
     warn: (msg: string) => out.println(chalk.yellow("⚠"), msg),
     error: (msg: string) => out.println(chalk.red("✖"), msg),
     debug: (msg: string) => {
-        if (process.env.DEBUG) {
+        if (env.log.isDebugEnabled()) {
             out.println(chalk.dim("🐛"), msg);
         }
     },
@@ -530,15 +531,15 @@ fi
     const sequenceEditorCmd = `sed -i '' 's/^pick /reword /' "$1"`;
 
     // Set up environment for rebase
-    const env = {
-        ...process.env,
+    const rebaseEnv = {
+        ...env.getProcessEnv(),
         GIT_SEQUENCE_EDITOR: `sh -c ${SafeJSON.stringify(sequenceEditorCmd)} _`,
         GIT_EDITOR: editorScriptPath,
     };
 
     logger.info("🔄 Executing git rebase...");
 
-    const { exitCode } = await git.execInteractive(["rebase", "-i", `HEAD~${count}`], { env });
+    const { exitCode } = await git.execInteractive(["rebase", "-i", `HEAD~${count}`], { env: rebaseEnv });
 
     // Cleanup temporary files
     try {

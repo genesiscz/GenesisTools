@@ -28,6 +28,7 @@ import type {
     AlbertNavigationResponse,
     AlbertRawProduct,
 } from "@app/shops/api/shops/AlbertClient.types";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 
 const ALBERT_ORIGIN = "albert.cz";
@@ -57,7 +58,7 @@ const APOLLO_HEADERS = {
 };
 
 function loadHashes(): Readonly<Record<string, string>> {
-    const override = process.env.ALBERT_PERSISTED_QUERY_HASHES_JSON;
+    const override = env.shops.getAlbertPersistedQueryHashesJson();
     if (override) {
         try {
             return Object.freeze(SafeJSON.parse(override) as Record<string, string>);

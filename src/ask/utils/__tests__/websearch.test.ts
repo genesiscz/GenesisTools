@@ -1,12 +1,13 @@
 import { describe, expect, it } from "bun:test";
+import { env } from "@app/utils/env";
 import { WebSearchTool } from "../websearch";
 
 describe("WebSearchTool", () => {
     describe("createSearchTool()", () => {
         it("returns null when BRAVE_API_KEY is not set", () => {
             // Save and clear
-            const saved = process.env.BRAVE_API_KEY;
-            delete process.env.BRAVE_API_KEY;
+            const saved = env.brave.getKey();
+            env.testing.unset("BRAVE_API_KEY");
 
             const tool = new WebSearchTool();
             const result = tool.createSearchTool();
@@ -14,13 +15,15 @@ describe("WebSearchTool", () => {
 
             // Restore
             if (saved) {
-                process.env.BRAVE_API_KEY = saved;
+                env.testing.set("BRAVE_API_KEY", saved);
+            } else {
+                env.testing.unset("BRAVE_API_KEY");
             }
         });
 
         it("returns tool definition when BRAVE_API_KEY is set", () => {
-            const saved = process.env.BRAVE_API_KEY;
-            process.env.BRAVE_API_KEY = "test-key-xxx";
+            const saved = env.brave.getKey();
+            env.testing.set("BRAVE_API_KEY", "test-key-xxx");
 
             const tool = new WebSearchTool();
             const result = tool.createSearchTool();
@@ -32,15 +35,15 @@ describe("WebSearchTool", () => {
 
             // Restore
             if (saved) {
-                process.env.BRAVE_API_KEY = saved;
+                env.testing.set("BRAVE_API_KEY", saved);
             } else {
-                delete process.env.BRAVE_API_KEY;
+                env.testing.unset("BRAVE_API_KEY");
             }
         });
 
         it("uses Zod schema for parameters", () => {
-            const saved = process.env.BRAVE_API_KEY;
-            process.env.BRAVE_API_KEY = "test-key-xxx";
+            const saved = env.brave.getKey();
+            env.testing.set("BRAVE_API_KEY", "test-key-xxx");
 
             const tool = new WebSearchTool();
             const result = tool.createSearchTool();
@@ -76,15 +79,15 @@ describe("WebSearchTool", () => {
 
             // Restore
             if (saved) {
-                process.env.BRAVE_API_KEY = saved;
+                env.testing.set("BRAVE_API_KEY", saved);
             } else {
-                delete process.env.BRAVE_API_KEY;
+                env.testing.unset("BRAVE_API_KEY");
             }
         });
 
         it("execute returns a string", async () => {
-            const saved = process.env.BRAVE_API_KEY;
-            process.env.BRAVE_API_KEY = "test-key-xxx";
+            const saved = env.brave.getKey();
+            env.testing.set("BRAVE_API_KEY", "test-key-xxx");
 
             const tool = new WebSearchTool();
             const result = tool.createSearchTool();
@@ -100,9 +103,9 @@ describe("WebSearchTool", () => {
 
             // Restore
             if (saved) {
-                process.env.BRAVE_API_KEY = saved;
+                env.testing.set("BRAVE_API_KEY", saved);
             } else {
-                delete process.env.BRAVE_API_KEY;
+                env.testing.unset("BRAVE_API_KEY");
             }
         });
     });
@@ -144,24 +147,26 @@ describe("WebSearchTool", () => {
 
     describe("isAvailable()", () => {
         it("returns true when BRAVE_API_KEY is set", () => {
-            const saved = process.env.BRAVE_API_KEY;
-            process.env.BRAVE_API_KEY = "xxx";
+            const saved = env.brave.getKey();
+            env.testing.set("BRAVE_API_KEY", "xxx");
             const tool = new WebSearchTool();
             expect(tool.isAvailable()).toBe(true);
             if (saved) {
-                process.env.BRAVE_API_KEY = saved;
+                env.testing.set("BRAVE_API_KEY", saved);
             } else {
-                delete process.env.BRAVE_API_KEY;
+                env.testing.unset("BRAVE_API_KEY");
             }
         });
 
         it("returns false when BRAVE_API_KEY is not set", () => {
-            const saved = process.env.BRAVE_API_KEY;
-            delete process.env.BRAVE_API_KEY;
+            const saved = env.brave.getKey();
+            env.testing.unset("BRAVE_API_KEY");
             const tool = new WebSearchTool();
             expect(tool.isAvailable()).toBe(false);
             if (saved) {
-                process.env.BRAVE_API_KEY = saved;
+                env.testing.set("BRAVE_API_KEY", saved);
+            } else {
+                env.testing.unset("BRAVE_API_KEY");
             }
         });
     });

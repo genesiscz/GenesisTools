@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { env } from "@app/utils/env";
 import { Storage } from "./storage";
 
 describe("Storage.parseTTL", () => {
@@ -71,18 +72,18 @@ describe("Storage.parseTTL", () => {
 });
 
 describe("Storage GENESIS_TOOLS_HOME override", () => {
-    const ORIG = process.env.GENESIS_TOOLS_HOME;
+    const ORIG = env.get("GENESIS_TOOLS_HOME");
 
     afterEach(() => {
         if (ORIG === undefined) {
-            delete process.env.GENESIS_TOOLS_HOME;
+            env.testing.unset("GENESIS_TOOLS_HOME");
         } else {
-            process.env.GENESIS_TOOLS_HOME = ORIG;
+            env.testing.set("GENESIS_TOOLS_HOME", ORIG);
         }
     });
 
     it("roots all paths under GENESIS_TOOLS_HOME when set", () => {
-        process.env.GENESIS_TOOLS_HOME = "/tmp/gt-sandbox-xyz";
+        env.testing.set("GENESIS_TOOLS_HOME", "/tmp/gt-sandbox-xyz");
         const s = new Storage("mcp-manager");
         expect(s.getBaseDir()).toBe("/tmp/gt-sandbox-xyz/.genesis-tools/mcp-manager");
         expect(s.getConfigPath()).toBe("/tmp/gt-sandbox-xyz/.genesis-tools/mcp-manager/config.json");
@@ -90,10 +91,10 @@ describe("Storage GENESIS_TOOLS_HOME override", () => {
     });
 
     it("falls back to homedir() when unset or empty (production behavior unchanged)", () => {
-        delete process.env.GENESIS_TOOLS_HOME;
+        env.testing.unset("GENESIS_TOOLS_HOME");
         const home = homedir();
         expect(new Storage("ask").getConfigPath()).toBe(join(home, ".genesis-tools", "ask", "config.json"));
-        process.env.GENESIS_TOOLS_HOME = "";
+        env.testing.set("GENESIS_TOOLS_HOME", "");
         expect(new Storage("ask").getConfigPath()).toBe(join(home, ".genesis-tools", "ask", "config.json"));
     });
 });

@@ -1,3 +1,4 @@
+import { env } from "@app/utils/env";
 import { defineConfig } from "drizzle-kit";
 
 export default defineConfig({
@@ -5,7 +6,7 @@ export default defineConfig({
     out: "./src/drizzle/migrations",
     dialect: "sqlite",
     dbCredentials: {
-        url: process.env.SQLITE_PATH ?? ".data/dashboard.sqlite",
+        url: env.db.getSqlitePath(),
     },
     verbose: true,
     strict: true,

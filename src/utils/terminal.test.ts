@@ -1,32 +1,23 @@
 import { describe, expect, test } from "bun:test";
+import { env } from "@app/utils/env";
 import { detectTerminalApp } from "./terminal";
 
 describe("detectTerminalApp", () => {
     function withEnv(overrides: Record<string, string | undefined>, fn: () => void) {
-        const saved: Record<string, string | undefined> = {};
-
-        for (const key of Object.keys(overrides)) {
-            saved[key] = process.env[key];
-        }
+        const snapshot = env.testing.snapshot();
 
         try {
             for (const [key, value] of Object.entries(overrides)) {
                 if (value === undefined) {
-                    delete process.env[key];
+                    env.testing.unset(key);
                 } else {
-                    process.env[key] = value;
+                    env.testing.set(key, value);
                 }
             }
 
             fn();
         } finally {
-            for (const [key, value] of Object.entries(saved)) {
-                if (value === undefined) {
-                    delete process.env[key];
-                } else {
-                    process.env[key] = value;
-                }
-            }
+            env.testing.restore(snapshot);
         }
     }
 
