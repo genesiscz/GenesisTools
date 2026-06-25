@@ -19,13 +19,26 @@ export function stripApplyMarkersFromPatchFiles(args: { patch: string }): string
     const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/;
 
     const lines = args.patch.split("\n");
-    // PR #222 t27: per-name apply depth counter, not a Set. Two nested apply-time openers with the
-    // same stash name would otherwise share one Set entry — deleting on the first close would leave
-    // the second close unmatched in the output.
-    const applyCloseDepth = new Map<string, number>();
-    // PR #222 t33: track bare author regions separately so an inner `#endregion @stash:NAME` is not
-    // dropped while an outer apply-time wrapper of the same name is still open.
-    const authorCloseDepth = new Map<string, number>();
+    // PR #222 t36: LIFO stack per name pairs each `#endregion` with the most recent same-name opener.
+    // Separate counters mishandle inverse nesting (author wrapper containing apply wrapper).
+    type CloseKind = "apply" | "author";
+    const closeStackByName = new Map<string, CloseKind[]>();
+    const pushCloseKind = (name: string, kind: CloseKind) => {
+        const stack = closeStackByName.get(name) ?? [];
+        stack.push(kind);
+        closeStackByName.set(name, stack);
+    };
+    const popCloseKind = (name: string): CloseKind | null => {
+        const stack = closeStackByName.get(name);
+        if (!stack) {
+            return null;
+        }
+        const kind = stack.pop();
+        if (stack.length === 0) {
+            closeStackByName.delete(name);
+        }
+        return kind ?? null;
+    };
     // Buffer per hunk so we can rewrite the header after counting dropped `+` lines.
     let currentHeader: { oldStart: number; oldLines: number; newStart: number; newLines: number; ctx: string } | null =
         null;
@@ -70,37 +83,26 @@ export function stripApplyMarkersFromPatchFiles(args: { patch: string }): string
         const openMatch = APPLY_OPEN_WITH_NAME.exec(line);
         if (openMatch?.[1]) {
             const name = openMatch[1];
-            applyCloseDepth.set(name, (applyCloseDepth.get(name) ?? 0) + 1);
+            pushCloseKind(name, "apply");
             droppedInHunk++;
             continue;
         }
         const bareOpenMatch = /^\+.*#region\s+@stash:([\w.-]+)/.exec(line);
         if (bareOpenMatch?.[1] && !APPLY_OPEN_WITH_NAME.test(line)) {
             const name = bareOpenMatch[1];
-            authorCloseDepth.set(name, (authorCloseDepth.get(name) ?? 0) + 1);
+            pushCloseKind(name, "author");
             currentBody.push(line);
             continue;
         }
         const closeMatch = CLOSE_WITH_NAME.exec(line);
         if (closeMatch?.[1]) {
             const name = closeMatch[1];
-            const authorDepth = authorCloseDepth.get(name) ?? 0;
-            if (authorDepth > 0) {
-                if (authorDepth === 1) {
-                    authorCloseDepth.delete(name);
-                } else {
-                    authorCloseDepth.set(name, authorDepth - 1);
-                }
+            const closeKind = popCloseKind(name);
+            if (closeKind === "author") {
                 currentBody.push(line);
                 continue;
             }
-            const applyDepth = applyCloseDepth.get(name) ?? 0;
-            if (applyDepth > 0) {
-                if (applyDepth === 1) {
-                    applyCloseDepth.delete(name);
-                } else {
-                    applyCloseDepth.set(name, applyDepth - 1);
-                }
+            if (closeKind === "apply") {
                 droppedInHunk++;
                 continue;
             }
