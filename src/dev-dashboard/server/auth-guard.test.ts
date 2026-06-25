@@ -21,6 +21,15 @@ describe("decideApiAuth", () => {
         expect(d.decision).toBe("allow");
     });
 
+    it("allows HEAD and trailing-slash share URLs without auth", () => {
+        expect(decideApiAuth({ method: "HEAD", pathname: "/share/tok", headers: {}, provision }).decision).toBe(
+            "allow"
+        );
+        expect(decideApiAuth({ method: "GET", pathname: "/share/tok/", headers: {}, provision }).decision).toBe(
+            "allow"
+        );
+    });
+
     it("allows + mints a cookie for a valid Basic header", () => {
         const d = decideApiAuth({
             method: "GET",
