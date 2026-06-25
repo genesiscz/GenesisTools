@@ -52,7 +52,7 @@ export function shareRoutes(): RouteDef[] {
                         },
                     });
                     const title = (note.vaultPath.split("/").pop() ?? note.vaultPath).replace(/\.md$/, "");
-                    const page = renderSharePage({ title, rendered, sourcePath: note.vaultPath });
+                    const page = renderSharePage({ title, rendered, source, sourcePath: note.vaultPath });
 
                     return {
                         kind: "raw",
