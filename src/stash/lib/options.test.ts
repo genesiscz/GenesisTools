@@ -45,4 +45,8 @@ describe("parsePositiveInt", () => {
     test("rejects leading zero (no octal-by-accident)", () => {
         expect(() => parsePositiveInt("01")).toThrow(InvalidArgumentError);
     });
+    test("rejects unsafe integers beyond MAX_SAFE_INTEGER", () => {
+        const unsafe = String(Number.MAX_SAFE_INTEGER + 1);
+        expect(() => parsePositiveInt(unsafe)).toThrow(InvalidArgumentError);
+    });
 });

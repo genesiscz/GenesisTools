@@ -33,5 +33,9 @@ export function parsePositiveInt(v: string): number {
     if (!/^[1-9]\d*$/.test(trimmed)) {
         throw new InvalidArgumentError(`must be a positive decimal integer (got "${v}")`);
     }
-    return Number.parseInt(trimmed, 10);
+    const n = Number.parseInt(trimmed, 10);
+    if (!Number.isSafeInteger(n)) {
+        throw new InvalidArgumentError(`must be a safe integer (got "${v}")`);
+    }
+    return n;
 }

@@ -39,6 +39,12 @@ export async function dropCommand(opts: {
         process.exit(1);
     }
 
+    if (opts.allVersions && opts.version !== undefined) {
+        ui.err("--all-versions cannot be combined with --at");
+        db.close();
+        process.exit(1);
+    }
+
     if (isInteractive()) {
         const { confirm } = await import("@clack/prompts");
         const ok = await confirm({
