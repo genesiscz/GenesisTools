@@ -2,9 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { BenuClient } from "@app/shops/api/shops/BenuClient";
 import { DrmaxClient } from "@app/shops/api/shops/DrmaxClient";
 import { ItescoClient } from "@app/shops/api/shops/ItescoClient";
+import { env } from "@app/utils/env";
 
-const RUN_BASE = process.env.SHOPS_LIVE_SMOKE === "1";
-const RUN_ITESCO = process.env.SHOPS_LIVE_ITESCO === "1";
+const RUN_BASE = env.test.shouldRunLiveSmoke();
+const RUN_ITESCO = env.test.shouldRunShopsLiveItesco();
 const maybeBase = RUN_BASE ? describe : describe.skip;
 const maybeItesco = RUN_BASE && RUN_ITESCO ? describe : describe.skip;
 

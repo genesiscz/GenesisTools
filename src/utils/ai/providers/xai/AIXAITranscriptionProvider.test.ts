@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { env } from "@app/utils/env";
 import { AIXAITranscriptionProvider } from "./AIXAITranscriptionProvider";
 
 describe("AIXAITranscriptionProvider", () => {
@@ -16,6 +17,6 @@ describe("AIXAITranscriptionProvider", () => {
 
     test("isAvailable reflects X_AI_API_KEY", async () => {
         const p = new AIXAITranscriptionProvider();
-        expect(await p.isAvailable()).toBe(!!process.env.X_AI_API_KEY);
+        expect(await p.isAvailable()).toBe(env.x.hasApiKey());
     });
 });

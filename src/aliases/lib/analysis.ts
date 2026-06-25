@@ -12,6 +12,7 @@ import {
     updateLevel,
 } from "@app/aliases/lib/core";
 import { logger } from "@app/logger";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage/storage";
 
@@ -111,7 +112,7 @@ export function resolveHistoryFile(explicit?: string): string | null {
     }
 
     const candidates: string[] = [];
-    const envHist = process.env.HISTFILE;
+    const envHist = env.paths.getHistfile();
     if (envHist) {
         candidates.push(envHist);
     }

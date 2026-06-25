@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { logger, out } from "@app/logger";
+import { env } from "@app/utils/env";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import type { RolldownWatcher } from "rolldown";
 import type { InlineConfig } from "vite";
@@ -15,10 +16,10 @@ function resolveBindHost(opts: DashboardPreviewUiOptions): DashboardBindHost {
         return opts.resolveBindHost();
     }
 
-    const env = process.env.DASHBOARD_BIND_HOST;
+    const bindHost = env.dashboard.getBindHost();
 
-    if (env === "0.0.0.0" || env === "127.0.0.1") {
-        return env;
+    if (bindHost === "0.0.0.0" || bindHost === "127.0.0.1") {
+        return bindHost;
     }
 
     return "0.0.0.0";

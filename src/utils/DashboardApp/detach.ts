@@ -15,6 +15,7 @@
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
+import { env } from "@app/utils/env";
 
 export interface DetachOptions {
     cmd: readonly string[];
@@ -34,7 +35,7 @@ export function spawnDetached(opts: DetachOptions): DetachResult {
     try {
         child = spawn(opts.cmd[0], opts.cmd.slice(1), {
             cwd: opts.cwd,
-            env: { ...process.env, ...filterUndefined(opts.env) },
+            env: { ...env.getProcessEnv(), ...filterUndefined(opts.env) },
             detached: true,
             stdio: ["ignore", logFd, logFd],
         });

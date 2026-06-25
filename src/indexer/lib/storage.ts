@@ -162,7 +162,7 @@ export function getIndexerStorage(): IndexerStorage {
 
 /**
  * Test-only: drop the cached singleton so the next `getIndexerStorage()` call
- * re-reads the env (e.g. picks up a redirected `process.env.HOME`).
+ * re-reads the env (e.g. picks up a redirected `env.paths.getHome()`).
  * Without this, tests that set `HOME = tmpDir` in `beforeAll` leak indexes to
  * the real homedir if any earlier test in the run already constructed the
  * singleton.

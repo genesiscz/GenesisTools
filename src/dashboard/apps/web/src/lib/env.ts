@@ -1,3 +1,4 @@
+import { env as appEnv } from "@app/utils/env";
 import { createEnv } from "@t3-oss/env-core";
 import { z } from "zod";
 
@@ -28,6 +29,6 @@ export const env = createEnv({
         MCP_BEARER_TOKEN: z.string().min(16).optional(),
         MCP_USER_ID: z.string().min(1).optional(),
     },
-    runtimeEnv: process.env,
+    runtimeEnv: appEnv.getProcessEnv(),
     emptyStringAsUndefined: true,
 });

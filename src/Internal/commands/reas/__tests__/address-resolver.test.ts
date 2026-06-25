@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { DistrictInfo } from "@app/Internal/commands/reas/data/districts";
+import { env } from "@app/utils/env";
 
 describe("parseResolvedAddress", () => {
     test("extracts district from suggest result with matching district DB entry", async () => {
@@ -134,14 +135,17 @@ describe("buildSearchFilters", () => {
 });
 
 describe("resolveAddress", () => {
-    test.skipIf(!process.env.INTEGRATION)("calls suggestLocality and cross-references with district DB", async () => {
-        const { resolveAddress } = await import("../lib/address-resolver");
+    test.skipIf(!env.test.shouldRunIntegration())(
+        "calls suggestLocality and cross-references with district DB",
+        async () => {
+            const { resolveAddress } = await import("../lib/address-resolver");
 
-        const results = await resolveAddress("Hradec Králové");
+            const results = await resolveAddress("Hradec Králové");
 
-        expect(results.length).toBeGreaterThan(0);
-        expect(results[0].district.name).toBe("Hradec Králové");
-        expect(results[0].district.reasId).toBe(3602);
-        expect(results[0].municipalityName).toBe("Hradec Králové");
-    });
+            expect(results.length).toBeGreaterThan(0);
+            expect(results[0].district.name).toBe("Hradec Králové");
+            expect(results[0].district.reasId).toBe(3602);
+            expect(results[0].municipalityName).toBe("Hradec Králové");
+        }
+    );
 });

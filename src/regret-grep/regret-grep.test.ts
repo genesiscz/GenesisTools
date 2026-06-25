@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@app/utils/env";
 import { distillEntry } from "./lib/entry";
 import { collectBugFixCommits, extractDiffContentLines } from "./lib/git";
 import { scoreQuery } from "./lib/similarity";
@@ -17,7 +18,7 @@ async function git(args: string[], cwd: string): Promise<string> {
         stdout: "pipe",
         stderr: "pipe",
         env: {
-            ...process.env,
+            ...env.getProcessEnv(),
             GIT_AUTHOR_NAME: "Test",
             GIT_AUTHOR_EMAIL: "test@example.com",
             GIT_COMMITTER_NAME: "Test",
@@ -147,8 +148,8 @@ describe("end-to-end index + check over a throwaway git repo", () => {
     beforeAll(async () => {
         home = mkdtempSync(join(tmpdir(), "regret-home-"));
         repo = mkdtempSync(join(tmpdir(), "regret-repo-"));
-        previousGenesisToolsHome = process.env.GENESIS_TOOLS_HOME;
-        process.env.GENESIS_TOOLS_HOME = home;
+        previousGenesisToolsHome = env.get("GENESIS_TOOLS_HOME");
+        env.testing.set("GENESIS_TOOLS_HOME", home);
 
         await git(["init", "-q"], repo);
         await git(["config", "commit.gpgsign", "false"], repo);
@@ -175,9 +176,9 @@ describe("end-to-end index + check over a throwaway git repo", () => {
 
     afterAll(() => {
         if (previousGenesisToolsHome === undefined) {
-            delete process.env.GENESIS_TOOLS_HOME;
+            env.testing.unset("GENESIS_TOOLS_HOME");
         } else {
-            process.env.GENESIS_TOOLS_HOME = previousGenesisToolsHome;
+            env.testing.set("GENESIS_TOOLS_HOME", previousGenesisToolsHome);
         }
 
         rmSync(home, { recursive: true, force: true });

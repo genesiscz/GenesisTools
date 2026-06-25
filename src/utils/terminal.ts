@@ -1,14 +1,15 @@
+import { env } from "@app/utils/env";
 /**
  * Detect the name of the current terminal application.
  * Checks CMUX_BUNDLE_ID first (cmux sets TERM_PROGRAM="" but has its own env),
  * then falls back to TERM_PROGRAM.
  */
 export function detectTerminalApp(): string {
-    if (process.env.CMUX_BUNDLE_ID) {
+    if (env.device.getCmuxBundleId()) {
         return "cmux";
     }
 
-    const tp = process.env.TERM_PROGRAM ?? "";
+    const tp = env.device.getTermProgram() ?? "";
 
     switch (tp) {
         case "iTerm.app":

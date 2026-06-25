@@ -1,13 +1,14 @@
 import { openSync } from "node:fs";
 import { jsonlPath, stdoutLogPath } from "@app/task/lib/paths";
 import type { TaskRunMode } from "@app/task/types";
+import { env } from "@app/utils/env";
 import { readJsonlFile } from "@app/utils/log-session/jsonl-reader";
 import type { JsonlExitRecord } from "@app/utils/log-session/types";
 
 const WORKER_ENV = "TASK_RUN_WORKER";
 
 export function isDetachedRunWorker(): boolean {
-    return process.env[WORKER_ENV] === "1";
+    return env.task.isDetachedWorker();
 }
 
 export function shouldSuperviseDetachedRun(): boolean {
@@ -68,7 +69,7 @@ export function spawnDetachedRunWorker(opts: {
 
     return Bun.spawn({
         cmd,
-        env: { ...process.env, [WORKER_ENV]: "1" },
+        env: { ...env.getProcessEnv(), [WORKER_ENV]: "1" },
         cwd: process.cwd(),
         stdin: "ignore",
         stdout: logFd,

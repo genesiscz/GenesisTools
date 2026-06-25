@@ -7,6 +7,7 @@ import { runFanOut } from "./sinks/registry";
 import "./sinks/obsidian";
 import "./sinks/sound";
 import "./sinks/notification";
+import { env } from "@app/utils/env";
 import type { QaEntry, RecordInput, RecordResult } from "./types";
 
 const log = logger.child({ component: "question:record" });
@@ -36,7 +37,7 @@ export async function recordAnswer(input: RecordInput, deps: RecordDeps = {}): P
             ...(input.sessionId ? { sessionId: input.sessionId } : {}),
             ...(input.project ? { project: input.project } : {}),
         },
-        deps.env ?? process.env
+        deps.env ?? env.getProcessEnv()
     );
 
     const entry: QaEntry = {

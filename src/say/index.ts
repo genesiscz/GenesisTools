@@ -11,6 +11,7 @@ import { playBuffer } from "@app/utils/audio/playback";
 import { runTool } from "@app/utils/cli";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
 import { parseVariadic } from "@app/utils/cli/variadic";
+import { env } from "@app/utils/env";
 import {
     DEFAULT_APP_NAME,
     isSettableField,
@@ -349,11 +350,11 @@ async function resolveText(messageParts: string[], filePath?: string): Promise<s
 
 function envForProvider(provider: SayProvider): boolean {
     if (provider === "xai") {
-        return !!process.env.X_AI_API_KEY;
+        return env.x.hasApiKey();
     }
 
     if (provider === "openai") {
-        return !!process.env.OPENAI_API_KEY;
+        return env.ai.openai.hasKey();
     }
 
     return true;

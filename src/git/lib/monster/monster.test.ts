@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env as appEnv } from "@app/utils/env";
 import { analyze } from "./analyze";
 import { parseImports } from "./imports";
 import { render, renderHealth } from "./render";
@@ -233,8 +234,8 @@ describe("renderHealth", () => {
 });
 
 function gitInit(dir: string): void {
-    const run = (args: string[], env?: Record<string, string>) => {
-        const r = spawnSync("git", args, { cwd: dir, env: { ...process.env, ...env } });
+    const run = (args: string[], extraEnv?: Record<string, string>) => {
+        const r = spawnSync("git", args, { cwd: dir, env: { ...appEnv.getProcessEnv(), ...extraEnv } });
         if (r.status !== 0) {
             throw new Error(`git ${args.join(" ")} failed: ${r.stderr?.toString()}`);
         }
@@ -246,11 +247,11 @@ function gitInit(dir: string): void {
 }
 
 function commitAll(dir: string, message: string, isoDate: string): void {
-    const env = { GIT_AUTHOR_DATE: isoDate, GIT_COMMITTER_DATE: isoDate };
+    const gitEnv = { GIT_AUTHOR_DATE: isoDate, GIT_COMMITTER_DATE: isoDate };
     spawnSync("git", ["add", "-A"], { cwd: dir });
     const r = spawnSync("git", ["commit", "-q", "-m", message], {
         cwd: dir,
-        env: { ...process.env, ...env },
+        env: { ...appEnv.getProcessEnv(), ...gitEnv },
     });
     if (r.status !== 0) {
         throw new Error(`git commit failed: ${r.stderr?.toString()}`);

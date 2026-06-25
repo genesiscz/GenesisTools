@@ -4,6 +4,7 @@ import { BackupManager } from "@app/mcp-manager/utils/backup.js";
 import { getUnifiedConfigPath } from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { isInteractive } from "@app/utils/cli";
+import { env } from "@app/utils/env";
 import { Storage } from "@app/utils/storage";
 
 // Lazy (not a module-level singleton) so it re-reads GENESIS_TOOLS_HOME at
@@ -53,7 +54,7 @@ export async function openConfig(options: ConfigOptions = {}): Promise<void> {
     }
 
     // Try to open in editor
-    const editor = process.env.EDITOR || process.env.VISUAL || "nano";
+    const editor = env.editor.get() || "nano";
     // Split editor command in case it has arguments (e.g., "code --wait")
     const editorParts = editor.split(" ");
     const proc = Bun.spawn({

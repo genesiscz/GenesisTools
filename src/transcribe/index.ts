@@ -13,6 +13,7 @@ import { isInteractive, suggestCommand } from "@app/utils/cli/executor.ts";
 import { isQuietOutput } from "@app/utils/cli/output-mode.ts";
 import { createQuietSpinner } from "@app/utils/cli/quiet-spinner.ts";
 import { copyToClipboard } from "@app/utils/clipboard.ts";
+import { env } from "@app/utils/env";
 import { formatBytes, formatDuration } from "@app/utils/format.ts";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
@@ -231,10 +232,10 @@ async function interactiveMode(): Promise<void> {
         options: [
             { value: "local-hf", label: "Local (Hugging Face)", hint: "runs locally via transformers.js" },
             { value: "cloud", label: "Cloud (auto-select)", hint: "picks best available" },
-            ...(process.env.OPENAI_API_KEY ? [{ value: "openai", label: "OpenAI", hint: "whisper-1" }] : []),
-            ...(process.env.GROQ_API_KEY ? [{ value: "groq", label: "Groq", hint: "whisper-large-v3" }] : []),
-            ...(process.env.OPENROUTER_API_KEY ? [{ value: "openrouter", label: "OpenRouter" }] : []),
-            ...(process.env.X_AI_API_KEY ? [{ value: "xai", label: "xAI (Grok)", hint: "grok-voice STT" }] : []),
+            ...(env.ai.openai.getKey() ? [{ value: "openai", label: "OpenAI", hint: "whisper-1" }] : []),
+            ...(env.ai.groq.getKey() ? [{ value: "groq", label: "Groq", hint: "whisper-large-v3" }] : []),
+            ...(env.ai.openrouter.getKey() ? [{ value: "openrouter", label: "OpenRouter" }] : []),
+            ...(env.x.getApiKey() ? [{ value: "xai", label: "xAI (Grok)", hint: "grok-voice STT" }] : []),
             { value: "darwinkit", label: "DarwinKit", hint: "macOS native speech recognition" },
         ],
     });

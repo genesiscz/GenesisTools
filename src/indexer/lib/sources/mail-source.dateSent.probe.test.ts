@@ -3,6 +3,7 @@ import { describe, it } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { env } from "@app/utils/env";
 
 /**
  * Pick the active Mail.app envelope index, or return null if none exists.
@@ -11,7 +12,7 @@ import { join } from "node:path";
  * runtime so the probe stays useful across upgrades.
  */
 function findEnvelopePath(): string | null {
-    const override = process.env.MAIL_ENVELOPE_PATH;
+    const override = env.tools.getMailEnvelopePath();
     if (override && existsSync(override)) {
         return override;
     }

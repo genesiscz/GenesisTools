@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
 import { logger } from "@app/logger";
+import { env } from "@app/utils/env";
 import { waitForUrlReady } from "../readiness";
 
 /** Opens `url` when lifecycle set `DASHBOARD_OPEN_BROWSER=1`. */
 export async function openBrowserWhenDashboardEnv(url: string, timeoutMs = 20_000): Promise<void> {
-    if (process.env.DASHBOARD_OPEN_BROWSER !== "1") {
+    if (!env.dashboard.shouldOpenBrowser()) {
         return;
     }
 

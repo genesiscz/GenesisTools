@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { env } from "@app/utils/env";
 import { Command } from "commander";
 import {
     addGlobalVerboseOption,
@@ -9,20 +10,20 @@ import {
     runTool,
 } from "./commander";
 
-const ORIGINAL_LOG_DEBUG = process.env.LOG_DEBUG;
-const ORIGINAL_LOG_TRACE = process.env.LOG_TRACE;
+const ORIGINAL_LOG_DEBUG = env.get("LOG_DEBUG");
+const ORIGINAL_LOG_TRACE = env.get("LOG_TRACE");
 
 afterEach(() => {
     if (ORIGINAL_LOG_DEBUG === undefined) {
-        delete process.env.LOG_DEBUG;
+        env.testing.unset("LOG_DEBUG");
     } else {
-        process.env.LOG_DEBUG = ORIGINAL_LOG_DEBUG;
+        env.testing.set("LOG_DEBUG", ORIGINAL_LOG_DEBUG);
     }
 
     if (ORIGINAL_LOG_TRACE === undefined) {
-        delete process.env.LOG_TRACE;
+        env.testing.unset("LOG_TRACE");
     } else {
-        process.env.LOG_TRACE = ORIGINAL_LOG_TRACE;
+        env.testing.set("LOG_TRACE", ORIGINAL_LOG_TRACE);
     }
 });
 
@@ -50,13 +51,13 @@ describe("global Commander verbose option", () => {
     });
 
     it("sets debug and trace environment variables from verbosity", () => {
-        delete process.env.LOG_DEBUG;
-        delete process.env.LOG_TRACE;
+        env.testing.unset("LOG_DEBUG");
+        env.testing.unset("LOG_TRACE");
 
         applyVerbosityToEnv(2);
 
-        expect(process.env.LOG_DEBUG === "1").toBe(true);
-        expect(process.env.LOG_TRACE === "1").toBe(true);
+        expect(env.log.isDebug()).toBe(true);
+        expect(env.log.isTrace()).toBe(true);
     });
 });
 

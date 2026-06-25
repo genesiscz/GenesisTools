@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { AzureConfig, AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
 import { out } from "@app/logger";
+import { env } from "@app/utils/env";
 import { formatRelativeTime } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
 
@@ -18,7 +19,7 @@ export function getRelativeTime(date: Date): string {
  */
 export function findConfigPath(): string | null {
     const configName = ".claude/azure/config.json";
-    let currentDir = resolve(process.env.CLARITY_PROJECT_CWD || process.cwd());
+    let currentDir = resolve(env.paths.getClarityProjectCwd());
 
     for (let i = 0; i < 4; i++) {
         // current + 3 levels up

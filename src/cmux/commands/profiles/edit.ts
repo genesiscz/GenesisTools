@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
 import { out } from "@app/logger";
+import { env } from "@app/utils/env";
 import type { Command } from "commander";
 
 export function registerEditCommand(parent: Command): void {
@@ -35,7 +36,7 @@ export function registerEditCommand(parent: Command): void {
 }
 
 function pickEditor(): { bin: string; args: string[] } {
-    const fromEnv = process.env.VISUAL || process.env.EDITOR;
+    const fromEnv = env.editor.get();
     if (fromEnv) {
         const parts = fromEnv.split(/\s+/).filter(Boolean);
         if (parts.length > 0) {

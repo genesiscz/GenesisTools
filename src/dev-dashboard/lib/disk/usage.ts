@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { logger } from "@app/logger";
+import { env } from "@app/utils/env";
 import type { DiskUsageEntry, DiskUsageResult } from "./types";
 
 /** One `du -sk` row is "<kilobytes>\t<path>"; split on the FIRST whitespace run so paths with
@@ -75,7 +76,7 @@ export function diskUsageTargets(home = homedir(), cwd = process.cwd()): string[
 export const DEFAULT_DU_TIMEOUT_MS = 4000;
 
 export function duTimeoutMs(): number {
-    const raw = process.env.DD_DISK_DU_TIMEOUT_MS;
+    const raw = String(env.dashboard.getDiskDuTimeoutMs());
     if (!raw) {
         return DEFAULT_DU_TIMEOUT_MS;
     }

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { logger } from "@app/logger";
 import { stripMeta } from "@app/mcp-manager/utils/config.utils.js";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import type { GeminiGenericConfig, GeminiMCPServerConfig } from "./gemini.types.js";
@@ -16,7 +17,7 @@ import { MCPProvider, WriteResult } from "./types.js";
 
 export class GeminiProvider extends MCPProvider {
     constructor() {
-        const homeDir = process.env.HOME || process.env.USERPROFILE || "~";
+        const homeDir = env.paths.getHome() || env.paths.getUserProfile() || "~";
         super(path.join(homeDir, ".gemini", "settings.json"), "gemini");
     }
 

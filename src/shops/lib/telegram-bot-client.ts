@@ -1,5 +1,6 @@
 import { logger } from "@app/logger";
 import { ApiClient } from "@app/utils/api/ApiClient";
+import { env as appEnv } from "@app/utils/env";
 
 export interface TelegramBotClientConfig {
     token: string;
@@ -37,8 +38,8 @@ export class TelegramBotClient {
         });
     }
 
-    static fromEnv(env: Record<string, string | undefined> = process.env): TelegramBotClient | null {
-        const token = env.TELEGRAM_BOT_TOKEN;
+    static fromEnv(processEnv: Record<string, string | undefined> = appEnv.getProcessEnv()): TelegramBotClient | null {
+        const token = processEnv.TELEGRAM_BOT_TOKEN;
         if (!token) {
             return null;
         }

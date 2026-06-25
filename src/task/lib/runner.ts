@@ -2,6 +2,7 @@ import { logger } from "@app/logger";
 import { jsonlPath, sessionFilePaths, stderrLogPath, stdoutLogPath, uiJsonlPath } from "@app/task/lib/paths";
 import { TaskSessionStore } from "@app/task/lib/session-store";
 import type { ResolvedRunSession, RunTaskOptions, RunTaskResult } from "@app/task/types";
+import { env } from "@app/utils/env";
 import { JsonlWriter } from "@app/utils/log-session/jsonl-writer";
 import { OrderedCaptureWriter } from "@app/utils/log-session/ordered-capture-writer";
 
@@ -105,7 +106,7 @@ async function runPipeMode(opts: RunTaskOptions, writer: OrderedCaptureWriter): 
         stdout: "pipe",
         stderr: "pipe",
         stdin: "inherit",
-        env: process.env,
+        env: env.getProcessEnv(),
         detached: detachChild,
     });
 
@@ -155,7 +156,7 @@ async function runPtyMode(opts: RunTaskOptions, writer: OrderedCaptureWriter): P
 
     const proc = Bun.spawn(opts.command, {
         cwd: opts.cwd,
-        env: process.env,
+        env: env.getProcessEnv(),
         terminal: {
             cols,
             rows,

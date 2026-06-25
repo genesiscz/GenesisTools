@@ -1,4 +1,5 @@
 import { logger } from "@app/logger";
+import { env } from "@app/utils/env";
 import { resolveTmuxBin } from "@app/utils/tmux/bin";
 import {
     createTmuxSession,
@@ -346,7 +347,7 @@ export function restoreTmuxSession(snapshot: TmuxSessionSnapshot, opts: RestoreO
     const firstPane = firstWindow?.panes[0];
     const firstCwd = firstPane?.cwd ?? snapshot.cwd ?? process.cwd();
 
-    createTmuxSession(targetName, firstCwd, process.env.SHELL ?? "/bin/zsh");
+    createTmuxSession(targetName, firstCwd, env.paths.getShell("/bin/zsh"));
 
     if (firstWindow?.name) {
         runTmux(tmuxBin, ["rename-window", "-t", `${targetName}:0`, firstWindow.name], "rename-window");

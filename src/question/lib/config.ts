@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { SoundChoice } from "@app/utils/audio/runner.server";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 
 export interface QuestionConfig {
@@ -19,7 +20,7 @@ const DEFAULT: QuestionConfig = {
 };
 
 export function configPath(): string {
-    return process.env.QUESTION_CONFIG_PATH ?? join(homedir(), ".genesis-tools", "question", "config.json");
+    return env.question.getConfigPath() ?? join(homedir(), ".genesis-tools", "question", "config.json");
 }
 
 export function loadConfig(path = configPath()): QuestionConfig {

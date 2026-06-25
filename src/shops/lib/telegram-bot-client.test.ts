@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { TelegramBotClient } from "@app/shops/lib/telegram-bot-client";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 
 describe("TelegramBotClient", () => {
@@ -10,9 +11,9 @@ describe("TelegramBotClient", () => {
     });
 
     it("fromEnv returns null when TELEGRAM_BOT_TOKEN is unset", () => {
-        const env = { ...process.env };
-        delete env.TELEGRAM_BOT_TOKEN;
-        expect(TelegramBotClient.fromEnv(env)).toBeNull();
+        const processEnv = { ...env.getProcessEnv() };
+        delete processEnv.TELEGRAM_BOT_TOKEN;
+        expect(TelegramBotClient.fromEnv(processEnv)).toBeNull();
     });
 
     it("fromEnv returns a client when token is set", () => {

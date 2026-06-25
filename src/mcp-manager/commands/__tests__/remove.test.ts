@@ -17,6 +17,7 @@ const { removeServers } = await import("../remove.js");
 
 import { logger } from "@app/logger";
 import { setGlobalOptions } from "@app/mcp-manager/utils/config.utils.js";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage";
 import * as TOML from "@iarna/toml";
@@ -149,9 +150,9 @@ describe("remove command (permanent purge)", () => {
 
     beforeEach(() => {
         mock.restore(); // clear spies leaked from other test files (single bun process)
-        prevHome = process.env.HOME;
+        prevHome = env.get("HOME");
         homeDir = mkdtempSync(join(tmpdir(), "mcp-remove-"));
-        process.env.HOME = homeDir;
+        env.testing.set("HOME", homeDir);
         setGlobalOptions({ yes: true });
         spyOn(logger, "info").mockImplementation(() => {});
         spyOn(logger, "warn").mockImplementation(() => {});
@@ -161,7 +162,11 @@ describe("remove command (permanent purge)", () => {
 
     afterEach(() => {
         mock.restore();
-        process.env.HOME = prevHome;
+        if (prevHome) {
+            env.testing.set("HOME", prevHome);
+        } else {
+            env.testing.unset("HOME");
+        }
         setGlobalOptions({});
         rmSync(homeDir, { recursive: true, force: true });
     });

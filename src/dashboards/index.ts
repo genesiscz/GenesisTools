@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
+import { env } from "@app/utils/env";
 import { DASHBOARDS, type DashboardKey } from "@app/utils/ui/dashboards";
 import { Command } from "commander";
 
@@ -43,7 +44,7 @@ async function execDashboard(args: string[], extra: string[] = []): Promise<numb
         const child = spawn(TOOLS, [...args, ...extra], {
             cwd: ROOT,
             stdio: "inherit",
-            env: { ...process.env, BROWSER: "none" },
+            env: { ...env.getProcessEnv(), BROWSER: "none" },
         });
 
         child.on("error", (err) => {

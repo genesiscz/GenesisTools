@@ -1,5 +1,6 @@
 import { access, mkdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@dashboard/shared";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -20,7 +21,7 @@ interface WorkOSUserResponse {
 }
 
 async function setWorkOSProfilePicture(userId: string, profilePictureUrl: string | null): Promise<WorkOSUserResponse> {
-    const apiKey = process.env.WORKOS_API_KEY;
+    const apiKey = env.workos.getApiKey();
 
     if (!apiKey) {
         throw new Error("WORKOS_API_KEY is not configured");

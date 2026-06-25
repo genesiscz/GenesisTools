@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { env } from "@app/utils/env";
 import { resetTmuxBinCache, setTmuxBinForTests } from "@app/utils/tmux/bin";
 import {
     buildTmuxSpawnEnv,
@@ -83,35 +84,35 @@ describe("tmux sessions", () => {
 
     test("buildTmuxSpawnEnv sets UTF-8 locale when LANG unset", () => {
         const saved = {
-            LANG: process.env.LANG,
-            LC_ALL: process.env.LC_ALL,
-            LC_CTYPE: process.env.LC_CTYPE,
+            LANG: env.locale.getLang(),
+            LC_ALL: env.locale.getLcAll(),
+            LC_CTYPE: env.locale.getLcCtype(),
         };
 
-        delete process.env.LANG;
-        delete process.env.LC_ALL;
-        delete process.env.LC_CTYPE;
+        env.testing.unset("LANG");
+        env.testing.unset("LC_ALL");
+        env.testing.unset("LC_CTYPE");
 
         try {
             expect(buildTmuxSpawnEnv().LANG).toMatch(/UTF-8/i);
             expect(buildTmuxSpawnEnv().LC_ALL).toBe(buildTmuxSpawnEnv().LANG);
         } finally {
             if (saved.LANG === undefined) {
-                delete process.env.LANG;
+                env.testing.unset("LANG");
             } else {
-                process.env.LANG = saved.LANG;
+                env.testing.set("LANG", saved.LANG);
             }
 
             if (saved.LC_ALL === undefined) {
-                delete process.env.LC_ALL;
+                env.testing.unset("LC_ALL");
             } else {
-                process.env.LC_ALL = saved.LC_ALL;
+                env.testing.set("LC_ALL", saved.LC_ALL);
             }
 
             if (saved.LC_CTYPE === undefined) {
-                delete process.env.LC_CTYPE;
+                env.testing.unset("LC_CTYPE");
             } else {
-                process.env.LC_CTYPE = saved.LC_CTYPE;
+                env.testing.set("LC_CTYPE", saved.LC_CTYPE);
             }
         }
     });

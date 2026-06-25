@@ -2,6 +2,7 @@ import { out } from "@app/logger";
 import type { CliArgs, CommandType, TSServer } from "@app/mcp-tsc/core/interfaces.js";
 import { LspServer } from "@app/mcp-tsc/providers/LspServer.js";
 import { TscServer } from "@app/mcp-tsc/providers/TscServer.js";
+import { env } from "@app/utils/env";
 import { Command } from "commander";
 
 /**
@@ -97,7 +98,7 @@ export class CliHandler {
             return new TscServer({ cwd });
         } else {
             // LSP is the default
-            return new LspServer({ cwd, debug: process.env.DEBUG === "1" });
+            return new LspServer({ cwd, debug: env.log.isDebugEnabled() });
         }
     }
 

@@ -1,4 +1,5 @@
 import { out } from "@app/logger";
+import { env } from "@app/utils/env";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -254,7 +255,7 @@ export class Executor {
         }
 
         return {
-            ...process.env,
+            ...env.getProcessEnv(),
             ...this.env,
             ...callEnv,
         };

@@ -1,8 +1,9 @@
 import { homedir } from "node:os";
 import { resolve, sep } from "node:path";
+import { env } from "@app/utils/env";
 
 function genesisToolsRoot(): string {
-    return process.env.GENESIS_TOOLS_HOME || homedir();
+    return env.tools.getHome() || homedir();
 }
 
 export function getTaskSessionsDir(): string {
@@ -10,7 +11,7 @@ export function getTaskSessionsDir(): string {
 }
 
 export function taskConfigPath(): string {
-    return process.env.TASK_CONFIG_PATH ?? resolve(genesisToolsRoot(), ".genesis-tools", "task", "config.json");
+    return env.task.getConfigPath() ?? resolve(genesisToolsRoot(), ".genesis-tools", "task", "config.json");
 }
 
 function safeSessionPath(session: string, suffix: string): string {

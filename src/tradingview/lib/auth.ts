@@ -1,4 +1,5 @@
 import { logger } from "@app/logger";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage";
 import type { TvSession } from "./types";
@@ -12,8 +13,8 @@ interface SessionOpts {
 }
 
 function cookieFromParts(): string | undefined {
-    const sid = process.env.TRADINGVIEW_SESSIONID;
-    const sign = process.env.TRADINGVIEW_SESSIONID_SIGN;
+    const sid = env.tradingview.getSessionId();
+    const sign = env.tradingview.getSessionIdSign();
     if (sid && sign) {
         return `sessionid=${sid}; sessionid_sign=${sign}`;
     }
@@ -21,10 +22,10 @@ function cookieFromParts(): string | undefined {
 }
 
 export async function resolveSession(opts: SessionOpts = {}): Promise<TvSession | null> {
-    const cookie = opts.cookie ?? process.env.TRADINGVIEW_COOKIE ?? cookieFromParts();
+    const cookie = opts.cookie ?? env.tradingview.getCookie() ?? cookieFromParts();
     if (cookie) {
-        const username = opts.username ?? process.env.TRADINGVIEW_USERNAME ?? "";
-        const userId = opts.userId ?? Number(process.env.TRADINGVIEW_USER_ID ?? 0);
+        const username = opts.username ?? env.tradingview.getUsername() ?? "";
+        const userId = opts.userId ?? Number(env.tradingview.getUserId() ?? 0);
         const session: TvSession = { username, userId, cookie };
         if (!username || !userId) {
             const enriched = await enrichFromHomepage(session);

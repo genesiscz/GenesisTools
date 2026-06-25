@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import { logger } from "@app/logger";
 import { runTool } from "@app/utils/cli";
+import { env } from "@app/utils/env";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { spawn } from "bun";
 import chalk from "chalk";
@@ -186,7 +187,7 @@ function analyzeEvents(events: Event[], topCount: number) {
 async function showFseventsWatchers() {
     logger.info(chalk.bold("--- Fsevents Watchers Analysis (using fs_usage) ---"));
 
-    if (process.env.USER !== "root") {
+    if (!env.device.isRoot()) {
         logger.error("This command requires root privileges to run fs_usage.");
         logger.info(`Please re-run with sudo: ${chalk.cyan("sudo tools fsevents-profile --watchers")}`);
         process.exit(1);

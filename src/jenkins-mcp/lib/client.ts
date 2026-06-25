@@ -1,4 +1,5 @@
 import { logger } from "@app/logger";
+import { env } from "@app/utils/env";
 import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from "axios";
 
 export interface JenkinsAuth {
@@ -8,9 +9,9 @@ export interface JenkinsAuth {
 }
 
 export function readEnvAuth(): JenkinsAuth {
-    const url = process.env.JENKINS_URL ?? "";
-    const user = process.env.JENKINS_USER ?? "";
-    const token = process.env.JENKINS_TOKEN ?? "";
+    const url = env.jenkins.getUrl();
+    const user = env.jenkins.getUser();
+    const token = env.jenkins.getToken();
 
     if (!url || !user || !token) {
         const missing = [!url && "JENKINS_URL", !user && "JENKINS_USER", !token && "JENKINS_TOKEN"]

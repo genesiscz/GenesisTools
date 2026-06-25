@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { env } from "@app/utils/env";
 
 const ALGO = "aes-256-gcm";
 const KEY_BYTES = 32;
@@ -11,7 +12,7 @@ const TAG_BYTES = 16;
 let cachedKey: Buffer | null = null;
 
 function defaultKeyPath(): string {
-    return process.env.SHOPS_SECRET_KEY_PATH ?? join(homedir(), ".genesis-tools", "shops", ".secret-key");
+    return env.shops.getSecretKeyPath() ?? join(homedir(), ".genesis-tools", "shops", ".secret-key");
 }
 
 function loadOrCreateKey(): Buffer {

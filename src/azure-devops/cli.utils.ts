@@ -8,6 +8,7 @@
  */
 import { azLoginSuggestionBlock, extractTenantFromStderr } from "@app/azure-devops/lib/az-cli.utils";
 import { out } from "@app/logger";
+import { env } from "@app/utils/env";
 
 const SSL_PROXY_GUIDE = `
 🔐 SSL Certificate Error (Proxy Detected)
@@ -128,7 +129,7 @@ export function extractAzLoginSuggestion(stderr: string): string | null {
 export function exitWithSslGuide(error?: unknown): never {
     out.println(SSL_PROXY_GUIDE);
 
-    if (error instanceof Error && error.stack && process.env.DEBUG) {
+    if (error instanceof Error && error.stack && env.log.isDebugEnabled()) {
         out.error("\nStacktrace:\n");
         out.error(error.stack);
     }
@@ -142,7 +143,7 @@ export function exitWithSslGuide(error?: unknown): never {
 export function exitWithAuthGuide(error?: unknown): never {
     out.println(authGuide());
 
-    if (error instanceof Error && error.stack && process.env.DEBUG) {
+    if (error instanceof Error && error.stack && env.log.isDebugEnabled()) {
         out.error("\nStacktrace:\n");
         out.error(error.stack);
     }

@@ -1,4 +1,5 @@
 import { out } from "@app/logger";
+import { env } from "@app/utils/env";
 import { formatDuration as _formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
 import type { Args, CLIOptions, OutputFormat } from "@ask/types";
@@ -334,7 +335,7 @@ export function parseMaxTokens(tokensArg?: string | number): number | undefined 
 }
 
 export function getConversationsDir(): string {
-    const customDir = process.env.ASK_CONVERSATIONS_DIR;
+    const customDir = env.ask.getConversationsDir();
     return customDir || "./conversations";
 }
 

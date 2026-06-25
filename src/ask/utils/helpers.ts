@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { env } from "@app/utils/env";
 import { formatTokens } from "@app/utils/format";
 import type { LanguageModelUsage } from "ai";
 import pc from "picocolors";
@@ -129,7 +130,7 @@ export function validateAPIKey(key: string, provider: string): boolean {
 }
 
 export function getEnvVar(name: string, required: boolean = false): string | undefined {
-    const value = process.env[name];
+    const value = env.get(name);
 
     if (required && !value) {
         throw new Error(`Required environment variable ${name} is not set`);

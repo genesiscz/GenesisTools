@@ -1,4 +1,5 @@
 import { logger } from "@app/logger";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { clearPid, registerSignalHandlers, writePid } from "@app/youtube/lib/server/daemon";
@@ -134,7 +135,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
 
 if (import.meta.main) {
     const portFlagIndex = process.argv.indexOf("--port");
-    const rawPort = portFlagIndex >= 0 ? process.argv[portFlagIndex + 1] : process.env.PORT;
+    const rawPort = portFlagIndex >= 0 ? process.argv[portFlagIndex + 1] : env.node.getPort();
     const parsedPort = rawPort ? parseInt(rawPort, 10) : undefined;
     const port = parsedPort && !Number.isNaN(parsedPort) ? parsedPort : undefined;
     await startServer({ port, daemon: true });

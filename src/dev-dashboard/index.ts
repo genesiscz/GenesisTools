@@ -16,6 +16,7 @@ import { isInteractive, runTool } from "@app/utils/cli";
 import { stopUiServerOnPort } from "@app/utils/DashboardApp";
 import { openBrowserWhenDashboardEnv } from "@app/utils/DashboardApp/preview";
 import { waitForUrlReady } from "@app/utils/DashboardApp/readiness";
+import { env } from "@app/utils/env";
 import { findFreePort } from "@app/utils/net/free-port";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import { Command } from "commander";
@@ -73,7 +74,7 @@ async function runUiServer(): Promise<void> {
             cwd: PROJECT_ROOT,
             stdio: "inherit",
             env: {
-                ...process.env,
+                ...env.getProcessEnv(),
                 FORCE_COLOR: "1",
                 GENESIS_TOOLS_ROOT: PROJECT_ROOT,
                 DEV_DASHBOARD_PUBLIC_PORT: String(port),
@@ -101,7 +102,7 @@ async function runUiServer(): Promise<void> {
     }
 
     try {
-        const bindHost = process.env.DASHBOARD_BIND_HOST ?? "0.0.0.0";
+        const bindHost = env.dashboard.getBindHost() ?? "0.0.0.0";
         frontProxy = startFrontProxy({ publicPort: port, internalPort, hostname: bindHost });
         logger.info({ publicPort: port, internalPort }, "front proxy listening — upstream Vite is ready");
     } catch (err) {

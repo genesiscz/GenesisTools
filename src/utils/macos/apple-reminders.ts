@@ -2,6 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { logger } from "@app/logger";
+import { env } from "@app/utils/env";
 import type { DarwinKit, ReminderInfo, ReminderListInfo } from "@genesiscz/darwinkit";
 import { DarwinKitError, ReminderPriority } from "@genesiscz/darwinkit";
 import { closeDarwinKit, getDarwinKit } from "./darwinkit";
@@ -18,7 +19,7 @@ const DIAGNOSTIC_DIR = join(homedir(), "Library/Logs/DiagnosticReports");
 const STDERR_BUFFER_LINES = 50;
 
 function resolveDefaultTimeoutMs(): number {
-    const raw = process.env.DARWINKIT_TIMEOUT_MS;
+    const raw = String(env.device.getDarwinKitTimeoutMs());
 
     if (!raw) {
         return 10_000;

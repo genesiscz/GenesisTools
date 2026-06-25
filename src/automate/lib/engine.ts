@@ -3,6 +3,7 @@
 // Register all step handlers (http, file, git, json, text, array, notify, parallel, loop)
 import "./steps/index";
 
+import { env } from "@app/utils/env";
 import { formatDuration } from "@app/utils/format.ts";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
@@ -223,7 +224,7 @@ function buildContext(preset: Preset, options: RunOptions): ExecutionContext {
     return {
         vars,
         steps: {},
-        env: process.env as Record<string, string>,
+        env: env.getProcessEnv() as Record<string, string>,
     };
 }
 

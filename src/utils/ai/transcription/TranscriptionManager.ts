@@ -1,5 +1,6 @@
 import { statSync } from "node:fs";
 import { logger } from "@app/logger";
+import { env } from "@app/utils/env";
 import type { TranscriptionModel } from "ai";
 import { experimental_transcribe as transcribe } from "ai";
 import pc from "picocolors";
@@ -287,8 +288,8 @@ export class TranscriptionManager {
 
         const triedProviders = new Set<string>([options.provider ?? ""]);
 
-        for (const { env, provider } of fallbackProviders) {
-            if (!process.env[env] || triedProviders.has(provider)) {
+        for (const { env: envKey, provider } of fallbackProviders) {
+            if (!env.get(envKey) || triedProviders.has(provider)) {
                 continue;
             }
 
@@ -365,7 +366,7 @@ export class TranscriptionManager {
         // For large files (>25MB), prioritize providers that support large files
         if (fileSize > 25 * 1024 * 1024) {
             // Try AssemblyAI first (supports large files, high quality)
-            if (process.env.ASSEMBLYAI_API_KEY) {
+            if (env.ai.assemblyai.getKey()) {
                 const model = await this.getSpecificTranscriptionModel("assemblyai", "best");
                 if (model) {
                     return model;
@@ -373,7 +374,7 @@ export class TranscriptionManager {
             }
 
             // Try Deepgram (supports large files, fast)
-            if (process.env.DEEPGRAM_API_KEY) {
+            if (env.ai.deepgram.getKey()) {
                 const model = await this.getSpecificTranscriptionModel("deepgram", "nova-3");
                 if (model) {
                     return model;
@@ -381,7 +382,7 @@ export class TranscriptionManager {
             }
 
             // Try Gladia (supports large files)
-            if (process.env.GLADIA_API_KEY) {
+            if (env.ai.gladia.getKey()) {
                 const model = await this.getSpecificTranscriptionModel("gladia", "default");
                 if (model) {
                     return model;
@@ -414,7 +415,7 @@ export class TranscriptionManager {
         try {
             switch (providerName) {
                 case "groq": {
-                    if (!process.env.GROQ_API_KEY) {
+                    if (!env.ai.groq.getKey()) {
                         return null;
                     }
                     const { groq } = await import("@ai-sdk/groq");
@@ -426,12 +427,12 @@ export class TranscriptionManager {
                 }
 
                 case "openrouter": {
-                    if (!process.env.OPENROUTER_API_KEY) {
+                    if (!env.ai.openrouter.getKey()) {
                         return null;
                     }
                     const { createOpenAI } = await import("@ai-sdk/openai");
                     const openrouter = createOpenAI({
-                        apiKey: process.env.OPENROUTER_API_KEY,
+                        apiKey: env.ai.openrouter.getKey(),
                         baseURL: "https://openrouter.ai/api/v1",
                     });
                     return {
@@ -442,7 +443,7 @@ export class TranscriptionManager {
                 }
 
                 case "openai": {
-                    if (!process.env.OPENAI_API_KEY) {
+                    if (!env.ai.openai.getKey()) {
                         return null;
                     }
                     const { openai } = await import("@ai-sdk/openai");
@@ -454,7 +455,7 @@ export class TranscriptionManager {
                 }
 
                 case "assemblyai": {
-                    if (!process.env.ASSEMBLYAI_API_KEY) {
+                    if (!env.ai.assemblyai.getKey()) {
                         return null;
                     }
                     // @ts-expect-error - Optional dependency, may not be installed
@@ -467,7 +468,7 @@ export class TranscriptionManager {
                 }
 
                 case "deepgram": {
-                    if (!process.env.DEEPGRAM_API_KEY) {
+                    if (!env.ai.deepgram.getKey()) {
                         return null;
                     }
                     // Optional dependency — string-typed specifier so tsc skips
@@ -481,7 +482,7 @@ export class TranscriptionManager {
                 }
 
                 case "gladia": {
-                    if (!process.env.GLADIA_API_KEY) {
+                    if (!env.ai.gladia.getKey()) {
                         return null;
                     }
                     // @ts-expect-error - Optional dependency, may not be installed
@@ -663,22 +664,22 @@ export class TranscriptionManager {
     getAvailableProviders(): string[] {
         const providers: string[] = [];
 
-        if (process.env.GROQ_API_KEY) {
+        if (env.ai.groq.getKey()) {
             providers.push("groq");
         }
-        if (process.env.OPENROUTER_API_KEY) {
+        if (env.ai.openrouter.getKey()) {
             providers.push("openrouter");
         }
-        if (process.env.OPENAI_API_KEY) {
+        if (env.ai.openai.getKey()) {
             providers.push("openai");
         }
-        if (process.env.ASSEMBLYAI_API_KEY) {
+        if (env.ai.assemblyai.getKey()) {
             providers.push("assemblyai");
         }
-        if (process.env.DEEPGRAM_API_KEY) {
+        if (env.ai.deepgram.getKey()) {
             providers.push("deepgram");
         }
-        if (process.env.GLADIA_API_KEY) {
+        if (env.ai.gladia.getKey()) {
             providers.push("gladia");
         }
 

@@ -2,6 +2,7 @@ import { describe, expect, it, test } from "bun:test";
 import { ShopApiClient } from "@app/shops/api/ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import type { HttpRequestEvent, HttpRequestSink } from "@app/shops/lib/http-sink";
+import { env } from "@app/utils/env";
 
 class TestSink implements HttpRequestSink {
     public readonly events: HttpRequestEvent[] = [];
@@ -49,19 +50,22 @@ describe("ShopApiClient", () => {
         expect(() => c.parseUrl("https://www.kosik.cz/p116247-nescafe-gold")).toThrow(/does not belong to rohlik.cz/);
     });
 
-    test.skipIf(!process.env.INTEGRATION)("emits an http-request event through the sink on every request", async () => {
-        const sink = new TestSink();
-        const c = new FakeRohlikClient({ baseUrl: "https://data.hlidacshopu.cz", sink, retry: 0 });
-        try {
-            await c.requestRawPublic("GET", "/items/alza.cz/8023870/meta.json");
-        } catch {
-            // 404 is fine; we only care that the sink got an event.
-        }
+    test.skipIf(!env.test.shouldRunIntegration())(
+        "emits an http-request event through the sink on every request",
+        async () => {
+            const sink = new TestSink();
+            const c = new FakeRohlikClient({ baseUrl: "https://data.hlidacshopu.cz", sink, retry: 0 });
+            try {
+                await c.requestRawPublic("GET", "/items/alza.cz/8023870/meta.json");
+            } catch {
+                // 404 is fine; we only care that the sink got an event.
+            }
 
-        expect(sink.events).toHaveLength(1);
-        expect(sink.events[0]?.method).toBe("GET");
-        expect(sink.events[0]?.shopOrigin).toBe("rohlik.cz");
-        expect(sink.events[0]?.source).toBe("ShopApiClient:rohlik.cz");
-        expect(typeof sink.events[0]?.durationMs).toBe("number");
-    });
+            expect(sink.events).toHaveLength(1);
+            expect(sink.events[0]?.method).toBe("GET");
+            expect(sink.events[0]?.shopOrigin).toBe("rohlik.cz");
+            expect(sink.events[0]?.source).toBe("ShopApiClient:rohlik.cz");
+            expect(typeof sink.events[0]?.durationMs).toBe("number");
+        }
+    );
 });

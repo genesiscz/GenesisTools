@@ -22,6 +22,7 @@ import type {
 import { convertFileToMonoMp3 } from "@app/utils/audio/converter";
 import { sniffAudioExt } from "@app/utils/audio/detect-format";
 import type { AIProviderType } from "@app/utils/config/ai.types";
+import { env } from "@app/utils/env";
 
 type LlmCloudType = "openai" | "groq" | "openrouter";
 type TranscribeOnlyCloudType = "assemblyai" | "deepgram" | "gladia";
@@ -78,15 +79,15 @@ export class AICloudProvider
 
     async isAvailable(): Promise<boolean> {
         if (this.cloudType === "auto") {
-            return AUTO_API_KEY_VARS.some((key) => !!process.env[key]);
+            return AUTO_API_KEY_VARS.some((key) => !!env.get(key));
         }
 
-        return !!process.env[ENV_VAR_MAP[this.cloudType]];
+        return !!env.ai.getByEnvKey(ENV_VAR_MAP[this.cloudType]);
     }
 
     supports(task: AITask): boolean {
         if (this.cloudType === "auto" && task === "embed") {
-            return !!process.env.OPENAI_API_KEY;
+            return env.ai.openai.hasKey();
         }
 
         return CLOUD_TASKS[this.cloudType].has(task);
@@ -245,7 +246,7 @@ export class AICloudProvider
         }
 
         for (const ct of FALLBACK_ORDER) {
-            if (process.env[ENV_VAR_MAP[ct]]) {
+            if (env.ai.getByEnvKey(ENV_VAR_MAP[ct])) {
                 return this.resolveModel(DEFAULT_LLM_MODELS[ct]);
             }
         }
@@ -266,7 +267,7 @@ export class AICloudProvider
             case "openrouter": {
                 const { createOpenAI } = await import("@ai-sdk/openai");
                 const openrouter = createOpenAI({
-                    apiKey: process.env.OPENROUTER_API_KEY,
+                    apiKey: env.ai.openrouter.getKey(),
                     baseURL: "https://openrouter.ai/api/v1",
                 });
                 return openrouter(modelId);

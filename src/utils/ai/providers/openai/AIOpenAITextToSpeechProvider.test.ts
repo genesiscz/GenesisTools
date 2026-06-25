@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { env } from "@app/utils/env";
 import { AIOpenAITextToSpeechProvider } from "./AIOpenAITextToSpeechProvider";
 
 describe("AIOpenAITextToSpeechProvider", () => {
@@ -15,7 +16,7 @@ describe("AIOpenAITextToSpeechProvider", () => {
 
     test("isAvailable reflects OPENAI_API_KEY", async () => {
         const p = new AIOpenAITextToSpeechProvider();
-        expect(await p.isAvailable()).toBe(!!process.env.OPENAI_API_KEY);
+        expect(await p.isAvailable()).toBe(env.ai.openai.hasKey());
     });
 
     test("synthesize rejects text over 4096 chars", async () => {
@@ -42,7 +43,7 @@ describe("AIOpenAITextToSpeechProvider", () => {
     });
 
     // Live integration test — short utterance round-trip.
-    test.skipIf(!process.env.OPENAI_API_KEY)(
+    test.skipIf(!env.ai.openai.getKey())(
         "synthesize() returns audio bytes for a short utterance (requires OPENAI_API_KEY)",
         async () => {
             const p = new AIOpenAITextToSpeechProvider();

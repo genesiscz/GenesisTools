@@ -1,5 +1,6 @@
 import { logger } from "@app/logger";
 import { toFloat32Audio } from "@app/utils/audio/converter";
+import { env } from "@app/utils/env";
 import { formatBytes } from "@app/utils/format";
 import { Stopwatch } from "@app/utils/Stopwatch";
 import { resolveDevice } from "../device";
@@ -485,26 +486,27 @@ export class AILocalProvider
     }
 
     /**
-     * Ensure process.env.HF_TOKEN is set from AIConfig.
-     * @huggingface/transformers reads process.env.HF_TOKEN in its fetch wrapper (hub.js).
+     * Ensure env.hf.getKey() is set from AIConfig.
+     * @huggingface/transformers reads env.hf.getKey() in its fetch wrapper (hub.js).
      */
     private async ensureHfToken(): Promise<void> {
-        if (process.env.HF_TOKEN) {
+        if (env.hf.getKey()) {
             return;
         }
 
         const { AIConfig } = await import("../AIConfig");
         const config = await AIConfig.load();
-        const token = config.getHfToken() ?? process.env.HUGGINGFACE_TOKEN;
+        const token = config.getHfToken() ?? env.hf.getKey();
 
         if (token) {
-            process.env.HF_TOKEN = token;
+            env.testing.set("HUGGINGFACE_TOKEN", token);
+            env.testing.set("HF_TOKEN", token);
         }
     }
 
     /**
      * Prompt the user for a HuggingFace token when a gated model returns Unauthorized.
-     * Opens the token page in the browser, saves the token to AIConfig, and sets process.env.HF_TOKEN.
+     * Opens the token page in the browser, saves the token to AIConfig, and sets env.hf.getKey().
      */
     private async promptForHfToken(model: string): Promise<string | null> {
         const { isInteractive } = await import("@app/utils/cli");
@@ -561,8 +563,9 @@ export class AILocalProvider
         const config = await AIConfig.load();
         await config.setHfToken(tokenStr);
 
-        // Set for current session — @huggingface/transformers reads this in hub.js
-        process.env.HF_TOKEN = tokenStr;
+        // Set for current session — @huggingface/transformers reads HF_TOKEN in hub.js
+        env.testing.set("HUGGINGFACE_TOKEN", tokenStr);
+        env.testing.set("HF_TOKEN", tokenStr);
 
         p.log.success("HuggingFace token saved to AI config.");
         return tokenStr;

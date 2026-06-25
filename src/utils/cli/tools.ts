@@ -1,5 +1,6 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { env } from "@app/utils/env";
 import type { ExecResult } from "./executor";
 
 function getToolsPath(): string {
@@ -22,7 +23,7 @@ export async function execTool(args: string[], options?: RunToolOptions): Promis
     const proc = Bun.spawn(["bun", "run", getToolsPath(), ...args], {
         cwd: options?.cwd ?? process.cwd(),
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, ...options?.env },
+        env: { ...env.getProcessEnv(), ...options?.env },
         ...(options?.timeout ? { timeout: options.timeout } : {}),
     });
 
@@ -51,7 +52,7 @@ export async function execToolInteractive(
     const proc = Bun.spawn(["bun", "run", getToolsPath(), ...args], {
         cwd: options?.cwd ?? process.cwd(),
         stdio: ["inherit", "inherit", "inherit"],
-        env: { ...process.env, ...options?.env },
+        env: { ...env.getProcessEnv(), ...options?.env },
     });
 
     const exitCode = await proc.exited;

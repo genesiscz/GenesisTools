@@ -18,6 +18,7 @@ import pc from "picocolors";
 // they stay on the TTY.
 const STDERR: { output: typeof process.stderr } = { output: process.stderr };
 
+import { env } from "@app/utils/env";
 import type { PromptBackend } from "./backend";
 import type {
     EditorOpts,
@@ -170,7 +171,7 @@ export const clackBackend: PromptBackend = {
     },
 
     editor: async (opts: EditorOpts): Promise<string> => {
-        const editor = process.env.EDITOR ?? process.env.VISUAL;
+        const editor = env.editor.getEditor() ?? env.editor.getVisual();
 
         if (editor) {
             // PR #179 t13: use os.tmpdir() — /tmp doesn't exist on Windows.

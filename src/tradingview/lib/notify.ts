@@ -1,4 +1,5 @@
 import { logger } from "@app/logger";
+import { env as appEnv } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import type { SignalEvent } from "./types";
 
@@ -9,10 +10,10 @@ export interface NotifyOpts {
 
 type Spawner = (cmd: string[], env?: Record<string, string>) => void;
 
-const defaultSpawner: Spawner = (cmd, env) => {
+const defaultSpawner: Spawner = (cmd, extraEnv) => {
     try {
         Bun.spawn(cmd, {
-            env: { ...process.env, ...(env ?? {}) },
+            env: { ...appEnv.getProcessEnv(), ...(extraEnv ?? {}) },
             stdout: "ignore",
             stderr: "ignore",
             stdin: "ignore",

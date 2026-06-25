@@ -17,6 +17,7 @@
  * — we deliberately do NOT call `process.exit` here so callers can run cleanup.
  */
 import { logger } from "@app/logger";
+import { env as appEnv } from "@app/utils/env";
 
 export interface SpawnDashboardOptions {
     /** Argv. First element is the executable. */
@@ -37,7 +38,7 @@ export async function spawnDashboard(opts: SpawnDashboardOptions): Promise<numbe
     const child = Bun.spawn([...cmd], {
         cwd,
         stdio: ["inherit", "inherit", "inherit"],
-        env: { ...process.env, ...env },
+        env: { ...appEnv.getProcessEnv(), ...env },
     });
 
     let exiting = false;

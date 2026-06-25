@@ -3,10 +3,11 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decryptCredentials, encryptCredentials, resetCryptoForTest } from "@app/shops/lib/crypto";
+import { env } from "@app/utils/env";
 
 function freshKeyDir(): string {
     const dir = mkdtempSync(join(tmpdir(), "shops-crypto-"));
-    process.env.SHOPS_SECRET_KEY_PATH = join(dir, ".secret-key");
+    env.testing.set("SHOPS_SECRET_KEY_PATH", join(dir, ".secret-key"));
     resetCryptoForTest();
     return dir;
 }

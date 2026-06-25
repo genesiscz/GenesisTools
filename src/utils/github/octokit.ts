@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { logger } from "@app/logger";
+import { env } from "@app/utils/env";
 import { Octokit } from "octokit";
 
 let _octokit: Octokit | null = null;
@@ -30,19 +31,11 @@ export function getOctokit(): Octokit {
  */
 function getGitHubToken(): string | undefined {
     // 1. Check environment variables
-    if (process.env.GITHUB_TOKEN) {
-        logger.debug("Using GITHUB_TOKEN from environment");
-        return process.env.GITHUB_TOKEN;
-    }
-
-    if (process.env.GH_TOKEN) {
-        logger.debug("Using GH_TOKEN from environment");
-        return process.env.GH_TOKEN;
-    }
-
-    if (process.env.GITHUB_PERSONAL_ACCESS_TOKEN) {
-        logger.debug("Using GITHUB_PERSONAL_ACCESS_TOKEN from environment");
-        return process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
+    const token = env.github.getToken();
+    if (token) {
+        const tokenEnvKey = env.github.getTokenEnvKey();
+        logger.debug(`Using ${tokenEnvKey ?? "GITHUB_TOKEN"} from environment`);
+        return token;
     }
 
     // 2. Try `gh auth token` command (works with modern gh CLI)
@@ -55,7 +48,7 @@ function getGitHubToken(): string | undefined {
     // 3. Fallback: Try to read from gh CLI config (older versions)
     const ghConfigPath =
         process.platform === "win32"
-            ? join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "gh", "hosts.yml")
+            ? join(env.paths.getAppData() || join(homedir(), "AppData", "Roaming"), "gh", "hosts.yml")
             : join(homedir(), ".config", "gh", "hosts.yml");
     if (existsSync(ghConfigPath)) {
         try {

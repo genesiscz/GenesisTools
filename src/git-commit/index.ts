@@ -7,6 +7,7 @@ import { handleReadmeFlag } from "@app/utils/readme";
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
 
+import { env } from "@app/utils/env";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateObject } from "ai";
 import { Command } from "commander";
@@ -26,7 +27,7 @@ interface CommitMessage {
 }
 
 async function generateCommitMessages(diff: string, includeDetail: boolean): Promise<CommitMessage[]> {
-    const apiKey = process.env.OPENROUTER_API_KEY;
+    const apiKey = env.ai.openrouter.getKey();
     if (!apiKey) {
         throw new Error("OPENROUTER_API_KEY environment variable is not set");
     }

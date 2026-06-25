@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { logger } from "@app/logger";
 import { runTool } from "@app/utils/cli";
+import { env } from "@app/utils/env";
 import { handleReadmeFlag } from "@app/utils/readme";
 import axios from "axios";
 import { Command } from "commander";
@@ -42,6 +43,7 @@ async function fetchReleaseNotes(options: ScriptOptions): Promise<void> {
         let allReleases: GitHubRelease[] = [];
         let page = 1;
         let hasMorePages = true;
+        const githubToken = env.github.getToken();
 
         while (hasMorePages && page <= maxPages) {
             logger.debug(`Fetching page ${page} of ${maxPages}...`);
@@ -51,8 +53,7 @@ async function fetchReleaseNotes(options: ScriptOptions): Promise<void> {
             const response = await axios.get(url, {
                 headers: {
                     Accept: "application/vnd.github.v3+json",
-                    // Use GitHub token from environment if available
-                    ...(process.env.GITHUB_TOKEN && { Authorization: `token ${process.env.GITHUB_TOKEN}` }),
+                    ...(githubToken && { Authorization: `token ${githubToken}` }),
                 },
             });
 

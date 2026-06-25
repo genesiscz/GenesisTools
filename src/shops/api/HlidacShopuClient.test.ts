@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { HlidacShopuClient } from "@app/shops/api/HlidacShopuClient";
 import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
+import { env } from "@app/utils/env";
 
-const HAS_NETWORK = process.env.SKIP_NETWORK_TESTS !== "1";
+const HAS_NETWORK = !env.test.shouldSkipNetworkTests();
 const ALZA_S3_URL = "https://data.hlidacshopu.cz/items/alza.cz/8023870/price-history.json";
 
 describe("HlidacShopuClient", () => {

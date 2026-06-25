@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { env } from "@app/utils/env";
 import { skip } from "@app/utils/test/skip";
 import {
     createLanguageDetector,
@@ -12,7 +13,7 @@ import {
 // To run audio tests, set this to a real audio file path:
 // TEST_AUDIO_FILE=/path/to/czech-audio.m4a bun test src/utils/ai/LanguageDetector.test.ts
 // ============================================
-const TEST_AUDIO_FILE = process.env.TEST_AUDIO_FILE;
+const TEST_AUDIO_FILE = env.test.getTestAudioFile();
 
 describe("LanguageDetector", () => {
     describe.skipIf(skip.darwinkit)("text detection (DarwinKit)", () => {

@@ -1,3 +1,4 @@
+import { env } from "@app/utils/env";
 import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
@@ -5,7 +6,7 @@ export default defineConfig({
     timeout: 90_000,
     retries: 0,
     use: {
-        baseURL: process.env.DD_QA_BASE_URL ?? "http://localhost:3042",
+        baseURL: env.dashboard.getQaBaseUrl(),
         trace: "retain-on-failure",
     },
 });

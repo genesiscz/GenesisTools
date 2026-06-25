@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { AIOllamaProvider } from "./AIOllamaProvider";
 
@@ -71,7 +72,7 @@ describe("AIOllamaProvider", () => {
     });
 
     // Integration test: only runs if Ollama is available locally
-    test.skipIf(!process.env.TEST_OLLAMA)("embed() returns valid vector (requires running Ollama)", async () => {
+    test.skipIf(!env.test.isOllamaTest())("embed() returns valid vector (requires running Ollama)", async () => {
         const provider = new AIOllamaProvider();
         const result = await provider.embed("Hello, world!");
 
@@ -80,7 +81,7 @@ describe("AIOllamaProvider", () => {
         expect(result.vector.length).toBe(result.dimensions);
     });
 
-    test.skipIf(!process.env.TEST_OLLAMA)("embedBatch() returns correct count (requires running Ollama)", async () => {
+    test.skipIf(!env.test.isOllamaTest())("embedBatch() returns correct count (requires running Ollama)", async () => {
         const provider = new AIOllamaProvider();
         const texts = ["Hello", "World", "Test"];
         const results = await provider.embedBatch(texts);

@@ -1,4 +1,5 @@
 import { out } from "@app/logger";
+import { env } from "@app/utils/env";
 import { makeStandaloneTmuxSessionName } from "@app/utils/tmux/naming";
 import { attachTmuxSession, createTmuxSession, sessionExists } from "@app/utils/tmux/sessions";
 import type { Command } from "commander";
@@ -21,7 +22,7 @@ export function registerCreateCommand(program: Command): void {
         .action((flags: CreateFlags) => {
             const sessionName = flags.name?.trim() || makeStandaloneTmuxSessionName();
             const cwd = flags.cwd ?? process.cwd();
-            const command = flags.command ?? process.env.SHELL ?? "/bin/zsh";
+            const command = flags.command ?? env.paths.getShell("/bin/zsh");
 
             if (sessionExists(sessionName)) {
                 throw new Error(`tmux session ${sessionName} already exists`);

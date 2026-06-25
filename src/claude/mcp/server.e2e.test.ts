@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -18,7 +19,7 @@ describe("genesis-tools MCP server (stdio e2e)", () => {
             command: process.execPath,
             args: ["run", join(import.meta.dir, "../index.ts"), "mcp"],
             env: {
-                ...process.env,
+                ...env.getProcessEnv(),
                 CLAUDE_CODE_SESSION_ID: "e2e-sess",
                 CLAUDECODE: "1",
                 QUESTION_LOG_BASE: logBase,

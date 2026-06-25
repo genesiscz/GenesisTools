@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { env } from "@app/utils/env";
 import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
@@ -30,7 +31,7 @@ export async function runTaskCli(args: string[], opts: { homeDir: string }): Pro
     const proc = Bun.spawn(["bun", "run", join(REPO_ROOT, "src/task/index.ts"), ...args], {
         cwd: REPO_ROOT,
         env: {
-            ...process.env,
+            ...env.getProcessEnv(),
             GENESIS_TOOLS_HOME: opts.homeDir,
         },
         stdout: "pipe",

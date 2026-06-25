@@ -1,5 +1,6 @@
 import { basename, dirname } from "node:path";
 import { setBaseBinding, setConsoleLevel } from "@app/logger";
+import { env } from "@app/utils/env";
 import { consoleFloorFor } from "@app/utils/logging/tool-policy";
 import { printReadmeAndExit } from "@app/utils/readme";
 import type { Command } from "commander";
@@ -73,11 +74,11 @@ export function getArgvVerbosity(argv: readonly string[] = process.argv.slice(2)
 
 export function applyVerbosityToEnv(verbosity: number): void {
     if (verbosity >= 1) {
-        process.env.LOG_DEBUG = "1";
+        env.testing.set("LOG_DEBUG", "1");
     }
 
     if (verbosity >= 2) {
-        process.env.LOG_TRACE = "1";
+        env.testing.set("LOG_TRACE", "1");
     }
 }
 

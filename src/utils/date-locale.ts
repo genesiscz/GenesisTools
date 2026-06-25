@@ -4,6 +4,7 @@
  */
 
 import { execSync } from "node:child_process";
+import { env } from "@app/utils/env";
 
 let cachedLocale: string | undefined;
 
@@ -46,7 +47,7 @@ export function getSystemLocale(): string {
         }
     }
 
-    const envLocale = process.env.LC_TIME || process.env.LANG || process.env.LC_ALL;
+    const envLocale = env.locale.getPreferred();
 
     if (envLocale) {
         cachedLocale = envLocale.split(".")[0].replace(/_/g, "-");

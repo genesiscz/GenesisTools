@@ -6,10 +6,11 @@ import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { UserOrdersRepository } from "@app/shops/db/UserOrdersRepository";
 import { UserProvidersRepository } from "@app/shops/db/UserProvidersRepository";
 import { resetCryptoForTest } from "@app/shops/lib/crypto";
+import { env } from "@app/utils/env";
 
 async function fresh(): Promise<{ orders: UserOrdersRepository; userProviderId: number }> {
     const dir = mkdtempSync(join(tmpdir(), "shops-uo-"));
-    process.env.SHOPS_SECRET_KEY_PATH = join(dir, ".secret-key");
+    env.testing.set("SHOPS_SECRET_KEY_PATH", join(dir, ".secret-key"));
     resetCryptoForTest();
     const db = new ShopsDatabase(join(dir, "test.db"));
     db.raw().exec(
@@ -92,7 +93,7 @@ describe("UserOrdersRepository", () => {
 
     it("markItemMatched sets product_id + master_product_id + matched_at", async () => {
         const dir = mkdtempSync(join(tmpdir(), "shops-uo-mark-"));
-        process.env.SHOPS_SECRET_KEY_PATH = join(dir, ".secret-key");
+        env.testing.set("SHOPS_SECRET_KEY_PATH", join(dir, ".secret-key"));
         resetCryptoForTest();
         const db = new ShopsDatabase(join(dir, "test.db"));
         db.raw().exec(

@@ -9,6 +9,7 @@ import {
 } from "@app/claude/lib/history/search";
 import { findClaudeCommand, resolveProjectFilter } from "@app/utils/claude";
 import { formatDateTime } from "@app/utils/date";
+import { env } from "@app/utils/env";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -303,7 +304,7 @@ async function resumeSession(session: DisplaySession): Promise<never> {
     const cmd = await findClaudeCommand();
     p.outro(`${pc.green("Resuming:")} ${cmd} --resume ${session.sessionId}`);
 
-    const shell = process.env.SHELL || "/bin/sh";
+    const shell = env.paths.getShell("/bin/sh");
     const proc = Bun.spawn({
         cmd: [shell, "-ic", `exec ${cmd} --resume '${session.sessionId}'`],
         stdio: ["inherit", "inherit", "inherit"],

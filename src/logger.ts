@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import { formatLocalDate } from "@app/utils/date";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import pino from "pino";
@@ -26,21 +27,21 @@ type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "silent";
 // via setConsoleLevel()/configureLogger() retroactively re-gates already
 // created children — no rebuild, see spec §3.1.
 function getConsoleLevel(): pino.LevelWithSilent {
-    if (process.env.LOG_TRACE === "1") {
+    if (env.log.isTrace()) {
         return "trace";
     }
 
-    if (process.env.LOG_DEBUG === "1") {
+    if (env.log.isDebug()) {
         return "debug";
     }
 
-    if (process.env.LOG_SILENT === "1") {
+    if (env.log.isSilent()) {
         return "silent";
     }
 
-    const env = process.env.LOG_CONSOLE_LEVEL as pino.LevelWithSilent | undefined;
-    if (env && env in pino.levels.values) {
-        return env;
+    const consoleLevelEnv = env.log.getConsoleLevel() as pino.LevelWithSilent | undefined;
+    if (consoleLevelEnv && consoleLevelEnv in pino.levels.values) {
+        return consoleLevelEnv;
     }
 
     return "info";
@@ -51,7 +52,7 @@ export function setConsoleLevel(l: pino.LevelWithSilent): void {
     consoleLevel = l;
 }
 
-const prefixPid = process.env.LOG_PID === "1" || process.env.DEBUG === "1";
+const prefixPid = env.log.shouldIncludePid();
 // pino-pretty writes to STDERR (see createLogger below), so the minimalLevels
 // WARN/ERROR color prefixer must key off stderr.isTTY too — otherwise ANSI
 // leaks when stderr is redirected, or color is suppressed when only stderr

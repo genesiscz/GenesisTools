@@ -9,6 +9,7 @@ import { getConfig, saveConfig } from "@app/clarity/config";
 import { parseAuthCurl } from "@app/clarity/lib/parse-auth-curl";
 import { type AuthStatus, pingAdo, pingClarity, pingTimelog, type ServiceAuthState } from "@app/clarity/lib/preflight";
 import { ClarityApi } from "@app/utils/clarity";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 
 export type { AuthStatus, ServiceAuthState };
@@ -218,7 +219,7 @@ function buildTimelogShape(config: AzureConfigWithTimeLog | null): TimelogShape 
 export async function getGranularStatus(): Promise<GranularStatus> {
     const clarityConfig = await getConfig();
     const adoConfig = loadAdoConfig() as AzureConfigWithTimeLog | null;
-    const projectCwd = process.env.CLARITY_PROJECT_CWD || process.cwd();
+    const projectCwd = env.paths.getClarityProjectCwd();
 
     const [clarityAuth, adoAuth, timelogAuth] = await Promise.all([
         pingClarity(clarityConfig),
@@ -242,7 +243,7 @@ export async function configureAdo(
     try {
         await checkAzureCliLogin();
         const config = await buildAdoConfig(url);
-        const configDir = join(process.env.CLARITY_PROJECT_CWD || process.cwd(), ".claude/azure");
+        const configDir = join(env.paths.getClarityProjectCwd(), ".claude/azure");
         saveAdoConfig(config, configDir);
 
         return {

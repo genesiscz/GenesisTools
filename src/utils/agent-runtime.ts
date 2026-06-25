@@ -4,6 +4,7 @@ import { logger } from "@app/logger";
 import { detectCurrentProject } from "@app/utils/claude/projects";
 import { type AgentRuntimeContext, resolveClaudeContext } from "@app/utils/claude/runtime-context";
 import { isCodex, resolveCodexContext } from "@app/utils/codex/runtime-context";
+import { env as appEnv } from "@app/utils/env";
 import { getMainRepoRootSync } from "@app/utils/git/worktree";
 
 export type { AgentRuntimeContext } from "@app/utils/claude/runtime-context";
@@ -20,7 +21,7 @@ function gitSync(args: string[], cwd: string): string | null {
 
 export function getAgentRuntimeContext(
     overrides: Partial<AgentRuntimeContext> = {},
-    env: NodeJS.ProcessEnv = process.env
+    processEnv: NodeJS.ProcessEnv = appEnv.getProcessEnv()
 ): AgentRuntimeContext {
     const cwd = overrides.cwd ?? process.cwd();
     const repoRoot = (() => {
@@ -32,10 +33,10 @@ export function getAgentRuntimeContext(
     })();
 
     let agentPartial: Partial<AgentRuntimeContext> = { agent: "unknown", sessionId: null, isInAgent: false };
-    if (env.CLAUDE_CODE_SESSION_ID || env.CLAUDECODE) {
-        agentPartial = resolveClaudeContext(env);
-    } else if (isCodex(env)) {
-        agentPartial = resolveCodexContext(env);
+    if (processEnv.CLAUDE_CODE_SESSION_ID || processEnv.CLAUDECODE) {
+        agentPartial = resolveClaudeContext(processEnv);
+    } else if (isCodex(processEnv)) {
+        agentPartial = resolveCodexContext(processEnv);
     }
 
     // Canonical worktree test: in the main repo `--git-dir` and
@@ -51,7 +52,7 @@ export function getAgentRuntimeContext(
         agent: "unknown",
         sessionId: null,
         isInAgent: false,
-        aiAgent: env.AI_AGENT ?? null,
+        aiAgent: processEnv.AI_AGENT ?? null,
         sessionTitle: null,
         project: detectCurrentProject() ?? basename(repoRoot),
         repoRoot,

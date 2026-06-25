@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { env } from "@app/utils/env";
 import { mapIndicatorList, mapTranslateResponse, parseScriptSpec, resolvePubScriptRef } from "./pine-facade";
 import { SignalDetector } from "./signals";
 
@@ -79,7 +80,7 @@ describe("resolvePubScriptRef", () => {
     });
 
     // Live-network test: hits pubscripts-suggest-json + the script page. Opt in with TV_NET_TESTS=1.
-    test.skipIf(!process.env.TV_NET_TESTS)("resolves publication slug PUB;AGFHDbJ2 to internal script id", async () => {
+    test.skipIf(!env.test.isTvNetTests())("resolves publication slug PUB;AGFHDbJ2 to internal script id", async () => {
         const resolved = await resolvePubScriptRef("PUB;AGFHDbJ2");
         expect(resolved.scriptIdPart).toBe("PUB;0u4crLN8uj6zMzf6TJ0lhIuiKOKlHd7G");
         expect(resolved.version.length).toBeGreaterThan(0);

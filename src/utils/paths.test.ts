@@ -1,6 +1,7 @@
 // biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ or /Users/ string literals — production plugins do not apply to test code
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { join } from "node:path";
+import { env } from "@app/utils/env";
 import { skip } from "@app/utils/test/skip";
 
 // We need to test with platform overrides, so we import the module fresh per test group.
@@ -77,7 +78,7 @@ describe("paths: lastSepIndex", () => {
 
 describe("paths: expandTilde", () => {
     let expandTilde: typeof import("./paths").expandTilde;
-    const home = process.env.HOME || process.env.USERPROFILE || "/mock-home";
+    const home = env.paths.getHome() || env.paths.getUserProfile() || "/mock-home";
 
     beforeEach(async () => {
         const mod = await import("./paths");
@@ -114,7 +115,7 @@ describe("paths: expandTilde", () => {
 
 describe("paths: expandPath", () => {
     let expandPath: typeof import("./paths").expandPath;
-    const home = process.env.HOME || process.env.USERPROFILE || "/mock-home";
+    const home = env.paths.getHome() || env.paths.getUserProfile() || "/mock-home";
     const cwd = process.cwd();
 
     beforeEach(async () => {
@@ -157,7 +158,7 @@ describe("paths: expandPath", () => {
 
 describe("paths: collapsePath", () => {
     let collapsePath: typeof import("./paths").collapsePath;
-    const home = process.env.HOME || process.env.USERPROFILE || "/mock-home";
+    const home = env.paths.getHome() || env.paths.getUserProfile() || "/mock-home";
 
     beforeEach(async () => {
         const mod = await import("./paths");
@@ -187,7 +188,7 @@ describe("paths: collapsePath", () => {
 
 describe("collapsePathForDisplay", () => {
     let collapsePathForDisplay: typeof import("./paths").collapsePathForDisplay;
-    const home = process.env.HOME || process.env.USERPROFILE || "/mock-home";
+    const home = env.paths.getHome() || env.paths.getUserProfile() || "/mock-home";
 
     beforeEach(async () => {
         const mod = await import("./paths");
@@ -256,12 +257,12 @@ describe("paths: Windows-specific behavior", () => {
     });
 
     it("expandTilde handles ~\\ (Windows convention)", () => {
-        const home = process.env.HOME || process.env.USERPROFILE || "/mock-home";
+        const home = env.paths.getHome() || env.paths.getUserProfile() || "/mock-home";
         expect(expandTilde("~\\Desktop")).toBe(join(home, "Desktop"));
     });
 
     it("expandPath handles ~\\ path", () => {
-        const home = process.env.HOME || process.env.USERPROFILE || "/mock-home";
+        const home = env.paths.getHome() || env.paths.getUserProfile() || "/mock-home";
         expect(expandPath("~\\Desktop")).toBe(join(home, "Desktop"));
     });
 

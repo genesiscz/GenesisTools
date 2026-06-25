@@ -1,9 +1,10 @@
+import { env } from "@app/utils/env";
 import type { User } from "@workos-inc/node";
 import { WorkOS } from "@workos-inc/node";
 import { sealData } from "iron-session";
 
 // WorkOS client singleton
-const workos = new WorkOS(process.env.WORKOS_API_KEY);
+const workos = new WorkOS(env.workos.getApiKey());
 
 export { workos };
 
@@ -28,7 +29,7 @@ export interface Session {
  * is handed to AuthKit's `saveSession` so AuthKit owns the cookie.
  */
 export async function encryptSession(session: Session): Promise<string> {
-    const password = process.env.WORKOS_COOKIE_PASSWORD;
+    const password = env.workos.getCookiePassword();
     if (!password || password.length < 32) {
         throw new Error("WORKOS_COOKIE_PASSWORD must be set and at least 32 characters long");
     }
