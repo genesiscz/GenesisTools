@@ -13,14 +13,18 @@
  * This preload mirrors the upstream Solid transform but tightens `filter` to
  * files under `src/doctor/` (the only place Solid is used). Everything else
  * goes through Bun's native react-jsx loader untouched.
+ *
+ * Babel packages are loaded lazily via createRequire(PROJECT_ROOT) so preloads
+ * keep working when Bun is invoked from another cwd (tools launcher, IDE hooks).
  */
 
-import { transformAsync } from "@babel/core";
-// @ts-expect-error - no published types
-import babelPresetTypescript from "@babel/preset-typescript";
-// @ts-expect-error - no published types
-import babelPresetSolid from "babel-preset-solid";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { type BunPlugin, plugin as registerBunPlugin } from "bun";
+
+const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");
+const requireFromRoot = createRequire(join(PROJECT_ROOT, "package.json"));
 
 const SOLID_PATH_FILTER = /[/\\]src[/\\]doctor[/\\][^?#]*\.[jt]sx(?:[?#].*)?$/;
 
@@ -31,10 +35,34 @@ function stripQueryAndHash(path: string): string {
     return cuts.length === 0 ? path : path.slice(0, cuts[0]);
 }
 
+interface BabelModules {
+    transformAsync: typeof import("@babel/core")["transformAsync"];
+    babelPresetTypescript: unknown;
+    babelPresetSolid: unknown;
+}
+
+let babelModules: BabelModules | undefined;
+
+function loadBabelModules(): BabelModules {
+    if (babelModules) {
+        return babelModules;
+    }
+
+    const { transformAsync } = requireFromRoot("@babel/core") as typeof import("@babel/core");
+    babelModules = {
+        transformAsync,
+        babelPresetTypescript: requireFromRoot("@babel/preset-typescript"),
+        babelPresetSolid: requireFromRoot("babel-preset-solid"),
+    };
+
+    return babelModules;
+}
+
 const scopedSolidPlugin: BunPlugin = {
     name: "bun-plugin-solid-scoped",
     setup(build) {
         build.onLoad({ filter: SOLID_PATH_FILTER }, async (args) => {
+            const { transformAsync, babelPresetTypescript, babelPresetSolid } = loadBabelModules();
             const path = stripQueryAndHash(args.path);
             const code = await Bun.file(path).text();
 

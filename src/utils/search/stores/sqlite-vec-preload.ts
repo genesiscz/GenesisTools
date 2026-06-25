@@ -1,15 +1,11 @@
 /**
  * Preload script: swaps in extension-capable SQLite before any Database is
  * created in the process. Wired into the `tools` launcher (see `tools`,
- * executeTool) and into bunfig.toml's `preload` plus `[test].preload`.
+ * executeTool) and into bunfig.toml's `preload`.
  *
- * Delegates to ensureExtensionCapableSQLite() so the loader's module-level
- * state is set correctly and every later call is a clean no-op.
- *
- * Usage: bun run --preload ./src/utils/search/stores/sqlite-vec-preload.ts <entry>
+ * Uses sqlite-vec-bootstrap (no @app/* imports) so Bun preloads keep working
+ * when invoked from another cwd (tools launcher, IDE hooks).
  */
-import { logger } from "@app/logger";
-import { ensureExtensionCapableSQLite } from "./sqlite-vec-loader";
+import { ensureExtensionCapableSQLiteCore } from "./sqlite-vec-bootstrap";
 
-ensureExtensionCapableSQLite();
-logger.debug("[sqlite-vec-preload] ensureExtensionCapableSQLite() ran at preload time");
+ensureExtensionCapableSQLiteCore();
