@@ -4,11 +4,11 @@ import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { newStashId, shortId } from "../lib/ids";
 import { diffWorkingTree, listFilesInPatch, runGitIn, type SaveMode } from "../lib/patch";
-import { stripApplyMarkersFromPatchFiles } from "../lib/strip-apply-markers";
 import { detectProject } from "../lib/projects";
 import { openStashDb } from "../lib/stash-db";
 import { StashStorage } from "../lib/storage";
 import { StoreRepo } from "../lib/store-repo";
+import { stripApplyMarkersFromPatchFiles } from "../lib/strip-apply-markers";
 import { ui } from "../lib/ui";
 import type { StashRow } from "../types";
 
