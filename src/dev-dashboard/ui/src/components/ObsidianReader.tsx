@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Button } from "@ui/components/button";
 import { Copy, Globe, GlobeLock } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { QaSourceToggle, type QaViewMode } from "@/components/QaSourceToggle";
 import { obsidianApi } from "@/lib/api";
 
 interface Props {
@@ -19,6 +20,11 @@ export function ObsidianReader({ path }: Props) {
         queryFn: () => obsidianApi.note(path),
     });
     const [copied, setCopied] = useState(false);
+    const [viewMode, setViewMode] = useState<QaViewMode>("reading");
+
+    useEffect(() => {
+        setViewMode("reading");
+    }, [path]);
 
     const publish = useMutation({
         mutationFn: () => obsidianApi.publish(path),
@@ -79,7 +85,10 @@ export function ObsidianReader({ path }: Props) {
     return (
         <div className="dd-panel flex h-full flex-col overflow-hidden">
             <div className="flex items-center justify-between gap-2 border-b border-[var(--dd-border)] px-3 py-2 text-[11px]">
-                <span className="truncate font-mono text-[var(--dd-text-secondary)]">{path}</span>
+                <div className="flex min-w-0 flex-1 items-center gap-2">
+                    <QaSourceToggle mode={viewMode} onChange={setViewMode} />
+                    <span className="truncate font-mono text-[var(--dd-text-secondary)]">{path}</span>
+                </div>
                 {shareUrl ? (
                     <div className="flex min-w-0 items-center gap-2">
                         <code className="truncate text-[10px] text-[var(--dd-text-muted)]">{shareUrl}</code>
@@ -112,11 +121,17 @@ export function ObsidianReader({ path }: Props) {
                     </Button>
                 )}
             </div>
-            <article
-                className="dd-markdown flex-1 overflow-auto px-5 py-4"
-                dangerouslySetInnerHTML={{ __html: data.html }}
-                onClick={onArticleClick}
-            />
+            {viewMode === "reading" ? (
+                <article
+                    className="dd-markdown flex-1 overflow-auto px-5 py-4"
+                    dangerouslySetInnerHTML={{ __html: data.html }}
+                    onClick={onArticleClick}
+                />
+            ) : (
+                <pre className="flex-1 overflow-auto px-5 py-4 font-mono text-xs whitespace-pre-wrap text-[var(--dd-text-secondary)]">
+                    {data.source}
+                </pre>
+            )}
         </div>
     );
 }

@@ -1,9 +1,11 @@
 import type { RenderResult } from "@app/dev-dashboard/lib/obsidian/markdown";
+import { SafeJSON } from "@app/utils/json";
 import { escapeHtml } from "@app/utils/string";
 
 interface ShareTemplateOptions {
     title: string;
     rendered: RenderResult;
+    source: string;
     sourcePath?: string;
 }
 
@@ -365,6 +367,62 @@ footer.dd-share-footer .dd-share-source {
     word-break: break-all;
 }
 
+.dd-share-toolbar {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 100;
+}
+
+.dd-share-view-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--dd-border-strong);
+    border-radius: 8px;
+    background: var(--dd-bg-elevated);
+    color: var(--dd-text-dim);
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.dd-share-view-btn:hover {
+    color: var(--dd-accent);
+    border-color: var(--dd-accent);
+    background: var(--dd-accent-soft);
+}
+
+.dd-share-view-btn svg {
+    width: 18px;
+    height: 18px;
+}
+
+.dd-share-source-panel {
+    display: none;
+    font-family: var(--dd-mono);
+    font-size: 13px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--dd-text);
+    background: var(--dd-bg-panel);
+    border: 1px solid var(--dd-border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    overflow-x: auto;
+    margin: 0;
+}
+
+body.dd-share-mode-source article {
+    display: none;
+}
+
+body.dd-share-mode-source .dd-share-source-panel {
+    display: block;
+}
+
 @media (max-width: 600px) {
     body { padding: 28px 16px 64px; }
     article { font-size: 16px; }
@@ -399,8 +457,48 @@ mermaid.initialize({
 </script>`;
 }
 
+const FILE_CODE_ICON =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 12.5 8 15l2 2.5"/><path d="m14 12.5 2 2.5-2 2.5"/></svg>';
+
+const BOOK_OPEN_ICON =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>';
+
+function embedSourceJson(source: string): string {
+    return SafeJSON.stringify(source).replace(/</g, "\\u003c");
+}
+
+function buildViewToggleScript(): string {
+    return `<script>
+(function () {
+    var btn = document.getElementById("dd-share-view-btn");
+    var panel = document.getElementById("dd-share-source-panel");
+    var dataEl = document.getElementById("dd-share-source-data");
+    if (!btn || !panel || !dataEl) {
+        return;
+    }
+
+    panel.textContent = JSON.parse(dataEl.textContent);
+
+    var fileCodeIcon = ${SafeJSON.stringify(FILE_CODE_ICON)};
+    var bookOpenIcon = ${SafeJSON.stringify(BOOK_OPEN_ICON)};
+    var mode = "reading";
+
+    btn.addEventListener("click", function () {
+        mode = mode === "reading" ? "source" : "reading";
+        document.body.classList.toggle("dd-share-mode-source", mode === "source");
+        btn.innerHTML = mode === "reading" ? fileCodeIcon : bookOpenIcon;
+        btn.setAttribute(
+            "aria-label",
+            mode === "reading" ? "Show raw markdown source" : "Show rendered note"
+        );
+        btn.title = btn.getAttribute("aria-label") ?? "";
+    });
+})();
+</script>`;
+}
+
 export function renderSharePage(options: ShareTemplateOptions): string {
-    const { title, rendered, sourcePath } = options;
+    const { title, rendered, source, sourcePath } = options;
     const headExtras: string[] = [
         `<link rel="preconnect" href="https://fonts.googleapis.com">`,
         `<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>`,
@@ -420,6 +518,8 @@ export function renderSharePage(options: ShareTemplateOptions): string {
         bodyExtras.push(buildMermaidScript());
     }
 
+    bodyExtras.push(buildViewToggleScript());
+
     const sourceLine = sourcePath ? `<span class="dd-share-source">${escapeHtml(sourcePath)}</span>` : "";
 
     return `<!doctype html>
@@ -433,10 +533,15 @@ ${headExtras.join("\n")}
 <style>${buildCss()}</style>
 </head>
 <body>
+<div class="dd-share-toolbar">
+<button type="button" class="dd-share-view-btn" id="dd-share-view-btn" aria-label="Show raw markdown source" title="Show raw markdown source">${FILE_CODE_ICON}</button>
+</div>
 <main>
 <article>${rendered.html}</article>
+<pre class="dd-share-source-panel" id="dd-share-source-panel"></pre>
 <footer class="dd-share-footer">shared via dev-dashboard${sourceLine}</footer>
 </main>
+<script type="application/json" id="dd-share-source-data">${embedSourceJson(source)}</script>
 ${bodyExtras.join("\n")}
 </body>
 </html>`;
