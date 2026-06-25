@@ -2,6 +2,7 @@ import { afterAll, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
+import { env } from "@app/utils/env";
 import { Storage } from "./storage";
 
 // Every Storage method that writes under baseDir. The sentinel guards ALL
@@ -83,9 +84,9 @@ export function setupStorageSandbox(): void {
     };
 
     beforeAll(() => {
-        prevEnv = process.env.GENESIS_TOOLS_HOME;
+        prevEnv = env.get("GENESIS_TOOLS_HOME");
         sandboxRoot = mkdtempSync(join(tmpdir(), "gt-mcp-sandbox-"));
-        process.env.GENESIS_TOOLS_HOME = sandboxRoot;
+        env.testing.set("GENESIS_TOOLS_HOME", sandboxRoot);
         for (const m of GUARDED_WRITE_METHODS) {
             guard(m);
         }
@@ -100,9 +101,9 @@ export function setupStorageSandbox(): void {
         originals.clear();
 
         if (prevEnv === undefined) {
-            delete process.env.GENESIS_TOOLS_HOME;
+            env.testing.unset("GENESIS_TOOLS_HOME");
         } else {
-            process.env.GENESIS_TOOLS_HOME = prevEnv;
+            env.testing.set("GENESIS_TOOLS_HOME", prevEnv);
         }
 
         if (sandboxRoot) {

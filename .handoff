@@ -1,0 +1,218 @@
+# ai-proxy handoff — Grok subscription in Cursor via OpenAI-compat proxy
+
+**Updated:** 2026-06-23  
+**Branch:** `feat/ai-proxy`  
+**Worktree:** `/Users/Martin/Tresors/Projects/GenesisTools.worktrees/ai-proxy`
+
+---
+
+## Goal
+
+Use **Grok SuperGrok Heavy** (`grok-composer-2.5-fast`) inside **Cursor Agent/Composer** via a local OpenAI-compatible proxy that forwards to the Grok CLI subscription backend.
+
+```
+Cursor (cloud) → https://mac.foltyn.dev/ai/v1 → ai-proxy :8317 → Grok CLI proxy → api.x.ai
+```
+
+---
+
+## Cursor BYOK settings (working)
+
+| Field | Value |
+|-------|-------|
+| Base URL | `https://mac.foltyn.dev/ai/v1` (no trailing slash) |
+| API Key | `<proxyApiKey>` |
+| Model | `martin/grok/grok-composer-2.5-fast` |
+
+Config: `~/.genesis-tools/ai-proxy/config.json` (`AiProxyConfigStore` / `AiProxyStorage`)
+
+Public exposure config (`public` block):
+```json
+{
+  "mode": "cloudflared",
+  "hostname": "mac.foltyn.dev",
+  "basePath": "/ai",
+  "cloudflared": { "tunnelName": "foltyn-home", "autoStart": true }
+}
+```
+
+Modes: `none` | `cloudflared` | `tailscale` | `custom` — tunnel is **optional** for local dev.
+
+---
+
+## Lifecycle commands
+
+```bash
+tools ai-proxy config              # interactive menu (+ setup-tunnel wizard)
+tools ai-proxy config setup-tunnel # cloudflared / tailscale / custom
+tools ai-proxy up                  # start proxy (+ tunnel if cloudflared autoStart)
+tools ai-proxy down                # stop proxy ONLY (never kills cloudflared)
+tools ai-proxy status
+```
+
+**Important:** `down` never stops `cloudflared` — dev-dashboard catch-all on `mac.foltyn.dev` stays up.
+
+### After reboot
+
+```bash
+tools ai-proxy up
+# cloudflared starts automatically if not running and public.cloudflared.autoStart=true
+# If tunnel already running (shared), up leaves it alone
+```
+
+### Background state files
+
+| File | Purpose |
+|------|---------|
+| `~/.genesis-tools/ai-proxy/proxy.pid` | ai-proxy process |
+| `~/.genesis-tools/ai-proxy/runtime.json` | proxy + tunnel metadata |
+| `~/.genesis-tools/ai-proxy/proxy.log` | proxy stdout/stderr |
+| `~/.genesis-tools/ai-proxy/tunnel.log` | tunnel stdout/stderr (if started by up) |
+
+### cloudflared ingress (shared tunnel)
+
+`~/.cloudflared/config.yml` — ai-proxy managed block:
+```yaml
+  # ai-proxy (managed by tools ai-proxy)
+  - hostname: mac.foltyn.dev
+    path: /ai
+    service: http://127.0.0.1:8317
+```
+
+Dev-dashboard catch-all unchanged: `mac.foltyn.dev` → `:3042`
+
+---
+
+## Git state
+
+```
+Branch: feat/ai-proxy (from origin/master)
+```
+
+### Commits (oldest → newest)
+
+| SHA | Message |
+|-----|---------|
+| `9427411e5` | feat(ai-proxy): add Grok subscription OpenAI-compatible proxy |
+| `c1d456ae5` | fix(ai-proxy): rewrite proxy model id in upstream request body |
+| `001d9ae2d` | fix(ai-proxy): normalize Cursor Agent tools for Grok responses API |
+| `c3e93604e` | Convert chat messages to responses input for Grok upstream |
+| `6a7f2b195` | Add LiteLLM-inspired responses-to-chat translator for Cursor |
+
+---
+
+## Architecture
+
+```
+src/utils/ai/grok/           # Grok subscription auth, client, models, billing
+src/ai-proxy/
+  index.ts                   # CLI entry
+  lib/
+    server.ts                # Bun.serve routes
+    providers/grok-subscription.ts  # upstream forward + body prep
+    rewrite-upstream-body.ts        # model rewrite, tools normalize, messages→input
+    chat-to-responses-body.ts       # messages → input conversion
+    translators/
+      detect-request.ts             # Cursor UA / body detection
+      responses-to-chat.ts          # routes stream vs non-stream
+      responses-stream-translator.ts # LiteLLM-inspired event → chat delta
+      responses-to-chat-sse.ts      # streaming SSE rewrite
+      responses-to-chat-json.ts       # non-stream JSON rewrite
+      identity-pipeline.ts          # passthrough when translation off
+```
+
+### Request flow (Cursor Agent, translation auto)
+
+1. `POST /v1/chat/completions` with `User-Agent: Cursor` + `messages`
+2. `handleChatCompletions` → `responsesToChat`
+3. Upstream: `POST /responses` with `input` (converted from messages)
+4. Response: Grok Responses API SSE/JSON → rewritten to Chat Completions format
+
+### Model ID format
+
+`{account}/{providerSlug}/{upstreamModel}` → e.g. `martin/grok/grok-composer-2.5-fast`
+
+---
+
+## Cursor errors fixed
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Access to private networks is forbidden` | Cursor cloud can't hit localhost | Public tunnel `mac.foltyn.dev` |
+| `Model not found: martin/grok/...` | Proxy model id forwarded upstream | `rewrite-upstream-body.ts` |
+| `missing field name` (tools) | Cursor nested `tools[].function.name` | `normalizeGrokTool()` |
+| `missing field input` | Chat body routed to `/responses` without `input` | `chat-to-responses-body.ts` |
+| Raw Responses JSON to Cursor (non-stream) | No response transform | `responses-to-chat-json.ts` |
+| Empty stream / no reasoning | Grok uses `response.reasoning_text.delta` | `responses-stream-translator.ts` |
+
+---
+
+## LiteLLM reference (cloned, not in chain)
+
+**Path:** `~/Tresors/Projects/_Playgrounds/LiteLLM/`
+
+Use as reference only — do **not** add LiteLLM as another hop.
+
+Key files cribbed from:
+- `litellm/proxy/response_api_endpoints/endpoints.py` — Cursor `messages`→`input`
+- `litellm/completion_extras/litellm_responses_transformation/transformation.py`:
+  - `convert_chat_completion_messages_to_responses_api()` (request)
+  - `OpenAiResponsesToChatCompletionStreamIterator` (stream response)
+  - `transform_response()` / `_convert_response_output_to_choices()` (non-stream)
+
+---
+
+## Verification commands
+
+```bash
+API_KEY="<proxyApiKey>"
+MODEL="martin/grok/grok-composer-2.5-fast"
+
+# Health
+curl -s http://127.0.0.1:8317/health
+
+# Non-stream (should return chat.completion, not raw response object)
+curl -s -X POST http://127.0.0.1:8317/v1/chat/completions \
+  -H "Authorization: Bearer $API_KEY" -H "User-Agent: Cursor/1.0" \
+  -H "Content-Type: application/json" \
+  -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly: hello\"}],\"stream\":false,\"max_tokens\":50}"
+
+# Stream (should emit reasoning_content + content deltas)
+curl -s -N -X POST http://127.0.0.1:8317/v1/chat/completions \
+  -H "Authorization: Bearer $API_KEY" -H "User-Agent: Cursor/1.0" \
+  -H "Content-Type: application/json" \
+  -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly: hello\"}],\"stream\":true,\"max_tokens\":100}"
+
+# Tests
+cd /Users/Martin/Tresors/Projects/GenesisTools.worktrees/ai-proxy
+bun test src/ai-proxy/
+```
+
+**Tip:** Low `max_tokens` can look like a streaming bug — Grok burns tokens on `reasoning_text` before `output_text`.
+
+---
+
+## What may still break (Agent E2E)
+
+- **Multi-turn tool loops** — streaming `tool_calls` translation is implemented but not fully E2E-tested with Cursor Agent's full tool schema
+- **Custom Cursor tools** (`type: custom`) — normalized to empty-schema functions; may need per-tool mapping
+- **OAuth refresh** — proxy fails hard on expired auth; Grok CLI owns refresh (`~/.grok/auth.json`)
+- **`work` account** (`xai-api-key` provider) — detected in config but skipped at runtime (not implemented)
+
+---
+
+## Deferred / not started
+
+- Merge `feat/ai-proxy` → `master` + `install.sh` PATH for `tools ai-proxy`
+- xai-api-key provider (pay-per-token fallback)
+- Obsidian plan at `GenesisBrain/GenesisTools/Grok/2026-06-26-AiProxy-Implementation-Plan.md` (not in vault commit)
+- Phase 4 E2E matrix: Cursor Agent with real tool calls, plan mode, ask mode
+
+---
+
+## Accounts in config
+
+| Name | Provider | Status |
+|------|----------|--------|
+| `martin` | `grok-subscription` | **Active** — uses `~/.grok/auth.json` |
+| `work` | `xai-api-key` | Configured but **skipped** at runtime |
