@@ -12,6 +12,26 @@ function bunPath(): string {
     return Bun.which("bun") ?? "bun";
 }
 
+export function validateRetentionMin(raw: string): number | null {
+    const minRuns = Number(raw);
+
+    if (!Number.isInteger(minRuns) || minRuns < 1) {
+        return null;
+    }
+
+    return minRuns;
+}
+
+export function validateRetentionDays(raw: string): number | null {
+    const maxAgeDays = Number(raw);
+
+    if (!Number.isFinite(maxAgeDays) || maxAgeDays < 0) {
+        return null;
+    }
+
+    return maxAgeDays;
+}
+
 export function registerDaemonCommand(program: Command): void {
     const daemon = program.command("daemon").description("Manage background usage polling via the daemon scheduler");
 
@@ -22,16 +42,16 @@ export function registerDaemonCommand(program: Command): void {
         .option("--retention-days <days>", "Delete run logs older than N days (with --retention-min)", "3")
         .option("--retention-min <count>", "Always keep at least N newest run logs", "100")
         .action(async (opts: { interval: string; retentionDays: string; retentionMin: string }) => {
-            const maxAgeDays = Number(opts.retentionDays);
-            const minRuns = Number(opts.retentionMin);
+            const maxAgeDays = validateRetentionDays(opts.retentionDays);
+            const minRuns = validateRetentionMin(opts.retentionMin);
 
-            if (!Number.isFinite(maxAgeDays) || maxAgeDays < 0) {
+            if (maxAgeDays === null) {
                 p.log.error(`Invalid --retention-days: "${opts.retentionDays}" (expected a non-negative number)`);
                 process.exit(1);
             }
 
-            if (!Number.isInteger(minRuns) || minRuns < 0) {
-                p.log.error(`Invalid --retention-min: "${opts.retentionMin}" (expected a non-negative integer)`);
+            if (minRuns === null) {
+                p.log.error(`Invalid --retention-min: "${opts.retentionMin}" (expected an integer of at least 1)`);
                 process.exit(1);
             }
 

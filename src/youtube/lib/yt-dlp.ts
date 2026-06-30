@@ -241,7 +241,7 @@ export async function downloadVideo(opts: DownloadVideoOpts): Promise<DownloadVi
     return { path: opts.outPath, sizeBytes: file.size };
 }
 
-async function runDownloadWithProgress(
+export async function runDownloadWithProgress(
     args: string[],
     signal: AbortSignal | undefined,
     onLine: (line: string) => void,
@@ -250,19 +250,27 @@ async function runDownloadWithProgress(
     const proc = Bun.spawn(args, { stdio: ["ignore", "pipe", "pipe"], signal });
     let stderr = "";
 
-    await streamProgress(proc.stderr, (line) => {
-        stderr += `${line}\n`;
-        onLine(line);
-    });
+    try {
+        await Promise.all([
+            streamProgress(proc.stdout, onLine),
+            streamProgress(proc.stderr, (line) => {
+                stderr += `${line}\n`;
+                onLine(line);
+            }),
+        ]);
+        const exit = await proc.exited;
 
-    const exit = await proc.exited;
+        if (exit !== 0) {
+            logger.error({ label, exit, stderr: stderr.trim() }, "yt-dlp download failed");
+            throw new Error(`yt-dlp ${label} failed: ${stderr.trim()}`);
+        }
 
-    if (exit !== 0) {
-        logger.error({ label, exit, stderr: stderr.trim() }, "yt-dlp download failed");
-        throw new Error(`yt-dlp ${label} failed: ${stderr.trim()}`);
+        return stderr;
+    } catch (err) {
+        proc.kill();
+        await proc.exited;
+        throw err;
     }
-
-    return stderr;
 }
 
 function parseProgressLine(line: string, onProgress?: DownloadAudioOpts["onProgress"]): void {

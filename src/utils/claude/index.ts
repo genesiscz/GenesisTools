@@ -49,18 +49,36 @@ export async function parseJsonlTranscript<T = Record<string, unknown>>(filePath
  * Uses interactive shell to resolve functions/aliases from ~/.zshrc,
  * and verifies the command is actually Claude (not e.g. the C compiler for `cc`).
  */
+export interface FindClaudeCommandTestHooks {
+    candidates?: string[];
+    timeoutMs?: number;
+    spawnProbe?: (candidate: string, shell: string) => ReturnType<typeof Bun.spawn>;
+}
+
+let findClaudeCommandTestHooks: FindClaudeCommandTestHooks | undefined;
+
+/** @internal test-only hook */
+export function _setFindClaudeCommandTestHooks(hooks: FindClaudeCommandTestHooks | undefined): void {
+    findClaudeCommandTestHooks = hooks;
+}
+
 export async function findClaudeCommand(): Promise<string> {
     const shell = env.paths.getShell("/bin/sh");
+    const candidates = findClaudeCommandTestHooks?.candidates ?? ["ccc", "cc", "claude"];
+    const timeoutMs = findClaudeCommandTestHooks?.timeoutMs ?? 3000;
 
-    for (const candidate of ["ccc", "cc", "claude"]) {
+    for (const candidate of candidates) {
+        const proc = findClaudeCommandTestHooks?.spawnProbe
+            ? findClaudeCommandTestHooks.spawnProbe(candidate, shell)
+            : Bun.spawn({
+                  cmd: [shell, "-ic", `'${candidate}' --version 2>&1`],
+                  stdio: ["ignore", "pipe", "pipe"],
+              });
+
         try {
-            const proc = Bun.spawn({
-                cmd: [shell, "-ic", `'${candidate}' --version 2>&1`],
-                stdio: ["ignore", "pipe", "pipe"],
-            });
             const stdout = await Promise.race([
                 new Response(proc.stdout).text(),
-                new Promise<string>((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000)),
+                new Promise<string>((_, reject) => setTimeout(() => reject(new Error("timeout")), timeoutMs)),
             ]);
             await proc.exited;
 
@@ -69,6 +87,8 @@ export async function findClaudeCommand(): Promise<string> {
             }
         } catch {
             // Timeout or spawn failure — skip this candidate
+        } finally {
+            proc.kill();
         }
     }
     return "claude";
