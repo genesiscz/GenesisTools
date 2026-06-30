@@ -18,8 +18,11 @@ async function runJxa(script: string, timeoutMs = 30_000): Promise<JxaResult> {
 
     const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => {
-            proc.kill();
-            reject(new Error(`JXA script timed out after ${timeoutMs}ms`));
+            void (async () => {
+                proc.kill();
+                await proc.exited;
+                reject(new Error(`JXA script timed out after ${timeoutMs}ms`));
+            })();
         }, timeoutMs)
     );
 
