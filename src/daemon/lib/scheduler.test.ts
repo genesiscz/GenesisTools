@@ -36,36 +36,35 @@ async function drainActiveRuns(activeRuns: Set<string>): Promise<void> {
 
 describe("scheduler heartbeat", () => {
     test("the per-iteration sleep log reaches the file-backed appLogger, not just a logToFile:false local logger", async () => {
-        const { logger: appLogger } = await import("@app/logger");
+        const { daemonLog: log, logSchedulerHeartbeat } = await import("./scheduler");
         const debugSpy = mock(() => {});
-        const original = appLogger.debug;
-        appLogger.debug = debugSpy;
+        const original = log.debug;
+        log.debug = debugSpy;
 
         try {
-            const { logSchedulerHeartbeat } = await import("./scheduler");
             logSchedulerHeartbeat(60_000, 0);
 
             expect(debugSpy).toHaveBeenCalled();
         } finally {
-            appLogger.debug = original;
+            log.debug = original;
         }
     });
 });
 
 describe("scheduler loop-failure logging", () => {
     test("the catch block logs a timestamp and a consecutive-failure count", async () => {
-        const { logger: appLogger } = await import("@app/logger");
+        const { daemonLog: log, logSchedulerLoopFailure } = await import("./scheduler");
         const errorSpy = mock(() => {});
-        const original = appLogger.error;
-        appLogger.error = errorSpy;
+        const original = log.error;
+        log.error = errorSpy;
 
         try {
-            const { logSchedulerLoopFailure } = await import("./scheduler");
             logSchedulerLoopFailure(new Error("boom"), 1);
             logSchedulerLoopFailure(new Error("boom again"), 2);
 
             expect(errorSpy).toHaveBeenCalledTimes(2);
-            const secondBindings = (errorSpy.mock.calls[1] as unknown[] | undefined)?.[0];
+            const calls = errorSpy.mock.calls as unknown[][];
+            const secondBindings = calls[1]?.[0];
 
             if (!secondBindings || typeof secondBindings !== "object") {
                 throw new Error("expected bindings object on second error log call");
@@ -75,7 +74,49 @@ describe("scheduler loop-failure logging", () => {
             expect(secondCallArgs.consecutiveFailures).toBe(2);
             expect(secondCallArgs.timestamp).toBeDefined();
         } finally {
-            appLogger.error = original;
+            log.error = original;
+        }
+    });
+});
+
+describe("scheduler logging consolidation", () => {
+    test("a task-completion event logs exactly once via appLogger, not twice via two loggers", async () => {
+        const { daemonLog: log } = await import("./scheduler");
+        const infoSpy = mock(() => {});
+        const original = log.info;
+        log.info = infoSpy;
+
+        const taskStates = new Map<string, TaskState>();
+        const activeRuns = new Set<string>();
+        const now = new Date();
+        const tasks: DaemonTask[] = [
+            {
+                name: "once-task",
+                command: "echo hi",
+                every: "every 1 hour",
+                retries: 0,
+                enabled: true,
+            },
+        ];
+
+        taskStates.set("once-task", {
+            nextRunAt: new Date(now.getTime() - 1_000),
+            attemptCount: 0,
+            running: false,
+        });
+
+        try {
+            dispatchDueTasks(tasks, taskStates, activeRuns, logsBaseDir, now);
+            await drainActiveRuns(activeRuns);
+
+            const completionLogs = (infoSpy.mock.calls as unknown[][]).filter((call) => {
+                const message = call[1];
+                return typeof message === "string" && message.includes("task completed");
+            });
+
+            expect(completionLogs).toHaveLength(1);
+        } finally {
+            log.info = original;
         }
     });
 });

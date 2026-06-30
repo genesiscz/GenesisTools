@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { configureLogger, createLogger } from "@app/logger";
+import { configureLogger, logger } from "@app/logger";
 import { getLogsBaseDir, getPidFile } from "./lib/config";
 import { runSchedulerLoop } from "./lib/scheduler";
 
-const log = createLogger({ logToFile: false });
+const { log } = logger.scoped("daemon");
 
 export async function startDaemon(): Promise<void> {
     const pidFile = getPidFile();
@@ -18,7 +18,7 @@ export async function startDaemon(): Promise<void> {
             const existing = getDaemonPid();
 
             if (existing !== null) {
-                log.error({ existingPid: existing }, "Another daemon is already running");
+                log.error({ existingPid: existing }, "[daemon] another daemon is already running");
                 process.exit(1);
             }
 
@@ -29,20 +29,20 @@ export async function startDaemon(): Promise<void> {
         }
     }
 
-    log.info({ pid: process.pid }, "Daemon starting");
+    log.info({ pid: process.pid }, "[daemon] starting");
 
     const cleanup = () => {
         if (existsSync(pidFile)) {
             unlinkSync(pidFile);
         }
 
-        log.info("Daemon stopped");
+        log.info("[daemon] stopped");
     };
 
     try {
         await runSchedulerLoop(getLogsBaseDir());
     } catch (err) {
-        log.error({ err }, "Daemon crashed");
+        log.error({ err }, "[daemon] crashed");
     } finally {
         cleanup();
     }
