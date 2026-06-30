@@ -1,6 +1,7 @@
-import { useDraggable } from "@dnd-kit/core";
+import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { useNavigate } from "@tanstack/react-router";
 import type { AssistantTask } from "@/drizzle";
+import { INBOX_DROPPABLE_ID } from "./usePlannerDnd";
 
 // Static urgency badge colours (no dynamic Tailwind interpolation)
 const URGENCY_BADGE_BG: Record<string, string> = {
@@ -31,6 +32,8 @@ function DraggableInboxItem({ task, onFocus }: DraggableInboxItemProps) {
             ref={setNodeRef}
             {...listeners}
             {...attributes}
+            data-testid="planner-inbox-item"
+            data-task-id={task.id}
             className={[
                 "group flex cursor-grab items-center gap-2 rounded-lg border border-white/5 bg-zinc-800/60 px-3 py-2",
                 "transition-all duration-150 hover:border-white/10 hover:bg-zinc-800/80 hover:shadow-md",
@@ -74,13 +77,22 @@ interface PlannerInboxProps {
 
 export function PlannerInbox({ tasks, completedToday, deferredToTomorrow }: PlannerInboxProps) {
     const navigate = useNavigate();
+    const { setNodeRef, isOver } = useDroppable({ id: INBOX_DROPPABLE_ID });
 
     function handleFocus(taskId: string) {
         navigate({ to: "/dashboard/focus", search: { taskId } });
     }
 
     return (
-        <div className="flex w-full shrink-0 flex-col gap-2 rounded-xl border border-white/5 bg-zinc-900/60 p-3 backdrop-blur-sm md:w-72">
+        <div
+            ref={setNodeRef}
+            data-testid="planner-inbox"
+            className={[
+                "flex w-full shrink-0 flex-col gap-2 rounded-xl border bg-zinc-900/60 p-3 backdrop-blur-sm md:w-72",
+                "transition-colors duration-150",
+                isOver ? "border-amber-400/60 bg-amber-400/5 ring-1 ring-amber-400/30" : "border-white/5",
+            ].join(" ")}
+        >
             <div className="flex items-center justify-between px-1">
                 <h3 className="text-xs font-semibold uppercase tracking-widest text-zinc-400">Inbox</h3>
                 <span className="text-[10px] text-zinc-600" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
@@ -89,8 +101,16 @@ export function PlannerInbox({ tasks, completedToday, deferredToTomorrow }: Plan
             </div>
 
             {tasks.length === 0 ? (
-                <p className="px-1 py-4 text-center text-xs text-zinc-600">
-                    Inbox empty — drag on the timeline to create a task
+                <p
+                    data-testid="planner-inbox-empty"
+                    className={[
+                        "rounded-lg border border-dashed px-1 py-6 text-center text-xs transition-colors",
+                        isOver ? "border-amber-400/60 text-amber-300" : "border-white/10 text-zinc-600",
+                    ].join(" ")}
+                >
+                    {isOver
+                        ? "Drop here to move back to the inbox"
+                        : "Inbox empty — drag on the timeline to create a task"}
                 </p>
             ) : (
                 <div className="flex flex-col gap-1.5 overflow-y-auto">
@@ -101,7 +121,7 @@ export function PlannerInbox({ tasks, completedToday, deferredToTomorrow }: Plan
             )}
 
             <p className="mt-1 px-1 text-[10px] text-zinc-600">
-                Drag a task onto the timeline to schedule it, or drag on empty timeline space to create one.
+                Drag on empty timeline space to create a task, or drag a scheduled block here to unschedule it.
             </p>
 
             {/* Footer stats */}

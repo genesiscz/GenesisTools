@@ -1,5 +1,6 @@
 import { useDroppable } from "@dnd-kit/core";
 import { useState } from "react";
+import type { AssistantTask } from "@/drizzle";
 import type { FocusSessionBlock } from "@/lib/timer/timer-sync.server";
 import { FocusSessionGhost } from "./FocusSessionGhost";
 import { NowMarker } from "./NowMarker";
@@ -52,12 +53,14 @@ interface PlannerTimelineProps {
     scheduledTasks: ScheduledTask[];
     /** Active drag task id, from usePlannerDnd */
     activeDragId: string | null;
-    dragListeners?: Record<string, unknown>;
-    dragAttributes?: Record<string, unknown>;
     /** Completed pomodoro focus sessions to render as ghost blocks */
     focusSessions: FocusSessionBlock[];
     /** Draw a time block on empty timeline space to create a scheduled task. */
     onCreateAt?: (scheduledStart: string, scheduledEnd: string) => void;
+    onEditTitle: (task: AssistantTask) => void;
+    onDelete: (task: AssistantTask) => void;
+    onDefer: (task: AssistantTask) => void;
+    onToggleComplete: (task: AssistantTask, completed: boolean) => void;
 }
 
 function DroppableTimeline({
@@ -117,6 +120,7 @@ function DroppableTimeline({
     return (
         <div
             ref={setNodeRef}
+            data-testid="planner-timeline-droppable"
             className={["relative transition-colors duration-150", isOver ? "bg-white/5" : ""].join(" ")}
             style={{ height: TIMELINE_HEIGHT, touchAction: "pan-y" }}
             onPointerDown={handlePointerDown}
@@ -134,7 +138,16 @@ function DroppableTimeline({
     );
 }
 
-export function PlannerTimeline({ scheduledTasks, activeDragId, focusSessions, onCreateAt }: PlannerTimelineProps) {
+export function PlannerTimeline({
+    scheduledTasks,
+    activeDragId,
+    focusSessions,
+    onCreateAt,
+    onEditTitle,
+    onDelete,
+    onDefer,
+    onToggleComplete,
+}: PlannerTimelineProps) {
     const topPx = nowTopPx();
 
     return (
@@ -205,6 +218,10 @@ export function PlannerTimeline({ scheduledTasks, activeDragId, focusSessions, o
                                     topPx={blockTopPx}
                                     heightPx={blockHeightPx}
                                     isDragging={activeDragId === task.id}
+                                    onEditTitle={onEditTitle}
+                                    onDelete={onDelete}
+                                    onDefer={onDefer}
+                                    onToggleComplete={onToggleComplete}
                                 />
                             );
                         })}
