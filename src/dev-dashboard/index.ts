@@ -10,6 +10,7 @@ import { startFrontProxy } from "@app/dev-dashboard/lib/front-proxy";
 import { runPreviewUiServer } from "@app/dev-dashboard/lib/preview-ui-server";
 import { runConfigure, runFirstTimeSetup } from "@app/dev-dashboard/lib/setup";
 import { serveAgent } from "@app/dev-dashboard/server/serve";
+import { setDashboardBoundPort } from "@app/dev-dashboard/server/routes/net";
 import { devDashboardUiApp } from "@app/dev-dashboard/ui/app";
 import { logger, out } from "@app/logger";
 import { isInteractive, runTool } from "@app/utils/cli";
@@ -104,6 +105,7 @@ async function runUiServer(): Promise<void> {
     try {
         const bindHost = env.dashboard.getBindHost() ?? "0.0.0.0";
         frontProxy = startFrontProxy({ publicPort: port, internalPort, hostname: bindHost });
+        setDashboardBoundPort(port);
         logger.info({ publicPort: port, internalPort }, "front proxy listening — upstream Vite is ready");
     } catch (err) {
         try {

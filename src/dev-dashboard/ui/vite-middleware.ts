@@ -12,7 +12,9 @@ import { isPublicShareRequest } from "@app/dev-dashboard/lib/share-auth";
 import { handleWithRouter } from "@app/dev-dashboard/server/adapters/node-connect";
 import { defaultSystemCollector } from "@app/dev-dashboard/server/collector/SystemCollector";
 import { createDashboardRouter, startBackgroundServices } from "@app/dev-dashboard/server/registry";
+import { setDashboardBoundPort } from "@app/dev-dashboard/server/routes/net";
 import { logger } from "@app/logger";
+import { env } from "@app/utils/env";
 import type { Connect } from "vite";
 
 // The route handlers + the cmux/pulse pollers now live in the extracted,
@@ -92,6 +94,8 @@ async function requireDashboardAuth(req: IncomingMessage, res: ServerResponse, u
 // startBackgroundServices() so the Agent and the web share one boot path.
 const router = createDashboardRouter();
 const services = { collector: defaultSystemCollector() };
+
+setDashboardBoundPort(Number(env.dashboard.getPublicPort()) || 3042);
 
 void startBackgroundServices();
 
