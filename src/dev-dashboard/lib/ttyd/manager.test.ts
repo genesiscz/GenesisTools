@@ -76,6 +76,35 @@ describe.skipIf(!hasTtydDeps)("ttyd manager", () => {
     });
 });
 
+describe.skipIf(!hasTtydDeps)("spawnTtyd persist-failure cleanup", () => {
+    afterEach(async () => {
+        const { __setPersistRegistryForTest } = await import("./manager");
+        __setPersistRegistryForTest(null);
+
+        const sessions = await listTtyd();
+        for (const session of sessions) {
+            await killTtyd(session.id, { killTmux: true });
+        }
+        await killAllTtyd();
+    });
+
+    test("kills the spawned child if registry persistence fails", async () => {
+        const { spawnTtyd, __setPersistRegistryForTest } = await import("./manager");
+
+        __setPersistRegistryForTest(async () => {
+            throw new Error("disk full");
+        });
+
+        await expect(spawnTtyd({ cwd: "/tmp", command: "/bin/sh" })).rejects.toThrow("disk full");
+
+        await new Promise((r) => setTimeout(r, 100));
+
+        const ps = Bun.spawnSync(["pgrep", "-f", "ttyd.*--port"]);
+        const survivors = new TextDecoder().decode(ps.stdout).trim();
+        expect(survivors).toBe("");
+    });
+});
+
 const labelBase: TtydSession = {
     id: "a",
     port: 50245,
