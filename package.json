@@ -144,7 +144,7 @@
         "clipboardy": "^4.0.0",
         "commander": "^14.0.3",
         "comment-json": "^4.6.2",
-        "diff": "^8.0.2",
+        "diff": "^9.0.0",
         "diff2html": "^3.4.51",
         "fb-watchman": "^2.0.2",
         "filesize": "^10.1.6",
