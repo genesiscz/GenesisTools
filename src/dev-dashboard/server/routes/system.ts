@@ -1,4 +1,4 @@
-import { getCachedPulse, getSeries } from "@app/dev-dashboard/lib/system/poller";
+import { getCachedPulse, getSeries, markPulseClientSeen } from "@app/dev-dashboard/lib/system/poller";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
 
 export function systemRoutes(): RouteDef[] {
@@ -6,7 +6,10 @@ export function systemRoutes(): RouteDef[] {
         {
             method: "GET",
             pattern: "/api/system/pulse",
-            handler: () => ({ kind: "json", status: 200, body: getCachedPulse() ?? { capturedAt: null } }),
+            handler: () => {
+                markPulseClientSeen();
+                return { kind: "json", status: 200, body: getCachedPulse() ?? { capturedAt: null } };
+            },
         },
         {
             method: "GET",

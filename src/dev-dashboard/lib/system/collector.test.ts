@@ -99,6 +99,27 @@ describe("parseWifiSsid", () => {
     });
 });
 
+describe("collectTopProcesses", () => {
+    test("uses a cheaper top-N path instead of enumerating + sorting every process", async () => {
+        const spawnSpy = mock(Bun.spawn);
+        const original = Bun.spawn;
+        // @ts-expect-error -- intentional test override
+        Bun.spawn = spawnSpy;
+
+        try {
+            const { collectTopProcesses } = await import("./collector");
+            await collectTopProcesses(5);
+
+            const psCall = spawnSpy.mock.calls.find((c) => Array.isArray(c[0]) && c[0][0] === "ps");
+            expect(psCall).toBeDefined();
+            const argv = psCall?.[0] as string[];
+            expect(argv.some((a) => a.includes("-r") || a.includes("-m"))).toBe(true);
+        } finally {
+            Bun.spawn = original;
+        }
+    });
+});
+
 describe("runShell", () => {
     test("logs at debug level when the spawned command fails to spawn", async () => {
         const debugSpy = mock(() => {});
