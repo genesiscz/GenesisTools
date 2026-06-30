@@ -184,6 +184,7 @@ export function registerWatchCommand(program: Command): void {
 
                 await waitUntilExit();
             } finally {
+                session?.dispose();
                 store.close();
                 await client.disconnect();
             }

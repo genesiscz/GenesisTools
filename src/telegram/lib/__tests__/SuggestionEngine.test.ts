@@ -17,6 +17,19 @@ describe("SuggestionEngine", () => {
         expect(prompt).toContain("hey wyd");
     });
 
+    it("cancelAutoSuggest clears a pending auto-suggest timer", async () => {
+        const engine = new SuggestionEngine({} as never, { modes: { suggestions: { enabled: true, trigger: "auto", autoDelayMs: 5000 } } } as never, "Me");
+        let fired = false;
+
+        engine.scheduleAutoSuggest([{ sender: "Alice", text: "hi" }], () => {
+            fired = true;
+        });
+        engine.cancelAutoSuggest();
+
+        await new Promise((r) => setTimeout(r, 100));
+        expect(fired).toBe(false);
+    });
+
     it("parseSuggestions extracts numbered list", () => {
         const raw = `Here are 3 suggestions:
 

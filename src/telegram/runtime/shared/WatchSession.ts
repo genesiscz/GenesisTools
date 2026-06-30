@@ -149,6 +149,10 @@ export class WatchSession {
         this.notify();
     }
 
+    dispose(): void {
+        this.suggestionEngine.cancelAutoSuggest();
+    }
+
     async switchContact(contact: TelegramContactV2): Promise<void> {
         this.suggestionEngine.cancelAutoSuggest();
         this._currentContact = contact;
