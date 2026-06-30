@@ -1,7 +1,7 @@
 import * as p from "@clack/prompts";
 import { getTask } from "../lib/config";
-import { DEFAULT_RETENTION } from "../lib/register";
 import { parseInterval } from "../lib/interval";
+import { DEFAULT_RETENTION } from "../lib/register";
 import type { DaemonTask } from "../lib/types";
 
 export async function runTaskEditor(initial?: Partial<DaemonTask>): Promise<DaemonTask | null> {
