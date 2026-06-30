@@ -157,6 +157,22 @@ describe("UsageHistoryDb", () => {
         expect(db.getLatestSpend("nobody")).toBeNull();
     });
 
+    test("only runs ensureSchema's CREATE/ALTER statements once per underlying connection", () => {
+        const execSpy: string[] = [];
+        const first = new UsageHistoryDb(dbPath);
+        const rawDb = first["claudeDb"].getDb();
+        const originalExec = rawDb.exec.bind(rawDb);
+        rawDb.exec = (sql: string) => {
+            execSpy.push(sql);
+            return originalExec(sql);
+        };
+
+        const firstCount = execSpy.length;
+        new UsageHistoryDb(dbPath);
+        expect(execSpy.length).toBe(firstCount);
+        first.close();
+    });
+
     test("ensureSchema is idempotent across re-opens (PRAGMA-guarded ALTERs)", () => {
         db.recordSnapshotV2("livinka", "five_hour", 10, recentTimestamp(5), {
             resetsAt: null,
