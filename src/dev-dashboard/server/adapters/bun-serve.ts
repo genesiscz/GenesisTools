@@ -2,7 +2,7 @@ import type { Router } from "@app/dev-dashboard/server/router";
 import type { RouteContext, RouteResult, RouteServices, SseEmitter } from "@app/dev-dashboard/server/types";
 import { SafeJSON } from "@app/utils/json";
 
-function toResponse(result: RouteResult): Response {
+export function toResponse(result: RouteResult): Response {
     if (result.kind === "json") {
         return new Response(SafeJSON.stringify(result.body), {
             status: result.status,
@@ -35,19 +35,37 @@ function toResponse(result: RouteResult): Response {
 
     const encoder = new TextEncoder();
     let handle: { close: () => void } | null = null;
+    let closed = false;
     const stream = new ReadableStream<Uint8Array>({
         start(controller) {
             const emit: SseEmitter = {
                 data: (payload) => {
-                    controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+                    if (closed) {
+                        return;
+                    }
+
+                    try {
+                        controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+                    } catch {
+                        closed = true;
+                    }
                 },
                 comment: (text) => {
-                    controller.enqueue(encoder.encode(`:${text}\n\n`));
+                    if (closed) {
+                        return;
+                    }
+
+                    try {
+                        controller.enqueue(encoder.encode(`:${text}\n\n`));
+                    } catch {
+                        closed = true;
+                    }
                 },
             };
             handle = result.start(emit);
         },
         cancel() {
+            closed = true;
             handle?.close();
         },
     });
