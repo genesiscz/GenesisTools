@@ -187,9 +187,12 @@ function getFilesInDirectory(dirPath: string, basePath: string): FileChange[] {
                         mtime: stats.mtime,
                     });
                 }
-            } catch (_error: unknown) {}
+            } catch (err) {
+                logger.debug({ err, path: relativePath }, "[last-changes] file scan entry failed");
+            }
         }
-    } catch (_error: unknown) {
+    } catch (err) {
+        logger.debug({ err, path: dirPath }, "[last-changes] file scan entry failed");
         return result;
     }
 

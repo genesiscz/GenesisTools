@@ -1,3 +1,4 @@
+import { logger } from "@app/logger";
 import type { OAuthProfileResponse } from "@app/utils/claude/auth";
 import { Storage } from "@app/utils/storage/storage";
 
@@ -199,7 +200,12 @@ export async function refreshAccountLabels(): Promise<void> {
     }
 
     const profiles = await Promise.all(
-        accounts.map((acc) => fetchOAuthProfile(acc.tokens.accessToken ?? "").catch(() => undefined))
+        accounts.map((acc) =>
+            fetchOAuthProfile(acc.tokens.accessToken ?? "").catch((err) => {
+                logger.debug({ err, account: acc.name }, "[claude] refreshAccountLabels: per-account fetch failed");
+                return undefined;
+            })
+        )
     );
 
     // Batch all label updates into a single disk write

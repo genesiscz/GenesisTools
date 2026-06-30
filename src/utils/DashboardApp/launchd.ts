@@ -13,6 +13,7 @@
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { logger } from "@app/logger";
 
 const LAUNCH_AGENTS_DIR = join(homedir(), "Library", "LaunchAgents");
 
@@ -199,7 +200,9 @@ export async function kickstartLaunchd(label: string): Promise<void> {
         return;
     }
 
-    await launchctl(["kickstart", "-k", `gui/${uid}/${label}`]).catch(() => undefined);
+    await launchctl(["kickstart", "-k", `gui/${uid}/${label}`]).catch((err) =>
+        logger.warn({ err, label }, "[launchd] kickstart -k failed; service may not have restarted")
+    );
 }
 
 /** Load plist if needed and kickstart — faster than rewriting the plist on restart. */

@@ -1,6 +1,7 @@
 import { useScroll } from "@app/claude/commands/usage/hooks/use-scroll";
 import { type SessionRow, useSessions } from "@app/claude/commands/usage/hooks/use-sessions";
 import type { NotificationManager } from "@app/claude/lib/usage/notification-manager";
+import { logger } from "@app/logger";
 import { findClaudeCommand } from "@app/utils/claude";
 import { formatRelativeTime, formatTokens } from "@app/utils/format";
 import { Box, Text, useInput, useStdout } from "ink";
@@ -65,7 +66,7 @@ export function SessionsView({ notifications }: SessionsViewProps) {
     useEffect(() => {
         findClaudeCommand()
             .then(setClaudeCmd)
-            .catch(() => {});
+            .catch((err) => logger.debug({ err }, "[claude-usage] findClaudeCommand failed, falling back to default"));
     }, []);
 
     // Clean up ping timers on unmount

@@ -1,3 +1,4 @@
+import { logger } from "@app/logger";
 import type { AIEmbeddingProvider, AIProvider, AITask, EmbeddingResult, EmbedOptions } from "../types";
 
 const SUPPORTED_TASKS: AITask[] = ["embed"];
@@ -178,7 +179,11 @@ export class AICoreMLProvider implements AIProvider, AIEmbeddingProvider {
 
     dispose(): void {
         if (this.darwinkit && this.loaded) {
-            this.darwinkit.coreml.unloadModel({ id: this.options.modelId }).catch(() => {});
+            this.darwinkit.coreml
+                .unloadModel({ id: this.options.modelId })
+                .catch((err) =>
+                    logger.debug({ err, path: this.options.modelId }, "[cleanup] best-effort resource cleanup failed")
+                );
         }
     }
 }

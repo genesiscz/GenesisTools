@@ -104,7 +104,14 @@ export class DiffUtil {
 
                 proc.on("close", (code) => {
                     // Clean up temp files
-                    Promise.all([unlink(oldFile).catch(() => {}), unlink(newFile).catch(() => {})]).finally(() => {
+                    Promise.all([
+                        unlink(oldFile).catch((err) =>
+                            logger.debug({ err, path: oldFile }, "[cleanup] best-effort resource cleanup failed")
+                        ),
+                        unlink(newFile).catch((err) =>
+                            logger.debug({ err, path: newFile }, "[cleanup] best-effort resource cleanup failed")
+                        ),
+                    ]).finally(() => {
                         if (code === 0) {
                             // No differences
                             diffLogger.info(chalk.gray("No differences found."));
@@ -134,7 +141,14 @@ export class DiffUtil {
 
                 proc.on("error", (error) => {
                     // Clean up temp files
-                    Promise.all([unlink(oldFile).catch(() => {}), unlink(newFile).catch(() => {})]).finally(() => {
+                    Promise.all([
+                        unlink(oldFile).catch((err) =>
+                            logger.debug({ err, path: oldFile }, "[cleanup] best-effort resource cleanup failed")
+                        ),
+                        unlink(newFile).catch((err) =>
+                            logger.debug({ err, path: newFile }, "[cleanup] best-effort resource cleanup failed")
+                        ),
+                    ]).finally(() => {
                         logger.error(chalk.red(`Failed to run diff command: ${error.message}`));
                         // Fallback: show a simple comparison
                         logger.warn(chalk.yellow("Could not generate diff. Showing content comparison:"));
@@ -148,7 +162,14 @@ export class DiffUtil {
             });
         } catch (error) {
             // Clean up temp files on error
-            await Promise.all([unlink(oldFile).catch(() => {}), unlink(newFile).catch(() => {})]);
+            await Promise.all([
+                unlink(oldFile).catch((err) =>
+                    logger.debug({ err, path: oldFile }, "[cleanup] best-effort resource cleanup failed")
+                ),
+                unlink(newFile).catch((err) =>
+                    logger.debug({ err, path: newFile }, "[cleanup] best-effort resource cleanup failed")
+                ),
+            ]);
             logger.error(chalk.red(`Failed to create diff: ${error instanceof Error ? error.message : String(error)}`));
             // Fallback: show a simple comparison
             logger.warn(chalk.yellow("Could not generate diff. Showing content comparison:"));
