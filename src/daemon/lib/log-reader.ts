@@ -1,5 +1,6 @@
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { LogEntry, RunSummary } from "./types";
 
@@ -108,8 +109,8 @@ export function listRunsForTask(logsBaseDir: string, taskName: string, limit?: n
                         exitCode = typeof last.code === "number" ? last.code : null;
                         duration_ms = typeof last.duration_ms === "number" ? last.duration_ms : null;
                     }
-                } catch {
-                    // incomplete log
+                } catch (err) {
+                    logger.debug({ err, file: logFile }, "[daemon] skipping incomplete run-log line");
                 }
             }
 
@@ -122,8 +123,11 @@ export function listRunsForTask(logsBaseDir: string, taskName: string, limit?: n
                 duration_ms,
                 attempt: typeof meta.attempt === "number" ? meta.attempt : 1,
             });
-        } catch {
-            // skip malformed log files
+        } catch (err) {
+            logger.warn(
+                { err, file: logFile },
+                "[daemon] skipping malformed run-log file; nextRunAt may be computed from older history"
+            );
         }
     }
 
@@ -154,8 +158,8 @@ export function parseLogFile(logFile: string): LogEntry[] {
             if (typeof parsed.type === "string" && VALID_LOG_TYPES.has(parsed.type)) {
                 entries.push(parsed as unknown as LogEntry);
             }
-        } catch {
-            // skip malformed lines
+        } catch (err) {
+            logger.debug({ err, file: logFile, line }, "[daemon] skipping malformed log line");
         }
     }
 

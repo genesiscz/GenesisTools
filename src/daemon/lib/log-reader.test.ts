@@ -1,7 +1,8 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, mock, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { listRunsForTask } from "./log-reader";
 
@@ -27,6 +28,29 @@ for (let i = 0; i < 50; i++) {
 
 afterAll(() => {
     rmSync(baseDir, { recursive: true, force: true });
+});
+
+describe("listRunsForTask malformed-log handling", () => {
+    test("logs at warn level when a run-log file fails to parse, instead of silently skipping it", () => {
+        const warnSpy = mock(() => {});
+        const original = logger.warn;
+        logger.warn = warnSpy;
+
+        try {
+            const corruptDir = mkdtempSync(join(tmpdir(), "log-reader-corrupt-"));
+            const taskDir = join(corruptDir, "test-task");
+            mkdirSync(taskDir, { recursive: true });
+            writeFileSync(join(taskDir, "corrupt.jsonl"), "{not valid json");
+
+            const runs = listRunsForTask(corruptDir, "test-task", 5);
+
+            expect(runs).toEqual([]);
+            expect(warnSpy).toHaveBeenCalled();
+            rmSync(corruptDir, { recursive: true, force: true });
+        } finally {
+            logger.warn = original;
+        }
+    });
 });
 
 describe("listRunsForTask limit", () => {

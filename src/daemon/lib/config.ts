@@ -62,6 +62,8 @@ export async function getTask(name: string): Promise<DaemonTask | undefined> {
     return config.tasks.find((t) => t.name === name);
 }
 
+// upsertTask/removeTask/setTaskEnabled read-modify-write without locking — a lost-update
+// race if two writers interleave. Full fix is out of scope here; log if it recurs.
 export async function upsertTask(task: DaemonTask): Promise<void> {
     const config = await loadConfig();
     const idx = config.tasks.findIndex((t) => t.name === task.name);
