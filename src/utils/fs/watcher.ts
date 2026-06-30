@@ -136,7 +136,7 @@ export async function createWatcher(
                 }
 
                 // Schedule retry after backoff -- do NOT increment consecutiveErrors
-                setTimeout(flushEvents, transientBackoffMs);
+                debounceTimer = setTimeout(flushEvents, transientBackoffMs);
                 return;
             }
 
