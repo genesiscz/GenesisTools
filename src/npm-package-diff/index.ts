@@ -1625,16 +1625,16 @@ class EnhancedPackageComparison {
     }
 
     async cleanup(): Promise<void> {
+        for (const watcher of this.watchers) {
+            await watcher.close();
+        }
+        this.watchers = [];
+
         if (!this.options.keep) {
             const cleanupSpinner = ora({
                 text: "Cleaning up temporary files...",
                 spinner: "dots",
             }).start();
-
-            // Close watchers
-            for (const watcher of this.watchers) {
-                await watcher.close();
-            }
 
             // Remove temp directory
             if (fs.existsSync(this.tempDir)) {

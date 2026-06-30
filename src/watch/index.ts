@@ -10,6 +10,7 @@ import chalk from "chalk";
 import chokidar from "chokidar";
 import { Command } from "commander";
 import { glob } from "glob";
+import { closeAllFileWatchers, closeFileWatcher, setFileWatcher } from "./file-watchers";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -369,7 +370,7 @@ async function setupFileWatchers() {
         // For each tracked file, set up a watcher for direct file changes
         Array.from(matchedFiles).forEach((file) => {
             try {
-                fs.watch(file, { persistent: true } as WatchOptions, (eventType: WatchEventType) => {
+                const watcher = fs.watch(file, { persistent: true } as WatchOptions, (eventType: WatchEventType) => {
                     if (eventType === "change") {
                         log.debug(`Direct fs.watch event (change) for ${file}`);
                         // Immediately check the file size and read new content
@@ -390,6 +391,7 @@ async function setupFileWatchers() {
                         }
                     }
                 });
+                setFileWatcher(file, watcher);
             } catch (err) {
                 log.debug(`Error setting up fs.watch for ${file}: ${err}`);
             }
@@ -507,7 +509,7 @@ async function startWatcher() {
                         tailFile({ filepath, follow: false });
                         // Set up direct watcher for this new file
                         try {
-                            fs.watch(filepath, { persistent: true } as WatchOptions, (eventType: WatchEventType) => {
+                            const watcher = fs.watch(filepath, { persistent: true } as WatchOptions, (eventType: WatchEventType) => {
                                 if (eventType === "change") {
                                     log.debug(`Direct fs.watch event (change) for ${filepath}`);
 
@@ -522,6 +524,7 @@ async function startWatcher() {
                                     tailFile({ filepath, follow: false });
                                 }
                             });
+                            setFileWatcher(filepath, watcher);
                         } catch (err) {
                             log.debug(`Error setting up fs.watch for new file ${filepath}: ${err}`);
                         }
@@ -552,6 +555,7 @@ async function startWatcher() {
                 log.file.remove(`${new Date().toLocaleTimeString()} - ${filepath}`);
 
                 // Remove from tracking
+                closeFileWatcher(filepath);
                 delete filePositions[filepath];
                 delete fileLastModified[filepath];
                 matchedFiles.delete(filepath);
@@ -664,6 +668,7 @@ async function startWatcher() {
         log.info(chalk.yellow("Stopping file watcher..."));
         clearInterval(fileCheckInterval);
         clearInterval(rescanInterval);
+        closeAllFileWatchers();
         watcher.close().then(() => process.exit(0));
     });
 
