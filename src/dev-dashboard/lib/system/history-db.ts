@@ -36,10 +36,6 @@ interface KvRow {
     updated_at: string;
 }
 
-interface CountRow {
-    n: number;
-}
-
 export class PulseHistoryDb {
     private db: Database;
 
@@ -76,11 +72,9 @@ export class PulseHistoryDb {
         );
     }
 
-    pruneOlderThan(hours: number): number {
+    pruneOlderThan(hours: number): void {
         const cutoff = new Date(Date.now() - hours * 3_600_000).toISOString();
-        const before = this.db.prepare("SELECT COUNT(*) AS n FROM pulse_points WHERE ts < ?").get(cutoff) as CountRow;
         this.db.prepare("DELETE FROM pulse_points WHERE ts < ?").run(cutoff);
-        return before.n;
     }
 
     getPublicIp(maxAgeMs: number): string | null {
