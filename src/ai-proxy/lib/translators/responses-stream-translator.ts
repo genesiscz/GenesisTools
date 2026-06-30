@@ -154,6 +154,24 @@ export function translateResponsesStreamEvent({
                 },
             };
         }
+
+        if (item.type === "reasoning") {
+            if (useFoldedThinking) {
+                return null;
+            }
+
+            if (!useCursorThinking) {
+                return null;
+            }
+
+            const reasoningItem = buildReasoningItem(item);
+
+            return {
+                delta: {
+                    reasoning_items: serializeReasoningItems([reasoningItem]),
+                },
+            };
+        }
     }
 
     if (type === "response.function_call_arguments.delta" && typeof event.delta === "string") {

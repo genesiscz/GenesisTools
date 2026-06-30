@@ -1,4 +1,5 @@
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
+import { safeStreamControllerError } from "@app/ai-proxy/lib/safe-stream-controller";
 import { createFoldedStreamState } from "@app/ai-proxy/lib/thinking-folded";
 import {
     type ChatStreamDelta,
@@ -36,6 +37,25 @@ function chatChunk({
     }
 
     return SafeJSON.stringify(chunk);
+}
+
+function withAssistantRole(delta: ChatStreamDelta, roleSent: { value: boolean }): ChatStreamDelta {
+    if (roleSent.value) {
+        return delta;
+    }
+
+    const hasPayload =
+        delta.content !== undefined ||
+        delta.reasoning_content !== undefined ||
+        delta.reasoning_items !== undefined ||
+        delta.tool_calls !== undefined;
+
+    if (!hasPayload) {
+        return delta;
+    }
+
+    roleSent.value = true;
+    return { role: "assistant", ...delta };
 }
 
 export async function responsesToChatSse({
@@ -77,13 +97,16 @@ export async function responsesToChatSse({
 
             if (!reader) {
                 resolveBody("");
-                controller.close();
+                try {
+                    controller.close();
+                } catch (controllerErr) {
+                    logger.debug(
+                        { err: controllerErr, model: proxyModel },
+                        "ai-proxy: SSE early-return controller.close() threw"
+                    );
+                }
                 return;
             }
-
-            const initialChunk = `data: ${chatChunk({ model: proxyModel, delta: { role: "assistant" } })}\n\n`;
-            outboundBuffer += initialChunk;
-            controller.enqueue(encoder.encode(initialChunk));
 
             let buffer = "";
             let finishReason: string | null = null;
@@ -91,6 +114,7 @@ export async function responsesToChatSse({
             const decoder = new TextDecoder();
             const foldedState = thinkingMode === "folded" ? createFoldedStreamState() : undefined;
             const toolCallIndexState = createToolCallIndexState();
+            const roleSent = { value: false };
             let streamSucceeded = false;
 
             try {
@@ -133,9 +157,10 @@ export async function responsesToChatSse({
                             }
 
                             if (translated.delta && Object.keys(translated.delta).length > 0) {
+                                const delta = withAssistantRole(translated.delta, roleSent);
                                 const chunk = `data: ${chatChunk({
                                     model: proxyModel,
-                                    delta: translated.delta,
+                                    delta,
                                     usage: translated.usage,
                                 })}\n\n`;
                                 outboundBuffer += chunk;
@@ -174,12 +199,25 @@ export async function responsesToChatSse({
                 streamSucceeded = true;
             } catch (err) {
                 logger.warn({ err, model: proxyModel }, "ai-proxy: SSE stream failed");
-                controller.error(err);
+
+                if (!safeStreamControllerError(controller, err, streamSucceeded)) {
+                    logger.debug(
+                        { err, model: proxyModel, streamSucceeded },
+                        "ai-proxy: SSE skipped controller.error (client abort or detached)"
+                    );
+                }
             } finally {
                 resolveBody(outboundBuffer);
 
                 if (streamSucceeded) {
-                    controller.close();
+                    try {
+                        controller.close();
+                    } catch (controllerErr) {
+                        logger.warn(
+                            { err: controllerErr, model: proxyModel },
+                            "ai-proxy: SSE controller.close() threw — controller already detached, likely client disconnected"
+                        );
+                    }
                 }
             }
         },

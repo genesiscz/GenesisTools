@@ -5,8 +5,24 @@ import { responsesToChat } from "@app/ai-proxy/lib/translators/responses-to-chat
 import type { CursorTranslationMode, ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
 import type { PipelineResult } from "@app/ai-proxy/lib/usage/pipeline-result";
 
-export function shouldTranslateChatRequest(mode: CursorTranslationMode, req: Request, bodyText: string): boolean {
+export function shouldTranslateChatRequest({
+    mode,
+    req,
+    bodyText,
+    providerId,
+}: {
+    mode: CursorTranslationMode;
+    req: Request;
+    bodyText: string;
+    providerId?: string;
+}): boolean {
     if (mode === "off") {
+        return false;
+    }
+
+    // Grok subscription chat/completions already streams Cursor-native reasoning_content.
+    // Re-encoding via /responses drops role coalescing and breaks the thinking UI.
+    if (providerId === "grok-subscription") {
         return false;
     }
 
@@ -34,7 +50,7 @@ export async function handleChatCompletions({
     req: Request;
     bodyText: string;
 }): Promise<PipelineResult> {
-    if (shouldTranslateChatRequest(mode, req, bodyText)) {
+    if (shouldTranslateChatRequest({ mode, req, bodyText, providerId: provider.id })) {
         return responsesToChat({
             provider,
             upstreamModel,
@@ -48,6 +64,8 @@ export async function handleChatCompletions({
     return identityPipeline({
         provider,
         upstreamModel,
+        proxyModel,
+        thinkingMode,
         path: "chat/completions",
         req,
         bodyText,

@@ -23,6 +23,25 @@ describe("responses-stream-translator", () => {
         expect(result?.delta?.reasoning_content).toBeUndefined();
     });
 
+    it("maps reasoning output_item.added to reasoning_items in cursor mode", () => {
+        const result = translateResponsesStreamEvent({
+            event: {
+                type: "response.output_item.added",
+                output_index: 0,
+                item: {
+                    id: "rs_1",
+                    type: "reasoning",
+                    summary: [],
+                    status: "in_progress",
+                },
+            },
+            thinkingMode: "cursor",
+        });
+
+        expect(result?.delta?.reasoning_items?.[0]?.id).toBe("rs_1");
+        expect(result?.delta?.reasoning_content).toBeUndefined();
+    });
+
     it("maps Grok reasoning_text delta to reasoning_content in cursor mode", () => {
         const result = translateResponsesStreamEvent({
             event: { type: "response.reasoning_text.delta", delta: "thinking" },
