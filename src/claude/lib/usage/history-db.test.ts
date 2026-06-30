@@ -133,6 +133,36 @@ describe("UsageHistoryDb", () => {
         expect(inserted).toBe(false);
     });
 
+    test("recordIfChangedV2 skips when resets_at differs only by sub-second precision", () => {
+        db.recordSnapshotV2("livinka", "seven_day", 100, recentTimestamp(5), {
+            resetsAt: "2026-07-02T19:00:00.245191+00:00",
+            severity: "critical",
+            scopeModel: null,
+        });
+        const inserted = db.recordIfChangedV2("livinka", "seven_day", 100, {
+            resetsAt: "2026-07-02T19:00:00.194135+00:00",
+            severity: "critical",
+            scopeModel: null,
+        });
+        expect(inserted).toBe(false);
+        expect(db.getSnapshots("livinka", "seven_day", 60)).toHaveLength(1);
+    });
+
+    test("recordIfChangedV2 inserts when resets_at changes by a full second", () => {
+        db.recordSnapshotV2("livinka", "seven_day", 100, recentTimestamp(5), {
+            resetsAt: "2026-07-02T19:00:00.000Z",
+            severity: "critical",
+            scopeModel: null,
+        });
+        const inserted = db.recordIfChangedV2("livinka", "seven_day", 100, {
+            resetsAt: "2026-07-02T19:00:01.000Z",
+            severity: "critical",
+            scopeModel: null,
+        });
+        expect(inserted).toBe(true);
+        expect(db.getSnapshots("livinka", "seven_day", 60)).toHaveLength(2);
+    });
+
     test("recordSpendIfChanged writes a row and skips duplicates", () => {
         const spend = {
             used_minor: 1234,

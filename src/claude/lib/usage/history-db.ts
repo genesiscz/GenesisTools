@@ -66,6 +66,21 @@ interface SpendRow {
     cap_currency: string | null;
 }
 
+/** API resets_at strings jitter at sub-second precision; compare at second granularity for dedup. */
+export function resetsAtDedupKey(value: string | null): string | null {
+    if (value === null) {
+        return null;
+    }
+
+    const ms = Date.parse(value);
+
+    if (Number.isNaN(ms)) {
+        return value;
+    }
+
+    return String(Math.floor(ms / 1000));
+}
+
 export class UsageHistoryDb {
     private claudeDb: ClaudeDatabase;
 
@@ -186,7 +201,7 @@ export class UsageHistoryDb {
             latest &&
             latest.utilization === utilization &&
             latest.severity === extras.severity &&
-            latest.resetsAt === extras.resetsAt
+            resetsAtDedupKey(latest.resetsAt) === resetsAtDedupKey(extras.resetsAt)
         ) {
             return false;
         }
