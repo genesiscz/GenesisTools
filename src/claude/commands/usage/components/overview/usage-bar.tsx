@@ -4,17 +4,18 @@ import { Text } from "ink";
 interface UsageBarProps {
     utilization: number;
     width?: number;
+    color?: string;
 }
 
 const BLOCK_FULL = "\u2588";
 const BLOCK_HALF = "\u258C";
 
-export function UsageBar({ utilization, width = 30 }: UsageBarProps) {
+export function UsageBar({ utilization, width = 30, color: colorOverride }: UsageBarProps) {
     const pct = Math.max(0, Math.min(utilization, 100));
     const filled = Math.floor((pct / 100) * width);
     const hasHalf = pct > 0 && filled < width && ((pct / 100) * width) % 1 >= 0.25;
     const emptyCount = width - filled - (hasHalf ? 1 : 0);
-    const color = colorForPct(pct);
+    const color = colorOverride ?? colorForPct(pct);
 
     return (
         <Text>
