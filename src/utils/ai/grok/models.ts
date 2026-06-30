@@ -23,7 +23,7 @@ function seed(
 
 export const GROK_STATIC_CATALOG: GrokModelRecord[] = [
     seed("grok-build", "high", "slow", "reasoning", "ok"),
-    seed("grok-composer-2.5-fast", "high", "fast", "none", "ok"),
+    seed("grok-composer-2.5-fast", "high", "fast", "reasoning", "ok"),
     seed("grok-build-0.1", "medium", "slow", "reasoning", "ok"),
     seed("grok-code-fast", "medium", "fast", "none", "ok"),
     seed("grok-code-fast-1", "medium", "fast", "none", "ok"),
@@ -51,7 +51,7 @@ export const GROK_STATIC_CATALOG: GrokModelRecord[] = [
     seed("grok-4.20-0309-non-reasoning", "medium", "fast", "none", "ok"),
     seed("grok-4.20-multi-agent-0309", "medium", "slow", "multi-agent", "ok"),
     seed("composer-2.5-fast", "low", "fast", "none", "fail"),
-    seed("grok-composer-2.5", "low", "fast", "none", "fail"),
+    seed("grok-composer-2.5", "low", "fast", "reasoning", "fail"),
     seed("grok-4.1-fast", "low", "fast", "none", "fail"),
     seed("grok-2", "low", "medium", "optional", "fail"),
     seed("grok-2-vision", "low", "medium", "optional", "fail"),
@@ -82,17 +82,25 @@ export function inferModelSpeed(id: string): GrokModelSpeed {
     return "medium";
 }
 
+export function isGrokComposerModel(id: string): boolean {
+    return /grok-composer(?:-2\.5)?(?:-fast)?$/i.test(id) || /^composer-2\.5(?:-fast)?$/i.test(id);
+}
+
 export function inferModelThinking(id: string): GrokModelThinking {
     if (/multi-agent/i.test(id)) {
         return "multi-agent";
     }
 
-    if (/reasoning|grok-build/i.test(id)) {
+    if (isGrokComposerModel(id)) {
         return "reasoning";
     }
 
-    if (/non-reasoning|composer|code-fast|mini|fast/i.test(id)) {
+    if (/non-reasoning|code-fast|mini|fast/i.test(id)) {
         return "none";
+    }
+
+    if (/reasoning|grok-build/i.test(id)) {
+        return "reasoning";
     }
 
     return "optional";

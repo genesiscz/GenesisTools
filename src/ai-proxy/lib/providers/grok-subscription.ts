@@ -44,7 +44,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             object: "model",
             created: model.created,
             owned_by: model.owned_by,
-            description: SafeDescription(model),
+            description: model.description,
         }));
     }
 
@@ -75,14 +75,14 @@ export class GrokSubscriptionProvider implements ProxyProvider {
 
     private async forward(path: string, upstreamModel: string, bodyText: string, req: Request): Promise<Response> {
         const target = path.includes("responses") ? "responses" : "chat";
-        const upstreamBody = prepareGrokUpstreamBody(bodyText, upstreamModel, target);
+        const prepared = prepareGrokUpstreamBody(bodyText, upstreamModel, target);
         const started = performance.now();
 
         try {
             const upstream = await this.client.fetch(path, {
                 method: "POST",
-                body: upstreamBody,
-                modelOverride: upstreamModel,
+                body: prepared.bodyText,
+                modelOverride: prepared.upstreamModel,
                 signal: req.signal,
                 headers: {
                     Accept: req.headers.get("Accept") ?? "application/json",
@@ -96,7 +96,9 @@ export class GrokSubscriptionProvider implements ProxyProvider {
                 logger.warn(
                     {
                         account: this.account.name,
-                        upstreamModel,
+                        upstreamModel: prepared.upstreamModel,
+                        requestedModel: upstreamModel,
+                        imageRouted: prepared.imageRouted,
                         path,
                         status: upstream.status,
                         elapsedMs,
@@ -106,7 +108,15 @@ export class GrokSubscriptionProvider implements ProxyProvider {
                 );
             } else {
                 logger.debug(
-                    { account: this.account.name, upstreamModel, path, status: upstream.status, elapsedMs },
+                    {
+                        account: this.account.name,
+                        upstreamModel: prepared.upstreamModel,
+                        requestedModel: upstreamModel,
+                        imageRouted: prepared.imageRouted,
+                        path,
+                        status: upstream.status,
+                        elapsedMs,
+                    },
                     "ai-proxy: upstream request ok"
                 );
             }
@@ -117,16 +127,29 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             });
         } catch (err) {
             if (err instanceof GrokAuthExpiredError) {
+                logger.warn(
+                    {
+                        account: this.account.name,
+                        upstreamModel: prepared.upstreamModel,
+                        requestedModel: upstreamModel,
+                        imageRouted: prepared.imageRouted,
+                        path,
+                        elapsedMs: Math.round(performance.now() - started),
+                        authPath: err.authPath,
+                    },
+                    "ai-proxy: synthesizing 502 from GrokAuthExpiredError (upstream said 401/403 — see prior 'grok: upstream returned auth-status' log for body)"
+                );
+
                 return new Response(
                     SafeJSON.stringify({
                         error: {
-                            message: err.message,
-                            type: "auth_error",
+                            message: `Upstream Grok auth expired or invalid — the ai-proxy host must refresh its Grok login. ${err.message}`,
+                            type: "upstream_auth_error",
                             code: "grok_auth_expired",
                         },
                     }),
                     {
-                        status: 401,
+                        status: 502,
                         headers: { "Content-Type": "application/json" },
                     }
                 );
@@ -135,22 +158,4 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             throw err;
         }
     }
-}
-
-function SafeDescription(model: {
-    visibility: string;
-    speed: string;
-    thinking: string;
-    contextWindow?: number;
-    agentType?: string;
-    probeStatus?: string;
-}): string {
-    return SafeJSON.stringify({
-        visibility: model.visibility,
-        speed: model.speed,
-        thinking: model.thinking,
-        contextWindow: model.contextWindow,
-        agentType: model.agentType,
-        probeStatus: model.probeStatus,
-    });
 }

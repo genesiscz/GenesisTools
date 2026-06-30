@@ -64,8 +64,25 @@ export class GrokSubscriptionClient {
         }
     }
 
+    private async ensureFreshTokenInMemory(): Promise<void> {
+        if (!isTokenExpired(decodeJwtClaims(this.token))) {
+            return;
+        }
+
+        const previousToken = this.token;
+        const reloaded = await this.reloadTokenFromDisk();
+
+        if (reloaded && reloaded !== previousToken) {
+            logger.debug("grok: in-memory token expired, reloaded auth.json from disk");
+        }
+
+        if (isTokenExpired(decodeJwtClaims(this.token))) {
+            throw new GrokAuthExpiredError(this.authPath);
+        }
+    }
+
     async fetch(path: string, init?: RequestInit & { modelOverride?: string }): Promise<Response> {
-        this.assertTokenFresh();
+        await this.ensureFreshTokenInMemory();
 
         let response = await this.doFetch(path, init);
 
@@ -80,6 +97,27 @@ export class GrokSubscriptionClient {
         }
 
         if (isAuthHttpStatus(response.status)) {
+            // Drain the upstream body so we can include it in the diagnostic log —
+            // otherwise we throw away the only clue about WHY upstream said 401.
+            // The body is small (xAI auth-fail bodies are <1KB); buffering is fine here.
+            let bodyExcerpt = "";
+            try {
+                bodyExcerpt = (await response.text()).slice(0, 500);
+            } catch (err) {
+                bodyExcerpt = `<failed to read body: ${err instanceof Error ? err.message : String(err)}>`;
+            }
+
+            logger.warn(
+                {
+                    path,
+                    upstreamStatus: response.status,
+                    upstreamBodyExcerpt: bodyExcerpt,
+                    modelOverride: init?.modelOverride,
+                    authPath: this.authPath,
+                },
+                "grok: upstream returned auth-status, throwing GrokAuthExpiredError"
+            );
+
             throw new GrokAuthExpiredError(this.authPath);
         }
 

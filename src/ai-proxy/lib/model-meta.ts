@@ -8,6 +8,26 @@ import type { CopilotModelRecord } from "@app/utils/ai/github-copilot/types";
 import type { GrokModelRecord } from "@app/utils/ai/grok";
 import { GROK_STATIC_CATALOG, toProxyId } from "@app/utils/ai/grok";
 
+import { SafeJSON } from "@app/utils/json";
+
+export function buildGrokModelDescription(meta: {
+    visibility: string;
+    speed: string;
+    thinking: string;
+    contextWindow?: number;
+    agentType?: string;
+    probeStatus?: string;
+}): string {
+    return SafeJSON.stringify({
+        visibility: meta.visibility,
+        speed: meta.speed,
+        thinking: meta.thinking,
+        contextWindow: meta.contextWindow,
+        agentType: meta.agentType,
+        probeStatus: meta.probeStatus,
+    });
+}
+
 export function grokRecordToProxyMeta(
     account: AiProxyAccountConfig,
     record: GrokModelRecord,
@@ -32,7 +52,16 @@ export function grokRecordToProxyMeta(
         billingPlane: "subscription",
         source: record.source,
         probeStatus: record.probeStatus,
-        description: record.description,
+        description:
+            record.description ??
+            buildGrokModelDescription({
+                visibility: record.visibility,
+                speed: record.speed,
+                thinking: record.thinking,
+                contextWindow: record.context_window,
+                agentType: record.agent_type,
+                probeStatus: record.probeStatus,
+            }),
         object: "model",
         created: 1_740_960_000,
         owned_by: providerKey(account),
