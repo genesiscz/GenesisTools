@@ -2,6 +2,8 @@ import { ensureStorage, getTask, removeTask, upsertTask } from "./config";
 import { parseInterval } from "./interval";
 import type { DaemonTask, RunLogRetention } from "./types";
 
+export const DEFAULT_RETENTION: RunLogRetention = { maxAgeDays: 14, minRuns: 50 };
+
 export interface RegisterTaskOptions {
     name: string;
     command: string;
@@ -48,7 +50,7 @@ export async function registerTask(opts: RegisterTaskOptions): Promise<boolean> 
         description: opts.description,
         ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
         ...(opts.notify === false ? { notify: false } : {}),
-        ...(opts.retention ? { retention: opts.retention } : {}),
+        retention: opts.retention ?? DEFAULT_RETENTION,
     };
 
     await upsertTask(task);
