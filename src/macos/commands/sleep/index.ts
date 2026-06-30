@@ -92,7 +92,7 @@ async function execSleep(): Promise<void> {
         stdio: ["ignore", "pipe", "pipe"],
     });
 
-    const stderr = await new Response(proc.stderr).text();
+    const [, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     const exitCode = await proc.exited;
 
     if (exitCode !== 0) {

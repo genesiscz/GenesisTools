@@ -195,10 +195,12 @@ export class DockerContainer {
               ])
             : proc.exited);
 
-        const stdout = await new Response(proc.stdout).text();
+        const [stdout, stderr] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+        ]);
 
         if (result !== 0) {
-            const stderr = await new Response(proc.stderr).text();
             throw new Error(`docker ${args[0]} failed: ${stderr.trim()}`);
         }
 

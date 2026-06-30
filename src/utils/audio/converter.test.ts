@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { convertToWhisperWav, toFloat32Audio } from "./converter";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { convertFileToMonoMp3, convertToWhisperWav, toFloat32Audio } from "./converter";
 
 describe("audio converter", () => {
     test("parses a generated WAV buffer correctly", async () => {
@@ -85,6 +88,37 @@ describe("audio converter", () => {
 
         const float32 = await toFloat32Audio(wav);
         expect(float32.length).toBe(numSamples);
+    });
+
+    test("does not hang when ffmpeg writes a large amount of stderr progress output", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "audio-converter-drain-"));
+        const input = join(dir, "input.wav");
+        const output = join(dir, "output.mp3");
+
+        const sampleRate = 16000;
+        const numSamples = sampleRate;
+        const dataSize = numSamples * 2;
+        const headerSize = 44;
+        const wav = Buffer.alloc(headerSize + dataSize);
+        wav.write("RIFF", 0);
+        wav.writeUInt32LE(36 + dataSize, 4);
+        wav.write("WAVE", 8);
+        wav.write("fmt ", 12);
+        wav.writeUInt32LE(16, 16);
+        wav.writeUInt16LE(1, 20);
+        wav.writeUInt16LE(1, 22);
+        wav.writeUInt32LE(sampleRate, 24);
+        wav.writeUInt32LE(sampleRate * 2, 28);
+        wav.writeUInt16LE(2, 32);
+        wav.writeUInt16LE(16, 34);
+        wav.write("data", 36);
+        wav.writeUInt32LE(dataSize, 40);
+        writeFileSync(input, wav);
+
+        const start = Date.now();
+        await convertFileToMonoMp3(input, output);
+        expect(Date.now() - start).toBeLessThan(15000);
+        rmSync(dir, { recursive: true, force: true });
     });
 
     test("convertToWhisperWav rejects garbage input", async () => {
