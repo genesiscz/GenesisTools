@@ -6,6 +6,7 @@ import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
 import { findFreePort } from "@app/utils/net/free-port";
+import { killWithEscalation } from "@app/utils/process/killWithEscalation";
 import { buildTerminalSpawnEnv } from "@app/utils/terminal/locale";
 import { resolveTmuxBin } from "@app/utils/tmux/bin";
 import {
@@ -188,17 +189,43 @@ async function pruneDeadSessions(): Promise<void> {
     }
 }
 
-function stopTtydProcess(tracked: Tracked, id: string): void {
+async function stopTtydProcess(tracked: Tracked, id: string): Promise<void> {
     if (tracked.child) {
-        tracked.child.kill("SIGTERM");
-    } else if (processMatchesSession(tracked.session)) {
-        try {
-            process.kill(tracked.session.pid, "SIGTERM");
-        } catch (err) {
-            logger.debug({ err, id }, "ttyd process already gone");
-        }
-    } else {
+        await killWithEscalation(tracked.child);
+        return;
+    }
+
+    if (!processMatchesSession(tracked.session)) {
         logger.debug({ id, pid: tracked.session.pid }, "ttyd pid no longer ours; skipping kill");
+        return;
+    }
+
+    const pid = tracked.session.pid;
+
+    try {
+        await killWithEscalation({
+            kill(signal) {
+                process.kill(pid, signal);
+            },
+            on(event, listener) {
+                if (event !== "exit") {
+                    return;
+                }
+
+                const poll = (): void => {
+                    try {
+                        process.kill(pid, 0);
+                        setTimeout(poll, 200);
+                    } catch {
+                        listener();
+                    }
+                };
+
+                poll();
+            },
+        });
+    } catch (err) {
+        logger.debug({ err, id }, "ttyd process already gone");
     }
 }
 
@@ -408,7 +435,7 @@ export async function killTtyd(id: string, opts: KillTtydOptions = {}): Promise<
         return false;
     }
 
-    stopTtydProcess(tracked, id);
+    await stopTtydProcess(tracked, id);
 
     if (opts.killTmux && tracked.session.tmuxSessionName) {
         killTmuxSession(tracked.session.tmuxSessionName);
@@ -426,7 +453,7 @@ export async function killAllTtyd(): Promise<void> {
     await hydrateRegistry();
 
     for (const [id, tracked] of registry.entries()) {
-        stopTtydProcess(tracked, id);
+        await stopTtydProcess(tracked, id);
     }
 
     registry.clear();
