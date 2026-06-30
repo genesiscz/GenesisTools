@@ -208,6 +208,8 @@ export async function saveCommand(opts: SaveOptions): Promise<void> {
     const storage = new StashStorage();
     await storage.ensureDirs();
     const db = openStashDb(new Database(storage.dbPath()));
+
+    try {
     const repo = new StoreRepo(storage.storeRepoDir());
     await repo.init();
 
@@ -237,7 +239,6 @@ export async function saveCommand(opts: SaveOptions): Promise<void> {
 
         if (decision === "abort") {
             ui.info(`save aborted; "${opts.name}" stays at v${prevVersion}`);
-            db.close();
             return;
         }
 
@@ -313,8 +314,10 @@ export async function saveCommand(opts: SaveOptions): Promise<void> {
     ui.info(`  ${fileList.length} files, baseline ref=${baselineRef}`);
     emitPostSaveHints({ name: opts.name, mode, files: fileList });
 
-    db.close();
     log.debug({ stashId, version, files: fileList.length }, "stash saved");
+    } finally {
+        db.close();
+    }
 }
 
 /**

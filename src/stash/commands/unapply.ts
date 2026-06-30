@@ -51,10 +51,11 @@ export async function unapplyCommand(opts: UnapplyOptions): Promise<void> {
     await storage.ensureDirs();
     const db = openStashDb(new Database(storage.dbPath()));
 
+    try {
     const stash = db.query<StashRow, [string]>("SELECT * FROM stashes WHERE name = ?").get(opts.name);
     if (!stash) {
         ui.err(`stash "${opts.name}" not found`);
-        db.close();
+
         process.exit(1);
     }
 
@@ -65,7 +66,7 @@ export async function unapplyCommand(opts: UnapplyOptions): Promise<void> {
         const w = await Walk.load({ stashId: stash.id, projectHash, stateDir: storage.stateDir() });
         if (!w) {
             ui.info("no in-progress session");
-            db.close();
+    
             return;
         }
         if (opts.action === "abort") {
@@ -78,7 +79,7 @@ export async function unapplyCommand(opts: UnapplyOptions): Promise<void> {
                 `${p.decided}/${p.total} decided; current: ${cur?.filePath ?? "(none)"} hunk ${cur?.hunkIndex ?? "?"}`
             );
         }
-        db.close();
+
         return;
     }
 
@@ -87,12 +88,12 @@ export async function unapplyCommand(opts: UnapplyOptions): Promise<void> {
     if (!walk) {
         if (opts.action !== "start") {
             ui.err("no in-progress session; run without --continue to start");
-            db.close();
+    
             process.exit(1);
         }
         walk = await bootstrapUnapplyWalk({ storage, db, stash, project, projectHash });
         if (!walk) {
-            db.close();
+    
             return;
         }
         // Only strip unchanged regions on the first run (not on --continue) to keep logs clean.
@@ -115,7 +116,7 @@ export async function unapplyCommand(opts: UnapplyOptions): Promise<void> {
     if (!walk.isComplete()) {
         await walk.persist();
         await emitNonTtyPrompt({ walk, verb: "unapply" });
-        db.close();
+
         return;
     }
 
@@ -145,6 +146,8 @@ export async function unapplyCommand(opts: UnapplyOptions): Promise<void> {
         );
     }
 
-    db.close();
     log.debug({ stashId: stash.id, stats }, "stash unapplied");
+    } finally {
+        db.close();
+    }
 }

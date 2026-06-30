@@ -43,10 +43,11 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
     await storage.ensureDirs();
     const db = openStashDb(new Database(storage.dbPath()));
 
+    try {
     const stash = db.query<StashRow, [string]>("SELECT * FROM stashes WHERE name = ?").get(opts.name);
     if (!stash) {
         ui.err(`stash "${opts.name}" not found`);
-        db.close();
+
         process.exit(1);
     }
 
@@ -57,7 +58,7 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
         const session = await ApplySession.load({ stashId: stash.id, projectHash, stateDir: storage.stateDir() });
         if (!session) {
             ui.info("no in-progress apply session");
-            db.close();
+    
             return;
         }
         const snap = session.snapshot();
@@ -71,7 +72,7 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
         }
         await session.abort();
         ui.ok("aborted");
-        db.close();
+
         return;
     }
 
@@ -84,7 +85,7 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
               .get(stash.id);
     if (!version) {
         ui.err(`no version found for "${opts.name}"${opts.version ? ` @v${opts.version}` : ""}`);
-        db.close();
+
         process.exit(1);
     }
     log.debug({ stashId: stash.id, version: version.version, patch_ref: version.patch_ref }, "version resolved");
@@ -93,7 +94,7 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
     const patch = await repo.readFileAt(version.patch_ref, "PATCH.diff");
     if (!patch) {
         ui.err(`patch missing from store at ${version.patch_ref}`);
-        db.close();
+
         process.exit(1);
     }
     log.debug({ patchBytes: patch.length }, "patch fetched from store");
@@ -103,7 +104,7 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
         const session = await ApplySession.load({ stashId: stash.id, projectHash, stateDir: storage.stateDir() });
         if (!session) {
             ui.err(`no in-progress apply session for "${opts.name}"; run 'apply' to start`);
-            db.close();
+    
             process.exit(1);
         }
 
@@ -114,7 +115,7 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
                 ui.warn(`  ${f}`);
             }
             ui.info("resolve all conflicts, then re-run with --resume");
-            db.close();
+    
             process.exit(1);
         }
 
@@ -141,7 +142,7 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
         await session.complete();
         ui.ok(`applied "${opts.name}" v${version.version} (after conflict resolution)`);
         ui.info(`  ${affectedFiles.length} files affected`);
-        db.close();
+
         log.debug({ stashId: stash.id, version: version.version }, "stash applied after conflict resolution");
         return;
     }
@@ -154,7 +155,7 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
         .get(stash.id, project.rootPath);
     if (existingActive) {
         ui.err(`"${opts.name}" is already applied here. Use 'unapply' or 'update'.`);
-        db.close();
+
         process.exit(1);
     }
 
@@ -202,7 +203,7 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
             ui.info("resolve conflicts manually, then:");
             ui.info(`  tools stash apply ${opts.name} --resume`);
             ui.info(`  tools stash apply ${opts.name} --abort    (to reverse the partial apply)`);
-            db.close();
+    
             process.exit(1);
         }
 
@@ -221,7 +222,7 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
             return raw;
         })();
         ui.err(`apply failed: ${friendly}`);
-        db.close();
+
         process.exit(1);
     }
 
@@ -253,8 +254,10 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
     ui.ok(`applied "${opts.name}" v${version.version}`);
     ui.info(`  ${affectedFiles.length} files affected`);
 
-    db.close();
     log.debug({ stashId: stash.id, version: version.version, files: affectedFiles.length }, "stash applied");
+    } finally {
+        db.close();
+    }
 }
 
 async function fetchBaselineBlobs(args: { projectRoot: string; storeDir: string; baselineRef: string }): Promise<void> {

@@ -37,11 +37,12 @@ export async function updateCommand(opts: UpdateOptions): Promise<void> {
     await storage.ensureDirs();
     const db = openStashDb(new Database(storage.dbPath()));
 
+    try {
     const stash = db.query<StashRow, [string]>("SELECT * FROM stashes WHERE name = ?").get(opts.name);
 
     if (!stash) {
         ui.err(`stash "${opts.name}" not found`);
-        db.close();
+
         process.exit(1);
     }
 
@@ -54,7 +55,7 @@ export async function updateCommand(opts: UpdateOptions): Promise<void> {
 
         if (w?.snapshot().verb !== "update") {
             ui[action === "abort" ? "warn" : "info"]("no in-progress update session");
-            db.close();
+    
             return;
         }
 
@@ -66,7 +67,7 @@ export async function updateCommand(opts: UpdateOptions): Promise<void> {
             ui.info(`${p.decided}/${p.total} decided`);
         }
 
-        db.close();
+
         return;
     }
 
@@ -75,7 +76,7 @@ export async function updateCommand(opts: UpdateOptions): Promise<void> {
 
     if (walk && walk.snapshot().verb !== "update") {
         ui.err(`in-progress ${walk.snapshot().verb} session blocks update; resolve it first`);
-        db.close();
+
         process.exit(1);
     }
 
@@ -87,7 +88,7 @@ export async function updateCommand(opts: UpdateOptions): Promise<void> {
             // Surface as a clean CLI error instead of a bun stack trace. Common case: stash isn't
             // applied here (`bootstrapUpdateWalk` throws Error with the recovery hint embedded).
             ui.err(err instanceof Error ? err.message : String(err));
-            db.close();
+    
             process.exit(1);
         }
     }
@@ -116,12 +117,14 @@ export async function updateCommand(opts: UpdateOptions): Promise<void> {
     if (!walk.isComplete()) {
         await walk.persist();
         await emitNonTtyPrompt({ walk, verb: "update" });
-        db.close();
+
         return;
     }
 
     await executeUpdateDecisions({ walk, projectRoot: project.rootPath, storage, db, stash });
     await walk.complete();
-    db.close();
     log.debug({ stashId: stash.id }, "update complete");
+    } finally {
+        db.close();
+    }
 }
