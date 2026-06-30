@@ -1,4 +1,7 @@
+import { Database } from "bun:sqlite";
 import { ClaudeDatabase } from "@app/utils/claude/database";
+
+const schemaEnsured = new WeakSet<Database>();
 
 export interface UsageSnapshot {
     id: number;
@@ -74,6 +77,10 @@ export class UsageHistoryDb {
     private ensureSchema(): void {
         const db = this.claudeDb.getDb();
 
+        if (schemaEnsured.has(db)) {
+            return;
+        }
+
         db.exec(`
             CREATE TABLE IF NOT EXISTS usage_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -121,6 +128,8 @@ export class UsageHistoryDb {
         if (!have.has("scope_model")) {
             db.exec("ALTER TABLE usage_snapshots ADD COLUMN scope_model TEXT");
         }
+
+        schemaEnsured.add(db);
     }
 
     recordSnapshot(
