@@ -340,9 +340,10 @@ export async function searchIndexReadonly(
 
     const db = new Database(dbPath, { readonly: true });
     const tableName = sanitizeName(indexName);
-    assertVecExtensionAvailable(db, tableName);
 
     try {
+        assertVecExtensionAvailable(db, tableName);
+
         if (opts?.attach) {
             attachReadonly(db, opts.attach.alias, opts.attach.dbPath, opts.attach.mode ?? "ro");
         }
@@ -531,10 +532,11 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
     }
 
     const dbPath = join(indexDir, "index.db");
-    let db: InstanceType<typeof Database>;
+    let dbForCleanup: InstanceType<typeof Database> | undefined;
 
     try {
-        db = new Database(dbPath);
+        const db = new Database(dbPath);
+        dbForCleanup = db;
         db.run("PRAGMA journal_mode = WAL");
 
         const tableName = sanitizeName(config.name);
@@ -1272,6 +1274,9 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
 
         return store;
     } catch (err) {
+        if (dbForCleanup) {
+            dbForCleanup.close();
+        }
         // Release the lock if initialization fails — otherwise it stays held until stale
         await lockHandle.release();
         throw err;
