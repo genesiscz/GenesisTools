@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { runTunnelSetup } from "@app/dev-dashboard/commands/tunnel";
@@ -9,8 +9,8 @@ import { generatePairingCode, savePairingCode } from "@app/dev-dashboard/lib/e2e
 import { startFrontProxy } from "@app/dev-dashboard/lib/front-proxy";
 import { runPreviewUiServer } from "@app/dev-dashboard/lib/preview-ui-server";
 import { runConfigure, runFirstTimeSetup } from "@app/dev-dashboard/lib/setup";
-import { serveAgent } from "@app/dev-dashboard/server/serve";
 import { setDashboardBoundPort } from "@app/dev-dashboard/server/routes/net";
+import { serveAgent } from "@app/dev-dashboard/server/serve";
 import { devDashboardUiApp } from "@app/dev-dashboard/ui/app";
 import { logger, out } from "@app/logger";
 import { isInteractive, runTool } from "@app/utils/cli";
@@ -19,8 +19,17 @@ import { openBrowserWhenDashboardEnv } from "@app/utils/DashboardApp/preview";
 import { waitForUrlReady } from "@app/utils/DashboardApp/readiness";
 import { env } from "@app/utils/env";
 import { findFreePort } from "@app/utils/net/free-port";
+import { killWithEscalation } from "@app/utils/process/killWithEscalation";
 import { PROJECT_ROOT } from "@app/utils/paths";
+import type { Subprocess } from "bun";
 import { Command } from "commander";
+
+export async function killChild(
+    child: ChildProcess | Subprocess,
+    opts: { graceMs?: number } = {}
+): Promise<boolean> {
+    return killWithEscalation(child, opts);
+}
 
 const program = new Command()
     .name("dev-dashboard")
@@ -134,25 +143,27 @@ async function runUiServer(): Promise<void> {
         process.exit(1);
     });
 
-    const killChild = () => {
-        try {
-            child.kill("SIGTERM");
-        } catch (err) {
-            logger.debug({ err }, "Vite child kill failed (already gone?)");
-        }
-    };
-
-    const shutdown = (signal: NodeJS.Signals) => {
+    const shutdown = async (signal: NodeJS.Signals) => {
         stopFrontProxy();
-        killChild();
+        await killChild(child);
         process.exit(signal === "SIGTERM" || signal === "SIGINT" ? 0 : 1);
     };
 
-    process.on("SIGINT", () => shutdown("SIGINT"));
-    process.on("SIGTERM", () => shutdown("SIGTERM"));
-    process.on("SIGHUP", () => shutdown("SIGHUP"));
+    process.on("SIGINT", () => {
+        void shutdown("SIGINT");
+    });
+    process.on("SIGTERM", () => {
+        void shutdown("SIGTERM");
+    });
+    process.on("SIGHUP", () => {
+        void shutdown("SIGHUP");
+    });
     process.on("exit", () => {
-        killChild();
+        try {
+            child.kill("SIGKILL");
+        } catch (err) {
+            logger.debug({ err }, "Vite child kill failed on process exit (already gone?)");
+        }
     });
 
     void openBrowserWhenDashboardEnv(url);
@@ -253,7 +264,9 @@ program
         out.println("");
     });
 
-await runTool(program, { tool: "dev-dashboard" }).catch((err) => {
-    logger.error({ err }, "dev-dashboard failed");
-    process.exit(1);
-});
+if (import.meta.main) {
+    await runTool(program, { tool: "dev-dashboard" }).catch((err) => {
+        logger.error({ err }, "dev-dashboard failed");
+        process.exit(1);
+    });
+}
