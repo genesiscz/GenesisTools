@@ -2,7 +2,7 @@ import { logger } from "@app/logger";
 
 const { log } = logger.scoped("stash:patch");
 
-export type SaveMode = "staged" | "unstaged" | "all";
+export type SaveMode = "staged" | "unstaged" | "all" | "regions" | "patch";
 
 export async function runGitIn(repoDir: string, args: string[], opts?: { stdin?: string }): Promise<string> {
     log.debug({ repoDir, args }, "git invoke");
@@ -41,7 +41,8 @@ export async function diffWorkingTree(args: { repoDir: string; mode: SaveMode })
     const gitArgs = ["diff", "--no-color", "--no-ext-diff", "--binary", "--src-prefix=a/", "--dst-prefix=b/"];
     if (args.mode === "staged") {
         gitArgs.push("--cached");
-    } else if (args.mode === "all") {
+    } else if (args.mode === "all" || args.mode === "regions" || args.mode === "patch") {
+        // "regions" and "patch" use the full working-tree diff; each mode narrows downstream.
         gitArgs.push("HEAD");
     }
     log.debug({ mode: args.mode }, "diffWorkingTree");

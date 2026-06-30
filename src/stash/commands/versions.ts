@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { logger, out } from "@app/logger";
+import chalk from "chalk";
 import { openStashDb } from "../lib/stash-db";
 import { StashStorage } from "../lib/storage";
 import { ui } from "../lib/ui";
@@ -29,14 +30,17 @@ export async function versionsCommand(name: string): Promise<void> {
         return;
     }
 
-    ui.section(`${name} — ${rows.length} version${rows.length === 1 ? "" : "s"}`);
-    ui.dim(`  VER  FILES  REGIONS  CREATED                       ORIGIN`);
+    // EVERYTHING to stdout in order — mixing stderr (ui.*) and stdout (out.*) makes the
+    // terminal display rows before the section divider due to independent stream buffering.
+    const title = `${name} — ${rows.length} version${rows.length === 1 ? "" : "s"}`;
+    out.println(chalk.dim(`── ${title} ${"─".repeat(Math.max(0, 60 - title.length))}`));
+    out.println(chalk.dim(`  VER  FILES  REGIONS  CREATED                       ORIGIN`));
     for (const r of rows) {
         const ver = `v${r.version}`.padEnd(4);
         const files = String(r.file_count).padStart(5);
         const regs = String(r.region_count).padStart(7);
         const created = r.created_at.padEnd(29);
-        out.print(`  ${ver} ${files}  ${regs}  ${created} ${r.source_origin ?? "—"}`);
+        out.println(`  ${ver} ${files}  ${regs}  ${created} ${r.source_origin ?? "—"}`);
     }
     db.close();
 }

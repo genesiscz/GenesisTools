@@ -114,12 +114,16 @@ export async function listCommand(opts: ListOptions): Promise<void> {
     const verW = Math.max(3, ...display.map((d) => d.ver.length));
     const tagsW = Math.max(4, ...display.map((d) => d.tags.length));
 
-    ui.section(`${rows.length} stash${rows.length === 1 ? "" : "es"}`);
-    ui.dim(`  ${"NAME".padEnd(nameW)}  ${"VER".padEnd(verW)}  ${"TAGS".padEnd(tagsW)}  STATUS`);
+    // EVERYTHING goes to stdout in order (header → column titles → rows). Mixing stderr (ui.*)
+    // and stdout (out.*) caused the terminal to display rows BEFORE the section divider due to
+    // independent buffering of the two streams. A single stream preserves write order; `tools
+    // stash list | grep` still works because grep sees the same ordered output.
+    const title = `${rows.length} stash${rows.length === 1 ? "" : "es"}`;
+    out.println(chalk.dim(`── ${title} ${"─".repeat(Math.max(0, 60 - title.length))}`));
+    out.println(chalk.dim(`  ${"NAME".padEnd(nameW)}  ${"VER".padEnd(verW)}  ${"TAGS".padEnd(tagsW)}  STATUS`));
     for (const d of display) {
         const status = d.appliedHere ? chalk.green("● applied here") : chalk.dim("·");
-        // Plain row data via out.print so `tools stash list | grep` still works as expected.
-        out.print(`  ${d.name.padEnd(nameW)}  ${d.ver.padEnd(verW)}  ${d.tags.padEnd(tagsW)}  ${status}`);
+        out.println(`  ${d.name.padEnd(nameW)}  ${d.ver.padEnd(verW)}  ${d.tags.padEnd(tagsW)}  ${status}`);
     }
     db.close();
 }

@@ -55,4 +55,26 @@ describe("findSiblingClones", () => {
         const names = found.map((p) => p.split("/").pop()).sort();
         expect(names).toEqual(["foo-upgrade", "foo2"]);
     });
+
+    test("falls back to tree-hash similarity when no origin URL is set", async () => {
+        // repos "main" and "clone" share 9/10 files → Jaccard ≈ 0.818 → siblings
+        // repo "other" shares only 1/10 → Jaccard ≈ 0.11 → not a sibling
+        const sharedFiles = ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts", "g.ts", "h.ts", "i.ts"];
+        for (const name of ["main", "clone", "other"]) {
+            const repo = join(work, name);
+            await runGitIn(work, ["init", name, "--initial-branch=main"]);
+            const files =
+                name === "other" ? ["a.ts", "x.ts", "y.ts"] : [...sharedFiles, name === "main" ? "j.ts" : "k.ts"];
+
+            for (const f of files) {
+                await Bun.write(join(repo, f), "");
+            }
+
+            await runGitIn(repo, ["add", "--all"]);
+        }
+
+        const found = await findSiblingClones(join(work, "main"));
+        const names = found.map((p) => p.split("/").pop()).sort();
+        expect(names).toEqual(["clone"]);
+    });
 });
