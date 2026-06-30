@@ -92,4 +92,83 @@ describe("UsageHistoryDb", () => {
         const pairs = db.getAllAccountBuckets();
         expect(pairs).toHaveLength(3);
     });
+
+    test("recordSnapshotV2 stores severity + scope_model", () => {
+        db.recordSnapshotV2("livinka", "five_hour", 42, recentTimestamp(5), {
+            resetsAt: null,
+            severity: "warning",
+            scopeModel: null,
+        });
+        const latest = db.getLatest("livinka", "five_hour");
+        expect(latest?.severity).toBe("warning");
+        expect(latest?.scopeModel).toBeNull();
+    });
+
+    test("recordIfChangedV2 inserts when severity changes even if percent equal", () => {
+        db.recordSnapshotV2("livinka", "five_hour", 80, recentTimestamp(5), {
+            resetsAt: null,
+            severity: "normal",
+            scopeModel: null,
+        });
+        const inserted = db.recordIfChangedV2("livinka", "five_hour", 80, {
+            resetsAt: null,
+            severity: "warning",
+            scopeModel: null,
+        });
+        expect(inserted).toBe(true);
+        expect(db.getSnapshots("livinka", "five_hour", 60)).toHaveLength(2);
+    });
+
+    test("recordIfChangedV2 skips when percent AND severity unchanged", () => {
+        db.recordSnapshotV2("livinka", "five_hour", 80, recentTimestamp(5), {
+            resetsAt: null,
+            severity: "warning",
+            scopeModel: null,
+        });
+        const inserted = db.recordIfChangedV2("livinka", "five_hour", 80, {
+            resetsAt: null,
+            severity: "warning",
+            scopeModel: null,
+        });
+        expect(inserted).toBe(false);
+    });
+
+    test("recordSpendIfChanged writes a row and skips duplicates", () => {
+        const spend = {
+            used_minor: 1234,
+            used_currency: "EUR",
+            used_exponent: 2,
+            limit_minor: 15000,
+            limit_exponent: 2,
+            percent: 8,
+            severity: "normal",
+            enabled: true,
+            cap_minor: 15000,
+            cap_currency: "EUR",
+        };
+        expect(db.recordSpendIfChanged("acct", spend)).toBe(true);
+        expect(db.recordSpendIfChanged("acct", spend)).toBe(false);
+
+        const latest = db.getLatestSpend("acct");
+        expect(latest).toMatchObject({ used_minor: 1234, percent: 8, severity: "normal", enabled: true });
+    });
+
+    test("getLatestSpend returns null when no spend snapshots exist", () => {
+        expect(db.getLatestSpend("nobody")).toBeNull();
+    });
+
+    test("ensureSchema is idempotent across re-opens (PRAGMA-guarded ALTERs)", () => {
+        db.recordSnapshotV2("livinka", "five_hour", 10, recentTimestamp(5), {
+            resetsAt: null,
+            severity: "normal",
+            scopeModel: null,
+        });
+        db.close();
+
+        // Re-open same file — ensureSchema runs again; ALTERs must be guarded.
+        const db2 = new UsageHistoryDb(dbPath);
+        const latest = db2.getLatest("livinka", "five_hour");
+        expect(latest?.utilization).toBe(10);
+        db2.close();
+    });
 });

@@ -33,16 +33,14 @@ describe("getSharedAccountsUsage", () => {
             getCache: (k) => store.get(k) ?? null,
             putCache: (k, v) => void store.set(k, v),
             withLock: async (_k, fn) => fn(),
-            record: () => {},
         });
         const r = await get({});
         expect(fetches).toBe(0);
         expect(r[0].usage?.five_hour.utilization).toBe(11);
     });
 
-    test("fetches + records + writes cache when stale", async () => {
+    test("fetches + writes cache when stale (recording is daemon-owned)", async () => {
         let fetches = 0;
-        let recorded = 0;
         const store: CacheStore = new Map();
         store.set("usage-shared", { fetchedAt: Date.now() - 60_000, accounts: [acct("a", 11)] });
         const get = __makeSharedUsage({
@@ -53,13 +51,9 @@ describe("getSharedAccountsUsage", () => {
             getCache: (k) => store.get(k) ?? null,
             putCache: (k, v) => void store.set(k, v),
             withLock: async (_k, fn) => fn(),
-            record: () => {
-                recorded++;
-            },
         });
         const r = await get({});
         expect(fetches).toBe(1);
-        expect(recorded).toBe(1);
         expect(r[0].usage?.five_hour.utilization).toBe(42);
         expect((store.get("usage-shared") as CachedEntry).accounts[0].usage?.five_hour.utilization).toBe(42);
     });
@@ -76,7 +70,6 @@ describe("getSharedAccountsUsage", () => {
             getCache: (k) => store.get(k) ?? null,
             putCache: (k, v) => void store.set(k, v),
             withLock: async (_k, fn) => fn(),
-            record: () => {},
         });
         await get({ force: true });
         expect(fetches).toBe(1);
@@ -91,7 +84,6 @@ describe("getSharedAccountsUsage", () => {
             getCache: (k) => store.get(k) ?? null,
             putCache: (k, v) => void store.set(k, v),
             withLock: async (_k, fn) => fn(),
-            record: () => {},
             notifyExtraUsage: async () => {
                 notifyCalls++;
             },
@@ -113,7 +105,6 @@ describe("getSharedAccountsUsage", () => {
             getCache: (k) => store.get(k) ?? null,
             putCache: () => {},
             withLock: async (_k, fn) => fn(),
-            record: () => {},
         });
         const r = await get({ accountFilter: "b" });
         expect(r.map((x) => x.accountName)).toEqual(["b"]);
