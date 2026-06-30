@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { createLogger } from "@app/logger";
+import { configureLogger, createLogger } from "@app/logger";
 import { getLogsBaseDir, getPidFile } from "./lib/config";
 import { runSchedulerLoop } from "./lib/scheduler";
 
@@ -74,5 +74,6 @@ export function getDaemonPid(): number | null {
 }
 
 if (import.meta.main) {
+    configureLogger({ includeTimestamp: true });
     startDaemon();
 }

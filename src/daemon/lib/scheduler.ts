@@ -26,6 +26,15 @@ export function logSchedulerHeartbeat(sleepMs: number, activeTasks: number): voi
     appLogger.debug({ sleepMs, activeTasks }, "[daemon] scheduler tick");
 }
 
+export function logSchedulerLoopFailure(err: unknown, consecutiveFailures: number): void {
+    const timestamp = new Date().toISOString();
+    log.error({ err, consecutiveFailures, timestamp }, "Scheduler loop iteration failed; retrying after backoff");
+    appLogger.error(
+        { err, consecutiveFailures, timestamp },
+        "[daemon] scheduler loop iteration failed; retrying after backoff"
+    );
+}
+
 export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
     let running = true;
     const activeRuns = new Set<string>();
@@ -43,8 +52,11 @@ export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
 
     await initializeTaskStates(taskStates, logsBaseDir);
 
+    let consecutiveLoopFailures = 0;
+
     while (running) {
         try {
+            consecutiveLoopFailures = 0;
             const config = await loadConfig();
             const now = new Date();
 
@@ -64,10 +76,8 @@ export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
                 },
             });
         } catch (err) {
-            // A transient FS hiccup (e.g. ENFILE during a brief vnode/FD spike) must not
-            // permanently stall the scheduler with zero trace — log and retry next tick.
-            log.error({ err }, "Scheduler loop iteration failed; retrying after backoff");
-            appLogger.error({ err }, "[daemon] scheduler loop iteration failed; retrying after backoff");
+            consecutiveLoopFailures++;
+            logSchedulerLoopFailure(err, consecutiveLoopFailures);
             await wakefulSleep(5000, { shouldAbort: () => !running });
         }
     }

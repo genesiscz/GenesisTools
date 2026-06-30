@@ -52,6 +52,34 @@ describe("scheduler heartbeat", () => {
     });
 });
 
+describe("scheduler loop-failure logging", () => {
+    test("the catch block logs a timestamp and a consecutive-failure count", async () => {
+        const { logger: appLogger } = await import("@app/logger");
+        const errorSpy = mock(() => {});
+        const original = appLogger.error;
+        appLogger.error = errorSpy;
+
+        try {
+            const { logSchedulerLoopFailure } = await import("./scheduler");
+            logSchedulerLoopFailure(new Error("boom"), 1);
+            logSchedulerLoopFailure(new Error("boom again"), 2);
+
+            expect(errorSpy).toHaveBeenCalledTimes(2);
+            const secondBindings = (errorSpy.mock.calls[1] as unknown[] | undefined)?.[0];
+
+            if (!secondBindings || typeof secondBindings !== "object") {
+                throw new Error("expected bindings object on second error log call");
+            }
+
+            const secondCallArgs = secondBindings as Record<string, unknown>;
+            expect(secondCallArgs.consecutiveFailures).toBe(2);
+            expect(secondCallArgs.timestamp).toBeDefined();
+        } finally {
+            appLogger.error = original;
+        }
+    });
+});
+
 describe("thundering herd prevention", () => {
     test("multiple tasks overdue after a simulated wall-clock jump get staggered dispatch times, not identical ones", () => {
         const taskNames = ["task-a", "task-b", "task-c", "task-d", "task-e"];
