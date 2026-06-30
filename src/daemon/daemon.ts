@@ -68,7 +68,8 @@ export function getDaemonPid(): number | null {
 
             return null;
         }
-    } catch {
+    } catch (err) {
+        logger.debug({ err, pidFile }, "[daemon] failed to read/parse PID file");
         return null;
     }
 }
