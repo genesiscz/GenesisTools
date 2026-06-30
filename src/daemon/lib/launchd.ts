@@ -24,7 +24,7 @@ export function generatePlist(): string {
   <array><string>${bunPath}</string><string>run</string><string>${daemonScript}</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>${logDir}/daemon-stdout.log</string>
+  <key>StandardOutPath</key><string>${logDir}/daemon-stderr.log</string>
   <key>StandardErrorPath</key><string>${logDir}/daemon-stderr.log</string>
   <key>EnvironmentVariables</key>
   <dict><key>HOME</key><string>${home}</string><key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:${dirname(bunPath)}</string></dict>
