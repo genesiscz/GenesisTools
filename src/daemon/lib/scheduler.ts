@@ -34,51 +34,7 @@ export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
 
             syncTaskStates(taskStates, config.tasks);
 
-            for (const task of config.tasks) {
-                if (!task.enabled) {
-                    continue;
-                }
-
-                if (activeRuns.has(task.name)) {
-                    continue;
-                }
-
-                const state = taskStates.get(task.name);
-
-                if (!state || now < state.nextRunAt) {
-                    continue;
-                }
-
-                activeRuns.add(task.name);
-                state.running = true;
-
-                executeTask(task, logsBaseDir)
-                    .catch((err) => {
-                        log.error({ err, task: task.name }, "Task execution error");
-                        appLogger.error({ err, task: task.name }, "[daemon] task execution error");
-                    })
-                    .finally(() => {
-                        activeRuns.delete(task.name);
-                        const s = taskStates.get(task.name);
-
-                        if (s) {
-                            s.running = false;
-
-                            try {
-                                const parsed = parseInterval(task.every);
-                                s.nextRunAt = computeNextRunAt(parsed);
-                            } catch (err) {
-                                // Unguarded, this throw becomes an unhandled rejection in the
-                                // detached .catch().finally() chain and can take the loop down.
-                                log.error(
-                                    { err, task: task.name },
-                                    "Failed to compute next run time; task will not be rescheduled until config reload"
-                                );
-                                appLogger.error({ err, task: task.name }, "[daemon] failed to compute next run time");
-                            }
-                        }
-                    });
-            }
+            dispatchDueTasks(config.tasks, taskStates, activeRuns, logsBaseDir, now);
 
             const sleepMs = getNextWakeupMs(taskStates, config.tasks);
             log.debug({ sleepMs, activeTasks: activeRuns.size }, "Sleeping");
@@ -120,6 +76,59 @@ export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
 
     log.info("Daemon scheduler stopped");
     appLogger.info("[daemon] scheduler stopped");
+}
+
+export function dispatchDueTasks(
+    tasks: DaemonTask[],
+    taskStates: Map<string, TaskState>,
+    activeRuns: Set<string>,
+    logsBaseDir: string,
+    now: Date = new Date()
+): void {
+    for (const task of tasks) {
+        if (!task.enabled) {
+            continue;
+        }
+
+        if (activeRuns.has(task.name)) {
+            continue;
+        }
+
+        const state = taskStates.get(task.name);
+
+        if (!state || now < state.nextRunAt) {
+            continue;
+        }
+
+        activeRuns.add(task.name);
+        state.running = true;
+
+        executeTask(task, logsBaseDir)
+            .catch((err) => {
+                log.error({ err, task: task.name }, "Task execution error");
+                appLogger.error({ err, task: task.name }, "[daemon] task execution error");
+            })
+            .finally(() => {
+                activeRuns.delete(task.name);
+                const s = taskStates.get(task.name);
+
+                if (s) {
+                    s.running = false;
+
+                    try {
+                        const parsed = parseInterval(task.every);
+                        s.nextRunAt = computeNextRunAt(parsed);
+                    } catch (err) {
+                        s.nextRunAt = new Date(Date.now() + 60_000);
+                        log.error({ err, task: task.name, every: task.every }, "Invalid task interval; deferring 60s");
+                        appLogger.error(
+                            { err, task: task.name, every: task.every },
+                            "[daemon] invalid task interval; deferring 60s"
+                        );
+                    }
+                }
+            });
+    }
 }
 
 async function executeTask(task: DaemonTask, logsBaseDir: string): Promise<void> {

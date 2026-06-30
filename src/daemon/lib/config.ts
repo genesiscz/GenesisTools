@@ -1,7 +1,9 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
 import { Storage } from "@app/utils/storage/storage";
+import { parseInterval } from "./interval";
 import type { DaemonConfig, DaemonTask } from "./types";
 
 const storage = new Storage("daemon");
@@ -29,12 +31,24 @@ export async function ensureStorage(): Promise<void> {
     mkdirSync(getLogsBaseDir(), { recursive: true });
 }
 
+export function validateTaskIntervals(tasks: DaemonTask[]): void {
+    for (const task of tasks) {
+        try {
+            parseInterval(task.every);
+        } catch (err) {
+            logger.warn({ err, task: task.name, every: task.every }, "[daemon] invalid task interval in config");
+        }
+    }
+}
+
 export async function loadConfig(): Promise<DaemonConfig> {
     const config = await storage.getConfig<DaemonConfig>();
 
     if (!config || !Array.isArray(config.tasks)) {
         return { tasks: [] };
     }
+
+    validateTaskIntervals(config.tasks);
 
     return config;
 }
