@@ -4,7 +4,8 @@ import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { getClaudeUsageStorage } from "@app/claude/lib/usage/storage";
 import { logger } from "@app/logger";
 import type { AccountUsage } from "./api";
-import { fetchAllAccountsUsage, isUsageBucket } from "./api";
+import { fetchAllAccountsUsage } from "./api";
+import { normalizeLimits, normalizeSpend } from "./limits";
 
 export const DB_FRESH_MS = 10_000;
 export const API_MIN_INTERVAL_MS = 30_000;
@@ -22,7 +23,6 @@ interface Deps {
     getCache: (key: string) => (Cached | null) | Promise<Cached | null>;
     putCache: (key: string, value: Cached) => void | Promise<void>;
     withLock: <T>(key: string, fn: () => Promise<T>) => Promise<T>;
-    record: (accounts: AccountUsage[]) => void;
     notifyExtraUsage?: (accounts: AccountUsage[]) => void | Promise<void>;
 }
 
@@ -42,7 +42,19 @@ function filterAccounts(accounts: AccountUsage[], filter?: string | string[]): A
     return accounts.filter((a) => set.has(a.accountName));
 }
 
-function recordAll(accounts: AccountUsage[]): void {
+/**
+ * Write fetched usage to the history DB. Owned by the daemon — see poll-daemon.ts.
+ * Other consumers (TUI dashboard, dev-dashboard) read from this DB but do not
+ * write to it; the daemon is the single source of truth for history rows.
+ * Prior to 2026-06-30, this ran on every fresh fetch from any consumer, which
+ * combined with the TUI's legacy V1 writer to insert twin rows per poll.
+ */
+export function recordAll(accounts: AccountUsage[]): void {
+    // No dbPath -> UsageHistoryDb resolves the process-wide ClaudeDatabase
+    // singleton (see ClaudeDatabase.getInstance), the same connection
+    // poll-daemon.ts already holds open in its own `db` and closes once in
+    // its top-level `finally` after recordAll() and pruneOlderThan() both
+    // run. Closing it here would sever that shared connection mid-flight.
     const db = new UsageHistoryDb();
 
     for (const account of accounts) {
@@ -50,10 +62,24 @@ function recordAll(accounts: AccountUsage[]): void {
             continue;
         }
 
-        for (const [bucket, data] of Object.entries(account.usage)) {
-            if (isUsageBucket(data) && typeof data.utilization === "number") {
-                db.recordIfChanged(account.accountName, bucket, data.utilization, data.resets_at ?? null);
+        const limits = normalizeLimits(account.usage);
+
+        for (const limit of limits) {
+            if (typeof limit.percent !== "number") {
+                continue;
             }
+
+            db.recordIfChangedV2(account.accountName, limit.bucket, limit.percent, {
+                resetsAt: limit.resets_at,
+                severity: limit.severity,
+                scopeModel: limit.scope_model,
+            });
+        }
+
+        const spend = normalizeSpend(account.usage);
+
+        if (spend) {
+            db.recordSpendIfChanged(account.accountName, spend);
         }
     }
 }
@@ -77,12 +103,6 @@ export function __makeSharedUsage(deps: Deps) {
 
             const fresh = await deps.fetchAll();
             await deps.putCache(CACHE_KEY, { fetchedAt: Date.now(), accounts: fresh });
-
-            try {
-                deps.record(fresh);
-            } catch (err) {
-                logger.warn({ err }, "usage history record failed; returning fetched usage anyway");
-            }
 
             if (deps.notifyExtraUsage) {
                 try {
@@ -111,7 +131,6 @@ const realGetShared = __makeSharedUsage({
             fn,
             timeout: 10_000,
         }),
-    record: recordAll,
     notifyExtraUsage: processExtraUsageNotifications,
 });
 
