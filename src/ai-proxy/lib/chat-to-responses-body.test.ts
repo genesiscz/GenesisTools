@@ -61,7 +61,7 @@ describe("chat-to-responses-body", () => {
             "responses"
         );
 
-        const parsed = SafeJSON.parse(rewritten) as { input?: unknown[]; messages?: unknown; model: string };
+        const parsed = SafeJSON.parse(rewritten.bodyText) as { input?: unknown[]; messages?: unknown; model: string };
         expect(parsed.model).toBe("grok-composer-2.5-fast");
         expect(parsed.input?.length).toBe(1);
         expect(parsed.messages).toBeUndefined();
