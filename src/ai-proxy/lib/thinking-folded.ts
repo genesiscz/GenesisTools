@@ -45,3 +45,10 @@ export function wrapReasoningForFoldedJson(reasoning: string, answer: string | n
 
     return body.trimEnd();
 }
+
+const CURSOR_THINKING_BLOCK_RE =
+    /(?:<(?:think|thinking)\b[^>]*>[\s\S]*?(?:<\/(?:think|thinking)>|$)|<details\b[^>]*>\s*<summary\b[^>]*>\s*(?:<strong>)?Thinking(?:<\/strong>)?\s*<\/summary>[\s\S]*?(?:<\/details>|$))\s*/gi;
+
+export function stripCursorThinkingBlocks(content: string): string {
+    return content.replace(CURSOR_THINKING_BLOCK_RE, "").replace(/^\r\n+/, "");
+}

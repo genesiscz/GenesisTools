@@ -1,10 +1,16 @@
 import { describe, expect, it } from "bun:test";
-import { GROK_PROBE_CANDIDATES, GROK_STATIC_CATALOG, mergeModelCatalog, toProxyId } from "./models";
+import { GROK_PROBE_CANDIDATES, GROK_STATIC_CATALOG, inferModelThinking, mergeModelCatalog, toProxyId } from "./models";
 
 describe("grok probe helpers", () => {
     it("includes researched static catalog ids", () => {
         expect(GROK_STATIC_CATALOG.some((model) => model.id === "grok-composer-2.5-fast")).toBe(true);
         expect(GROK_STATIC_CATALOG.length).toBeGreaterThanOrEqual(29);
+    });
+
+    it("treats grok-composer models as required reasoning, not optional", () => {
+        expect(inferModelThinking("grok-composer-2.5-fast")).toBe("reasoning");
+        expect(inferModelThinking("grok-composer-2.5")).toBe("reasoning");
+        expect(GROK_STATIC_CATALOG.find((model) => model.id === "grok-composer-2.5-fast")?.thinking).toBe("reasoning");
     });
 
     it("merges picker models over static catalog", () => {

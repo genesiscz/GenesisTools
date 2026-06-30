@@ -22,7 +22,10 @@ const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 
 function mapProxyRequestError(err: unknown): { status: number; message: string } {
     if (err instanceof GrokAuthExpiredError || err instanceof CopilotAuthExpiredError) {
-        return { status: 401, message: err.message };
+        return {
+            status: 502,
+            message: "Upstream provider auth expired or invalid — the ai-proxy host must refresh its login.",
+        };
     }
 
     const message = err instanceof Error ? err.message : String(err);
@@ -30,7 +33,8 @@ function mapProxyRequestError(err: unknown): { status: number; message: string }
     if (
         message.startsWith("Model id must be") ||
         message.startsWith("No enabled account for model") ||
-        message.startsWith("Provider not loaded:")
+        message.startsWith("Provider not loaded:") ||
+        message.startsWith("Ambiguous model")
     ) {
         return { status: 400, message };
     }
@@ -121,6 +125,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                 }
 
                 const models = await buildProxyModelCatalog(config.accounts);
+
                 return new Response(
                     SafeJSON.stringify({
                         object: "list",
