@@ -111,7 +111,19 @@ async function isSessionAliveBatch(sessions: TtydSession[]): Promise<Map<string,
     );
 }
 
+let persistRegistryOverride: (() => Promise<void>) | null = null;
+
+/** Test hook: replace disk persistence so spawn-failure cleanup can be exercised. */
+export function __setPersistRegistryForTest(fn: (() => Promise<void>) | null): void {
+    persistRegistryOverride = fn;
+}
+
 async function persistRegistry(): Promise<void> {
+    if (persistRegistryOverride) {
+        await persistRegistryOverride();
+        return;
+    }
+
     const all = Array.from(registry.values()).map((tracked) => tracked.session);
     const alive = await isSessionAliveBatch(all);
     const sessions = all.filter((session) => alive.get(session.id) === true);
@@ -278,8 +290,17 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
         startedAt: new Date().toISOString(),
         tmuxSessionName,
     };
-    registry.set(id, { session, child });
-    await persistRegistry();
+    try {
+        registry.set(id, { session, child });
+        await persistRegistry();
+    } catch (err) {
+        registry.delete(id);
+        child.kill();
+        await child.exited;
+        logger.error({ err, id }, "[ttyd] registry persist failed after spawn; killed orphaned child");
+        throw err;
+    }
+
     logger.info({ id, port, command, cwd, tmuxSessionName, attach: Boolean(opts.attachTmuxSession) }, "ttyd spawned");
 
     return session;
