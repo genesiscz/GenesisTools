@@ -56,7 +56,7 @@ export function closeDatabase(): void {
 /**
  * Initialize database schema
  */
-function initSchema(db: Database): void {
+export function initSchema(db: Database): void {
     db.exec(`
     CREATE TABLE IF NOT EXISTS repos (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -393,48 +393,62 @@ export function getFetchMetadata(issueId: number): FetchMetadataRecord | null {
     return db.query("SELECT * FROM fetch_metadata WHERE issue_id = ?").get(issueId) as FetchMetadataRecord | null;
 }
 
-export function updateFetchMetadata(issueId: number, data: Partial<FetchMetadataRecord>): void {
-    const db = getDatabase();
+function getFetchMetadataForDb(db: Database, issueId: number): FetchMetadataRecord | null {
+    return db.query("SELECT * FROM fetch_metadata WHERE issue_id = ?").get(issueId) as FetchMetadataRecord | null;
+}
 
-    const existing = getFetchMetadata(issueId);
-    if (existing) {
-        const updates: string[] = [];
-        const params: (string | number | null)[] = [];
+export function updateFetchMetadataForDb(
+    db: Database,
+    issueId: number,
+    data: Partial<FetchMetadataRecord>
+): void {
+    const txn = db.transaction(() => {
+        const existing = getFetchMetadataForDb(db, issueId);
+        if (existing) {
+            const updates: string[] = [];
+            const params: (string | number | null)[] = [];
 
-        if (data.last_full_fetch !== undefined) {
-            updates.push("last_full_fetch = ?");
-            params.push(data.last_full_fetch);
-        }
-        if (data.last_incremental_fetch !== undefined) {
-            updates.push("last_incremental_fetch = ?");
-            params.push(data.last_incremental_fetch);
-        }
-        if (data.total_comments !== undefined) {
-            updates.push("total_comments = ?");
-            params.push(data.total_comments);
-        }
-        if (data.last_comment_date !== undefined) {
-            updates.push("last_comment_date = ?");
-            params.push(data.last_comment_date);
-        }
+            if (data.last_full_fetch !== undefined) {
+                updates.push("last_full_fetch = ?");
+                params.push(data.last_full_fetch);
+            }
+            if (data.last_incremental_fetch !== undefined) {
+                updates.push("last_incremental_fetch = ?");
+                params.push(data.last_incremental_fetch);
+            }
+            if (data.total_comments !== undefined) {
+                updates.push("total_comments = ?");
+                params.push(data.total_comments);
+            }
+            if (data.last_comment_date !== undefined) {
+                updates.push("last_comment_date = ?");
+                params.push(data.last_comment_date);
+            }
 
-        if (updates.length > 0) {
-            params.push(issueId);
-            db.query(`UPDATE fetch_metadata SET ${updates.join(", ")} WHERE issue_id = ?`).run(...params);
-        }
-    } else {
-        db.query(`
+            if (updates.length > 0) {
+                params.push(issueId);
+                db.query(`UPDATE fetch_metadata SET ${updates.join(", ")} WHERE issue_id = ?`).run(...params);
+            }
+        } else {
+            db.query(`
       INSERT INTO fetch_metadata (
         issue_id, last_full_fetch, last_incremental_fetch, total_comments, last_comment_date
       ) VALUES (?, ?, ?, ?, ?)
     `).run(
-            issueId,
-            data.last_full_fetch ?? null,
-            data.last_incremental_fetch ?? null,
-            data.total_comments ?? 0,
-            data.last_comment_date ?? null
-        );
-    }
+                issueId,
+                data.last_full_fetch ?? null,
+                data.last_incremental_fetch ?? null,
+                data.total_comments ?? 0,
+                data.last_comment_date ?? null
+            );
+        }
+    });
+
+    txn();
+}
+
+export function updateFetchMetadata(issueId: number, data: Partial<FetchMetadataRecord>): void {
+    updateFetchMetadataForDb(getDatabase(), issueId, data);
 }
 
 // Utility functions
