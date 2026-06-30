@@ -34,6 +34,24 @@ async function drainActiveRuns(activeRuns: Set<string>): Promise<void> {
     }
 }
 
+describe("scheduler heartbeat", () => {
+    test("the per-iteration sleep log reaches the file-backed appLogger, not just a logToFile:false local logger", async () => {
+        const { logger: appLogger } = await import("@app/logger");
+        const debugSpy = mock(() => {});
+        const original = appLogger.debug;
+        appLogger.debug = debugSpy;
+
+        try {
+            const { logSchedulerHeartbeat } = await import("./scheduler");
+            logSchedulerHeartbeat(60_000, 0);
+
+            expect(debugSpy).toHaveBeenCalled();
+        } finally {
+            appLogger.debug = original;
+        }
+    });
+});
+
 describe("thundering herd prevention", () => {
     test("multiple tasks overdue after a simulated wall-clock jump get staggered dispatch times, not identical ones", () => {
         const taskNames = ["task-a", "task-b", "task-c", "task-d", "task-e"];

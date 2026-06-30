@@ -22,6 +22,10 @@ function jitteredNow(taskName: string): Date {
 
 export { jitteredNow };
 
+export function logSchedulerHeartbeat(sleepMs: number, activeTasks: number): void {
+    appLogger.debug({ sleepMs, activeTasks }, "[daemon] scheduler tick");
+}
+
 export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
     let running = true;
     const activeRuns = new Set<string>();
@@ -49,7 +53,7 @@ export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
             dispatchDueTasks(config.tasks, taskStates, activeRuns, logsBaseDir, now);
 
             const sleepMs = getNextWakeupMs(taskStates, config.tasks);
-            log.debug({ sleepMs, activeTasks: activeRuns.size }, "Sleeping");
+            logSchedulerHeartbeat(sleepMs, activeRuns.size);
             await wakefulSleep(sleepMs, {
                 shouldAbort: () => !running,
                 onWallClockJump: ({ elapsedMs, expectedMs }) => {
