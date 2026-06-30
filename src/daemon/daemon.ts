@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { createLogger } from "@app/logger";
 import { getLogsBaseDir, getPidFile } from "./lib/config";
 import { runSchedulerLoop } from "./lib/scheduler";
@@ -8,6 +9,7 @@ const log = createLogger({ logToFile: false });
 
 export async function startDaemon(): Promise<void> {
     const pidFile = getPidFile();
+    mkdirSync(dirname(pidFile), { recursive: true });
 
     try {
         await writeFile(pidFile, String(process.pid), { flag: "wx" });
@@ -37,16 +39,11 @@ export async function startDaemon(): Promise<void> {
         log.info("Daemon stopped");
     };
 
-    process.once("SIGTERM", cleanup);
-    process.once("SIGINT", cleanup);
-
     try {
         await runSchedulerLoop(getLogsBaseDir());
     } catch (err) {
         log.error({ err }, "Daemon crashed");
     } finally {
-        process.off("SIGTERM", cleanup);
-        process.off("SIGINT", cleanup);
         cleanup();
     }
 }
