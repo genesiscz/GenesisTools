@@ -48,7 +48,7 @@ describe("buildSplitTree", () => {
         }
     });
 
-    it("decomposes the reservine layout (left full + 2 stacked right)", () => {
+    it("decomposes the L-shaped layout (left full + 2 stacked right)", () => {
         const tree = buildSplitTree([
             pane(0, 0, 0, 500, 800), // left full-height
             pane(1, 500, 0, 500, 400), // top-right
