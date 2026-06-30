@@ -5,6 +5,8 @@ import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-confi
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
 import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
+import { logger } from "@app/logger";
+import { Storage } from "@app/utils/storage/storage";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PollResult } from "../types";
 
@@ -24,6 +26,8 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
 
     const dbRef = useRef<UsageHistoryDb | null>(null);
     const notifRef = useRef<NotificationManager | null>(null);
+    const notifStorageRef = useRef<Storage | null>(null);
+    const notifReadyRef = useRef<Promise<void> | null>(null);
     const accountNamesRef = useRef<string[]>([]);
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const pruneIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -31,10 +35,26 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
 
     useEffect(() => {
         // Refresh account labels from API profiles on startup (best-effort, non-blocking)
-        refreshAccountLabels().catch(() => {});
+        refreshAccountLabels().catch((err) =>
+            logger.debug({ error: err }, "[claude-usage] refreshAccountLabels failed")
+        );
 
         dbRef.current = new UsageHistoryDb();
         notifRef.current = new NotificationManager(config.notifications);
+
+        // Persist notification tracker state across TUI launches so we don't
+        // re-fire "[INIT]" alerts every time the dashboard opens — matches the
+        // pattern used by poll-daemon.ts. Without this, every launch sees
+        // isFirstPoll=true and any over-threshold bucket re-notifies.
+        // The ready promise is awaited by poll() so the first fetch never races
+        // ahead of loadState — that race was the lingering spam source.
+        notifStorageRef.current = new Storage("claude-usage");
+        const notifManagerForLoad = notifRef.current;
+        const storageForLoad = notifStorageRef.current;
+        notifReadyRef.current = storageForLoad
+            .ensureDirs()
+            .then(() => notifManagerForLoad.loadState(storageForLoad))
+            .catch((err) => logger.warn({ error: err }, "[claude-usage] notification state load failed"));
 
         dbRef.current.pruneOlderThan(config.dataRetentionDays);
 
@@ -71,18 +91,34 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
                         continue;
                     }
 
-                    dbRef.current?.recordIfChanged(account.accountName, bucket, data.utilization, data.resets_at);
+                    // History writes are owned by shared-cache.recordAll (V2 path with severity).
+                    // Re-recording here via the legacy V1 path inserted a parallel null-severity row
+                    // every poll, mutually poisoning the V2 dedup check (null != "critical") so both
+                    // writers kept inserting flat-value rows forever.
 
                     try {
                         notifRef.current?.processUsage(account.accountName, bucket, data.utilization, data.resets_at);
-                    } catch {
-                        // Notification failure should not interrupt polling
+                    } catch (err) {
+                        logger.warn(
+                            { error: err, account: account.accountName, bucket },
+                            "[claude-usage] processUsage notification failed"
+                        );
                     }
                 }
             }
 
             notifRef.current?.markFirstPollDone();
             notifRef.current?.autoDismissOld();
+
+            // Persist tracker state so the next TUI launch / poll knows which
+            // thresholds have already notified (mirrors poll-daemon's save pass).
+            const notifManager = notifRef.current;
+            const notifStorage = notifStorageRef.current;
+            if (notifManager && notifStorage) {
+                notifManager.saveState(notifStorage).catch((err) => {
+                    logger.warn({ error: err }, "[claude-usage] notification state save failed");
+                });
+            }
 
             setResults({ accounts: accountUsages, timestamp: now });
             setDbVersion((v) => v + 1);
@@ -118,6 +154,12 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
             // bucket: Anthropic is hit at most once per 30s and every live fetch
             // write-throughs to history.
             const resolvedUsages = await getSharedAccountsUsage({ accountFilter });
+
+            // Block on notification-state load so the first poll never races
+            // ahead of loadState() and re-fires every over-threshold alert.
+            if (notifReadyRef.current) {
+                await notifReadyRef.current;
+            }
 
             if (resolvedUsages.length > 0) {
                 processAccountUsages(resolvedUsages, new Date());

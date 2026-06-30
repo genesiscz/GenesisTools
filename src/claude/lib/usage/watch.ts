@@ -2,8 +2,9 @@ import type { NotificationConfig } from "@app/claude/lib/config";
 import { out } from "@app/logger";
 import { dispatchNotification } from "@app/utils/notifications";
 import type { AccountUsage } from "./api";
-import { isUsageBucket } from "./api";
 import { renderAllAccounts } from "./display";
+import type { Severity } from "./limits";
+import { normalizeLimits } from "./limits";
 import { getSharedAccountsUsage } from "./shared-cache";
 
 const BUCKET_THRESHOLD_MAP: Record<string, "sessionThresholds" | "weeklyThresholds"> = {
@@ -17,9 +18,12 @@ const BUCKET_THRESHOLD_MAP: Record<string, "sessionThresholds" | "weeklyThreshol
 /**
  * Tracks notification state for a single bucket (e.g., "Livinka:seven_day")
  */
+export type NotifyReason = "INIT" | "+5%" | "CRITICAL" | "WARNING";
+
 class BucketTracker {
     private lastNotifiedPct: number | null = null;
     private lastResetAt: string | null = null;
+    private lastSeverity: Severity = "normal";
 
     constructor(
         public readonly accountName: string,
@@ -37,22 +41,46 @@ class BucketTracker {
     /**
      * Check if we should notify for this bucket.
      * Returns notification reason or null if no notification needed.
+     *
+     * Severity escalations (normal→warning, *→critical) fire IMMEDIATELY
+     * regardless of percent thresholds; percent thresholds are preserved
+     * as before (additive — user-configured behavior unchanged).
      */
     shouldNotify(
         currentPct: number,
         resetAt: string | null,
         thresholds: number[],
-        isFirstPoll: boolean
-    ): "INIT" | "+5%" | null {
+        isFirstPoll: boolean,
+        severity: Severity = "normal"
+    ): NotifyReason | null {
         const normalizedReset = this.normalizeResetTime(resetAt);
 
         // Period reset detection - clear state if reset timestamp changed
         if (this.lastResetAt !== null && this.lastResetAt !== normalizedReset) {
             this.lastNotifiedPct = null;
+            this.lastSeverity = "normal";
         }
         this.lastResetAt = normalizedReset;
 
-        // Check if any threshold is crossed
+        // Severity escalation — fires regardless of percent thresholds.
+        // Skip on first poll: that's an INIT/percent-threshold case.
+        if (!isFirstPoll && severity === "critical" && this.lastSeverity !== "critical") {
+            this.lastSeverity = severity;
+            this.lastNotifiedPct = currentPct;
+            return "CRITICAL";
+        }
+
+        if (!isFirstPoll && severity === "warning" && this.lastSeverity === "normal") {
+            this.lastSeverity = severity;
+            this.lastNotifiedPct = currentPct;
+            return "WARNING";
+        }
+
+        // Track latest severity even when we don't notify, so the next
+        // escalation can fire.
+        this.lastSeverity = severity;
+
+        // Check if any percent threshold is crossed
         const crossedThreshold = thresholds.some((t) => currentPct >= t);
         if (!crossedThreshold) {
             return null;
@@ -116,35 +144,37 @@ class UsageWatcher {
                 continue;
             }
 
-            for (const [bucket, data] of Object.entries(account.usage)) {
-                if (!isUsageBucket(data)) {
+            const limits = normalizeLimits(account.usage);
+
+            for (const limit of limits) {
+                if (typeof limit.percent !== "number") {
                     continue;
                 }
 
-                if (data.utilization === null || data.utilization === undefined) {
-                    continue;
-                }
-
-                const thresholdKey = BUCKET_THRESHOLD_MAP[bucket];
+                const thresholdKey = BUCKET_THRESHOLD_MAP[limit.bucket];
                 if (!thresholdKey) {
                     continue;
                 }
 
-                // Get or create tracker
-                const trackerKey = `${account.accountName}:${bucket}`;
+                const trackerKey = `${account.accountName}:${limit.bucket}:${limit.scope_model ?? ""}`;
                 let tracker = this.trackers.get(trackerKey);
                 if (!tracker) {
-                    tracker = new BucketTracker(account.accountName, bucket);
+                    tracker = new BucketTracker(account.accountName, limit.bucket);
                     this.trackers.set(trackerKey, tracker);
                 }
 
-                // Check if notification needed
                 const thresholds = this.notifications[thresholdKey];
-                const reason = tracker.shouldNotify(data.utilization, data.resets_at, thresholds, this.isFirstPoll);
+                const reason = tracker.shouldNotify(
+                    limit.percent,
+                    limit.resets_at,
+                    thresholds,
+                    this.isFirstPoll,
+                    limit.severity
+                );
 
                 if (reason) {
                     notifications.push({
-                        message: `${account.accountName}: ${tracker.label} ${Math.round(data.utilization)}%`,
+                        message: `${account.accountName}: ${tracker.label} ${Math.round(limit.percent)}%`,
                         reason,
                         title: "Claude Usage Alert",
                     });
@@ -194,8 +224,27 @@ export async function watchUsage(accountFilter?: string, notifications?: Notific
 
         // Send notifications (fire and forget)
         if (pending.length > 0) {
+            const criticalNotifs = pending.filter((n) => n.reason === "CRITICAL");
+            const warningNotifs = pending.filter((n) => n.reason === "WARNING");
             const initNotifs = pending.filter((n) => n.reason === "INIT");
             const increaseNotifs = pending.filter((n) => n.reason === "+5%");
+
+            for (const notif of criticalNotifs) {
+                dispatchNotification({
+                    app: "claude",
+                    title: notif.title,
+                    message: `[CRITICAL] ${notif.message}`,
+                });
+            }
+
+            for (const notif of warningNotifs) {
+                dispatchNotification({
+                    app: "claude",
+                    title: notif.title,
+                    message: `[WARNING] ${notif.message}`,
+                });
+            }
+
             for (const notif of initNotifs) {
                 dispatchNotification({
                     app: "claude",

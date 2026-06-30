@@ -1,6 +1,8 @@
-import type { AccountUsage, ExtraUsageBucket, UsageBucket } from "@app/claude/lib/usage/api";
+import type { AccountUsage } from "@app/claude/lib/usage/api";
 import { BUCKET_LABELS, BUCKET_PERIODS_MS, colorForPct } from "@app/claude/lib/usage/constants";
-import { resolveExtraUsageOverview } from "@app/claude/lib/usage/extra-usage-tracker";
+import { formatSpendBalance } from "@app/claude/lib/usage/display";
+import type { NormalizedLimit, NormalizedSpend, Severity } from "@app/claude/lib/usage/limits";
+import { normalizeLimits, normalizeSpend } from "@app/claude/lib/usage/limits";
 import { useTerminalSize } from "@app/utils/ink/hooks/use-terminal-size";
 import { Box, Text } from "ink";
 import { useEffect, useState } from "react";
@@ -63,19 +65,30 @@ function calcProjection(utilization: number, resetsAt: string | null, bucketKey:
     return Math.round((utilization / elapsed) * periodMs);
 }
 
-const NAME_WIDTH = 18;
+function severityColor(severity: Severity): string {
+    if (severity === "critical") {
+        return "red";
+    }
+
+    if (severity === "warning") {
+        return "yellow";
+    }
+
+    return "green";
+}
+
+const NAME_WIDTH = 22;
 const PCT_WIDTH = 6;
 const PROJ_WIDTH = 8;
 const FIXED_OVERHEAD = NAME_WIDTH + PCT_WIDTH + PROJ_WIDTH + 2;
 const MIN_BAR_WIDTH = 10;
 
 interface BucketRowProps {
-    bucketKey: string;
-    bucket: UsageBucket;
+    limit: NormalizedLimit;
     barWidth: number;
 }
 
-function BucketRow({ bucketKey, bucket, barWidth }: BucketRowProps) {
+function BucketRow({ limit, barWidth }: BucketRowProps) {
     const [, setTick] = useState(0);
 
     useEffect(() => {
@@ -83,11 +96,12 @@ function BucketRow({ bucketKey, bucket, barWidth }: BucketRowProps) {
         return () => clearInterval(timer);
     }, []);
 
-    const label = BUCKET_LABELS[bucketKey] ?? bucketKey.replace(/_/g, " ");
-    const countdown = formatResetCountdown(bucket.resets_at);
-    const notUsed = !bucket.resets_at && bucket.utilization === 0;
-    const projected = calcProjection(bucket.utilization, bucket.resets_at, bucketKey);
-    const pct = Math.round(Math.max(0, Math.min(bucket.utilization, 100)));
+    const known = BUCKET_LABELS[limit.bucket];
+    const label = known ?? (limit.scope_model ? `Weekly (${limit.scope_model})` : limit.bucket.replace(/_/g, " "));
+    const countdown = formatResetCountdown(limit.resets_at);
+    const notUsed = !limit.resets_at && limit.percent === 0;
+    const projected = calcProjection(limit.percent, limit.resets_at, limit.bucket);
+    const pct = Math.round(Math.max(0, Math.min(limit.percent, 100)));
 
     const projStr = projected !== null && projected >= 100 ? `~${Math.round(projected)}%` : "";
     const projColor = projected !== null ? colorForPct(projected) : undefined;
@@ -96,7 +110,7 @@ function BucketRow({ bucketKey, bucket, barWidth }: BucketRowProps) {
         <Box flexDirection="column">
             <Box>
                 <Text>{label.padEnd(NAME_WIDTH)}</Text>
-                <UsageBar utilization={bucket.utilization} width={barWidth} />
+                <UsageBar utilization={limit.percent} width={barWidth} color={severityColor(limit.severity)} />
                 <Text bold>{`${pct}%`.padStart(PCT_WIDTH)}</Text>
                 {projStr ? (
                     <Text dimColor color={projColor}>
@@ -115,37 +129,25 @@ function BucketRow({ bucketKey, bucket, barWidth }: BucketRowProps) {
     );
 }
 
-interface ExtraUsageRowProps {
-    bucket: ExtraUsageBucket;
+interface SpendRowProps {
+    spend: NormalizedSpend;
     barWidth: number;
 }
 
-function ExtraUsageRow({ bucket, barWidth }: ExtraUsageRowProps) {
-    const overview = resolveExtraUsageOverview(bucket);
-    const label = BUCKET_LABELS.extra_usage;
-
-    if (!overview.enabled) {
-        return (
-            <Box flexDirection="column">
-                <Box>
-                    <Text>{label.padEnd(NAME_WIDTH)}</Text>
-                    <Text dimColor>{"off"}</Text>
-                </Box>
-            </Box>
-        );
-    }
-
-    const pct = Math.round(Math.max(0, Math.min(overview.utilization, 100)));
+function SpendRow({ spend, barWidth }: SpendRowProps) {
+    const label = BUCKET_LABELS.extra_usage ?? "extra credits";
+    const balance = formatSpendBalance(spend);
+    const pct = Math.round(Math.max(0, Math.min(spend.percent, 100)));
 
     return (
         <Box flexDirection="column">
             <Box>
                 <Text>{label.padEnd(NAME_WIDTH)}</Text>
-                <UsageBar utilization={overview.utilization} width={barWidth} />
+                <UsageBar utilization={spend.percent} width={barWidth} color={severityColor(spend.severity)} />
                 <Text bold>{`${pct}%`.padStart(PCT_WIDTH)}</Text>
                 <Text>{" ".repeat(PROJ_WIDTH)}</Text>
             </Box>
-            {overview.balance ? <Text dimColor>{`${" ".repeat(NAME_WIDTH)}${overview.balance}`}</Text> : null}
+            <Text dimColor>{`${" ".repeat(NAME_WIDTH)}${balance}`}</Text>
         </Box>
     );
 }
@@ -179,37 +181,22 @@ export function AccountSection({ account, prominentBuckets }: AccountSectionProp
         );
     }
 
-    const extraUsage = account.usage.extra_usage ?? null;
+    const limits = normalizeLimits(account.usage);
+    const spend = normalizeSpend(account.usage);
 
-    const allEntries = Object.entries(account.usage).filter(([key, v]) => {
-        if (key === "extra_usage") {
-            return false;
-        }
-
-        return v && typeof v === "object" && "utilization" in v;
-    }) as Array<[string, UsageBucket]>;
-
-    const sessionAt100 = allEntries.some(([k, b]) => k === "five_hour" && b.utilization >= 100);
-    const weeklyAt100 = allEntries.some(([k, b]) => k === "seven_day" && b.utilization >= 100);
+    const sessionAt100 = limits.some((l) => l.bucket === "five_hour" && l.percent >= 100);
+    const weeklyAt100 = limits.some((l) => l.bucket === "seven_day" && l.percent >= 100);
     const showAll = sessionAt100 || weeklyAt100;
 
-    const entries = showAll
-        ? allEntries
-        : allEntries.filter(([key, bucket]) => {
-              if (prominentBuckets.includes(key)) {
-                  return true;
-              }
-
-              return bucket.utilization > 0;
-          });
+    const visibleLimits = showAll ? limits : limits.filter((l) => prominentBuckets.includes(l.bucket) || l.percent > 0);
 
     return (
         <Box flexDirection="column" marginBottom={1}>
             <Text bold>{`── ${header} ${"─".repeat(Math.max(0, 40 - header.length))}`}</Text>
-            {entries.map(([key, bucket]) => (
-                <BucketRow key={key} bucketKey={key} bucket={bucket} barWidth={barWidth} />
+            {visibleLimits.map((limit) => (
+                <BucketRow key={`${limit.bucket}:${limit.scope_model ?? ""}`} limit={limit} barWidth={barWidth} />
             ))}
-            {extraUsage ? <ExtraUsageRow bucket={extraUsage} barWidth={barWidth} /> : null}
+            {spend?.enabled ? <SpendRow spend={spend} barWidth={barWidth} /> : null}
         </Box>
     );
 }

@@ -1,8 +1,8 @@
 import { formatDateTime } from "@app/utils/date";
 import pc from "picocolors";
 import type { AccountUsage } from "./api";
-import { isUsageBucket } from "./api";
-import { resolveExtraUsageOverview } from "./extra-usage-tracker";
+import type { NormalizedSpend, Severity } from "./limits";
+import { normalizeLimits, normalizeSpend } from "./limits";
 
 const BAR_WIDTH = 40;
 const BLOCK_FULL = "\u2588"; // █
@@ -26,11 +26,23 @@ function colorForPct(pct: number): (s: string) => string {
     return pc.green;
 }
 
-function renderBar(pct: number): string {
+function colorForSeverity(severity: Severity): (s: string) => string {
+    if (severity === "critical") {
+        return pc.red;
+    }
+
+    if (severity === "warning") {
+        return pc.yellow;
+    }
+
+    return pc.green;
+}
+
+function renderBar(pct: number, severity: Severity = "normal"): string {
     pct = Math.max(0, Math.min(pct, 100));
     const filled = Math.floor((pct / 100) * BAR_WIDTH);
     const hasHalf = pct > 0 && filled < BAR_WIDTH && ((pct / 100) * BAR_WIDTH) % 1 >= 0.25;
-    const color = colorForPct(pct);
+    const color = colorForSeverity(severity);
     const bar = color(BLOCK_FULL.repeat(filled) + (hasHalf ? BLOCK_HALF : ""));
     const empty = " ".repeat(BAR_WIDTH - filled - (hasHalf ? 1 : 0));
     return `${bar}${empty}  ${Math.round(pct)}% used`;
@@ -45,8 +57,14 @@ const BUCKET_LABELS: Record<string, string> = {
     extra_usage: "Extra usage",
 };
 
-function bucketLabel(key: string): string {
-    return BUCKET_LABELS[key] ?? key.replace(/_/g, " ");
+function bucketLabel(key: string, scopeModel: string | null = null): string {
+    const known = BUCKET_LABELS[key];
+
+    if (known) {
+        return known;
+    }
+
+    return scopeModel ? `Current week (${scopeModel} only)` : key.replace(/_/g, " ");
 }
 
 function formatDuration(ms: number): string {
@@ -125,26 +143,24 @@ export function renderAccountUsage(account: AccountUsage): string {
         return lines.join("\n");
     }
 
-    for (const [key, bucket] of Object.entries(account.usage)) {
-        if (key === "extra_usage" || !isUsageBucket(bucket)) {
+    const limits = normalizeLimits(account.usage);
+
+    for (const limit of limits) {
+        if (typeof limit.percent !== "number") {
             continue;
         }
 
-        if (bucket.utilization === null || bucket.utilization === undefined) {
-            continue;
-        }
-
-        lines.push(`${bucketLabel(key)}`);
-        lines.push(renderBar(bucket.utilization));
+        lines.push(bucketLabel(limit.bucket, limit.scope_model));
+        lines.push(renderBar(limit.percent, limit.severity));
 
         const parts: string[] = [];
-        const resetStr = formatResetTime(bucket.resets_at);
+        const resetStr = formatResetTime(limit.resets_at);
         if (resetStr) {
             parts.push(resetStr);
         }
 
-        const projected = calcProjection(bucket.utilization, bucket.resets_at, key);
-        if (projected !== null && projected !== Math.round(bucket.utilization)) {
+        const projected = calcProjection(limit.percent, limit.resets_at, limit.bucket);
+        if (projected !== null && projected !== Math.round(limit.percent)) {
             parts.push(renderProjection(projected));
         }
 
@@ -154,24 +170,37 @@ export function renderAccountUsage(account: AccountUsage): string {
         lines.push("");
     }
 
-    if (account.usage.extra_usage) {
-        const overview = resolveExtraUsageOverview(account.usage.extra_usage);
+    const spend = normalizeSpend(account.usage);
+
+    if (spend && spend.enabled) {
         lines.push(bucketLabel("extra_usage"));
-
-        if (!overview.enabled) {
-            lines.push(pc.dim("  off"));
-        } else {
-            lines.push(renderBar(overview.utilization));
-
-            if (overview.balance) {
-                lines.push(pc.dim(`  ${overview.balance}`));
-            }
-        }
-
+        lines.push(renderBar(spend.percent, spend.severity));
+        lines.push(pc.dim(`  ${formatSpendBalance(spend)}`));
         lines.push("");
     }
 
     return lines.join("\n");
+}
+
+function formatMinorAmount(amountMinor: number, exponent: number): string {
+    return (amountMinor / 10 ** exponent).toFixed(Math.max(0, exponent));
+}
+
+export function formatSpendBalance(spend: NormalizedSpend): string {
+    const used = formatMinorAmount(spend.used_minor, spend.used_exponent);
+
+    if (spend.limit_minor !== null && spend.limit_exponent !== null) {
+        const limit = formatMinorAmount(spend.limit_minor, spend.limit_exponent);
+        return `${used} / ${limit} ${spend.used_currency}`;
+    }
+
+    if (spend.cap_minor !== null) {
+        const cap = formatMinorAmount(spend.cap_minor, spend.used_exponent);
+        const currency = spend.cap_currency ?? spend.used_currency;
+        return `${used} / ${cap} ${currency}`;
+    }
+
+    return `${used} ${spend.used_currency}`;
 }
 
 export function renderAllAccounts(accounts: AccountUsage[]): string {
