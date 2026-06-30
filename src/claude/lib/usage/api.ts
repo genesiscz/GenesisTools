@@ -29,6 +29,39 @@ export interface ExtraUsageBucket {
     disabled_reason?: string | null;
 }
 
+export interface ApiLimitScope {
+    model: { id: string | null; display_name: string | null } | null;
+    surface: string | null;
+}
+
+export interface ApiLimit {
+    kind: string;
+    group?: string;
+    percent: number;
+    severity: string;
+    resets_at: string | null;
+    scope: ApiLimitScope | null;
+    is_active: boolean;
+}
+
+export interface ApiSpendMoney {
+    amount_minor: number;
+    currency: string;
+    exponent: number;
+}
+
+export interface ApiSpend {
+    used: ApiSpendMoney | null;
+    limit: ApiSpendMoney | null;
+    percent: number;
+    severity: string;
+    enabled: boolean;
+    disabled_reason?: string | null;
+    cap: { money: ApiSpendMoney | null; credits: unknown | null } | null;
+    balance?: unknown | null;
+    auto_reload?: unknown | null;
+}
+
 export interface UsageResponse {
     five_hour: UsageBucket;
     seven_day: UsageBucket;
@@ -36,7 +69,10 @@ export interface UsageResponse {
     seven_day_sonnet?: UsageBucket | null;
     seven_day_oauth_apps?: UsageBucket | null;
     extra_usage?: ExtraUsageBucket | null;
-    [key: string]: UsageBucket | ExtraUsageBucket | null | undefined;
+    limits?: ApiLimit[];
+    spend?: ApiSpend | null;
+    member_dashboard_available?: boolean;
+    [key: string]: unknown;
 }
 
 export interface AccountUsage {
@@ -46,8 +82,8 @@ export interface AccountUsage {
     error?: string;
 }
 
-export function isUsageBucket(value: UsageBucket | ExtraUsageBucket | null | undefined): value is UsageBucket {
-    if (value === null || value === undefined) {
+export function isUsageBucket(value: unknown): value is UsageBucket {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
         return false;
     }
 
