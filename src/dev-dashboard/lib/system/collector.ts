@@ -1,3 +1,4 @@
+import { logger } from "@app/logger";
 import { parseSwapUsage } from "@app/macos/lib/swap/scanner";
 import { collectProcesses, sortProcesses } from "./processes";
 import type { PulseSnapshot, TopProcess } from "./types";
@@ -101,18 +102,20 @@ export function parseWifiSsid(out: string): string | null {
     return m[1].trim();
 }
 
-async function runShell(cmd: string[]): Promise<string | null> {
+export async function runShell(cmd: string[]): Promise<string | null> {
     try {
-        const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "ignore" });
-        const out = await new Response(proc.stdout).text();
+        const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
+        const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
         await proc.exited;
 
         if (proc.exitCode !== 0) {
+            logger.debug({ cmd, exitCode: proc.exitCode, stderr: err }, "[dev-dashboard] runShell failed");
             return null;
         }
 
         return out;
-    } catch {
+    } catch (err) {
+        logger.debug({ cmd, err }, "[dev-dashboard] runShell spawn failed");
         return null;
     }
 }
