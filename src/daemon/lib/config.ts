@@ -1,26 +1,32 @@
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { env } from "@app/utils/env";
 import { Storage } from "@app/utils/storage/storage";
 import type { DaemonConfig, DaemonTask } from "./types";
 
 const storage = new Storage("daemon");
 
-const BASE_DIR = join(homedir(), ".genesis-tools", "daemon");
-const LOGS_DIR = join(BASE_DIR, "logs");
-const PID_FILE = join(BASE_DIR, "daemon.pid");
+function resolveBaseDir(): string {
+    const override = env.getTrimmed("GENESIS_TOOLS_DAEMON_DIR");
+
+    if (override) {
+        return override;
+    }
+
+    return join(env.tools.getHome(), ".genesis-tools", "daemon");
+}
 
 export function getLogsBaseDir(): string {
-    return LOGS_DIR;
+    return join(resolveBaseDir(), "logs");
 }
 
 export function getPidFile(): string {
-    return PID_FILE;
+    return join(resolveBaseDir(), "daemon.pid");
 }
 
 export async function ensureStorage(): Promise<void> {
     await storage.ensureDirs();
-    mkdirSync(LOGS_DIR, { recursive: true });
+    mkdirSync(getLogsBaseDir(), { recursive: true });
 }
 
 export async function loadConfig(): Promise<DaemonConfig> {
