@@ -102,6 +102,7 @@ export function dispatchDueTasks(
 
         activeRuns.add(task.name);
         state.running = true;
+        const scheduledAt = state.nextRunAt;
 
         executeTask(task, logsBaseDir)
             .catch((err) => {
@@ -117,7 +118,8 @@ export function dispatchDueTasks(
 
                     try {
                         const parsed = parseInterval(task.every);
-                        s.nextRunAt = computeNextRunAt(parsed);
+                        const next = computeNextRunAt(parsed, scheduledAt);
+                        s.nextRunAt = next < new Date() ? new Date() : next;
                     } catch (err) {
                         s.nextRunAt = new Date(Date.now() + 60_000);
                         log.error({ err, task: task.name, every: task.every }, "Invalid task interval; deferring 60s");
