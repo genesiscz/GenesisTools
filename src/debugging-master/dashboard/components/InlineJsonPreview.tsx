@@ -5,6 +5,8 @@ interface Props {
     value: unknown;
     /** Soft cap on rendered chars; further content is truncated with an ellipsis. */
     maxChars?: number;
+    /** When true, render the full JSON without a char cap. */
+    unlimited?: boolean;
 }
 
 interface RenderCtx {
@@ -23,8 +25,8 @@ interface RenderCtx {
  * scroll, this skips re-rendering the JSON span tree entirely on the common
  * "row remounts at a different scroll offset" path.
  */
-function InlineJsonPreviewImpl({ value, maxChars = 800 }: Props): ReactNode {
-    const ctx: RenderCtx = { out: [], remaining: maxChars, key: 0 };
+function InlineJsonPreviewImpl({ value, maxChars = 800, unlimited = false }: Props): ReactNode {
+    const ctx: RenderCtx = { out: [], remaining: unlimited ? Number.MAX_SAFE_INTEGER : maxChars, key: 0 };
     render(value, ctx);
     return <>{ctx.out}</>;
 }

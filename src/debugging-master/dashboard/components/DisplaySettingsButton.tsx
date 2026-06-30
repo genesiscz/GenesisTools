@@ -7,6 +7,7 @@ import {
     type LogFontFamily,
     type TimestampMode,
 } from "@/lib/display-settings";
+import { usePaneWrapLongLines } from "@/lib/use-pane-wrap-long-lines";
 import { useDisplaySettings } from "./DisplaySettingsProvider";
 
 function FontSizeField({
@@ -80,12 +81,18 @@ function LogDisplayFields({
     updateSettings,
     onReset,
     resetLabel,
+    paneKey,
+    showWrap,
 }: {
     settings: ReturnType<typeof useDisplaySettings>["settings"];
     updateSettings: ReturnType<typeof useDisplaySettings>["updateSettings"];
     onReset: () => void;
     resetLabel: string;
+    paneKey?: string;
+    showWrap: boolean;
 }): ReactElement {
+    const paneWrap = usePaneWrapLongLines(paneKey);
+
     return (
         <>
             <SegmentedField<TimestampMode>
@@ -122,6 +129,45 @@ function LogDisplayFields({
                     updateSettings({ showLineId: next === "show" });
                 }}
             />
+            {showWrap ? (
+                <>
+                    <SegmentedField<"wrap" | "nowrap">
+                        legend={paneKey ? "Wrap long lines (pane)" : "Wrap long lines"}
+                        value={
+                            paneKey
+                                ? paneWrap.effective
+                                    ? "wrap"
+                                    : "nowrap"
+                                : settings.wrapLongLines
+                                  ? "wrap"
+                                  : "nowrap"
+                        }
+                        options={[
+                            { value: "wrap", label: "Wrap" },
+                            { value: "nowrap", label: "No wrap" },
+                        ]}
+                        onChange={(next) => {
+                            const wrapLongLines = next === "wrap";
+
+                            if (paneKey) {
+                                paneWrap.setWrapLongLines(wrapLongLines);
+                                return;
+                            }
+
+                            updateSettings({ wrapLongLines });
+                        }}
+                    />
+                    {paneKey && paneWrap.override !== undefined ? (
+                        <button
+                            type="button"
+                            onClick={paneWrap.resetToGlobal}
+                            className="dbg-ui-text-xs uppercase tracking-wider text-cyan-400/70 hover:text-cyan-300"
+                        >
+                            use global wrap ({paneWrap.global ? "wrap" : "no wrap"})
+                        </button>
+                    ) : null}
+                </>
+            ) : null}
             <button
                 type="button"
                 onClick={onReset}
@@ -135,6 +181,7 @@ function LogDisplayFields({
 
 interface Props {
     variant?: "full" | "log";
+    paneKey?: string;
 }
 
 function ResetDefaultsButton({ label, onClick }: { label: string; onClick: () => void }): ReactElement {
@@ -149,7 +196,7 @@ function ResetDefaultsButton({ label, onClick }: { label: string; onClick: () =>
     );
 }
 
-export function DisplaySettingsButton({ variant = "full" }: Props): ReactElement {
+export function DisplaySettingsButton({ variant = "full", paneKey }: Props): ReactElement {
     const { settings, updateSettings, resetTypographySettings, resetLogSettings } = useDisplaySettings();
     const isLogOnly = variant === "log";
 
@@ -205,6 +252,20 @@ export function DisplaySettingsButton({ variant = "full" }: Props): ReactElement
                         }}
                     />
                     <ResetDefaultsButton label="reset typography defaults" onClick={resetTypographySettings} />
+                    <SegmentedField<"wrap" | "nowrap">
+                        legend="Wrap long lines (global)"
+                        value={settings.wrapLongLines ? "wrap" : "nowrap"}
+                        options={[
+                            { value: "wrap", label: "Wrap" },
+                            { value: "nowrap", label: "No wrap" },
+                        ]}
+                        onChange={(next) => {
+                            updateSettings({ wrapLongLines: next === "wrap" });
+                        }}
+                    />
+                    <p className="dbg-ui-text-xs text-white/30">
+                        Global wrap applies to all panes; per-pane wrench can override.
+                    </p>
                 </>
             ) : null}
             <LogDisplayFields
@@ -212,6 +273,8 @@ export function DisplaySettingsButton({ variant = "full" }: Props): ReactElement
                 updateSettings={updateSettings}
                 onReset={resetLogSettings}
                 resetLabel={isLogOnly ? "reset log defaults" : "reset log display defaults"}
+                paneKey={isLogOnly ? paneKey : undefined}
+                showWrap={isLogOnly}
             />
         </IconPopover>
     );

@@ -12,6 +12,7 @@ import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
 import { freezeLogSearch } from "@/components/LogSearchPopover";
 import { api } from "@/lib/api";
 import type { TimestampMode } from "@/lib/display-settings";
+import { EntriesContext } from "@/lib/entries-context";
 import { filterDisplayLogLines, shouldShowLogTimestamp, visibleLogText } from "@/lib/log-line-display";
 import { isSessionInActivePool } from "@/lib/session-active-pool";
 import { activeSessionRetentionMs } from "@/lib/session-pool-settings";
@@ -19,12 +20,13 @@ import { formatSessionHeaderParts } from "@/lib/session-run-context";
 import type { ConnectionStatus, MultiplexLogEntry } from "@/lib/sse";
 import { connectActiveStream } from "@/lib/sse";
 import { useLogSearchDisplay } from "@/lib/use-log-search-display";
+import { usePaneWrapLongLines } from "@/lib/use-pane-wrap-long-lines";
 import { useScrollToFirstLogMatch } from "@/lib/use-scroll-to-first-log-match";
 import { ActiveSessionMosaicToolbar } from "./ActiveSessionMosaicToolbar";
 import { DisplaySettingsButton } from "./DisplaySettingsButton";
 import { useDisplaySettings } from "./DisplaySettingsProvider";
+import { EntryRow } from "./EntryRow";
 import { LogLineJumpProvider, useLogLineJump } from "./LogLineJumpProvider";
-import { LogPreviewLine } from "./LogPreviewLine";
 import { SessionHeaderLine } from "./SessionHeaderLine";
 import { SessionPoolSettingsButton } from "./SessionPoolSettingsButton";
 import { useSessionPoolSettings } from "./SessionPoolSettingsProvider";
@@ -161,6 +163,11 @@ function ActiveSessionTile({
     onScroll,
     timestampMode,
     jumpEnabled,
+    expandedIds,
+    onToggleExpand,
+    wrapLongLines,
+    showLineId,
+    fullJsonContext,
 }: {
     lineHits: Array<{ line: MultiplexLogEntry; isMatch: boolean; isContext: boolean }>;
     highlightTokens: string[];
@@ -168,18 +175,25 @@ function ActiveSessionTile({
     onScroll: () => void;
     timestampMode: TimestampMode;
     jumpEnabled: boolean;
+    expandedIds: Set<number>;
+    onToggleExpand: (index: number) => void;
+    wrapLongLines: boolean;
+    showLineId: boolean;
+    fullJsonContext: boolean;
 }): React.ReactElement {
     const { registerScrollContainer } = useLogLineJump();
 
     useEffect(() => {
         registerScrollContainer(scrollRef);
     }, [registerScrollContainer, scrollRef]);
+
     return (
         <div className="h-full flex flex-col bg-black/30">
             <div
                 ref={scrollRef}
                 onScroll={onScroll}
                 className="flex-1 min-h-0 overflow-y-auto overflow-x-auto font-mono dbg-log-text"
+                data-dbg-wrap-lines={wrapLongLines ? "true" : "false"}
             >
                 {lineHits.length === 0 ? (
                     <p className="px-2 py-2 text-white/25 italic">
@@ -195,16 +209,19 @@ function ActiveSessionTile({
                         });
 
                         return (
-                            <LogPreviewLine
+                            <EntryRow
                                 key={`${line.index}-${line.ts}`}
                                 entry={line}
-                                previewText={previewText(line)}
+                                expanded={expandedIds.has(line.index)}
+                                fresh={false}
                                 showTimestamp={showTimestamp}
-                                lineIdPresentation="hover-rail"
+                                showLineId={showLineId}
                                 jumpEnabled={jumpEnabled}
                                 highlightTokens={highlightTokens}
                                 isMatch={isMatch}
                                 isContext={isContext}
+                                fullJsonContext={fullJsonContext}
+                                onToggle={onToggleExpand}
                             />
                         );
                     })
@@ -219,6 +236,7 @@ interface ActiveSessionMosaicPaneProps {
     path: string[];
     lines: MultiplexLogEntry[];
     timestampMode: TimestampMode;
+    showLineId: boolean;
     onOpenSession: (source: LogSourceId, name: string) => void;
     onDeleteConfirmed: (session: DashboardSession) => void;
 }
@@ -228,10 +246,15 @@ function ActiveSessionMosaicPane({
     path,
     lines,
     timestampMode,
+    showLineId,
     onOpenSession,
     onDeleteConfirmed,
 }: ActiveSessionMosaicPaneProps): React.ReactElement {
     const [paused, setPaused] = useState(false);
+    const [expandedIds, setExpandedIds] = useState<Set<number>>(() => new Set());
+    const paneKey = sessionKey(session.source, session.name);
+    const { settings, updateSettings } = useDisplaySettings();
+    const { effective: wrapLongLines } = usePaneWrapLongLines(paneKey);
 
     const onAutoscrollChange = useCallback((enabled: boolean) => {
         setPaused(!enabled);
@@ -267,47 +290,73 @@ function ActiveSessionMosaicPane({
         setPaused(true);
     }, [paused, resume]);
 
+    const onToggleExpand = useCallback((index: number) => {
+        setExpandedIds((prev) => {
+            const next = new Set(prev);
+
+            if (next.has(index)) {
+                next.delete(index);
+            } else {
+                next.add(index);
+            }
+
+            return next;
+        });
+    }, []);
+
     return (
-        <LogLineJumpProvider
-            onBeforeJump={() => {
-                logDisplay.setLogSearch((prev) => freezeLogSearch(prev));
-            }}
-        >
-            <MosaicWindow<string>
-                path={path}
-                title=""
-                toolbarControls={<span />}
-                renderToolbar={() => (
-                    <div className="flex w-full min-w-0">
-                        <ActiveSessionMosaicToolbar
-                            session={session}
-                            lines={lines}
-                            logSearch={logDisplay.logSearch}
-                            onLogSearchChange={logDisplay.setLogSearch}
-                            logMatchCount={logDisplay.matchCount}
-                            logLineCount={logDisplay.lineCount}
-                            paused={paused}
-                            onTogglePause={togglePause}
-                            onOpen={() => {
-                                onOpenSession(session.source, session.name);
-                            }}
-                            onDeleteConfirmed={() => {
-                                onDeleteConfirmed(session);
-                            }}
-                        />
-                    </div>
-                )}
+        <EntriesContext.Provider value={lines}>
+            <LogLineJumpProvider
+                onBeforeJump={() => {
+                    logDisplay.setLogSearch((prev) => freezeLogSearch(prev));
+                }}
             >
-                <ActiveSessionTile
-                    lineHits={lineHits}
-                    highlightTokens={logDisplay.highlightTokens}
-                    scrollRef={ref}
-                    onScroll={onScroll}
-                    timestampMode={timestampMode}
-                    jumpEnabled={logDisplay.isSearchActive}
-                />
-            </MosaicWindow>
-        </LogLineJumpProvider>
+                <MosaicWindow<string>
+                    path={path}
+                    title=""
+                    toolbarControls={<span />}
+                    renderToolbar={() => (
+                        <div className="flex w-full min-w-0">
+                            <ActiveSessionMosaicToolbar
+                                session={session}
+                                lines={lines}
+                                paneKey={paneKey}
+                                logSearch={logDisplay.logSearch}
+                                onLogSearchChange={logDisplay.setLogSearch}
+                                logMatchCount={logDisplay.matchCount}
+                                logLineCount={logDisplay.lineCount}
+                                paused={paused}
+                                onTogglePause={togglePause}
+                                fullJsonContext={settings.fullJsonContext}
+                                onToggleFullJsonContext={() => {
+                                    updateSettings({ fullJsonContext: !settings.fullJsonContext });
+                                }}
+                                onOpen={() => {
+                                    onOpenSession(session.source, session.name);
+                                }}
+                                onDeleteConfirmed={() => {
+                                    onDeleteConfirmed(session);
+                                }}
+                            />
+                        </div>
+                    )}
+                >
+                    <ActiveSessionTile
+                        lineHits={lineHits}
+                        highlightTokens={logDisplay.highlightTokens}
+                        scrollRef={ref}
+                        onScroll={onScroll}
+                        timestampMode={timestampMode}
+                        jumpEnabled={logDisplay.isSearchActive}
+                        expandedIds={expandedIds}
+                        onToggleExpand={onToggleExpand}
+                        wrapLongLines={wrapLongLines}
+                        showLineId={showLineId}
+                        fullJsonContext={settings.fullJsonContext}
+                    />
+                </MosaicWindow>
+            </LogLineJumpProvider>
+        </EntriesContext.Provider>
     );
 }
 
@@ -730,6 +779,7 @@ export function SessionsHome({
                                     path={path}
                                     lines={lines}
                                     timestampMode={settings.timestampMode}
+                                    showLineId={settings.showLineId}
                                     onOpenSession={onOpenSession}
                                     onDeleteConfirmed={clearDeletedSessionLocalState}
                                 />

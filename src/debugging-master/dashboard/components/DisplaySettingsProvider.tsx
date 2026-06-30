@@ -9,6 +9,7 @@ import {
     type DisplaySettings,
     parseDisplaySettings,
 } from "@/lib/display-settings";
+import { clearAllPaneWrapOverrides } from "@/lib/pane-display-overrides";
 
 const { Provider: BaseProvider, useSettings: useBaseDisplaySettings } = createSettingsProvider<DisplaySettings>({
     displayName: "DisplaySettings",
@@ -25,9 +26,17 @@ export function DisplaySettingsProvider({ children }: { children: ReactNode }): 
 export function useDisplaySettings() {
     const base = useBaseDisplaySettings();
 
+    const updateSettings = (partial: Partial<DisplaySettings>) => {
+        if ("wrapLongLines" in partial) {
+            clearAllPaneWrapOverrides();
+        }
+
+        base.updateSettings(partial);
+    };
+
     return {
         settings: base.settings,
-        updateSettings: base.updateSettings,
+        updateSettings,
         resetSettings: base.resetSettings,
         resetTypographySettings: () => {
             base.resetPartial(DEFAULT_TYPOGRAPHY_SETTINGS);

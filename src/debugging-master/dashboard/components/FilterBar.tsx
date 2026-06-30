@@ -1,11 +1,14 @@
 import type { LogLevel } from "@app/debugging-master/types";
 import type { DashboardSession } from "@app/utils/log-viewer/log-source";
+import { sessionKey } from "@app/utils/log-viewer/session-key";
 import type { FilterState } from "@/lib/filters";
 import { FILTER_ORDER, LEVEL_META } from "@/lib/levels";
 import { formatSessionHeaderParts } from "@/lib/session-run-context";
 import { SessionLiveStatus } from "@/lib/ui/SessionLiveStatus";
 import { AutoscrollToggle } from "./AutoscrollToggle";
 import { DisplaySettingsButton } from "./DisplaySettingsButton";
+import { useDisplaySettings } from "./DisplaySettingsProvider";
+import { FullJsonContextToggle } from "./FullJsonContextToggle";
 import { LevelTooltip } from "./LevelTooltip";
 import { LogSearchControl } from "./LogSearchControl";
 import type { LogSearchState } from "./LogSearchPopover";
@@ -48,9 +51,11 @@ export function FilterBar({
     onTogglePause,
     onToggleSort,
 }: Props): React.ReactElement {
+    const { settings, updateSettings } = useDisplaySettings();
     const allOn = state.levels.size === FILTER_ORDER.length;
     const sessionContext = session ? formatSessionHeaderParts(session) : null;
     const showSessionContext = Boolean(sessionContext?.cwd || sessionContext?.command);
+    const paneKey = session ? sessionKey(session.source, session.name) : undefined;
 
     return (
         <div className="sticky top-[3.25rem] sm:top-[3.5rem] z-10 glass-card border-b border-white/8 px-3 sm:px-5 py-2.5 flex flex-col gap-2.5">
@@ -106,7 +111,7 @@ export function FilterBar({
                     matchCount={logMatchCount}
                     lineCount={logLineCount}
                 />
-                <DisplaySettingsButton variant="log" />
+                <DisplaySettingsButton variant="log" paneKey={paneKey} />
                 {logSearch.query.trim().length > 0 ? (
                     <span className="dbg-ui-text-xs text-white/35 truncate min-w-0 flex-1">
                         {logSearch.frozen ? (
@@ -150,6 +155,12 @@ export function FilterBar({
                         {sortDir === "asc" ? "↓ newest" : "↑ newest"}
                     </button>
                     <AutoscrollToggle paused={paused} onToggle={onTogglePause} />
+                    <FullJsonContextToggle
+                        enabled={settings.fullJsonContext}
+                        onToggle={() => {
+                            updateSettings({ fullJsonContext: !settings.fullJsonContext });
+                        }}
+                    />
                 </div>
             </div>
         </div>

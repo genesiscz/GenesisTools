@@ -1,6 +1,6 @@
 import type { IndexedLogEntry, LogLevel } from "@app/debugging-master/types";
 import type { DashboardSession, LogSourceId } from "@app/utils/log-viewer/log-source";
-import { isLogSourceId } from "@app/utils/log-viewer/session-key";
+import { isLogSourceId, sessionKey } from "@app/utils/log-viewer/session-key";
 import { sortSessionsByRecency } from "@app/utils/log-viewer/session-recency";
 import { DirPathPrefixProvider } from "@ui/components/DirPath";
 import { IconTooltipProvider } from "@ui/components/icon-button";
@@ -498,6 +498,11 @@ export function App(): React.ReactElement {
                                                 matchCount={logDisplay.matchCount}
                                                 isSearchActive={logDisplay.isFilterActive}
                                                 jumpEnabled={logDisplay.isSearchActive}
+                                                paneKey={
+                                                    activeSource && activeSession
+                                                        ? sessionKey(activeSource, activeSession)
+                                                        : undefined
+                                                }
                                                 onToggle={onToggleExpand}
                                                 onFilterHypothesis={onChangeHypothesis}
                                                 onAutoScrollChange={onAutoScrollChange}
