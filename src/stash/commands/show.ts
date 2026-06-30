@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { logger, out } from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { openStashDb } from "../lib/stash-db";
 import { StashStorage } from "../lib/storage";
 import { StoreRepo } from "../lib/store-repo";
@@ -37,13 +38,40 @@ export async function showCommand(opts: {
     }
     log.debug({ stashId: stash.id, version: v.version, mode: opts.mode }, "version resolved");
 
+    // Count actual regions-table rows for accurate display (versions.region_count was set at save
+    // time from `@stash:` marker count in the patch — that's a SEMANTIC marker count, NOT the
+    // hunk count. Users find this confusing: they see "regions 0" alongside a 10-row inventory.
+    // Show the table count, which matches what the inventory below renders.
+    const regionRowCount = db
+        .query<{ c: number }, [string]>("SELECT COUNT(*) as c FROM regions WHERE version_id = ?")
+        .get(v.id);
+    const actualRegions = regionRowCount?.c ?? 0;
+
+    // Pretty-print tags: stored as JSON array string; show as comma-separated list. Falls back to
+    // "—" when missing OR when the stored value parses to an empty array. Defensive parse so a
+    // corrupted tags column doesn't crash the show.
+    let tagsDisplay = "—";
+    if (stash.tags) {
+        try {
+            const arr = SafeJSON.parse(stash.tags) as unknown;
+            if (Array.isArray(arr)) {
+                tagsDisplay = arr.length > 0 ? arr.join(", ") : "—";
+            } else {
+                tagsDisplay = stash.tags;
+            }
+        } catch (err) {
+            log.debug({ err, raw: stash.tags }, "tags parse failed; showing raw");
+            tagsDisplay = stash.tags;
+        }
+    }
+
     ui.header(`${stash.name}  v${v.version}`);
-    ui.kv("tags", stash.tags ?? "—");
+    ui.kv("tags", tagsDisplay);
     ui.kv("desc", stash.description ?? "—");
     ui.kv("source", `${v.source_repo_path ?? "?"} @ ${v.source_sha?.slice(0, 7) ?? "?"}`);
     ui.kv("origin", v.source_origin ?? "—");
     ui.kv("files", String(v.file_count));
-    ui.kv("regions", String(v.region_count));
+    ui.kv("regions", String(actualRegions));
     ui.kv("created", v.created_at);
 
     if (opts.mode === "meta") {
@@ -67,7 +95,11 @@ export async function showCommand(opts: {
         const fileW = Math.max(4, ...regions.map((r) => r.file_path.length));
         for (const r of regions) {
             const name = r.region_name ?? "(anon)";
-            out.print(
+            // `ui.raw` (stderr, newline-terminated) so the rows ORDER correctly relative to the
+            // header above and don't get interleaved with stderr metadata due to stdout buffering
+            // (previously used `out.print` which is unterminated AND stdout — caused rows to
+            // mash onto one line AND appear before the header in interactive use).
+            ui.raw(
                 `  ${r.file_path.padEnd(fileW)}  hunk ${r.hunk_index}  ${String(r.line_count).padStart(4)} lines  ${name}`
             );
         }

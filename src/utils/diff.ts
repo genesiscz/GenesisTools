@@ -5,9 +5,57 @@ import { join } from "node:path";
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
+import { createPatch } from "diff";
 
 // Use logger for clean diff output (no timestamps, no level for info)
 const diffLogger = logger;
+
+export interface RenderUnifiedDiffArgs {
+    before: string;
+    after: string;
+    /** File label used in the `--- a/<label> / +++ b/<label>` headers. */
+    label: string;
+    /** Unified-diff context radius (lines). Default: 3 (matches `git diff` default). */
+    context?: number;
+}
+
+/**
+ * Pure-JS unified diff. No shell-out, no temp files, synchronous. Backed by jsdiff
+ * (`diff` package). Returns "" when before === after so callers can early-exit cheaply.
+ *
+ * Output format matches `git diff` shape: `--- a/<label>\n+++ b/<label>\n@@ ... @@\n...`.
+ * The two trailing newlines on the header that `createPatch` includes are stripped so the
+ * output composes cleanly when concatenated.
+ */
+export function renderUnifiedDiff(args: RenderUnifiedDiffArgs): string {
+    if (args.before === args.after) {
+        return "";
+    }
+
+    const patch = createPatch(args.label, args.before, args.after, "", "", { context: args.context ?? 3 });
+    // jsdiff's createPatch emits `Index: <name>\n===\n--- <oldHeader>\n+++ <newHeader>\n...`.
+    // Strip the `Index:` + `===` lines so the output starts directly at the `---` header — that's
+    // what every other diff renderer in this codebase emits and what `git apply` parses.
+    const lines = patch.split("\n");
+    const firstMinus = lines.findIndex((l) => l.startsWith("---"));
+
+    if (firstMinus === -1) {
+        return patch;
+    }
+
+    // jsdiff uses the label as-is for both --- and +++ headers; rewrite to git-style a/ b/ prefixes.
+    const result = lines.slice(firstMinus);
+
+    if (result[0]?.startsWith("---")) {
+        result[0] = `--- a/${args.label}`;
+    }
+
+    if (result[1]?.startsWith("+++")) {
+        result[1] = `+++ b/${args.label}`;
+    }
+
+    return result.join("\n");
+}
 
 /**
  * Utility for showing diffs using system diff command

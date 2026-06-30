@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { logger, out } from "@app/logger";
+import chalk from "chalk";
 import { openStashDb } from "../lib/stash-db";
 import { StashStorage } from "../lib/storage";
 import { ui } from "../lib/ui";
@@ -31,11 +32,14 @@ export async function whereCommand(name: string): Promise<void> {
         return;
     }
 
-    ui.section(`${name} — ${apps.length} active application${apps.length === 1 ? "" : "s"}`);
+    // All output to stdout in one stream so interactive display order matches code order
+    // (mixing stderr ui.* with stdout out.* causes the terminal to reorder them).
+    const title = `${name} — ${apps.length} active application${apps.length === 1 ? "" : "s"}`;
     const pathW = Math.max(10, ...apps.map((a) => a.project_path.length));
-    ui.dim(`  ${"PROJECT".padEnd(pathW)}  APPLIED`);
+    out.println(chalk.dim(`── ${title} ${"─".repeat(Math.max(0, 60 - title.length))}`));
+    out.println(chalk.dim(`  ${"PROJECT".padEnd(pathW)}  APPLIED`));
     for (const a of apps) {
-        out.print(`  ${a.project_path.padEnd(pathW)}  ${a.applied_at}`);
+        out.println(`  ${a.project_path.padEnd(pathW)}  ${a.applied_at}`);
     }
     db.close();
 }

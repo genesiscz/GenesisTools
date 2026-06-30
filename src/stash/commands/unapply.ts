@@ -1,30 +1,39 @@
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { logger } from "@app/logger";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { classifyRegion } from "../lib/classify";
-import { applyDecisionToCode } from "../lib/decisions";
-import { renderDiff } from "../lib/diff-render";
-import { newStashId } from "../lib/ids";
-import { parseMarkers } from "../lib/markers";
+import { isInteractive } from "@app/utils/cli";
 import { detectProject } from "../lib/projects";
-import { extractRegionContent } from "../lib/regions";
 import { openStashDb } from "../lib/stash-db";
 import { StashStorage } from "../lib/storage";
-import { StoreRepo } from "../lib/store-repo";
 import { ui } from "../lib/ui";
-import { type Decision, type SessionRegion, UnapplySession } from "../lib/unapply-session";
-import type { ApplicationRow, StashRow, VersionRow } from "../types";
+import { Walk } from "../lib/walk";
+import {
+    applyBlanketDecision,
+    bootstrapUnapplyWalk,
+    emitNonTtyPrompt,
+    executeUnapplyDecisions,
+    normalizeUnapplyDecision,
+    processAutoRemoves,
+    walkInteractive,
+} from "../lib/walk-execute";
+import type { StashRow } from "../types";
 
 const { log } = logger.scoped("stash:unapply");
 
 export interface UnapplyOptions {
     name: string;
     action: "start" | "continue" | "skip" | "abort" | "status";
+    /**
+     * v1.1 verbs: "capture" | "restore" | "skip"
+     * v1 back-compat aliases: "update" → capture, "discard" → restore
+     * Blanket dangerous forms: "discard-all-dangerous" | "update-stash-all-dangerous"
+     */
     decision:
-        | Exclude<Decision, null | "auto-remove">
+        | "capture"
+        | "restore"
+        | "skip"
+        | "update"
+        | "discard"
         | "discard-all-dangerous"
         | "update-stash-all-dangerous"
         | undefined;
@@ -51,115 +60,82 @@ export async function unapplyCommand(opts: UnapplyOptions): Promise<void> {
 
     const projectHash = createHash("sha256").update(project.rootPath).digest("hex");
 
-    if (opts.action === "abort") {
-        const s = await UnapplySession.load({ stashId: stash.id, projectHash, stateDir: storage.stateDir() });
-        if (!s) {
-            ui.warn("no in-progress unapply session");
-            db.close();
-            return;
-        }
-        await s.abort();
-        ui.ok("aborted");
-        db.close();
-        return;
-    }
-
-    if (opts.action === "status") {
-        const s = await UnapplySession.load({ stashId: stash.id, projectHash, stateDir: storage.stateDir() });
-        if (!s) {
+    // Fast paths: abort and status only need to load an existing walk.
+    if (opts.action === "abort" || opts.action === "status") {
+        const w = await Walk.load({ stashId: stash.id, projectHash, stateDir: storage.stateDir() });
+        if (!w) {
             ui.info("no in-progress session");
             db.close();
             return;
         }
-        const p = s.progress();
-        const cur = s.currentRegion();
-        ui.info(`${p.decided}/${p.total} decided; current: ${cur?.filePath ?? "(none)"} hunk ${cur?.hunkIndex ?? "?"}`);
+        if (opts.action === "abort") {
+            await w.abort();
+            ui.ok("aborted");
+        } else {
+            const p = w.progress();
+            const cur = w.currentRegion();
+            ui.info(
+                `${p.decided}/${p.total} decided; current: ${cur?.filePath ?? "(none)"} hunk ${cur?.hunkIndex ?? "?"}`
+            );
+        }
         db.close();
         return;
     }
 
-    let session = await UnapplySession.load({ stashId: stash.id, projectHash, stateDir: storage.stateDir() });
-    let bootstrapped = false;
-    if (!session) {
+    // Load or bootstrap the walk.
+    let walk = await Walk.load({ stashId: stash.id, projectHash, stateDir: storage.stateDir() });
+    if (!walk) {
         if (opts.action !== "start") {
             ui.err("no in-progress session; run without --continue to start");
             db.close();
             process.exit(1);
         }
-        session = await bootstrapSession({ storage, db, stash, project, projectHash });
-        bootstrapped = true;
-        log.debug(
-            {
-                regionsTotal: session.regions().length,
-                autoRemove: session.regions().filter((r) => r.decision === "auto-remove").length,
-            },
-            "session bootstrapped"
-        );
-    }
-
-    // Only strip the trivially-unchanged regions on the FIRST run of this session.
-    // On --continue we'd otherwise re-process every prior auto-remove with no markers left to remove
-    // (idempotent but noisy; the guard keeps logs clean).
-    if (bootstrapped) {
-        await processAutoRemoves({ session, projectRoot: project.rootPath });
-    }
-
-    if (opts.decision === "discard-all-dangerous" || opts.decision === "update-stash-all-dangerous") {
-        const blanket = opts.decision === "discard-all-dangerous" ? "discard" : "update";
-        const undecided = session.regions().filter((r) => r.decision === null).length;
-        ui.warn(`blanket decision: ${blanket} (applies to ${undecided} undecided region${undecided === 1 ? "" : "s"})`);
-        log.debug({ blanket, undecided }, "blanket dangerous-decision applied");
-        for (const r of session.regions()) {
-            if (r.decision === null) {
-                r.decision = blanket;
-            }
+        walk = await bootstrapUnapplyWalk({ storage, db, stash, project, projectHash });
+        if (!walk) {
+            db.close();
+            return;
         }
-    } else if (opts.decision) {
-        if (session.currentRegion()) {
-            log.debug(
-                { region: session.currentRegion()?.filePath, decision: opts.decision },
-                "per-step decision recorded"
-            );
-            session.decide(opts.decision);
-        }
-    } else if (opts.action === "skip") {
-        if (session.currentRegion()) {
-            log.debug({ region: session.currentRegion()?.filePath, decision: "skip" }, "--skip recorded");
-            session.decide("skip");
-        }
+        // Only strip unchanged regions on the first run (not on --continue) to keep logs clean.
+        await processAutoRemoves({ walk, projectRoot: project.rootPath });
     }
 
-    if (isInteractive() && !session.isComplete()) {
-        await walkInteractive({ session, projectRoot: project.rootPath });
+    // Apply incoming decision (normalise v1 aliases → v1.1 verbs at the CLI boundary).
+    applyBlanketDecision(walk, opts.decision);
+    const d = normalizeUnapplyDecision(opts.decision);
+    if (d && walk.currentRegion()) {
+        walk.decide(d);
+    } else if (opts.action === "skip" && walk.currentRegion()) {
+        walk.decide("skip");
     }
 
-    if (!session.isComplete()) {
-        await session.persist();
-        await emitNonTtyPrompt({ session });
+    if (isInteractive() && !walk.isComplete()) {
+        await walkInteractive({ walk, verb: "unapply" });
+    }
+
+    if (!walk.isComplete()) {
+        await walk.persist();
+        await emitNonTtyPrompt({ walk, verb: "unapply" });
         db.close();
         return;
     }
 
-    const stats = await executeAllDecisions({ session, projectRoot: project.rootPath, storage, db, stash });
+    const stats = await executeUnapplyDecisions({ walk, projectRoot: project.rootPath, storage, db, stash });
 
-    // PR #222 t28: only mark the application as 'unapplied' if every region was actually cleaned
-    // up. A `marker-missing` outcome means the user's file may still carry wrapped code; flipping
-    // the DB to 'unapplied' would falsely claim the stash is gone. Keep the application 'active'
-    // and surface the failed files so the user can audit + retry.
+    // D-25: only mark the application 'unapplied' when every region was cleaned up. A
+    // marker-missing outcome means the user's file may still carry wrapped code; keeping the
+    // application 'active' preserves the retry path.
     if (stats.failedToFind === 0) {
         const now = new Date().toISOString();
         db.run(
             "UPDATE applications SET state = 'unapplied', unapplied_at = ? WHERE stash_id = ? AND project_path = ? AND state = 'active'",
             [now, stash.id, project.rootPath]
         );
-        await session.complete();
+        await walk.complete();
         ui.ok(
             `unapplied "${opts.name}" — ${stats.removed} removed, ${stats.updated} captured to v${stats.newVersion ?? "(none)"}, ${stats.skipped} skipped`
         );
     } else {
-        // Persist the session so the user can re-run (`--continue`) after they investigate. Do NOT
-        // call session.complete() — that would discard the state.
-        await session.persist();
+        await walk.persist();
         ui.err(`partial unapply: ${stats.failedToFind} region(s) had no matching marker; application kept ACTIVE`);
         for (const f of stats.failedFiles) {
             ui.warn(`  marker missing in: ${f}`);
@@ -171,366 +147,4 @@ export async function unapplyCommand(opts: UnapplyOptions): Promise<void> {
 
     db.close();
     log.debug({ stashId: stash.id, stats }, "stash unapplied");
-}
-
-async function bootstrapSession(args: {
-    storage: StashStorage;
-    db: Database;
-    stash: StashRow;
-    project: NonNullable<Awaited<ReturnType<typeof detectProject>>>;
-    projectHash: string;
-}): Promise<UnapplySession> {
-    const app = args.db
-        .query<ApplicationRow, [string, string]>(
-            "SELECT * FROM applications WHERE stash_id = ? AND project_path = ? AND state = 'active'"
-        )
-        .get(args.stash.id, args.project.rootPath);
-    if (!app) {
-        ui.err(`"${args.stash.name}" is not applied here`);
-        args.db.close();
-        process.exit(1);
-    }
-    if (!app.version_id) {
-        ui.err("application row has no version (orphaned by drop); cannot unapply");
-        args.db.close();
-        process.exit(1);
-    }
-    const version = args.db.query<VersionRow, [string]>("SELECT * FROM versions WHERE id = ?").get(app.version_id);
-    if (!version) {
-        ui.err("version row missing");
-        args.db.close();
-        process.exit(1);
-    }
-    const repo = new StoreRepo(args.storage.storeRepoDir());
-    const storedPatch = (await repo.readFileAt(version.patch_ref, "PATCH.diff")) ?? "";
-    const regionMap = collectRegionsFromPatch(storedPatch);
-
-    const sessionRegions: SessionRegion[] = [];
-    for (const r of regionMap) {
-        const fileContent = await readFile(join(args.project.rootPath, r.filePath), "utf8").catch(() => null);
-        const present = fileContent ? parseMarkers(fileContent).some((m) => m.name === args.stash.name) : false;
-        const currentContent = fileContent
-            ? await extractRegionContent(join(args.project.rootPath, r.filePath), args.stash.name)
-            : null;
-        const klass = classifyRegion({
-            storedContent: r.content,
-            currentContent,
-            present,
-        }).klass;
-        sessionRegions.push({
-            id: newStashId(),
-            filePath: r.filePath,
-            hunkIndex: r.hunkIndex,
-            klass,
-            decision: klass === "unchanged" ? "auto-remove" : null,
-            storedContent: r.content,
-            currentContent,
-        });
-    }
-
-    return UnapplySession.start({
-        stashId: args.stash.id,
-        stashName: args.stash.name,
-        projectPath: args.project.rootPath,
-        projectHash: args.projectHash,
-        regions: sessionRegions,
-        stateDir: args.storage.stateDir(),
-    });
-}
-
-interface PatchRegion {
-    filePath: string;
-    hunkIndex: number;
-    content: string;
-}
-
-function collectRegionsFromPatch(patch: string): PatchRegion[] {
-    const regions: PatchRegion[] = [];
-    const lines = patch.split("\n");
-    let currentFile: string | null = null;
-    let hunkIndex = 0;
-    let buffer: string[] = [];
-    const flush = () => {
-        if (currentFile && buffer.length) {
-            hunkIndex++;
-            regions.push({ filePath: currentFile, hunkIndex, content: buffer.join("\n") });
-            buffer = [];
-        }
-    };
-    for (const line of lines) {
-        // Post-image file header from `git diff --dst-prefix=b/` — captures relative path; resets hunk index per file.
-        const fm = /^\+\+\+ b\/(.+)$/.exec(line);
-        if (fm) {
-            flush();
-            currentFile = fm[1] ?? null;
-            hunkIndex = 0;
-            continue;
-        }
-        // New hunk delimiter `@@ ... @@` — flush the previous hunk's accumulated additions.
-        if (line.startsWith("@@")) {
-            flush();
-            continue;
-        }
-        // Added (`+`) lines accumulate into the current region buffer (stripping the `+` prefix).
-        // The `+++ b/path` file header is handled above (it sets currentFile and flushes), so we
-        // never see `+++` here — no extra startsWith guard required.
-        // Context/removal lines terminate the buffer. We DON'T flush on `\` lines (e.g.
-        // `\ No newline at end of file`) — those don't end a hunk, so flushing on them would
-        // truncate the region prematurely.
-        if (line.startsWith("+")) {
-            buffer.push(line.slice(1));
-        } else if (buffer.length && (line.startsWith(" ") || line.startsWith("-"))) {
-            flush();
-        }
-    }
-    flush();
-    return regions;
-}
-
-async function processAutoRemoves(args: { session: UnapplySession; projectRoot: string }): Promise<void> {
-    // Group by filePath and walk each file's regions back-to-front (highest hunkIndex first).
-    // Each removal shifts subsequent line numbers, so descending hunkIndex order keeps the
-    // markers.filter(...)[hunkIndex-1] lookup in decisions.ts consistent as we go.
-    for (const regions of groupRegionsByFileDescending(args.session.regions())) {
-        for (const r of regions) {
-            if (r.decision === "auto-remove") {
-                await applyDecisionToCode({
-                    filePath: join(args.projectRoot, r.filePath),
-                    regionName: args.session.snapshot().stashName,
-                    hunkIndex: r.hunkIndex,
-                    decision: "auto-remove",
-                });
-            }
-        }
-    }
-}
-
-function groupRegionsByFileDescending(regions: SessionRegion[]): SessionRegion[][] {
-    const byFile = new Map<string, SessionRegion[]>();
-    for (const r of regions) {
-        const arr = byFile.get(r.filePath) ?? [];
-        arr.push(r);
-        byFile.set(r.filePath, arr);
-    }
-    return [...byFile.values()].map((arr) => [...arr].sort((a, b) => b.hunkIndex - a.hunkIndex));
-}
-
-async function walkInteractive(args: { session: UnapplySession; projectRoot: string }): Promise<void> {
-    const { select, note } = await import("@clack/prompts");
-    while (!args.session.isComplete()) {
-        const region = args.session.currentRegion();
-        if (!region) {
-            return;
-        }
-        const total = args.session.regions().length;
-        const idx = args.session.snapshot().currentIndex + 1;
-        const diff = renderDiff({
-            before: region.storedContent ?? "",
-            after: region.currentContent ?? "",
-            label: `${region.filePath} hunk ${region.hunkIndex}`,
-        });
-        note(diff, `Region ${idx}/${total} — class: ${region.klass}`);
-        const selectOpts: Array<{ value: Exclude<Decision, null | "auto-remove">; label: string; hint?: string }> = [
-            { value: "update", label: "update — capture current as new vN+1, remove from code" },
-            { value: "discard", label: "discard — remove using stored content (lose local edits)" },
-            { value: "skip", label: "skip — leave code & store alone (warns)" },
-        ];
-        if (region.klass === "missing") {
-            selectOpts.splice(1, 1);
-        }
-        const sel = await select({ message: "decision?", options: selectOpts });
-        if (typeof sel !== "string") {
-            ui.warn("paused; resume with: tools stash unapply <name> --continue");
-            await args.session.persist();
-            process.exit(0);
-        }
-        args.session.decide(sel as Exclude<Decision, null | "auto-remove">);
-    }
-}
-
-async function emitNonTtyPrompt(args: { session: UnapplySession }): Promise<void> {
-    const region = args.session.currentRegion();
-    if (!region) {
-        return;
-    }
-    const total = args.session.regions().length;
-    const idx = args.session.snapshot().currentIndex + 1;
-    process.stderr.write(
-        `\nRegion ${idx}/${total} — ${region.filePath} hunk ${region.hunkIndex} (class: ${region.klass})\n`
-    );
-    process.stderr.write(
-        renderDiff({
-            before: region.storedContent ?? "",
-            after: region.currentContent ?? "",
-            label: `${region.filePath} hunk ${region.hunkIndex}`,
-        })
-    );
-    process.stderr.write("\nChoose a decision:\n");
-    for (const dec of ["update", "discard", "skip"]) {
-        // suggestCommand pulls <name> from process.argv; subcommand=["unapply"] strips the duplicate token.
-        process.stderr.write(
-            `  ${suggestCommand("tools stash unapply", { add: ["--continue", `--decision=${dec}`], subcommand: ["unapply"] })}\n`
-        );
-    }
-    process.stderr.write(
-        `Or abort:\n  ${suggestCommand("tools stash unapply", { add: ["--abort"], subcommand: ["unapply"] })}\n`
-    );
-}
-
-interface ExecStats {
-    removed: number;
-    updated: number;
-    skipped: number;
-    newVersion: number | null;
-    /**
-     * Regions whose marker couldn't be found at execute time (file edited out-of-band between
-     * bootstrap and execute, or already cleaned up manually). PR #222 t28: when > 0, the caller
-     * must NOT mark the application as 'unapplied' — the user's file may still contain wrapped
-     * code that the DB would otherwise claim is gone.
-     */
-    failedToFind: number;
-    /** Files where a marker lookup failed — surfaced to the user so they can audit. */
-    failedFiles: string[];
-}
-
-async function executeAllDecisions(args: {
-    session: UnapplySession;
-    projectRoot: string;
-    storage: StashStorage;
-    db: Database;
-    stash: StashRow;
-}): Promise<ExecStats> {
-    const stats: ExecStats = { removed: 0, updated: 0, skipped: 0, newVersion: null, failedToFind: 0, failedFiles: [] };
-    // Snapshot "update"-bound regions in their original order so capturedUpdatesAsNewVersion sees
-    // their stored/current content before we start mutating files. The capture itself is purely
-    // in-memory (it reads from r.storedContent/r.currentContent), so order doesn't matter for
-    // correctness — we just don't want stats accounting to depend on the mutation order below.
-    const updatedRegions: SessionRegion[] = args.session.regions().filter((r) => r.decision === "update");
-    for (const r of args.session.regions()) {
-        if (r.decision === "skip") {
-            stats.skipped++;
-            ui.warn(`region ${r.filePath} hunk ${r.hunkIndex}: kept (stash and code now diverged)`);
-        } else if (r.decision === "auto-remove" || r.decision === "discard" || r.decision === "update") {
-            if (r.decision === "update") {
-                stats.updated++;
-            }
-            stats.removed++;
-        }
-    }
-    // Apply file mutations per-file, back-to-front. Each removal shifts subsequent marker line
-    // numbers; processing in descending hunkIndex order keeps decisions.ts's
-    // markers.filter(...)[hunkIndex-1] lookup correct for the still-pending regions.
-    // NOTE: `auto-remove` regions were already stripped from disk by processAutoRemoves() at
-    // bootstrap, so calling applyDecisionToCode on them again would log a spurious "no marker"
-    // warn. Only mutate for discard/update here.
-    for (const regions of groupRegionsByFileDescending(args.session.regions())) {
-        for (const r of regions) {
-            if (r.decision !== "discard" && r.decision !== "update") {
-                continue;
-            }
-            const outcome = await applyDecisionToCode({
-                filePath: join(args.projectRoot, r.filePath),
-                regionName: args.session.snapshot().stashName,
-                hunkIndex: r.hunkIndex,
-                decision: r.decision,
-            });
-            if (outcome === "marker-missing") {
-                stats.failedToFind++;
-                if (!stats.failedFiles.includes(r.filePath)) {
-                    stats.failedFiles.push(r.filePath);
-                }
-            }
-        }
-    }
-    if (updatedRegions.length) {
-        stats.newVersion = await capturedUpdatesAsNewVersion({
-            storage: args.storage,
-            db: args.db,
-            stash: args.stash,
-            updatedRegions,
-        });
-    }
-    return stats;
-}
-
-/**
- * Persist the user's `update` decisions as a new stash version.
- *
- * Builds a real unified diff per region (stored content → current content), reusing the existing
- * v(N) baseline ref so future `apply` calls of v(N+1) still have a 3-way base. The diff is a plain
- * concatenation of per-region `--- a/<path> / +++ b/<path>` blocks — git apply parses this and
- * the round-trip test in e2e.test.ts proves it applies cleanly.
- */
-async function capturedUpdatesAsNewVersion(args: {
-    storage: StashStorage;
-    db: Database;
-    stash: StashRow;
-    updatedRegions: SessionRegion[];
-}): Promise<number> {
-    const repo = new StoreRepo(args.storage.storeRepoDir());
-    const maxV = args.db
-        .query<{ m: number | null }, [string]>("SELECT MAX(version) as m FROM versions WHERE stash_id = ?")
-        .get(args.stash.id);
-    const newV = (maxV?.m ?? 0) + 1;
-
-    const patchParts: string[] = [];
-    for (const r of args.updatedRegions) {
-        const before = r.storedContent ?? "";
-        const after = r.currentContent ?? "";
-        patchParts.push(buildUnifiedDiff({ path: r.filePath, before, after }));
-    }
-    const patch = patchParts.join("");
-
-    const patchRef = `refs/stashes/${args.stash.id}/v${newV}`;
-    const baselineRef = `refs/baselines/${args.stash.id}/v${newV}`;
-
-    // Carry the prior baseline forward: an updated version still merges against the original
-    // pre-stash files, so 3-way merge stays valid for any future apply target.
-    const baselineFiles: Record<string, string> = {};
-    for (const r of args.updatedRegions) {
-        baselineFiles[r.filePath] = r.storedContent ?? "";
-    }
-    await repo.writePatchCommit({
-        ref: baselineRef,
-        files: baselineFiles,
-        message: `stash:${args.stash.name} v${newV} baseline (captured)`,
-    });
-    await repo.writePatchCommit({
-        ref: patchRef,
-        files: { "PATCH.diff": patch },
-        message: `stash:${args.stash.name} v${newV} (captured from unapply)`,
-    });
-    log.debug({ patchRef, baselineRef, regions: args.updatedRegions.length }, "captured-from-unapply version written");
-
-    const now = new Date().toISOString();
-    args.db.run(
-        `INSERT INTO versions (id, stash_id, version, patch_ref, region_count, file_count, metadata_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, '{"capturedFromUnapply":true}', ?)`,
-        [
-            newStashId(),
-            args.stash.id,
-            newV,
-            patchRef,
-            args.updatedRegions.length,
-            new Set(args.updatedRegions.map((r) => r.filePath)).size,
-            now,
-        ]
-    );
-    args.db.run("UPDATE stashes SET updated_at = ? WHERE id = ?", [now, args.stash.id]);
-    return newV;
-}
-
-/** Minimal single-file unified diff between `before` and `after` content. */
-function buildUnifiedDiff(args: { path: string; before: string; after: string }): string {
-    const beforeLines = args.before.split("\n");
-    const afterLines = args.after.split("\n");
-    const header = [
-        `--- a/${args.path}`,
-        `+++ b/${args.path}`,
-        // Whole-file replace hunk: covers `before` (count=beforeLines.length) → `after` (count=afterLines.length).
-        // Sufficient for the captured-region case where boundaries are exact.
-        `@@ -1,${beforeLines.length} +1,${afterLines.length} @@`,
-    ].join("\n");
-    const body = [...beforeLines.map((l) => `-${l}`), ...afterLines.map((l) => `+${l}`)].join("\n");
-    return `${header}\n${body}\n`;
 }

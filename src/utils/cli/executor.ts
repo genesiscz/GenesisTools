@@ -159,14 +159,19 @@ export function suggestCommand(
         args = [...globalArgs, ...modifications.replaceCommand];
     }
 
-    // Remove specified flags (and their values if they have one)
+    // Remove specified flags (and their values if they have one). Matches both bare flag form
+    // (`--decision capture` → two argv entries) and combined form (`--decision=capture` → one
+    // argv entry) when the caller passes the flag name without a value (e.g.
+    // `remove: ["--decision"]`).
     if (modifications.remove?.length) {
         const removeSet = new Set(modifications.remove);
         const filtered: string[] = [];
         for (let i = 0; i < args.length; i++) {
-            if (removeSet.has(args[i])) {
-                // Skip the flag — also skip its value if next arg doesn't start with --
-                if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
+            const eqIdx = args[i].indexOf("=");
+            const flagName = eqIdx > 0 ? args[i].slice(0, eqIdx) : args[i];
+            if (removeSet.has(flagName)) {
+                // Skip the flag. If it was bare (no `=value`), also skip its trailing value arg.
+                if (eqIdx < 0 && i + 1 < args.length && !args[i + 1].startsWith("-")) {
                     i++;
                 }
                 continue;

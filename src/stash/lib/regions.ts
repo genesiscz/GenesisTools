@@ -69,9 +69,25 @@ async function walk(rootDir: string, dir: string, out: DiscoveredRegion[]): Prom
 }
 
 export async function extractRegionContent(filePath: string, regionName: string): Promise<string | null> {
+    return extractRegionContentByHunk(filePath, regionName, 1);
+}
+
+/**
+ * Return the content wrapped by the `occurrence`-th `@stash:<regionName>` marker pair in the file
+ * (1-based). When a file has multiple hunks with the same region name, hunkIndex from the patch
+ * corresponds to marker occurrence order — so pass r.hunkIndex here to look up each hunk's own
+ * post-apply content instead of always returning the first.
+ */
+export async function extractRegionContentByHunk(
+    filePath: string,
+    regionName: string,
+    occurrence: number
+): Promise<string | null> {
     const content = await readFile(filePath, "utf8");
     const markers = parseMarkers(content);
-    const m = markers.find((x) => x.name === regionName);
+    const matching = markers.filter((x) => x.name === regionName);
+    const m = matching[occurrence - 1];
+
     if (!m) {
         return null;
     }
