@@ -19,15 +19,12 @@ import { openBrowserWhenDashboardEnv } from "@app/utils/DashboardApp/preview";
 import { waitForUrlReady } from "@app/utils/DashboardApp/readiness";
 import { env } from "@app/utils/env";
 import { findFreePort } from "@app/utils/net/free-port";
-import { killWithEscalation } from "@app/utils/process/killWithEscalation";
 import { PROJECT_ROOT } from "@app/utils/paths";
+import { killWithEscalation } from "@app/utils/process/killWithEscalation";
 import type { Subprocess } from "bun";
 import { Command } from "commander";
 
-export async function killChild(
-    child: ChildProcess | Subprocess,
-    opts: { graceMs?: number } = {}
-): Promise<boolean> {
+export async function killChild(child: ChildProcess | Subprocess, opts: { graceMs?: number } = {}): Promise<boolean> {
     return killWithEscalation(child, opts);
 }
 

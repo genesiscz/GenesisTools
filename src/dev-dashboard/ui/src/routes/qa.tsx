@@ -2,7 +2,6 @@ import { isQaAnswerTruncated } from "@app/dev-dashboard/lib/qa-preview";
 import { searchQa } from "@app/dev-dashboard/lib/qa-search";
 import type { QaRow } from "@app/dev-dashboard/lib/qa-types";
 import { SafeJSON } from "@app/utils/json";
-import { prependQaLiveEntry } from "./qa-live-cap";
 import { highlightMatchesInHtml } from "@app/utils/ui/helpers/highlight-matches.client";
 import { useScrollProgress } from "@app/utils/ui/hooks/useScrollProgress.client";
 import { hasNonEmptySelection } from "@app/utils/ui/hooks/useSelectionAware.client";
@@ -19,6 +18,7 @@ import { QaSearchBox } from "@/components/QaSearchBox";
 import { QaSectionHeading } from "@/components/QaSectionHeading";
 import { QaSourceToggle, type QaViewMode } from "@/components/QaSourceToggle";
 import { QaTopBar } from "@/components/QaTopBar";
+import { prependQaLiveEntry } from "./qa-live-cap";
 
 const READ_PERSIST_DEBOUNCE_MS = 400;
 

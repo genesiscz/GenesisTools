@@ -13,7 +13,7 @@ export function registerMessagesAttachmentCommand(program: Command): void {
         .option("--download [dest]", "Copy attachment to destination (default: current directory)")
         .option("--open", "Open attachment with default app")
         .option("--info", "Show attachment metadata only")
-        .action((idArg: string, opts: { download?: string | true; open?: boolean; info?: boolean }) => {
+        .action(async (idArg: string, opts: { download?: string | true; open?: boolean; info?: boolean }) => {
             const rowid = Number.parseInt(idArg.replace(/^#/, ""), 10);
 
             if (Number.isNaN(rowid)) {
@@ -64,7 +64,8 @@ export function registerMessagesAttachmentCommand(program: Command): void {
             }
 
             if (opts.open) {
-                Bun.spawn(["open", att.resolvedPath], { stdio: ["ignore", "ignore", "ignore"] });
+                const openProc = Bun.spawn(["open", att.resolvedPath], { stdio: ["ignore", "ignore", "ignore"] });
+                await openProc.exited;
             }
         });
 }

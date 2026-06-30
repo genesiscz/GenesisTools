@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import type { PulseSnapshot } from "@app/dev-dashboard/lib/system/types";
 import { routerToResponse, toResponse } from "@app/dev-dashboard/server/adapters/bun-serve";
-import type { SseEmitter } from "@app/dev-dashboard/server/types";
 import type { SystemCollector } from "@app/dev-dashboard/server/collector/SystemCollector";
 import { Router } from "@app/dev-dashboard/server/router";
+import type { SseEmitter } from "@app/dev-dashboard/server/types";
 
 const fakeCollector: SystemCollector = {
     platform: "macos",
