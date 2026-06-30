@@ -22,10 +22,7 @@ async function waitForExit(child: KillableProcess): Promise<void> {
 }
 
 /** SIGTERM, then SIGKILL after grace if the child is still alive. Returns true once exit is confirmed. */
-export async function killWithEscalation(
-    child: KillableProcess,
-    opts: { graceMs?: number } = {}
-): Promise<boolean> {
+export async function killWithEscalation(child: KillableProcess, opts: { graceMs?: number } = {}): Promise<boolean> {
     const graceMs = opts.graceMs ?? 5000;
 
     try {
