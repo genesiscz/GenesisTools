@@ -24,7 +24,7 @@ mock.module("./runner", () => ({
     runTask: runTaskMock,
 }));
 
-const { dispatchDueTasks } = await import("./scheduler");
+const { dispatchDueTasks, jitteredNow } = await import("./scheduler");
 
 async function drainActiveRuns(activeRuns: Set<string>): Promise<void> {
     const deadline = Date.now() + 5_000;
@@ -33,6 +33,21 @@ async function drainActiveRuns(activeRuns: Set<string>): Promise<void> {
         await Bun.sleep(10);
     }
 }
+
+describe("thundering herd prevention", () => {
+    test("multiple tasks overdue after a simulated wall-clock jump get staggered dispatch times, not identical ones", () => {
+        const taskNames = ["task-a", "task-b", "task-c", "task-d", "task-e"];
+        const nextRunAts = taskNames.map((name) => jitteredNow(name).getTime());
+        const unique = new Set(nextRunAts);
+
+        expect(unique.size).toBe(taskNames.length);
+
+        for (const ts of nextRunAts) {
+            expect(ts - Date.now()).toBeGreaterThanOrEqual(0);
+            expect(ts - Date.now()).toBeLessThanOrEqual(2000);
+        }
+    });
+});
 
 describe("scheduler grid anchoring", () => {
     afterEach(() => {

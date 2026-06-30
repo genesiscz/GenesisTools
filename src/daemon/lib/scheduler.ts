@@ -10,6 +10,18 @@ import type { DaemonTask, TaskState } from "./types";
 
 const log = createLogger({ logToFile: false });
 
+function jitteredNow(taskName: string): Date {
+    let hash = 0;
+
+    for (let i = 0; i < taskName.length; i++) {
+        hash = (hash * 31 + taskName.charCodeAt(i)) >>> 0;
+    }
+
+    return new Date(Date.now() + (hash % 2000));
+}
+
+export { jitteredNow };
+
 export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
     let running = true;
     const activeRuns = new Set<string>();
@@ -226,7 +238,7 @@ async function initializeTaskStates(taskStates: Map<string, TaskState>, logsBase
                 nextRunAt = new Date();
             }
         } else {
-            nextRunAt = new Date();
+            nextRunAt = jitteredNow(task.name);
         }
 
         taskStates.set(task.name, { nextRunAt, attemptCount: 0, running: false });
@@ -246,7 +258,7 @@ function syncTaskStates(taskStates: Map<string, TaskState>, tasks: DaemonTask[])
     for (const task of tasks) {
         if (!taskStates.has(task.name)) {
             taskStates.set(task.name, {
-                nextRunAt: new Date(),
+                nextRunAt: jitteredNow(task.name),
                 attemptCount: 0,
                 running: false,
             });
