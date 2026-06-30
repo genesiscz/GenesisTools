@@ -42,13 +42,13 @@ describe("PulseHistoryDb", () => {
         expect(db.series("mem", 60).map((p) => p.value)).toEqual([2]);
     });
 
-    test("pruneOlderThan removes stale rows and returns count", () => {
+    test("pruneOlderThan deletes rows older than the retention window without a separate count query", () => {
         const old = new Date(Date.now() - 1000 * 60 * 60 * 48).toISOString();
         db.recordAt("cpu", 99, old);
         db.record("cpu", 10);
-        const removed = db.pruneOlderThan(24);
-        expect(removed).toBe(1);
+        db.pruneOlderThan(24);
         expect(db.series("cpu", 60 * 24 * 7).length).toBe(1);
+        expect(db.series("cpu", 60 * 24 * 7)[0].value).toBe(10);
     });
 
     test("series downsamples long ranges", () => {
