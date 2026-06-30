@@ -573,7 +573,7 @@ export class AILocalProvider
 
     dispose(): void {
         for (const pipe of this.pipelines.values()) {
-            pipe.dispose().catch(() => {});
+            pipe.dispose().catch((err) => logger.debug({ err }, "[cleanup] best-effort resource cleanup failed"));
         }
 
         this.pipelines.clear();

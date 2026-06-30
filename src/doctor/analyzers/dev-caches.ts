@@ -13,6 +13,7 @@ import {
 import { run, runInherit } from "@app/doctor/lib/run";
 import { duBytes, formatBytes } from "@app/doctor/lib/size";
 import type { Action, AnalyzerCategory, AnalyzerContext, ExecutorContext, Finding } from "@app/doctor/lib/types";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import pLimit from "p-limit";
 
@@ -261,7 +262,8 @@ export function parseSimctlJson(raw: string): SimDevice[] {
         }
 
         return devices;
-    } catch {
+    } catch (err) {
+        logger.debug({ err }, "[doctor] failed to parse command output");
         return [];
     }
 }

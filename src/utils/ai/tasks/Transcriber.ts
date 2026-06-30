@@ -221,11 +221,15 @@ export class Transcriber {
             return this.maybeDiarizeLocal(stitched, audio, options);
         } finally {
             if (!sourcePath && inputPath && existsSync(inputPath)) {
-                await rm(inputPath, { force: true }).catch(() => {});
+                await rm(inputPath, { force: true }).catch((err) =>
+                    logger.debug({ err, path: inputPath }, "[cleanup] best-effort resource cleanup failed")
+                );
             }
 
             if (existsSync(chunkDir)) {
-                await rm(chunkDir, { recursive: true, force: true }).catch(() => {});
+                await rm(chunkDir, { recursive: true, force: true }).catch((err) =>
+                    logger.debug({ err, path: chunkDir }, "[cleanup] best-effort resource cleanup failed")
+                );
             }
         }
     }

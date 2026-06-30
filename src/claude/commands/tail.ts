@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, resolve, sep } from "node:path";
-import { out } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { ClaudeSessionFormatter } from "@app/utils/claude/ClaudeSessionFormatter";
 import { ClaudeSessionTailer } from "@app/utils/claude/ClaudeSessionTailer";
 import { INCLUDE_HELP, IncludeSpec } from "@app/utils/claude/cli/dsl";
@@ -322,7 +322,8 @@ function getProjectDirs(projectPath?: string): string[] {
         return readdirSync(PROJECTS_DIR)
             .map((d) => resolve(PROJECTS_DIR, d))
             .filter((d) => statSync(d).isDirectory());
-    } catch {
+    } catch (err) {
+        logger.debug({ err, dir: PROJECTS_DIR }, "[claude] session-discovery directory scan failed");
         return [];
     }
 }
@@ -343,7 +344,9 @@ async function findSessionByPrefix(prefix: string, projectPath?: string): Promis
                     });
                 }
             }
-        } catch {}
+        } catch (err) {
+            logger.debug({ err, dir: baseDir }, "[claude] session-discovery directory scan failed");
+        }
     }
 
     if (matches.length === 1) {
@@ -408,7 +411,9 @@ function findMostRecentSession(projectPath?: string): TailTarget | null {
                     best = { filePath, sessionId: f.replace(".jsonl", ""), mtime };
                 }
             }
-        } catch {}
+        } catch (err) {
+            logger.debug({ err, dir: baseDir }, "[claude] session-discovery directory scan failed");
+        }
     }
 
     if (!best) {

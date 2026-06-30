@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { snapshotFilePath } from "./paths";
 import { run } from "./run";
@@ -70,7 +71,8 @@ export function parseNpmJson(raw: string): string[] {
                     typeof entry[1].version === "string" && entry[1].version.length > 0
             )
             .map(([name, info]) => `${name}@${info.version}`);
-    } catch {
+    } catch (err) {
+        logger.debug({ err }, "[doctor] failed to parse command output");
         return [];
     }
 }
@@ -88,7 +90,9 @@ export function parseYarnJson(raw: string): string[] {
                     pkgs.push(nameMatch[1]);
                 }
             }
-        } catch {}
+        } catch (err) {
+            logger.debug({ err }, "[doctor] failed to parse command output");
+        }
     }
 
     return pkgs;

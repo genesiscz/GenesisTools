@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { logger } from "@app/logger";
 import type { AsyncSubscription, Event } from "@parcel/watcher";
 
 export interface WatcherEvent {
@@ -161,7 +162,9 @@ export async function createWatcher(
 
                 if (consecutiveErrors >= maxErrors) {
                     isActive = false;
-                    subscription.unsubscribe().catch(() => {});
+                    subscription
+                        .unsubscribe()
+                        .catch((err) => logger.warn({ err }, "[watcher] circuit-breaker unsubscribe failed"));
                 }
 
                 return;

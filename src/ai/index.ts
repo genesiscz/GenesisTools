@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { out } from "@app/logger";
+import { logger, out } from "@app/logger";
 import { AI, AIConfig } from "@app/utils/ai/index.ts";
 import { ModelManager } from "@app/utils/ai/ModelManager.ts";
 import type { AIProviderType, AITask } from "@app/utils/ai/types.ts";
@@ -541,7 +541,9 @@ async function interactiveMode(): Promise<void> {
         try {
             await cmdSummarize(tmpPath, {});
         } finally {
-            await unlink(tmpPath).catch(() => {});
+            await unlink(tmpPath).catch((err) =>
+                logger.debug({ err, path: tmpPath }, "[cleanup] best-effort resource cleanup failed")
+            );
         }
         p.outro(pc.green("Done."));
         return;
