@@ -37,9 +37,9 @@ describe("config-store migration", () => {
         expect(config.public?.tunnelName).toBeUndefined();
     });
 
-    it("defaults thinking presentation to raw", () => {
+    it("defaults thinking presentation to cursor", () => {
         const config = parseConfigJson(SafeJSON.stringify({}));
-        expect(config.translation.thinking).toBe("raw");
+        expect(config.translation.thinking).toBe("cursor");
     });
 
     it("loadFresh reads disk without stale in-process cache", async () => {
