@@ -92,9 +92,9 @@ describe("ExtraUsageBucketTracker", () => {
 });
 
 describe("formatExtraUsageMessage", () => {
-    test("formats live reservine-style values", () => {
+    test("formats live extra-usage-enabled values", () => {
         const message = formatExtraUsageMessage({
-            accountName: "reservine",
+            accountName: "acme",
             event: {
                 reason: "EXTRA_ENABLED",
                 fromSpent: null,
@@ -106,6 +106,6 @@ describe("formatExtraUsageMessage", () => {
             },
         });
 
-        expect(message).toBe("reservine: Extra usage enabled — €18.34/€100.00");
+        expect(message).toBe("acme: Extra usage enabled — €18.34/€100.00");
     });
 });

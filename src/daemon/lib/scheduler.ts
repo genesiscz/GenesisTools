@@ -28,57 +28,76 @@ export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
     await initializeTaskStates(taskStates, logsBaseDir);
 
     while (running) {
-        const config = await loadConfig();
-        const now = new Date();
+        try {
+            const config = await loadConfig();
+            const now = new Date();
 
-        syncTaskStates(taskStates, config.tasks);
+            syncTaskStates(taskStates, config.tasks);
 
-        for (const task of config.tasks) {
-            if (!task.enabled) {
-                continue;
+            for (const task of config.tasks) {
+                if (!task.enabled) {
+                    continue;
+                }
+
+                if (activeRuns.has(task.name)) {
+                    continue;
+                }
+
+                const state = taskStates.get(task.name);
+
+                if (!state || now < state.nextRunAt) {
+                    continue;
+                }
+
+                activeRuns.add(task.name);
+                state.running = true;
+
+                executeTask(task, logsBaseDir)
+                    .catch((err) => {
+                        log.error({ err, task: task.name }, "Task execution error");
+                        appLogger.error({ err, task: task.name }, "[daemon] task execution error");
+                    })
+                    .finally(() => {
+                        activeRuns.delete(task.name);
+                        const s = taskStates.get(task.name);
+
+                        if (s) {
+                            s.running = false;
+
+                            try {
+                                const parsed = parseInterval(task.every);
+                                s.nextRunAt = computeNextRunAt(parsed);
+                            } catch (err) {
+                                // Unguarded, this throw becomes an unhandled rejection in the
+                                // detached .catch().finally() chain and can take the loop down.
+                                log.error(
+                                    { err, task: task.name },
+                                    "Failed to compute next run time; task will not be rescheduled until config reload"
+                                );
+                                appLogger.error({ err, task: task.name }, "[daemon] failed to compute next run time");
+                            }
+                        }
+                    });
             }
 
-            if (activeRuns.has(task.name)) {
-                continue;
-            }
-
-            const state = taskStates.get(task.name);
-
-            if (!state || now < state.nextRunAt) {
-                continue;
-            }
-
-            activeRuns.add(task.name);
-            state.running = true;
-
-            executeTask(task, logsBaseDir)
-                .catch((err) => {
-                    log.error({ err, task: task.name }, "Task execution error");
-                    appLogger.error({ err, task: task.name }, "[daemon] task execution error");
-                })
-                .finally(() => {
-                    activeRuns.delete(task.name);
-                    const s = taskStates.get(task.name);
-
-                    if (s) {
-                        s.running = false;
-                        const parsed = parseInterval(task.every);
-                        s.nextRunAt = computeNextRunAt(parsed);
-                    }
-                });
+            const sleepMs = getNextWakeupMs(taskStates, config.tasks);
+            log.debug({ sleepMs, activeTasks: activeRuns.size }, "Sleeping");
+            await wakefulSleep(sleepMs, {
+                shouldAbort: () => !running,
+                onWallClockJump: ({ elapsedMs, expectedMs }) => {
+                    appLogger.info(
+                        { elapsedMs, expectedMs },
+                        "[daemon] wall-clock jumped (likely wake from sleep/hibernate); resuming scheduler"
+                    );
+                },
+            });
+        } catch (err) {
+            // A transient FS hiccup (e.g. ENFILE during a brief vnode/FD spike) must not
+            // permanently stall the scheduler with zero trace — log and retry next tick.
+            log.error({ err }, "Scheduler loop iteration failed; retrying after backoff");
+            appLogger.error({ err }, "[daemon] scheduler loop iteration failed; retrying after backoff");
+            await wakefulSleep(5000, { shouldAbort: () => !running });
         }
-
-        const sleepMs = getNextWakeupMs(taskStates, config.tasks);
-        log.debug({ sleepMs, activeTasks: activeRuns.size }, "Sleeping");
-        await wakefulSleep(sleepMs, {
-            shouldAbort: () => !running,
-            onWallClockJump: ({ elapsedMs, expectedMs }) => {
-                appLogger.info(
-                    { elapsedMs, expectedMs },
-                    "[daemon] wall-clock jumped (likely wake from sleep/hibernate); resuming scheduler"
-                );
-            },
-        });
     }
 
     if (activeRuns.size > 0) {

@@ -33,7 +33,7 @@ describe("processExtraUsageNotifications", () => {
         });
 
         await run([
-            makeAccount("reservine", {
+            makeAccount("acme", {
                 is_enabled: true,
                 used_credits: 1834,
                 monthly_limit: 10_000,
@@ -48,7 +48,7 @@ describe("processExtraUsageNotifications", () => {
         dispatched.length = 0;
 
         await run([
-            makeAccount("reservine", {
+            makeAccount("acme", {
                 is_enabled: false,
                 monthly_limit: null,
                 used_credits: null,
@@ -62,7 +62,7 @@ describe("processExtraUsageNotifications", () => {
         dispatched.length = 0;
 
         await run([
-            makeAccount("reservine", {
+            makeAccount("acme", {
                 is_enabled: false,
                 monthly_limit: null,
                 used_credits: null,
