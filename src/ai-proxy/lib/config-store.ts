@@ -8,7 +8,7 @@ export function getDefaultConfig(): AiProxyConfig {
     return {
         listen: { host: "127.0.0.1", port: 8317 },
         proxyApiKey: `aipx-${crypto.randomUUID().replace(/-/g, "")}`,
-        translation: { cursorAgent: "auto", thinking: "raw" },
+        translation: { cursorAgent: "auto", thinking: "cursor" },
         public: { mode: "none", basePath: "/ai" },
         accounts: [],
     };

@@ -15,7 +15,7 @@ export interface AiProxyListenConfig {
 
 export interface AiProxyTranslationConfig {
     cursorAgent: CursorTranslationMode;
-    /** raw = inline content; cursor = reasoning_content; folded = HTML details in content */
+    /** raw = passthrough; cursor = reasoning_content only (native thinking UI); folded = <details> in content */
     thinking: ThinkingPresentationMode;
 }
 
