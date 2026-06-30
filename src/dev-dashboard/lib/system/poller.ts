@@ -7,6 +7,7 @@ import type { PulseSeries, PulseSnapshot } from "./types";
 
 const PUBLIC_IP_MAX_AGE_MS = 5 * 60 * 1000;
 const DEFAULT_RETENTION_HOURS = 24;
+const IDLE_THRESHOLD_MS = 60_000;
 
 interface IpifyResponse {
     ip?: string;
@@ -17,6 +18,15 @@ let polling = false;
 let db: PulseHistoryDb | null = null;
 let lastSnapshot: PulseSnapshot | null = null;
 let retentionHours = DEFAULT_RETENTION_HOURS;
+let lastClientSeenAt = 0;
+
+export interface PulsePollingOptions {
+    collectOverride?: () => Promise<PulseSnapshot>;
+}
+
+export function markPulseClientSeen(): void {
+    lastClientSeenAt = Date.now();
+}
 
 function getDb(): PulseHistoryDb {
     if (!db) {
@@ -94,7 +104,7 @@ async function tick(): Promise<void> {
     }
 }
 
-export function startPulsePolling(intervalMs: number): void {
+export function startPulsePolling(intervalMs: number, opts: PulsePollingOptions = {}): void {
     if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
         logger.warn({ intervalMs }, "pulse polling not started: invalid interval");
         return;
@@ -104,7 +114,27 @@ export function startPulsePolling(intervalMs: number): void {
         return;
     }
 
-    handle = startWakefulInterval(intervalMs, () => tick());
+    handle = startWakefulInterval(intervalMs, async () => {
+        if (Date.now() - lastClientSeenAt > IDLE_THRESHOLD_MS) {
+            return;
+        }
+
+        if (opts.collectOverride) {
+            polling = true;
+
+            try {
+                lastSnapshot = await opts.collectOverride();
+            } catch (err) {
+                logger.debug({ err }, "pulse tick failed; keeping last good snapshot");
+            } finally {
+                polling = false;
+            }
+
+            return;
+        }
+
+        await tick();
+    });
 }
 
 export function stopPulsePolling(): void {

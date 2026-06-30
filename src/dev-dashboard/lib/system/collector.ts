@@ -1,6 +1,6 @@
 import { logger } from "@app/logger";
 import { parseSwapUsage } from "@app/macos/lib/swap/scanner";
-import { collectProcesses, sortProcesses } from "./processes";
+import { parseProcessRows } from "./processes";
 import type { PulseSnapshot, TopProcess } from "./types";
 
 export function parseCpuIdlePct(topOut: string): number | null {
@@ -219,10 +219,15 @@ async function collectWifi(): Promise<string | null> {
     return parseWifiSsid(out);
 }
 
-async function collectTopProcesses(): Promise<TopProcess[]> {
-    const all = await collectProcesses();
-    return sortProcesses(all, "rss")
-        .slice(0, 5)
+export async function collectTopProcesses(limit = 5): Promise<TopProcess[]> {
+    const out = await runShell(["ps", "-ax", "-m", "-o", "pid=,rss=,etime=,%cpu=,comm="]);
+
+    if (out === null) {
+        return [];
+    }
+
+    return parseProcessRows(out)
+        .slice(0, limit)
         .map((r) => ({ pid: r.pid, name: r.name, rssBytes: r.rssBytes }));
 }
 
