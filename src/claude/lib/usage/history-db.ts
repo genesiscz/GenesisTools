@@ -66,19 +66,29 @@ interface SpendRow {
     cap_currency: string | null;
 }
 
-/** API resets_at strings jitter at sub-second precision; compare at second granularity for dedup. */
-export function resetsAtDedupKey(value: string | null): string | null {
-    if (value === null) {
-        return null;
+/**
+ * API `resets_at` strings jitter by up to ~1.6s between polls (observed empirically
+ * across 5944 same-utilization/severity snapshot pairs, max diff 1606ms) even when the
+ * reset window hasn't changed. Flooring to the second (a prior fix) still misclassifies
+ * jitter that straddles a whole-second boundary (e.g. 03:59:59.9 vs 04:00:00.1) as a
+ * change. Use a tolerance well above the observed jitter but far below any real window
+ * shift (hours/days) instead.
+ */
+const RESETS_AT_JITTER_TOLERANCE_MS = 5_000;
+
+export function resetsAtRoughlyEqual(a: string | null, b: string | null): boolean {
+    if (a === null || b === null) {
+        return a === b;
     }
 
-    const ms = Date.parse(value);
+    const msA = Date.parse(a);
+    const msB = Date.parse(b);
 
-    if (Number.isNaN(ms)) {
-        return value;
+    if (Number.isNaN(msA) || Number.isNaN(msB)) {
+        return a === b;
     }
 
-    return String(Math.floor(ms / 1000));
+    return Math.abs(msA - msB) <= RESETS_AT_JITTER_TOLERANCE_MS;
 }
 
 export class UsageHistoryDb {
@@ -201,7 +211,7 @@ export class UsageHistoryDb {
             latest &&
             latest.utilization === utilization &&
             latest.severity === extras.severity &&
-            resetsAtDedupKey(latest.resetsAt) === resetsAtDedupKey(extras.resetsAt)
+            resetsAtRoughlyEqual(latest.resetsAt, extras.resetsAt)
         ) {
             return false;
         }

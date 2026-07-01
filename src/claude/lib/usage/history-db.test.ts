@@ -148,14 +148,33 @@ describe("UsageHistoryDb", () => {
         expect(db.getSnapshots("livinka", "seven_day", 60)).toHaveLength(1);
     });
 
-    test("recordIfChangedV2 inserts when resets_at changes by a full second", () => {
+    test("recordIfChangedV2 skips when resets_at jitters across a whole-second boundary", () => {
+        // Observed in production: the API's resets_at drifts by up to ~1.6s between polls
+        // even when the reset window hasn't moved, and that drift can straddle a whole
+        // second (e.g. 03:59:59.9 vs 04:00:00.1) — a floor-to-second comparison would
+        // wrongly treat this as a change.
+        db.recordSnapshotV2("livinka", "seven_day", 100, recentTimestamp(5), {
+            resetsAt: "2026-07-02T19:00:00.900Z",
+            severity: "critical",
+            scopeModel: null,
+        });
+        const inserted = db.recordIfChangedV2("livinka", "seven_day", 100, {
+            resetsAt: "2026-07-02T19:00:01.100Z",
+            severity: "critical",
+            scopeModel: null,
+        });
+        expect(inserted).toBe(false);
+        expect(db.getSnapshots("livinka", "seven_day", 60)).toHaveLength(1);
+    });
+
+    test("recordIfChangedV2 inserts when resets_at changes well beyond jitter tolerance", () => {
         db.recordSnapshotV2("livinka", "seven_day", 100, recentTimestamp(5), {
             resetsAt: "2026-07-02T19:00:00.000Z",
             severity: "critical",
             scopeModel: null,
         });
         const inserted = db.recordIfChangedV2("livinka", "seven_day", 100, {
-            resetsAt: "2026-07-02T19:00:01.000Z",
+            resetsAt: "2026-07-02T19:00:30.000Z",
             severity: "critical",
             scopeModel: null,
         });
