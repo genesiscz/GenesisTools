@@ -48,7 +48,8 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
         if (!stash) {
             ui.err(`stash "${opts.name}" not found`);
 
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         }
 
         const projectHash = createHash("sha256").update(project.rootPath).digest("hex");
@@ -88,7 +89,8 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
         if (!version) {
             ui.err(`no version found for "${opts.name}"${opts.version ? ` @v${opts.version}` : ""}`);
 
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         }
         log.debug({ stashId: stash.id, version: version.version, patch_ref: version.patch_ref }, "version resolved");
 
@@ -97,7 +99,8 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
         if (!patch) {
             ui.err(`patch missing from store at ${version.patch_ref}`);
 
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         }
         log.debug({ patchBytes: patch.length }, "patch fetched from store");
 
@@ -107,7 +110,8 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
             if (!session) {
                 ui.err(`no in-progress apply session for "${opts.name}"; run 'apply' to start`);
 
-                process.exit(1);
+                process.exitCode = 1;
+                return;
             }
 
             const remaining = await session.remainingConflicts();
@@ -118,7 +122,8 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
                 }
                 ui.info("resolve all conflicts, then re-run with --resume");
 
-                process.exit(1);
+                process.exitCode = 1;
+                return;
             }
 
             const affectedFiles = await listFilesInPatch({ repoDir: project.rootPath, patch });
@@ -158,7 +163,8 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
         if (existingActive) {
             ui.err(`"${opts.name}" is already applied here. Use 'unapply' or 'update'.`);
 
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         }
 
         const baselineRef = `refs/baselines/${stash.id}/v${version.version}`;
@@ -206,7 +212,8 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
                 ui.info(`  tools stash apply ${opts.name} --resume`);
                 ui.info(`  tools stash apply ${opts.name} --abort    (to reverse the partial apply)`);
 
-                process.exit(1);
+                process.exitCode = 1;
+                return;
             }
 
             // Not a conflict: surface a clean error. Git's raw stderr ("repository lacks the
@@ -225,7 +232,8 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
             })();
             ui.err(`apply failed: ${friendly}`);
 
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         }
 
         await decorateAppliedRegions({

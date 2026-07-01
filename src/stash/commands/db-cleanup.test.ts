@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProcessExitError } from "@app/utils/bun/preload-test-process-exit";
 import * as patchModule from "../lib/patch";
 import { runGitIn } from "../lib/patch";
 import { saveCommand } from "./save";
@@ -65,13 +64,9 @@ describe("stash command db cleanup on throw", () => {
         const { applyCommand: applyWithMock } = await import("./apply");
         closeCalls = 0;
 
-        try {
-            await applyWithMock({ name: "cleanup-apply", verboseMarkers: false });
-            throw new Error("expected apply to exit");
-        } catch (err) {
-            expect(err).toBeInstanceOf(ProcessExitError);
-        }
+        await applyWithMock({ name: "cleanup-apply", verboseMarkers: false });
 
+        expect(process.exitCode).toBe(1);
         expect(closeCalls).toBeGreaterThanOrEqual(1);
     });
 });

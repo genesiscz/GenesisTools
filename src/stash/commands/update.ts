@@ -43,7 +43,8 @@ export async function updateCommand(opts: UpdateOptions): Promise<void> {
         if (!stash) {
             ui.err(`stash "${opts.name}" not found`);
 
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         }
 
         const projectHash = createHash("sha256").update(project.rootPath).digest("hex");
@@ -76,7 +77,8 @@ export async function updateCommand(opts: UpdateOptions): Promise<void> {
         if (walk && walk.snapshot().verb !== "update") {
             ui.err(`in-progress ${walk.snapshot().verb} session blocks update; resolve it first`);
 
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         }
 
         if (!walk) {
@@ -88,7 +90,8 @@ export async function updateCommand(opts: UpdateOptions): Promise<void> {
                 // applied here (`bootstrapUpdateWalk` throws Error with the recovery hint embedded).
                 ui.err(err instanceof Error ? err.message : String(err));
 
-                process.exit(1);
+                process.exitCode = 1;
+                return;
             }
         }
 
