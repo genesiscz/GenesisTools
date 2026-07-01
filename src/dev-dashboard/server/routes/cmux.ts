@@ -2,7 +2,7 @@ import { focusCmuxPane, renameCmuxSurface, renameCmuxWorkspace } from "@app/cmux
 import { createDevDashboardTerminal } from "@app/dev-dashboard/lib/cmux/create-terminal";
 import { createCmuxWorkspace } from "@app/dev-dashboard/lib/cmux/create-workspace";
 import { enrichPanesWithTtyd, resolveTtydForCmuxSurface } from "@app/dev-dashboard/lib/cmux/enrich-ttyd";
-import { getCachedSnapshot } from "@app/dev-dashboard/lib/cmux/poller";
+import { getCachedSnapshot, markClientSeen } from "@app/dev-dashboard/lib/cmux/poller";
 import { removeTmuxSessionFromCmux } from "@app/dev-dashboard/lib/cmux/remove-session";
 import { sendTmuxSessionToCmux } from "@app/dev-dashboard/lib/cmux/send-session";
 import { listTtyd, renameTtyd } from "@app/dev-dashboard/lib/ttyd/manager";
@@ -20,6 +20,7 @@ export function cmuxRoutes(): RouteDef[] {
             // Enrich panes with the ttyd session id backing each tmux-session terminal, so a client can
             // open a cmux pane as a real terminal (not just focus it in the native cmux app).
             handler: async () => {
+                markClientSeen();
                 const snapshot = enrichPanesWithTtyd(getCachedSnapshot(), await listTtyd());
 
                 return { kind: "json", status: 200, body: { snapshot } };

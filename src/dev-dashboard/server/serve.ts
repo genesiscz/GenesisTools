@@ -11,6 +11,7 @@ import { defaultSystemCollector } from "@app/dev-dashboard/server/collector/Syst
 import { createDashboardRouter, startBackgroundServices } from "@app/dev-dashboard/server/registry";
 import type { Router } from "@app/dev-dashboard/server/router";
 import { loadPeers } from "@app/dev-dashboard/server/routes/e2e";
+import { setDashboardBoundPort } from "@app/dev-dashboard/server/routes/net";
 import { handleE2eRpc } from "@app/dev-dashboard/server/transport/e2e-rpc";
 import { startMdnsAdvertiser } from "@app/dev-dashboard/server/transport/mdns-advertiser";
 import type { RouteServices } from "@app/dev-dashboard/server/types";
@@ -174,6 +175,8 @@ export async function serveAgent(opts: ServeAgentOptions): Promise<void> {
             return res ?? new Response("Not found", { status: 404 });
         },
     });
+
+    setDashboardBoundPort(server.port ?? opts.port);
 
     logger.info({ port: server.port, host }, "DevDashboard Agent listening");
     out.println(`DevDashboard Agent on http://${host}:${server.port} (API only, no Vite)`);

@@ -100,7 +100,7 @@ async function stashInstrumentation(files: string[], message: string, projectPat
 
 async function repairFile(filePath: string): Promise<void> {
     const proc = Bun.spawn(["git", "checkout", filePath], {
-        stdout: "pipe",
+        stdout: "ignore",
         stderr: "pipe",
     });
     const exitCode = await proc.exited;

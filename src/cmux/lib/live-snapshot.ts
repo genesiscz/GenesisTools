@@ -173,6 +173,67 @@ async function readSurfacePreview({
     }
 }
 
+async function fetchWorkspacePanes(
+    rawWorkspace: WorkspaceRpc,
+    runJson: CmuxJsonRunner,
+    run: CmuxRunner
+): Promise<CmuxLivePane[]> {
+    const id = workspaceId(rawWorkspace);
+    const paneResponse = await runJson<PaneListRpc>(["list-panes", "--workspace", id]);
+    const panes: CmuxLivePane[] = [];
+
+    for (const pane of paneResponse.panes ?? []) {
+        const selectedSurfaceRef = pane.selected_surface_ref;
+        const surfaceResponse = await runJson<SurfaceListRpc>([
+            "list-pane-surfaces",
+            "--workspace",
+            id,
+            "--pane",
+            paneId(pane),
+        ]);
+        const rawSurfaces = surfaceResponse.surfaces ?? [];
+        const surfaces: CmuxLiveSurface[] = await Promise.all(
+            rawSurfaces.map(async (surface, index) => {
+                const surfaceRef = surfaceId(surface);
+
+                return {
+                    id: surfaceRef,
+                    title: surfaceTitle(surface),
+                    type: surface.type ?? "terminal",
+                    index: surface.index_in_pane ?? surface.index ?? index,
+                    selected: surface.selected_in_pane === true || surface.selected === true,
+                    active: surface.focused === true || surface.active === true,
+                    url: surface.url,
+                    preview: await readSurfacePreview({ run, workspace: id, surface: surfaceRef }),
+                };
+            })
+        );
+
+        const selectedSurface = surfaces.find((surface) => surface.selected) ?? surfaces[0];
+        panes.push({
+            id: paneId(pane),
+            workspaceId: pane.workspace ?? id,
+            title: paneTitle(pane),
+            active: pane.selected === true || pane.focused === true,
+            cwd: pane.cwd ?? rawWorkspace.current_directory,
+            selectedSurfaceRef: selectedSurfaceRef ?? selectedSurface?.id,
+            surfaceCount: pane.surface_count ?? surfaces.length,
+            surfaces,
+            preview: selectedSurface?.preview,
+        });
+    }
+
+    return panes;
+}
+
+/** Test hook: parallel workspace fan-out with an injectable per-workspace runner. */
+export async function fetchCmuxLiveSnapshotWithRunner<T>(
+    workspaces: string[],
+    fetchWorkspace: (ws: string, index: number) => Promise<T>
+): Promise<T[]> {
+    return Promise.all(workspaces.map((ws, index) => fetchWorkspace(ws, index)));
+}
+
 export async function fetchCmuxLiveSnapshot(deps: SnapshotDeps = {}): Promise<CmuxLiveSnapshot> {
     const runJson = deps.runJson ?? runCmuxJSON;
     const run = deps.run ?? runCmux;
@@ -185,53 +246,11 @@ export async function fetchCmuxLiveSnapshot(deps: SnapshotDeps = {}): Promise<Cm
             id: workspaceId(workspace),
             name: workspaceName(workspace),
         }));
-        const panes: CmuxLivePane[] = [];
 
-        for (const rawWorkspace of rawWorkspaces) {
-            const id = workspaceId(rawWorkspace);
-            const paneResponse = await runJson<PaneListRpc>(["list-panes", "--workspace", id]);
-
-            for (const pane of paneResponse.panes ?? []) {
-                const selectedSurfaceRef = pane.selected_surface_ref;
-                const surfaceResponse = await runJson<SurfaceListRpc>([
-                    "list-pane-surfaces",
-                    "--workspace",
-                    id,
-                    "--pane",
-                    paneId(pane),
-                ]);
-                const rawSurfaces = surfaceResponse.surfaces ?? [];
-                const surfaces: CmuxLiveSurface[] = await Promise.all(
-                    rawSurfaces.map(async (surface, index) => {
-                        const surfaceRef = surfaceId(surface);
-
-                        return {
-                            id: surfaceRef,
-                            title: surfaceTitle(surface),
-                            type: surface.type ?? "terminal",
-                            index: surface.index_in_pane ?? surface.index ?? index,
-                            selected: surface.selected_in_pane === true || surface.selected === true,
-                            active: surface.focused === true || surface.active === true,
-                            url: surface.url,
-                            preview: await readSurfacePreview({ run, workspace: id, surface: surfaceRef }),
-                        };
-                    })
-                );
-
-                const selectedSurface = surfaces.find((surface) => surface.selected) ?? surfaces[0];
-                panes.push({
-                    id: paneId(pane),
-                    workspaceId: pane.workspace ?? id,
-                    title: paneTitle(pane),
-                    active: pane.selected === true || pane.focused === true,
-                    cwd: pane.cwd ?? rawWorkspace.current_directory,
-                    selectedSurfaceRef: selectedSurfaceRef ?? selectedSurface?.id,
-                    surfaceCount: pane.surface_count ?? surfaces.length,
-                    surfaces,
-                    preview: selectedSurface?.preview,
-                });
-            }
-        }
+        const paneGroups = await Promise.all(
+            rawWorkspaces.map((rawWorkspace) => fetchWorkspacePanes(rawWorkspace, runJson, run))
+        );
+        const panes = paneGroups.flat();
 
         return { fetchedAt, available: true, workspaces, panes };
     } catch (err) {

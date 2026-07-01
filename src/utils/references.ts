@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { Storage } from "@app/utils/storage/storage";
 
 export interface RefEntry {
@@ -105,12 +106,20 @@ export class RefStoreManager {
     }
 
     async formatValue(value: string, refId: string, options?: { full?: boolean }): Promise<string> {
-        const store = await this.load();
-        const { formatted, updated } = formatValueWithRef(value, refId, store, options);
-        if (updated) {
-            await this.save(store);
-        }
-        return formatted;
+        const lockPath = join(this.storage.getCacheDir(), this.refsPath);
+
+        return this.storage.withFileLock({
+            file: lockPath,
+            fn: async () => {
+                const store = await this.load();
+                const { formatted, updated } = formatValueWithRef(value, refId, store, options);
+                if (updated) {
+                    await this.save(store);
+                }
+                return formatted;
+            },
+            timeout: 5000,
+        });
     }
 
     async getRef(refId: string): Promise<RefEntry | null> {

@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProcessExitError } from "@app/utils/bun/preload-test-process-exit";
 import { runGitIn } from "../lib/patch";
 import { applyCommand } from "./apply";
 import { saveCommand } from "./save";
@@ -73,15 +72,12 @@ describe("update command", () => {
         await writeFile(join(repo, "x.ts"), "export const x = 1;\nconst log = (s: string) => console.log(s);\n");
         await saveCommand({ name: "unapplied", mode: "all", regions: undefined, tags: [], description: undefined });
         await runGitIn(repo, ["checkout", "x.ts"]);
-        // Anchored on the exit-path the preload synthesizes: a ProcessExitError(1). A generic
-        // `rejects.toThrow()` would have passed for *any* setup mishap (missing file, bad fixture,
-        // etc.) — anchoring to the synthetic exit proves we hit the "not applied here" branch.
-        try {
-            await updateCommand({ name: "unapplied", decision: undefined });
-            throw new Error("expected updateCommand to throw, but it returned normally");
-        } catch (err) {
-            expect(err).toBeInstanceOf(ProcessExitError);
-            expect((err as ProcessExitError).code).toBe(1);
-        }
+        // updateCommand now sets process.exitCode instead of calling process.exit(), so
+        // finally-block cleanup (db.close()) runs on this error path too. Anchored on
+        // exitCode === 1 rather than a generic resolve — a setup mishap (missing file, bad
+        // fixture, etc.) would throw instead, so this still proves we hit the
+        // "not applied here" branch specifically.
+        await updateCommand({ name: "unapplied", decision: undefined });
+        expect(process.exitCode).toBe(1);
     });
 });

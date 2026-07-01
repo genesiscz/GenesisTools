@@ -1,4 +1,7 @@
+import type { Database } from "bun:sqlite";
 import { ClaudeDatabase } from "@app/utils/claude/database";
+
+const schemaEnsured = new WeakSet<Database>();
 
 export interface UsageSnapshot {
     id: number;
@@ -63,6 +66,31 @@ interface SpendRow {
     cap_currency: string | null;
 }
 
+/**
+ * API `resets_at` strings jitter by up to ~1.6s between polls (observed empirically
+ * across 5944 same-utilization/severity snapshot pairs, max diff 1606ms) even when the
+ * reset window hasn't changed. Flooring to the second (a prior fix) still misclassifies
+ * jitter that straddles a whole-second boundary (e.g. 03:59:59.9 vs 04:00:00.1) as a
+ * change. Use a tolerance well above the observed jitter but far below any real window
+ * shift (hours/days) instead.
+ */
+const RESETS_AT_JITTER_TOLERANCE_MS = 5_000;
+
+export function resetsAtRoughlyEqual(a: string | null, b: string | null): boolean {
+    if (a === null || b === null) {
+        return a === b;
+    }
+
+    const msA = Date.parse(a);
+    const msB = Date.parse(b);
+
+    if (Number.isNaN(msA) || Number.isNaN(msB)) {
+        return a === b;
+    }
+
+    return Math.abs(msA - msB) <= RESETS_AT_JITTER_TOLERANCE_MS;
+}
+
 export class UsageHistoryDb {
     private claudeDb: ClaudeDatabase;
 
@@ -73,6 +101,10 @@ export class UsageHistoryDb {
 
     private ensureSchema(): void {
         const db = this.claudeDb.getDb();
+
+        if (schemaEnsured.has(db)) {
+            return;
+        }
 
         db.exec(`
             CREATE TABLE IF NOT EXISTS usage_snapshots (
@@ -121,6 +153,8 @@ export class UsageHistoryDb {
         if (!have.has("scope_model")) {
             db.exec("ALTER TABLE usage_snapshots ADD COLUMN scope_model TEXT");
         }
+
+        schemaEnsured.add(db);
     }
 
     recordSnapshot(
@@ -177,7 +211,7 @@ export class UsageHistoryDb {
             latest &&
             latest.utilization === utilization &&
             latest.severity === extras.severity &&
-            latest.resetsAt === extras.resetsAt
+            resetsAtRoughlyEqual(latest.resetsAt, extras.resetsAt)
         ) {
             return false;
         }

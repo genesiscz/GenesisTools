@@ -166,8 +166,10 @@ export class IndexerManager {
                 continue;
             }
 
+            let db: Database | undefined;
+
             try {
-                const db = new Database(dbPath, { readonly: true });
+                db = new Database(dbPath, { readonly: true });
                 const row = db.query("SELECT value FROM index_meta WHERE key = 'meta'").get() as {
                     value: string;
                 } | null;
@@ -205,6 +207,7 @@ export class IndexerManager {
 
                 db.close();
             } catch (err) {
+                db?.close();
                 // pino signature: ({obj}, msg) — the codemod converted
                 // `console.debug(str, err)` to `logger.debug(str, err)`, which
                 // doesn't match pino's overloads. Repacked as { err } context.

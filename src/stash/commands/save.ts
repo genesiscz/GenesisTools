@@ -208,113 +208,127 @@ export async function saveCommand(opts: SaveOptions): Promise<void> {
     const storage = new StashStorage();
     await storage.ensureDirs();
     const db = openStashDb(new Database(storage.dbPath()));
-    const repo = new StoreRepo(storage.storeRepoDir());
-    await repo.init();
 
-    const existing = db.query<StashRow, [string]>("SELECT * FROM stashes WHERE name = ?").get(opts.name);
+    try {
+        const repo = new StoreRepo(storage.storeRepoDir());
+        await repo.init();
 
-    const now = new Date().toISOString();
-    let stashId: string;
-    let version: number;
+        const existing = db.query<StashRow, [string]>("SELECT * FROM stashes WHERE name = ?").get(opts.name);
 
-    if (existing) {
-        stashId = existing.id;
-        const maxV = db
-            .query<{ m: number | null }, [string]>("SELECT MAX(version) as m FROM versions WHERE stash_id = ?")
-            .get(stashId);
-        const prevVersion = maxV?.m ?? 0;
-        version = prevVersion + 1;
+        const now = new Date().toISOString();
+        let stashId: string;
+        let version: number;
 
-        // Show aggregate v_prev → v_working diff and prompt before bumping.
-        const prevPatchRef = `refs/stashes/${stashId}/v${prevVersion}`;
-        const prevPatch = prevVersion > 0 ? ((await repo.readFileAt(prevPatchRef, "PATCH.diff")) ?? "") : "";
-        const decision = await maybePromptSameName({
-            existingName: opts.name,
-            prevPatch,
-            nextPatch: patch,
-            forceBump: opts.forceBump ?? false,
-        });
+        if (existing) {
+            stashId = existing.id;
+            const maxV = db
+                .query<{ m: number | null }, [string]>("SELECT MAX(version) as m FROM versions WHERE stash_id = ?")
+                .get(stashId);
+            const prevVersion = maxV?.m ?? 0;
+            version = prevVersion + 1;
 
-        if (decision === "abort") {
-            ui.info(`save aborted; "${opts.name}" stays at v${prevVersion}`);
-            db.close();
-            return;
+            // Show aggregate v_prev → v_working diff and prompt before bumping.
+            const prevPatchRef = `refs/stashes/${stashId}/v${prevVersion}`;
+            const prevPatch = prevVersion > 0 ? ((await repo.readFileAt(prevPatchRef, "PATCH.diff")) ?? "") : "";
+            const decision = await maybePromptSameName({
+                existingName: opts.name,
+                prevPatch,
+                nextPatch: patch,
+                forceBump: opts.forceBump ?? false,
+            });
+
+            if (decision === "abort") {
+                ui.info(`save aborted; "${opts.name}" stays at v${prevVersion}`);
+                return;
+            }
+
+            ui.info(`stash "${opts.name}" exists, creating v${version}`);
+            log.debug({ stashId, version, branch: "bump" }, "version bump for existing stash");
+            db.run("UPDATE stashes SET updated_at = ? WHERE id = ?", [now, stashId]);
+        } else {
+            stashId = newStashId();
+            version = 1;
+            log.debug({ stashId, version, branch: "new" }, "new stash created");
+            db.run(
+                "INSERT INTO stashes (id, name, tags, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    stashId,
+                    opts.name,
+                    opts.tags.length ? SafeJSON.stringify(opts.tags) : null,
+                    opts.description ?? null,
+                    now,
+                    now,
+                ]
+            );
         }
 
-        ui.info(`stash "${opts.name}" exists, creating v${version}`);
-        log.debug({ stashId, version, branch: "bump" }, "version bump for existing stash");
-        db.run("UPDATE stashes SET updated_at = ? WHERE id = ?", [now, stashId]);
-    } else {
-        stashId = newStashId();
-        version = 1;
-        log.debug({ stashId, version, branch: "new" }, "new stash created");
-        db.run("INSERT INTO stashes (id, name, tags, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", [
-            stashId,
-            opts.name,
-            opts.tags.length ? SafeJSON.stringify(opts.tags) : null,
-            opts.description ?? null,
-            now,
-            now,
-        ]);
-    }
+        const patchRef = `refs/stashes/${stashId}/v${version}`;
+        const baselineRef = `refs/baselines/${stashId}/v${version}`;
 
-    const patchRef = `refs/stashes/${stashId}/v${version}`;
-    const baselineRef = `refs/baselines/${stashId}/v${version}`;
+        const baselineFiles = await collectBaselineFiles({ projectRoot: project.rootPath, files: fileList });
+        await repo.writePatchCommit({
+            ref: baselineRef,
+            files: baselineFiles,
+            message: `stash:${opts.name} v${version} baseline`,
+        });
+        await repo.writePatchCommit({
+            ref: patchRef,
+            files: { "PATCH.diff": patch },
+            message: `stash:${opts.name} v${version}`,
+        });
+        log.debug({ patchRef, baselineRef }, "patch + baseline refs written to store");
 
-    const baselineFiles = await collectBaselineFiles({ projectRoot: project.rootPath, files: fileList });
-    await repo.writePatchCommit({
-        ref: baselineRef,
-        files: baselineFiles,
-        message: `stash:${opts.name} v${version} baseline`,
-    });
-    await repo.writePatchCommit({
-        ref: patchRef,
-        files: { "PATCH.diff": patch },
-        message: `stash:${opts.name} v${version}`,
-    });
-    log.debug({ patchRef, baselineRef }, "patch + baseline refs written to store");
+        // Pre-compute parsed regions so the INSERT below uses the same array length the regions-table
+        // loop will insert. Keeps `versions.region_count` consistent with the per-row inventory.
+        const patchRegions = parseRegionsFromPatch(patch);
 
-    // Pre-compute parsed regions so the INSERT below uses the same array length the regions-table
-    // loop will insert. Keeps `versions.region_count` consistent with the per-row inventory.
-    const patchRegions = parseRegionsFromPatch(patch);
-
-    const versionId = newStashId();
-    db.run(
-        `INSERT INTO versions (id, stash_id, version, patch_ref, source_repo_path, source_origin, source_sha, region_count, file_count, metadata_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-            versionId,
-            stashId,
-            version,
-            patchRef,
-            project.rootPath,
-            project.origin,
-            project.sha,
-            // `region_count` = number of rows inserted into the regions table below (one per hunk).
-            // Earlier this used `countAuthorRegionsInPatch` (= count of `@stash:` markers in `+`
-            // lines), which returned 0 for typical non-marker saves while the regions table got
-            // populated with N rows — `tools stash show <name>` then displayed both numbers and
-            // looked broken. Keeping these two counts identical is the simplest fix.
-            patchRegions.length,
-            fileList.length,
-            SafeJSON.stringify({ mode, tags: opts.tags }),
-            now,
-        ]
-    );
-
-    for (const r of patchRegions) {
+        const versionId = newStashId();
         db.run(
-            "INSERT INTO regions (id, version_id, region_name, file_path, hunk_index, start_marker_present, line_count) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [newStashId(), versionId, r.regionName, r.filePath, r.hunkIndex, r.startMarkerPresent ? 1 : 0, r.lineCount]
+            `INSERT INTO versions (id, stash_id, version, patch_ref, source_repo_path, source_origin, source_sha, region_count, file_count, metadata_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                versionId,
+                stashId,
+                version,
+                patchRef,
+                project.rootPath,
+                project.origin,
+                project.sha,
+                // `region_count` = number of rows inserted into the regions table below (one per hunk).
+                // Earlier this used `countAuthorRegionsInPatch` (= count of `@stash:` markers in `+`
+                // lines), which returned 0 for typical non-marker saves while the regions table got
+                // populated with N rows — `tools stash show <name>` then displayed both numbers and
+                // looked broken. Keeping these two counts identical is the simplest fix.
+                patchRegions.length,
+                fileList.length,
+                SafeJSON.stringify({ mode, tags: opts.tags }),
+                now,
+            ]
         );
+
+        for (const r of patchRegions) {
+            db.run(
+                "INSERT INTO regions (id, version_id, region_name, file_path, hunk_index, start_marker_present, line_count) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    newStashId(),
+                    versionId,
+                    r.regionName,
+                    r.filePath,
+                    r.hunkIndex,
+                    r.startMarkerPresent ? 1 : 0,
+                    r.lineCount,
+                ]
+            );
+        }
+
+        ui.ok(`saved "${opts.name}" v${version} [id=${shortId(stashId)}]`);
+        ui.info(`  ${fileList.length} files, baseline ref=${baselineRef}`);
+        emitPostSaveHints({ name: opts.name, mode, files: fileList });
+
+        log.debug({ stashId, version, files: fileList.length }, "stash saved");
+    } finally {
+        db.close();
     }
-
-    ui.ok(`saved "${opts.name}" v${version} [id=${shortId(stashId)}]`);
-    ui.info(`  ${fileList.length} files, baseline ref=${baselineRef}`);
-    emitPostSaveHints({ name: opts.name, mode, files: fileList });
-
-    db.close();
-    log.debug({ stashId, version, files: fileList.length }, "stash saved");
 }
 
 /**

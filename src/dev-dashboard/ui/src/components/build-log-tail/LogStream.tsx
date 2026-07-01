@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LiveSseIndicator } from "@/components/LiveSseIndicator";
 import { fetchJson } from "@/lib/api";
+import { appendLiveWithCap, BACKLOG_LIMIT, trimRowRefsForEvictedLive } from "./live-cap";
 
 interface Props {
     /** The selected run's log file, or null when no run is picked yet. */
@@ -17,8 +18,6 @@ interface RenderLine {
     cls: LogLineClass;
     text: string;
 }
-
-const BACKLOG_LIMIT = 500;
 
 function effClass(entry: ClassifiedLogEntry | LogEntry): LogLineClass {
     const cls = (entry as ClassifiedLogEntry).cls;
@@ -94,7 +93,16 @@ export function LogStream({ logFile }: Props) {
 
             try {
                 const entry = SafeJSON.parse(ev.data, { strict: true }) as ClassifiedLogEntry;
-                setLive((prev) => [...prev, entry]);
+                setLive((prev) => {
+                    const { next, evictedCount } = appendLiveWithCap(prev, entry);
+
+                    if (evictedCount > 0) {
+                        const backlogLen = backlogQuery.data?.length ?? 0;
+                        trimRowRefsForEvictedLive(rowRefs.current, backlogLen, evictedCount);
+                    }
+
+                    return next;
+                });
             } catch {
                 // Malformed frame or the guard's error frame — non-actionable; keep streaming.
             }

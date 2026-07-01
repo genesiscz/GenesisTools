@@ -1,4 +1,4 @@
-import { logger as appLogger, createLogger } from "@app/logger";
+import { logger } from "@app/logger";
 import { wakefulSleep } from "@app/utils/async";
 import { dispatchNotification } from "@app/utils/notifications";
 import { loadConfig } from "./config";
@@ -8,7 +8,34 @@ import { pruneTaskRunLogs } from "./retention";
 import { runTask } from "./runner";
 import type { DaemonTask, TaskState } from "./types";
 
-const log = createLogger({ logToFile: false });
+const { log } = logger.scoped("daemon");
+
+/** Scheduler's scoped logger — exported for tests that spy on log calls. */
+export const daemonLog = log;
+
+function jitteredNow(taskName: string): Date {
+    let hash = 0;
+
+    for (let i = 0; i < taskName.length; i++) {
+        hash = (hash * 31 + taskName.charCodeAt(i)) >>> 0;
+    }
+
+    return new Date(Date.now() + (hash % 2000));
+}
+
+export { jitteredNow };
+
+export function logSchedulerHeartbeat(sleepMs: number, activeTasks: number): void {
+    log.debug({ sleepMs, activeTasks }, "[daemon] scheduler tick");
+}
+
+export function logSchedulerLoopFailure(err: unknown, consecutiveFailures: number): void {
+    const timestamp = new Date().toISOString();
+    log.error(
+        { err, consecutiveFailures, timestamp },
+        "[daemon] scheduler loop iteration failed; retrying after backoff"
+    );
+}
 
 export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
     let running = true;
@@ -22,104 +49,115 @@ export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
     process.once("SIGTERM", shutdown);
     process.once("SIGINT", shutdown);
 
-    log.info("Daemon scheduler started");
-    appLogger.info({ logsBaseDir }, "[daemon] scheduler started");
+    try {
+        log.info({ logsBaseDir }, "[daemon] scheduler started");
 
-    await initializeTaskStates(taskStates, logsBaseDir);
+        await initializeTaskStates(taskStates, logsBaseDir);
 
-    while (running) {
-        try {
-            const config = await loadConfig();
-            const now = new Date();
+        let consecutiveLoopFailures = 0;
 
-            syncTaskStates(taskStates, config.tasks);
+        while (running) {
+            try {
+                consecutiveLoopFailures = 0;
+                const config = await loadConfig();
+                const now = new Date();
 
-            for (const task of config.tasks) {
-                if (!task.enabled) {
-                    continue;
-                }
+                syncTaskStates(taskStates, config.tasks);
 
-                if (activeRuns.has(task.name)) {
-                    continue;
-                }
+                dispatchDueTasks(config.tasks, taskStates, activeRuns, logsBaseDir, now);
 
-                const state = taskStates.get(task.name);
-
-                if (!state || now < state.nextRunAt) {
-                    continue;
-                }
-
-                activeRuns.add(task.name);
-                state.running = true;
-
-                executeTask(task, logsBaseDir)
-                    .catch((err) => {
-                        log.error({ err, task: task.name }, "Task execution error");
-                        appLogger.error({ err, task: task.name }, "[daemon] task execution error");
-                    })
-                    .finally(() => {
-                        activeRuns.delete(task.name);
-                        const s = taskStates.get(task.name);
-
-                        if (s) {
-                            s.running = false;
-
-                            try {
-                                const parsed = parseInterval(task.every);
-                                s.nextRunAt = computeNextRunAt(parsed);
-                            } catch (err) {
-                                // Unguarded, this throw becomes an unhandled rejection in the
-                                // detached .catch().finally() chain and can take the loop down.
-                                log.error(
-                                    { err, task: task.name },
-                                    "Failed to compute next run time; task will not be rescheduled until config reload"
-                                );
-                                appLogger.error({ err, task: task.name }, "[daemon] failed to compute next run time");
-                            }
-                        }
-                    });
+                const sleepMs = getNextWakeupMs(taskStates, config.tasks);
+                logSchedulerHeartbeat(sleepMs, activeRuns.size);
+                await wakefulSleep(sleepMs, {
+                    shouldAbort: () => !running,
+                    onWallClockJump: ({ elapsedMs, expectedMs }) => {
+                        log.info(
+                            { elapsedMs, expectedMs },
+                            "[daemon] wall-clock jumped (likely wake from sleep/hibernate); resuming scheduler"
+                        );
+                    },
+                });
+            } catch (err) {
+                consecutiveLoopFailures++;
+                logSchedulerLoopFailure(err, consecutiveLoopFailures);
+                await wakefulSleep(5000, { shouldAbort: () => !running });
             }
-
-            const sleepMs = getNextWakeupMs(taskStates, config.tasks);
-            log.debug({ sleepMs, activeTasks: activeRuns.size }, "Sleeping");
-            await wakefulSleep(sleepMs, {
-                shouldAbort: () => !running,
-                onWallClockJump: ({ elapsedMs, expectedMs }) => {
-                    appLogger.info(
-                        { elapsedMs, expectedMs },
-                        "[daemon] wall-clock jumped (likely wake from sleep/hibernate); resuming scheduler"
-                    );
-                },
-            });
-        } catch (err) {
-            // A transient FS hiccup (e.g. ENFILE during a brief vnode/FD spike) must not
-            // permanently stall the scheduler with zero trace — log and retry next tick.
-            log.error({ err }, "Scheduler loop iteration failed; retrying after backoff");
-            appLogger.error({ err }, "[daemon] scheduler loop iteration failed; retrying after backoff");
-            await wakefulSleep(5000, { shouldAbort: () => !running });
-        }
-    }
-
-    if (activeRuns.size > 0) {
-        log.info({ activeCount: activeRuns.size }, "Waiting for active runs to finish...");
-        appLogger.info(
-            { activeCount: activeRuns.size, activeTasks: [...activeRuns] },
-            "[daemon] waiting for active runs"
-        );
-        const deadline = Date.now() + 30_000;
-
-        while (activeRuns.size > 0 && Date.now() < deadline) {
-            await Bun.sleep(500);
         }
 
         if (activeRuns.size > 0) {
-            log.warn({ remaining: [...activeRuns] }, "Timed out waiting for active runs");
-            appLogger.warn({ remaining: [...activeRuns] }, "[daemon] timed out waiting for active runs");
-        }
-    }
+            log.info(
+                { activeCount: activeRuns.size, activeTasks: [...activeRuns] },
+                "[daemon] waiting for active runs"
+            );
+            const deadline = Date.now() + 30_000;
 
-    log.info("Daemon scheduler stopped");
-    appLogger.info("[daemon] scheduler stopped");
+            while (activeRuns.size > 0 && Date.now() < deadline) {
+                await Bun.sleep(500);
+            }
+
+            if (activeRuns.size > 0) {
+                log.warn({ remaining: [...activeRuns] }, "[daemon] timed out waiting for active runs");
+            }
+        }
+
+        log.info("[daemon] scheduler stopped");
+    } finally {
+        process.off("SIGTERM", shutdown);
+        process.off("SIGINT", shutdown);
+    }
+}
+
+export function dispatchDueTasks(
+    tasks: DaemonTask[],
+    taskStates: Map<string, TaskState>,
+    activeRuns: Set<string>,
+    logsBaseDir: string,
+    now: Date = new Date()
+): void {
+    for (const task of tasks) {
+        if (!task.enabled) {
+            continue;
+        }
+
+        if (activeRuns.has(task.name)) {
+            continue;
+        }
+
+        const state = taskStates.get(task.name);
+
+        if (!state || now < state.nextRunAt) {
+            continue;
+        }
+
+        activeRuns.add(task.name);
+        state.running = true;
+        const scheduledAt = state.nextRunAt;
+
+        executeTask(task, logsBaseDir)
+            .catch((err) => {
+                log.error({ err, task: task.name }, "[daemon] task execution error");
+            })
+            .finally(() => {
+                activeRuns.delete(task.name);
+                const s = taskStates.get(task.name);
+
+                if (s) {
+                    s.running = false;
+
+                    try {
+                        const parsed = parseInterval(task.every);
+                        const next = computeNextRunAt(parsed, scheduledAt);
+                        s.nextRunAt = next < new Date() ? new Date() : next;
+                    } catch (err) {
+                        s.nextRunAt = new Date(Date.now() + 60_000);
+                        log.error(
+                            { err, task: task.name, every: task.every },
+                            "[daemon] invalid task interval; deferring 60s"
+                        );
+                    }
+                }
+            });
+    }
 }
 
 async function executeTask(task: DaemonTask, logsBaseDir: string): Promise<void> {
@@ -130,7 +168,7 @@ async function executeTask(task: DaemonTask, logsBaseDir: string): Promise<void>
             try {
                 pruneTaskRunLogs(logsBaseDir, task.name, task.retention);
             } catch (err) {
-                log.warn({ err, task: task.name }, "retention prune failed");
+                log.warn({ err, task: task.name }, "[daemon] retention prune failed");
             }
         }
     }
@@ -151,14 +189,12 @@ async function runAttempts(task: DaemonTask, logsBaseDir: string): Promise<void>
     }
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        log.info({ task: task.name, attempt, maxAttempts }, "Running task");
-        appLogger.info({ task: task.name, attempt, maxAttempts, timeoutMs: task.timeoutMs }, "[daemon] running task");
+        log.info({ task: task.name, attempt, maxAttempts, timeoutMs: task.timeoutMs }, "[daemon] running task");
 
         const result = await runTask(task, attempt, logsBaseDir);
 
         if (result.exitCode === 0) {
-            log.info({ task: task.name, duration: result.duration_ms }, "Task completed");
-            appLogger.info(
+            log.info(
                 { task: task.name, duration_ms: result.duration_ms, logFile: result.logFile },
                 "[daemon] task completed"
             );
@@ -175,16 +211,14 @@ async function runAttempts(task: DaemonTask, logsBaseDir: string): Promise<void>
             return;
         }
 
-        log.warn({ task: task.name, exitCode: result.exitCode, attempt, maxAttempts }, "Task failed");
-        appLogger.warn(
+        log.warn(
             { task: task.name, exitCode: result.exitCode, attempt, maxAttempts, logFile: result.logFile },
             "[daemon] task failed"
         );
 
         if (attempt < maxAttempts) {
             const backoffMs = Math.min(2 ** attempt * 1000, 60_000);
-            log.info({ task: task.name, backoffMs }, "Retrying after backoff");
-            appLogger.info({ task: task.name, backoffMs }, "[daemon] retrying task after backoff");
+            log.info({ task: task.name, backoffMs }, "[daemon] retrying task after backoff");
             await Bun.sleep(backoffMs);
         }
     }
@@ -215,11 +249,11 @@ async function initializeTaskStates(taskStates: Map<string, TaskState>, logsBase
                 nextRunAt = new Date();
             }
         } else {
-            nextRunAt = new Date();
+            nextRunAt = jitteredNow(task.name);
         }
 
         taskStates.set(task.name, { nextRunAt, attemptCount: 0, running: false });
-        log.debug({ task: task.name, nextRunAt: nextRunAt.toISOString() }, "Initialized task state");
+        log.debug({ task: task.name, nextRunAt: nextRunAt.toISOString() }, "[daemon] initialized task state");
     }
 }
 
@@ -235,7 +269,7 @@ function syncTaskStates(taskStates: Map<string, TaskState>, tasks: DaemonTask[])
     for (const task of tasks) {
         if (!taskStates.has(task.name)) {
             taskStates.set(task.name, {
-                nextRunAt: new Date(),
+                nextRunAt: jitteredNow(task.name),
                 attemptCount: 0,
                 running: false,
             });

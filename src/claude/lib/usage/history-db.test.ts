@@ -133,6 +133,55 @@ describe("UsageHistoryDb", () => {
         expect(inserted).toBe(false);
     });
 
+    test("recordIfChangedV2 skips when resets_at differs only by sub-second precision", () => {
+        db.recordSnapshotV2("livinka", "seven_day", 100, recentTimestamp(5), {
+            resetsAt: "2026-07-02T19:00:00.245191+00:00",
+            severity: "critical",
+            scopeModel: null,
+        });
+        const inserted = db.recordIfChangedV2("livinka", "seven_day", 100, {
+            resetsAt: "2026-07-02T19:00:00.194135+00:00",
+            severity: "critical",
+            scopeModel: null,
+        });
+        expect(inserted).toBe(false);
+        expect(db.getSnapshots("livinka", "seven_day", 60)).toHaveLength(1);
+    });
+
+    test("recordIfChangedV2 skips when resets_at jitters across a whole-second boundary", () => {
+        // Observed in production: the API's resets_at drifts by up to ~1.6s between polls
+        // even when the reset window hasn't moved, and that drift can straddle a whole
+        // second (e.g. 03:59:59.9 vs 04:00:00.1) — a floor-to-second comparison would
+        // wrongly treat this as a change.
+        db.recordSnapshotV2("livinka", "seven_day", 100, recentTimestamp(5), {
+            resetsAt: "2026-07-02T19:00:00.900Z",
+            severity: "critical",
+            scopeModel: null,
+        });
+        const inserted = db.recordIfChangedV2("livinka", "seven_day", 100, {
+            resetsAt: "2026-07-02T19:00:01.100Z",
+            severity: "critical",
+            scopeModel: null,
+        });
+        expect(inserted).toBe(false);
+        expect(db.getSnapshots("livinka", "seven_day", 60)).toHaveLength(1);
+    });
+
+    test("recordIfChangedV2 inserts when resets_at changes well beyond jitter tolerance", () => {
+        db.recordSnapshotV2("livinka", "seven_day", 100, recentTimestamp(5), {
+            resetsAt: "2026-07-02T19:00:00.000Z",
+            severity: "critical",
+            scopeModel: null,
+        });
+        const inserted = db.recordIfChangedV2("livinka", "seven_day", 100, {
+            resetsAt: "2026-07-02T19:00:30.000Z",
+            severity: "critical",
+            scopeModel: null,
+        });
+        expect(inserted).toBe(true);
+        expect(db.getSnapshots("livinka", "seven_day", 60)).toHaveLength(2);
+    });
+
     test("recordSpendIfChanged writes a row and skips duplicates", () => {
         const spend = {
             used_minor: 1234,
@@ -155,6 +204,23 @@ describe("UsageHistoryDb", () => {
 
     test("getLatestSpend returns null when no spend snapshots exist", () => {
         expect(db.getLatestSpend("nobody")).toBeNull();
+    });
+
+    test("only runs ensureSchema's CREATE/ALTER statements once per underlying connection", () => {
+        const execSpy: string[] = [];
+        const first = new UsageHistoryDb(dbPath);
+        // biome-ignore lint/complexity/useLiteralKeys: bracket access deliberately bypasses the private-field check
+        const rawDb = first["claudeDb"].getDb();
+        const originalExec = rawDb.exec.bind(rawDb);
+        rawDb.exec = (sql: string) => {
+            execSpy.push(sql);
+            return originalExec(sql);
+        };
+
+        const firstCount = execSpy.length;
+        new UsageHistoryDb(dbPath);
+        expect(execSpy.length).toBe(firstCount);
+        first.close();
     });
 
     test("ensureSchema is idempotent across re-opens (PRAGMA-guarded ALTERs)", () => {

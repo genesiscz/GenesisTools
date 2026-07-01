@@ -135,7 +135,10 @@ export class HlidacShopuClient {
         try {
             const [history, meta] = await Promise.all([
                 this.priceHistoryS3(origin, slug),
-                this.metaS3(origin, slug).catch(() => undefined),
+                this.metaS3(origin, slug).catch((err) => {
+                    log.debug({ err, origin, slug }, "Hlídač S3 meta fetch failed");
+                    return undefined;
+                }),
             ]);
             return {
                 source: "s3",

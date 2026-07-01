@@ -6,6 +6,7 @@ import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
 import { findFreePort } from "@app/utils/net/free-port";
+import { killWithEscalation } from "@app/utils/process/killWithEscalation";
 import { buildTerminalSpawnEnv } from "@app/utils/terminal/locale";
 import { resolveTmuxBin } from "@app/utils/tmux/bin";
 import {
@@ -111,7 +112,19 @@ async function isSessionAliveBatch(sessions: TtydSession[]): Promise<Map<string,
     );
 }
 
+let persistRegistryOverride: (() => Promise<void>) | null = null;
+
+/** Test hook: replace disk persistence so spawn-failure cleanup can be exercised. */
+export function __setPersistRegistryForTest(fn: (() => Promise<void>) | null): void {
+    persistRegistryOverride = fn;
+}
+
 async function persistRegistry(): Promise<void> {
+    if (persistRegistryOverride) {
+        await persistRegistryOverride();
+        return;
+    }
+
     const all = Array.from(registry.values()).map((tracked) => tracked.session);
     const alive = await isSessionAliveBatch(all);
     const sessions = all.filter((session) => alive.get(session.id) === true);
@@ -176,17 +189,49 @@ async function pruneDeadSessions(): Promise<void> {
     }
 }
 
-function stopTtydProcess(tracked: Tracked, id: string): void {
+async function stopTtydProcess(tracked: Tracked, id: string): Promise<void> {
     if (tracked.child) {
-        tracked.child.kill("SIGTERM");
-    } else if (processMatchesSession(tracked.session)) {
-        try {
-            process.kill(tracked.session.pid, "SIGTERM");
-        } catch (err) {
-            logger.debug({ err, id }, "ttyd process already gone");
-        }
-    } else {
+        await killWithEscalation(tracked.child);
+        return;
+    }
+
+    if (!processMatchesSession(tracked.session)) {
         logger.debug({ id, pid: tracked.session.pid }, "ttyd pid no longer ours; skipping kill");
+        return;
+    }
+
+    const pid = tracked.session.pid;
+
+    try {
+        await killWithEscalation({
+            kill(signal) {
+                process.kill(pid, signal);
+            },
+            on(event, listener) {
+                if (event !== "exit") {
+                    return;
+                }
+
+                const poll = (): void => {
+                    try {
+                        process.kill(pid, 0);
+                        setTimeout(poll, 200);
+                    } catch (err) {
+                        // ESRCH means the process is actually gone; anything else (e.g. EPERM,
+                        // pid reused by a process we can't signal) means it's still alive.
+                        if (err && typeof err === "object" && "code" in err && err.code === "ESRCH") {
+                            listener();
+                        } else {
+                            setTimeout(poll, 200);
+                        }
+                    }
+                };
+
+                poll();
+            },
+        });
+    } catch (err) {
+        logger.debug({ err, id }, "ttyd process already gone");
     }
 }
 
@@ -278,8 +323,17 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
         startedAt: new Date().toISOString(),
         tmuxSessionName,
     };
-    registry.set(id, { session, child });
-    await persistRegistry();
+    try {
+        registry.set(id, { session, child });
+        await persistRegistry();
+    } catch (err) {
+        registry.delete(id);
+        child.kill();
+        await child.exited;
+        logger.error({ err, id }, "[ttyd] registry persist failed after spawn; killed orphaned child");
+        throw err;
+    }
+
     logger.info({ id, port, command, cwd, tmuxSessionName, attach: Boolean(opts.attachTmuxSession) }, "ttyd spawned");
 
     return session;
@@ -387,7 +441,7 @@ export async function killTtyd(id: string, opts: KillTtydOptions = {}): Promise<
         return false;
     }
 
-    stopTtydProcess(tracked, id);
+    await stopTtydProcess(tracked, id);
 
     if (opts.killTmux && tracked.session.tmuxSessionName) {
         killTmuxSession(tracked.session.tmuxSessionName);
@@ -405,7 +459,7 @@ export async function killAllTtyd(): Promise<void> {
     await hydrateRegistry();
 
     for (const [id, tracked] of registry.entries()) {
-        stopTtydProcess(tracked, id);
+        await stopTtydProcess(tracked, id);
     }
 
     registry.clear();

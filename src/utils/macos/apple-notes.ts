@@ -7,6 +7,7 @@ import { unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 
 import { ensureMacOS, escapeJxa, runJxa } from "./jxa";
@@ -96,6 +97,8 @@ note.id();
     } finally {
         try {
             unlinkSync(tmpFile);
-        } catch {}
+        } catch (err) {
+            logger.debug({ err, path: tmpFile }, "[cleanup] best-effort resource cleanup failed");
+        }
     }
 }

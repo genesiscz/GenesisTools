@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import type { PulseSnapshot } from "@app/dev-dashboard/lib/system/types";
-import { routerToResponse } from "@app/dev-dashboard/server/adapters/bun-serve";
+import { routerToResponse, toResponse } from "@app/dev-dashboard/server/adapters/bun-serve";
 import type { SystemCollector } from "@app/dev-dashboard/server/collector/SystemCollector";
 import { Router } from "@app/dev-dashboard/server/router";
+import type { SseEmitter } from "@app/dev-dashboard/server/types";
 
 const fakeCollector: SystemCollector = {
     platform: "macos",
@@ -27,6 +28,22 @@ describe("routerToResponse (bun.serve)", () => {
         const res = await routerToResponse(new Router(), new Request("http://h/none"), { services });
 
         expect(res).toBeNull();
+    });
+
+    it("calling emit.comment/emit.data after the stream is canceled does not throw", async () => {
+        let emitRef: SseEmitter | null = null;
+        const response = toResponse({
+            kind: "sse",
+            start: (emit) => {
+                emitRef = emit;
+                return { close: () => {} };
+            },
+        });
+
+        await response.body?.cancel();
+
+        expect(() => emitRef?.comment(" ping")).not.toThrow();
+        expect(() => emitRef?.data("test")).not.toThrow();
     });
 
     it("streams an SSE body with the right content-type", async () => {

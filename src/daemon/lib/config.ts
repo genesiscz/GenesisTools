@@ -1,26 +1,44 @@
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { logger } from "@app/logger";
+import { env } from "@app/utils/env";
 import { Storage } from "@app/utils/storage/storage";
+import { parseInterval } from "./interval";
 import type { DaemonConfig, DaemonTask } from "./types";
 
 const storage = new Storage("daemon");
 
-const BASE_DIR = join(homedir(), ".genesis-tools", "daemon");
-const LOGS_DIR = join(BASE_DIR, "logs");
-const PID_FILE = join(BASE_DIR, "daemon.pid");
+function resolveBaseDir(): string {
+    const override = env.getTrimmed("GENESIS_TOOLS_DAEMON_DIR");
+
+    if (override) {
+        return override;
+    }
+
+    return join(env.tools.getHome(), ".genesis-tools", "daemon");
+}
 
 export function getLogsBaseDir(): string {
-    return LOGS_DIR;
+    return join(resolveBaseDir(), "logs");
 }
 
 export function getPidFile(): string {
-    return PID_FILE;
+    return join(resolveBaseDir(), "daemon.pid");
 }
 
 export async function ensureStorage(): Promise<void> {
     await storage.ensureDirs();
-    mkdirSync(LOGS_DIR, { recursive: true });
+    mkdirSync(getLogsBaseDir(), { recursive: true });
+}
+
+export function validateTaskIntervals(tasks: DaemonTask[]): void {
+    for (const task of tasks) {
+        try {
+            parseInterval(task.every);
+        } catch (err) {
+            logger.warn({ err, task: task.name, every: task.every }, "[daemon] invalid task interval in config");
+        }
+    }
 }
 
 export async function loadConfig(): Promise<DaemonConfig> {
@@ -29,6 +47,8 @@ export async function loadConfig(): Promise<DaemonConfig> {
     if (!config || !Array.isArray(config.tasks)) {
         return { tasks: [] };
     }
+
+    validateTaskIntervals(config.tasks);
 
     return config;
 }
@@ -42,6 +62,8 @@ export async function getTask(name: string): Promise<DaemonTask | undefined> {
     return config.tasks.find((t) => t.name === name);
 }
 
+// upsertTask/removeTask/setTaskEnabled read-modify-write without locking — a lost-update
+// race if two writers interleave. Full fix is out of scope here; log if it recurs.
 export async function upsertTask(task: DaemonTask): Promise<void> {
     const config = await loadConfig();
     const idx = config.tasks.findIndex((t) => t.name === task.name);

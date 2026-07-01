@@ -56,27 +56,48 @@ export async function mdfindMailRowids(query: string, limit = 10000): Promise<nu
         stderr: "pipe",
     });
 
-    const out = await new Response(proc.stdout).text();
-    const code = await proc.exited;
+    const timeoutMs = 30_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    if (code !== 0) {
-        const err = await new Response(proc.stderr).text();
-        logger.debug({ code, err }, "[spotlight] mdfind failed");
+    try {
+        const [out, err, code] = await Promise.race([
+            Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]),
+            new Promise<never>((_, reject) => {
+                timer = setTimeout(() => {
+                    void (async () => {
+                        proc.kill();
+                        await proc.exited;
+                        reject(new Error(`mdfind timed out after ${timeoutMs}ms`));
+                    })();
+                }, timeoutMs);
+            }),
+        ]);
+
+        if (code !== 0) {
+            logger.debug({ code, err }, "[spotlight] mdfind failed");
+            return [];
+        }
+
+        const rowids = new Set<number>();
+
+        for (const line of out.split("\n")) {
+            const id = extractRowidFromEmlxPath(line.trim());
+            if (id !== null) {
+                rowids.add(id);
+            }
+
+            if (rowids.size >= limit) {
+                break;
+            }
+        }
+
+        return [...rowids];
+    } catch (err) {
+        logger.debug({ err }, "[spotlight] mdfind failed");
         return [];
-    }
-
-    const rowids = new Set<number>();
-
-    for (const line of out.split("\n")) {
-        const id = extractRowidFromEmlxPath(line.trim());
-        if (id !== null) {
-            rowids.add(id);
-        }
-
-        if (rowids.size >= limit) {
-            break;
+    } finally {
+        if (timer) {
+            clearTimeout(timer);
         }
     }
-
-    return [...rowids];
 }

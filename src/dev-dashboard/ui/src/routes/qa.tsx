@@ -18,6 +18,7 @@ import { QaSearchBox } from "@/components/QaSearchBox";
 import { QaSectionHeading } from "@/components/QaSectionHeading";
 import { QaSourceToggle, type QaViewMode } from "@/components/QaSourceToggle";
 import { QaTopBar } from "@/components/QaTopBar";
+import { prependQaLiveEntry } from "./qa-live-cap";
 
 const READ_PERSIST_DEBOUNCE_MS = 400;
 
@@ -520,7 +521,12 @@ export function QaRoute() {
                 }
 
                 seen.current.add(entry.id);
-                setLive((prev) => [entry, ...prev]);
+                setLive((prev) => {
+                    const evicted = prependQaLiveEntry(prev, entry, seenIds, readAtById, Date.now());
+                    setSeenIds(evicted.seen);
+                    setReadAtById(evicted.readAtById);
+                    return evicted.live;
+                });
             } catch {
                 /* ignore malformed frame */
             }

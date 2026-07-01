@@ -6,6 +6,7 @@ import { RefStoreManager } from "@app/har-analyzer/core/ref-store";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { EntryFilter, HarFile, HarSession } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
+import { logger } from "@app/logger";
 import { formatBytes, formatDuration } from "@app/utils/format";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -139,7 +140,9 @@ export async function startMcpServer(): Promise<void> {
                     session = await sm.createSession(filePath);
                     harFile = await loadHarFile(session.sourceFile);
                     refStore = new RefStoreManager(session.sourceHash);
-                    sm.cleanExpiredSessions().catch(() => {});
+                    sm.cleanExpiredSessions().catch((err) =>
+                        logger.debug({ err }, "[har-analyzer] expired-session cleanup failed")
+                    );
                     return { content: [{ type: "text", text: formatDashboard(session.stats, session.sourceFile) }] };
                 }
 

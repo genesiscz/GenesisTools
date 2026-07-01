@@ -1,5 +1,6 @@
+import { logger } from "@app/logger";
 import { parseSwapUsage } from "@app/macos/lib/swap/scanner";
-import { collectProcesses, sortProcesses } from "./processes";
+import { parseProcessRows } from "./processes";
 import type { PulseSnapshot, TopProcess } from "./types";
 
 export function parseCpuIdlePct(topOut: string): number | null {
@@ -101,18 +102,20 @@ export function parseWifiSsid(out: string): string | null {
     return m[1].trim();
 }
 
-async function runShell(cmd: string[]): Promise<string | null> {
+export async function runShell(cmd: string[]): Promise<string | null> {
     try {
-        const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "ignore" });
-        const out = await new Response(proc.stdout).text();
+        const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
+        const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
         await proc.exited;
 
         if (proc.exitCode !== 0) {
+            logger.debug({ cmd, exitCode: proc.exitCode, stderr: err }, "[dev-dashboard] runShell failed");
             return null;
         }
 
         return out;
-    } catch {
+    } catch (err) {
+        logger.debug({ cmd, err }, "[dev-dashboard] runShell spawn failed");
         return null;
     }
 }
@@ -216,10 +219,15 @@ async function collectWifi(): Promise<string | null> {
     return parseWifiSsid(out);
 }
 
-async function collectTopProcesses(): Promise<TopProcess[]> {
-    const all = await collectProcesses();
-    return sortProcesses(all, "rss")
-        .slice(0, 5)
+export async function collectTopProcesses(limit = 5): Promise<TopProcess[]> {
+    const out = await runShell(["ps", "-ax", "-m", "-o", "pid=,rss=,etime=,%cpu=,comm="]);
+
+    if (out === null) {
+        return [];
+    }
+
+    return parseProcessRows(out)
+        .slice(0, limit)
         .map((r) => ({ pid: r.pid, name: r.name, rssBytes: r.rssBytes }));
 }
 

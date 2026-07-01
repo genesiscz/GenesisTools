@@ -1,4 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
+import { logger } from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import {
     parseBattery,
     parseCpuIdlePct,
@@ -94,5 +96,62 @@ describe("parseWifiSsid", () => {
 
     test("returns null when not associated", () => {
         expect(parseWifiSsid(WIFI_NOT_ASSOCIATED)).toBeNull();
+    });
+});
+
+describe("collectTopProcesses", () => {
+    test("uses a cheaper top-N path instead of enumerating + sorting every process", async () => {
+        const spawnSpy = mock(Bun.spawn);
+        const original = Bun.spawn;
+        // @ts-expect-error -- intentional test override
+        Bun.spawn = spawnSpy;
+
+        try {
+            const { collectTopProcesses } = await import("./collector");
+            await collectTopProcesses(5);
+
+            const psCall = spawnSpy.mock.calls.find((c) => Array.isArray(c[0]) && c[0][0] === "ps");
+            expect(psCall).toBeDefined();
+            const argv = psCall?.[0] as string[];
+            expect(argv.some((a) => a.includes("-r") || a.includes("-m"))).toBe(true);
+        } finally {
+            Bun.spawn = original;
+        }
+    });
+});
+
+describe("runShell", () => {
+    test("logs at debug level when the spawned command fails to spawn", async () => {
+        const debugSpy = mock(() => {});
+        const original = logger.debug;
+        logger.debug = debugSpy;
+
+        try {
+            const { runShell } = await import("./collector");
+            const result = await runShell(["/nonexistent-binary-xyz123"]);
+
+            expect(result).toBeNull();
+            expect(debugSpy).toHaveBeenCalled();
+        } finally {
+            logger.debug = original;
+        }
+    });
+
+    test("logs at debug level when the command exits non-zero, including captured stderr", async () => {
+        const debugSpy = mock(() => {});
+        const original = logger.debug;
+        logger.debug = debugSpy;
+
+        try {
+            const { runShell } = await import("./collector");
+            const result = await runShell(["sh", "-c", "echo 'boom' >&2; exit 1"]);
+
+            expect(result).toBeNull();
+            expect(debugSpy).toHaveBeenCalled();
+            const call = debugSpy.mock.calls[0];
+            expect(SafeJSON.stringify(call)).toContain("boom");
+        } finally {
+            logger.debug = original;
+        }
     });
 });

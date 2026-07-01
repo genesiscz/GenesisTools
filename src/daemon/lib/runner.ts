@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { logger as appLogger } from "@app/logger";
+import { logger } from "@app/logger";
 import { formatLocalFileTimestamp } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import type { DaemonTask, RunResult } from "./types";
@@ -28,7 +28,9 @@ async function streamLines(
     let partial = "";
 
     const onAbort = (): void => {
-        reader.cancel().catch(() => {});
+        reader.cancel().catch((err) => {
+            logger.debug({ err }, "[daemon] stream reader cancel failed during abort cleanup");
+        });
     };
 
     signal.addEventListener("abort", onAbort, { once: true });
@@ -82,8 +84,8 @@ export async function runTask(task: DaemonTask, attempt: number, logsBaseDir: st
         timeoutMs,
     });
 
-    appLogger.info({ task: task.name, attempt, timeoutMs, logFile }, "[daemon] spawning task process");
-    appLogger.debug({ task: task.name, command: task.command }, "[daemon] task command");
+    logger.info({ task: task.name, attempt, timeoutMs, logFile }, "[daemon] spawning task process");
+    logger.debug({ task: task.name, command: task.command }, "[daemon] task command");
 
     // `detached: true` makes the child a process-group leader (POSIX setsid),
     // so a kill can target the whole group (`sh` + every descendant). Without
@@ -107,8 +109,8 @@ export async function runTask(task: DaemonTask, attempt: number, logsBaseDir: st
         } catch {
             try {
                 proc.kill(signal);
-            } catch {
-                // Process already gone — nothing to signal.
+            } catch (innerErr) {
+                logger.debug({ err: innerErr, pid: proc.pid }, "[daemon] process already gone during killTree");
             }
         }
     };
@@ -121,11 +123,11 @@ export async function runTask(task: DaemonTask, attempt: number, logsBaseDir: st
     let forceKillTimer: Timer | undefined;
     const timeoutTimer = setTimeout(() => {
         timedOut = true;
-        appLogger.warn({ task: task.name, attempt, timeoutMs, logFile }, "[daemon] task timed out, sending SIGTERM");
+        logger.warn({ task: task.name, attempt, timeoutMs, logFile }, "[daemon] task timed out, sending SIGTERM");
         killTree("SIGTERM");
         forceKillTimer = setTimeout(() => {
             if (!exited) {
-                appLogger.warn(
+                logger.warn(
                     { task: task.name, attempt, timeoutMs, logFile },
                     "[daemon] task still running, sending SIGKILL"
                 );
@@ -163,9 +165,9 @@ export async function runTask(task: DaemonTask, attempt: number, logsBaseDir: st
     });
 
     if (timedOut) {
-        appLogger.warn({ task: task.name, attempt, duration_ms, logFile }, "[daemon] task process timed out");
+        logger.warn({ task: task.name, attempt, duration_ms, logFile }, "[daemon] task process timed out");
     } else {
-        appLogger.info({ task: task.name, attempt, exitCode, duration_ms, logFile }, "[daemon] task process exited");
+        logger.info({ task: task.name, attempt, exitCode, duration_ms, logFile }, "[daemon] task process exited");
     }
 
     return { exitCode, duration_ms, logFile };

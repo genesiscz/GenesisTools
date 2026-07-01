@@ -32,7 +32,9 @@ export function atomicWriteFileSync(filePath: string, data: string): void {
     } catch {
         try {
             unlinkSync(tmp);
-        } catch {}
+        } catch (cleanupErr) {
+            logger.debug({ err: cleanupErr, tmp }, "[storage] tmp-file cleanup after failed rename");
+        }
 
         throw new Error(`Atomic rename failed: ${tmp} → ${filePath}`);
     }

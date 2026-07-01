@@ -1,6 +1,7 @@
 import * as p from "@clack/prompts";
 import { getTask } from "../lib/config";
 import { parseInterval } from "../lib/interval";
+import { DEFAULT_RETENTION } from "../lib/register";
 import type { DaemonTask } from "../lib/types";
 
 export async function runTaskEditor(initial?: Partial<DaemonTask>): Promise<DaemonTask | null> {
@@ -93,6 +94,56 @@ export async function runTaskEditor(initial?: Partial<DaemonTask>): Promise<Daem
         return null;
     }
 
+    const useDefaultRetention = await p.confirm({
+        message: `Use default retention (${DEFAULT_RETENTION.maxAgeDays} days, keep ${DEFAULT_RETENTION.minRuns} runs)?`,
+        initialValue: true,
+    });
+
+    if (p.isCancel(useDefaultRetention)) {
+        return null;
+    }
+
+    let retention = initial?.retention ?? DEFAULT_RETENTION;
+
+    if (!useDefaultRetention) {
+        const maxAgeDaysRaw = await p.text({
+            message: "Retention: delete run logs older than N days",
+            initialValue: String(retention.maxAgeDays),
+            validate(value = "") {
+                const n = Number(value);
+
+                if (!Number.isFinite(n) || n <= 0) {
+                    return "Enter a positive number of days";
+                }
+            },
+        });
+
+        if (p.isCancel(maxAgeDaysRaw)) {
+            return null;
+        }
+
+        const minRunsRaw = await p.text({
+            message: "Retention: always keep at least N newest run logs",
+            initialValue: String(retention.minRuns),
+            validate(value = "") {
+                const n = Number(value);
+
+                if (!Number.isInteger(n) || n < 1) {
+                    return "Enter an integer of at least 1";
+                }
+            },
+        });
+
+        if (p.isCancel(minRunsRaw)) {
+            return null;
+        }
+
+        retention = {
+            maxAgeDays: Number(maxAgeDaysRaw),
+            minRuns: Number(minRunsRaw),
+        };
+    }
+
     const confirmed = await p.confirm({
         message: `Create task "${name}"?`,
     });
@@ -108,5 +159,6 @@ export async function runTaskEditor(initial?: Partial<DaemonTask>): Promise<Daem
         retries: parseInt(retries, 10),
         enabled: initial?.enabled ?? true,
         description: description || undefined,
+        retention,
     };
 }

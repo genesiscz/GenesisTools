@@ -103,7 +103,7 @@ export abstract class MacDatabase {
 
     close(): void {
         if (this.kysely) {
-            this.kysely.destroy().catch(() => {});
+            this.kysely.destroy().catch((err) => logger.debug({ err }, "[MacDatabase] kysely destroy failed on close"));
             this.kysely = null;
         }
 

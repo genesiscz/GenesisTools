@@ -78,6 +78,7 @@ async function tryAfconvert(inputPath: string, outputPath: string): Promise<Buff
             stderr: "pipe",
         });
 
+        await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
         await proc.exited;
 
         if (proc.exitCode !== 0) {
@@ -117,6 +118,7 @@ async function tryFfmpeg(inputPath: string, outputPath: string): Promise<Buffer 
             { stdout: "pipe", stderr: "pipe" }
         );
 
+        await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
         await proc.exited;
 
         if (proc.exitCode !== 0) {
@@ -172,7 +174,7 @@ export async function convertFileToMonoMp3(inputPath: string, outputPath: string
         { stdout: "pipe", stderr: "pipe" }
     );
 
-    const stderr = await new Response(proc.stderr).text();
+    const [, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     await proc.exited;
 
     if (proc.exitCode !== 0 || !existsSync(outputPath)) {
@@ -301,8 +303,7 @@ export async function convertAudioFormat(
             stdio: ["ignore", "pipe", "pipe"],
         });
 
-        const _stdout = await new Response(proc.stdout).text();
-        const stderr = await new Response(proc.stderr).text();
+        const [, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
         const exitCode = await proc.exited;
 
         if (exitCode !== 0) {
