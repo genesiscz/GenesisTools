@@ -64,8 +64,11 @@ export async function mdfindMailRowids(query: string, limit = 10000): Promise<nu
             Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]),
             new Promise<never>((_, reject) => {
                 timer = setTimeout(() => {
-                    proc.kill();
-                    reject(new Error(`mdfind timed out after ${timeoutMs}ms`));
+                    void (async () => {
+                        proc.kill();
+                        await proc.exited;
+                        reject(new Error(`mdfind timed out after ${timeoutMs}ms`));
+                    })();
                 }, timeoutMs);
             }),
         ]);

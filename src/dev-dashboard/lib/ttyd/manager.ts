@@ -216,8 +216,14 @@ async function stopTtydProcess(tracked: Tracked, id: string): Promise<void> {
                     try {
                         process.kill(pid, 0);
                         setTimeout(poll, 200);
-                    } catch {
-                        listener();
+                    } catch (err) {
+                        // ESRCH means the process is actually gone; anything else (e.g. EPERM,
+                        // pid reused by a process we can't signal) means it's still alive.
+                        if (err && typeof err === "object" && "code" in err && err.code === "ESRCH") {
+                            listener();
+                        } else {
+                            setTimeout(poll, 200);
+                        }
                     }
                 };
 

@@ -49,54 +49,62 @@ export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
     process.once("SIGTERM", shutdown);
     process.once("SIGINT", shutdown);
 
-    log.info({ logsBaseDir }, "[daemon] scheduler started");
+    try {
+        log.info({ logsBaseDir }, "[daemon] scheduler started");
 
-    await initializeTaskStates(taskStates, logsBaseDir);
+        await initializeTaskStates(taskStates, logsBaseDir);
 
-    let consecutiveLoopFailures = 0;
+        let consecutiveLoopFailures = 0;
 
-    while (running) {
-        try {
-            consecutiveLoopFailures = 0;
-            const config = await loadConfig();
-            const now = new Date();
+        while (running) {
+            try {
+                consecutiveLoopFailures = 0;
+                const config = await loadConfig();
+                const now = new Date();
 
-            syncTaskStates(taskStates, config.tasks);
+                syncTaskStates(taskStates, config.tasks);
 
-            dispatchDueTasks(config.tasks, taskStates, activeRuns, logsBaseDir, now);
+                dispatchDueTasks(config.tasks, taskStates, activeRuns, logsBaseDir, now);
 
-            const sleepMs = getNextWakeupMs(taskStates, config.tasks);
-            logSchedulerHeartbeat(sleepMs, activeRuns.size);
-            await wakefulSleep(sleepMs, {
-                shouldAbort: () => !running,
-                onWallClockJump: ({ elapsedMs, expectedMs }) => {
-                    log.info(
-                        { elapsedMs, expectedMs },
-                        "[daemon] wall-clock jumped (likely wake from sleep/hibernate); resuming scheduler"
-                    );
-                },
-            });
-        } catch (err) {
-            consecutiveLoopFailures++;
-            logSchedulerLoopFailure(err, consecutiveLoopFailures);
-            await wakefulSleep(5000, { shouldAbort: () => !running });
-        }
-    }
-
-    if (activeRuns.size > 0) {
-        log.info({ activeCount: activeRuns.size, activeTasks: [...activeRuns] }, "[daemon] waiting for active runs");
-        const deadline = Date.now() + 30_000;
-
-        while (activeRuns.size > 0 && Date.now() < deadline) {
-            await Bun.sleep(500);
+                const sleepMs = getNextWakeupMs(taskStates, config.tasks);
+                logSchedulerHeartbeat(sleepMs, activeRuns.size);
+                await wakefulSleep(sleepMs, {
+                    shouldAbort: () => !running,
+                    onWallClockJump: ({ elapsedMs, expectedMs }) => {
+                        log.info(
+                            { elapsedMs, expectedMs },
+                            "[daemon] wall-clock jumped (likely wake from sleep/hibernate); resuming scheduler"
+                        );
+                    },
+                });
+            } catch (err) {
+                consecutiveLoopFailures++;
+                logSchedulerLoopFailure(err, consecutiveLoopFailures);
+                await wakefulSleep(5000, { shouldAbort: () => !running });
+            }
         }
 
         if (activeRuns.size > 0) {
-            log.warn({ remaining: [...activeRuns] }, "[daemon] timed out waiting for active runs");
-        }
-    }
+            log.info(
+                { activeCount: activeRuns.size, activeTasks: [...activeRuns] },
+                "[daemon] waiting for active runs"
+            );
+            const deadline = Date.now() + 30_000;
 
-    log.info("[daemon] scheduler stopped");
+            while (activeRuns.size > 0 && Date.now() < deadline) {
+                await Bun.sleep(500);
+            }
+
+            if (activeRuns.size > 0) {
+                log.warn({ remaining: [...activeRuns] }, "[daemon] timed out waiting for active runs");
+            }
+        }
+
+        log.info("[daemon] scheduler stopped");
+    } finally {
+        process.off("SIGTERM", shutdown);
+        process.off("SIGINT", shutdown);
+    }
 }
 
 export function dispatchDueTasks(

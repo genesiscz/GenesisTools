@@ -56,7 +56,8 @@ export async function unapplyCommand(opts: UnapplyOptions): Promise<void> {
         if (!stash) {
             ui.err(`stash "${opts.name}" not found`);
 
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         }
 
         const projectHash = createHash("sha256").update(project.rootPath).digest("hex");
@@ -89,7 +90,8 @@ export async function unapplyCommand(opts: UnapplyOptions): Promise<void> {
             if (opts.action !== "start") {
                 ui.err("no in-progress session; run without --continue to start");
 
-                process.exit(1);
+                process.exitCode = 1;
+                return;
             }
             walk = await bootstrapUnapplyWalk({ storage, db, stash, project, projectHash });
             if (!walk) {
