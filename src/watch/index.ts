@@ -509,21 +509,25 @@ async function startWatcher() {
                         tailFile({ filepath, follow: false });
                         // Set up direct watcher for this new file
                         try {
-                            const watcher = fs.watch(filepath, { persistent: true } as WatchOptions, (eventType: WatchEventType) => {
-                                if (eventType === "change") {
-                                    log.debug(`Direct fs.watch event (change) for ${filepath}`);
+                            const watcher = fs.watch(
+                                filepath,
+                                { persistent: true } as WatchOptions,
+                                (eventType: WatchEventType) => {
+                                    if (eventType === "change") {
+                                        log.debug(`Direct fs.watch event (change) for ${filepath}`);
 
-                                    // Update last modified time
-                                    try {
-                                        const stats = fs.statSync(filepath);
-                                        fileLastModified[filepath] = stats.mtimeMs;
-                                    } catch (err) {
-                                        log.debug(`Error updating last modified time for ${filepath}: ${err}`);
+                                        // Update last modified time
+                                        try {
+                                            const stats = fs.statSync(filepath);
+                                            fileLastModified[filepath] = stats.mtimeMs;
+                                        } catch (err) {
+                                            log.debug(`Error updating last modified time for ${filepath}: ${err}`);
+                                        }
+
+                                        tailFile({ filepath, follow: false });
                                     }
-
-                                    tailFile({ filepath, follow: false });
                                 }
-                            });
+                            );
                             setFileWatcher(filepath, watcher);
                         } catch (err) {
                             log.debug(`Error setting up fs.watch for new file ${filepath}: ${err}`);

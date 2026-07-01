@@ -5,7 +5,13 @@ describe("npm-package-diff --keep watcher cleanup", () => {
         let closed = false;
         const comparison = {
             options: { keep: true },
-            watchers: [{ close: async () => { closed = true; } }],
+            watchers: [
+                {
+                    close: async () => {
+                        closed = true;
+                    },
+                },
+            ],
             async cleanup(this: { options: { keep: boolean }; watchers: Array<{ close: () => Promise<void> }> }) {
                 for (const watcher of this.watchers) {
                     await watcher.close();

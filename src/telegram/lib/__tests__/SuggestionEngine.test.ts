@@ -18,7 +18,11 @@ describe("SuggestionEngine", () => {
     });
 
     it("cancelAutoSuggest clears a pending auto-suggest timer", async () => {
-        const engine = new SuggestionEngine({} as never, { modes: { suggestions: { enabled: true, trigger: "auto", autoDelayMs: 5000 } } } as never, "Me");
+        const engine = new SuggestionEngine(
+            {} as never,
+            { modes: { suggestions: { enabled: true, trigger: "auto", autoDelayMs: 5000 } } } as never,
+            "Me"
+        );
         let fired = false;
 
         engine.scheduleAutoSuggest([{ sender: "Alice", text: "hi" }], () => {

@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
 import { initSchema, updateFetchMetadataForDb } from "./cache";
 
 describe("updateFetchMetadata concurrency safety", () => {
@@ -13,9 +13,10 @@ describe("updateFetchMetadata concurrency safety", () => {
         updateFetchMetadataForDb(db, 12345, { total_comments: 1 });
         updateFetchMetadataForDb(db, 12345, { total_comments: 5 });
 
-        const row = db
-            .query("SELECT issue_id, total_comments FROM fetch_metadata WHERE issue_id = ?")
-            .get(12345) as { issue_id: number; total_comments: number } | null;
+        const row = db.query("SELECT issue_id, total_comments FROM fetch_metadata WHERE issue_id = ?").get(12345) as {
+            issue_id: number;
+            total_comments: number;
+        } | null;
 
         expect(row).toBeTruthy();
         expect(row!.issue_id).toBe(12345);

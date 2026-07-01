@@ -44,82 +44,190 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
     const db = openStashDb(new Database(storage.dbPath()));
 
     try {
-    const stash = db.query<StashRow, [string]>("SELECT * FROM stashes WHERE name = ?").get(opts.name);
-    if (!stash) {
-        ui.err(`stash "${opts.name}" not found`);
+        const stash = db.query<StashRow, [string]>("SELECT * FROM stashes WHERE name = ?").get(opts.name);
+        if (!stash) {
+            ui.err(`stash "${opts.name}" not found`);
 
-        process.exit(1);
-    }
+            process.exit(1);
+        }
 
-    const projectHash = createHash("sha256").update(project.rootPath).digest("hex");
+        const projectHash = createHash("sha256").update(project.rootPath).digest("hex");
 
-    // --abort: restore conflicted files from HEAD and delete the session state.
-    if (action === "abort") {
-        const session = await ApplySession.load({ stashId: stash.id, projectHash, stateDir: storage.stateDir() });
-        if (!session) {
-            ui.info("no in-progress apply session");
-    
+        // --abort: restore conflicted files from HEAD and delete the session state.
+        if (action === "abort") {
+            const session = await ApplySession.load({ stashId: stash.id, projectHash, stateDir: storage.stateDir() });
+            if (!session) {
+                ui.info("no in-progress apply session");
+
+                return;
+            }
+            const snap = session.snapshot();
+            for (const file of snap.conflictedFiles) {
+                // Use `checkout HEAD -- <file>` (not bare `checkout -- <file>`) because after a 3-way
+                // conflict the file is "unmerged" in the index, which makes the index-based form fail.
+                // Specifying HEAD reads from the HEAD tree, clearing the unmerged index entries too.
+                await runGitIn(project.rootPath, ["checkout", "HEAD", "--", file]).catch((err) => {
+                    log.warn({ err, file }, "checkout restore failed — file may need manual cleanup");
+                });
+            }
+            await session.abort();
+            ui.ok("aborted");
+
             return;
         }
-        const snap = session.snapshot();
-        for (const file of snap.conflictedFiles) {
-            // Use `checkout HEAD -- <file>` (not bare `checkout -- <file>`) because after a 3-way
-            // conflict the file is "unmerged" in the index, which makes the index-based form fail.
-            // Specifying HEAD reads from the HEAD tree, clearing the unmerged index entries too.
-            await runGitIn(project.rootPath, ["checkout", "HEAD", "--", file]).catch((err) => {
-                log.warn({ err, file }, "checkout restore failed — file may need manual cleanup");
-            });
-        }
-        await session.abort();
-        ui.ok("aborted");
 
-        return;
-    }
+        const version = opts.version
+            ? db
+                  .query<VersionRow, [string, number]>("SELECT * FROM versions WHERE stash_id = ? AND version = ?")
+                  .get(stash.id, opts.version)
+            : db
+                  .query<VersionRow, [string]>(
+                      "SELECT * FROM versions WHERE stash_id = ? ORDER BY version DESC LIMIT 1"
+                  )
+                  .get(stash.id);
+        if (!version) {
+            ui.err(`no version found for "${opts.name}"${opts.version ? ` @v${opts.version}` : ""}`);
 
-    const version = opts.version
-        ? db
-              .query<VersionRow, [string, number]>("SELECT * FROM versions WHERE stash_id = ? AND version = ?")
-              .get(stash.id, opts.version)
-        : db
-              .query<VersionRow, [string]>("SELECT * FROM versions WHERE stash_id = ? ORDER BY version DESC LIMIT 1")
-              .get(stash.id);
-    if (!version) {
-        ui.err(`no version found for "${opts.name}"${opts.version ? ` @v${opts.version}` : ""}`);
-
-        process.exit(1);
-    }
-    log.debug({ stashId: stash.id, version: version.version, patch_ref: version.patch_ref }, "version resolved");
-
-    const repo = new StoreRepo(storage.storeRepoDir());
-    const patch = await repo.readFileAt(version.patch_ref, "PATCH.diff");
-    if (!patch) {
-        ui.err(`patch missing from store at ${version.patch_ref}`);
-
-        process.exit(1);
-    }
-    log.debug({ patchBytes: patch.length }, "patch fetched from store");
-
-    // --resume: check remaining conflicts, then finish decoration and insert the application row.
-    if (action === "resume") {
-        const session = await ApplySession.load({ stashId: stash.id, projectHash, stateDir: storage.stateDir() });
-        if (!session) {
-            ui.err(`no in-progress apply session for "${opts.name}"; run 'apply' to start`);
-    
             process.exit(1);
         }
+        log.debug({ stashId: stash.id, version: version.version, patch_ref: version.patch_ref }, "version resolved");
 
-        const remaining = await session.remainingConflicts();
-        if (remaining.length > 0) {
-            ui.err(`${remaining.length} file(s) still have conflict markers:`);
-            for (const f of remaining) {
-                ui.warn(`  ${f}`);
+        const repo = new StoreRepo(storage.storeRepoDir());
+        const patch = await repo.readFileAt(version.patch_ref, "PATCH.diff");
+        if (!patch) {
+            ui.err(`patch missing from store at ${version.patch_ref}`);
+
+            process.exit(1);
+        }
+        log.debug({ patchBytes: patch.length }, "patch fetched from store");
+
+        // --resume: check remaining conflicts, then finish decoration and insert the application row.
+        if (action === "resume") {
+            const session = await ApplySession.load({ stashId: stash.id, projectHash, stateDir: storage.stateDir() });
+            if (!session) {
+                ui.err(`no in-progress apply session for "${opts.name}"; run 'apply' to start`);
+
+                process.exit(1);
             }
-            ui.info("resolve all conflicts, then re-run with --resume");
-    
+
+            const remaining = await session.remainingConflicts();
+            if (remaining.length > 0) {
+                ui.err(`${remaining.length} file(s) still have conflict markers:`);
+                for (const f of remaining) {
+                    ui.warn(`  ${f}`);
+                }
+                ui.info("resolve all conflicts, then re-run with --resume");
+
+                process.exit(1);
+            }
+
+            const affectedFiles = await listFilesInPatch({ repoDir: project.rootPath, patch });
+            await decorateAppliedRegions({
+                projectRoot: project.rootPath,
+                files: affectedFiles,
+                patch,
+                stashName: opts.name,
+                stashId: stash.id,
+                version: version.version,
+                verbose: opts.verboseMarkers,
+                sourceRepo: version.source_repo_path,
+                sourceSha: version.source_sha,
+            });
+
+            const now = new Date().toISOString();
+            db.run(
+                `INSERT INTO applications (id, stash_id, version_id, project_path, project_origin, project_sha_at_apply, applied_at, state)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
+                [newStashId(), stash.id, version.id, project.rootPath, project.origin, project.sha, now]
+            );
+
+            await session.complete();
+            ui.ok(`applied "${opts.name}" v${version.version} (after conflict resolution)`);
+            ui.info(`  ${affectedFiles.length} files affected`);
+
+            log.debug({ stashId: stash.id, version: version.version }, "stash applied after conflict resolution");
+            return;
+        }
+
+        // action === "start": normal apply path.
+        const existingActive = db
+            .query<ApplicationRow, [string, string]>(
+                "SELECT * FROM applications WHERE stash_id = ? AND project_path = ? AND state = 'active'"
+            )
+            .get(stash.id, project.rootPath);
+        if (existingActive) {
+            ui.err(`"${opts.name}" is already applied here. Use 'unapply' or 'update'.`);
+
             process.exit(1);
         }
 
+        const baselineRef = `refs/baselines/${stash.id}/v${version.version}`;
+        await fetchBaselineBlobs({ projectRoot: project.rootPath, storeDir: storage.storeRepoDir(), baselineRef });
+
+        ui.info(`applying "${opts.name}" v${version.version} [id=${shortId(stash.id)}]`);
+
+        // List affected files BEFORE applying so we can scan them for conflict markers in the catch block.
         const affectedFiles = await listFilesInPatch({ repoDir: project.rootPath, patch });
+
+        try {
+            await applyPatch({ repoDir: project.rootPath, patch, threeWay: true });
+        } catch (err) {
+            // Scan the affected files for conflict markers to distinguish a conflict from a hard failure.
+            const conflictedFiles: string[] = [];
+            for (const file of affectedFiles) {
+                const abs = join(project.rootPath, file);
+                try {
+                    const content = await readFile(abs, "utf8");
+                    if (content.includes("<<<<<<<")) {
+                        conflictedFiles.push(file);
+                    }
+                } catch {
+                    // Unreadable file: patch may have deleted it or it simply doesn't exist — not conflicted.
+                }
+            }
+
+            if (conflictedFiles.length > 0) {
+                await ApplySession.start({
+                    stashId: stash.id,
+                    stashName: opts.name,
+                    versionId: version.id,
+                    version: version.version,
+                    projectPath: project.rootPath,
+                    projectHash,
+                    conflictedFiles,
+                    stateDir: storage.stateDir(),
+                });
+
+                ui.err(`apply conflict: ${conflictedFiles.length} file(s) need manual resolution`);
+                for (const f of conflictedFiles) {
+                    ui.warn(`  conflict: ${f}`);
+                }
+                ui.info("resolve conflicts manually, then:");
+                ui.info(`  tools stash apply ${opts.name} --resume`);
+                ui.info(`  tools stash apply ${opts.name} --abort    (to reverse the partial apply)`);
+
+                process.exit(1);
+            }
+
+            // Not a conflict: surface a clean error. Git's raw stderr ("repository lacks the
+            // necessary blob to perform 3-way merge", "Falling back to direct application", etc.)
+            // is verbose and exposes internals — replace it with a human-readable message when we
+            // can identify the failure mode, fall through to raw on the unknown ones.
+            const raw = err instanceof Error ? err.message : String(err);
+            const friendly = (() => {
+                if (raw.includes("lacks the necessary blob") || raw.includes("patch does not apply")) {
+                    return (
+                        `cannot apply patch — the target files have diverged too far from the stash's source baseline.\n` +
+                        `  Try saving a new stash from this project instead, or apply in a project closer to the original source.`
+                    );
+                }
+                return raw;
+            })();
+            ui.err(`apply failed: ${friendly}`);
+
+            process.exit(1);
+        }
+
         await decorateAppliedRegions({
             projectRoot: project.rootPath,
             files: affectedFiles,
@@ -135,126 +243,20 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
         const now = new Date().toISOString();
         db.run(
             `INSERT INTO applications (id, stash_id, version_id, project_path, project_origin, project_sha_at_apply, applied_at, state)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
             [newStashId(), stash.id, version.id, project.rootPath, project.origin, project.sha, now]
         );
 
-        await session.complete();
-        ui.ok(`applied "${opts.name}" v${version.version} (after conflict resolution)`);
+        // Drop the fetched baseline ref — it was only needed to seed 3-way merge blobs into objects/.
+        // Failure is harmless: git's GC will reap unreachable objects eventually.
+        await runGitIn(project.rootPath, ["update-ref", "-d", BASELINE_TARGET_REF]).catch((err) => {
+            log.debug({ err }, "baseline ref cleanup failed (non-fatal)");
+        });
+
+        ui.ok(`applied "${opts.name}" v${version.version}`);
         ui.info(`  ${affectedFiles.length} files affected`);
 
-        log.debug({ stashId: stash.id, version: version.version }, "stash applied after conflict resolution");
-        return;
-    }
-
-    // action === "start": normal apply path.
-    const existingActive = db
-        .query<ApplicationRow, [string, string]>(
-            "SELECT * FROM applications WHERE stash_id = ? AND project_path = ? AND state = 'active'"
-        )
-        .get(stash.id, project.rootPath);
-    if (existingActive) {
-        ui.err(`"${opts.name}" is already applied here. Use 'unapply' or 'update'.`);
-
-        process.exit(1);
-    }
-
-    const baselineRef = `refs/baselines/${stash.id}/v${version.version}`;
-    await fetchBaselineBlobs({ projectRoot: project.rootPath, storeDir: storage.storeRepoDir(), baselineRef });
-
-    ui.info(`applying "${opts.name}" v${version.version} [id=${shortId(stash.id)}]`);
-
-    // List affected files BEFORE applying so we can scan them for conflict markers in the catch block.
-    const affectedFiles = await listFilesInPatch({ repoDir: project.rootPath, patch });
-
-    try {
-        await applyPatch({ repoDir: project.rootPath, patch, threeWay: true });
-    } catch (err) {
-        // Scan the affected files for conflict markers to distinguish a conflict from a hard failure.
-        const conflictedFiles: string[] = [];
-        for (const file of affectedFiles) {
-            const abs = join(project.rootPath, file);
-            try {
-                const content = await readFile(abs, "utf8");
-                if (content.includes("<<<<<<<")) {
-                    conflictedFiles.push(file);
-                }
-            } catch {
-                // Unreadable file: patch may have deleted it or it simply doesn't exist — not conflicted.
-            }
-        }
-
-        if (conflictedFiles.length > 0) {
-            await ApplySession.start({
-                stashId: stash.id,
-                stashName: opts.name,
-                versionId: version.id,
-                version: version.version,
-                projectPath: project.rootPath,
-                projectHash,
-                conflictedFiles,
-                stateDir: storage.stateDir(),
-            });
-
-            ui.err(`apply conflict: ${conflictedFiles.length} file(s) need manual resolution`);
-            for (const f of conflictedFiles) {
-                ui.warn(`  conflict: ${f}`);
-            }
-            ui.info("resolve conflicts manually, then:");
-            ui.info(`  tools stash apply ${opts.name} --resume`);
-            ui.info(`  tools stash apply ${opts.name} --abort    (to reverse the partial apply)`);
-    
-            process.exit(1);
-        }
-
-        // Not a conflict: surface a clean error. Git's raw stderr ("repository lacks the
-        // necessary blob to perform 3-way merge", "Falling back to direct application", etc.)
-        // is verbose and exposes internals — replace it with a human-readable message when we
-        // can identify the failure mode, fall through to raw on the unknown ones.
-        const raw = err instanceof Error ? err.message : String(err);
-        const friendly = (() => {
-            if (raw.includes("lacks the necessary blob") || raw.includes("patch does not apply")) {
-                return (
-                    `cannot apply patch — the target files have diverged too far from the stash's source baseline.\n` +
-                    `  Try saving a new stash from this project instead, or apply in a project closer to the original source.`
-                );
-            }
-            return raw;
-        })();
-        ui.err(`apply failed: ${friendly}`);
-
-        process.exit(1);
-    }
-
-    await decorateAppliedRegions({
-        projectRoot: project.rootPath,
-        files: affectedFiles,
-        patch,
-        stashName: opts.name,
-        stashId: stash.id,
-        version: version.version,
-        verbose: opts.verboseMarkers,
-        sourceRepo: version.source_repo_path,
-        sourceSha: version.source_sha,
-    });
-
-    const now = new Date().toISOString();
-    db.run(
-        `INSERT INTO applications (id, stash_id, version_id, project_path, project_origin, project_sha_at_apply, applied_at, state)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
-        [newStashId(), stash.id, version.id, project.rootPath, project.origin, project.sha, now]
-    );
-
-    // Drop the fetched baseline ref — it was only needed to seed 3-way merge blobs into objects/.
-    // Failure is harmless: git's GC will reap unreachable objects eventually.
-    await runGitIn(project.rootPath, ["update-ref", "-d", BASELINE_TARGET_REF]).catch((err) => {
-        log.debug({ err }, "baseline ref cleanup failed (non-fatal)");
-    });
-
-    ui.ok(`applied "${opts.name}" v${version.version}`);
-    ui.info(`  ${affectedFiles.length} files affected`);
-
-    log.debug({ stashId: stash.id, version: version.version, files: affectedFiles.length }, "stash applied");
+        log.debug({ stashId: stash.id, version: version.version, files: affectedFiles.length }, "stash applied");
     } finally {
         db.close();
     }

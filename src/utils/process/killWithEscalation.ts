@@ -1,7 +1,7 @@
 export interface KillableProcess {
     kill(signal?: NodeJS.Signals | number): void;
     readonly killed?: boolean;
-    exited?: Promise<number | null | void>;
+    exited?: Promise<number | null | undefined>;
     on?(event: "exit", listener: () => void): void;
     exitCode?: number | null;
 }

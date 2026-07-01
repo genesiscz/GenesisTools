@@ -397,11 +397,7 @@ function getFetchMetadataForDb(db: Database, issueId: number): FetchMetadataReco
     return db.query("SELECT * FROM fetch_metadata WHERE issue_id = ?").get(issueId) as FetchMetadataRecord | null;
 }
 
-export function updateFetchMetadataForDb(
-    db: Database,
-    issueId: number,
-    data: Partial<FetchMetadataRecord>
-): void {
+export function updateFetchMetadataForDb(db: Database, issueId: number, data: Partial<FetchMetadataRecord>): void {
     const txn = db.transaction(() => {
         const existing = getFetchMetadataForDb(db, issueId);
         if (existing) {
