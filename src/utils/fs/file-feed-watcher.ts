@@ -8,6 +8,7 @@ const DEFAULT_POLL_FALLBACK_MS = 1000;
 
 export interface FileFeedWatcherOptions {
     path: string;
+    // biome-ignore lint/suspicious/noConfusingVoidType: intentional — callers may ignore the return value entirely
     onChange: () => Promise<{ done: boolean } | void> | { done: boolean } | void;
     deadlineAt?: number;
     debounceMs?: number;
@@ -87,7 +88,7 @@ export async function watchFileFeed(opts: FileFeedWatcherOptions): Promise<void>
                     return;
                 }
 
-                if (result && result.done) {
+                if (result?.done) {
                     finish();
                     return;
                 }

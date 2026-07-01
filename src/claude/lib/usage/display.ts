@@ -172,7 +172,7 @@ export function renderAccountUsage(account: AccountUsage): string {
 
     const spend = normalizeSpend(account.usage);
 
-    if (spend && spend.enabled) {
+    if (spend?.enabled) {
         lines.push(bucketLabel("extra_usage"));
         lines.push(renderBar(spend.percent, spend.severity));
         lines.push(pc.dim(`  ${formatSpendBalance(spend)}`));

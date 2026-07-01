@@ -209,6 +209,7 @@ describe("UsageHistoryDb", () => {
     test("only runs ensureSchema's CREATE/ALTER statements once per underlying connection", () => {
         const execSpy: string[] = [];
         const first = new UsageHistoryDb(dbPath);
+        // biome-ignore lint/complexity/useLiteralKeys: bracket access deliberately bypasses the private-field check
         const rawDb = first["claudeDb"].getDb();
         const originalExec = rawDb.exec.bind(rawDb);
         rawDb.exec = (sql: string) => {
