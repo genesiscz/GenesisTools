@@ -187,8 +187,24 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
                     if (content.includes("<<<<<<<")) {
                         conflictedFiles.push(file);
                     }
-                } catch {
-                    // Unreadable file: patch may have deleted it or it simply doesn't exist — not conflicted.
+                } catch (readErr) {
+                    const code =
+                        readErr && typeof readErr === "object" && "code" in readErr
+                            ? (readErr as NodeJS.ErrnoException).code
+                            : undefined;
+
+                    if (code === "ENOENT") {
+                        // Patch deleted the file or it never existed — genuinely not conflicted.
+                        continue;
+                    }
+
+                    // Permission/IO errors are real failures, not "no conflict" — surface them and
+                    // treat the file as needing manual review rather than silently passing it through.
+                    log.warn(
+                        { err: readErr, file },
+                        "conflict scan: could not read file; treating as conflicted for manual review"
+                    );
+                    conflictedFiles.push(file);
                 }
             }
 

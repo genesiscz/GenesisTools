@@ -533,6 +533,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
 
     const dbPath = join(indexDir, "index.db");
     let dbForCleanup: InstanceType<typeof Database> | undefined;
+    let qdrantStoreForCleanup: QdrantVectorStore | undefined;
 
     try {
         const db = new Database(dbPath);
@@ -604,6 +605,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
             });
 
             await qdrantStore.init();
+            qdrantStoreForCleanup = qdrantStore;
             externalVectorStore = qdrantStore;
         }
 
@@ -1274,11 +1276,19 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
 
         return store;
     } catch (err) {
-        if (dbForCleanup) {
-            dbForCleanup.close();
+        try {
+            if (qdrantStoreForCleanup) {
+                await qdrantStoreForCleanup.close();
+            }
+
+            if (dbForCleanup) {
+                dbForCleanup.close();
+            }
+        } finally {
+            // Release the lock if initialization fails — otherwise it stays held until stale
+            await lockHandle.release();
         }
-        // Release the lock if initialization fails — otherwise it stays held until stale
-        await lockHandle.release();
+
         throw err;
     }
 }

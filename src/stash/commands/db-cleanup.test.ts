@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@app/utils/env";
 import * as patchModule from "../lib/patch";
 import { runGitIn } from "../lib/patch";
 import { saveCommand } from "./save";
@@ -17,8 +18,8 @@ let originalClose: typeof Database.prototype.close;
 beforeEach(async () => {
     origCwd = process.cwd();
     work = await mkdtemp(join(tmpdir(), "stash-db-cleanup-"));
-    origStashRoot = process.env.GENESIS_TOOLS_STASH_ROOT;
-    process.env.GENESIS_TOOLS_STASH_ROOT = join(work, ".genesis-tools", "stash");
+    origStashRoot = env.get("GENESIS_TOOLS_STASH_ROOT");
+    env.testing.set("GENESIS_TOOLS_STASH_ROOT", join(work, ".genesis-tools", "stash"));
     repo = join(work, "repo");
     await runGitIn(work, ["init", "repo", "--initial-branch=main"]);
     await runGitIn(repo, ["config", "user.email", "t@t"]);
@@ -40,9 +41,9 @@ afterEach(async () => {
     mock.restore();
     process.chdir(origCwd);
     if (origStashRoot !== undefined) {
-        process.env.GENESIS_TOOLS_STASH_ROOT = origStashRoot;
+        env.testing.set("GENESIS_TOOLS_STASH_ROOT", origStashRoot);
     } else {
-        delete process.env.GENESIS_TOOLS_STASH_ROOT;
+        env.testing.unset("GENESIS_TOOLS_STASH_ROOT");
     }
     await rm(work, { recursive: true, force: true });
 });

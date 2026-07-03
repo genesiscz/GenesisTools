@@ -12,14 +12,23 @@ describe("cursor streaming child exception safety", () => {
         });
 
         const adapter = {
-            parseLine: () => {
+            parseLine: () => ({
+                textDelta: undefined,
+                blocks: [{ type: "metadata" as const, content: "test" }],
+                done: false,
+            }),
+        } as unknown as CursorStreamAdapter;
+
+        const renderer = {
+            render: () => {
                 throw new Error("forced renderer failure");
             },
-        } as unknown as CursorStreamAdapter;
+        };
 
         await expect(
             streamCursorAgent(proc, {
                 adapter,
+                renderer,
             })
         ).rejects.toThrow("forced renderer failure");
 

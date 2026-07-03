@@ -43,6 +43,7 @@ export async function startDaemon(): Promise<void> {
         await runSchedulerLoop(getLogsBaseDir());
     } catch (err) {
         log.error({ err }, "[daemon] crashed");
+        throw err;
     } finally {
         cleanup();
     }
@@ -76,5 +77,7 @@ export function getDaemonPid(): number | null {
 
 if (import.meta.main) {
     configureLogger({ includeTimestamp: true });
-    startDaemon();
+    startDaemon().catch(() => {
+        process.exitCode = 1;
+    });
 }

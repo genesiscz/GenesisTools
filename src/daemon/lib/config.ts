@@ -31,14 +31,16 @@ export async function ensureStorage(): Promise<void> {
     mkdirSync(getLogsBaseDir(), { recursive: true });
 }
 
-export function validateTaskIntervals(tasks: DaemonTask[]): void {
-    for (const task of tasks) {
+export function validateTaskIntervals(tasks: DaemonTask[]): DaemonTask[] {
+    return tasks.filter((task) => {
         try {
             parseInterval(task.every);
+            return true;
         } catch (err) {
             logger.warn({ err, task: task.name, every: task.every }, "[daemon] invalid task interval in config");
+            return false;
         }
-    }
+    });
 }
 
 export async function loadConfig(): Promise<DaemonConfig> {
@@ -48,13 +50,7 @@ export async function loadConfig(): Promise<DaemonConfig> {
         return { tasks: [] };
     }
 
-    validateTaskIntervals(config.tasks);
-
-    return config;
-}
-
-export async function saveConfig(config: DaemonConfig): Promise<void> {
-    await storage.setConfig(config);
+    return { ...config, tasks: validateTaskIntervals(config.tasks) };
 }
 
 export async function getTask(name: string): Promise<DaemonTask | undefined> {
@@ -62,42 +58,47 @@ export async function getTask(name: string): Promise<DaemonTask | undefined> {
     return config.tasks.find((t) => t.name === name);
 }
 
-// upsertTask/removeTask/setTaskEnabled read-modify-write without locking — a lost-update
-// race if two writers interleave. Full fix is out of scope here; log if it recurs.
 export async function upsertTask(task: DaemonTask): Promise<void> {
-    const config = await loadConfig();
-    const idx = config.tasks.findIndex((t) => t.name === task.name);
+    await storage.atomicConfigUpdate<DaemonConfig>((config) => {
+        if (!Array.isArray(config.tasks)) {
+            config.tasks = [];
+        }
 
-    if (idx >= 0) {
-        config.tasks[idx] = task;
-    } else {
-        config.tasks.push(task);
-    }
+        const idx = config.tasks.findIndex((t) => t.name === task.name);
 
-    await saveConfig(config);
+        if (idx >= 0) {
+            config.tasks[idx] = task;
+        } else {
+            config.tasks.push(task);
+        }
+    });
 }
 
 export async function removeTask(name: string): Promise<boolean> {
-    const config = await loadConfig();
-    const before = config.tasks.length;
-    config.tasks = config.tasks.filter((t) => t.name !== name);
+    let removed = false;
 
-    if (config.tasks.length === before) {
-        return false;
-    }
+    await storage.atomicConfigUpdate<DaemonConfig>((config) => {
+        if (!Array.isArray(config.tasks)) {
+            config.tasks = [];
+            return;
+        }
 
-    await saveConfig(config);
-    return true;
+        const before = config.tasks.length;
+        config.tasks = config.tasks.filter((t) => t.name !== name);
+        removed = config.tasks.length !== before;
+    });
+
+    return removed;
 }
 
 export async function setTaskEnabled(name: string, enabled: boolean): Promise<void> {
-    const config = await loadConfig();
-    const task = config.tasks.find((t) => t.name === name);
+    await storage.atomicConfigUpdate<DaemonConfig>((config) => {
+        const task = config.tasks?.find((t) => t.name === name);
 
-    if (!task) {
-        throw new Error(`Task "${name}" not found`);
-    }
+        if (!task) {
+            throw new Error(`Task "${name}" not found`);
+        }
 
-    task.enabled = enabled;
-    await saveConfig(config);
+        task.enabled = enabled;
+    });
 }

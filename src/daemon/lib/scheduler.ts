@@ -58,13 +58,12 @@ export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
 
         while (running) {
             try {
-                consecutiveLoopFailures = 0;
                 const config = await loadConfig();
                 const now = new Date();
 
                 syncTaskStates(taskStates, config.tasks);
 
-                dispatchDueTasks(config.tasks, taskStates, activeRuns, logsBaseDir, now);
+                dispatchDueTasks({ tasks: config.tasks, taskStates, activeRuns, logsBaseDir, now });
 
                 const sleepMs = getNextWakeupMs(taskStates, config.tasks);
                 logSchedulerHeartbeat(sleepMs, activeRuns.size);
@@ -77,6 +76,7 @@ export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
                         );
                     },
                 });
+                consecutiveLoopFailures = 0;
             } catch (err) {
                 consecutiveLoopFailures++;
                 logSchedulerLoopFailure(err, consecutiveLoopFailures);
@@ -107,13 +107,15 @@ export async function runSchedulerLoop(logsBaseDir: string): Promise<void> {
     }
 }
 
-export function dispatchDueTasks(
-    tasks: DaemonTask[],
-    taskStates: Map<string, TaskState>,
-    activeRuns: Set<string>,
-    logsBaseDir: string,
-    now: Date = new Date()
-): void {
+export function dispatchDueTasks(options: {
+    tasks: DaemonTask[];
+    taskStates: Map<string, TaskState>;
+    activeRuns: Set<string>;
+    logsBaseDir: string;
+    now?: Date;
+}): void {
+    const { tasks, taskStates, activeRuns, logsBaseDir, now = new Date() } = options;
+
     for (const task of tasks) {
         if (!task.enabled) {
             continue;

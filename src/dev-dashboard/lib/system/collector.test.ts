@@ -1,6 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
 import { logger } from "@app/logger";
-import { SafeJSON } from "@app/utils/json";
 import {
     parseBattery,
     parseCpuIdlePct,
@@ -138,7 +137,7 @@ describe("runShell", () => {
     });
 
     test("logs at debug level when the command exits non-zero, including captured stderr", async () => {
-        const debugSpy = mock(() => {});
+        const debugSpy = mock((..._args: unknown[]) => {});
         const original = logger.debug;
         logger.debug = debugSpy;
 
@@ -148,8 +147,8 @@ describe("runShell", () => {
 
             expect(result).toBeNull();
             expect(debugSpy).toHaveBeenCalled();
-            const call = debugSpy.mock.calls[0];
-            expect(SafeJSON.stringify(call)).toContain("boom");
+            const [payload] = debugSpy.mock.calls[0] ?? [];
+            expect((payload as { stderr?: string }).stderr).toContain("boom");
         } finally {
             logger.debug = original;
         }

@@ -14,7 +14,7 @@ describe("handleShell timeout cleanup", () => {
                     id: "timeout-test",
                     name: "timeout test",
                     action: "shell",
-                    params: { command: `sleep 30 # ${marker}`, timeout: 1 },
+                    params: { command: `exec -a ${marker} sleep 30`, timeout: 1 },
                 },
                 ctx
             );

@@ -308,18 +308,34 @@ async function resolveTarget(query: string | undefined, opts: TailOptions): Prom
     return findMostRecentSession(projectPath);
 }
 
-function getProjectDirs(projectPath?: string): string[] {
+interface GetProjectDirsTestHooks {
+    existsSync?: typeof existsSync;
+    readdirSync?: typeof readdirSync;
+}
+
+let getProjectDirsTestHooks: GetProjectDirsTestHooks | undefined;
+
+/** Test-only: inject fake fs functions so the directory-scan failure path is testable
+ * without mocking the global "node:fs" module (which bun:test can't cleanly restore). */
+export function _setGetProjectDirsTestHooks(hooks: GetProjectDirsTestHooks | undefined): void {
+    getProjectDirsTestHooks = hooks;
+}
+
+export function getProjectDirs(projectPath?: string): string[] {
+    const exists = getProjectDirsTestHooks?.existsSync ?? existsSync;
+
     if (projectPath) {
         const dir = resolve(PROJECTS_DIR, encodedProjectDir(projectPath));
-        return existsSync(dir) ? [dir] : [];
+        return exists(dir) ? [dir] : [];
     }
 
-    if (!existsSync(PROJECTS_DIR)) {
+    if (!exists(PROJECTS_DIR)) {
         return [];
     }
 
     try {
-        return readdirSync(PROJECTS_DIR)
+        const readdir = getProjectDirsTestHooks?.readdirSync ?? readdirSync;
+        return readdir(PROJECTS_DIR)
             .map((d) => resolve(PROJECTS_DIR, d))
             .filter((d) => statSync(d).isDirectory());
     } catch (err) {

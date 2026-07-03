@@ -33,13 +33,17 @@ describe("searchIndexReadonly handle cleanup", () => {
 
     afterEach(() => {
         Database.prototype.close = originalClose;
+        // Delete the index dir BEFORE restoring GENESIS_TOOLS_HOME — once restored,
+        // getIndexerStorage() (after the reset below) resolves against the real env,
+        // so this call would target the wrong directory instead of the tmp one.
+        rmSync(getIndexerStorage().getIndexDir(indexName), { recursive: true, force: true });
+
         if (previousHome === undefined) {
             env.testing.unset("GENESIS_TOOLS_HOME");
         } else {
             env.testing.set("GENESIS_TOOLS_HOME", previousHome);
         }
         _resetIndexerStorageForTesting();
-        rmSync(getIndexerStorage().getIndexDir(indexName), { recursive: true, force: true });
         rmSync(homeDir, { recursive: true, force: true });
         mock.restore();
     });
@@ -93,13 +97,17 @@ describe("createIndexStore handle cleanup", () => {
 
     afterEach(() => {
         Database.prototype.close = originalClose;
+        // Delete the index dir BEFORE restoring GENESIS_TOOLS_HOME — once restored,
+        // getIndexerStorage() (after the reset below) resolves against the real env,
+        // so this call would target the wrong directory instead of the tmp one.
+        rmSync(getIndexerStorage().getIndexDir(indexName), { recursive: true, force: true });
+
         if (previousHome === undefined) {
             env.testing.unset("GENESIS_TOOLS_HOME");
         } else {
             env.testing.set("GENESIS_TOOLS_HOME", previousHome);
         }
         _resetIndexerStorageForTesting();
-        rmSync(getIndexerStorage().getIndexDir(indexName), { recursive: true, force: true });
         rmSync(homeDir, { recursive: true, force: true });
     });
 

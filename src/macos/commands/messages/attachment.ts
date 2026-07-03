@@ -64,8 +64,14 @@ export function registerMessagesAttachmentCommand(program: Command): void {
             }
 
             if (opts.open) {
-                const openProc = Bun.spawn(["open", att.resolvedPath], { stdio: ["ignore", "ignore", "ignore"] });
-                await openProc.exited;
+                const openProc = Bun.spawn(["open", att.resolvedPath], { stdio: ["ignore", "ignore", "pipe"] });
+                const stderr = await new Response(openProc.stderr).text();
+                const exitCode = await openProc.exited;
+
+                if (exitCode !== 0) {
+                    out.error(`Failed to open attachment: ${stderr.trim() || `open exited with code ${exitCode}`}`);
+                    process.exit(1);
+                }
             }
         });
 }

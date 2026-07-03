@@ -91,6 +91,18 @@ describe.skipIf(!hasTtydDeps)("spawnTtyd persist-failure cleanup", () => {
     test("kills the spawned child if registry persistence fails", async () => {
         const { spawnTtyd, __setPersistRegistryForTest } = await import("./manager");
 
+        const pgrepTtyd = (): string[] =>
+            new TextDecoder()
+                .decode(Bun.spawnSync(["pgrep", "-f", "ttyd.*--port"]).stdout)
+                .trim()
+                .split("\n")
+                .filter(Boolean);
+
+        // Diff against a pre-spawn snapshot instead of asserting on the global process
+        // list — the dashboard's own ttyd terminals may legitimately be running
+        // alongside this test.
+        const before = new Set(pgrepTtyd());
+
         __setPersistRegistryForTest(async () => {
             throw new Error("disk full");
         });
@@ -99,9 +111,8 @@ describe.skipIf(!hasTtydDeps)("spawnTtyd persist-failure cleanup", () => {
 
         await new Promise((r) => setTimeout(r, 100));
 
-        const ps = Bun.spawnSync(["pgrep", "-f", "ttyd.*--port"]);
-        const survivors = new TextDecoder().decode(ps.stdout).trim();
-        expect(survivors).toBe("");
+        const survivors = pgrepTtyd().filter((pid) => !before.has(pid));
+        expect(survivors).toEqual([]);
     });
 });
 

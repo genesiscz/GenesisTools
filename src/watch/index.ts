@@ -651,6 +651,7 @@ async function startWatcher() {
 
                     if (matchedFiles.has(file)) {
                         log.file.remove(`${new Date().toLocaleTimeString()} - ${file}`);
+                        closeFileWatcher(file);
                         matchedFiles.delete(file);
                         delete filePositions[file];
                         delete fileLastModified[file];

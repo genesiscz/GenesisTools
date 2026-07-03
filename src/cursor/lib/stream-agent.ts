@@ -1,5 +1,6 @@
 import { CursorStreamAdapter } from "@app/utils/agents/adapters/cursor";
 import { TerminalRenderer } from "@app/utils/agents/renderers/TerminalRenderer";
+import { killWithEscalation } from "@app/utils/process/killWithEscalation";
 import type { Subprocess } from "bun";
 
 export interface StreamCursorAgentOptions {
@@ -25,6 +26,39 @@ export async function streamCursorAgent(proc: Subprocess, opts: StreamCursorAgen
 
     const reader = proc.stdout.getReader();
 
+    // Drain stderr concurrently with stdout instead of after — a chatty child can fill the
+    // stderr pipe buffer and block while we're still reading stdout, deadlocking otherwise.
+    const stderrPromise =
+        proc.stderr && typeof proc.stderr !== "number" ? new Response(proc.stderr).text() : Promise.resolve("");
+
+    let streamDone = false;
+
+    const handleLine = (line: string): void => {
+        const parsed = adapter.parseLine(line);
+
+        if (parsed.textDelta) {
+            opts.onTextDelta?.(parsed.textDelta);
+            wroteText = true;
+        }
+
+        if (parsed.blocks.length > 0 && !raw) {
+            if (wroteText) {
+                wroteText = false;
+            }
+
+            const rendered = renderer.render(parsed.blocks);
+            const output = rendered.join("\n");
+
+            if (output.trim()) {
+                opts.onBlocks?.(output);
+            }
+        }
+
+        if (parsed.done) {
+            streamDone = true;
+        }
+    };
+
     try {
         try {
             while (true) {
@@ -40,42 +74,27 @@ export async function streamCursorAgent(proc: Subprocess, opts: StreamCursorAgen
                     const line = buffer.slice(0, newlineIdx);
                     buffer = buffer.slice(newlineIdx + 1);
 
-                    const parsed = adapter.parseLine(line);
+                    handleLine(line);
 
-                    if (parsed.textDelta) {
-                        opts.onTextDelta?.(parsed.textDelta);
-                        wroteText = true;
-                    }
-
-                    if (parsed.blocks.length > 0 && !raw) {
-                        if (wroteText) {
-                            wroteText = false;
-                        }
-
-                        const rendered = renderer.render(parsed.blocks);
-                        const output = rendered.join("\n");
-
-                        if (output.trim()) {
-                            opts.onBlocks?.(output);
-                        }
-                    }
-
-                    if (parsed.done) {
+                    if (streamDone) {
                         break;
                     }
                 }
+            }
+
+            buffer += decoder.decode();
+
+            if (buffer.trim() && !streamDone) {
+                handleLine(buffer);
             }
         } finally {
             reader.releaseLock();
         }
 
-        if (proc.stderr && typeof proc.stderr !== "number") {
-            await new Response(proc.stderr).text();
-        }
+        await stderrPromise;
         return await proc.exited;
     } catch (err) {
-        proc.kill();
-        await proc.exited;
+        await killWithEscalation(proc);
         throw err;
     }
 }

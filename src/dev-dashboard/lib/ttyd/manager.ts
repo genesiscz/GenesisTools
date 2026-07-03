@@ -215,6 +215,15 @@ async function stopTtydProcess(tracked: Tracked, id: string): Promise<void> {
                 const poll = (): void => {
                     try {
                         process.kill(pid, 0);
+
+                        // A live PID isn't necessarily still ttyd — the OS can reuse a PID
+                        // within the escalation grace window. Confirm ownership before
+                        // continuing to treat it as the process we're waiting to exit.
+                        if (!processMatchesSession(tracked.session)) {
+                            listener();
+                            return;
+                        }
+
                         setTimeout(poll, 200);
                     } catch (err) {
                         // ESRCH means the process is actually gone; anything else (e.g. EPERM,
@@ -328,8 +337,7 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
         await persistRegistry();
     } catch (err) {
         registry.delete(id);
-        child.kill();
-        await child.exited;
+        await killWithEscalation(child);
         logger.error({ err, id }, "[ttyd] registry persist failed after spawn; killed orphaned child");
         throw err;
     }
