@@ -440,7 +440,10 @@ export function updateFetchMetadataForDb(db: Database, issueId: number, data: Pa
         }
     });
 
-    txn();
+    // BEGIN IMMEDIATE acquires the write lock before the SELECT runs, closing the
+    // window where two connections could both observe a missing row and race on
+    // the INSERT — a plain (deferred) transaction doesn't lock until the first write.
+    txn.immediate();
 }
 
 export function updateFetchMetadata(issueId: number, data: Partial<FetchMetadataRecord>): void {

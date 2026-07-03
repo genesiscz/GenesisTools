@@ -6,7 +6,7 @@ describe("runDownloadWithProgress stream draining", () => {
         const start = Date.now();
 
         await runDownloadWithProgress(
-            ["sh", "-c", 'for i in $(seq 1 5000); do echo "[download] line $i"; done'],
+            ["sh", "-c", 'for i in $(seq 1 5000); do echo "[download] out $i"; echo "[download] err $i" >&2; done'],
             undefined,
             () => {},
             "test"

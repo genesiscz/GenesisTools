@@ -200,9 +200,18 @@ export async function kickstartLaunchd(label: string): Promise<void> {
         return;
     }
 
-    await launchctl(["kickstart", "-k", `gui/${uid}/${label}`]).catch((err) =>
-        logger.warn({ err, label }, "[launchd] kickstart -k failed; service may not have restarted")
-    );
+    try {
+        const { exitCode, stderr } = await launchctl(["kickstart", "-k", `gui/${uid}/${label}`]);
+
+        if (exitCode !== 0) {
+            logger.warn(
+                { exitCode, stderr: stderr.trim(), label },
+                "[launchd] kickstart -k failed; service may not have restarted"
+            );
+        }
+    } catch (err) {
+        logger.warn({ err, label }, "[launchd] kickstart -k failed; service may not have restarted");
+    }
 }
 
 /** Load plist if needed and kickstart — faster than rewriting the plist on restart. */

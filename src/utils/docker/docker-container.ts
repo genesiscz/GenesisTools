@@ -180,6 +180,11 @@ export class DockerContainer {
 
         let timer: Timer | undefined;
 
+        // Drain stdout/stderr concurrently with the exit wait, not after — a chatty command
+        // (e.g. `docker pull`) can fill the pipe buffers and block before this is reached.
+        const stdoutPromise = new Response(proc.stdout).text();
+        const stderrPromise = new Response(proc.stderr).text();
+
         const result = await (timeoutMs > 0
             ? Promise.race([
                   proc.exited.then((code) => {
@@ -195,10 +200,7 @@ export class DockerContainer {
               ])
             : proc.exited);
 
-        const [stdout, stderr] = await Promise.all([
-            new Response(proc.stdout).text(),
-            new Response(proc.stderr).text(),
-        ]);
+        const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
 
         if (result !== 0) {
             throw new Error(`docker ${args[0]} failed: ${stderr.trim()}`);

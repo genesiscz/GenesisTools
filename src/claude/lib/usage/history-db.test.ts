@@ -207,8 +207,16 @@ describe("UsageHistoryDb", () => {
     });
 
     test("only runs ensureSchema's CREATE/ALTER statements once per underlying connection", () => {
+        // Passing an explicit dbPath (as the outer beforeEach does) bypasses the
+        // ClaudeDatabase singleton — each `new UsageHistoryDb(dbPath)` then gets its
+        // own Database object, so a spy on the first would never see the second's
+        // calls. Use the singleton path (no dbPath arg) so both constructions share
+        // the exact same connection the WeakSet dedup is keyed on.
+        ClaudeDatabase.closeInstance();
+        ClaudeDatabase.getInstance(dbPath);
+
         const execSpy: string[] = [];
-        const first = new UsageHistoryDb(dbPath);
+        const first = new UsageHistoryDb();
         // biome-ignore lint/complexity/useLiteralKeys: bracket access deliberately bypasses the private-field check
         const rawDb = first["claudeDb"].getDb();
         const originalExec = rawDb.exec.bind(rawDb);
@@ -218,9 +226,10 @@ describe("UsageHistoryDb", () => {
         };
 
         const firstCount = execSpy.length;
-        new UsageHistoryDb(dbPath);
+        new UsageHistoryDb();
         expect(execSpy.length).toBe(firstCount);
-        first.close();
+
+        ClaudeDatabase.closeInstance();
     });
 
     test("ensureSchema is idempotent across re-opens (PRAGMA-guarded ALTERs)", () => {

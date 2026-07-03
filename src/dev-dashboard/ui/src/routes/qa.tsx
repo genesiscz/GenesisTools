@@ -337,6 +337,8 @@ export function QaRoute() {
     const [query, setQuery] = useState("");
     const [readAtById, setReadAtById] = useState<Map<string, number>>(() => new Map());
     const seen = useRef<Set<string>>(new Set());
+    const seenIdsRef = useRef<Set<string>>(seenIds);
+    const readAtByIdRef = useRef<Map<string, number>>(readAtById);
     const markedReadRef = useRef<Set<string>>(new Set());
     const pendingReadIds = useRef<Set<string>>(new Set());
     const pendingUnreadIds = useRef<Set<string>>(new Set());
@@ -508,6 +510,14 @@ export function QaRoute() {
     }, [logQuery.data]);
 
     useEffect(() => {
+        seenIdsRef.current = seenIds;
+    }, [seenIds]);
+
+    useEffect(() => {
+        readAtByIdRef.current = readAtById;
+    }, [readAtById]);
+
+    useEffect(() => {
         const es = new EventSource("/api/qa/stream");
         es.onopen = () => setSseDown(false);
         es.onmessage = (ev) => {
@@ -522,7 +532,13 @@ export function QaRoute() {
 
                 seen.current.add(entry.id);
                 setLive((prev) => {
-                    const evicted = prependQaLiveEntry(prev, entry, seenIds, readAtById, Date.now());
+                    const evicted = prependQaLiveEntry(
+                        prev,
+                        entry,
+                        seenIdsRef.current,
+                        readAtByIdRef.current,
+                        Date.now()
+                    );
                     setSeenIds(evicted.seen);
                     setReadAtById(evicted.readAtById);
                     return evicted.live;

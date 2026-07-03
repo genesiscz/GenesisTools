@@ -14,7 +14,7 @@ describe("findClaudeCommand timeout cleanup", () => {
             timeoutMs: 100,
             spawnProbe: () =>
                 Bun.spawn({
-                    cmd: ["sh", "-c", `sleep 30 # ${marker}`],
+                    cmd: ["sh", "-c", `exec -a ${marker} sleep 30`],
                     stdio: ["ignore", "pipe", "pipe"],
                 }),
         });

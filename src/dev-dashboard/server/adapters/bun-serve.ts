@@ -1,5 +1,6 @@
 import type { Router } from "@app/dev-dashboard/server/router";
 import type { RouteContext, RouteResult, RouteServices, SseEmitter } from "@app/dev-dashboard/server/types";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 
 export function toResponse(result: RouteResult): Response {
@@ -46,7 +47,8 @@ export function toResponse(result: RouteResult): Response {
 
                     try {
                         controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
-                    } catch {
+                    } catch (err) {
+                        logger.debug({ err }, "[dev-dashboard] SSE enqueue failed; closing stream");
                         closed = true;
                     }
                 },
@@ -57,7 +59,8 @@ export function toResponse(result: RouteResult): Response {
 
                     try {
                         controller.enqueue(encoder.encode(`:${text}\n\n`));
-                    } catch {
+                    } catch (err) {
+                        logger.debug({ err }, "[dev-dashboard] SSE enqueue failed; closing stream");
                         closed = true;
                     }
                 },

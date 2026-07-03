@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { basename } from "node:path";
 import { logger } from "@app/logger";
+import { killWithEscalation } from "@app/utils/process/killWithEscalation";
 
 export function extractRowidFromEmlxPath(emlxPath: string): number | null {
     const base = basename(emlxPath);
@@ -64,11 +65,9 @@ export async function mdfindMailRowids(query: string, limit = 10000): Promise<nu
             Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]),
             new Promise<never>((_, reject) => {
                 timer = setTimeout(() => {
-                    void (async () => {
-                        proc.kill();
-                        await proc.exited;
+                    void killWithEscalation(proc).finally(() => {
                         reject(new Error(`mdfind timed out after ${timeoutMs}ms`));
-                    })();
+                    });
                 }, timeoutMs);
             }),
         ]);

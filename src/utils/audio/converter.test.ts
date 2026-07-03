@@ -96,7 +96,9 @@ describe("audio converter", () => {
         const output = join(dir, "output.mp3");
 
         const sampleRate = 16000;
-        const numSamples = sampleRate;
+        // 60s of audio (not 1s) so ffmpeg emits enough progress lines on stderr to
+        // actually exercise the draining path — a 1s clip barely produces any.
+        const numSamples = sampleRate * 60;
         const dataSize = numSamples * 2;
         const headerSize = 44;
         const wav = Buffer.alloc(headerSize + dataSize);

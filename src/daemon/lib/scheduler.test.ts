@@ -106,7 +106,7 @@ describe("scheduler logging consolidation", () => {
         });
 
         try {
-            dispatchDueTasks(tasks, taskStates, activeRuns, logsBaseDir, now);
+            dispatchDueTasks({ tasks, taskStates, activeRuns, logsBaseDir, now });
             await drainActiveRuns(activeRuns);
 
             const completionLogs = (infoSpy.mock.calls as unknown[][]).filter((call) => {
@@ -164,7 +164,7 @@ describe("scheduler grid anchoring", () => {
         });
 
         runDurationMs = 50;
-        dispatchDueTasks(tasks, taskStates, activeRuns, logsBaseDir, scheduledAt);
+        dispatchDueTasks({ tasks, taskStates, activeRuns, logsBaseDir, now: scheduledAt });
         await drainActiveRuns(activeRuns);
 
         const afterSlowRun = taskStates.get("slow-task");
@@ -173,7 +173,7 @@ describe("scheduler grid anchoring", () => {
 
         runDurationMs = 1;
         runTaskMock.mockClear();
-        dispatchDueTasks(tasks, taskStates, activeRuns, logsBaseDir, afterSlowRun?.nextRunAt);
+        dispatchDueTasks({ tasks, taskStates, activeRuns, logsBaseDir, now: afterSlowRun?.nextRunAt });
         await drainActiveRuns(activeRuns);
 
         expect(runTaskMock).toHaveBeenCalledTimes(1);
@@ -207,7 +207,7 @@ describe("scheduler task .finally() resilience", () => {
             running: false,
         });
 
-        dispatchDueTasks(tasks, taskStates, activeRuns, logsBaseDir, now);
+        dispatchDueTasks({ tasks, taskStates, activeRuns, logsBaseDir, now });
         await drainActiveRuns(activeRuns);
 
         expect(runTaskMock).toHaveBeenCalledTimes(1);
@@ -216,7 +216,7 @@ describe("scheduler task .finally() resilience", () => {
         expect(state?.nextRunAt.getTime()).toBeGreaterThan(now.getTime() + 59_000);
 
         runTaskMock.mockClear();
-        dispatchDueTasks(tasks, taskStates, activeRuns, logsBaseDir, now);
+        dispatchDueTasks({ tasks, taskStates, activeRuns, logsBaseDir, now });
         await drainActiveRuns(activeRuns);
 
         expect(runTaskMock).toHaveBeenCalledTimes(0);

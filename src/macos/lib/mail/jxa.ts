@@ -1,6 +1,6 @@
 import { logger } from "@app/logger";
-
 import { SafeJSON } from "@app/utils/json";
+import { killWithEscalation } from "@app/utils/process/killWithEscalation";
 
 interface JxaResult {
     stdout: string;
@@ -18,11 +18,9 @@ async function runJxa(script: string, timeoutMs = 30_000): Promise<JxaResult> {
 
     const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => {
-            void (async () => {
-                proc.kill();
-                await proc.exited;
+            void killWithEscalation(proc).finally(() => {
                 reject(new Error(`JXA script timed out after ${timeoutMs}ms`));
-            })();
+            });
         }, timeoutMs)
     );
 

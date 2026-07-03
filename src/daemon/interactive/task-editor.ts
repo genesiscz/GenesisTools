@@ -94,16 +94,21 @@ export async function runTaskEditor(initial?: Partial<DaemonTask>): Promise<Daem
         return null;
     }
 
+    const initialRetention = initial?.retention ?? DEFAULT_RETENTION;
+    const usesDefaultRetention =
+        initialRetention.maxAgeDays === DEFAULT_RETENTION.maxAgeDays &&
+        initialRetention.minRuns === DEFAULT_RETENTION.minRuns;
+
     const useDefaultRetention = await p.confirm({
         message: `Use default retention (${DEFAULT_RETENTION.maxAgeDays} days, keep ${DEFAULT_RETENTION.minRuns} runs)?`,
-        initialValue: true,
+        initialValue: usesDefaultRetention,
     });
 
     if (p.isCancel(useDefaultRetention)) {
         return null;
     }
 
-    let retention = initial?.retention ?? DEFAULT_RETENTION;
+    let retention = useDefaultRetention ? { ...DEFAULT_RETENTION } : initialRetention;
 
     if (!useDefaultRetention) {
         const maxAgeDaysRaw = await p.text({
@@ -112,8 +117,8 @@ export async function runTaskEditor(initial?: Partial<DaemonTask>): Promise<Daem
             validate(value = "") {
                 const n = Number(value);
 
-                if (!Number.isFinite(n) || n <= 0) {
-                    return "Enter a positive number of days";
+                if (!Number.isFinite(n) || n < 0) {
+                    return "Enter a non-negative number of days";
                 }
             },
         });

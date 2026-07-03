@@ -159,7 +159,7 @@ export function parseLogFile(logFile: string): LogEntry[] {
                 entries.push(parsed as unknown as LogEntry);
             }
         } catch (err) {
-            logger.debug({ err, file: logFile, line }, "[daemon] skipping malformed log line");
+            logger.debug({ err, file: logFile, lineLength: line.length }, "[daemon] skipping malformed log line");
         }
     }
 
