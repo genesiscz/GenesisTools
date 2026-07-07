@@ -1,37 +1,57 @@
+import type { AccountUsage } from "@app/claude/lib/usage/api";
+import { normalizeLimits } from "@app/claude/lib/usage/limits";
 import type { MultiBucketHistoryResult } from "@app/dev-dashboard/lib/claude-usage/types";
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { fetchJson } from "@/lib/api";
 import { formatAccountTitle } from "./account-title";
 import { UsageChart } from "./UsageChart";
 
-// 5-hour, weekly, and Sonnet weekly limits — the three lines per account.
-const BUCKETS = "five_hour,seven_day,seven_day_sonnet";
-
 interface AccountUsageChartProps {
-    accountName: string;
-    /** Subscription tier label (e.g. "max 20x"); shown next to the name. */
-    label?: string;
-    /** Current poll error for this account, if any (from /api/claude/usage). */
-    accountError?: string;
+    account: AccountUsage;
     rangeMinutes: number;
-    /** Shared end of the time window (epoch ms) — identical across all charts so axes align. */
     rangeEndMs: number;
 }
 
+const FALLBACK_BUCKETS = ["five_hour", "seven_day"];
+
 // One independent query per account so each chart shows its own loader and
 // renders as soon as its data arrives — no waiting on the slowest account.
-export function AccountUsageChart({
-    accountName,
-    label,
-    accountError,
-    rangeMinutes,
-    rangeEndMs,
-}: AccountUsageChartProps) {
+export function AccountUsageChart({ account, rangeMinutes, rangeEndMs }: AccountUsageChartProps) {
+    const { accountName, label, error: accountError } = account;
+
+    const { bucketKeys, scopeModelByBucket } = useMemo(() => {
+        if (!account.usage) {
+            return { bucketKeys: FALLBACK_BUCKETS, scopeModelByBucket: {} as Record<string, string | null> };
+        }
+
+        const limits = normalizeLimits(account.usage);
+        const keys: string[] = [];
+        const map: Record<string, string | null> = {};
+
+        for (const limit of limits) {
+            if (map[limit.bucket] !== undefined) {
+                continue;
+            }
+
+            keys.push(limit.bucket);
+            map[limit.bucket] = limit.scope_model;
+        }
+
+        if (keys.length === 0) {
+            return { bucketKeys: FALLBACK_BUCKETS, scopeModelByBucket: {} as Record<string, string | null> };
+        }
+
+        return { bucketKeys: keys, scopeModelByBucket: map };
+    }, [account.usage]);
+
+    const bucketsParam = bucketKeys.map((b) => encodeURIComponent(b)).join(",");
+
     const query = useQuery({
-        queryKey: ["claude", "usage", "history", accountName, rangeMinutes],
+        queryKey: ["claude", "usage", "history", accountName, rangeMinutes, bucketsParam],
         queryFn: () =>
             fetchJson<MultiBucketHistoryResult>(
-                `/api/claude/usage/history?account=${encodeURIComponent(accountName)}&buckets=${BUCKETS}&minutes=${rangeMinutes}`
+                `/api/claude/usage/history?account=${encodeURIComponent(accountName)}&buckets=${bucketsParam}&minutes=${rangeMinutes}`
             ),
         refetchInterval: 30000,
     });
@@ -46,6 +66,7 @@ export function AccountUsageChart({
         <UsageChart
             title={formatAccountTitle(accountName, label)}
             series={query.data?.series ?? []}
+            scopeModelByBucket={scopeModelByBucket}
             rangeMinutes={rangeMinutes}
             rangeEndMs={rangeEndMs}
             loading={query.isLoading}

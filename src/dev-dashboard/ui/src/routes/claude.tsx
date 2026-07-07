@@ -71,9 +71,7 @@ export function ClaudeRoute() {
                 {accounts.map((account) => (
                     <AccountUsageChart
                         key={account.accountName}
-                        accountName={account.accountName}
-                        label={account.label}
-                        accountError={account.error}
+                        account={account}
                         rangeMinutes={Number(rangeMinutes)}
                         rangeEndMs={rangeEndMs}
                     />

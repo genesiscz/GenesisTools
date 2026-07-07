@@ -1,16 +1,11 @@
+import { formatBucketLabel } from "./bucket-label";
+
 interface BucketBarProps {
     bucket: string;
+    scopeModel?: string | null;
     utilization: number;
     resetsAt: string | null;
 }
-
-const BUCKET_LABELS: Record<string, string> = {
-    five_hour: "5-hour",
-    seven_day: "7-day",
-    seven_day_sonnet: "7-day (Sonnet)",
-    seven_day_opus: "7-day (Opus)",
-    seven_day_oauth_apps: "7-day (OAuth apps)",
-};
 
 function barColor(utilization: number): string {
     if (utilization > 85) {
@@ -40,11 +35,12 @@ function formatResetsIn(resetsAt: string | null): string | null {
     return `resets in ${hours}h ${minutes}m`;
 }
 
-export function BucketBar({ bucket, utilization, resetsAt }: BucketBarProps) {
-    const label = BUCKET_LABELS[bucket] ?? bucket;
+export function BucketBar({ bucket, scopeModel, utilization, resetsAt }: BucketBarProps) {
+    const label = formatBucketLabel(bucket, scopeModel);
     const pct = Math.max(0, Math.min(100, utilization));
     const color = barColor(utilization);
     const resetsIn = formatResetsIn(resetsAt);
+    const notUsed = !resetsAt && utilization === 0;
 
     return (
         <div className="flex flex-col gap-1">
@@ -58,7 +54,11 @@ export function BucketBar({ bucket, utilization, resetsAt }: BucketBarProps) {
                     style={{ width: `${pct}%`, backgroundColor: color }}
                 />
             </div>
-            {resetsIn ? <span className="text-xs text-[var(--dd-text-muted)]">{resetsIn}</span> : null}
+            {notUsed ? (
+                <span className="text-xs text-[var(--dd-text-muted)]">Not used</span>
+            ) : resetsIn ? (
+                <span className="text-xs text-[var(--dd-text-muted)]">{resetsIn}</span>
+            ) : null}
         </div>
     );
 }

@@ -1,10 +1,15 @@
 import type { BucketSeries } from "@app/dev-dashboard/lib/claude-usage/types";
 import { formatClock } from "@app/utils/format";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { formatBucketLabel } from "./bucket-label";
 
 interface UsageChartProps {
     title: string;
     series: BucketSeries[];
+    /** Optional scope-model per bucket (from the live /usage response) used to
+     * label dynamic weekly-scoped buckets (Fable, …) with the API's proper
+     * casing instead of deriving from the lowercase bucket key. */
+    scopeModelByBucket?: Record<string, string | null>;
     rangeMinutes: number;
     /** End of the shared time window (epoch ms). Same value across all charts so their axes align. */
     rangeEndMs: number;
@@ -12,16 +17,34 @@ interface UsageChartProps {
     hint?: string;
 }
 
-const BUCKET_META: Record<string, { label: string; color: string }> = {
-    five_hour: { label: "5-hour", color: "#34d399" },
-    seven_day: { label: "7-day", color: "#60a5fa" },
-    seven_day_sonnet: { label: "7-day Sonnet", color: "#fbbf24" },
-    seven_day_opus: { label: "7-day Opus", color: "#f472b6" },
-    seven_day_oauth_apps: { label: "7-day OAuth", color: "#a78bfa" },
+const BUCKET_COLORS: Record<string, string> = {
+    five_hour: "#34d399",
+    seven_day: "#60a5fa",
+    seven_day_sonnet: "#fbbf24",
+    seven_day_opus: "#f472b6",
+    seven_day_oauth_apps: "#a78bfa",
 };
 
-function bucketMeta(bucket: string): { label: string; color: string } {
-    return BUCKET_META[bucket] ?? { label: bucket, color: "#94a3b8" };
+const FALLBACK_COLORS = ["#ef4444", "#22d3ee", "#eab308", "#f97316", "#84cc16", "#c084fc"];
+
+function hashCode(input: string): number {
+    let h = 0;
+
+    for (let i = 0; i < input.length; i++) {
+        h = (h * 31 + input.charCodeAt(i)) >>> 0;
+    }
+
+    return h;
+}
+
+function bucketColor(bucket: string): string {
+    const known = BUCKET_COLORS[bucket];
+
+    if (known) {
+        return known;
+    }
+
+    return FALLBACK_COLORS[hashCode(bucket) % FALLBACK_COLORS.length];
 }
 
 function formatTick(timestamp: number | string, rangeMinutes: number): string {
@@ -91,7 +114,15 @@ function mergeSeries(series: BucketSeries[]): Row[] {
     return rows;
 }
 
-export function UsageChart({ title, series, rangeMinutes, rangeEndMs, loading, hint }: UsageChartProps) {
+export function UsageChart({
+    title,
+    series,
+    scopeModelByBucket,
+    rangeMinutes,
+    rangeEndMs,
+    loading,
+    hint,
+}: UsageChartProps) {
     const present = series.filter((s) => s.snapshots.length > 0);
 
     if (loading) {
@@ -154,15 +185,17 @@ export function UsageChart({ title, series, rangeMinutes, rangeEndMs, loading, h
                     />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
                     {present.map((s) => {
-                        const meta = bucketMeta(s.bucket);
+                        const scopeModel = scopeModelByBucket?.[s.bucket] ?? s.snapshots[0]?.scopeModel ?? null;
+                        const label = formatBucketLabel(s.bucket, scopeModel);
+                        const color = bucketColor(s.bucket);
 
                         return (
                             <Line
                                 key={s.bucket}
                                 type="monotone"
                                 dataKey={s.bucket}
-                                name={meta.label}
-                                stroke={meta.color}
+                                name={label}
+                                stroke={color}
                                 strokeWidth={2}
                                 dot={false}
                                 connectNulls

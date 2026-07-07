@@ -1,4 +1,5 @@
 import type { AccountUsage } from "@app/claude/lib/usage/api";
+import { normalizeLimits } from "@app/claude/lib/usage/limits";
 import { formatAccountTitle } from "./account-title";
 import { BucketBar } from "./BucketBar";
 
@@ -6,11 +7,10 @@ interface AccountCardProps {
     account: AccountUsage;
 }
 
-const BUCKET_ORDER = ["five_hour", "seven_day", "seven_day_sonnet", "seven_day_opus"] as const;
-
 export function AccountCard({ account }: AccountCardProps) {
     const title = formatAccountTitle(account.accountName, account.label);
     const usage = account.usage;
+    const limits = usage ? normalizeLimits(usage) : [];
 
     return (
         <div className="dd-panel flex flex-col gap-4 p-4">
@@ -27,21 +27,15 @@ export function AccountCard({ account }: AccountCardProps) {
                 </div>
             ) : usage ? (
                 <div className="flex flex-col gap-3">
-                    {BUCKET_ORDER.map((bucket) => {
-                        const data = usage[bucket];
-                        if (!data) {
-                            return null;
-                        }
-
-                        return (
-                            <BucketBar
-                                key={bucket}
-                                bucket={bucket}
-                                utilization={data.utilization}
-                                resetsAt={data.resets_at}
-                            />
-                        );
-                    })}
+                    {limits.map((limit) => (
+                        <BucketBar
+                            key={`${limit.bucket}:${limit.scope_model ?? ""}`}
+                            bucket={limit.bucket}
+                            scopeModel={limit.scope_model}
+                            utilization={limit.percent}
+                            resetsAt={limit.resets_at}
+                        />
+                    ))}
                 </div>
             ) : (
                 <p className="text-sm text-[var(--dd-text-muted)]">No usage data.</p>
