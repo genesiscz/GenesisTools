@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { env } from "@app/utils/env";
+// Relative on purpose: config bundlers inline relative imports but externalize bare ones.
+import { env } from "../../utils/env.client";
 
 const projectRoot = env.tools.getRoot() ?? process.cwd();
 const appRoot = resolve(projectRoot, "src");

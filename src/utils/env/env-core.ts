@@ -2,8 +2,28 @@
 
 export type EnvKey = string;
 
+type EnvDict = Record<string, string | undefined>;
+
+interface ImportMetaWithEnv {
+    env?: EnvDict;
+}
+
+/**
+ * Runtime-agnostic env source: process.env under node/bun/SSR; import.meta.env
+ * in vite-bundled browser code (VITE_-prefixed vars only); empty dict otherwise.
+ * Keeping this guarded is what makes @app/utils/env.client safe in client bundles.
+ */
+function envDict(): EnvDict {
+    if (typeof process !== "undefined" && process.env) {
+        return process.env;
+    }
+
+    const meta: ImportMetaWithEnv = import.meta;
+    return meta.env ?? {};
+}
+
 export function getRaw(name: EnvKey): string | undefined {
-    return process.env[name];
+    return envDict()[name];
 }
 
 export function getTrimmed(name: EnvKey): string | undefined {
