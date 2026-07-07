@@ -1,6 +1,7 @@
 import type { DatabaseClient } from "@app/utils/database/client";
 import { SafeJSON } from "@app/utils/json";
 import type { Kysely, Selectable } from "kysely";
+import { getBoardAnnotations } from "./annotations-store";
 import type { BoardCardsTable, BoardEdgesTable, BoardStrokesTable, BoardsDb, BoardsTable } from "./db-types";
 import { NotFoundError, setRefOf } from "./sets-store";
 import { nowIso } from "./time";
@@ -286,7 +287,7 @@ export async function getBoardDoc(db: DatabaseClient<BoardsDb>, slug: string): P
         cards: cardRows.map(toCardDto),
         strokes: strokeRows.map(toStrokeDto),
         edges: edgeRows.map(toEdgeDto),
-        annotations: [], // filled by annotations-store (Task 7)
+        annotations: await getBoardAnnotations(db, board.id, board.slug),
         boardMessages: messageRows.map(toMessageDto),
         questions: questionRows.map(toQuestionDto),
     };
@@ -512,7 +513,7 @@ export async function bulkLayout(
  * backward, the append-only history still holds the higher (rejected) version row, so
  * `current_version + 1` would collide with it under the (card_id, version) UNIQUE constraint.
  */
-export async function nextCardVersionNumber(kysely: Kysely<BoardsDb>, cardId: number): Promise<number> {
+async function nextCardVersionNumber(kysely: Kysely<BoardsDb>, cardId: number): Promise<number> {
     const row = await kysely
         .selectFrom("card_versions")
         .select(({ fn }) => fn.max("version").as("maxVersion"))
