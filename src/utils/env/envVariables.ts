@@ -216,6 +216,19 @@ export const env = {
         getLogBase: () => getTrimmed("QUESTION_LOG_BASE"),
     },
 
+    boards: {
+        /** Test/tooling override for the boards SQLite path (e.g. ":memory:"). */
+        getDbPath: () => getTrimmed("BOARDS_DB_PATH"),
+        /** Base URL of the dev-dashboard server for MCP/CLI clients. */
+        getBaseUrl: () => getTrimmed("BOARDS_BASE_URL"),
+        /** Listener lease TTL override in ms. */
+        getListenerTtlMs: () => {
+            const raw = getTrimmed("BOARDS_LISTENER_TTL_MS");
+            const n = raw ? Number(raw) : Number.NaN;
+            return Number.isFinite(n) && n > 0 ? n : undefined;
+        },
+    },
+
     ask: {
         getConversationsDir: () => getTrimmed("ASK_CONVERSATIONS_DIR"),
     },
