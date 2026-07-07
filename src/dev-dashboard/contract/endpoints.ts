@@ -1,5 +1,7 @@
 import type {
     AttentionItem,
+    BoardDocDto,
+    BoardSummaryDto,
     ClassifiedLogEntry,
     CmuxLayoutTree,
     CmuxSnapshot,
@@ -11,6 +13,7 @@ import type {
     PulseSeries,
     PulseSnapshot,
     SavedCommand,
+    SetSummaryDto,
     TimelineEvent,
     TmuxHubSession,
     TmuxPresetSummary,
@@ -18,7 +21,9 @@ import type {
     TodosResult,
     TtydSession,
     VaultEntry,
+    WaitResultDto,
     WeatherSnapshot,
+    WorkItemDto,
 } from "@app/dev-dashboard/contract/dto";
 
 export const QA_STREAM_PATH = "/api/qa/stream" as const;
@@ -131,6 +136,47 @@ export const paths = {
     obsidianNote: (path: string) => `/api/obsidian/note${qs({ path })}`,
     obsidianPublish: () => "/api/obsidian/publish",
     obsidianUnpublish: () => "/api/obsidian/unpublish",
+    // boards
+    boards: (project?: string) => `/api/boards${qs({ project })}`,
+    board: (slug: string) => `/api/boards/${slug}`,
+    boardEvents: (slug: string) => `/api/boards/${slug}/events`,
+    boardCards: (slug: string) => `/api/boards/${slug}/cards`,
+    boardCard: (id: number) => `/api/boards/cards/${id}`,
+    boardCardRestore: (id: number) => `/api/boards/cards/${id}/restore`,
+    boardCardVersions: (id: number) => `/api/boards/cards/${id}/versions`,
+    boardTrash: (slug: string) => `/api/boards/${slug}/trash`,
+    boardStrokes: (slug: string) => `/api/boards/${slug}/strokes`,
+    boardStroke: (id: number) => `/api/boards/strokes/${id}`,
+    boardEdges: (slug: string) => `/api/boards/${slug}/edges`,
+    boardEdge: (id: number) => `/api/boards/edges/${id}`,
+    boardLayout: (slug: string) => `/api/boards/${slug}/layout`,
+    boardImportSet: (slug: string) => `/api/boards/${slug}/import-set`,
+    boardSyncSet: (slug: string) => `/api/boards/${slug}/sync-set`,
+    boardUpload: (slug: string, name: string, mime: string) => `/api/boards/${slug}/upload${qs({ name, mime })}`,
+    boardMessages: (slug: string) => `/api/boards/${slug}/messages`,
+    boardDispatch: (slug: string) => `/api/boards/${slug}/dispatch`,
+    annotations: () => "/api/boards/annotations",
+    annotation: (id: number) => `/api/boards/annotations/${id}`,
+    annotationCancel: (id: number) => `/api/boards/annotations/${id}/cancel`,
+    annotationReactivate: (id: number) => `/api/boards/annotations/${id}/reactivate`,
+    annotationCapsule: (id: number) => `/api/boards/annotations/${id}/capsule`,
+    annotationRevisions: (id: number) => `/api/boards/annotations/${id}/revisions`,
+    annotationMessages: (id: number) => `/api/boards/annotations/${id}/messages`,
+    annotationAttempts: (id: number) => `/api/boards/annotations/${id}/attempts`,
+    attemptVerdict: (id: number) => `/api/boards/attempts/${id}/verdict`,
+    work: (q: { status?: string; board?: string; project?: string; branch?: string } = {}) =>
+        `/api/boards/work${qs(q)}`,
+    workWait: (q: Record<string, string | undefined>) => `/api/boards/work/wait${qs(q)}`,
+    workListeners: () => "/api/boards/work/listeners",
+    workListener: (id: number) => `/api/boards/work/listeners/${id}`,
+    boardsSets: (project: string, branch?: string) =>
+        branch ? `/api/boards/sets/${project}/${branch}` : `/api/boards/sets/${project}`,
+    boardsSet: (project: string, branch: string, selector: string) =>
+        `/api/boards/sets/${project}/${branch}/${selector}`,
+    boardsSetContent: (project: string, branch: string, key: string, q: Record<string, string | undefined> = {}) =>
+        `/api/boards/sets/${project}/${branch}/${key}/content${qs(q)}`,
+    boardsBlob: (key: string) => `/api/boards/blobs/${key}`,
+    boardsOperator: () => "/api/boards/operator",
 } as const;
 
 // Response type aliases for the typed client methods.
@@ -155,3 +201,10 @@ export type PortsRes = PortsResult;
 export type CommandsRes = { commands: SavedCommand[] };
 export type TimelineRes = TimelineEvent[];
 export type RunTailRes = ClassifiedLogEntry;
+
+// boards
+export type BoardsRes = { boards: Array<BoardSummaryDto & { cardCount: number; openWork: number }> };
+export type BoardDocRes = BoardDocDto;
+export type BoardsSetsRes = { sets: SetSummaryDto[] };
+export type WorkListRes = { work: WorkItemDto[] };
+export type WorkWaitRes = WaitResultDto;
