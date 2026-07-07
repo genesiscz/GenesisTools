@@ -19,6 +19,7 @@ import { ActivityChartSkeleton } from "@/components/stats/ChartSkeleton";
 import { ConversationLengthHistogram } from "@/components/stats/ConversationLengthHistogram";
 import { CumulativeChart } from "@/components/stats/CumulativeChart";
 import { HourlyHeatmap } from "@/components/stats/HourlyHeatmap";
+import { HoverTip } from "@/components/stats/HoverTip";
 import { ModelUsageChart } from "@/components/stats/ModelUsageChart";
 import { ProjectListSkeleton, ToolBadgesSkeleton } from "@/components/stats/ProjectListSkeleton";
 import { TokenUsageCard } from "@/components/stats/TokenUsageCard";
@@ -427,14 +428,15 @@ function ActivityChart({ stats }: { stats: FullStats }) {
 				<div className="flex items-end gap-1 h-32">
 					{recentDays.map(([date, count]) => (
 						<div key={date} className="flex-1 flex flex-col items-center justify-end h-full gap-1">
-							<div
-								className="w-full bg-primary rounded-t opacity-80 hover:opacity-100 transition-opacity"
-								style={{
-									height: `${(count / maxDailyMessages) * 100}%`,
-									minHeight: count > 0 ? "4px" : "0",
-								}}
-								title={`${date}: ${count} messages`}
-							/>
+							<HoverTip tip={`${date}: ${count} messages`}>
+								<div
+									className="w-full bg-primary rounded-t opacity-80 hover:opacity-100 transition-opacity"
+									style={{
+										height: `${(count / maxDailyMessages) * 100}%`,
+										minHeight: count > 0 ? "4px" : "0",
+									}}
+								/>
+							</HoverTip>
 							<span className="text-[8px] text-muted-foreground rotate-45 origin-left translate-y-2">
 								{new Date(date).getUTCDate()}
 							</span>

@@ -6,6 +6,7 @@ import { Input } from "@ui/components/input";
 import { Progress } from "@ui/components/progress";
 import { ScrollArea } from "@ui/components/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@ui/components/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import { cn } from "@ui/lib/utils";
 import {
     Activity,
@@ -294,12 +295,16 @@ export function OverviewTab({ data }: AnalysisSectionProps) {
                                                 {providerHealth === "healthy" ? "ok" : providerHealth}
                                             </div>
                                             {provider.error ? (
-                                                <div
-                                                    title={provider.error}
-                                                    className="mt-1 max-w-[220px] break-words text-[11px] font-mono leading-4 text-red-300"
-                                                >
-                                                    {summarizeProviderMessage(provider.error)}
-                                                </div>
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <div className="mt-1 max-w-[220px] break-words text-[11px] font-mono leading-4 text-red-300">
+                                                            {summarizeProviderMessage(provider.error)}
+                                                        </div>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent className="max-w-lg break-all">
+                                                        {provider.error}
+                                                    </TooltipContent>
+                                                </Tooltip>
                                             ) : provider.count === 0 ? (
                                                 <div className="mt-1 max-w-[220px] text-[11px] font-mono leading-4 text-primary">
                                                     Returned 0 rows for the current filters.

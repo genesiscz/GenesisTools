@@ -1,4 +1,5 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import { useMemo } from "react";
 import { diffVars, findPreviousSnapshot, type SnapshotDelta } from "@/lib/diff";
 import { useEntries } from "@/lib/entries-context";
@@ -61,12 +62,16 @@ export function ExpandedView({ entry }: Props): React.ReactElement {
                     </span>
                 ) : null}
                 {entry.file ? (
-                    <span
-                        className="text-white/50 normal-case truncate-mono max-w-[24rem]"
-                        title={entry.line != null ? `${entry.file}:${entry.line}` : entry.file}
-                    >
-                        {entry.line != null ? `${entry.file}:${entry.line}` : entry.file}
-                    </span>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <span className="text-white/50 normal-case truncate-mono max-w-[24rem]">
+                                {entry.line != null ? `${entry.file}:${entry.line}` : entry.file}
+                            </span>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-lg break-all">
+                            {entry.line != null ? `${entry.file}:${entry.line}` : entry.file}
+                        </TooltipContent>
+                    </Tooltip>
                 ) : null}
                 {entry.durationMs !== undefined ? (
                     <span className="text-purple-300">{entry.durationMs.toFixed(2)}ms</span>

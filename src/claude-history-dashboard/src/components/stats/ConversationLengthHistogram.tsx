@@ -1,4 +1,5 @@
 import { BarChart3 } from "lucide-react";
+import { HoverTip } from "@/components/stats/HoverTip";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface ConversationLengthHistogramProps {
@@ -83,23 +84,24 @@ export function ConversationLengthHistogram({ conversationLengths }: Conversatio
 						return (
 							<div key={bucket.label} className="flex-1 flex flex-col items-center justify-end h-full group">
 								{/* Bar */}
-								<div
-									className={`w-full rounded-t transition-all duration-300 cursor-pointer hover:brightness-110 ${
-										index === 0
-											? "bg-purple-400"
-											: index === 1
-												? "bg-purple-500"
-												: index === 2
-													? "bg-purple-600"
-													: index === 3
-														? "bg-purple-700"
-														: index === 4
-															? "bg-purple-800"
-															: "bg-purple-900"
-									}`}
-									style={{ height: `${Math.max(height, bucket.count > 0 ? 4 : 0)}%` }}
-									title={`${bucket.label}: ${bucket.count} (${percentage.toFixed(1)}%)`}
-								/>
+								<HoverTip tip={`${bucket.label}: ${bucket.count} (${percentage.toFixed(1)}%)`}>
+									<div
+										className={`w-full rounded-t transition-all duration-300 cursor-pointer hover:brightness-110 ${
+											index === 0
+												? "bg-purple-400"
+												: index === 1
+													? "bg-purple-500"
+													: index === 2
+														? "bg-purple-600"
+														: index === 3
+															? "bg-purple-700"
+															: index === 4
+																? "bg-purple-800"
+																: "bg-purple-900"
+										}`}
+										style={{ height: `${Math.max(height, bucket.count > 0 ? 4 : 0)}%` }}
+									/>
+								</HoverTip>
 							</div>
 						);
 					})}

@@ -1,4 +1,5 @@
 import type { TimerType } from "@dashboard/shared";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import { Coffee, Hourglass, Timer } from "lucide-react";
 import { memo, useCallback } from "react";
 import { cn } from "@/lib/utils";
@@ -35,35 +36,39 @@ export const TimerTypeSelector = memo(function TimerTypeSelector({
     }, [currentIndex, onChange]);
 
     return (
-        <button
-            onClick={cycleType}
-            disabled={disabled}
-            title={`Switch to ${TIMER_TYPES[(currentIndex + 1) % TIMER_TYPES.length].label}`}
-            className={cn(
-                "group flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg",
-                "text-xs font-medium transition-all duration-200",
-                "border",
-                disabled && "opacity-50 cursor-not-allowed",
-                current.color === "cyan" && [
-                    "bg-cyan-500/15 text-cyan-400",
-                    "border-cyan-500/30",
-                    "hover:bg-cyan-500/25 hover:border-cyan-500/50",
-                ],
-                current.color === "amber" && [
-                    "bg-amber-500/15 text-amber-400",
-                    "border-amber-500/30",
-                    "hover:bg-amber-500/25 hover:border-amber-500/50",
-                ],
-                current.color === "emerald" && [
-                    "bg-emerald-500/15 text-emerald-400",
-                    "border-emerald-500/30",
-                    "hover:bg-emerald-500/25 hover:border-emerald-500/50",
-                ],
-                className
-            )}
-        >
-            <Icon className="h-3.5 w-3.5" />
-            <span>{current.label}</span>
-        </button>
+        <Tooltip>
+            <TooltipTrigger asChild>
+                <button
+                    onClick={cycleType}
+                    disabled={disabled}
+                    className={cn(
+                        "group flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg",
+                        "text-xs font-medium transition-all duration-200",
+                        "border",
+                        disabled && "opacity-50 cursor-not-allowed",
+                        current.color === "cyan" && [
+                            "bg-cyan-500/15 text-cyan-400",
+                            "border-cyan-500/30",
+                            "hover:bg-cyan-500/25 hover:border-cyan-500/50",
+                        ],
+                        current.color === "amber" && [
+                            "bg-amber-500/15 text-amber-400",
+                            "border-amber-500/30",
+                            "hover:bg-amber-500/25 hover:border-amber-500/50",
+                        ],
+                        current.color === "emerald" && [
+                            "bg-emerald-500/15 text-emerald-400",
+                            "border-emerald-500/30",
+                            "hover:bg-emerald-500/25 hover:border-emerald-500/50",
+                        ],
+                        className
+                    )}
+                >
+                    <Icon className="h-3.5 w-3.5" />
+                    <span>{current.label}</span>
+                </button>
+            </TooltipTrigger>
+            <TooltipContent>{`Switch to ${TIMER_TYPES[(currentIndex + 1) % TIMER_TYPES.length].label}`}</TooltipContent>
+        </Tooltip>
     );
 });

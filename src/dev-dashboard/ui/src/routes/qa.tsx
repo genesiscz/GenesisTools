@@ -7,6 +7,7 @@ import { useScrollProgress } from "@app/utils/ui/hooks/useScrollProgress.client"
 import { hasNonEmptySelection } from "@app/utils/ui/hooks/useSelectionAware.client";
 import { useQuery } from "@tanstack/react-query";
 import { BlinkingBox } from "@ui/components/BlinkingBox";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import { type KeyboardEvent, type MouseEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { QaClockProvider } from "@/components/QaClockProvider";
 import { QaCopyButtons } from "@/components/QaCopyButtons";
@@ -87,44 +88,66 @@ function QaContextStrip({ entry }: { entry: QaRow }) {
     return (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-[var(--dd-border)] pt-2 text-[10px] font-mono text-[var(--dd-text-muted)]">
             {commitLabel ? (
-                <span title={entry.commitMessage ?? entry.commitSha ?? undefined}>
-                    {commitRef ? (
-                        <a
-                            href={`https://github.com/search?q=${encodeURIComponent(commitRef.value)}&type=commits`}
-                            className="dd-accent-text hover:opacity-80"
-                            onClick={(ev) => ev.stopPropagation()}
-                        >
-                            {commitLabel}
-                        </a>
-                    ) : (
-                        <span className="text-[var(--dd-text-secondary)]">{commitLabel}</span>
-                    )}
-                </span>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <span>
+                            {commitRef ? (
+                                <a
+                                    href={`https://github.com/search?q=${encodeURIComponent(commitRef.value)}&type=commits`}
+                                    className="dd-accent-text hover:opacity-80"
+                                    onClick={(ev) => ev.stopPropagation()}
+                                >
+                                    {commitLabel}
+                                </a>
+                            ) : (
+                                <span className="text-[var(--dd-text-secondary)]">{commitLabel}</span>
+                            )}
+                        </span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-md break-all">
+                        {entry.commitMessage ?? entry.commitSha}
+                    </TooltipContent>
+                </Tooltip>
             ) : null}
             {entry.isWorktree ? (
-                <span
-                    className="rounded border border-[var(--dd-border)] px-1.5 py-px text-[var(--dd-text-secondary)]"
-                    title={entry.worktreePath ?? entry.cwd}
-                >
-                    worktree
-                    {entry.worktreePath ? `: ${truncateMiddle(entry.worktreePath, 36)}` : ""}
-                </span>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <span className="rounded border border-[var(--dd-border)] px-1.5 py-px text-[var(--dd-text-secondary)]">
+                            worktree
+                            {entry.worktreePath ? `: ${truncateMiddle(entry.worktreePath, 36)}` : ""}
+                        </span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-lg break-all">{entry.worktreePath ?? entry.cwd}</TooltipContent>
+                </Tooltip>
             ) : null}
             {entry.cwd ? (
-                <span className="max-w-full truncate" title={entry.cwd}>
-                    cwd {truncateMiddle(entry.cwd, 42)}
-                </span>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <span className="max-w-full truncate">cwd {truncateMiddle(entry.cwd, 42)}</span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-lg break-all">{entry.cwd}</TooltipContent>
+                </Tooltip>
             ) : null}
             {entry.agent !== "unknown" || entry.sessionId !== "unknown" ? (
-                <span title={entry.sessionId}>
-                    {entry.agent !== "unknown" ? entry.agent : "session"}{" "}
-                    <span className="text-[var(--dd-text-secondary)]">{shortSessionId(entry.sessionId)}</span>
-                </span>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <span>
+                            {entry.agent !== "unknown" ? entry.agent : "session"}{" "}
+                            <span className="text-[var(--dd-text-secondary)]">{shortSessionId(entry.sessionId)}</span>
+                        </span>
+                    </TooltipTrigger>
+                    <TooltipContent>{entry.sessionId}</TooltipContent>
+                </Tooltip>
             ) : null}
             {entry.sessionTitle ? (
-                <span className="text-[var(--dd-text-secondary)]" title={entry.sessionTitle}>
-                    {truncateMiddle(entry.sessionTitle, 40)}
-                </span>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <span className="text-[var(--dd-text-secondary)]">
+                            {truncateMiddle(entry.sessionTitle, 40)}
+                        </span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-md break-all">{entry.sessionTitle}</TooltipContent>
+                </Tooltip>
             ) : null}
         </div>
     );

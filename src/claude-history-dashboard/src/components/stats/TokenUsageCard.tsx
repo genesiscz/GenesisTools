@@ -1,4 +1,5 @@
 import { ArrowDown, ArrowUp, Coins, Database, Zap } from "lucide-react";
+import { HoverTip } from "@/components/stats/HoverTip";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface TokenUsage {
@@ -70,26 +71,18 @@ export function TokenUsageCard({ tokenUsage }: TokenUsageCardProps) {
 
 				{/* Breakdown Bar */}
 				<div className="flex h-3 rounded-full overflow-hidden mb-4 bg-muted/30">
-					<div
-						className="bg-cyan-500 transition-all"
-						style={{ width: `${inputPercent}%` }}
-						title={`Input: ${formatTokens(tokenUsage.inputTokens)}`}
-					/>
-					<div
-						className="bg-amber-500 transition-all"
-						style={{ width: `${outputPercent}%` }}
-						title={`Output: ${formatTokens(tokenUsage.outputTokens)}`}
-					/>
-					<div
-						className="bg-purple-500 transition-all"
-						style={{ width: `${cacheCreatePercent}%` }}
-						title={`Cache Create: ${formatTokens(tokenUsage.cacheCreateTokens)}`}
-					/>
-					<div
-						className="bg-green-500 transition-all"
-						style={{ width: `${cacheReadPercent}%` }}
-						title={`Cache Read: ${formatTokens(tokenUsage.cacheReadTokens)}`}
-					/>
+					<HoverTip tip={`Input: ${formatTokens(tokenUsage.inputTokens)}`}>
+						<div className="bg-cyan-500 transition-all" style={{ width: `${inputPercent}%` }} />
+					</HoverTip>
+					<HoverTip tip={`Output: ${formatTokens(tokenUsage.outputTokens)}`}>
+						<div className="bg-amber-500 transition-all" style={{ width: `${outputPercent}%` }} />
+					</HoverTip>
+					<HoverTip tip={`Cache Create: ${formatTokens(tokenUsage.cacheCreateTokens)}`}>
+						<div className="bg-purple-500 transition-all" style={{ width: `${cacheCreatePercent}%` }} />
+					</HoverTip>
+					<HoverTip tip={`Cache Read: ${formatTokens(tokenUsage.cacheReadTokens)}`}>
+						<div className="bg-green-500 transition-all" style={{ width: `${cacheReadPercent}%` }} />
+					</HoverTip>
 				</div>
 
 				{/* Legend */}

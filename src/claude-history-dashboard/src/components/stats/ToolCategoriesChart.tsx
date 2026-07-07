@@ -1,4 +1,5 @@
 import { Layers } from "lucide-react";
+import { HoverTip } from "@/components/stats/HoverTip";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface ToolCategoriesChartProps {
@@ -92,12 +93,12 @@ export function ToolCategoriesChart({ toolCounts }: ToolCategoriesChartProps) {
 						const percentage = (count / total) * 100;
 						const { color } = TOOL_CATEGORIES[category] || { color: "bg-gray-500" };
 						return (
-							<div
-								key={category}
-								className={`${color} transition-all hover:brightness-110 cursor-pointer`}
-								style={{ width: `${percentage}%` }}
-								title={`${category}: ${count.toLocaleString()} (${percentage.toFixed(1)}%)`}
-							/>
+							<HoverTip key={category} tip={`${category}: ${count.toLocaleString()} (${percentage.toFixed(1)}%)`}>
+								<div
+									className={`${color} transition-all hover:brightness-110 cursor-pointer`}
+									style={{ width: `${percentage}%` }}
+								/>
+							</HoverTip>
 						);
 					})}
 				</div>

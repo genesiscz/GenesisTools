@@ -1,3 +1,4 @@
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import type { CSSProperties, ReactElement } from "react";
 
 interface Props {
@@ -20,15 +21,19 @@ export function AutoscrollToggle({ paused, onToggle, className = "" }: Props): R
           };
 
     return (
-        <button
-            type="button"
-            onClick={onToggle}
-            className={`dbg-ui-btn inline-flex items-center gap-1.5 uppercase tracking-wider px-2.5 py-1 border rounded-md transition-colors ${className}`}
-            style={style}
-            title={paused ? "click to resume autoscroll" : "click to pause autoscroll"}
-        >
-            <span className={paused ? "status-dot status-down" : "status-dot status-live"} />
-            {paused ? "paused" : "autoscroll"}
-        </button>
+        <Tooltip>
+            <TooltipTrigger asChild>
+                <button
+                    type="button"
+                    onClick={onToggle}
+                    className={`dbg-ui-btn inline-flex items-center gap-1.5 uppercase tracking-wider px-2.5 py-1 border rounded-md transition-colors ${className}`}
+                    style={style}
+                >
+                    <span className={paused ? "status-dot status-down" : "status-dot status-live"} />
+                    {paused ? "paused" : "autoscroll"}
+                </button>
+            </TooltipTrigger>
+            <TooltipContent>{paused ? "click to resume autoscroll" : "click to pause autoscroll"}</TooltipContent>
+        </Tooltip>
     );
 }

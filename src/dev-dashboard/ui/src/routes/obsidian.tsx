@@ -7,6 +7,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { IconButton } from "@ui/components/icon-button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import { cn } from "@ui/lib/utils";
 import { ChevronDown, ChevronUp, FolderTree, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -140,12 +141,20 @@ export function ObsidianRoute() {
                             <span>Vault</span>
                             {browserOpen ? <ChevronUp size={14} aria-hidden /> : <ChevronDown size={14} aria-hidden />}
                         </button>
-                        <span
-                            className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--dd-text-muted)]"
-                            title={note ?? undefined}
-                        >
-                            {noteLabel ?? "No note selected"}
-                        </span>
+                        {note ? (
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--dd-text-muted)]">
+                                        {noteLabel}
+                                    </span>
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-lg break-all">{note}</TooltipContent>
+                            </Tooltip>
+                        ) : (
+                            <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--dd-text-muted)]">
+                                No note selected
+                            </span>
+                        )}
                     </header>
 
                     {browserOpen ? (

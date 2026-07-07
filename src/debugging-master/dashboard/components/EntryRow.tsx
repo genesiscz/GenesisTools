@@ -1,6 +1,7 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
 import { BlinkingBox } from "@ui/components/BlinkingBox";
 import { HighlightText } from "@ui/components/highlight-text";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import { memo } from "react";
 import { entryHasExpandableContent } from "@/lib/entry-expandable";
 import { formatDurationMs, formatTime } from "@/lib/format";
@@ -9,6 +10,7 @@ import { visibleLogText } from "@/lib/log-line-display";
 import { formatLogLineIndex } from "@/lib/log-line-index";
 import { ExpandedView } from "./ExpandedView";
 import { InlineJsonPreview } from "./InlineJsonPreview";
+import { LevelTooltip } from "./LevelTooltip";
 import { LogLineIndexButton } from "./LogLineIndexButton";
 import { useLogLineJump } from "./LogLineJumpProvider";
 import { LogLineText } from "./LogLineText";
@@ -106,27 +108,32 @@ function EntryRowImpl({
                 </span>
                 <div className="dbg-log-line__body flex items-baseline gap-2 min-w-0 flex-wrap">
                     {showLevelChip ? (
-                        <span
-                            className="lvl-chip shrink-0"
-                            data-lvl={entry.level}
-                            data-failed={failed ? "true" : undefined}
-                            title={LEVEL_META[entry.level].description}
-                        >
-                            {LEVEL_META[entry.level].label}
-                        </span>
+                        <LevelTooltip level={entry.level}>
+                            <span
+                                className="lvl-chip shrink-0"
+                                data-lvl={entry.level}
+                                data-failed={failed ? "true" : undefined}
+                            >
+                                {LEVEL_META[entry.level].label}
+                            </span>
+                        </LevelTooltip>
                     ) : null}
                     {entry.h ? (
-                        <button
-                            type="button"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                onFilterHypothesis?.(entry.h!);
-                            }}
-                            className="h-chip"
-                            title={`filter by hypothesis: ${entry.h}`}
-                        >
-                            h:{entry.h}
-                        </button>
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <button
+                                    type="button"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onFilterHypothesis?.(entry.h!);
+                                    }}
+                                    className="h-chip"
+                                >
+                                    h:{entry.h}
+                                </button>
+                            </TooltipTrigger>
+                            <TooltipContent>{`filter by hypothesis: ${entry.h}`}</TooltipContent>
+                        </Tooltip>
                     ) : null}
                     <span className={`flex-1 min-w-0 dbg-log-wrap ${entry.msgAnsi && !highlighting ? "" : ""}`}>
                         {highlighting && previewText ? (

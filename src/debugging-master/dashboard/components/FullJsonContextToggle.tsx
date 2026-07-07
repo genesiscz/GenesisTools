@@ -1,3 +1,4 @@
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import type { CSSProperties, ReactElement } from "react";
 
 interface Props {
@@ -20,18 +21,22 @@ export function FullJsonContextToggle({ enabled, onToggle, className = "" }: Pro
           };
 
     return (
-        <button
-            type="button"
-            onClick={onToggle}
-            className={`dbg-ui-btn inline-flex items-center gap-1.5 uppercase tracking-wider px-2.5 py-1 border rounded-md transition-colors ${className}`}
-            style={style}
-            title={
-                enabled
+        <Tooltip>
+            <TooltipTrigger asChild>
+                <button
+                    type="button"
+                    onClick={onToggle}
+                    className={`dbg-ui-btn inline-flex items-center gap-1.5 uppercase tracking-wider px-2.5 py-1 border rounded-md transition-colors ${className}`}
+                    style={style}
+                >
+                    {enabled ? "full json" : "slice json"}
+                </button>
+            </TooltipTrigger>
+            <TooltipContent>
+                {enabled
                     ? "Showing full JSON context lines (click for truncated preview)"
-                    : "Showing truncated JSON context (click for full copy-pasteable JSON)"
-            }
-        >
-            {enabled ? "full json" : "slice json"}
-        </button>
+                    : "Showing truncated JSON context (click for full copy-pasteable JSON)"}
+            </TooltipContent>
+        </Tooltip>
     );
 }

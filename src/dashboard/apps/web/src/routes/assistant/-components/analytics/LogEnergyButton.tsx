@@ -8,6 +8,7 @@ import {
     DialogTitle,
 } from "@ui/components/dialog";
 import { Textarea } from "@ui/components/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import { Brain, FileText, MessageSquare, Plus, Users, Zap } from "lucide-react";
 import { useState } from "react";
 import type { EnergySnapshotInput, FocusQuality, WorkType } from "@/lib/assistant/types";
@@ -318,20 +319,23 @@ export function LogEnergyFAB({ onLogEnergy, loading = false, className }: LogEne
                             {WORK_TYPE_OPTIONS.map((option) => {
                                 const Icon = option.icon;
                                 return (
-                                    <button
-                                        key={option.value}
-                                        type="button"
-                                        onClick={() => setTypeOfWork(option.value)}
-                                        className={cn(
-                                            "p-2 rounded-lg border transition-all",
-                                            typeOfWork === option.value
-                                                ? "border-cyan-500/50 bg-cyan-500/10"
-                                                : "border-slate-700/30 opacity-50"
-                                        )}
-                                        title={option.label}
-                                    >
-                                        <Icon className={cn("h-5 w-5", option.color)} />
-                                    </button>
+                                    <Tooltip key={option.value}>
+                                        <TooltipTrigger asChild>
+                                            <button
+                                                type="button"
+                                                onClick={() => setTypeOfWork(option.value)}
+                                                className={cn(
+                                                    "p-2 rounded-lg border transition-all",
+                                                    typeOfWork === option.value
+                                                        ? "border-cyan-500/50 bg-cyan-500/10"
+                                                        : "border-slate-700/30 opacity-50"
+                                                )}
+                                            >
+                                                <Icon className={cn("h-5 w-5", option.color)} />
+                                            </button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>{option.label}</TooltipContent>
+                                    </Tooltip>
                                 );
                             })}
                         </div>

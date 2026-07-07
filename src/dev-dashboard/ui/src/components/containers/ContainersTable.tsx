@@ -1,4 +1,5 @@
 import type { ContainerInfo, ContainersResult } from "@app/dev-dashboard/lib/containers/types";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 
 interface ContainersTableProps {
     result: ContainersResult;
@@ -53,13 +54,17 @@ export function ContainersTable({ result }: ContainersTableProps) {
                         {containers.map((c) => (
                             <tr key={c.id} className="border-t border-[var(--dd-border)] text-[var(--dd-text-primary)]">
                                 <td className="px-2 py-2">
-                                    <span
-                                        className="inline-block h-2.5 w-2.5 rounded-full"
-                                        style={{ backgroundColor: stateColor(c.state) }}
-                                        role="img"
-                                        aria-label={`State: ${c.state}`}
-                                        title={c.state}
-                                    />
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <span
+                                                className="inline-block h-2.5 w-2.5 rounded-full"
+                                                style={{ backgroundColor: stateColor(c.state) }}
+                                                role="img"
+                                                aria-label={`State: ${c.state}`}
+                                            />
+                                        </TooltipTrigger>
+                                        <TooltipContent>{c.state}</TooltipContent>
+                                    </Tooltip>
                                 </td>
                                 <td className="px-2 py-2">{c.name}</td>
                                 <td className="px-2 py-2 text-[var(--dd-text-secondary)]">{c.image}</td>

@@ -1,4 +1,5 @@
 import type { AttentionItem } from "@app/dev-dashboard/contract/dto";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 
 interface AttentionRowProps {
     item: AttentionItem;
@@ -67,12 +68,18 @@ export function AttentionRow({ item, onOpenTerminal, onResolve, resolving }: Att
                     </span>
                     <span className="text-xs text-[var(--dd-text-muted)]">{relativeTime(item.ts)}</span>
                 </div>
-                <p className="truncate text-sm font-semibold text-[var(--dd-text-primary)]" title={item.title}>
-                    {item.title}
-                </p>
-                <p className="truncate font-mono text-xs text-[var(--dd-text-secondary)]" title={item.subtitle}>
-                    {item.subtitle}
-                </p>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <p className="truncate text-sm font-semibold text-[var(--dd-text-primary)]">{item.title}</p>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-md break-all">{item.title}</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <p className="truncate font-mono text-xs text-[var(--dd-text-secondary)]">{item.subtitle}</p>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-md break-all">{item.subtitle}</TooltipContent>
+                </Tooltip>
             </div>
 
             <button

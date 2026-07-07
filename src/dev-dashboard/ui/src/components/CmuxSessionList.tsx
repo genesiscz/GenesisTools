@@ -2,7 +2,7 @@ import type { CmuxSnapshot } from "@app/dev-dashboard/lib/cmux/types";
 import { formatClock } from "@app/utils/format";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@ui/components/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import { CircleDashed, Layers, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
@@ -367,154 +367,151 @@ export function CmuxSessionList({ snapshot }: Props) {
     }
 
     return (
-        <TooltipProvider>
-            <div className="flex h-full min-w-0 flex-col gap-2 overflow-hidden font-mono">
-                <div className="dd-panel flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 px-3 py-2 text-[11px] text-[var(--dd-text-muted)]">
-                    <span className="flex min-w-0 flex-wrap items-center gap-2">
+        <div className="flex h-full min-w-0 flex-col gap-2 overflow-hidden font-mono">
+            <div className="dd-panel flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 px-3 py-2 text-[11px] text-[var(--dd-text-muted)]">
+                <span className="flex min-w-0 flex-wrap items-center gap-2">
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={createSession.isPending}
+                        onClick={() => createSession.mutate()}
+                        aria-label="New tmux session in cmux"
+                    >
+                        <Plus size={12} />
+                        <span className="hidden sm:inline">New</span>
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setHubOpen(true)} aria-label="Tmux sessions">
+                        <Layers size={12} />
+                        <span className="hidden sm:inline">Tmux</span>
+                    </Button>
+                    <span className="truncate">snapshot · {formatClock(snapshot.fetchedAt, { seconds: true })}</span>
+                </span>
+                <span className="flex min-w-0 shrink-0 items-center gap-3">
+                    <span className="hidden lg:inline">
+                        drag panes to reorder · drag dividers to resize · live snapshot
+                    </span>
+                    {!isMobile ? (
                         <Button
                             size="sm"
                             variant="outline"
-                            disabled={createSession.isPending}
-                            onClick={() => createSession.mutate()}
-                            aria-label="New tmux session in cmux"
+                            onClick={() => setMode("focused")}
+                            aria-label="toggle layout"
                         >
-                            <Plus size={12} />
-                            <span className="hidden sm:inline">New</span>
+                            Focused
                         </Button>
-                        <Button size="sm" variant="outline" onClick={() => setHubOpen(true)} aria-label="Tmux sessions">
-                            <Layers size={12} />
-                            <span className="hidden sm:inline">Tmux</span>
-                        </Button>
-                        <span className="truncate">
-                            snapshot · {formatClock(snapshot.fetchedAt, { seconds: true })}
-                        </span>
-                    </span>
-                    <span className="flex min-w-0 shrink-0 items-center gap-3">
-                        <span className="hidden lg:inline">
-                            drag panes to reorder · drag dividers to resize · live snapshot
-                        </span>
-                        {!isMobile ? (
-                            <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setMode("focused")}
-                                aria-label="toggle layout"
-                            >
-                                Focused
-                            </Button>
-                        ) : null}
-                    </span>
-                </div>
-                <div className="min-h-0 flex-1">
-                    {layout ? (
-                        <Mosaic<string>
-                            value={layout}
-                            onChange={(next) => setLayout(next)}
-                            renderTile={(id, path) => {
-                                const pane = paneById.get(id);
+                    ) : null}
+                </span>
+            </div>
+            <div className="min-h-0 flex-1">
+                {layout ? (
+                    <Mosaic<string>
+                        value={layout}
+                        onChange={(next) => setLayout(next)}
+                        renderTile={(id, path) => {
+                            const pane = paneById.get(id);
 
-                                if (!pane) {
-                                    return <GoneCmuxPane id={id} onExpire={removeGonePane} />;
-                                }
+                            if (!pane) {
+                                return <GoneCmuxPane id={id} onExpire={removeGonePane} />;
+                            }
 
-                                const workspace = workspaceById.get(pane.workspaceId);
-                                const surfaces = pane.surfaces ?? [];
-                                const nativeSurface = surfaces.find((surface) => surface.selected) ?? surfaces[0];
-                                const selectedSurface =
-                                    surfaces.find((surface) => surface.id === surfaceSelectionByPaneId[pane.id]) ??
-                                    nativeSurface;
+                            const workspace = workspaceById.get(pane.workspaceId);
+                            const surfaces = pane.surfaces ?? [];
+                            const nativeSurface = surfaces.find((surface) => surface.selected) ?? surfaces[0];
+                            const selectedSurface =
+                                surfaces.find((surface) => surface.id === surfaceSelectionByPaneId[pane.id]) ??
+                                nativeSurface;
 
-                                return (
-                                    <MosaicWindow<string>
-                                        path={path}
-                                        title={`${workspace?.name ?? "cmux"} · ${pane.title}`}
-                                        additionalControls={null}
-                                        toolbarControls={
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    <Button
-                                                        className="h-6 px-2 text-[10px]"
-                                                        variant="ghost"
-                                                        disabled={attach.isPending}
-                                                        onClick={() =>
-                                                            attach.mutate({
-                                                                workspaceId: pane.workspaceId,
-                                                                paneId: pane.id,
-                                                            })
-                                                        }
-                                                        aria-label={`focus ${pane.title} in cmux`}
-                                                    >
-                                                        <CircleDashed size={11} /> attach
-                                                    </Button>
-                                                </TooltipTrigger>
-                                                <TooltipContent>Focus this pane in the native cmux app.</TooltipContent>
-                                            </Tooltip>
-                                        }
-                                    >
-                                        <div className="dd-cmux-tile flex h-full min-w-0 flex-col overflow-hidden p-2">
-                                            <div className="dd-cmux-meta mb-2 flex min-w-0 items-center gap-2 overflow-hidden">
-                                                <span
-                                                    className="inline-block h-[7px] w-[7px] shrink-0 rounded-full"
-                                                    style={
-                                                        pane.active
-                                                            ? {
-                                                                  background: "var(--dd-accent-from)",
-                                                                  boxShadow: "0 0 8px var(--dd-accent-from)",
-                                                              }
-                                                            : { background: "#2a3439" }
+                            return (
+                                <MosaicWindow<string>
+                                    path={path}
+                                    title={`${workspace?.name ?? "cmux"} · ${pane.title}`}
+                                    additionalControls={null}
+                                    toolbarControls={
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <Button
+                                                    className="h-6 px-2 text-[10px]"
+                                                    variant="ghost"
+                                                    disabled={attach.isPending}
+                                                    onClick={() =>
+                                                        attach.mutate({
+                                                            workspaceId: pane.workspaceId,
+                                                            paneId: pane.id,
+                                                        })
                                                     }
-                                                />
-                                                <span className="truncate text-[var(--dd-text-secondary)]">
-                                                    {pane.cwd ?? pane.title}
-                                                </span>
-                                                <span className="ml-auto shrink-0 text-[var(--dd-text-muted)]">
-                                                    {pane.surfaceCount ?? surfaces.length} tabs
-                                                </span>
-                                            </div>
-                                            <div className="dd-cmux-tabs mb-2">
-                                                {surfaces.map((surface) => (
-                                                    <button
-                                                        key={surface.id}
-                                                        type="button"
-                                                        className={[
-                                                            "dd-cmux-tab",
-                                                            surface.selected ? "is-selected" : "",
-                                                            surface.id === selectedSurface?.id ? "is-viewed" : "",
-                                                        ]
-                                                            .filter(Boolean)
-                                                            .join(" ")}
-                                                        onClick={() =>
-                                                            setSurfaceSelectionByPaneId((current) => ({
-                                                                ...current,
-                                                                [pane.id]: surface.id,
-                                                            }))
-                                                        }
-                                                        title={surface.title}
-                                                        aria-pressed={surface.id === selectedSurface?.id}
-                                                    >
-                                                        <span className="truncate">{surface.title}</span>
-                                                    </button>
-                                                ))}
-                                            </div>
-                                            <SemanticTerminalPreview
-                                                preview={
-                                                    selectedSurface?.preview || pane.preview || "(no snapshot text)"
+                                                    aria-label={`focus ${pane.title} in cmux`}
+                                                >
+                                                    <CircleDashed size={11} /> attach
+                                                </Button>
+                                            </TooltipTrigger>
+                                            <TooltipContent>Focus this pane in the native cmux app.</TooltipContent>
+                                        </Tooltip>
+                                    }
+                                >
+                                    <div className="dd-cmux-tile flex h-full min-w-0 flex-col overflow-hidden p-2">
+                                        <div className="dd-cmux-meta mb-2 flex min-w-0 items-center gap-2 overflow-hidden">
+                                            <span
+                                                className="inline-block h-[7px] w-[7px] shrink-0 rounded-full"
+                                                style={
+                                                    pane.active
+                                                        ? {
+                                                              background: "var(--dd-accent-from)",
+                                                              boxShadow: "0 0 8px var(--dd-accent-from)",
+                                                          }
+                                                        : { background: "#2a3439" }
                                                 }
                                             />
+                                            <span className="truncate text-[var(--dd-text-secondary)]">
+                                                {pane.cwd ?? pane.title}
+                                            </span>
+                                            <span className="ml-auto shrink-0 text-[var(--dd-text-muted)]">
+                                                {pane.surfaceCount ?? surfaces.length} tabs
+                                            </span>
                                         </div>
-                                    </MosaicWindow>
-                                );
-                            }}
-                            className="dd-mosaic min-w-0"
-                        />
-                    ) : (
-                        <div className="dd-panel flex h-full items-center justify-center text-[var(--dd-text-muted)]">
-                            No cmux panes in the current snapshot.
-                        </div>
-                    )}
-                </div>
-                {cmuxOverlays}
+                                        <div className="dd-cmux-tabs mb-2">
+                                            {surfaces.map((surface) => (
+                                                <Tooltip key={surface.id}>
+                                                    <TooltipTrigger asChild>
+                                                        <button
+                                                            type="button"
+                                                            className={[
+                                                                "dd-cmux-tab",
+                                                                surface.selected ? "is-selected" : "",
+                                                                surface.id === selectedSurface?.id ? "is-viewed" : "",
+                                                            ]
+                                                                .filter(Boolean)
+                                                                .join(" ")}
+                                                            onClick={() =>
+                                                                setSurfaceSelectionByPaneId((current) => ({
+                                                                    ...current,
+                                                                    [pane.id]: surface.id,
+                                                                }))
+                                                            }
+                                                            aria-pressed={surface.id === selectedSurface?.id}
+                                                        >
+                                                            <span className="truncate">{surface.title}</span>
+                                                        </button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>{surface.title}</TooltipContent>
+                                                </Tooltip>
+                                            ))}
+                                        </div>
+                                        <SemanticTerminalPreview
+                                            preview={selectedSurface?.preview || pane.preview || "(no snapshot text)"}
+                                        />
+                                    </div>
+                                </MosaicWindow>
+                            );
+                        }}
+                        className="dd-mosaic min-w-0"
+                    />
+                ) : (
+                    <div className="dd-panel flex h-full items-center justify-center text-[var(--dd-text-muted)]">
+                        No cmux panes in the current snapshot.
+                    </div>
+                )}
             </div>
-        </TooltipProvider>
+            {cmuxOverlays}
+        </div>
     );
 }

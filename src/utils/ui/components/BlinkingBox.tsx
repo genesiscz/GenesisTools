@@ -1,6 +1,6 @@
 import { Slot } from "@radix-ui/react-slot";
 import { cn } from "@ui/lib/utils";
-import type { ComponentPropsWithoutRef, CSSProperties, ReactElement, ReactNode } from "react";
+import type { ComponentProps, CSSProperties, ReactElement, ReactNode } from "react";
 
 export type BlinkingBoxVariant = "amber-inset" | "cyan-inset" | "accent-glow";
 
@@ -51,7 +51,7 @@ function BlinkingBoxKeyframes(): ReactElement {
     );
 }
 
-export interface BlinkingBoxProps extends ComponentPropsWithoutRef<"div"> {
+export interface BlinkingBoxProps extends ComponentProps<"div"> {
     active: boolean;
     children: ReactNode;
     variant?: BlinkingBoxVariant;

@@ -1,4 +1,5 @@
 import { GitBranch } from "lucide-react";
+import { HoverTip } from "@/components/stats/HoverTip";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface BranchActivityChartProps {
@@ -62,12 +63,13 @@ export function BranchActivityChart({ branchCounts }: BranchActivityChartProps) 
 						return (
 							<div key={branch} className="group">
 								<div className="flex items-center justify-between mb-1">
-									<span
-										className={`text-xs truncate max-w-[180px] ${isMain ? "text-green-400 font-medium" : "text-foreground"}`}
-										title={branch}
-									>
-										{truncateBranch(branch)}
-									</span>
+									<HoverTip tip={branch}>
+										<span
+											className={`text-xs truncate max-w-[180px] ${isMain ? "text-green-400 font-medium" : "text-foreground"}`}
+										>
+											{truncateBranch(branch)}
+										</span>
+									</HoverTip>
 									<span className="text-xs text-muted-foreground font-mono">{count.toLocaleString()}</span>
 								</div>
 								<div className="h-1.5 bg-muted/30 rounded-full overflow-hidden">

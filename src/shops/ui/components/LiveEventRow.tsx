@@ -1,6 +1,7 @@
 import type { LiveEvent, LiveHttpRequestEvent } from "@app/shops/types";
 import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
 import { Badge } from "@app/utils/ui/components/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@app/utils/ui/components/tooltip";
 import { useState } from "react";
 
 interface LiveEventRowProps {
@@ -70,19 +71,29 @@ export function LiveEventRow({ frame }: LiveEventRowProps) {
                     </span>
                     <span className={statusColor(frame.status)}>{frame.status ?? "—"}</span>
                     <span className={durationColor(frame.duration_ms)}>{frame.duration_ms.toFixed(0)}ms</span>
-                    <span className="truncate min-w-0" title={frame.url}>
-                        <span className="text-muted-foreground mr-1.5">{frame.method}</span>
-                        {frame.url}
-                    </span>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <span className="truncate min-w-0">
+                                <span className="text-muted-foreground mr-1.5">{frame.method}</span>
+                                {frame.url}
+                            </span>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-lg break-all">{frame.url}</TooltipContent>
+                    </Tooltip>
                     <span className="text-muted-foreground truncate text-[10px]">
                         {frame.operation ?? frame.source}
                     </span>
                 </button>
 
                 {failed && frame.error ? (
-                    <div className="px-3 pb-1 font-mono text-[10px] text-rose-300/90 truncate" title={frame.error}>
-                        ↳ {frame.error}
-                    </div>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <div className="px-3 pb-1 font-mono text-[10px] text-rose-300/90 truncate">
+                                ↳ {frame.error}
+                            </div>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-lg break-all">{frame.error}</TooltipContent>
+                    </Tooltip>
                 ) : null}
 
                 {expanded && hasDetail ? <LiveHttpDetail frame={frame} /> : null}
