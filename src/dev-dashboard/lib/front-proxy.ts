@@ -22,7 +22,10 @@ const TTYD_PATH = /^\/ttyd\/([0-9a-fA-F-]{36})(?:\/|$)/;
 
 /** SSE and other streaming routes must not use the short upstream fetch timeout. */
 export function isLongLivedProxiedStream(pathname: string): boolean {
-    return pathname === "/api/qa/stream";
+    if (pathname === "/api/qa/stream" || pathname === "/api/boards/work/wait") {
+        return true;
+    }
+    return pathname.startsWith("/api/boards/") && pathname.endsWith("/events");
 }
 
 const UPSTREAM_RETRY_ATTEMPTS = 10;

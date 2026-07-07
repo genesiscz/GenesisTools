@@ -124,8 +124,11 @@ describe("LOCAL_ORIGIN_HEADER invariant", () => {
 });
 
 describe("isLongLivedProxiedStream", () => {
-    test("matches QA SSE route only", () => {
+    test("matches QA SSE, boards work/wait, and any board's SSE stream", () => {
         expect(isLongLivedProxiedStream("/api/qa/stream")).toBe(true);
         expect(isLongLivedProxiedStream("/api/qa/log")).toBe(false);
+        expect(isLongLivedProxiedStream("/api/boards/work/wait")).toBe(true);
+        expect(isLongLivedProxiedStream("/api/boards/my-board/events")).toBe(true);
+        expect(isLongLivedProxiedStream("/api/boards/my-board")).toBe(false);
     });
 });

@@ -15,12 +15,13 @@ import {
     listTrash,
     patchBoard,
     patchCard,
+    RESERVED_SLUGS,
     restoreCard,
     softDeleteCard,
     syncSetCards,
 } from "@app/dev-dashboard/lib/boards/boards-store";
 import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
-import { publishBoardEvent } from "@app/dev-dashboard/lib/boards/events";
+import { publishBoardEvent, subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
 import { readImageDims } from "@app/dev-dashboard/lib/boards/image-size";
 import { getSet } from "@app/dev-dashboard/lib/boards/sets-store";
 import { dispatchBoard } from "@app/dev-dashboard/lib/boards/work-store";
@@ -96,6 +97,12 @@ export function boardsRoutes(): RouteDef[] {
             method: "GET",
             pattern: "/api/boards/:slug",
             handler: async (ctx) => {
+                // Belt-and-braces: static-prefix boards routes (sets/work/annotations/...) are
+                // registered before this catch-all, so this never fires in practice — but it's
+                // cheap insurance against a router that scores/sorts instead of first-matching.
+                if (RESERVED_SLUGS.has(ctx.params.slug)) {
+                    return { kind: "json", status: 404, body: { error: "not found" } };
+                }
                 try {
                     const doc = await getBoardDoc(getBoardsDb(), ctx.params.slug);
                     return { kind: "json", status: 200, body: doc };
@@ -108,6 +115,9 @@ export function boardsRoutes(): RouteDef[] {
             method: "PATCH",
             pattern: "/api/boards/:slug",
             handler: async (ctx) => {
+                if (RESERVED_SLUGS.has(ctx.params.slug)) {
+                    return { kind: "json", status: 404, body: { error: "not found" } };
+                }
                 try {
                     const body = await ctx.readJson<{ title?: string; project?: string; archived?: boolean }>();
                     const board = await patchBoard(getBoardsDb(), ctx.params.slug, body);
@@ -427,6 +437,25 @@ export function boardsRoutes(): RouteDef[] {
                     return boardsError(err);
                 }
             },
+        },
+        {
+            method: "GET",
+            pattern: "/api/boards/:slug/events",
+            longLived: true,
+            handler: (ctx) => ({
+                kind: "sse",
+                start: (emit) => {
+                    emit.comment(` board ${ctx.params.slug} stream open`);
+                    const unsubscribe = subscribeBoard(ctx.params.slug, (frame) => emit.data(frame));
+                    const keepAlive = setInterval(() => emit.comment(" ping"), 12_000);
+                    return {
+                        close: () => {
+                            clearInterval(keepAlive);
+                            unsubscribe();
+                        },
+                    };
+                },
+            }),
         },
     ];
 }
