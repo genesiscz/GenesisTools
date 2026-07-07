@@ -3,14 +3,14 @@ import type { RouteMatch, Router } from "@app/dev-dashboard/server/router";
 import type { RouteContext, RouteResult, RouteServices, SseEmitter } from "@app/dev-dashboard/server/types";
 import { SafeJSON } from "@app/utils/json";
 
-async function readBody(req: IncomingMessage): Promise<string> {
+async function readRawBytes(req: IncomingMessage): Promise<Uint8Array> {
     const chunks: Buffer[] = [];
 
     for await (const chunk of req) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     }
 
-    return Buffer.concat(chunks).toString("utf8") || "{}";
+    return new Uint8Array(Buffer.concat(chunks));
 }
 
 function lowerHeaders(req: IncomingMessage): Record<string, string> {
@@ -99,7 +99,11 @@ export async function handleWithRouter(
         return false;
     }
 
-    let cachedBody: string | undefined;
+    let rawBodyPromise: Promise<Uint8Array> | undefined;
+    const readRawBody = (): Promise<Uint8Array> => {
+        rawBodyPromise ??= readRawBytes(req);
+        return rawBodyPromise;
+    };
     const ctx: RouteContext = {
         method: (req.method ?? "GET") as RouteContext["method"],
         pathname: url.pathname,
@@ -107,12 +111,10 @@ export async function handleWithRouter(
         params: matched.params,
         headers: lowerHeaders(req),
         readJson: async <T>() => {
-            if (cachedBody === undefined) {
-                cachedBody = await readBody(req);
-            }
-
-            return SafeJSON.parse(cachedBody, { strict: true }) as T;
+            const text = new TextDecoder().decode(await readRawBody()) || "{}";
+            return SafeJSON.parse(text, { strict: true }) as T;
         },
+        readRawBody,
         services: opts.services,
     };
 

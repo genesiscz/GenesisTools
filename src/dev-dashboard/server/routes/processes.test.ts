@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { processesRoutes } from "@app/dev-dashboard/server/routes/processes";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
+import { SafeJSON } from "@app/utils/json";
 
 function findRoute(method: string, pattern: string): RouteDef {
     const def = processesRoutes().find((d) => d.method === method && d.pattern === pattern);
@@ -20,6 +21,7 @@ function makeCtx(opts: { query?: Record<string, string>; body?: unknown }): Rout
         params: {},
         headers: {},
         readJson: async <T>() => opts.body as T,
+        readRawBody: async () => new TextEncoder().encode(SafeJSON.stringify(opts.body ?? {})),
         // The processes routes never touch services; an empty cast keeps the test focused.
         services: {} as RouteContext["services"],
     };

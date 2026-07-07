@@ -15,6 +15,8 @@ export interface RouteContext {
     headers: Record<string, string>;
     /** Lazily reads + strict-parses the JSON body. Throws on invalid JSON. */
     readJson: <T>() => Promise<T>;
+    /** Lazily reads the raw request body bytes (uploads: tar.gz, images). */
+    readRawBody: () => Promise<Uint8Array>;
     /** Injected services (lets routes stay pure + testable). */
     services: RouteServices;
 }

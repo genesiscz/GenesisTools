@@ -100,7 +100,11 @@ export async function routerToResponse(
         headers[key.toLowerCase()] = value;
     });
 
-    let cachedBody: string | undefined;
+    let rawBodyPromise: Promise<Uint8Array> | undefined;
+    const readRawBody = (): Promise<Uint8Array> => {
+        rawBodyPromise ??= req.arrayBuffer().then((buf) => new Uint8Array(buf));
+        return rawBodyPromise;
+    };
     const ctx: RouteContext = {
         method: req.method as RouteContext["method"],
         pathname: url.pathname,
@@ -108,12 +112,10 @@ export async function routerToResponse(
         params: matched.params,
         headers,
         readJson: async <T>() => {
-            if (cachedBody === undefined) {
-                cachedBody = (await req.text()) || "{}";
-            }
-
-            return SafeJSON.parse(cachedBody, { strict: true }) as T;
+            const text = new TextDecoder().decode(await readRawBody()) || "{}";
+            return SafeJSON.parse(text, { strict: true }) as T;
         },
+        readRawBody,
         services: opts.services,
     };
 
