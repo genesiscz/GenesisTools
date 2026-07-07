@@ -78,7 +78,9 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
     const processAccountUsages = useCallback(
         (accountUsages: AccountUsage[], now: Date) => {
             for (const account of accountUsages) {
-                if (!account.usage) {
+                // Stale entries replay an older fetch — notifying on them
+                // could re-fire thresholds already handled.
+                if (!account.usage || account.stale) {
                     continue;
                 }
 
@@ -165,11 +167,13 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
                 processAccountUsages(resolvedUsages, new Date());
             }
         } catch (error) {
-            setResults({
-                accounts: [],
+            // Keep whatever we last rendered — a failed poll (no cache to fall
+            // back on) shouldn't blank out data the user is already looking at.
+            setResults((prev) => ({
+                accounts: prev?.accounts ?? [],
                 timestamp: new Date(),
                 error: error instanceof Error ? error.message : String(error),
-            });
+            }));
         } finally {
             pollingRef.current = false;
             setPollingLabel(null);

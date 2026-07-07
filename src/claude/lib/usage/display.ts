@@ -1,4 +1,5 @@
 import { formatDateTime } from "@app/utils/date";
+import { formatRelativeTime } from "@app/utils/format";
 import pc from "picocolors";
 import type { AccountUsage } from "./api";
 import type { NormalizedSpend, Severity } from "./limits";
@@ -15,6 +16,18 @@ const BUCKET_PERIODS_MS: Record<string, number> = {
     seven_day_sonnet: 7 * 24 * 60 * 60 * 1000,
     seven_day_oauth_apps: 7 * 24 * 60 * 60 * 1000,
 };
+
+const STALE_REASON_MAX = 90;
+
+function truncateReason(reason: string): string {
+    const flat = reason.replace(/\s+/g, " ").trim();
+
+    if (flat.length <= STALE_REASON_MAX) {
+        return flat;
+    }
+
+    return `${flat.slice(0, STALE_REASON_MAX - 1)}…`;
+}
 
 function colorForPct(pct: number): (s: string) => string {
     if (pct >= 80) {
@@ -134,13 +147,18 @@ export function renderAccountUsage(account: AccountUsage): string {
     const header = account.label ? `${account.accountName} (${account.label})` : account.accountName;
     lines.push(pc.bold(`── ${header} ${"─".repeat(Math.max(0, 40 - header.length))}`));
 
-    if (account.error) {
+    if (account.error && !account.usage) {
         lines.push(pc.red(`  Error: ${account.error}`));
         return lines.join("\n");
     }
 
     if (!account.usage) {
         return lines.join("\n");
+    }
+
+    if (account.stale) {
+        const ago = formatRelativeTime(new Date(account.stale.lastSuccessAt), { compact: true });
+        lines.push(pc.yellow(`  ⚠ Stale data (updated ${ago}) — ${truncateReason(account.stale.reason)}`));
     }
 
     const limits = normalizeLimits(account.usage);

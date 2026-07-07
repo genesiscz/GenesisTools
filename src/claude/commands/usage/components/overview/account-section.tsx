@@ -3,6 +3,7 @@ import { BUCKET_LABELS, BUCKET_PERIODS_MS, colorForPct } from "@app/claude/lib/u
 import { formatSpendBalance } from "@app/claude/lib/usage/display";
 import type { NormalizedLimit, NormalizedSpend, Severity } from "@app/claude/lib/usage/limits";
 import { normalizeLimits, normalizeSpend } from "@app/claude/lib/usage/limits";
+import { formatRelativeTime } from "@app/utils/format";
 import { useTerminalSize } from "@app/utils/ink/hooks/use-terminal-size";
 import { Box, Text } from "ink";
 import { useEffect, useState } from "react";
@@ -163,7 +164,7 @@ export function AccountSection({ account, prominentBuckets }: AccountSectionProp
 
     const header = account.label ? `${account.accountName} (${account.label})` : account.accountName;
 
-    if (account.error) {
+    if (account.error && !account.usage) {
         return (
             <Box flexDirection="column" marginBottom={1}>
                 <Text bold>{`── ${header} ${"─".repeat(Math.max(0, 40 - header.length))}`}</Text>
@@ -181,6 +182,10 @@ export function AccountSection({ account, prominentBuckets }: AccountSectionProp
         );
     }
 
+    const staleAgo = account.stale
+        ? formatRelativeTime(new Date(account.stale.lastSuccessAt), { compact: true })
+        : null;
+
     const limits = normalizeLimits(account.usage);
     const spend = normalizeSpend(account.usage);
 
@@ -193,6 +198,7 @@ export function AccountSection({ account, prominentBuckets }: AccountSectionProp
     return (
         <Box flexDirection="column" marginBottom={1}>
             <Text bold>{`── ${header} ${"─".repeat(Math.max(0, 40 - header.length))}`}</Text>
+            {staleAgo ? <Text color="yellow">{`  ⚠ stale · updated ${staleAgo} · fetch failing`}</Text> : null}
             {visibleLimits.map((limit) => (
                 <BucketRow key={`${limit.bucket}:${limit.scope_model ?? ""}`} limit={limit} barWidth={barWidth} />
             ))}

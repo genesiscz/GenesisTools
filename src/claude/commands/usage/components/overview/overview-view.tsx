@@ -17,7 +17,9 @@ export function OverviewView({ results, config }: OverviewViewProps) {
         );
     }
 
-    if (results.error) {
+    // Full-screen error only when there is nothing at all to show — with
+    // last-good data on hand, degrade to a banner above the account sections.
+    if (results.error && results.accounts.length === 0) {
         return (
             <Box paddingX={1} flexDirection="column">
                 <Text color="red" bold>
@@ -38,6 +40,7 @@ export function OverviewView({ results, config }: OverviewViewProps) {
 
     return (
         <Box flexDirection="column" flexShrink={0} paddingX={1} paddingY={1}>
+            {results.error ? <Text color="yellow">{`  ⚠ Last poll failed: ${results.error}`}</Text> : null}
             {results.accounts.map((account) => (
                 <AccountSection
                     key={account.accountName}
