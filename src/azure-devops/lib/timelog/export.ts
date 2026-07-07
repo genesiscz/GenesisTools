@@ -1,3 +1,4 @@
+import type { WorkItemParentRef } from "@app/azure-devops/lib/work-item-enrichment";
 import type { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { TimeLogQueryEntry } from "@app/azure-devops/types";
 
@@ -5,6 +6,8 @@ export interface ExportedEntry extends TimeLogQueryEntry {
     workItemTitle: string;
     workItemType: string;
     teamProject: string;
+    /** First hierarchy parent of the work item (populated during enrichment) */
+    workItemParent?: WorkItemParentRef;
 }
 
 export interface DaySummary {

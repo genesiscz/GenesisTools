@@ -1,4 +1,5 @@
 import { createRootRoute, HeadContent, Outlet, Scripts, useRouter, useRouterState } from "@tanstack/react-router";
+import { TooltipProvider } from "@ui/components/tooltip";
 import { DashboardLayout } from "@ui/layouts/DashboardLayout";
 import { ArrowDownToLine, ArrowUpFromLine, Link2, Settings } from "lucide-react";
 import { Toaster } from "sonner";
@@ -45,7 +46,9 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 function RootComponent() {
     return (
         <AppProvider>
-            <ClarityLayout />
+            <TooltipProvider>
+                <ClarityLayout />
+            </TooltipProvider>
             <Toaster
                 theme="dark"
                 toastOptions={{

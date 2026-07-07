@@ -158,6 +158,8 @@ export interface WorkItemCache {
     state: string;
     type?: string;
     assignee?: string;
+    /** First hierarchy parent ID. `null` = fetched and has no parent; absent = written before parent support. */
+    parentId?: number | null;
     category?: string;
     taskFolder?: boolean;
     history?: WorkItemHistorySection;
