@@ -6,6 +6,7 @@ import { isProcessAlive } from "@app/utils/process-alive";
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const POLL_INTERVAL_MS = 50;
+const ORPHANED_PID_RECHECK_MS = 100;
 
 export class LockTimeoutError extends Error {
     constructor(lockPath: string, timeout: number) {
@@ -51,7 +52,52 @@ async function tryAcquireLock(lockPath: string): Promise<boolean> {
             return false;
         }
 
-        if (Number.isNaN(lockPid) || isProcessAlive(lockPid)) {
+        if (Number.isNaN(lockPid)) {
+            // Lock file has no valid PID content. writeFile with `flag:"wx"` is
+            // O_CREAT|O_EXCL followed by a separate write() syscall, so a
+            // legitimate owner is empty for microseconds; but a SIGKILL between
+            // those two syscalls leaves a permanently empty (0-byte) lock that
+            // would otherwise block every future acquirer until timeout.
+            // Disambiguate by re-reading after a short grace: if the owner is
+            // real, the PID appears; if the file stays empty, the lock is
+            // orphaned and safe to steal.
+            await sleep(ORPHANED_PID_RECHECK_MS);
+
+            let recheckPid = Number.NaN;
+
+            try {
+                const recheckContent = await Bun.file(lockPath).text();
+                recheckPid = parseInt(recheckContent.trim(), 10);
+            } catch {
+                return false;
+            }
+
+            if (!Number.isNaN(recheckPid)) {
+                // Owner finished its write during the grace — fall through to
+                // the normal alive/dead check below.
+                lockPid = recheckPid;
+            } else {
+                // Still empty after grace — orphaned. Steal.
+                logger.debug(`Stealing orphaned lock at ${lockPath} (no PID content)`);
+
+                try {
+                    const confirmContent = await Bun.file(lockPath).text();
+
+                    if (confirmContent.trim() !== "") {
+                        // Someone wrote content between our checks — retry
+                        return false;
+                    }
+
+                    await unlink(lockPath);
+                    await writeFile(lockPath, String(process.pid), { flag: "wx" });
+                    return true;
+                } catch {
+                    return false;
+                }
+            }
+        }
+
+        if (isProcessAlive(lockPid)) {
             return false;
         }
 
