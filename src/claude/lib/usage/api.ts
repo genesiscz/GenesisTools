@@ -75,11 +75,25 @@ export interface UsageResponse {
     [key: string]: unknown;
 }
 
+export interface AccountStaleInfo {
+    /** Epoch ms of the successful fetch that produced the attached `usage`. */
+    lastSuccessAt: number;
+    /** Why live data is unavailable (per-account fetch error, lock timeout, …). */
+    reason: string;
+}
+
 export interface AccountUsage {
     accountName: string;
     label?: string;
     usage?: UsageResponse;
     error?: string;
+    /**
+     * Present when `usage` is served from an older successful fetch because the
+     * live fetch failed. Consumers should render the data with a staleness
+     * indicator instead of hiding it; writers (history DB, notifications) must
+     * skip stale entries.
+     */
+    stale?: AccountStaleInfo;
 }
 
 export function isUsageBucket(value: unknown): value is UsageBucket {

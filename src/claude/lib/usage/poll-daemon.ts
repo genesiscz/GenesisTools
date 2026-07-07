@@ -39,7 +39,9 @@ async function main(): Promise<void> {
         }
 
         for (const account of results) {
-            if (!account.usage) {
+            // Stale entries replay an older fetch — feeding them to the
+            // notification manager could re-fire thresholds after a restart.
+            if (!account.usage || account.stale) {
                 continue;
             }
 
@@ -71,10 +73,10 @@ async function main(): Promise<void> {
             // Persistence failure should not fail the poll
         }
 
-        // Warmup hook: check rules against fresh usage data
+        // Warmup hook: check rules against fresh usage data (stale replays excluded)
         try {
             const { processWarmupRules } = await import("@app/claude/lib/warmup/service");
-            await processWarmupRules(results);
+            await processWarmupRules(results.filter((r) => !r.stale));
         } catch (err) {
             out.warn(`Warmup check failed: ${err}`);
         }

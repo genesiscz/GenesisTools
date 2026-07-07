@@ -58,7 +58,9 @@ export function recordAll(accounts: AccountUsage[]): void {
     const db = new UsageHistoryDb();
 
     for (const account of accounts) {
-        if (!account.usage) {
+        // Stale entries are replays of an older successful fetch — recording
+        // them would re-timestamp old utilization as if it were current.
+        if (!account.usage || account.stale) {
             continue;
         }
 
@@ -84,6 +86,57 @@ export function recordAll(accounts: AccountUsage[]): void {
     }
 }
 
+/**
+ * Backfill accounts whose live fetch failed with the last-good usage payload
+ * from the previous cache entry, marked `stale` so consumers can render the
+ * data with an age indicator and writers can skip it. Chained failures keep
+ * the ORIGINAL success timestamp (prev entry's own stale.lastSuccessAt wins
+ * over the cache write time).
+ */
+function backfillFromLastGood(fresh: AccountUsage[], prev: Cached | null): AccountUsage[] {
+    if (!prev) {
+        return fresh;
+    }
+
+    return fresh.map((account) => {
+        if (account.usage || !account.error) {
+            return account;
+        }
+
+        const prevAccount = prev.accounts.find((p) => p.accountName === account.accountName);
+
+        if (!prevAccount?.usage) {
+            return account;
+        }
+
+        return {
+            ...account,
+            usage: prevAccount.usage,
+            stale: {
+                lastSuccessAt: prevAccount.stale?.lastSuccessAt ?? prev.fetchedAt,
+                reason: account.error,
+            },
+        };
+    });
+}
+
+/** Mark every usage-bearing account in a cache entry stale with the given reason. */
+function markAllStale(entry: Cached, reason: string): AccountUsage[] {
+    return entry.accounts.map((account) => {
+        if (!account.usage) {
+            return account;
+        }
+
+        return {
+            ...account,
+            stale: {
+                lastSuccessAt: account.stale?.lastSuccessAt ?? entry.fetchedAt,
+                reason,
+            },
+        };
+    });
+}
+
 // Exported for tests: build the accessor with injected dependencies.
 export function __makeSharedUsage(deps: Deps) {
     return async function getShared(opts: SharedUsageOpts): Promise<AccountUsage[]> {
@@ -94,26 +147,44 @@ export function __makeSharedUsage(deps: Deps) {
             return filterAccounts(cached.accounts, opts.accountFilter);
         }
 
-        return deps.withLock(CACHE_KEY, async () => {
-            const c2 = await deps.getCache(CACHE_KEY);
+        try {
+            return await deps.withLock(CACHE_KEY, async () => {
+                const c2 = await deps.getCache(CACHE_KEY);
 
-            if (!opts.force && c2 && Date.now() - c2.fetchedAt < staleMs) {
-                return filterAccounts(c2.accounts, opts.accountFilter);
-            }
-
-            const fresh = await deps.fetchAll();
-            await deps.putCache(CACHE_KEY, { fetchedAt: Date.now(), accounts: fresh });
-
-            if (deps.notifyExtraUsage) {
-                try {
-                    await deps.notifyExtraUsage(fresh);
-                } catch (err) {
-                    logger.warn({ err }, "extra usage notification pass failed; returning fetched usage anyway");
+                if (!opts.force && c2 && Date.now() - c2.fetchedAt < staleMs) {
+                    return filterAccounts(c2.accounts, opts.accountFilter);
                 }
+
+                const fresh = backfillFromLastGood(await deps.fetchAll(), c2 ?? cached);
+                await deps.putCache(CACHE_KEY, { fetchedAt: Date.now(), accounts: fresh });
+
+                if (deps.notifyExtraUsage) {
+                    try {
+                        // Stale entries replay old spend values — notifying on
+                        // them would re-fire thresholds already handled.
+                        await deps.notifyExtraUsage(fresh.filter((a) => !a.stale));
+                    } catch (err) {
+                        logger.warn({ err }, "extra usage notification pass failed; returning fetched usage anyway");
+                    }
+                }
+
+                return filterAccounts(fresh, opts.accountFilter);
+            });
+        } catch (err) {
+            // Lock contention (e.g. the daemon holds the lock through a slow
+            // multi-account fetch) or a whole-fetch failure must not blank out
+            // consumers — degrade to the last cached payload, marked stale so
+            // callers know exactly how old it is and why.
+            const fallback = await deps.getCache(CACHE_KEY);
+
+            if (!fallback) {
+                throw err;
             }
 
-            return filterAccounts(fresh, opts.accountFilter);
-        });
+            const reason = err instanceof Error ? err.message : String(err);
+            logger.warn({ err }, "usage fetch unavailable; serving stale cache");
+            return filterAccounts(markAllStale(fallback, reason), opts.accountFilter);
+        }
     };
 }
 

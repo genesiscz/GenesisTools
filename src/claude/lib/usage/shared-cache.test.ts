@@ -109,4 +109,135 @@ describe("getSharedAccountsUsage", () => {
         const r = await get({ accountFilter: "b" });
         expect(r.map((x) => x.accountName)).toEqual(["b"]);
     });
+
+    test("backfills a per-account fetch error with last-good usage, marked stale", async () => {
+        const lastGoodAt = Date.now() - 120_000;
+        const store: CacheStore = new Map();
+        store.set("usage-shared", { fetchedAt: lastGoodAt, accounts: [acct("a", 33), acct("b", 44)] });
+        const get = __makeSharedUsage({
+            fetchAll: async () => [
+                { accountName: "a", label: "a", error: "TimeoutError: The operation timed out." },
+                acct("b", 55),
+            ],
+            getCache: (k) => store.get(k) ?? null,
+            putCache: (k, v) => void store.set(k, v),
+            withLock: async (_k, fn) => fn(),
+        });
+
+        const r = await get({ force: true });
+        const a = r.find((x) => x.accountName === "a");
+        const b = r.find((x) => x.accountName === "b");
+
+        expect(a?.usage?.five_hour.utilization).toBe(33);
+        expect(a?.error).toContain("TimeoutError");
+        expect(a?.stale?.lastSuccessAt).toBe(lastGoodAt);
+        expect(a?.stale?.reason).toContain("TimeoutError");
+        expect(b?.usage?.five_hour.utilization).toBe(55);
+        expect(b?.stale).toBeUndefined();
+    });
+
+    test("chained failures preserve the ORIGINAL lastSuccessAt, not the latest cache write", async () => {
+        const originalAt = Date.now() - 600_000;
+        const store: CacheStore = new Map();
+        store.set("usage-shared", {
+            fetchedAt: Date.now() - 60_000,
+            accounts: [
+                {
+                    ...acct("a", 33),
+                    error: "TimeoutError (round 1)",
+                    stale: { lastSuccessAt: originalAt, reason: "TimeoutError (round 1)" },
+                },
+            ],
+        });
+        const get = __makeSharedUsage({
+            fetchAll: async () => [{ accountName: "a", label: "a", error: "TimeoutError (round 2)" }],
+            getCache: (k) => store.get(k) ?? null,
+            putCache: (k, v) => void store.set(k, v),
+            withLock: async (_k, fn) => fn(),
+        });
+
+        const r = await get({ force: true });
+
+        expect(r[0].usage?.five_hour.utilization).toBe(33);
+        expect(r[0].stale?.lastSuccessAt).toBe(originalAt);
+        expect(r[0].stale?.reason).toContain("round 2");
+    });
+
+    test("lock failure degrades to the cached payload, all usage-bearing accounts marked stale", async () => {
+        const cachedAt = Date.now() - 90_000;
+        const store: CacheStore = new Map();
+        store.set("usage-shared", { fetchedAt: cachedAt, accounts: [acct("a", 33)] });
+        const get = __makeSharedUsage({
+            fetchAll: async () => [acct("a", 99)],
+            getCache: (k) => store.get(k) ?? null,
+            putCache: (k, v) => void store.set(k, v),
+            withLock: async () => {
+                throw new Error("Failed to acquire file lock at /x within 10000ms.");
+            },
+        });
+
+        const r = await get({ force: true });
+
+        expect(r[0].usage?.five_hour.utilization).toBe(33);
+        expect(r[0].stale?.lastSuccessAt).toBe(cachedAt);
+        expect(r[0].stale?.reason).toContain("Failed to acquire file lock");
+    });
+
+    test("lock failure with NO cache rethrows", async () => {
+        const get = __makeSharedUsage({
+            fetchAll: async () => [],
+            getCache: () => null,
+            putCache: () => {},
+            withLock: async () => {
+                throw new Error("Failed to acquire file lock at /x within 10000ms.");
+            },
+        });
+
+        await expect(get({})).rejects.toThrow("Failed to acquire file lock");
+    });
+
+    test("stale entries are excluded from the extra-usage notify pass", async () => {
+        const notified: string[][] = [];
+        const store: CacheStore = new Map();
+        store.set("usage-shared", { fetchedAt: Date.now() - 60_000, accounts: [acct("a", 33), acct("b", 44)] });
+        const get = __makeSharedUsage({
+            fetchAll: async () => [{ accountName: "a", label: "a", error: "boom" }, acct("b", 55)],
+            getCache: (k) => store.get(k) ?? null,
+            putCache: (k, v) => void store.set(k, v),
+            withLock: async (_k, fn) => fn(),
+            notifyExtraUsage: (accounts) => {
+                notified.push(accounts.map((x) => x.accountName));
+            },
+        });
+
+        await get({ force: true });
+
+        expect(notified).toEqual([["b"]]);
+    });
+
+    test("a later successful fetch clears the stale marker", async () => {
+        const store: CacheStore = new Map();
+        store.set("usage-shared", {
+            fetchedAt: Date.now() - 60_000,
+            accounts: [
+                {
+                    ...acct("a", 33),
+                    error: "TimeoutError",
+                    stale: { lastSuccessAt: Date.now() - 600_000, reason: "TimeoutError" },
+                },
+            ],
+        });
+        const get = __makeSharedUsage({
+            fetchAll: async () => [acct("a", 77)],
+            getCache: (k) => store.get(k) ?? null,
+            putCache: (k, v) => void store.set(k, v),
+            withLock: async (_k, fn) => fn(),
+        });
+
+        const r = await get({ force: true });
+
+        expect(r[0].usage?.five_hour.utilization).toBe(77);
+        expect(r[0].stale).toBeUndefined();
+        expect(r[0].error).toBeUndefined();
+    });
 });
