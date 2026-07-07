@@ -280,4 +280,43 @@ describe("boards-store", () => {
         expect(versions.length).toBe(2);
         expect(versions.map((v) => v.blobKey)).toEqual(["hash1.png", "hash2.png"]);
     });
+
+    it("appendCardVersion after a revert mints a fresh version number instead of colliding with history", async () => {
+        // Regression: nextVersion must come from MAX(card_versions.version), not
+        // board_cards.current_version — after a revert moves current_version backward,
+        // current_version+1 would re-collide with a version number already in history.
+        await createBoard(db, { slug: "b1" });
+        const card = await createCard(db, "b1", {
+            kind: "shot",
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 100,
+            setRef: "proj/main/s1",
+            setVersion: 1,
+            filePath: "a.png",
+            blobKey: "hash1.png",
+        });
+
+        const v2 = await appendCardVersion(db, card.id, {
+            setRef: "proj/main/s1",
+            setVersion: 2,
+            filePath: "a.png",
+            blobKey: "hash2.png",
+        });
+        expect(v2).toBe(2);
+        await revertCardFace(db, card.id, 1);
+
+        const v3 = await appendCardVersion(db, card.id, {
+            setRef: "proj/main/s1",
+            setVersion: 3,
+            filePath: "a.png",
+            blobKey: "hash3.png",
+        });
+        expect(v3).toBe(3);
+
+        const versions = await listCardVersions(db, card.id);
+        expect(versions.map((v) => v.version)).toEqual([1, 2, 3]);
+        expect(versions.map((v) => v.blobKey)).toEqual(["hash1.png", "hash2.png", "hash3.png"]);
+    });
 });

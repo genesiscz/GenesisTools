@@ -1,6 +1,6 @@
 import type { DatabaseClient } from "@app/utils/database/client";
 import { SafeJSON } from "@app/utils/json";
-import type { Selectable } from "kysely";
+import type { Kysely, Selectable } from "kysely";
 import type { BoardCardsTable, BoardEdgesTable, BoardStrokesTable, BoardsDb, BoardsTable } from "./db-types";
 import { NotFoundError, setRefOf } from "./sets-store";
 import { nowIso } from "./time";
@@ -506,6 +506,21 @@ export async function bulkLayout(
     });
 }
 
+/**
+ * The next version number to append for a card. MUST be derived from MAX(card_versions.version),
+ * not from board_cards.current_version: after a reject reverts the current_version pointer
+ * backward, the append-only history still holds the higher (rejected) version row, so
+ * `current_version + 1` would collide with it under the (card_id, version) UNIQUE constraint.
+ */
+export async function nextCardVersionNumber(kysely: Kysely<BoardsDb>, cardId: number): Promise<number> {
+    const row = await kysely
+        .selectFrom("card_versions")
+        .select(({ fn }) => fn.max("version").as("maxVersion"))
+        .where("card_id", "=", cardId)
+        .executeTakeFirst();
+    return Number(row?.maxVersion ?? 0) + 1;
+}
+
 /** Deterministic serpentine grid layout for a fresh import. */
 function serpentinePositions(heights: number[]): Array<{ x: number; y: number }> {
     const positions: Array<{ x: number; y: number }> = [];
@@ -657,7 +672,7 @@ export async function syncSetCards(
                 skippedFiles.push(card.file_path);
                 continue;
             }
-            const nextVersion = card.current_version + 1;
+            const nextVersion = await nextCardVersionNumber(trx, card.id);
             await trx
                 .insertInto("card_versions")
                 .values({
@@ -697,9 +712,9 @@ export async function appendCardVersion(
     if (!card) {
         throw new NotFoundError(`card not found: ${cardId}`);
     }
-    const nextVersion = card.current_version + 1;
     const now = nowIso();
-    await db.kysely.transaction().execute(async (trx) => {
+    return db.kysely.transaction().execute(async (trx) => {
+        const nextVersion = await nextCardVersionNumber(trx, cardId);
         await trx
             .insertInto("card_versions")
             .values({
@@ -725,8 +740,8 @@ export async function appendCardVersion(
             })
             .where("id", "=", cardId)
             .execute();
+        return nextVersion;
     });
-    return nextVersion;
 }
 
 export async function revertCardFace(
