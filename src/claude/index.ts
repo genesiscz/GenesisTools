@@ -14,10 +14,12 @@ import { registerDaemonCommand } from "./commands/daemon";
 import { registerDesktopCommand } from "./commands/desktop";
 import { registerExportCommand } from "./commands/export";
 import { registerHistoryCommand } from "./commands/history";
+import { registerLoginLongCommand } from "./commands/login-long";
 import { registerMcpCommand } from "./commands/mcp";
 import { registerMemoryCommand } from "./commands/memory";
 import { registerMigrateCommand } from "./commands/migrate";
 import { registerResumeCommand } from "./commands/resume";
+import { registerStartCommand } from "./commands/start";
 import { registerSummarizeCommand } from "./commands/summarize";
 import { registerTailCommand } from "./commands/tail";
 import { registerUsageCommand } from "./commands/usage";
@@ -44,6 +46,8 @@ registerDaemonCommand(program);
 registerMigrateCommand(program);
 registerWarmupCommand(program);
 registerMcpCommand(program);
+registerLoginLongCommand(program);
+registerStartCommand(program);
 
 addGlobalVerboseOption(program);
 
