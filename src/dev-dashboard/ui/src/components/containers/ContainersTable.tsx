@@ -58,6 +58,7 @@ export function ContainersTable({ result }: ContainersTableProps) {
                                         <TooltipTrigger asChild>
                                             <span
                                                 className="inline-block h-2.5 w-2.5 rounded-full"
+                                                tabIndex={0}
                                                 style={{ backgroundColor: stateColor(c.state) }}
                                                 role="img"
                                                 aria-label={`State: ${c.state}`}

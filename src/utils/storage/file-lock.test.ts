@@ -1,6 +1,6 @@
 // biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ string literals — production plugins do not apply to test code
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LockTimeoutError, withFileLock } from "./file-lock";
@@ -92,7 +92,5 @@ describe("file-lock: stale/orphaned lock handling", () => {
         expect(result).toBe("ok");
         // The parent dir was created and persists — only the lock file itself is cleaned up.
         expect(existsSync(nestedDir)).toBe(true);
-        // Ensure the mkdir path in tryAcquireLock ran (parent path exists even after unlink)
-        mkdirSync(join(dir, "sentinel"), { recursive: true });
     });
 });
