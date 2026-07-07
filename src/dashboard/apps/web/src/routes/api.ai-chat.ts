@@ -4,7 +4,8 @@ import { createAnthropicChat } from "@tanstack/ai-anthropic";
 import { createFileRoute } from "@tanstack/react-router";
 import { and, eq } from "drizzle-orm";
 import { aiConversations, aiMessages, db } from "@/drizzle";
-import { getUserIdFromRequest, isSameOrigin } from "@/lib/auth/requireUser";
+import { getUserIdFromRequest } from "@/lib/auth/requireUser";
+import { isSameOrigin } from "@/lib/auth-server";
 import { env } from "@/lib/env";
 import { emitDomainEvent } from "@/lib/events/event-bus.server";
 

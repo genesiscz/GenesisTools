@@ -14,6 +14,7 @@ import {
     parseIntEnv,
 } from "@app/utils/env/env-core";
 import { restoreEnv, setEnv, snapshotEnv, unsetEnv, withEnvOverrides } from "@app/utils/env/env-testing";
+import { env as envClient } from "@app/utils/env.client";
 
 const XAI_API_KEYS = ["XAI_API_KEY", "X_AI_API_KEY"] as const;
 // HuggingFace local inference accepts either name depending on the library version.
@@ -173,14 +174,8 @@ export const env = {
         isTvNetTests: () => isNonEmpty("TV_NET_TESTS"),
     },
 
-    dashboard: {
-        getBindHost: (fallback = "0.0.0.0") => getWithDefault("DASHBOARD_BIND_HOST", fallback),
-        shouldOpenBrowser: () => isFlag("DASHBOARD_OPEN_BROWSER"),
-        isDevtoolsEnabled: () => isFlag("DASHBOARD_DEVTOOLS"),
-        getQaBaseUrl: () => getWithDefault("DD_QA_BASE_URL", "http://localhost:3042"),
-        getPublicPort: () => getTrimmed("DEV_DASHBOARD_PUBLIC_PORT"),
-        getDiskDuTimeoutMs: () => parseIntEnv("DD_DISK_DU_TIMEOUT_MS", 0),
-    },
+    // Client-safe domains are defined once in @app/utils/env.client and re-exposed here.
+    dashboard: envClient.dashboard,
 
     workos: {
         getApiKey: () => getTrimmed("WORKOS_API_KEY"),
@@ -225,21 +220,11 @@ export const env = {
         getConversationsDir: () => getTrimmed("ASK_CONVERSATIONS_DIR"),
     },
 
-    node: {
-        getEnv: () => getTrimmed("NODE_ENV"),
-        isProduction: () => getRaw("NODE_ENV") === "production",
-        getPort: (fallback?: string) => getTrimmed("PORT") ?? fallback,
-    },
+    node: envClient.node,
 
-    youtube: {
-        getGitSha: () => getTrimmed("YOUTUBE_GIT_SHA"),
-        getUiPort: () => getTrimmed("YOUTUBE_UI_PORT"),
-    },
+    youtube: envClient.youtube,
 
-    db: {
-        getSqlitePath: (fallback = ".data/dashboard.sqlite") => getWithDefault("SQLITE_PATH", fallback),
-        getMigrationsDir: () => getTrimmed("MIGRATIONS_DIR"),
-    },
+    db: envClient.db,
 
     testing: {
         snapshot: snapshotEnv,

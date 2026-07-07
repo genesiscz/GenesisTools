@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
-import { env } from "@app/utils/env";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
+// Relative on purpose: config bundlers inline relative imports but externalize bare ones.
+import { env } from "../../utils/env.client";
 import { DASHBOARDS } from "../../utils/ui/dashboards";
 import { createDashboardViteConfig } from "../../utils/ui/vite.base";
 import { youtubeConfigPlugin } from "./vite.plugins/config-middleware";

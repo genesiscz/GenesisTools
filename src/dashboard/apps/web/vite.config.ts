@@ -1,5 +1,4 @@
 import { fileURLToPath } from "node:url";
-import { env } from "@app/utils/env";
 import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
 import { devtools } from "@tanstack/devtools-vite";
@@ -9,6 +8,10 @@ import type { NitroConfig } from "nitro/types";
 import { nitro } from "nitro/vite";
 import { defineConfig } from "vite";
 import viteTsConfigPaths from "vite-tsconfig-paths";
+// Relative import on purpose: vite's config bundler inlines relative imports but
+// externalizes bare ones, and "@app/utils/env" is not a resolvable package from
+// this isolated workspace — the bare import kept the dev server from booting.
+import { env } from "../../../utils/env.client";
 
 const nitroConfig: NitroConfig = {
     experimental: {
@@ -70,6 +73,18 @@ const config = defineConfig({
                 replacement: fileURLToPath(new URL("../../../logger/client.ts", import.meta.url)),
             },
             { find: "@app/utils/json", replacement: fileURLToPath(new URL("../../../utils/json.ts", import.meta.url)) },
+            {
+                find: "@app/utils/env.client",
+                replacement: fileURLToPath(new URL("../../../utils/env.client.ts", import.meta.url)),
+            },
+            {
+                find: /^@app\/utils\/env\/(.+)$/,
+                replacement: `${fileURLToPath(new URL("../../../utils/env", import.meta.url))}/$1`,
+            },
+            {
+                find: /^@app\/utils\/env$/,
+                replacement: fileURLToPath(new URL("../../../utils/env/index.ts", import.meta.url)),
+            },
             { find: "@radix-ui/react-avatar", replacement: dashboardDependency("@radix-ui/react-avatar") },
             { find: "@radix-ui/react-dialog", replacement: dashboardDependency("@radix-ui/react-dialog") },
             {
