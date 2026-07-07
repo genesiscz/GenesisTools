@@ -50,7 +50,9 @@ function toBoardDto(row: Selectable<BoardsTable>): BoardSummaryDto {
     };
 }
 
-function toCardDto(row: Selectable<BoardCardsTable>): CardDto {
+/** Exported for work-store.ts's listOpenWorkDetailed (boards-store -> work-store is the one
+ *  intended cross-module edge; work-store never gets imported back, so no cycle). */
+export function toCardDto(row: Selectable<BoardCardsTable>): CardDto {
     return {
         id: row.id,
         boardId: row.board_id,

@@ -13,6 +13,7 @@ import {
     drainChoices,
     listenerTtlMs,
     listListeners,
+    listOpenWorkDetailed,
     listWork,
     reapExpiredListeners,
     releaseLease,
@@ -124,6 +125,39 @@ describe("work-store", () => {
 
         const narrowed = await listWork(db, { project: "proj", branch: "main" });
         expect(narrowed.map((w) => w.prompt)).toEqual(["main"]);
+    });
+
+    it("listOpenWorkDetailed resolves full AnnotationDto + CardDto per scope", async () => {
+        await createBoard(db, { slug: "b1" });
+        await createBoard(db, { slug: "b2" });
+        const cardB1 = await makeCard(db, "b1", "proj/main/s1");
+        const cardB2 = await makeCard(db, "b2", "proj/main/s1");
+
+        await createAnnotation(db, {
+            boardSlug: "b1",
+            cardId: cardB1.id,
+            region: REGION,
+            intent: "fix",
+            prompt: "b1-item",
+            status: "open",
+        });
+        await createAnnotation(db, {
+            boardSlug: "b2",
+            cardId: cardB2.id,
+            region: REGION,
+            intent: "fix",
+            prompt: "b2-item",
+            status: "open",
+        });
+
+        const items = await listOpenWorkDetailed(db, { kind: "board", board: "b1" });
+        expect(items.length).toBe(1);
+        expect(items[0].boardSlug).toBe("b1");
+        expect(items[0].annotation.prompt).toBe("b1-item");
+        expect(items[0].card.id).toBe(cardB1.id);
+
+        const all = await listOpenWorkDetailed(db, { kind: "all" });
+        expect(all.length).toBe(2);
     });
 
     it("dispatchBoard flips staged annotations to open and releases answered staged questions", async () => {
