@@ -93,7 +93,10 @@ export function CoverageShopCard({ row }: CoverageShopCardProps) {
                             {row.recent_runs.map((r) => (
                                 <Tooltip key={r.id}>
                                     <TooltipTrigger asChild>
-                                        <span className={`block w-2 h-2 rounded-sm ${statusColor(r.status)}`} />
+                                        <span
+                                            tabIndex={0}
+                                            className={`block w-2 h-2 rounded-sm ${statusColor(r.status)}`}
+                                        />
                                     </TooltipTrigger>
                                     <TooltipContent>
                                         {r.status} · {r.products_seen} seen / {r.products_new} new

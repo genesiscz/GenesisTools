@@ -56,7 +56,10 @@ export function DiskUsageBars({ result }: DiskUsageBarsProps) {
                         <div className="flex items-baseline justify-between gap-2">
                             <Tooltip>
                                 <TooltipTrigger asChild>
-                                    <span className="truncate font-mono text-sm text-[var(--dd-text-primary)]">
+                                    <span
+                                        tabIndex={0}
+                                        className="truncate font-mono text-sm text-[var(--dd-text-primary)]"
+                                    >
                                         {entry.label}
                                     </span>
                                 </TooltipTrigger>
