@@ -3,6 +3,7 @@ import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { Toaster } from "sonner";
+import { BACKEND_RECONNECTED_EVENT } from "./backend-status";
 import { routeTree } from "./routeTree.gen";
 import "./styles.css";
 
@@ -11,6 +12,12 @@ const queryClient = new QueryClient({
         queries: { staleTime: 30_000, refetchOnWindowFocus: false, retry: 1 },
         mutations: { retry: 0 },
     },
+});
+
+// Queries that errored while the API server was down stay errored until something
+// refetches — refetch everything as soon as the backend is reachable again.
+window.addEventListener(BACKEND_RECONNECTED_EVENT, () => {
+    void queryClient.invalidateQueries();
 });
 
 const router = createRouter({ routeTree, context: { queryClient } });

@@ -15,6 +15,7 @@ import type {
     YoutubeConfigShape,
 } from "@app/youtube/lib/types";
 import { fetchUiConfig } from "@app/yt/config.client";
+import { reportBackendReachable, reportBackendUnreachable } from "./backend-status";
 
 export interface AskVideoResponse {
     answer: string;
@@ -50,10 +51,23 @@ async function baseUrl(): Promise<string> {
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     const base = await baseUrl();
-    const res = await fetch(`${base}/api/v1${path}`, {
-        ...init,
-        headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
-    });
+    let res: Response;
+
+    try {
+        res = await fetch(`${base}/api/v1${path}`, {
+            ...init,
+            headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
+        });
+    } catch (err) {
+        // Network-level failure (ERR_CONNECTION_REFUSED etc.) — the backend is down,
+        // not "the database is empty". Surface it instead of failing silently.
+        reportBackendUnreachable(`${base} is not responding`);
+        throw new Error(`YouTube API server unreachable at ${base}. Start it with: tools youtube server up`, {
+            cause: err,
+        });
+    }
+
+    reportBackendReachable();
 
     if (!res.ok) {
         const body = await res.text();
