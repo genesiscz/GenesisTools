@@ -28,35 +28,53 @@ const SERVER_INSTRUCTIONS =
     "DO NOT use for: routine task instructions you simply execute, pure acknowledgements " +
     '("ok", "thanks", "continue"), or trivial lookups not worth preserving.';
 
+interface ToolEntry {
+    description: string;
+    inputSchema: Record<string, unknown>;
+    handler: (args: Record<string, unknown>) => Promise<string>; // returns the text content
+}
+
+function buildToolRegistry(): Record<string, ToolEntry> {
+    return {
+        question_answer: {
+            description: QUESTION_ANSWER_DESCRIPTION,
+            inputSchema: QUESTION_ANSWER_INPUT_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => {
+                const r = await handleQuestionAnswer(args as unknown as QuestionAnswerArgs);
+                return r.summary;
+            },
+        },
+    };
+}
+
 export async function startMcpServer(): Promise<void> {
+    const registry = buildToolRegistry();
     const server = new Server(
         { name: "genesis-tools", version: "1.0.0" },
         { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS }
     );
 
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
-        tools: [
-            {
-                name: "question_answer",
-                description: QUESTION_ANSWER_DESCRIPTION,
-                inputSchema: QUESTION_ANSWER_INPUT_SCHEMA,
-            },
-        ],
+        tools: Object.entries(registry).map(([name, t]) => ({
+            name,
+            description: t.description,
+            inputSchema: t.inputSchema,
+        })),
     }));
 
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
-        if (request.params.name !== "question_answer") {
+        const entry = registry[request.params.name];
+        if (!entry) {
             return { content: [{ type: "text", text: `Unknown tool: ${request.params.name}` }], isError: true };
         }
 
         try {
-            const args = (request.params.arguments ?? {}) as unknown as QuestionAnswerArgs;
-            const r = await handleQuestionAnswer(args);
-            return { content: [{ type: "text", text: r.summary }] };
+            const text = await entry.handler((request.params.arguments ?? {}) as Record<string, unknown>);
+            return { content: [{ type: "text", text }] };
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            log.warn({ err }, "question_answer handler failed");
-            return { content: [{ type: "text", text: `Failed to log Q→A: ${message}` }], isError: true };
+            log.warn({ err, tool: request.params.name }, "mcp tool handler failed");
+            return { content: [{ type: "text", text: `${request.params.name} failed: ${message}` }], isError: true };
         }
     });
 
