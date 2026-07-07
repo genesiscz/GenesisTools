@@ -2,6 +2,7 @@ import { SafeJSON } from "@app/utils/json";
 import type { JobEvent } from "@app/youtube/lib/types";
 import { fetchUiConfig } from "@app/yt/config.client";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { reportBackendReachable, reportBackendUnreachable } from "./backend-status";
 
 export interface UseEventStreamOpts {
     enabled?: boolean;
@@ -92,6 +93,11 @@ export function useEventStream(opts: UseEventStreamOpts = {}) {
                         setConnected(false);
                         latestOpts.current.onClose?.();
                         attempt += 1;
+
+                        if (attempt >= 2) {
+                            reportBackendUnreachable("Live event stream disconnected");
+                        }
+
                         setReconnects((value) => value + 1);
                         scheduleConnect(false);
                     },
@@ -122,6 +128,10 @@ export function useEventStream(opts: UseEventStreamOpts = {}) {
 
         const interval = window.setInterval(() => {
             setConnected(handle?.connected ?? false);
+
+            if (handle?.connected) {
+                reportBackendReachable();
+            }
         }, 1000);
 
         return () => {
