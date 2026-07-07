@@ -18,7 +18,9 @@ import { boardsError } from "./boards-errors";
 
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 
-async function getOperator(): Promise<string> {
+/** Reads the `operator` settings row — the fallback actor identity for board writes that
+ *  arrive without an `x-board-actor` header (see boards-annotations.ts's actorFrom). */
+export async function getOperator(): Promise<string> {
     const db = getBoardsDb();
     const row = await db.kysely.selectFrom("settings").select("value").where("key", "=", "operator").executeTakeFirst();
     return row?.value ?? "";
