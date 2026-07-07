@@ -9,9 +9,7 @@ import pc from "picocolors";
 
 async function main(nameArg: string | undefined): Promise<never> {
     const aiConfig = await AIConfig.load();
-    const withToken = aiConfig
-        .getAccountsByProvider("anthropic-sub")
-        .filter((a) => Boolean(a.tokens.longLivedToken));
+    const withToken = aiConfig.getAccountsByProvider("anthropic-sub").filter((a) => Boolean(a.tokens.longLivedToken));
 
     if (withToken.length === 0) {
         out.error(pc.red("No accounts with a long-lived token."));
@@ -47,9 +45,10 @@ async function main(nameArg: string | undefined): Promise<never> {
         }
 
         const defaultAccount = aiConfig.getDefaultAccount("claude");
-        const defaultName = defaultAccount && withToken.some((a) => a.name === defaultAccount.name)
-            ? defaultAccount.name
-            : withToken[0].name;
+        const defaultName =
+            defaultAccount && withToken.some((a) => a.name === defaultAccount.name)
+                ? defaultAccount.name
+                : withToken[0].name;
 
         const picked = await p.select({
             message: "Launch Claude Code as which account?",
