@@ -3,6 +3,10 @@ import { startPolling } from "@app/dev-dashboard/lib/cmux/poller";
 import { configureRetention, startPulsePolling } from "@app/dev-dashboard/lib/system/poller";
 import { Router } from "@app/dev-dashboard/server/router";
 import { attentionRoutes } from "@app/dev-dashboard/server/routes/attention";
+import { boardsRoutes } from "@app/dev-dashboard/server/routes/boards";
+import { boardsAnnotationsRoutes } from "@app/dev-dashboard/server/routes/boards-annotations";
+import { boardsSetsRoutes } from "@app/dev-dashboard/server/routes/boards-sets";
+import { boardsWorkRoutes } from "@app/dev-dashboard/server/routes/boards-work";
 import { claudeRoutes } from "@app/dev-dashboard/server/routes/claude";
 import { cmuxRoutes } from "@app/dev-dashboard/server/routes/cmux";
 import { commandsRoutes } from "@app/dev-dashboard/server/routes/commands";
@@ -28,6 +32,12 @@ import { logger } from "@app/logger";
 /** Assemble every feature registrar into one transport-neutral Router. */
 export function createDashboardRouter(): Router {
     return new Router().addAll([
+        // Static-prefix boards routes MUST precede boardsRoutes()'s /api/boards/:slug catch-all
+        // (the router is first-match) — see plan §0.3.2 / Task 13.
+        ...boardsSetsRoutes(),
+        ...boardsWorkRoutes(),
+        ...boardsAnnotationsRoutes(),
+        ...boardsRoutes(),
         ...systemRoutes(),
         ...netRoutes(),
         ...tmuxRoutes(),
