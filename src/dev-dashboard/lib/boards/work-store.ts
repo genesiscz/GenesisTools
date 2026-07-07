@@ -3,11 +3,21 @@ import { escapeLike } from "@app/utils/database/predicates";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { type SqlBool, sql, type Transaction } from "kysely";
+import { getAnnotation } from "./annotations-store";
+import { toCardDto } from "./boards-store";
 import type { BoardsDb } from "./db-types";
 import { publishBoardEvent, wakeWorkWaiters } from "./events";
 import { NotFoundError, slugifyBranch } from "./sets-store";
 import { nowIso } from "./time";
-import type { AnnotationStatus, ChoiceItemDto, ListenerDto, WorkItemDto, WorkScope } from "./types";
+import type {
+    AnnotationDto,
+    AnnotationStatus,
+    CardDto,
+    ChoiceItemDto,
+    ListenerDto,
+    WorkItemDto,
+    WorkScope,
+} from "./types";
 
 export const DEFAULT_LISTENER_TTL_MS = 90_000;
 
@@ -112,6 +122,41 @@ export async function listWork(
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
     }));
+}
+
+function scopeToListWorkFilter(scope: WorkScope): { board?: string; project?: string; branch?: string } {
+    if (scope.kind === "board") {
+        return { board: scope.board };
+    }
+    if (scope.kind === "project") {
+        return { project: scope.project, branch: scope.branch };
+    }
+    return {};
+}
+
+export interface OpenWorkItem {
+    annotation: AnnotationDto;
+    card: CardDto;
+    boardSlug: string;
+}
+
+/** Same scoping as listWork, but resolved to full AnnotationDto + CardDto (for capsule building). */
+export async function listOpenWorkDetailed(db: DatabaseClient<BoardsDb>, scope: WorkScope): Promise<OpenWorkItem[]> {
+    const items = await listWork(db, { status: "open", ...scopeToListWorkFilter(scope) });
+    const result: OpenWorkItem[] = [];
+    for (const item of items) {
+        const annotation = await getAnnotation(db, item.id);
+        const cardRow = await db.kysely
+            .selectFrom("board_cards")
+            .selectAll()
+            .where("id", "=", annotation.cardId)
+            .executeTakeFirst();
+        if (!cardRow) {
+            continue; // a card is required to create an annotation; this shouldn't happen
+        }
+        result.push({ annotation, card: toCardDto(cardRow), boardSlug: annotation.boardSlug });
+    }
+    return result;
 }
 
 /** Reverts a listener's claimed ("working") annotations back to "open" and publishes `status`

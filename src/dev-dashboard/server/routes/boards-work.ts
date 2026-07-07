@@ -1,0 +1,132 @@
+import { buildCapsule } from "@app/dev-dashboard/lib/boards/capsule";
+import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
+import { waitForWorkSignal } from "@app/dev-dashboard/lib/boards/events";
+import type { WorkScope } from "@app/dev-dashboard/lib/boards/types";
+import {
+    claimOrRenewLease,
+    drainChoices,
+    listListeners,
+    listOpenWorkDetailed,
+    listWork,
+    reapExpiredListeners,
+    releaseLease,
+} from "@app/dev-dashboard/lib/boards/work-store";
+import type { RouteDef } from "@app/dev-dashboard/server/types";
+import { boardsError } from "./boards-errors";
+
+function parseScope(q: URLSearchParams): WorkScope | null {
+    if (q.get("all") === "1") {
+        return { kind: "all" };
+    }
+    const board = q.get("board");
+    if (board) {
+        return { kind: "board", board };
+    }
+    const project = q.get("project");
+    if (project) {
+        return { kind: "project", project, branch: q.get("branch") ?? "" };
+    }
+    return null;
+}
+
+export function boardsWorkRoutes(): RouteDef[] {
+    return [
+        {
+            method: "GET",
+            pattern: "/api/boards/work",
+            handler: async (ctx) => {
+                const work = await listWork(getBoardsDb(), {
+                    status: ctx.query.get("status") ?? undefined,
+                    board: ctx.query.get("board") ?? undefined,
+                    project: ctx.query.get("project") ?? undefined,
+                    branch: ctx.query.get("branch") ?? undefined,
+                });
+                return { kind: "json", status: 200, body: { work } };
+            },
+        },
+        {
+            method: "GET",
+            pattern: "/api/boards/work/wait",
+            longLived: true,
+            handler: async (ctx) => {
+                try {
+                    const db = getBoardsDb();
+                    const timeoutSec = Math.min(55, Math.max(1, Number(ctx.query.get("timeout") ?? "25") || 25));
+                    const scope = parseScope(ctx.query);
+                    const session = ctx.query.get("session") ?? "";
+                    const actor = ctx.query.get("actor") ?? "";
+                    if (session && !scope) {
+                        return {
+                            kind: "json",
+                            status: 400,
+                            body: { error: "leased waits require a scope (board | project | all=1)" },
+                        };
+                    }
+                    const deadline = Date.now() + timeoutSec * 1000;
+                    let leaseId: number | undefined;
+                    for (;;) {
+                        await reapExpiredListeners(db);
+                        if (session && scope) {
+                            const lease = await claimOrRenewLease(db, scope, session, actor);
+                            if (lease.conflict) {
+                                return {
+                                    kind: "json",
+                                    status: 409,
+                                    body: { error: "scope held by a live listener", live: true, holder: lease.holder },
+                                };
+                            }
+                            leaseId = lease.id;
+                        }
+                        const effectiveScope = scope ?? ({ kind: "all" } as const);
+                        const items = await listOpenWorkDetailed(db, effectiveScope);
+                        const choices = await drainChoices(db, effectiveScope);
+                        if (items.length > 0 || choices.length > 0) {
+                            const work = items.slice(0, 3).map((it) => ({
+                                id: it.annotation.id,
+                                board: it.boardSlug,
+                                capsule: buildCapsule(it.annotation, it.card, it.boardSlug),
+                            }));
+                            return {
+                                kind: "json",
+                                status: 200,
+                                body: {
+                                    work,
+                                    choices,
+                                    pending: items.length,
+                                    ...(leaseId ? { listener: leaseId } : {}),
+                                },
+                            };
+                        }
+                        const remaining = deadline - Date.now();
+                        if (remaining <= 0) {
+                            return {
+                                kind: "json",
+                                status: 200,
+                                body: { idle: true, ...(leaseId ? { listener: leaseId } : {}) },
+                            };
+                        }
+                        await waitForWorkSignal(Math.min(remaining, 10_000));
+                    }
+                } catch (err) {
+                    return boardsError(err);
+                }
+            },
+        },
+        {
+            method: "GET",
+            pattern: "/api/boards/work/listeners",
+            handler: async () => {
+                const listeners = await listListeners(getBoardsDb());
+                return { kind: "json", status: 200, body: { listeners } };
+            },
+        },
+        {
+            method: "DELETE",
+            pattern: "/api/boards/work/listeners/:id",
+            handler: async (ctx) => {
+                const reverted = await releaseLease(getBoardsDb(), Number(ctx.params.id));
+                return { kind: "json", status: 200, body: { reverted } };
+            },
+        },
+    ];
+}
