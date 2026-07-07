@@ -1,7 +1,20 @@
 #!/usr/bin/env bun
 import { resolve } from "node:path";
 
-const SUBCOMMANDS = new Set(["tail", "history", "resume", "desktop", "usage", "config", "daemon", "migrate"]);
+const SUBCOMMANDS = new Set([
+    "tail",
+    "history",
+    "resume",
+    "desktop",
+    "usage",
+    "config",
+    "daemon",
+    "migrate",
+    "login",
+    "login-long",
+    "start",
+    "run",
+]);
 
 const claude = resolve(import.meta.dir, "../claude/index.ts");
 const args = process.argv.slice(2);

@@ -15,6 +15,7 @@ export interface AIAccountTokens {
     accessToken?: string; // OAuth access token
     refreshToken?: string; // OAuth refresh token
     expiresAt?: number; // Token expiry (Unix ms)
+    longLivedToken?: string; // Long-lived OAuth token from `claude setup-token` (sk-ant-oat01-...); passed via CLAUDE_CODE_OAUTH_TOKEN
 }
 
 export interface AIAccountEntry {
