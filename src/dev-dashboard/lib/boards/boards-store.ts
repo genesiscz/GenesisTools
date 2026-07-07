@@ -368,6 +368,18 @@ export async function createCard(
     });
 }
 
+/** Fetches a single card by id (deleted or not — an open annotation's card can outlive a soft
+ *  delete since soft-delete doesn't cascade to annotations; matches listOpenWorkDetailed's
+ *  unfiltered lookup in work-store.ts so both capsule paths agree). Used by the capsule builder
+ *  to pair a card with its annotation without pulling the whole board doc. */
+export async function getCard(db: DatabaseClient<BoardsDb>, cardId: number): Promise<CardDto> {
+    const row = await db.kysely.selectFrom("board_cards").selectAll().where("id", "=", cardId).executeTakeFirst();
+    if (!row) {
+        throw new NotFoundError(`card not found: ${cardId}`);
+    }
+    return toCardDto(row);
+}
+
 export async function patchCard(
     db: DatabaseClient<BoardsDb>,
     cardId: number,

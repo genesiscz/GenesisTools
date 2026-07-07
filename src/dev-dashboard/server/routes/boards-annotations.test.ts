@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createBoard, createCard } from "@app/dev-dashboard/lib/boards/boards-store";
+import { blobUrl } from "@app/dev-dashboard/lib/boards/blobs";
+import { createBoard, createCard, softDeleteCard } from "@app/dev-dashboard/lib/boards/boards-store";
 import { getBoardsDb, resetBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { resetEventHub, subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
 import { getSet, syncSet } from "@app/dev-dashboard/lib/boards/sets-store";
@@ -12,9 +13,18 @@ import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/ser
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { boardsAnnotationsRoutes } from "./boards-annotations";
+import { boardsSetsRoutes } from "./boards-sets";
 
 function findRoute(method: string, pattern: string): RouteDef {
     const def = boardsAnnotationsRoutes().find((d) => d.method === method && d.pattern === pattern);
+    if (!def) {
+        throw new Error(`route not found: ${method} ${pattern}`);
+    }
+    return def;
+}
+
+function findSetsRoute(method: string, pattern: string): RouteDef {
+    const def = boardsSetsRoutes().find((d) => d.method === method && d.pattern === pattern);
     if (!def) {
         throw new Error(`route not found: ${method} ${pattern}`);
     }
@@ -25,13 +35,14 @@ function makeCtx(opts: {
     method?: RouteContext["method"];
     params?: Record<string, string>;
     body?: unknown;
+    headers?: Record<string, string>;
 }): RouteContext {
     return {
         method: opts.method ?? "GET",
         pathname: "/",
         query: new URLSearchParams(),
         params: opts.params ?? {},
-        headers: {},
+        headers: opts.headers ?? {},
         readJson: async <T>() => opts.body as T,
         readRawBody: async () => new TextEncoder().encode(SafeJSON.stringify(opts.body ?? {})),
         services: {} as RouteContext["services"],
@@ -259,12 +270,124 @@ describe("boardsAnnotationsRoutes", () => {
         expect(reply.status).toBe(409);
     });
 
-    it("capsule route returns markdown content type", async () => {
+    it("capsule route renders real markdown from the annotation+card, with optional ?base= absolutizing the image URL", async () => {
+        const db = getBoardsDb();
+        await createBoard(db, { slug: "b1" });
+        await syncSet(db, {
+            project: "proj",
+            branchRaw: "main",
+            key: "s1",
+            entries: [{ path: "a.png", data: buildPng(10, 10) }],
+        });
+        const set1 = await getSet(db, "proj", "main", "s1");
+        const card = await createCard(db, "b1", {
+            kind: "shot",
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 100,
+            setRef: "proj/main/s1",
+            setVersion: 1,
+            filePath: "a.png",
+            blobKey: set1.files[0].blobKey,
+        });
+
+        const create = findRoute("POST", "/api/boards/annotations");
+        const created = asJson(
+            await create.handler(
+                makeCtx({
+                    method: "POST",
+                    body: {
+                        board: "b1",
+                        cardId: card.id,
+                        region: { x: 1, y: 2, w: 3, h: 4 },
+                        intent: "fix",
+                        prompt: "make it blue",
+                        status: "open",
+                    },
+                })
+            )
+        );
+        const id = created.body.id as number;
+
         const capsule = findRoute("GET", "/api/boards/annotations/:id/capsule");
-        const result = await capsule.handler(makeCtx({ params: { id: "1" } }));
+        const result = await capsule.handler(makeCtx({ params: { id: String(id) } }));
         expect(result.kind).toBe("text");
-        if (result.kind === "text") {
-            expect(result.contentType).toBe("text/markdown");
+        if (result.kind !== "text") {
+            throw new Error("expected text result");
         }
+        expect(result.contentType).toBe("text/markdown");
+        expect(result.body).toContain(`# boards work №${id}`);
+        expect(result.body).toContain("board b1");
+        expect(result.body).toContain("**Region:** 1,2 3×4 px on `a.png`");
+        expect(result.body).toContain(`image: ${blobUrl(set1.files[0].blobKey)}`);
+        expect(result.body).toContain("**Protocol:**");
+
+        const ctxWithBase: RouteContext = {
+            ...makeCtx({ params: { id: String(id) } }),
+            query: new URLSearchParams({ base: "http://localhost:9999" }),
+        };
+        const withBase = await capsule.handler(ctxWithBase);
+        if (withBase.kind !== "text") {
+            throw new Error("expected text result");
+        }
+        expect(withBase.body).toContain(`image: http://localhost:9999${blobUrl(set1.files[0].blobKey)}`);
+
+        // Soft-deleting a card doesn't cascade to its annotations — the capsule must still
+        // render (matches listOpenWorkDetailed's unfiltered card lookup for the wait queue).
+        await softDeleteCard(db, card.id);
+        const afterDelete = await capsule.handler(makeCtx({ params: { id: String(id) } }));
+        expect(afterDelete.kind).toBe("text");
+    });
+
+    it("capsule route 404s for an unknown annotation id", async () => {
+        const capsule = findRoute("GET", "/api/boards/annotations/:id/capsule");
+        const result = await capsule.handler(makeCtx({ params: { id: "999999" } }));
+        expect(result.kind).toBe("json");
+        if (result.kind === "json") {
+            expect(result.status).toBe(404);
+        }
+    });
+
+    it('actor fallback chain: body override > x-board-actor header > operator setting > "operator" literal', async () => {
+        const db = getBoardsDb();
+        await createBoard(db, { slug: "b1" });
+        const card = await createCard(db, "b1", { kind: "note", x: 0, y: 0, w: 10, h: 10 });
+        const create = findRoute("POST", "/api/boards/annotations");
+        const annotationBody = {
+            board: "b1",
+            cardId: card.id,
+            region: { x: 0, y: 0, w: 1, h: 1 },
+            intent: "fix",
+            prompt: "p",
+        };
+
+        // No header, no operator set yet -> falls back to the literal "operator".
+        const noFallback = asJson(await create.handler(makeCtx({ method: "POST", body: annotationBody })));
+        expect(noFallback.body.createdBy).toBe("operator");
+
+        // Operator setting present, no header -> uses the operator setting.
+        const putOperator = findSetsRoute("PUT", "/api/boards/operator");
+        await putOperator.handler(makeCtx({ method: "PUT", body: { operator: "alice" } }));
+        const viaOperator = asJson(await create.handler(makeCtx({ method: "POST", body: annotationBody })));
+        expect(viaOperator.body.createdBy).toBe("alice");
+
+        // x-board-actor header present -> wins over the operator setting.
+        const viaHeader = asJson(
+            await create.handler(makeCtx({ method: "POST", body: annotationBody, headers: { "x-board-actor": "bob" } }))
+        );
+        expect(viaHeader.body.createdBy).toBe("bob");
+
+        // Explicit body.createdBy -> wins over everything.
+        const viaBody = asJson(
+            await create.handler(
+                makeCtx({
+                    method: "POST",
+                    body: { ...annotationBody, createdBy: "carol" },
+                    headers: { "x-board-actor": "bob" },
+                })
+            )
+        );
+        expect(viaBody.body.createdBy).toBe("carol");
     });
 });

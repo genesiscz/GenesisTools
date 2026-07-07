@@ -10,15 +10,25 @@ import {
     reactivateAnnotation,
     setVerdict,
 } from "@app/dev-dashboard/lib/boards/annotations-store";
+import { getCard } from "@app/dev-dashboard/lib/boards/boards-store";
+import { buildCapsule } from "@app/dev-dashboard/lib/boards/capsule";
 import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { publishBoardEvent, wakeWorkWaiters } from "@app/dev-dashboard/lib/boards/events";
 import { getSet, getSetFile, setRefOf } from "@app/dev-dashboard/lib/boards/sets-store";
 import type { Region } from "@app/dev-dashboard/lib/boards/types";
 import type { RouteContext, RouteDef } from "@app/dev-dashboard/server/types";
 import { boardsError } from "./boards-errors";
+import { getOperator } from "./boards-sets";
 
-function actorFrom(ctx: RouteContext): string {
-    return ctx.headers["x-board-actor"] ?? "";
+/** Actor fallback chain (plan §Task 9 note): body override (handled by callers) →
+ *  `x-board-actor` header → the `operator` settings row → the literal `"operator"`. */
+async function actorFrom(ctx: RouteContext): Promise<string> {
+    const header = ctx.headers["x-board-actor"];
+    if (header) {
+        return header;
+    }
+    const operator = await getOperator();
+    return operator || "operator";
 }
 
 async function listenerIdForSession(session: string | undefined): Promise<number | undefined> {
@@ -58,7 +68,7 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
                         intent: body.intent,
                         intentOther: body.intentOther,
                         prompt: body.prompt,
-                        createdBy: body.createdBy ?? actorFrom(ctx),
+                        createdBy: body.createdBy ?? (await actorFrom(ctx)),
                         status: body.status,
                     });
                     publishBoardEvent(annotation.boardSlug, { type: "annotation", payload: annotation });
@@ -170,10 +180,18 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
         {
             method: "GET",
             pattern: "/api/boards/annotations/:id/capsule",
-            handler: async () => {
-                // Real capsule builder lands in Task 12 (capsule.ts); stubbed per plan note
-                // for implementing Task 11 out of order.
-                return { kind: "text", status: 200, contentType: "text/markdown", body: "pending" };
+            handler: async (ctx) => {
+                try {
+                    const id = Number(ctx.params.id);
+                    const annotation = await getAnnotation(getBoardsDb(), id);
+                    const card = await getCard(getBoardsDb(), annotation.cardId);
+                    const capsule = buildCapsule(annotation, card, annotation.boardSlug);
+                    const base = ctx.query.get("base");
+                    const body = base ? capsule.replace("image: /api/", `image: ${base}/api/`) : capsule;
+                    return { kind: "text", status: 200, contentType: "text/markdown", body };
+                } catch (err) {
+                    return boardsError(err);
+                }
             },
         },
         {
@@ -183,7 +201,7 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
                 try {
                     const id = Number(ctx.params.id);
                     const body = await ctx.readJson<{ prompt: string }>();
-                    const annotation = await addRevision(getBoardsDb(), id, body.prompt, actorFrom(ctx));
+                    const annotation = await addRevision(getBoardsDb(), id, body.prompt, await actorFrom(ctx));
                     publishBoardEvent(annotation.boardSlug, { type: "annotation", payload: annotation });
                     return { kind: "json", status: 200, body: annotation };
                 } catch (err) {
@@ -199,7 +217,7 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
                     const id = Number(ctx.params.id);
                     const body = await ctx.readJson<{ body: string; author?: string }>();
                     const before = await getAnnotation(getBoardsDb(), id);
-                    const author = body.author ?? actorFrom(ctx);
+                    const author = body.author ?? (await actorFrom(ctx));
                     const message = await addMessage(getBoardsDb(), { annotationId: id, author, body: body.body });
                     publishBoardEvent(before.boardSlug, { type: "message", payload: message });
 
