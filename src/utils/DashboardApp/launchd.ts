@@ -201,6 +201,8 @@ export async function kickstartLaunchd(label: string): Promise<void> {
     }
 
     try {
+        // launchctl() itself never rejects (always resolves {exitCode, stderr}); this catch
+        // only guards against Bun.spawn throwing synchronously before that (e.g. ENOENT).
         const { exitCode, stderr } = await launchctl(["kickstart", "-k", `gui/${uid}/${label}`]);
 
         if (exitCode !== 0) {

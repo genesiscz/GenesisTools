@@ -38,12 +38,15 @@ export function registerLoginLongCommand(program: Command): void {
                     out.println(pc.dim(`Known: ${accounts.map((a) => a.name).join(", ")}`));
                     process.exit(1);
                 }
+
+                if (!isInteractive()) {
+                    out.error(pc.red("Pasting the long-lived token requires an interactive terminal."));
+                    process.exit(1);
+                }
             } else {
                 if (!isInteractive()) {
                     out.error(pc.red("Account name required in non-interactive mode."));
-                    out.println(
-                        suggestCommand("tools claude login-long", { add: [accounts[0]?.name ?? "<name>"] })
-                    );
+                    out.println(suggestCommand("tools claude login-long", { add: [accounts[0]?.name ?? "<name>"] }));
                     process.exit(1);
                 }
 

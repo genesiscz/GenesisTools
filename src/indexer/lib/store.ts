@@ -1278,11 +1278,19 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
     } catch (err) {
         try {
             if (qdrantStoreForCleanup) {
-                await qdrantStoreForCleanup.close();
+                try {
+                    await qdrantStoreForCleanup.close();
+                } catch (closeErr) {
+                    logger.debug({ err: closeErr }, "[indexer] qdrant close failed during init-failure cleanup");
+                }
             }
 
             if (dbForCleanup) {
-                dbForCleanup.close();
+                try {
+                    dbForCleanup.close();
+                } catch (closeErr) {
+                    logger.debug({ err: closeErr }, "[indexer] db close failed during init-failure cleanup");
+                }
             }
         } finally {
             // Release the lock if initialization fails — otherwise it stays held until stale
