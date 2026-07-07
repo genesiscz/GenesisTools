@@ -1,4 +1,4 @@
-import { Button } from "@ui/components/button";
+import { IconButton } from "@ui/components/icon-button";
 import { Plus } from "lucide-react";
 import type { TaskStatus } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
@@ -104,7 +104,8 @@ export function KanbanHeader({ status, count, onAddTask, className }: KanbanHead
 
             {/* Quick add button */}
             {onAddTask && status !== "completed" && (
-                <Button
+                <IconButton
+                    tooltip={`Add task to ${config.label}`}
                     variant="ghost"
                     size="sm"
                     onClick={onAddTask}
@@ -114,10 +115,9 @@ export function KanbanHeader({ status, count, onAddTask, className }: KanbanHead
                         config.textColor,
                         "opacity-60 hover:opacity-100 transition-opacity"
                     )}
-                    title={`Add task to ${config.label}`}
                 >
                     <Plus className="h-4 w-4" />
-                </Button>
+                </IconButton>
             )}
         </div>
     );

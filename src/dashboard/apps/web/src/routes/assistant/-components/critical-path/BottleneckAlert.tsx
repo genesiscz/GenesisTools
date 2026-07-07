@@ -7,6 +7,7 @@
 
 import { Link } from "@tanstack/react-router";
 import { Button } from "@ui/components/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import { AlertTriangle, ArrowRight, ChevronRight, Zap } from "lucide-react";
 import type { Task } from "@/lib/assistant/types";
 import { cn } from "@/lib/utils";
@@ -145,16 +146,20 @@ export function BottleneckBadge({ count, className }: { count: number; className
     }
 
     return (
-        <span
-            className={cn(
-                "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold",
-                "bg-orange-500/20 text-orange-400 border border-orange-500/30",
-                className
-            )}
-            title={`Blocks ${count} task${count !== 1 ? "s" : ""}`}
-        >
-            <AlertTriangle className="h-2.5 w-2.5" />
-            {count}
-        </span>
+        <Tooltip>
+            <TooltipTrigger asChild>
+                <span
+                    className={cn(
+                        "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold",
+                        "bg-orange-500/20 text-orange-400 border border-orange-500/30",
+                        className
+                    )}
+                >
+                    <AlertTriangle className="h-2.5 w-2.5" />
+                    {count}
+                </span>
+            </TooltipTrigger>
+            <TooltipContent>{`Blocks ${count} task${count !== 1 ? "s" : ""}`}</TooltipContent>
+        </Tooltip>
     );
 }

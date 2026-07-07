@@ -1,3 +1,4 @@
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import { Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { EnergyHeatmapData } from "@/lib/assistant/lib/storage/types";
@@ -191,11 +192,12 @@ export function EnergyHeatmap({ data, loading = false, onCellClick, className }:
                     <div className="flex items-center gap-1">
                         <span className="text-xs text-slate-600">Low</span>
                         {LEGEND_ITEMS.map((item, i) => (
-                            <div
-                                key={i}
-                                className={cn("w-4 h-4 rounded-sm border border-cyan-500/20", item.color)}
-                                title={`Quality: ${item.label}`}
-                            />
+                            <Tooltip key={i}>
+                                <TooltipTrigger asChild>
+                                    <div className={cn("w-4 h-4 rounded-sm border border-cyan-500/20", item.color)} />
+                                </TooltipTrigger>
+                                <TooltipContent>{`Quality: ${item.label}`}</TooltipContent>
+                            </Tooltip>
                         ))}
                         <span className="text-xs text-slate-600">High</span>
                     </div>

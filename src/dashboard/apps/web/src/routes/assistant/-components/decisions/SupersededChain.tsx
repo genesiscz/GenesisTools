@@ -1,3 +1,4 @@
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import { StatusBadge } from "@ui/custom";
 import { ArrowRight, Scale } from "lucide-react";
 import type { Decision, DecisionStatus } from "@/lib/assistant/types";
@@ -218,30 +219,34 @@ export function ChainIndicator({
     }
 
     return (
-        <button
-            type="button"
-            onClick={onClick}
-            className={cn(
-                "inline-flex items-center gap-1 px-2 py-0.5 rounded-full",
-                "bg-purple-500/10 border border-purple-500/20",
-                "text-[10px] font-medium text-purple-400",
-                "hover:bg-purple-500/20 transition-colors",
-                className
-            )}
-            title={`Part of a chain of ${chainLength} decisions`}
-        >
-            <div className="flex items-center -space-x-1">
-                {Array.from({ length: Math.min(chainLength, 3) }).map((_, i) => (
-                    <div
-                        key={i}
-                        className={cn(
-                            "h-2 w-2 rounded-full border border-purple-400",
-                            i === chainLength - 1 ? "bg-purple-400" : "bg-purple-400/30"
-                        )}
-                    />
-                ))}
-            </div>
-            <span>{chainLength} in chain</span>
-        </button>
+        <Tooltip>
+            <TooltipTrigger asChild>
+                <button
+                    type="button"
+                    onClick={onClick}
+                    className={cn(
+                        "inline-flex items-center gap-1 px-2 py-0.5 rounded-full",
+                        "bg-purple-500/10 border border-purple-500/20",
+                        "text-[10px] font-medium text-purple-400",
+                        "hover:bg-purple-500/20 transition-colors",
+                        className
+                    )}
+                >
+                    <div className="flex items-center -space-x-1">
+                        {Array.from({ length: Math.min(chainLength, 3) }).map((_, i) => (
+                            <div
+                                key={i}
+                                className={cn(
+                                    "h-2 w-2 rounded-full border border-purple-400",
+                                    i === chainLength - 1 ? "bg-purple-400" : "bg-purple-400/30"
+                                )}
+                            />
+                        ))}
+                    </div>
+                    <span>{chainLength} in chain</span>
+                </button>
+            </TooltipTrigger>
+            <TooltipContent>{`Part of a chain of ${chainLength} decisions`}</TooltipContent>
+        </Tooltip>
     );
 }

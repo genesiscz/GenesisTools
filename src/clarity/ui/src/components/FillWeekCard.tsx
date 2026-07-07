@@ -2,6 +2,7 @@ import { getDaysInPeriod, subtractDay } from "@app/utils/date";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/components/table";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import { CheckCircle, ChevronRight, XCircle } from "lucide-react";
 import { Fragment, useState } from "react";
 import type { AdoConfig } from "./WorkItemLink";
@@ -143,9 +144,14 @@ export function FillWeekCard({
                                                                 className={`w-3.5 h-3.5 text-gray-500 flex-shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`}
                                                             />
                                                         )}
-                                                        <div className="truncate" title={entry.clarityTaskName}>
-                                                            {entry.clarityTaskName}
-                                                        </div>
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <div className="truncate">{entry.clarityTaskName}</div>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent className="max-w-md">
+                                                                {entry.clarityTaskName}
+                                                            </TooltipContent>
+                                                        </Tooltip>
                                                     </div>
                                                 </TableCell>
                                                 {workDays.map((d) => {
@@ -205,9 +211,14 @@ export function FillWeekCard({
                                         .map((entry) => (
                                             <TableRow key={entry.clarityTaskCode} className="border-border/60">
                                                 <TableCell className="font-mono text-sm text-gray-500">
-                                                    <div className="truncate" title={entry.clarityTaskName}>
-                                                        {entry.clarityTaskName}
-                                                    </div>
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <div className="truncate">{entry.clarityTaskName}</div>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent className="max-w-md">
+                                                            {entry.clarityTaskName}
+                                                        </TooltipContent>
+                                                    </Tooltip>
                                                 </TableCell>
                                                 {workDays.map((d) => {
                                                     const clarityMins = entry.clarityDayValues?.[d.date] ?? 0;
@@ -313,9 +324,12 @@ function DayClarityIndicator({ adoMinutes, clarityMinutes }: { adoMinutes: numbe
 
     // Clarity has different non-zero value — red warning
     return (
-        <span className="text-[9px] text-red-400/80 mt-0.5" title={`Clarity: ${(clarityMinutes / 60).toFixed(1)}h`}>
-            c:{(clarityMinutes / 60).toFixed(1)}
-        </span>
+        <Tooltip>
+            <TooltipTrigger asChild>
+                <span className="text-[9px] text-red-400/80 mt-0.5">c:{(clarityMinutes / 60).toFixed(1)}</span>
+            </TooltipTrigger>
+            <TooltipContent>{`Clarity: ${(clarityMinutes / 60).toFixed(1)}h`}</TooltipContent>
+        </Tooltip>
     );
 }
 
@@ -326,27 +340,39 @@ function ClarityStatusIcon({ clarityMinutes, adoMinutes }: { clarityMinutes?: nu
 
     if (clarityMinutes === 0) {
         return (
-            <span className="flex-shrink-0" title="Not imported to Clarity">
-                <XCircle className="w-3.5 h-3.5 text-primary/70" />
-            </span>
+            <Tooltip>
+                <TooltipTrigger asChild>
+                    <span className="flex-shrink-0">
+                        <XCircle className="w-3.5 h-3.5 text-primary/70" />
+                    </span>
+                </TooltipTrigger>
+                <TooltipContent>Not imported to Clarity</TooltipContent>
+            </Tooltip>
         );
     }
 
     if (Math.abs(clarityMinutes - adoMinutes) < 2) {
         return (
-            <span className="flex-shrink-0" title={`Clarity: ${(clarityMinutes / 60).toFixed(1)}h (matches)`}>
-                <CheckCircle className="w-3.5 h-3.5 text-green-500" />
-            </span>
+            <Tooltip>
+                <TooltipTrigger asChild>
+                    <span className="flex-shrink-0">
+                        <CheckCircle className="w-3.5 h-3.5 text-green-500" />
+                    </span>
+                </TooltipTrigger>
+                <TooltipContent>{`Clarity: ${(clarityMinutes / 60).toFixed(1)}h (matches)`}</TooltipContent>
+            </Tooltip>
         );
     }
 
     return (
-        <span
-            className="text-[10px] text-red-400 flex-shrink-0 whitespace-nowrap"
-            title={`Clarity has ${(clarityMinutes / 60).toFixed(1)}h, ADO has ${(adoMinutes / 60).toFixed(1)}h`}
-        >
-            c:{(clarityMinutes / 60).toFixed(1)}h
-        </span>
+        <Tooltip>
+            <TooltipTrigger asChild>
+                <span className="text-[10px] text-red-400 flex-shrink-0 whitespace-nowrap">
+                    c:{(clarityMinutes / 60).toFixed(1)}h
+                </span>
+            </TooltipTrigger>
+            <TooltipContent>{`Clarity has ${(clarityMinutes / 60).toFixed(1)}h, ADO has ${(adoMinutes / 60).toFixed(1)}h`}</TooltipContent>
+        </Tooltip>
     );
 }
 
@@ -389,12 +415,18 @@ function TimelogEntriesTable({ entries, adoConfig }: { entries: TimelogEntry[]; 
                                     </div>
                                 )}
                             </TableCell>
-                            <TableCell
-                                className="font-mono text-[11px] text-gray-500 max-w-32 truncate py-1"
-                                title={e.comment ?? undefined}
-                            >
-                                {e.comment || ""}
-                            </TableCell>
+                            {e.comment ? (
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <TableCell className="font-mono text-[11px] text-gray-500 max-w-32 truncate py-1">
+                                            {e.comment}
+                                        </TableCell>
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-md">{e.comment}</TooltipContent>
+                                </Tooltip>
+                            ) : (
+                                <TableCell className="font-mono text-[11px] text-gray-500 max-w-32 truncate py-1" />
+                            )}
                         </TableRow>
                     ))}
                 </TableBody>

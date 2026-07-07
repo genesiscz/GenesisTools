@@ -3,6 +3,7 @@ import type { ProviderFetchSummary } from "@app/Internal/commands/reas/types";
 import { fmtDateTime } from "@app/Internal/commands/reas/ui/src/lib/format";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import { cn } from "@ui/lib/utils";
 import { summarizeProviderMessage } from "./shared";
 
@@ -126,15 +127,19 @@ export function DataProvenance({
                                     fetched {formatFetchedAt(detail.fetchedAt)}
                                 </div>
                                 {detail.message ? (
-                                    <div
-                                        title={detail.message}
-                                        className={cn(
-                                            "mt-2 break-words text-[11px] font-mono leading-5",
-                                            detail.status === "error" ? "text-red-300" : "text-amber-200"
-                                        )}
-                                    >
-                                        {summarizeProviderMessage(detail.message)}
-                                    </div>
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <div
+                                                className={cn(
+                                                    "mt-2 break-words text-[11px] font-mono leading-5",
+                                                    detail.status === "error" ? "text-red-300" : "text-amber-200"
+                                                )}
+                                            >
+                                                {summarizeProviderMessage(detail.message)}
+                                            </div>
+                                        </TooltipTrigger>
+                                        <TooltipContent className="max-w-lg break-all">{detail.message}</TooltipContent>
+                                    </Tooltip>
                                 ) : null}
                             </div>
                         ))}

@@ -1,4 +1,5 @@
 import type { DiskUsageEntry, DiskUsageResult } from "@app/dev-dashboard/lib/disk/types";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 
 interface DiskUsageBarsProps {
     result: DiskUsageResult;
@@ -53,12 +54,14 @@ export function DiskUsageBars({ result }: DiskUsageBarsProps) {
                 {ranked.map((entry) => (
                     <div key={entry.path} className="flex flex-col gap-1.5">
                         <div className="flex items-baseline justify-between gap-2">
-                            <span
-                                className="truncate font-mono text-sm text-[var(--dd-text-primary)]"
-                                title={entry.path}
-                            >
-                                {entry.label}
-                            </span>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <span className="truncate font-mono text-sm text-[var(--dd-text-primary)]">
+                                        {entry.label}
+                                    </span>
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-lg break-all">{entry.path}</TooltipContent>
+                            </Tooltip>
                             <span className="shrink-0 font-mono text-sm font-semibold text-[var(--dd-text-primary)]">
                                 {formatBytes(entry.bytes)}
                             </span>

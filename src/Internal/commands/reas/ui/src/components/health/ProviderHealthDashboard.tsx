@@ -2,6 +2,7 @@ import type { ProviderFetchLogRow, ProviderHealthSummary } from "@app/Internal/c
 import { fmtDateTime } from "@app/Internal/commands/reas/ui/src/lib/format";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ui/components/card";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import { cn } from "@ui/lib/utils";
 import { Activity, AlertTriangle, CheckCircle2, Clock, Database, XCircle } from "lucide-react";
 
@@ -157,12 +158,14 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                                 ) : null}
                             </div>
                             {provider.lastError ? (
-                                <div
-                                    title={provider.lastError}
-                                    className="rounded-md border border-red-500/10 bg-red-500/5 px-2 py-1.5 text-[11px] font-mono leading-4 text-red-300 line-clamp-2"
-                                >
-                                    {provider.lastError}
-                                </div>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <div className="rounded-md border border-red-500/10 bg-red-500/5 px-2 py-1.5 text-[11px] font-mono leading-4 text-red-300 line-clamp-2">
+                                            {provider.lastError}
+                                        </div>
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-lg break-all">{provider.lastError}</TooltipContent>
+                                </Tooltip>
                             ) : null}
                         </CardContent>
                     </Card>
@@ -229,11 +232,19 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                                             </span>
                                         </td>
                                         <td className="px-4 py-2 text-right text-foreground">{row.listing_count}</td>
-                                        <td
-                                            className="max-w-[240px] truncate px-4 py-2 text-red-300"
-                                            title={row.error_message ?? undefined}
-                                        >
-                                            {row.error_message ?? ""}
+                                        <td className="max-w-[240px] truncate px-4 py-2 text-red-300">
+                                            {row.error_message ? (
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <span>{row.error_message}</span>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent className="max-w-lg break-all">
+                                                        {row.error_message}
+                                                    </TooltipContent>
+                                                </Tooltip>
+                                            ) : (
+                                                ""
+                                            )}
                                         </td>
                                     </tr>
                                 ))}

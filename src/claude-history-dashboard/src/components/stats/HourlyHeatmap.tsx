@@ -1,4 +1,5 @@
 import { Clock } from "lucide-react";
+import { HoverTip } from "@/components/stats/HoverTip";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface HourlyHeatmapProps {
@@ -59,11 +60,11 @@ export function HourlyHeatmap({ hourlyActivity }: HourlyHeatmapProps) {
 					{/* Heatmap grid */}
 					<div className="grid grid-cols-12 gap-1">
 						{hours.map(({ hour, count }) => (
-							<div
-								key={hour}
-								className={`aspect-square rounded-sm ${getIntensity(count)} transition-all hover:scale-110 cursor-pointer`}
-								title={`${formatHour(hour)}: ${count.toLocaleString()} messages`}
-							/>
+							<HoverTip key={hour} tip={`${formatHour(hour)}: ${count.toLocaleString()} messages`}>
+								<div
+									className={`aspect-square rounded-sm ${getIntensity(count)} transition-all hover:scale-110 cursor-pointer`}
+								/>
+							</HoverTip>
 						))}
 					</div>
 

@@ -2,6 +2,7 @@ import { TanStackDevtools } from "@tanstack/react-devtools";
 import type { QueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, HeadContent, Scripts, useRouterState } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
+import { TooltipProvider } from "@ui/components/tooltip";
 import Header from "../components/Header";
 import { Sidebar } from "../components/sidebar/Sidebar";
 import TanStackQueryDevtools from "../integrations/tanstack-query/devtools";
@@ -67,7 +68,9 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 			<body className="cyberpunk bg-background text-foreground">
 				<div className="scan-lines" aria-hidden="true" />
 				<div className="cyber-grid" aria-hidden="true" />
-				<RootContent>{children}</RootContent>
+				<TooltipProvider>
+					<RootContent>{children}</RootContent>
+				</TooltipProvider>
 				{import.meta.env.DEV && (
 					<TanStackDevtools
 						config={{

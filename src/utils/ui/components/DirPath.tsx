@@ -1,4 +1,5 @@
 import { formatPathForDisplay, resolveDirPathDisplayPrefix } from "@app/utils/paths.client";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@ui/components/tooltip";
 import { createContext, type ReactElement, type ReactNode, useContext, useMemo } from "react";
 
 const DirPathPrefixContext = createContext<string>("");
@@ -42,21 +43,29 @@ export function DirPath({
     }
 
     const { display, full } = formatPathForDisplay(trimmed, prefix);
-    const title = showFullPathTitle ? full : undefined;
     const truncateClass =
         truncate === "tail" ? "truncate-mono-tail min-w-0" : truncate === "end" ? "truncate-mono min-w-0" : "";
 
-    if (truncate === "tail") {
-        return (
-            <span className={`${truncateClass} ${className ?? ""}`.trim()} title={title}>
+    const content =
+        truncate === "tail" ? (
+            <span className={`${truncateClass} ${className ?? ""}`.trim()}>
                 <span className="truncate-mono-tail__text">{display}</span>
             </span>
+        ) : (
+            <span className={`${truncateClass} ${className ?? ""}`.trim()}>{display}</span>
         );
+
+    if (!showFullPathTitle) {
+        return content;
     }
 
+    // Self-contained provider so DirPath works in any app tree (sidebar.tsx pattern)
     return (
-        <span className={`${truncateClass} ${className ?? ""}`.trim()} title={title}>
-            {display}
-        </span>
+        <TooltipProvider>
+            <Tooltip>
+                <TooltipTrigger asChild>{content}</TooltipTrigger>
+                <TooltipContent className="max-w-lg font-mono break-all">{full}</TooltipContent>
+            </Tooltip>
+        </TooltipProvider>
     );
 }

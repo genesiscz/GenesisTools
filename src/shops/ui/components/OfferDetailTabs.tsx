@@ -3,6 +3,7 @@ import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
 import { SafeJSON } from "@app/utils/json";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@app/utils/ui/components/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@app/utils/ui/components/tooltip";
 import { ChevronDown, ExternalLink, ImageOff } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -83,12 +84,16 @@ function OfferDetailPanel({ offer }: { offer: MasterOfferRow }) {
                     <div className="flex flex-wrap items-start justify-between gap-2">
                         <div className="min-w-0">
                             {breadcrumb.length > 0 ? (
-                                <div
-                                    className="font-mono text-[10px] tracking-[0.15em] text-muted-foreground uppercase mb-1 truncate"
-                                    title={breadcrumb.join(" > ")}
-                                >
-                                    {breadcrumb.join(" › ")}
-                                </div>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <div className="font-mono text-[10px] tracking-[0.15em] text-muted-foreground uppercase mb-1 truncate">
+                                            {breadcrumb.join(" › ")}
+                                        </div>
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-lg break-all">
+                                        {breadcrumb.join(" > ")}
+                                    </TooltipContent>
+                                </Tooltip>
                             ) : null}
                             <div className="font-mono text-base text-foreground leading-tight">{offer.name}</div>
                             <div className="flex flex-wrap items-center gap-2 mt-1">
@@ -189,9 +194,18 @@ function Spec({ label, value }: { label: string; value: string | null }) {
     return (
         <div className="min-w-0">
             <div className="text-[9px] tracking-[0.2em] text-muted-foreground uppercase">{label}</div>
-            <div className="text-foreground truncate" title={value ?? undefined}>
-                {value ?? <span className="text-muted-foreground">—</span>}
-            </div>
+            {value ? (
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <div className="text-foreground truncate">{value}</div>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-md">{value}</TooltipContent>
+                </Tooltip>
+            ) : (
+                <div className="text-foreground truncate">
+                    <span className="text-muted-foreground">—</span>
+                </div>
+            )}
         </div>
     );
 }

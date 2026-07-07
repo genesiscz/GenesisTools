@@ -7,6 +7,7 @@ import { buildBalancedMosaicLayout, reconcileMosaicLayout } from "@app/utils/ui/
 import { useAutoScroll } from "@app/utils/ui/hooks/useAutoScroll";
 import { useNowTick } from "@app/utils/ui/hooks/useNowTick";
 import { useDirPathPrefix } from "@ui/components/DirPath";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
 import { freezeLogSearch } from "@/components/LogSearchPopover";
@@ -720,26 +721,31 @@ export function SessionsHome({
                             });
 
                             return (
-                                <button
-                                    key={key}
-                                    type="button"
-                                    onClick={() => {
-                                        toggleSessionInMosaic(key);
-                                    }}
-                                    className={mosaicToggleClass(visibility, session.badge)}
-                                    title={mosaicToggleTitle(visibility, session, pathPrefix)}
-                                    aria-pressed={visibility === "visible"}
-                                >
-                                    <SessionHeaderLine
-                                        session={session}
-                                        showCommand={false}
-                                        layout="inline"
-                                        className="min-w-0 flex-1"
-                                    />
-                                    <span className="dbg-ui-text-xs shrink-0 opacity-70 ml-1">
-                                        {visibility === "visible" ? "●" : visibility === "overflow" ? "◐" : "○"}
-                                    </span>
-                                </button>
+                                <Tooltip key={key}>
+                                    <TooltipTrigger asChild>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                toggleSessionInMosaic(key);
+                                            }}
+                                            className={mosaicToggleClass(visibility, session.badge)}
+                                            aria-pressed={visibility === "visible"}
+                                        >
+                                            <SessionHeaderLine
+                                                session={session}
+                                                showCommand={false}
+                                                layout="inline"
+                                                className="min-w-0 flex-1"
+                                            />
+                                            <span className="dbg-ui-text-xs shrink-0 opacity-70 ml-1">
+                                                {visibility === "visible" ? "●" : visibility === "overflow" ? "◐" : "○"}
+                                            </span>
+                                        </button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                        {mosaicToggleTitle(visibility, session, pathPrefix)}
+                                    </TooltipContent>
+                                </Tooltip>
                             );
                         })}
                     </div>

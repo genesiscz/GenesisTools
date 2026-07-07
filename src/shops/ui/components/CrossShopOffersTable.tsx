@@ -2,6 +2,7 @@ import type { MasterOfferRow } from "@app/shops/types";
 import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@app/utils/ui/components/table";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@app/utils/ui/components/tooltip";
 import { ExternalLink } from "lucide-react";
 
 interface CrossShopOffersTableProps {
@@ -48,8 +49,13 @@ export function CrossShopOffersTable({ offers }: CrossShopOffersTableProps) {
                                 <TableCell>
                                     <ShopBadge origin={offer.shop_origin} label={offer.shop_display_name} />
                                 </TableCell>
-                                <TableCell className="font-mono text-xs max-w-md truncate" title={offer.name}>
-                                    {offer.name}
+                                <TableCell className="font-mono text-xs max-w-md truncate">
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <span>{offer.name}</span>
+                                        </TooltipTrigger>
+                                        <TooltipContent className="max-w-md">{offer.name}</TooltipContent>
+                                    </Tooltip>
                                 </TableCell>
                                 <TableCell className="text-right font-mono text-sm">
                                     {offer.current_price !== null ? (

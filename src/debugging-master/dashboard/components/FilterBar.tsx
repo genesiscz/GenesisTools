@@ -1,6 +1,7 @@
 import type { LogLevel } from "@app/debugging-master/types";
 import type { DashboardSession } from "@app/utils/log-viewer/log-source";
 import { sessionKey } from "@app/utils/log-viewer/session-key";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import type { FilterState } from "@/lib/filters";
 import { FILTER_ORDER, LEVEL_META } from "@/lib/levels";
 import { formatSessionHeaderParts } from "@/lib/session-run-context";
@@ -60,16 +61,20 @@ export function FilterBar({
     return (
         <div className="sticky top-[3.25rem] sm:top-[3.5rem] z-10 glass-card border-b border-white/8 px-3 sm:px-5 py-2.5 flex flex-col gap-2.5">
             <div className="flex flex-wrap items-center gap-1.5">
-                <button
-                    type="button"
-                    onClick={onToggleAll}
-                    className="filter-pill text-white/80"
-                    data-active={allOn ? "true" : "false"}
-                    style={{ color: "rgb(var(--lvl-purple, 168 85 247))" }}
-                    title={allOn ? "deselect all" : "select all"}
-                >
-                    {allOn ? "all" : "none"}
-                </button>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <button
+                            type="button"
+                            onClick={onToggleAll}
+                            className="filter-pill text-white/80"
+                            data-active={allOn ? "true" : "false"}
+                            style={{ color: "rgb(var(--lvl-purple, 168 85 247))" }}
+                        >
+                            {allOn ? "all" : "none"}
+                        </button>
+                    </TooltipTrigger>
+                    <TooltipContent>{allOn ? "deselect all" : "select all"}</TooltipContent>
+                </Tooltip>
                 {FILTER_ORDER.map((lvl) => {
                     const active = state.levels.has(lvl);
                     return (
@@ -142,18 +147,22 @@ export function FilterBar({
                 )}
 
                 <div className="flex shrink-0 items-center gap-2">
-                    <button
-                        type="button"
-                        onClick={onToggleSort}
-                        className="dbg-ui-btn uppercase tracking-wider px-2.5 py-1 border rounded-md transition-colors text-white/70 border-white/10 hover:border-cyan-500/40 hover:text-white/95"
-                        title={
-                            sortDir === "asc"
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <button
+                                type="button"
+                                onClick={onToggleSort}
+                                className="dbg-ui-btn uppercase tracking-wider px-2.5 py-1 border rounded-md transition-colors text-white/70 border-white/10 hover:border-cyan-500/40 hover:text-white/95"
+                            >
+                                {sortDir === "asc" ? "↓ newest" : "↑ newest"}
+                            </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                            {sortDir === "asc"
                                 ? "showing oldest → newest (newest at bottom)"
-                                : "showing newest → oldest (newest at top)"
-                        }
-                    >
-                        {sortDir === "asc" ? "↓ newest" : "↑ newest"}
-                    </button>
+                                : "showing newest → oldest (newest at top)"}
+                        </TooltipContent>
+                    </Tooltip>
                     <AutoscrollToggle paused={paused} onToggle={onTogglePause} />
                     <FullJsonContextToggle
                         enabled={settings.fullJsonContext}

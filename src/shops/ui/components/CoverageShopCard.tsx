@@ -2,6 +2,7 @@ import type { CoverageRow } from "@app/shops/types";
 import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Card, CardContent } from "@app/utils/ui/components/card";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@app/utils/ui/components/tooltip";
 
 interface CoverageShopCardProps {
     row: CoverageRow;
@@ -90,11 +91,14 @@ export function CoverageShopCard({ row }: CoverageShopCardProps) {
                                 runs:
                             </span>
                             {row.recent_runs.map((r) => (
-                                <span
-                                    key={r.id}
-                                    title={`${r.status} · ${r.products_seen} seen / ${r.products_new} new`}
-                                    className={`block w-2 h-2 rounded-sm ${statusColor(r.status)}`}
-                                />
+                                <Tooltip key={r.id}>
+                                    <TooltipTrigger asChild>
+                                        <span className={`block w-2 h-2 rounded-sm ${statusColor(r.status)}`} />
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                        {r.status} · {r.products_seen} seen / {r.products_new} new
+                                    </TooltipContent>
+                                </Tooltip>
                             ))}
                         </>
                     )}

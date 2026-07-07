@@ -2,6 +2,7 @@ import { TanStackDevtools } from "@tanstack/react-devtools";
 import type { QueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, HeadContent, Scripts } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
+import { TooltipProvider } from "@ui/components/tooltip";
 import { useEffect } from "react";
 import { Toaster } from "sonner";
 import { RouteError } from "@/components/RouteError";
@@ -68,33 +69,35 @@ function RootDocument({ children }: { children: React.ReactNode }) {
             </head>
             <body>
                 <WorkOSProvider>
-                    <ConfirmProvider>{children}</ConfirmProvider>
-                    <Toaster
-                        theme="dark"
-                        position="bottom-right"
-                        toastOptions={{
-                            style: {
-                                background: "rgba(3, 3, 8, 0.95)",
-                                border: "1px solid rgba(245, 158, 11, 0.2)",
-                                color: "#fff",
-                            },
-                        }}
-                    />
-                    {import.meta.env.DEV && (
-                        <TanStackDevtools
-                            config={{
-                                position: "bottom-right",
-                            }}
-                            plugins={[
-                                {
-                                    name: "Tanstack Router",
-                                    render: <TanStackRouterDevtoolsPanel />,
+                    <TooltipProvider>
+                        <ConfirmProvider>{children}</ConfirmProvider>
+                        <Toaster
+                            theme="dark"
+                            position="bottom-right"
+                            toastOptions={{
+                                style: {
+                                    background: "rgba(3, 3, 8, 0.95)",
+                                    border: "1px solid rgba(245, 158, 11, 0.2)",
+                                    color: "#fff",
                                 },
-                                TanStackQueryDevtools,
-                                AiDevtools,
-                            ]}
+                            }}
                         />
-                    )}
+                        {import.meta.env.DEV && (
+                            <TanStackDevtools
+                                config={{
+                                    position: "bottom-right",
+                                }}
+                                plugins={[
+                                    {
+                                        name: "Tanstack Router",
+                                        render: <TanStackRouterDevtoolsPanel />,
+                                    },
+                                    TanStackQueryDevtools,
+                                    AiDevtools,
+                                ]}
+                            />
+                        )}
+                    </TooltipProvider>
                 </WorkOSProvider>
                 <Scripts />
             </body>
