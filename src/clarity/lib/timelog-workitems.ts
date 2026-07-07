@@ -1,5 +1,9 @@
 import { exportMonth } from "@app/azure-devops/lib/timelog/export";
-import { type EnrichedWorkItem, enrichWorkItems } from "@app/azure-devops/lib/work-item-enrichment";
+import {
+    type EnrichedWorkItem,
+    enrichWorkItems,
+    type WorkItemParentRef,
+} from "@app/azure-devops/lib/work-item-enrichment";
 import type { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { AzureConfig } from "@app/azure-devops/types";
 import { out } from "@app/logger";
@@ -11,6 +15,7 @@ export interface TimelogWorkItemGroup {
     state: string;
     totalMinutes: number;
     entryCount: number;
+    parent?: WorkItemParentRef;
 }
 
 export interface TimelogWorkItemsResult {
@@ -33,7 +38,7 @@ export async function getTimelogWorkItems(
 
     if (uniqueIds.length > 0) {
         try {
-            workItemMap = await enrichWorkItems(adoConfig, uniqueIds);
+            workItemMap = await enrichWorkItems(adoConfig, uniqueIds, { includeParents: true });
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             out.error("[clarity-lib] Failed to enrich timelog entries:", msg);
@@ -53,6 +58,7 @@ export async function getTimelogWorkItems(
                 state: wi?.state ?? "",
                 totalMinutes: summary.minutes,
                 entryCount: summary.count,
+                parent: wi?.parent,
             };
         }
     );

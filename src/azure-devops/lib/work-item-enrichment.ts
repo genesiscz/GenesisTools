@@ -16,11 +16,19 @@ async function createApi(config: import("@app/azure-devops/types").AzureConfig) 
     return new Api(config);
 }
 
-import type { AzureConfig, WorkItemCache, WorkItemTypeDefinition } from "@app/azure-devops/types";
+import { parseRelations } from "@app/azure-devops/relations";
+import type { AzureConfig, WorkItemCache, WorkItemFull, WorkItemTypeDefinition } from "@app/azure-devops/types";
 import { WORKITEM_CACHE_VERSION } from "@app/azure-devops/types";
 import { logger } from "@app/logger";
 
 // ============= Types =============
+
+/** Minimal reference to a work item's first hierarchy parent */
+export interface WorkItemParentRef {
+    id: number;
+    title: string;
+    type?: string;
+}
 
 /** Lightweight work item info returned by the enrichment service */
 export interface EnrichedWorkItem {
@@ -30,6 +38,10 @@ export interface EnrichedWorkItem {
     type?: string;
     assignee?: string;
     changed: string;
+    /** First hierarchy parent ID (`null` = none). Only reliable when fetched with parent support. */
+    parentId?: number | null;
+    /** Resolved parent info. Populated only when `includeParents: true`. */
+    parent?: WorkItemParentRef;
 }
 
 export interface EnrichWorkItemsOptions {
@@ -37,6 +49,12 @@ export interface EnrichWorkItemsOptions {
     force?: boolean;
     /** Include work item type (System.WorkItemType). Requires fetching rawFields. Default: true */
     includeType?: boolean;
+    /**
+     * Resolve each item's first hierarchy parent (id + title + type) via the same
+     * cache-first strategy. Costs one extra batch fetch for uncached parents —
+     * leave off unless the caller actually renders parent info. Default: false
+     */
+    includeParents?: boolean;
 }
 
 /** Cached type definitions with color info */
@@ -72,7 +90,7 @@ export async function enrichWorkItems(
     ids: number[],
     options: EnrichWorkItemsOptions = {}
 ): Promise<Map<number, EnrichedWorkItem>> {
-    const { force = false, includeType = true } = options;
+    const { force = false, includeType = true, includeParents = false } = options;
     const result = new Map<number, EnrichedWorkItem>();
 
     if (ids.length === 0) {
@@ -87,7 +105,11 @@ export async function enrichWorkItems(
         for (const id of uniqueIds) {
             const cached = await loadWorkItemCache(id);
 
-            if (cached && isCacheFresh(cached)) {
+            // Entries written before parent support lack `parentId` entirely —
+            // refetch those when the caller needs parents.
+            const parentUsable = !includeParents || cached?.parentId !== undefined;
+
+            if (cached && isCacheFresh(cached) && parentUsable) {
                 result.set(id, cacheToEnriched(cached, includeType));
                 logger.debug(`[enrichment] Cache hit for #${id}`);
             } else {
@@ -148,6 +170,7 @@ export async function enrichWorkItems(
 
         for (const [id, item] of fetched) {
             const itemType = (item.rawFields?.["System.WorkItemType"] as string | undefined) ?? undefined;
+            const parentId = extractParentId(item);
 
             const cacheEntry: WorkItemCache = {
                 version: WORKITEM_CACHE_VERSION,
@@ -159,6 +182,7 @@ export async function enrichWorkItems(
                 state: item.state,
                 type: itemType,
                 assignee: item.assignee,
+                parentId,
             };
 
             await saveWorkItemCache(id, cacheEntry);
@@ -170,6 +194,7 @@ export async function enrichWorkItems(
                 type: includeType ? itemType : undefined,
                 assignee: item.assignee,
                 changed: item.changed,
+                parentId,
             };
 
             result.set(id, enriched);
@@ -178,7 +203,61 @@ export async function enrichWorkItems(
         logger.debug(`[enrichment] Fetched ${fetched.size} items from API`);
     }
 
+    // Phase 3 (opt-in): resolve parents through the same cache-first pipeline
+    if (includeParents) {
+        await attachParents(config, result, { force, includeType });
+    }
+
     return result;
+}
+
+/** Extract the first hierarchy parent ID from a fetched work item (`null` = no parent). */
+function extractParentId(item: WorkItemFull): number | null {
+    const rawParent = item.rawFields?.["System.Parent"];
+
+    if (typeof rawParent === "number") {
+        return rawParent;
+    }
+
+    if (item.relations) {
+        return parseRelations(item.relations).parent ?? null;
+    }
+
+    return null;
+}
+
+/** Resolve `parentId` references into `parent` refs using enrichWorkItems (shared cache). */
+async function attachParents(
+    config: AzureConfig,
+    items: Map<number, EnrichedWorkItem>,
+    options: { force: boolean; includeType: boolean }
+): Promise<void> {
+    const parentIds = [
+        ...new Set(
+            [...items.values()]
+                .map((item) => item.parentId)
+                .filter((pid): pid is number => typeof pid === "number" && pid > 0)
+        ),
+    ];
+
+    if (parentIds.length === 0) {
+        return;
+    }
+
+    const parents = await enrichWorkItems(config, parentIds, options);
+
+    for (const item of items.values()) {
+        if (typeof item.parentId !== "number") {
+            continue;
+        }
+
+        const parent = parents.get(item.parentId);
+        if (parent) {
+            item.parent = { id: parent.id, title: parent.title, type: parent.type };
+        }
+    }
+
+    logger.debug(`[enrichment] Attached ${parents.size} parents for ${items.size} items`);
 }
 
 // ============= Type Definitions =============
@@ -282,6 +361,7 @@ function cacheToEnriched(cache: WorkItemCache, includeType: boolean): EnrichedWo
         type: includeType ? cache.type : undefined,
         assignee: cache.assignee,
         changed: cache.changed,
+        parentId: cache.parentId,
     };
 }
 

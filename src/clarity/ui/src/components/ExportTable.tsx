@@ -1,8 +1,8 @@
-import type { WorkItemTypeColor } from "@app/azure-devops/lib/work-item-enrichment";
+import type { WorkItemParentRef, WorkItemTypeColor } from "@app/azure-devops/lib/work-item-enrichment";
 import { Badge } from "@ui/components/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/components/table";
-import type { AdoConfig } from "./WorkItemLink";
-import { TypeBadge, WorkItemLink } from "./WorkItemLink";
+import type { AdoConfig, ChainNode } from "./WorkItemLink";
+import { WorkItemChain } from "./WorkItemLink";
 
 interface ExportEntry {
     date: string;
@@ -10,6 +10,7 @@ interface ExportEntry {
     minutes: number;
     workItemTitle: string;
     workItemType?: string;
+    workItemParent?: WorkItemParentRef;
     timeTypeDescription: string;
     comment: string | null;
 }
@@ -20,6 +21,20 @@ interface ExportTableProps {
     mappedWorkItemIds: Set<number>;
     adoConfig?: AdoConfig | null;
     typeColors: Record<string, WorkItemTypeColor>;
+}
+
+function buildChainNodes(entry: ExportEntry): ChainNode[] {
+    const item: ChainNode = {
+        id: entry.workItemId,
+        title: entry.workItemTitle || undefined,
+        type: entry.workItemType || undefined,
+    };
+
+    if (!entry.workItemParent) {
+        return [item];
+    }
+
+    return [{ id: entry.workItemParent.id, title: entry.workItemParent.title, type: entry.workItemParent.type }, item];
 }
 
 export function ExportTable({ entries, entriesByDay, mappedWorkItemIds, adoConfig, typeColors }: ExportTableProps) {
@@ -74,16 +89,14 @@ export function ExportTable({ entries, entriesByDay, mappedWorkItemIds, adoConfi
                             <TableCell className="font-mono text-sm text-gray-300">
                                 {(entry.minutes / 60).toFixed(2)}h
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="whitespace-normal">
                                 <div>
-                                    <div className="flex items-center gap-1.5 text-xs">
-                                        <WorkItemLink id={entry.workItemId} adoConfig={adoConfig} />
-                                        {entry.workItemType && (
-                                            <TypeBadge
-                                                typeName={entry.workItemType}
-                                                color={typeColors[entry.workItemType]}
-                                            />
-                                        )}
+                                    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                                        <WorkItemChain
+                                            nodes={buildChainNodes(entry)}
+                                            adoConfig={adoConfig}
+                                            typeColors={typeColors}
+                                        />
                                         {entry.timeTypeDescription && (
                                             <span className="font-mono text-gray-500">
                                                 · {entry.timeTypeDescription}
@@ -91,16 +104,13 @@ export function ExportTable({ entries, entriesByDay, mappedWorkItemIds, adoConfi
                                         )}
                                     </div>
                                     {entry.workItemTitle && (
-                                        <div className="text-xs text-gray-500 truncate mt-0.5">
+                                        <div className="text-xs text-gray-500 break-words mt-0.5">
                                             {entry.workItemTitle}
                                         </div>
                                     )}
                                 </div>
                             </TableCell>
-                            <TableCell
-                                className="font-mono text-xs text-gray-500 max-w-48 truncate"
-                                title={entry.comment ?? undefined}
-                            >
+                            <TableCell className="font-mono text-xs text-gray-500 max-w-48 whitespace-normal break-words">
                                 {entry.comment || ""}
                             </TableCell>
                             <TableCell className="text-right whitespace-nowrap">

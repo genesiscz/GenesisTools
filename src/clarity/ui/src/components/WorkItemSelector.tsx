@@ -7,7 +7,7 @@ import { Button } from "@ui/components/button";
 import { Input } from "@ui/components/input";
 import { CheckCircle, Loader2, Plus, Search, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
-import { TypeBadge } from "./WorkItemLink";
+import { TypeBadge, WorkItemChain } from "./WorkItemLink";
 
 interface ClarityTaskTarget {
     taskId: number;
@@ -118,6 +118,14 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
         queryFn: fetchMappings,
     });
 
+    const { data: adoConfigData } = useQuery({
+        queryKey: ["ado-config"],
+        queryFn: async () => {
+            const res = await fetch("/api/ado-config");
+            return res.ok ? res.json() : { configured: false };
+        },
+    });
+
     const adoSearchMutation = useMutation({
         mutationFn: () => searchAdoWorkItems(adoQuery),
     });
@@ -135,6 +143,10 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
     }, [mappingsData]);
 
     const typeColors = typeColorsData?.types ?? {};
+    const adoConfig =
+        adoConfigData?.org && adoConfigData?.project
+            ? { org: adoConfigData.org, project: adoConfigData.project }
+            : null;
 
     const filteredTimelog = useMemo(() => {
         if (!timelogData?.workItems) {
@@ -295,7 +307,7 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
                             return (
                                 <label
                                     key={wi.id}
-                                    className={`flex items-center gap-2.5 w-full px-3 py-2 rounded border transition-colors font-mono text-xs ${
+                                    className={`flex items-start gap-2.5 w-full px-3 py-2 rounded border transition-colors font-mono text-xs ${
                                         isMapped
                                             ? "border-border/60 bg-card/60 text-gray-600 cursor-not-allowed"
                                             : isSelected
@@ -308,23 +320,45 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
                                         checked={isSelected}
                                         disabled={isMapped}
                                         onChange={() => toggleTimelogItem(wi)}
-                                        className="accent-cyan-500 w-3.5 h-3.5"
+                                        className="accent-cyan-500 w-3.5 h-3.5 mt-0.5 shrink-0"
                                     />
-                                    <span className="text-primary/80">#{wi.id}</span>
-                                    <span className="flex-1 truncate font-medium">{wi.title}</span>
-                                    {wi.type && <TypeBadge typeName={wi.type} color={typeColor} />}
-                                    <span className="text-gray-500 tabular-nums">{hours}h</span>
-                                    <span className="text-gray-600 tabular-nums">
-                                        {wi.entryCount} {wi.entryCount === 1 ? "entry" : "entries"}
-                                    </span>
-                                    {isMapped && (
-                                        <Badge
-                                            variant="outline"
-                                            className="text-[9px] border-green-500/30 text-green-500"
-                                        >
-                                            Mapped
-                                        </Badge>
-                                    )}
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-start gap-2.5">
+                                            <span className="text-primary/80">#{wi.id}</span>
+                                            <span className="flex-1 min-w-0 font-medium break-words">{wi.title}</span>
+                                            {wi.type && <TypeBadge typeName={wi.type} color={typeColor} />}
+                                            <span className="text-gray-500 tabular-nums whitespace-nowrap">
+                                                {hours}h
+                                            </span>
+                                            <span className="text-gray-600 tabular-nums whitespace-nowrap">
+                                                {wi.entryCount} {wi.entryCount === 1 ? "entry" : "entries"}
+                                            </span>
+                                            {isMapped && (
+                                                <Badge
+                                                    variant="outline"
+                                                    className="text-[9px] border-green-500/30 text-green-500"
+                                                >
+                                                    Mapped
+                                                </Badge>
+                                            )}
+                                        </div>
+                                        {wi.parent && (
+                                            <div className="mt-1 text-[11px]">
+                                                <WorkItemChain
+                                                    nodes={[
+                                                        {
+                                                            id: wi.parent.id,
+                                                            title: wi.parent.title,
+                                                            type: wi.parent.type,
+                                                        },
+                                                        { id: wi.id, title: wi.title, type: wi.type || undefined },
+                                                    ]}
+                                                    adoConfig={adoConfig}
+                                                    typeColors={typeColors}
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
                                 </label>
                             );
                         })}
@@ -394,7 +428,7 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
                                     }`}
                                 >
                                     <span className="text-primary/80">#{wi.id}</span>
-                                    <span className="flex-1 truncate font-medium">{wi.title}</span>
+                                    <span className="flex-1 min-w-0 font-medium break-words">{wi.title}</span>
                                     {wi.type && <TypeBadge typeName={wi.type} color={typeColor} />}
                                     {isMapped ? (
                                         <Badge

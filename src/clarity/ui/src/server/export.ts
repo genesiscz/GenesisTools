@@ -50,7 +50,10 @@ async function enrichExportEntries(
     }
 
     try {
-        const workItems = await enrichWorkItems(adoConfig, uniqueIds, { force: options?.force });
+        const workItems = await enrichWorkItems(adoConfig, uniqueIds, {
+            force: options?.force,
+            includeParents: true,
+        });
 
         for (const entry of result.entries) {
             const wi = workItems.get(entry.workItemId);
@@ -58,6 +61,7 @@ async function enrichExportEntries(
             if (wi) {
                 entry.workItemTitle = wi.title;
                 entry.workItemType = wi.type ?? "";
+                entry.workItemParent = wi.parent;
             }
         }
 
