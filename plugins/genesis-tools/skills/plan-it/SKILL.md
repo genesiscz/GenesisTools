@@ -114,7 +114,7 @@ git commit -m "feat: <concise why>"
 `## Deviations`, do not start Task N+1.
 ````
 
-ON-FAIL is one sentence, one action. It may NEVER modify anything declared in the interface freeze (names, signatures, frozen constants/sets), and it is not a debugging expedition — if one bounded action doesn't fix it, the answer is STOP, not a second idea.
+ON-FAIL is one sentence, one action. It may NEVER modify anything declared in the interface freeze (names, signatures, frozen constants/sets), may NEVER weaken, loosen, or delete a test to make it pass, and is not a debugging expedition — if one bounded action doesn't fix it, the answer is STOP, not a second idea. Commit steps always `git add` explicit paths — never `git add -A`.
 
 No test infrastructure in the target repo? Replace test steps with the strongest available observable (`tsgo --noEmit`, lint, a runnable command with expected output) — never drop verification.
 
@@ -140,9 +140,13 @@ Run this checklist yourself — not a subagent dispatch:
 4. **Stranger test** — could a model that has never seen this conversation execute it, alone, from the file?
 5. **Observable verification** — every task's checks name expected output, not "check it works".
 6. **Bounded failure** — every task has exactly one ON-FAIL fallback, then stop.
-7. **Dry-run trace** — take the least trivial example/test input in the plan and trace it through the planned code line by line; the traced output must equal the test's expected value. A plan whose own tests fail its own implementation strands the executor at the first VERIFY — the worst possible leak, because the executor is forbidden from fixing it.
+7. **Dry-run trace section present and honest** — the `## Dry-run trace` section exists, its intermediate values are actually computed (not asserted), and its conclusion equals the test's expected value. A plan whose own tests fail its own implementation strands the executor at the first VERIFY — the worst possible leak, because the executor is forbidden from fixing it.
 
 Fix and move on; no re-review loop.
+
+## Dry-run trace section (mandatory)
+
+Every plan contains, immediately before `## Deviations`, a `## Dry-run trace` section: take the least trivial test input in the plan and walk it through the final planned implementation step by step, SHOWING the intermediate values (the token array after each stage, not just the conclusion), ending with `traced result == expected ✓`. If the trace and the test disagree, the plan is wrong — fix the code or the test before publishing. A plan without this section is incomplete and must not be published. (This exists because a silently-run self-check gets skipped; a required section cannot be.)
 
 ## Deviations section
 
