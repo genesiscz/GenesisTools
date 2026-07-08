@@ -109,18 +109,25 @@ export interface RunWatchOptions {
     once: boolean;
     takeover: boolean;
     print?: (line: string) => Promise<void>;
+    /** Injectable for tests — defaults to `wakefulSleep` (real, sleep-resistant delay). */
+    sleep?: (ms: number, options: { shouldAbort: () => boolean }) => Promise<void>;
 }
 
 const DEGRADED_THRESHOLD_MS = 120_000;
 const DEGRADED_REEMIT_MS = 600_000;
 const BACKOFF_START_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
+// /work/wait returns IMMEDIATELY (no blocking) whenever the scope already has open work —
+// the long-poll only blocks while the queue is empty. Without this pace, a single standing
+// open annotation turns the continuous loop into a zero-delay busy-spin against the server.
+export const ANNOUNCED_POLL_PACE_MS = 3_000;
 
 /** The watch loop's stdout is a contract — Monitor consumes it. Every line printed here
  *  (via `print`) is part of that protocol; everything else goes to stderr. Returns the
  *  process exit code rather than calling `process.exit` itself, so it stays testable. */
 export async function runWatch(opts: RunWatchOptions): Promise<number> {
     const print = opts.print ?? printLn;
+    const sleep = opts.sleep ?? wakefulSleep;
     let seen: SeenMap = new Map();
     let leaseId: number | undefined;
     let backoffMs = BACKOFF_START_MS;
@@ -203,6 +210,10 @@ export async function runWatch(opts: RunWatchOptions): Promise<number> {
                     await release();
                     return 0;
                 }
+
+                // Pace the next check: an immediate re-poll would just echo the same still-open
+                // items right back (0 new lines) in a tight loop until they're claimed/resolved.
+                await sleep(ANNOUNCED_POLL_PACE_MS, { shouldAbort: () => stopping });
             } catch (err) {
                 if (stopping) {
                     continue;
@@ -227,7 +238,7 @@ export async function runWatch(opts: RunWatchOptions): Promise<number> {
                 await writeStderr(
                     `boards watch: transport error: ${err instanceof Error ? err.message : String(err)}\n`
                 );
-                await wakefulSleep(backoffMs, { shouldAbort: () => stopping });
+                await sleep(backoffMs, { shouldAbort: () => stopping });
                 backoffMs = Math.min(backoffMs * 2, BACKOFF_MAX_MS);
             }
         }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { runWatch } from "./watch";
+import { ANNOUNCED_POLL_PACE_MS, runWatch } from "./watch";
 
 describe("runWatch", () => {
     let server: ReturnType<typeof Bun.serve> | undefined;
@@ -89,6 +89,88 @@ describe("runWatch", () => {
         expect(lines).toEqual([
             "№1 [fix] demo: tighten the spacing",
             "⚠ boards scope held by live listener otherhost:123",
+        ]);
+    });
+
+    it("paces re-polls while work stays open, instead of busy-spinning /work/wait", async () => {
+        // /work/wait returns immediately (no blocking) whenever the scope already has open
+        // work — so a continuous loop MUST pace itself between "announced" iterations, or it
+        // hammers the server in a zero-delay spin for as long as the annotation stays open.
+        let waitCall = 0;
+        server = Bun.serve({
+            port: 0,
+            fetch(req) {
+                const url = new URL(req.url);
+
+                if (url.pathname === "/api/boards/work/wait") {
+                    waitCall += 1;
+                    if (waitCall <= 2) {
+                        return Response.json({ work: [{ id: 1, board: "demo", capsule: "..." }], pending: 1 });
+                    }
+                    return Response.json(
+                        {
+                            error: "scope held by a live listener",
+                            live: true,
+                            holder: {
+                                id: 1,
+                                scopeKind: "board",
+                                scope: "demo",
+                                branch: "",
+                                actor: "x",
+                                session: "otherhost:1",
+                                createdAt: "",
+                                lastSeen: "",
+                            },
+                        },
+                        { status: 409 }
+                    );
+                }
+
+                if (url.pathname === "/api/boards/work") {
+                    return Response.json({
+                        work: [
+                            {
+                                id: 1,
+                                board: "demo",
+                                cardId: 1,
+                                intent: "fix",
+                                status: "open",
+                                prompt: "tighten the spacing",
+                                createdAt: "2026-07-08T00:00:00.000Z",
+                                updatedAt: "2026-07-08T00:00:00.000Z",
+                            },
+                        ],
+                    });
+                }
+
+                return new Response("not found", { status: 404 });
+            },
+        });
+
+        const sleeps: number[] = [];
+        const lines: string[] = [];
+        const exitCode = await runWatch({
+            base: `http://127.0.0.1:${server.port}`,
+            scope: { kind: "board", board: "demo" },
+            session: "testhost:1",
+            actor: "tester",
+            once: false,
+            takeover: false,
+            print: async (line) => {
+                lines.push(line);
+            },
+            sleep: async (ms) => {
+                sleeps.push(ms);
+            },
+        });
+
+        expect(exitCode).toBe(2);
+        // Call 1 announces the new item and paces; call 2 sees the same item (unchanged, 0
+        // new lines) and still paces; call 3 conflicts and returns without sleeping.
+        expect(sleeps).toEqual([ANNOUNCED_POLL_PACE_MS, ANNOUNCED_POLL_PACE_MS]);
+        expect(lines).toEqual([
+            "№1 [fix] demo: tighten the spacing",
+            "⚠ boards scope held by live listener otherhost:1",
         ]);
     });
 
