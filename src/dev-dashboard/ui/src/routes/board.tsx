@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
+import { BoardCanvas } from "@/components/boards/BoardCanvas";
 import { boardsApi } from "@/components/boards/boards-api";
+import { useLockPageScroll } from "@/hooks/useLockPageScroll";
 
 export function BoardRoute() {
     const { slug } = useParams({ from: "/boards/$slug" });
@@ -8,6 +10,8 @@ export function BoardRoute() {
         queryKey: ["board", slug],
         queryFn: () => boardsApi.doc(slug),
     });
+
+    useLockPageScroll(true);
 
     return (
         <div className="flex h-full min-h-0 flex-col">
@@ -20,17 +24,15 @@ export function BoardRoute() {
                 </Link>
                 <span className="dd-accent-text font-mono text-sm font-bold">{slug}</span>
             </div>
-            <div className="min-h-0 flex-1 overflow-auto p-4">
+            <div className="min-h-0 flex-1">
                 {boardQuery.isPending ? (
-                    <p className="text-sm text-[var(--dd-text-muted)]">Loading board...</p>
+                    <p className="p-4 text-sm text-[var(--dd-text-muted)]">Loading board...</p>
                 ) : boardQuery.isError ? (
-                    <p className="text-sm text-[var(--dd-danger)]">
+                    <p className="p-4 text-sm text-[var(--dd-danger)]">
                         {boardQuery.error instanceof Error ? boardQuery.error.message : String(boardQuery.error)}
                     </p>
                 ) : (
-                    <pre className="dd-panel overflow-auto p-4 text-xs text-[var(--dd-text-secondary)]">
-                        {`cards: ${boardQuery.data.cards.length}\nstrokes: ${boardQuery.data.strokes.length}\nedges: ${boardQuery.data.edges.length}\nannotations: ${boardQuery.data.annotations.length}`}
-                    </pre>
+                    <BoardCanvas doc={boardQuery.data} />
                 )}
             </div>
         </div>
