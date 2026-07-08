@@ -1,0 +1,91 @@
+import { describe, expect, it } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+import {
+    captureRoot,
+    currentBranch,
+    DEFAULT_ROOT,
+    defaultProject,
+    ensureGitExclude,
+    mintKey,
+    readSetConfig,
+    slugifyBranch,
+    writeSetConfig,
+} from "./config";
+
+function initGitRepo(): string {
+    const dir = mkdtempSync(join(tmpdir(), "boards-cfg-"));
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: dir });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: dir });
+    return dir;
+}
+
+describe("captureRoot", () => {
+    it("defaults to <cwd>/.screenshots", () => {
+        expect(captureRoot("/repo")).toBe(join("/repo", DEFAULT_ROOT));
+    });
+
+    it("uses the --dir flag verbatim when given", () => {
+        expect(captureRoot("/repo", "custom-dir")).toBe("custom-dir");
+    });
+});
+
+describe("readSetConfig / writeSetConfig", () => {
+    it("round-trips a config", async () => {
+        const root = mkdtempSync(join(tmpdir(), "boards-root-"));
+        const cfg = { project: "demo", branch: "main", key: "s-20260101-0000", kind: "screenshots" };
+        await writeSetConfig(root, cfg);
+        expect(await readSetConfig(root)).toEqual(cfg);
+    });
+
+    it("returns null when no config exists", async () => {
+        const root = mkdtempSync(join(tmpdir(), "boards-root-"));
+        expect(await readSetConfig(root)).toBeNull();
+    });
+});
+
+describe("defaultProject / currentBranch", () => {
+    it("resolves the repo basename and current branch inside a git repo", () => {
+        const repo = initGitRepo();
+        expect(defaultProject(repo)).toBe(basename(repo));
+        expect(currentBranch(repo)).toBe("main");
+    });
+
+    it("falls back to the cwd basename outside a git repo", () => {
+        const dir = mkdtempSync(join(tmpdir(), "boards-nogit-"));
+        expect(defaultProject(dir)).toBe(basename(dir));
+        expect(currentBranch(dir)).toBe("main");
+    });
+});
+
+describe("mintKey", () => {
+    it("formats as s-YYYYMMDD-HHMM in UTC", () => {
+        expect(mintKey(new Date("2026-07-08T09:05:00Z"))).toBe("s-20260708-0905");
+    });
+});
+
+describe("slugifyBranch", () => {
+    it("mirrors the server's dev-dashboard/lib/boards/sets-store.ts algorithm", () => {
+        expect(slugifyBranch("Feature/ABC_123")).toBe("feature-abc-123");
+        expect(slugifyBranch("main")).toBe("main");
+        expect(slugifyBranch("---")).toBe("main");
+    });
+});
+
+describe("ensureGitExclude", () => {
+    it("appends the capture root once and is idempotent", async () => {
+        const repo = initGitRepo();
+        await ensureGitExclude(repo, DEFAULT_ROOT);
+        await ensureGitExclude(repo, DEFAULT_ROOT);
+        const content = readFileSync(join(repo, ".git", "info", "exclude"), "utf8");
+        expect(content.split("\n").filter((line) => line.trim() === `${DEFAULT_ROOT}/`)).toHaveLength(1);
+    });
+
+    it("is a no-op outside a git repo", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "boards-nogit2-"));
+        await expect(ensureGitExclude(dir, DEFAULT_ROOT)).resolves.toBeUndefined();
+    });
+});
