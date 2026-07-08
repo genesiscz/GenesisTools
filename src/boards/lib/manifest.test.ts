@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendShot, readManifest, writeManifest } from "./manifest";
@@ -8,6 +9,12 @@ describe("readManifest", () => {
     it("returns an empty manifest when the file is missing", async () => {
         const root = mkdtempSync(join(tmpdir(), "boards-manifest-"));
         expect(await readManifest(root)).toEqual({ shots: [] });
+    });
+
+    it("throws on corrupt manifest content instead of silently resetting history", async () => {
+        const root = mkdtempSync(join(tmpdir(), "boards-manifest-"));
+        await writeFile(join(root, "manifest.json"), "{ not valid json");
+        await expect(readManifest(root)).rejects.toThrow(/corrupt/);
     });
 
     it("round-trips shots", async () => {

@@ -66,6 +66,25 @@ export function currentBranch(cwd: string): string {
     return gitOutput(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]) ?? "main";
 }
 
+/** Normalizes a git remote URL to an `owner/name` slug (strips the github host prefix and
+ *  the trailing `.git`). Non-github or already-bare remotes are returned trimmed as-is. */
+export function repoSlugFromRemote(url: string): string {
+    return url
+        .trim()
+        .replace(/^git@github\.com:/, "")
+        .replace(/^https:\/\/github\.com\//, "")
+        .replace(/\.git$/, "");
+}
+
+/** Best-effort `commit` (short SHA) and `repo` (owner/name) for the repo at `cwd`. Both are
+ *  optional — pushes from outside a git repo simply omit them (gitOutput returns null). */
+export function gitProvenance(cwd: string): { commit?: string; repo?: string } {
+    const commit = gitOutput(cwd, ["rev-parse", "--short", "HEAD"]) || undefined;
+    const remote = gitOutput(cwd, ["remote", "get-url", "origin"]);
+    const repo = remote ? repoSlugFromRemote(remote) || undefined : undefined;
+    return { commit, repo };
+}
+
 function pad2(n: number): string {
     return String(n).padStart(2, "0");
 }
