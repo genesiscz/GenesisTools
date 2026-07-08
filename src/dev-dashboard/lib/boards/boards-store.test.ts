@@ -24,10 +24,11 @@ import {
     revertCardFace,
     SlugConflictError,
     softDeleteCard,
+    syncSetCards,
 } from "./boards-store";
 import { BOOTSTRAP_DDL } from "./db";
 import type { BoardsDb } from "./db-types";
-import { getSet, NotFoundError, syncSet } from "./sets-store";
+import { getSet, NotFoundError, setRefOf, syncSet } from "./sets-store";
 
 function makeTestDb(): DatabaseClient<BoardsDb> {
     return createKyselyClient<BoardsDb>({ path: ":memory:", bootstrap: BOOTSTRAP_DDL, pragmas: { foreignKeys: true } });
@@ -243,6 +244,61 @@ describe("boards-store", () => {
 
         const doc = await getBoardDoc(db, "b1");
         expect(doc.cards.length).toBe(5);
+    });
+
+    it("importSet persists each card's source-image dims in payload.naturalWidth/Height, even when downscaled to the fixed import cell width", async () => {
+        await createBoard(db, { slug: "b1" });
+        await syncSet(db, {
+            project: "proj",
+            branchRaw: "main",
+            key: "s1",
+            // A source screenshot much wider than IMPORT_CELL_W (420) — the card is downscaled to fit.
+            entries: [pngFile("shot1.png", 1290, 2796)],
+        });
+        const detail = await getSet(db, "proj", "main", "s1");
+
+        const { cards } = await importSet(db, "b1", detail);
+        expect(cards[0].w).toBe(420); // downscaled display width (IMPORT_CELL_W)
+        expect(cards[0].payload.naturalWidth).toBe(1290); // source-image width preserved
+        expect(cards[0].payload.naturalHeight).toBe(2796);
+    });
+
+    it("syncSetCards refreshes payload.naturalWidth/Height for a stale card, preserving other payload keys", async () => {
+        await createBoard(db, { slug: "b1" });
+        await syncSet(db, {
+            project: "proj",
+            branchRaw: "main",
+            key: "s1",
+            entries: [pngFile("a.png", 1170, 2532)],
+        });
+        const set1 = await getSet(db, "proj", "main", "s1");
+
+        // Construct a card already tagged with this set_ref but an older set_version, standing in
+        // for however staleness gets produced upstream — syncSetCards only needs set_ref match +
+        // set_version < set.version, which this directly satisfies without depending on how/whether
+        // a real re-push of the same key ever bumps `version` (a separate, out-of-scope question).
+        const card = await createCard(db, "b1", {
+            kind: "shot",
+            x: 0,
+            y: 0,
+            w: 420,
+            h: 907,
+            setRef: setRefOf(set1),
+            setVersion: set1.version - 1,
+            filePath: "a.png",
+            blobKey: "stale-hash",
+            payload: { note: "keep me" },
+        });
+
+        const result = await syncSetCards(db, "b1", set1);
+        expect(result.updated).toBe(1);
+
+        const doc = await getBoardDoc(db, "b1");
+        const updated = doc.cards.find((c) => c.id === card.id);
+        expect(updated?.blobKey).toBe(set1.files[0].blobKey);
+        expect(updated?.payload.naturalWidth).toBe(1170);
+        expect(updated?.payload.naturalHeight).toBe(2532);
+        expect(updated?.payload.note).toBe("keep me"); // unrelated payload key untouched
     });
 
     it("appendCardVersion + revertCardFace round-trip: face swaps then reverts, history keeps both rows", async () => {

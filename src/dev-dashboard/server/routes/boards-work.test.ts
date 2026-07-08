@@ -145,6 +145,25 @@ describe("boardsWorkRoutes", () => {
         expect((res.body.holder as { session: string }).session).toBe("session-a");
     }, 10000);
 
+    it("(d2) an anonymous wait (no session) never leases, so it coexists with a live watch lease on the same scope", async () => {
+        const db = getBoardsDb();
+        await createBoard(db, { slug: "b1" });
+        await claimOrRenewLease(db, { kind: "board", board: "b1" }, "session-a", "alice");
+
+        const wait = findRoute("GET", "/api/boards/work/wait");
+        const res = asJson(await wait.handler(makeCtx({ query: { board: "b1", timeout: "1" } })));
+        expect(res.status).toBe(200);
+        expect(res.body.idle).toBe(true);
+
+        // The held lease is untouched — an anonymous wait doesn't claim or evict it.
+        const listeners = await db.kysely
+            .selectFrom("listeners")
+            .selectAll()
+            .where("session", "=", "session-a")
+            .execute();
+        expect(listeners.length).toBe(1);
+    }, 10000);
+
     it("(e) an answered question drains as a choice exactly once", async () => {
         const db = getBoardsDb();
         await createBoard(db, { slug: "b1" });

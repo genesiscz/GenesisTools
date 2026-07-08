@@ -293,15 +293,38 @@ describe("annotations-store", () => {
             afterVersion: 2,
             afterFile: "a.png",
             afterBlobKey: "hash2.png",
+            afterWidth: 1170,
+            afterHeight: 2532,
         });
         expect(card.blobKey).toBe("hash2.png");
         expect(card.currentVersion).toBe(2);
+        expect(card.payload.naturalWidth).toBe(1170);
+        expect(card.payload.naturalHeight).toBe(2532);
         expect(attempt.afterBlobKey).toBe("hash2.png");
         expect(attempt.verdict).toBe("");
 
         const result = await setVerdict(db, attempt.id, "accept");
         expect(result.annotation.status).toBe("resolved");
         expect(result.card.blobKey).toBe("hash2.png");
+    });
+
+    it("addAttempt leaves the card's payload untouched when the caller doesn't supply after-dims", async () => {
+        const ann = await createAnnotation(db, {
+            boardSlug,
+            cardId,
+            region: REGION,
+            intent: "fix",
+            prompt: "p",
+            status: "open",
+        });
+        const { card } = await addAttempt(db, {
+            annotationId: ann.id,
+            afterSetRef: "proj/main/s1",
+            afterVersion: 2,
+            afterFile: "a.png",
+            afterBlobKey: "hash2.png",
+        });
+        expect(card.payload).toEqual({});
     });
 
     it("reject rolls the card face back to the pre-attempt blob; history keeps both versions", async () => {

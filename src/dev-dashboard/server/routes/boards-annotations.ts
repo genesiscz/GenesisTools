@@ -257,6 +257,8 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
                         afterVersion: set.version,
                         afterFile: body.file,
                         afterBlobKey: file.blobKey,
+                        afterWidth: file.width,
+                        afterHeight: file.height,
                         agent: body.agent,
                         commitRef: body.commit,
                     });

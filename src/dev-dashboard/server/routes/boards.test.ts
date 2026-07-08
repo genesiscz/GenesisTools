@@ -218,6 +218,10 @@ describe("boardsRoutes", () => {
         expect(res.body.h).toBe(240);
         expect(res.body.x).toBe(40);
         expect(res.body.y).toBe(40);
+        // Source dims (pre-downscale) persist in payload for the UI's region/stroke scaling.
+        const payload = res.body.payload as { naturalWidth: number; naturalHeight: number };
+        expect(payload.naturalWidth).toBe(960);
+        expect(payload.naturalHeight).toBe(480);
     });
 
     it("board messages post as board-level and emit board_message", async () => {
