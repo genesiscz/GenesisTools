@@ -10,7 +10,7 @@ import {
     reactivateAnnotation,
     setVerdict,
 } from "@app/dev-dashboard/lib/boards/annotations-store";
-import { getCard } from "@app/dev-dashboard/lib/boards/boards-store";
+import { getBoardDoc, getCard } from "@app/dev-dashboard/lib/boards/boards-store";
 import { buildCapsule } from "@app/dev-dashboard/lib/boards/capsule";
 import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { publishBoardEvent, wakeWorkWaiters } from "@app/dev-dashboard/lib/boards/events";
@@ -175,8 +175,12 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
                     const id = Number(ctx.params.id);
                     const annotation = await getAnnotation(getBoardsDb(), id);
                     const card = await getCard(getBoardsDb(), annotation.cardId);
-                    const capsule = buildCapsule(annotation, card, annotation.boardSlug);
+                    const doc = await getBoardDoc(getBoardsDb(), annotation.boardSlug);
                     const base = ctx.query.get("base");
+                    const capsule = buildCapsule(annotation, card, annotation.boardSlug, {
+                        boardCards: doc.cards,
+                        base: base ?? undefined,
+                    });
                     const body = base ? capsule.replace("image: /api/", `image: ${base}/api/`) : capsule;
                     return { kind: "text", status: 200, contentType: "text/markdown", body };
                 } catch (err) {

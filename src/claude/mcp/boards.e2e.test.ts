@@ -177,4 +177,119 @@ describe("boards MCP tools (stdio e2e against a real agent-mode dev-dashboard)",
             proc.kill();
         }
     }, 60000);
+
+    it("drives a composed-board loop: compose → sections/scrape → ask/answer → dispatch → wait choice", async () => {
+        const home = mkdtempSync(join(tmpdir(), "boards-e2e-compose-home-"));
+        const port = await findFreePort();
+        const base = `http://127.0.0.1:${port}`;
+
+        const dashboardEntry = join(import.meta.dir, "../../dev-dashboard/index.ts");
+        const proc = Bun.spawn([process.execPath, "run", dashboardEntry, "agent", "--port", String(port)], {
+            env: { ...env.getProcessEnv(), GENESIS_TOOLS_HOME: home },
+            stdout: "ignore",
+            stderr: "ignore",
+        });
+
+        try {
+            await waitReady(base, Date.now() + 10_000);
+
+            const slug = "e2e-compose-board";
+            const boardRes = await fetch(`${base}/api/boards`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: SafeJSON.stringify({ slug, title: "E2E compose board" }),
+            });
+            expect(boardRes.ok).toBe(true);
+
+            const transport = new StdioClientTransport({
+                command: process.execPath,
+                args: ["run", join(import.meta.dir, "../index.ts"), "mcp"],
+                env: { ...env.getProcessEnv(), BOARDS_BASE_URL: base },
+            });
+            const client = new Client({ name: "boards-compose-e2e", version: "1.0.0" });
+            await client.connect(transport);
+
+            try {
+                const tools = await client.listTools();
+                const names = tools.tools.map((t) => t.name);
+                for (const expected of [
+                    "boards_compose_board",
+                    "boards_arrange",
+                    "boards_update_cards",
+                    "boards_scrape_board",
+                    "boards_list_sections",
+                    "boards_ask_board",
+                    "boards_list_projects",
+                    "boards_update_set",
+                    "boards_get_templates",
+                ]) {
+                    expect(names).toContain(expected);
+                }
+
+                const composeRes = await client.callTool({
+                    name: "boards_compose_board",
+                    arguments: {
+                        board: slug,
+                        cards: [
+                            { ref: "s", kind: "section", payload: { title: "Checkout" }, children: ["a", "b"] },
+                            { ref: "a", kind: "text", payload: { md: "idea A" } },
+                            { ref: "b", kind: "note", payload: { text: "note B" } },
+                        ],
+                        questions: [{ prompt: "pick one", options: ["x", "y"], cardRef: "a" }],
+                    },
+                });
+                const composeBody = SafeJSON.parse(toolText(composeRes), { strict: true }) as {
+                    cards: Array<{ id: number; ref?: string }>;
+                    questions: number[];
+                };
+                expect(composeBody.cards.length).toBe(3);
+                expect(composeBody.questions.length).toBe(1);
+                const questionId = composeBody.questions[0];
+
+                const sectionsRes = await client.callTool({
+                    name: "boards_list_sections",
+                    arguments: { board: slug },
+                });
+                const sectionsBody = SafeJSON.parse(toolText(sectionsRes), { strict: true }) as {
+                    sections: Array<{ name: string; cards: number }>;
+                };
+                expect(sectionsBody.sections).toHaveLength(1);
+                expect(sectionsBody.sections[0]).toMatchObject({ name: "Checkout", cards: 2 });
+
+                const scrapeRes = await client.callTool({
+                    name: "boards_scrape_board",
+                    arguments: { board: slug, section: "Checkout" },
+                });
+                const scrapeBody = SafeJSON.parse(toolText(scrapeRes), { strict: true }) as { cards: unknown[] };
+                expect(scrapeBody.cards.length).toBe(2);
+
+                // Answering is a human/UI action over plain HTTP — boards_ask_board only CREATES
+                // the question; there is no dedicated "answer" MCP tool.
+                const answerRes = await fetch(`${base}/api/boards/questions/${questionId}/answer`, {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: SafeJSON.stringify({ answer: "x" }),
+                });
+                expect(answerRes.ok).toBe(true);
+
+                const dispatchRes = await fetch(`${base}/api/boards/${slug}/dispatch`, { method: "POST" });
+                expect(dispatchRes.ok).toBe(true);
+
+                const waitRes = await client.callTool({
+                    name: "boards_wait_for_work",
+                    arguments: { board: slug, timeoutSec: 2 },
+                });
+                const waitBody = SafeJSON.parse(toolText(waitRes), { strict: true }) as {
+                    choices?: Array<{ id: number; option: string[] }>;
+                };
+                expect(waitBody.choices?.length).toBe(1);
+                expect(waitBody.choices?.[0].id).toBe(questionId);
+                expect(waitBody.choices?.[0].option).toEqual(["x"]);
+            } finally {
+                await client.close();
+            }
+        } finally {
+            proc.kill();
+        }
+    }, 60000);
 });

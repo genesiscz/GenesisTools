@@ -308,3 +308,20 @@ describe("GET /api/boards/:slug/scrape", () => {
         expect(asJson(await route.handler(ctx({ section: "nope" }))).status).toBe(404);
     });
 });
+
+describe("GET /api/boards/templates.md", () => {
+    it("serves the template library as markdown", async () => {
+        const route = boardsComposeRoutes().find((d) => d.method === "GET" && d.pattern === "/api/boards/templates.md");
+        if (!route) {
+            throw new Error("templates route not found");
+        }
+        const result = await route.handler(makeCtx({}));
+        if (result.kind !== "text") {
+            throw new Error(`expected text result, got ${result.kind}`);
+        }
+        expect(result.status).toBe(200);
+        expect(result.contentType).toBe("text/markdown");
+        expect(result.body).toContain("# Board templates");
+        expect(result.body).toContain("boards_compose_board");
+    });
+});

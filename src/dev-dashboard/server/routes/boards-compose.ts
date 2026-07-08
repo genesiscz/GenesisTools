@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { getBoardDoc } from "@app/dev-dashboard/lib/boards/boards-store";
 import {
     type ComposeBody,
@@ -23,8 +24,18 @@ async function actorOf(header: string | undefined): Promise<string> {
     return (await getOperator()) || "claude";
 }
 
+const TEMPLATES_PATH = resolve(import.meta.dirname, "../static/boards-templates.md");
+
 export function boardsComposeRoutes(): RouteDef[] {
     return [
+        {
+            method: "GET",
+            pattern: "/api/boards/templates.md",
+            handler: async () => {
+                const body = await Bun.file(TEMPLATES_PATH).text();
+                return { kind: "text", status: 200, contentType: "text/markdown", body };
+            },
+        },
         {
             method: "POST",
             pattern: "/api/boards/:slug/compose",

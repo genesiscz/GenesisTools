@@ -3,6 +3,17 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import {
+    handleArrange,
+    handleAskBoard,
+    handleComposeBoard,
+    handleGetTemplates,
+    handleListProjects,
+    handleListSections,
+    handleScrapeBoard,
+    handleUpdateCards,
+    handleUpdateSet,
+} from "./tools/boards/compose-tools";
+import {
     handleGetAnnotation,
     handleGetCapsule,
     handleGetSet,
@@ -11,16 +22,25 @@ import {
     handleListWork,
 } from "./tools/boards/read-tools";
 import {
+    ARRANGE_SCHEMA,
+    ASK_BOARD_SCHEMA,
     ATTACH_AFTER_SCHEMA,
+    COMPOSE_BOARD_SCHEMA,
     GET_ANNOTATION_SCHEMA,
     GET_CAPSULE_SCHEMA,
     GET_SET_SCHEMA,
+    GET_TEMPLATES_SCHEMA,
     HIGHLIGHT_SCHEMA,
     LIST_BOARDS_SCHEMA,
+    LIST_PROJECTS_SCHEMA,
+    LIST_SECTIONS_SCHEMA,
     LIST_SETS_SCHEMA,
     LIST_WORK_SCHEMA,
     REPLY_SCHEMA,
+    SCRAPE_BOARD_SCHEMA,
     SET_STATUS_SCHEMA,
+    UPDATE_CARDS_SCHEMA,
+    UPDATE_SET_SCHEMA,
     WAIT_FOR_WORK_SCHEMA,
 } from "./tools/boards/schemas";
 import { handleWaitForWork } from "./tools/boards/wait-for-work";
@@ -59,7 +79,24 @@ const SERVER_INSTRUCTIONS =
     "sessions.\n" +
     '- A 409 "cancelled" on any write means the user withdrew the item: revert its changes, no reply, move on.\n' +
     "- Prefer the `tools boards watch` CLI via a background Monitor for idle listening (zero token cost); use " +
-    "boards_wait_for_work to DRAIN after a wake, with timeoutSec 1.";
+    "boards_wait_for_work to DRAIN after a wake, with timeoutSec 1.\n\n" +
+    "BOARD VOCABULARY (AI expression layer): you can PRESENT on boards, not just answer. boards_compose_board " +
+    "places a whole thought in ONE call — markdown text cards (roles: heading/idea/pro/con/risk), data-only viz " +
+    "cards (table/matrix/flow/bars/timeline/line/stat — always cheaper than an HTML artifact), cluster frames " +
+    "grouping a direction, wires, and anchored multiple-choice questions (options carry {label,hint,recommended}; " +
+    "answers arrive staged and are only released onto the work wire once the user dispatches). Batch-or-bust: " +
+    "never place cards one call at a time. Never send coordinates — pick a layout (column/row/grid) and use " +
+    "boards_arrange to tidy (13 modes; save:true persists the layout so the server auto-reflows it forever). " +
+    'JOURNEY SECTIONS: name board regions after customer journeys with kind "section" frames ("Onboarding", ' +
+    '"Checkout") — always visible, auto-indexed (boards_list_sections), and every tool scopes to them: ' +
+    'boards_compose_board {section}, boards_arrange {scope:"section:Name"}, boards_scrape_board {section} for ' +
+    "an isolated digest. Sections are also the ITERATION surface: present the next pass of a journey as its own " +
+    'section beside the current one (boards_compose_board {journey,pass:"next"}) instead of mixing takes ' +
+    "together — boards_scrape_board {diff:[a,b]} then diffs two sections pairwise. boards_update_cards edits or " +
+    "trashes only your own AI-layer cards (plus section frames) — the user's shots and notes are untouchable. " +
+    "boards_ask_board asks a first-class multiple-choice question outside a compose batch. Call " +
+    "boards_get_templates once before structuring a new board and start from a matching skeleton instead of " +
+    "inventing structure.";
 
 interface ToolEntry {
     description: string;
@@ -159,6 +196,135 @@ function buildToolRegistry(): Record<string, ToolEntry> {
             inputSchema: WAIT_FOR_WORK_SCHEMA as unknown as Record<string, unknown>,
             handler: async (args) =>
                 handleWaitForWork(args as { board?: string; project?: string; branch?: string; timeoutSec?: number }),
+        },
+        boards_ask_board: {
+            description:
+                "Ask the operator a first-class multiple-choice question on a board — rendered as one-click " +
+                "pills, optionally anchored to a card. The answer is STAGED until the operator dispatches, then " +
+                'returns on the work wire as a {type:"choice"} item (boards_wait_for_work). An "Other" free-text ' +
+                "escape is always added by the engine — pass only the real options, never hard-block off-" +
+                "vocabulary answers.",
+            inputSchema: ASK_BOARD_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) =>
+                handleAskBoard(
+                    args as {
+                        board: string;
+                        prompt: string;
+                        options: Array<string | { label: string; hint?: string; recommended?: boolean }>;
+                        multiSelect?: boolean;
+                        cardId?: number;
+                    }
+                ),
+        },
+        boards_compose_board: {
+            description:
+                "Place a BATCH of AI-authored content on a board in one call — text blocks, notes, viz, sections " +
+                "and questions, wired together. Batch-or-bust: compose the whole thought in ONE call (never one " +
+                "card per call); the server owns geometry — never send coordinates. All-or-nothing: on 400 the " +
+                "error carries {code,index} pointing at the bad item and nothing was placed.",
+            inputSchema: COMPOSE_BOARD_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) =>
+                handleComposeBoard(
+                    args as {
+                        board: string;
+                        layout?: "column" | "row" | "grid";
+                        anchorCardId?: number;
+                        section?: string;
+                        journey?: string;
+                        pass?: number | "next";
+                        cards?: unknown[];
+                        edges?: unknown[];
+                        questions?: unknown[];
+                    }
+                ),
+        },
+        boards_arrange: {
+            description:
+                "Auto-align board cards server-side — geometry is computed for you and lands as one atomic " +
+                "layout event. Default scope is the AI expression layer; scope 'all' tidies everything; " +
+                "'section:<Name>' reflows one journey section inside its frame. Pass save:true with a section " +
+                "scope to persist the layout so the server auto-reflows it on every future change.",
+            inputSchema: ARRANGE_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) =>
+                handleArrange(
+                    args as {
+                        board: string;
+                        mode: string;
+                        save?: boolean;
+                        sections?: string[];
+                        scope?: string;
+                        ids?: number[];
+                        gap?: string | number;
+                        padding?: string | number;
+                        cols?: number;
+                        sizing?: "natural" | "uniform";
+                    }
+                ),
+        },
+        boards_update_cards: {
+            description:
+                "Batch-edit YOUR OWN board layer — patch payload/geometry or remove cards you composed. " +
+                "Restricted to AI-layer cards plus section frames: the user's shots and notes are untouchable, " +
+                'a non-AI target 403s with {code:"not_ai_layer"}. Removals are soft (trashed, restorable via ' +
+                "restore) — the response of a remove is your undo handle.",
+            inputSchema: UPDATE_CARDS_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) =>
+                handleUpdateCards(
+                    args as {
+                        board: string;
+                        patch?: Array<{
+                            id: number;
+                            x?: number;
+                            y?: number;
+                            w?: number;
+                            h?: number;
+                            payload?: Record<string, unknown>;
+                        }>;
+                        remove?: number[];
+                        restore?: number[];
+                    }
+                ),
+        },
+        boards_scrape_board: {
+            description:
+                "Read a WHOLE board as one structured testing digest — every media image (URL), note text and " +
+                'annotation, connect-tool edges walked into ordered journey chains ("flow": [[A,B,C]]), and the ' +
+                "journey sections summarized. Pass section to isolate the digest to one journey, or diff to " +
+                "compare two sections pairwise (iteration diff). Images are absolute URLs — fetch them to SEE " +
+                "each step.",
+            inputSchema: SCRAPE_BOARD_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleScrapeBoard(args as { board: string; section?: string; diff?: string[] }),
+        },
+        boards_list_sections: {
+            description:
+                "The automatic journey-section index of a board: every section (name, bounds, member count, " +
+                "reading order, journey/pass when part of an iteration chain) plus journeys:[{journey,passes," +
+                "latest}] — the one-call orientation on which journeys exist and where the latest pass is.",
+            inputSchema: LIST_SECTIONS_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleListSections(args as { board: string }),
+        },
+        boards_list_projects: {
+            description: "List all projects known to the boards/sets library (name, branch count, set count).",
+            inputSchema: LIST_PROJECTS_SCHEMA as unknown as Record<string, unknown>,
+            handler: async () => handleListProjects(),
+        },
+        boards_update_set: {
+            description:
+                "Edit a set's mutable metadata: custom name and/or human title. Omitted fields stay untouched; " +
+                'empty string ("") clears the field.',
+            inputSchema: UPDATE_SET_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) =>
+                handleUpdateSet(
+                    args as { project: string; branch: string; selector: string; name?: string; title?: string }
+                ),
+        },
+        boards_get_templates: {
+            description:
+                "The board template library (markdown): compose-ready skeletons for QA sessions, iteration " +
+                "reviews, decision maps, metrics dashboards and presentation decks. Fetch ONCE before structuring " +
+                "a new board and start from the matching template instead of inventing structure.",
+            inputSchema: GET_TEMPLATES_SCHEMA as unknown as Record<string, unknown>,
+            handler: async () => handleGetTemplates(),
         },
     };
 }

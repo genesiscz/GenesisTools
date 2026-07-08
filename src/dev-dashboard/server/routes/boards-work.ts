@@ -1,3 +1,4 @@
+import { getBoardDoc } from "@app/dev-dashboard/lib/boards/boards-store";
 import { buildCapsule } from "@app/dev-dashboard/lib/boards/capsule";
 import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { waitForWorkSignal } from "@app/dev-dashboard/lib/boards/events";
@@ -89,11 +90,18 @@ export function boardsWorkRoutes(): RouteDef[] {
                         const { items, total } = await listOpenWorkDetailed(db, effectiveScope, 3);
                         const choices = await drainChoices(db, effectiveScope);
                         if (items.length > 0 || choices.length > 0) {
-                            const work = items.map((it) => ({
-                                id: it.annotation.id,
-                                board: it.boardSlug,
-                                capsule: buildCapsule(it.annotation, it.card, it.boardSlug),
-                            }));
+                            const work = await Promise.all(
+                                items.map(async (it) => {
+                                    const doc = await getBoardDoc(db, it.boardSlug);
+                                    return {
+                                        id: it.annotation.id,
+                                        board: it.boardSlug,
+                                        capsule: buildCapsule(it.annotation, it.card, it.boardSlug, {
+                                            boardCards: doc.cards,
+                                        }),
+                                    };
+                                })
+                            );
                             return {
                                 kind: "json",
                                 status: 200,
