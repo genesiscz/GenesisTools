@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { copyFile, mkdir } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
 import { printLn } from "@app/utils/cli";
 import type { Command } from "commander";
 import { captureRoot, readSetConfig } from "../lib/config";
@@ -46,8 +46,14 @@ export function registerAddCommand(program: Command): void {
                 }
 
                 await mkdir(root, { recursive: true });
-                const destName = uniqueDestName(root, basename(file));
-                await copyFile(file, join(root, destName));
+                // When the source already lives in the capture root (the standard agent flow:
+                // screenshot lands in .screenshots/, then `tools boards add .screenshots/shot.png`),
+                // it is already placed — don't copy it onto a `-2` suffix and duplicate the bytes.
+                const inPlace = resolve(file) === resolve(join(root, basename(file)));
+                const destName = inPlace ? basename(file) : uniqueDestName(root, basename(file));
+                if (!inPlace) {
+                    await copyFile(file, join(root, destName));
+                }
 
                 const manifest = await readManifest(root);
                 const next = appendShot(manifest, {
