@@ -182,6 +182,15 @@ export const paths = {
     }) => `/api/boards/sets/${params.project}/${params.branch}/${params.key}/content${qs(params.q ?? {})}`,
     boardsBlob: (key: string) => `/api/boards/blobs/${key}`,
     boardsOperator: () => "/api/boards/operator",
+    boardsProjects: () => "/api/boards/projects",
+    boardsTemplates: () => "/api/boards/templates.md",
+    boardCompose: (slug: string) => `/api/boards/${slug}/compose`,
+    boardArrange: (slug: string) => `/api/boards/${slug}/arrange`,
+    boardUpdateCards: (slug: string) => `/api/boards/${slug}/update-cards`,
+    boardScrape: (slug: string, q: { section?: string; diff?: string } = {}) => `/api/boards/${slug}/scrape${qs(q)}`,
+    boardSections: (slug: string) => `/api/boards/${slug}/sections`,
+    boardQuestions: (slug: string) => `/api/boards/${slug}/questions`,
+    boardQuestionAnswer: (id: number) => `/api/boards/questions/${id}/answer`,
 } as const;
 
 // Response type aliases for the typed client methods.

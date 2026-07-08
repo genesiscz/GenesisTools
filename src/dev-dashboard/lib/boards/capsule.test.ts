@@ -64,9 +64,11 @@ describe("buildCapsule", () => {
         expect(capsule).not.toContain("reshoot intent");
     });
 
-    it("appends the reshoot caveat when intent is reshoot", () => {
+    it("replaces the default protocol with the reshoot protocol when intent is reshoot", () => {
         const capsule = buildCapsule(makeAnnotation({ intent: "reshoot" }), makeCard(), "my-board");
-        expect(capsule).toContain("(reshoot intent: NO code changes — recapture only.)");
+        expect(capsule).toContain("**Protocol (reshoot):** NO code changes");
+        expect(capsule).toContain("boards_attach_after");
+        expect(capsule).not.toContain("**Protocol:** boards_set_status working");
     });
 
     it("uses intentOther for an 'other' intent", () => {
@@ -100,5 +102,32 @@ describe("buildCapsule", () => {
         expect(capsule).toContain("**Region:** 10,20 100×50 px on `shot`");
         expect(capsule).not.toContain("— image:");
         expect(capsule).not.toContain("**Source:**");
+    });
+
+    it("adds a Section line with a scoped scrape URL when the card sits inside a journey section", () => {
+        const section = { id: 99, kind: "section", x: 0, y: 0, w: 500, h: 500, payload: { title: "Checkout" } };
+        const capsule = buildCapsule(makeAnnotation(), makeCard(), "my-board", { boardCards: [section, makeCard()] });
+        expect(capsule).toContain(
+            "**Section:** Checkout — scoped digest: /api/boards/my-board/scrape?section=Checkout"
+        );
+    });
+
+    it("prefixes the Section digest URL with base when given", () => {
+        const section = { id: 99, kind: "section", x: 0, y: 0, w: 500, h: 500, payload: { title: "Checkout" } };
+        const capsule = buildCapsule(makeAnnotation(), makeCard(), "my-board", {
+            boardCards: [section, makeCard()],
+            base: "http://127.0.0.1:1234",
+        });
+        expect(capsule).toContain(
+            "**Section:** Checkout — scoped digest: http://127.0.0.1:1234/api/boards/my-board/scrape?section=Checkout"
+        );
+    });
+
+    it("omits the Section line when the card isn't inside any section, or boardCards isn't given", () => {
+        const outside = { id: 99, kind: "section", x: 900, y: 900, w: 50, h: 50, payload: { title: "Elsewhere" } };
+        expect(buildCapsule(makeAnnotation(), makeCard(), "my-board", { boardCards: [outside] })).not.toContain(
+            "**Section:**"
+        );
+        expect(buildCapsule(makeAnnotation(), makeCard(), "my-board")).not.toContain("**Section:**");
     });
 });

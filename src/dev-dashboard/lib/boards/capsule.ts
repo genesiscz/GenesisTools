@@ -1,10 +1,16 @@
 import { blobUrl } from "./blobs";
+import { containingSection, type SectionCard, sectionFrames, sectionTitle } from "./sections";
 import type { AnnotationDto, CardDto } from "./types";
 
 const THREAD_LIMIT = 5;
 const CLIP = 300;
 
-export function buildCapsule(a: AnnotationDto, card: CardDto, boardSlug: string): string {
+export function buildCapsule(
+    a: AnnotationDto,
+    card: CardDto,
+    boardSlug: string,
+    opts?: { boardCards?: SectionCard[]; base?: string }
+): string {
     const rev = a.revisions[a.revisions.length - 1];
     const lines: string[] = [];
     lines.push(
@@ -22,6 +28,15 @@ export function buildCapsule(a: AnnotationDto, card: CardDto, boardSlug: string)
             `**Source:** set \`${card.setRef}\` v${card.setVersion} (card ${card.id}, drawn on v${a.cardVersion})`
         );
     }
+    if (opts?.boardCards) {
+        const section = containingSection(sectionFrames(opts.boardCards), card);
+        if (section) {
+            const name = sectionTitle(section);
+            lines.push(
+                `**Section:** ${name} — scoped digest: ${opts.base ?? ""}/api/boards/${boardSlug}/scrape?section=${encodeURIComponent(name)}`
+            );
+        }
+    }
     const thread = a.messages.slice(-THREAD_LIMIT);
 
     if (thread.length > 0) {
@@ -32,10 +47,15 @@ export function buildCapsule(a: AnnotationDto, card: CardDto, boardSlug: string)
         }
     }
     lines.push(
-        "**Protocol:** boards_set_status working → fix → push a new set version → boards_attach_after → " +
-            "boards_reply (1-3 lines) → boards_set_status in_review. Never set resolved (user-only). " +
-            'A 409 "cancelled" on any write = the user withdrew this item — revert your changes for it and move on.' +
-            (a.intent === "reshoot" ? " (reshoot intent: NO code changes — recapture only.)" : "")
+        a.intent === "reshoot"
+            ? `**Protocol (reshoot):** NO code changes — the shot caught a bad state (loading/broken). ` +
+                  `boards_set_status working → re-capture this screen (route/surface in the set manifest for ` +
+                  `\`${card.filePath || card.kind}\`), wait for the app to settle → push the new set ` +
+                  `(\`tools boards push\`) → boards_attach_after → boards_reply (1 line) → boards_set_status ` +
+                  `in_review. A 409 "cancelled" from ANY tool means the user withdrew №${a.id}: reply once, move on.`
+            : "**Protocol:** boards_set_status working → fix → push a new set version → boards_attach_after → " +
+                  "boards_reply (1-3 lines) → boards_set_status in_review. Never set resolved (user-only). " +
+                  'A 409 "cancelled" on any write = the user withdrew this item — revert your changes for it and move on.'
     );
     lines.push(
         "**Scope:** this board only — keep draining with the same scope; other boards belong to other sessions."
