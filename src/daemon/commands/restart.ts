@@ -1,5 +1,5 @@
 import { getDaemonStatus } from "@app/daemon/lib/launchd";
-import { safeSigterm, waitForDaemonRestart } from "@app/daemon/lib/wait-for-restart";
+import { stopWithEscalation, waitForDaemonRestart } from "@app/daemon/lib/wait-for-restart";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -34,10 +34,18 @@ export function registerRestartCommand(program: Command): void {
             }
 
             const oldPid = status.pid;
-            safeSigterm(oldPid);
 
             const s = p.spinner();
             s.start("Restarting daemon...");
+
+            // Escalating stop (SIGTERM → SIGTERM → SIGKILL): a wedged daemon
+            // used to ignore the single SIGTERM and 'restart' just timed out.
+            const stopResult = await stopWithEscalation(oldPid);
+
+            if (!stopResult.exited) {
+                s.stop(`Daemon (PID ${oldPid}) survived SIGTERM→SIGTERM→SIGKILL — inspect it manually`);
+                return;
+            }
 
             const result = await waitForDaemonRestart(oldPid);
 
