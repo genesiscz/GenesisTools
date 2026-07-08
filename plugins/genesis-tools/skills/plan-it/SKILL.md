@@ -68,10 +68,10 @@ Each step is ONE action (2–5 minutes): write the failing test → run it, expe
 
 ## Task skeleton (mandatory)
 
-Use exactly this heading format — `### Task N: [Component Name]` (three `#`) — executors and graders match on it.
+Use exactly this heading format — `## Task N: [Component Name]` — executors and graders match on `^## Task`.
 
 ````markdown
-### Task N: [Component Name]
+## Task N: [Component Name]
 
 **REASON**: <2–4 lines: why this approach, which constraint rules out the obvious
 alternative. The executor must not re-derive or second-guess this.>
@@ -110,9 +110,8 @@ git add exact/path/to/file.test.ts exact/path/to/file.ts
 git commit -m "feat: <concise why>"
 ```
 
-**ON-FAIL**: <ONE bounded fallback, e.g. "if the anchor moved, rg for `<symbol>` and
-re-apply once">. Still red after that: STOP, append to `## Deviations`, do not start
-Task N+1.
+**ON-FAIL**: If <specific symptom> → <one action> once. Otherwise: STOP, append to
+`## Deviations`, do not start Task N+1.
 ````
 
 ON-FAIL is one sentence, one action. It may NEVER modify anything declared in the interface freeze (names, signatures, frozen constants/sets), and it is not a debugging expedition — if one bounded action doesn't fix it, the answer is STOP, not a second idea.
