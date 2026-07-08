@@ -161,6 +161,21 @@ describe("sets-store", () => {
         await expect(patchSet(db, "proj", "main", "s2", { name: "taken" })).rejects.toBeInstanceOf(NameConflictError);
     });
 
+    it("patchSet with an empty name clears it instead of throwing", async () => {
+        await syncSet(db, { project: "proj", branchRaw: "main", key: "s1", entries: [file("a.txt", "A")] });
+        await patchSet(db, "proj", "main", "s1", { name: "named" });
+        expect((await getSet(db, "proj", "main", "s1")).name).toBe("named");
+
+        const cleared = await patchSet(db, "proj", "main", "s1", { name: "" });
+        expect(cleared.name).toBe("");
+    });
+
+    it("patchSet rejects a name that doesn't start with a lowercase alphanumeric", async () => {
+        await syncSet(db, { project: "proj", branchRaw: "main", key: "s1", entries: [file("a.txt", "A")] });
+        await expect(patchSet(db, "proj", "main", "s1", { name: ".hidden" })).rejects.toBeInstanceOf(NameConflictError);
+        await expect(patchSet(db, "proj", "main", "s1", { name: "-lead" })).rejects.toBeInstanceOf(NameConflictError);
+    });
+
     it("getSet throws NotFoundError for an unknown selector", async () => {
         await expect(getSet(db, "proj", "main", "nope")).rejects.toBeInstanceOf(NotFoundError);
     });
