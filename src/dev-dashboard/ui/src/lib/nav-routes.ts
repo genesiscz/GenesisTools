@@ -11,6 +11,7 @@ import {
     Inbox,
     ListTodo,
     MessageCircleQuestion,
+    Presentation,
     Save,
     ScrollText,
     SquareTerminal,
@@ -41,6 +42,7 @@ export const NAV_ROUTES: NavRoute[] = [
     { to: "/cmux", label: "cmux", Icon: Boxes },
     { to: "/obsidian", label: "obsidian", Icon: BookOpen },
     // New features (ported from the mobile dev-dashboard) — appended at the bottom.
+    { to: "/boards", label: "boards", Icon: Presentation },
     { to: "/needs-input-inbox", label: "needs input", Icon: Inbox },
     { to: "/network-status", label: "network", Icon: Wifi },
     { to: "/build-log-tail", label: "build log", Icon: ScrollText },

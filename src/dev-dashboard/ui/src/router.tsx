@@ -3,6 +3,8 @@ import { createRootRoute, createRoute, createRouter, Outlet } from "@tanstack/re
 import { parseObsidianSearch } from "@/lib/obsidian-url-state";
 import { Shell } from "@/routes/__root";
 import { ActivityTimelineRoute } from "@/routes/activity-timeline";
+import { BoardRoute } from "@/routes/board";
+import { BoardsRoute } from "@/routes/boards";
 import { BuildLogTailRoute } from "@/routes/build-log-tail";
 import { ClaudeRoute } from "@/routes/claude";
 import { CmuxRoute } from "@/routes/cmux";
@@ -158,6 +160,18 @@ const quickCommandsRoute = createRoute({
     component: QuickCommandsRoute,
 });
 
+const boardsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/boards",
+    component: BoardsRoute,
+});
+
+const boardRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/boards/$slug",
+    component: BoardRoute,
+});
+
 const routeTree = rootRoute.addChildren([
     indexRoute,
     claudeRoute,
@@ -177,6 +191,8 @@ const routeTree = rootRoute.addChildren([
     ttydRoute,
     cmuxRoute,
     obsidianRoute,
+    boardsRoute,
+    boardRoute,
 ]);
 
 export function getRouter() {
