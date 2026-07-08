@@ -77,9 +77,10 @@ export async function attemptStaleTakeover(pidFile: string, expectedContent: str
         if (stolen !== null) {
             try {
                 await writeFile(pidFile, stolen, { flag: "wx" });
-            } catch {
+            } catch (err) {
                 // Slot already re-claimed — the robbed owner self-heals via
                 // its per-tick ownership check.
+                logger.debug({ err, pidFile }, "[daemon] stale-takeover restore skipped (slot re-claimed)");
             }
         }
 
