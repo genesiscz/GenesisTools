@@ -10,6 +10,10 @@ import { nowIso } from "./time";
 import type { SetDetailDto, SetFileDto, SetSummaryDto } from "./types";
 
 export const KEY_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+/** Set NAMES (the human alias) are stricter than push keys: they must start with a lowercase
+ *  alphanumeric (vitrinka's validName rule). Purely-numeric and "latest" stay reserved as
+ *  version selectors — enforced together with isReservedKey. */
+export const NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 export class NameConflictError extends Error {}
 export class NotFoundError extends Error {}
@@ -331,9 +335,12 @@ export async function patchSet(
     }
 
     let name = row.name;
-    if (patch.name !== undefined) {
+    if (patch.name === "") {
+        // Empty string clears the name (vitrinka parity: empty bypasses validation so a name can be removed).
+        name = "";
+    } else if (patch.name !== undefined) {
         const candidate = patch.name.toLowerCase();
-        if (!KEY_RE.test(candidate) || isReservedKey(candidate)) {
+        if (!NAME_RE.test(candidate) || isReservedKey(candidate)) {
             throw new NameConflictError(`invalid set name: ${patch.name}`);
         }
         const conflict = await db.kysely
