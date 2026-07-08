@@ -11,13 +11,18 @@ import {
     handleListWork,
 } from "./tools/boards/read-tools";
 import {
+    ATTACH_AFTER_SCHEMA,
     GET_ANNOTATION_SCHEMA,
     GET_CAPSULE_SCHEMA,
     GET_SET_SCHEMA,
+    HIGHLIGHT_SCHEMA,
     LIST_BOARDS_SCHEMA,
     LIST_SETS_SCHEMA,
     LIST_WORK_SCHEMA,
+    REPLY_SCHEMA,
+    SET_STATUS_SCHEMA,
 } from "./tools/boards/schemas";
+import { handleAttachAfter, handleHighlight, handleReply, handleSetStatus } from "./tools/boards/work-tools";
 import { handleQuestionAnswer, QUESTION_ANSWER_INPUT_SCHEMA, type QuestionAnswerArgs } from "./tools/question-answer";
 
 const log = logger.child({ component: "claude:mcp" });
@@ -96,6 +101,43 @@ function buildToolRegistry(): Record<string, ToolEntry> {
                 "protocol reminder) — the same capsule delivered by boards_wait_for_work.",
             inputSchema: GET_CAPSULE_SCHEMA as unknown as Record<string, unknown>,
             handler: async (args) => handleGetCapsule(args as { id: number }),
+        },
+        boards_set_status: {
+            description:
+                "Move an annotation to open/working/in_review. NEVER set resolved — that verdict is user-only " +
+                "(not offered by this tool's schema).",
+            inputSchema: SET_STATUS_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleSetStatus(args as { id: number; status: "open" | "working" | "in_review" }),
+        },
+        boards_reply: {
+            description: "Post a short reply (1-3 lines) to an annotation's thread, authored as claude.",
+            inputSchema: REPLY_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleReply(args as { id: number; text: string }),
+        },
+        boards_attach_after: {
+            description:
+                "Attach a pushed set version's file as the 'after' attempt for an annotation (project/branch/" +
+                "selector/file — selector is a version number, 'latest', a set name, or a set key).",
+            inputSchema: ATTACH_AFTER_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) =>
+                handleAttachAfter(
+                    args as {
+                        id: number;
+                        project: string;
+                        branch: string;
+                        selector: string;
+                        file: string;
+                        commit?: string;
+                    }
+                ),
+        },
+        boards_highlight: {
+            description:
+                "Draw an amber rectangle stroke on the annotation's card, defaulting to the annotation's own " +
+                "region — a visual pointer back to what you're addressing.",
+            inputSchema: HIGHLIGHT_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) =>
+                handleHighlight(args as { id: number; x?: number; y?: number; w?: number; h?: number; color?: string }),
         },
     };
 }
