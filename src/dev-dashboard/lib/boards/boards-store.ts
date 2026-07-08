@@ -3,6 +3,7 @@ import { escapeLike } from "@app/utils/database/predicates";
 import { SafeJSON } from "@app/utils/json";
 import { type Kysely, type Selectable, type SqlBool, sql } from "kysely";
 import { getBoardAnnotations } from "./annotations-store";
+import type { NormalizedOption } from "./compose-validate";
 import type {
     AnnotationMessagesTable,
     BoardCardsTable,
@@ -868,4 +869,87 @@ export async function listCardVersions(
         attemptId: r.attempt_id === 0 ? null : r.attempt_id,
         createdAt: r.created_at,
     }));
+}
+
+/** Create a board (cardId=0) or card-anchored question. Options must already be normalized
+ *  (compose-validate.ts's `normalizeOptions`) — callers validate prompt/option shape before this. */
+export async function createQuestion(
+    db: DatabaseClient<BoardsDb>,
+    boardSlug: string,
+    input: { cardId: number; prompt: string; options: NormalizedOption[]; multi?: boolean }
+): Promise<QuestionDto> {
+    const board = await getBoardRow(db, boardSlug);
+    if (input.cardId > 0) {
+        const card = await db.kysely
+            .selectFrom("board_cards")
+            .select("id")
+            .where("id", "=", input.cardId)
+            .where("board_id", "=", board.id)
+            .where("deleted_at", "=", "")
+            .executeTakeFirst();
+        if (!card) {
+            throw new NotFoundError(`card not found on this board: ${input.cardId}`);
+        }
+    }
+    const row = await db.kysely
+        .insertInto("board_questions")
+        .values({
+            board_id: board.id,
+            card_id: input.cardId,
+            prompt: input.prompt,
+            options: SafeJSON.stringify(input.options),
+            answer: "",
+            answered_by: "",
+            delivered: 0,
+            staged: 1,
+            multi: input.multi ? 1 : 0,
+            created_at: nowIso(),
+            answered_at: "",
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+    return toQuestionDto(row);
+}
+
+/** A board's questions, oldest first (the poll surface for callers not holding the work wire). */
+export async function listQuestions(db: DatabaseClient<BoardsDb>, boardSlug: string): Promise<QuestionDto[]> {
+    const board = await getBoardRow(db, boardSlug);
+    const rows = await db.kysely
+        .selectFrom("board_questions")
+        .selectAll()
+        .where("board_id", "=", board.id)
+        .orderBy("created_at", "asc")
+        .execute();
+    return rows.map(toQuestionDto);
+}
+
+/** Answer is any string (never hard-blocked — off-vocabulary "Other" text is a valid answer).
+ *  Storage is always a JSON-encoded array (drainChoices parses it uniformly): single-select
+ *  answers are wrapped as a one-element array; multi-select answers arrive pre-encoded by the
+ *  caller (decision §0.1.6) and are stored as-is. The answer stays staged — dispatchBoard
+ *  releases it onto the work wire, so re-answering before a dispatch costs nothing. */
+export async function answerQuestion(
+    db: DatabaseClient<BoardsDb>,
+    questionId: number,
+    answer: string,
+    actor: string
+): Promise<QuestionDto> {
+    return db.kysely.transaction().execute(async (trx) => {
+        const existing = await trx
+            .selectFrom("board_questions")
+            .select("multi")
+            .where("id", "=", questionId)
+            .executeTakeFirst();
+        if (!existing) {
+            throw new NotFoundError(`question not found: ${questionId}`);
+        }
+        const stored = existing.multi === 1 ? answer : SafeJSON.stringify([answer]);
+        const row = await trx
+            .updateTable("board_questions")
+            .set({ answer: stored, answered_by: actor, answered_at: nowIso() })
+            .where("id", "=", questionId)
+            .returningAll()
+            .executeTakeFirstOrThrow();
+        return toQuestionDto(row);
+    });
 }

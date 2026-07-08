@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createKyselyClient, type DatabaseClient } from "@app/utils/database/client";
 import { SafeJSON } from "@app/utils/json";
 import { createAnnotation, patchAnnotation } from "./annotations-store";
-import { createBoard, createCard } from "./boards-store";
+import { answerQuestion, createBoard, createCard, createQuestion } from "./boards-store";
 import { BOOTSTRAP_DDL } from "./db";
 import type { BoardsDb } from "./db-types";
 import { resetEventHub } from "./events";
@@ -404,6 +404,31 @@ describe("work-store", () => {
         const first = await drainChoices(db, { kind: "board", board: "b1" });
         expect(first.length).toBe(1);
         expect(first[0].option).toEqual(["a"]);
+
+        const second = await drainChoices(db, { kind: "board", board: "b1" });
+        expect(second.length).toBe(0);
+    });
+
+    it("full loop through the real API: staged until dispatch, then delivered exactly once", async () => {
+        await createBoard(db, { slug: "b1" });
+        const question = await createQuestion(db, "b1", {
+            cardId: 0,
+            prompt: "pick one",
+            options: [{ label: "picked" }, { label: "other" }],
+        });
+
+        await answerQuestion(db, question.id, "picked", "user");
+
+        // Answered but still staged: dispatch hasn't released it onto the wire yet.
+        expect(await drainChoices(db, { kind: "board", board: "b1" })).toEqual([]);
+
+        const { releasedQuestions } = await dispatchBoard(db, "b1");
+        expect(releasedQuestions).toEqual([question.id]);
+
+        const first = await drainChoices(db, { kind: "board", board: "b1" });
+        expect(first.length).toBe(1);
+        expect(first[0].option).toEqual(["picked"]);
+        expect(first[0].actor).toBe("user");
 
         const second = await drainChoices(db, { kind: "board", board: "b1" });
         expect(second.length).toBe(0);

@@ -5,18 +5,22 @@ import { join } from "node:path";
 import { resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import { createKyselyClient, type DatabaseClient } from "@app/utils/database/client";
 import { env } from "@app/utils/env";
+import { SafeJSON } from "@app/utils/json";
 import {
     addEdge,
     addStrokes,
+    answerQuestion,
     appendCardVersion,
     bulkLayout,
     createBoard,
     createCard,
+    createQuestion,
     getBoardBySlug,
     getBoardDoc,
     importSet,
     listBoards,
     listCardVersions,
+    listQuestions,
     listTrash,
     patchBoard,
     patchCard,
@@ -380,5 +384,64 @@ describe("boards-store", () => {
         const versions = await listCardVersions(db, card.id);
         expect(versions.map((v) => v.version)).toEqual([1, 2, 3]);
         expect(versions.map((v) => v.blobKey)).toEqual(["hash1.png", "hash2.png", "hash3.png"]);
+    });
+
+    it("createQuestion inserts staged/undelivered with a null cardId for board-level questions", async () => {
+        await createBoard(db, { slug: "b1" });
+        const q = await createQuestion(db, "b1", {
+            cardId: 0,
+            prompt: "pick one",
+            options: [{ label: "a" }, { label: "b" }],
+            multi: false,
+        });
+        expect(q).toMatchObject({
+            cardId: null,
+            prompt: "pick one",
+            options: [{ label: "a" }, { label: "b" }],
+            answer: null,
+            answeredBy: "",
+            staged: true,
+            multi: false,
+        });
+    });
+
+    it("createQuestion rejects a cardId that isn't a live card on this board", async () => {
+        await createBoard(db, { slug: "b1" });
+        await expect(
+            createQuestion(db, "b1", { cardId: 999, prompt: "pick one", options: [{ label: "a" }], multi: false })
+        ).rejects.toThrow(NotFoundError);
+    });
+
+    it("listQuestions returns a board's questions oldest-first", async () => {
+        await createBoard(db, { slug: "b1" });
+        const q1 = await createQuestion(db, "b1", { cardId: 0, prompt: "first", options: [{ label: "a" }] });
+        const q2 = await createQuestion(db, "b1", { cardId: 0, prompt: "second", options: [{ label: "a" }] });
+        const list = await listQuestions(db, "b1");
+        expect(list.map((q) => q.id)).toEqual([q1.id, q2.id]);
+    });
+
+    it("answerQuestion wraps a single-select answer as a one-element JSON array", async () => {
+        await createBoard(db, { slug: "b1" });
+        const q = await createQuestion(db, "b1", { cardId: 0, prompt: "pick one", options: [{ label: "picked" }] });
+        const answered = await answerQuestion(db, q.id, "picked", "user");
+        expect(answered.answer).toEqual(["picked"]);
+        expect(answered.answeredBy).toBe("user");
+        expect(answered.staged).toBe(true); // still staged — dispatch releases it, not the answer itself
+    });
+
+    it("answerQuestion stores a multi-select answer's pre-encoded JSON array as-is", async () => {
+        await createBoard(db, { slug: "b1" });
+        const q = await createQuestion(db, "b1", {
+            cardId: 0,
+            prompt: "pick some",
+            options: [{ label: "a" }, { label: "b" }],
+            multi: true,
+        });
+        const answered = await answerQuestion(db, q.id, SafeJSON.stringify(["a", "b"]), "user");
+        expect(answered.answer).toEqual(["a", "b"]);
+    });
+
+    it("answerQuestion on an unknown id throws NotFoundError", async () => {
+        await expect(answerQuestion(db, 999, "picked", "user")).rejects.toThrow(NotFoundError);
     });
 });
