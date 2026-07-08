@@ -25,6 +25,6 @@ export async function versionsCommand(opts: VersionsOptions): Promise<void> {
     }
 
     for (const v of versions) {
-        out.print(`${v}\t${packument.time[v] ?? "?"}`);
+        out.println(`${v}\t${packument.time[v] ?? "?"}`);
     }
 }

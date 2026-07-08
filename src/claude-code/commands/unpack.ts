@@ -14,15 +14,15 @@ export async function unpackCommand(version: string, opts: UnpackOptions): Promi
     out.log.info(
         `source: ${ref.meta.source}, modules: ${ref.meta.modules.length}, entry ${ref.meta.modules.find((m) => m.file === ref.meta.entrypoint)?.bytes} bytes`
     );
-    out.print(ref.entrypointPath);
+    out.println(ref.entrypointPath);
 
     if (opts.beautified || opts.normalized) {
         await ensureBeautified(ref);
-        out.print(join(ref.dir, "beautified.js"));
+        out.println(join(ref.dir, "beautified.js"));
     }
 
     if (opts.normalized) {
         await ensureNormalized(ref);
-        out.print(join(ref.dir, "normalized.js"));
+        out.println(join(ref.dir, "normalized.js"));
     }
 }
