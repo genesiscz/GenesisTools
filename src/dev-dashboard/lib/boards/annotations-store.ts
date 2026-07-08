@@ -548,6 +548,8 @@ export async function addAttempt(
         afterVersion: number;
         afterFile: string;
         afterBlobKey: string;
+        afterWidth?: number;
+        afterHeight?: number;
         agent?: string;
         commitRef?: string;
     }
@@ -610,6 +612,7 @@ export async function addAttempt(
                 created_at: now,
             })
             .execute();
+        const payload = SafeJSON.parse(card.payload || "{}", { strict: true }) as Record<string, unknown>;
         const updatedCard = await trx
             .updateTable("board_cards")
             .set({
@@ -618,6 +621,14 @@ export async function addAttempt(
                 file_path: input.afterFile,
                 blob_key: input.afterBlobKey,
                 current_version: nextVersion,
+                payload:
+                    input.afterWidth !== undefined && input.afterHeight !== undefined
+                        ? SafeJSON.stringify({
+                              ...payload,
+                              naturalWidth: input.afterWidth,
+                              naturalHeight: input.afterHeight,
+                          })
+                        : card.payload,
                 updated_at: now,
             })
             .where("id", "=", card.id)

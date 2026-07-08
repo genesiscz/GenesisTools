@@ -601,7 +601,7 @@ export async function importSet(
                     set_version: set.version,
                     file_path: f.path,
                     blob_key: f.blobKey,
-                    payload: "{}",
+                    payload: SafeJSON.stringify({ naturalWidth: f.width, naturalHeight: f.height }),
                     created_by: "",
                     elem_no: elemSeq,
                     current_version: 1,
@@ -701,12 +701,18 @@ export async function syncSetCards(
                     created_at: now,
                 })
                 .execute();
+            const payload = SafeJSON.parse(card.payload || "{}", { strict: true }) as Record<string, unknown>;
             await trx
                 .updateTable("board_cards")
                 .set({
                     blob_key: file.blobKey,
                     set_version: set.version,
                     current_version: nextVersion,
+                    payload: SafeJSON.stringify({
+                        ...payload,
+                        naturalWidth: file.width,
+                        naturalHeight: file.height,
+                    }),
                     updated_at: now,
                 })
                 .where("id", "=", card.id)
@@ -759,6 +765,11 @@ export async function appendCardVersion(
     });
 }
 
+/** Known limitation: `card_versions` doesn't store width/height, so a revert leaves
+ *  `payload.naturalWidth/naturalHeight` at whatever the rejected attempt's face set them
+ *  to, rather than restoring the prior face's dims. Accepted as-is: the common reject
+ *  case is a same-dimension reshoot, and CompareDeck's own overlay reads the live <img>'s
+ *  naturalWidth rather than payload, so the deck is unaffected either way. */
 export async function revertCardFace(
     db: DatabaseClient<BoardsDb>,
     cardId: number,

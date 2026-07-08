@@ -397,6 +397,7 @@ export function boardsRoutes(): RouteDef[] {
                         h,
                         filePath: name,
                         blobKey,
+                        payload: { naturalWidth, naturalHeight },
                         createdBy: actorFrom(ctx),
                     });
                     publishBoardEvent(ctx.params.slug, { type: "card", payload: card });
