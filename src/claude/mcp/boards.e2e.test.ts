@@ -263,6 +263,45 @@ describe("boards MCP tools (stdio e2e against a real agent-mode dev-dashboard)",
                 const scrapeBody = SafeJSON.parse(toolText(scrapeRes), { strict: true }) as { cards: unknown[] };
                 expect(scrapeBody.cards.length).toBe(2);
 
+                // Route-registration gate: arrange, update_cards and the standalone questions
+                // create/list routes over REAL HTTP through the assembled server (not a direct
+                // handler call) — a 404 here means registry.ts's ordering is wrong.
+                const arrangeRes = await client.callTool({
+                    name: "boards_arrange",
+                    arguments: { board: slug, mode: "column", scope: "section:Checkout", save: true },
+                });
+                const arrangeBody = SafeJSON.parse(toolText(arrangeRes), { strict: true }) as {
+                    ok: boolean;
+                    saved: boolean;
+                };
+                expect(arrangeBody.ok).toBe(true);
+                expect(arrangeBody.saved).toBe(true);
+
+                const cardA = composeBody.cards.find((c) => c.ref === "a");
+                if (!cardA) {
+                    throw new Error("compose did not return card ref 'a'");
+                }
+                const updateRes = await client.callTool({
+                    name: "boards_update_cards",
+                    arguments: { board: slug, patch: [{ id: cardA.id, payload: { md: "idea A (edited)" } }] },
+                });
+                const updateBody = SafeJSON.parse(toolText(updateRes), { strict: true }) as { patched: number };
+                expect(updateBody.patched).toBe(1);
+
+                const createQRes = await fetch(`${base}/api/boards/${slug}/questions`, {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: SafeJSON.stringify({ prompt: "board-level question", options: ["p", "q"] }),
+                });
+                expect(createQRes.status).toBe(201);
+                const createdQ = (await createQRes.json()) as { id: number };
+
+                const listQRes = await fetch(`${base}/api/boards/${slug}/questions`);
+                expect(listQRes.ok).toBe(true);
+                const listQBody = (await listQRes.json()) as { questions: Array<{ id: number }> };
+                expect(listQBody.questions.map((q) => q.id)).toContain(createdQ.id);
+                expect(listQBody.questions.map((q) => q.id)).toContain(questionId);
+
                 // Answering is a human/UI action over plain HTTP — boards_ask_board only CREATES
                 // the question; there is no dedicated "answer" MCP tool.
                 const answerRes = await fetch(`${base}/api/boards/questions/${questionId}/answer`, {

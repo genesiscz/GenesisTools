@@ -278,7 +278,7 @@ export function registerWatchCommand(program: Command): void {
         .option("--all", "scope to every board/project")
         .option("--once", "single lease-free wait cycle then exit (0=work announced, 3=idle/unreachable)")
         .option("--base <url>", "dev-dashboard base URL")
-        .option("--takeover", "accepted for CLI parity — expired leases are reaped automatically")
+        .option("--takeover", "steal an expired-but-unreaped lease on this scope (never a live one)")
         .action(
             async (opts: {
                 board?: string;

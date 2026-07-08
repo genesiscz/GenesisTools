@@ -37,6 +37,17 @@ Live updates go out over `GET /api/boards/:slug/events` (SSE). Annotations follo
 annotation is `staged` by default (invisible to the work queue) until a `dispatch` call flips
 it to `open`, so a human can review/edit the prompt before it goes live to an agent.
 
+The AI expression layer (`compose`/`arrange`/`update-cards`/`scrape`/`sections`/`questions` —
+20 `boards_*` MCP tools total) lets an agent PRESENT on a board, not just answer: batched
+markdown/viz/section/question cards placed in one call, server-side auto-layout, a
+structured board-digest read, and staged multiple-choice questions that release onto the
+work wire on the same `dispatch` gate as annotations. AI-authored cards carry
+`payload.layer === "ai"` (no schema column); journey sections are `kind:"section"` cards
+with spatial (not FK) membership. Question rows live in `board_questions`
+(`board_id, card_id, prompt, options, answer, staged, delivered, multi`) — `delivered` gives
+the work-wire's exactly-once drain. See `src/boards/README.md` for the CLI-facing summary and
+`src/dev-dashboard/server/static/boards-templates.md` for compose-ready skeletons.
+
 ## Public surface
 
 When tunneled (host, allowed identities, and tunnel name are read from local config, not committed here):
