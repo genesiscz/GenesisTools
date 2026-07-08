@@ -21,7 +21,9 @@ import {
     LIST_WORK_SCHEMA,
     REPLY_SCHEMA,
     SET_STATUS_SCHEMA,
+    WAIT_FOR_WORK_SCHEMA,
 } from "./tools/boards/schemas";
+import { handleWaitForWork } from "./tools/boards/wait-for-work";
 import { handleAttachAfter, handleHighlight, handleReply, handleSetStatus } from "./tools/boards/work-tools";
 import { handleQuestionAnswer, QUESTION_ANSWER_INPUT_SCHEMA, type QuestionAnswerArgs } from "./tools/question-answer";
 
@@ -47,7 +49,17 @@ const SERVER_INSTRUCTIONS =
     "action), and optional refs. It persists to the local question store, browsable later with " +
     "`tools question log` / `tools question tail`.\n\n" +
     "DO NOT use for: routine task instructions you simply execute, pure acknowledgements " +
-    '("ok", "thanks", "continue"), or trivial lookups not worth preserving.';
+    '("ok", "thanks", "continue"), or trivial lookups not worth preserving.\n\n' +
+    "BOARDS (dev-dashboard annotation boards):\n" +
+    "- The user annotates screenshots on /boards/<slug>; each dispatched annotation is a work item for you.\n" +
+    "- Work loop: boards_wait_for_work({board} or {project,branch}) → for each capsule: boards_set_status " +
+    "working → fix the app → push a new set version (tools boards push) → boards_attach_after → boards_reply " +
+    "(1-3 lines) → boards_set_status in_review. NEVER set resolved — that verdict belongs to the user.\n" +
+    "- ALWAYS scope wait/list calls to YOUR board or repo+branch; items on other boards belong to other " +
+    "sessions.\n" +
+    '- A 409 "cancelled" on any write means the user withdrew the item: revert its changes, no reply, move on.\n' +
+    "- Prefer the `tools boards watch` CLI via a background Monitor for idle listening (zero token cost); use " +
+    "boards_wait_for_work to DRAIN after a wake, with timeoutSec 1.";
 
 interface ToolEntry {
     description: string;
@@ -138,6 +150,15 @@ function buildToolRegistry(): Record<string, ToolEntry> {
             inputSchema: HIGHLIGHT_SCHEMA as unknown as Record<string, unknown>,
             handler: async (args) =>
                 handleHighlight(args as { id: number; x?: number; y?: number; w?: number; h?: number; color?: string }),
+        },
+        boards_wait_for_work: {
+            description:
+                "Block (one long-poll pass, up to timeoutSec) for open board annotations in scope. ALWAYS pass " +
+                "{board} or {project[, branch]} — unscoped waits belong to other sessions. A 409 means another " +
+                "session already holds a live listener on this scope.",
+            inputSchema: WAIT_FOR_WORK_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) =>
+                handleWaitForWork(args as { board?: string; project?: string; branch?: string; timeoutSec?: number }),
         },
     };
 }
