@@ -83,6 +83,7 @@ describe("runWatch", () => {
             print: async (line) => {
                 lines.push(line);
             },
+            sleep: async () => {},
         });
 
         expect(exitCode).toBe(2);

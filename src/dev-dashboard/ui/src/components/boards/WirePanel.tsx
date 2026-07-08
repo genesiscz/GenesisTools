@@ -118,11 +118,11 @@ export function WirePanel({ slug, annotation, boardMessages, operator, onClose }
         onSuccess: invalidate,
     });
     const replyMutation = useMutation({
-        mutationFn: (body: string) => boardsApi.reply(annotation?.id ?? -1, body, operator),
+        mutationFn: (body: string) => boardsApi.reply(annotation?.id ?? -1, { body, author: operator }),
         onSuccess: invalidate,
     });
     const boardMessageMutation = useMutation({
-        mutationFn: (body: string) => boardsApi.boardMessage(slug, body, operator),
+        mutationFn: (body: string) => boardsApi.boardMessage(slug, { body, author: operator }),
         onSuccess: invalidate,
     });
 

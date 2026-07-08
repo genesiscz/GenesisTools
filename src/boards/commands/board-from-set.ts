@@ -13,7 +13,11 @@ interface ImportSetResult {
 
 /** Board slugs must satisfy the server's `BOARD_SLUG_RE` (`^[a-z0-9][a-z0-9-]{0,63}$`). */
 export function boardSlugFrom(key: string): string {
-    return key.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
+    return key
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, "-")
+        .replace(/^-+/, "")
+        .slice(0, 64);
 }
 
 export function registerBoardFromSetCommand(program: Command): void {
@@ -39,7 +43,9 @@ export function registerBoardFromSetCommand(program: Command): void {
             const title = opts.title ?? cfg.title ?? cfg.key;
 
             try {
-                await postJson<BoardSummaryDto>(base, paths.boards(), { slug, title, project: cfg.project });
+                await postJson<BoardSummaryDto>(base, paths.boards(), {
+                    payload: { slug, title, project: cfg.project },
+                });
             } catch (err) {
                 if (!(err instanceof BoardsHttpError) || err.status !== 409) {
                     throw err;
@@ -48,9 +54,11 @@ export function registerBoardFromSetCommand(program: Command): void {
             }
 
             const result = await postJson<ImportSetResult>(base, paths.boardImportSet(slug), {
-                project: cfg.project,
-                branch: slugifyBranch(cfg.branch),
-                selector: cfg.key,
+                payload: {
+                    project: cfg.project,
+                    branch: slugifyBranch(cfg.branch),
+                    selector: cfg.key,
+                },
             });
 
             await printLn(

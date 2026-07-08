@@ -84,6 +84,7 @@ export function BoardRoute() {
     const dispatchMutation = useMutation({
         mutationFn: () => boardsApi.dispatch(slug),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["board", slug] }),
+        onError: (err) => console.error("[boards] dispatch failed", err),
     });
 
     const syncMutation = useMutation({
@@ -99,6 +100,7 @@ export function BoardRoute() {
             setSyncBanner(null);
             queryClient.invalidateQueries({ queryKey: ["board", slug] });
         },
+        onError: (err) => console.error("[boards] sync failed", err),
     });
 
     useLockPageScroll(true);

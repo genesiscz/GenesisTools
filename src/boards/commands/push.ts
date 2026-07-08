@@ -3,6 +3,8 @@ import { readdir, readFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { paths } from "@app/dev-dashboard/contract/endpoints";
 import { tarGz } from "@app/dev-dashboard/lib/boards/tar";
+import { logger } from "@app/logger";
+import { concurrentMap } from "@app/utils/async";
 import { printLn } from "@app/utils/cli";
 import type { Command } from "commander";
 import { putRaw, resolveBaseUrl } from "../lib/client";
@@ -71,26 +73,56 @@ export function registerPushCommand(program: Command): void {
             const source = opts.source ?? cfg.source;
 
             const relFiles = await collectFiles(root);
-            const entries = await Promise.all(
-                relFiles.map(async (rel) => ({
+            const fileByRel = await concurrentMap({
+                items: relFiles,
+                fn: async (rel) => ({
                     path: rel,
                     data: new Uint8Array(await readFile(join(root, ...rel.split("/")))),
-                }))
-            );
+                }),
+                concurrency: 12,
+                onError: (rel, error) => {
+                    throw error instanceof Error ? error : new Error(`failed to read ${rel}: ${String(error)}`);
+                },
+            });
+            const entries = relFiles.map((rel) => fileByRel.get(rel)!);
             const packed = await tarGz(entries);
 
             const base = resolveBaseUrl(opts.base);
             const branchSlug = slugifyBranch(cfg.branch);
-            const result = await putRaw<PushResult>(
-                base,
-                paths.boardsSetContent(cfg.project, branchSlug, cfg.key, {
-                    kind: cfg.kind,
-                    title,
-                    branch: cfg.branch,
-                    source,
-                }),
-                packed,
-                "application/gzip"
+            const targetPath = paths.boardsSetContent(cfg.project, branchSlug, cfg.key, {
+                kind: cfg.kind,
+                title,
+                branch: cfg.branch,
+                source,
+            });
+            logger.debug(
+                {
+                    url: `${base}${targetPath}`,
+                    project: cfg.project,
+                    branch: branchSlug,
+                    key: cfg.key,
+                    bytes: packed.length,
+                    files: entries.length,
+                },
+                "boards push: uploading set content"
+            );
+
+            let result: PushResult;
+            try {
+                result = await putRaw<PushResult>(
+                    base,
+                    targetPath,
+                    packed,
+                    "application/gzip",
+                    AbortSignal.timeout(120_000)
+                );
+            } catch (err) {
+                logger.error({ err, url: `${base}${targetPath}` }, "boards push: upload failed");
+                throw err;
+            }
+            logger.debug(
+                { files: result.files, version: result.version, bytes: result.bytes },
+                "boards push: upload complete"
             );
 
             if (opts.title || opts.source) {

@@ -158,6 +158,9 @@ export const BOOTSTRAP_DDL: string[] = [
         created_at TEXT NOT NULL,
         last_seen TEXT NOT NULL
     )`,
+    // 'all' leases are deliberately per-session duplicates (every concurrent "all" listener keeps
+    // its own row); the WHERE excludes them so only "board"/"project" scopes get a single holder.
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_listeners_scope ON listeners(scope_kind, scope, branch) WHERE scope_kind != 'all'`,
     `CREATE TABLE IF NOT EXISTS board_questions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         board_id INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
@@ -182,6 +185,7 @@ export function boardsDbPath(): string {
     if (override) {
         return override;
     }
+
     return join(getDevDashboardStorage().getBaseDir(), "boards.db");
 }
 

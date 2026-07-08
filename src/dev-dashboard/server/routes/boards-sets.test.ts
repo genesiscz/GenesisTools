@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resetBoardsDb } from "@app/dev-dashboard/lib/boards/db";
@@ -12,9 +12,11 @@ import { boardsSetsRoutes } from "./boards-sets";
 
 function findRoute(method: string, pattern: string): RouteDef {
     const def = boardsSetsRoutes().find((d) => d.method === method && d.pattern === pattern);
+
     if (!def) {
         throw new Error(`route not found: ${method} ${pattern}`);
     }
+
     return def;
 }
 
@@ -41,6 +43,7 @@ function asJson(result: RouteResult): { status: number; body: Record<string, unk
     if (result.kind !== "json") {
         throw new Error(`expected json result, got ${result.kind}`);
     }
+
     return { status: result.status, body: result.body as Record<string, unknown> };
 }
 
@@ -92,8 +95,10 @@ async function putContent(
 }
 
 describe("boardsSetsRoutes", () => {
+    let dir: string;
+
     beforeEach(() => {
-        const dir = mkdtempSync(join(tmpdir(), "boards-sets-route-"));
+        dir = mkdtempSync(join(tmpdir(), "boards-sets-route-"));
         env.testing.set("GENESIS_TOOLS_HOME", dir);
         env.testing.set("BOARDS_DB_PATH", ":memory:");
         resetDevDashboardStorage();
@@ -105,6 +110,7 @@ describe("boardsSetsRoutes", () => {
         resetDevDashboardStorage();
         env.testing.unset("GENESIS_TOOLS_HOME");
         env.testing.unset("BOARDS_DB_PATH");
+        rmSync(dir, { recursive: true, force: true });
     });
 
     it("PUT content: first push 201, re-push 200 with the same version and replaced file rows", async () => {

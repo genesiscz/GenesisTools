@@ -67,8 +67,8 @@ export const boardsApi = {
     reactivateAnnotation: (id: number) => fetchJson<AnnotationDto>(paths.annotationReactivate(id), { method: "POST" }),
     reviseAnnotation: (id: number, prompt: string) =>
         fetchJson<AnnotationDto>(paths.annotationRevisions(id), jsonInit("POST", { prompt })),
-    reply: (id: number, body: string, author: string) =>
-        fetchJson<MessageDto>(paths.annotationMessages(id), jsonInit("POST", { body, author })),
+    reply: (id: number, opts: { body: string; author: string }) =>
+        fetchJson<MessageDto>(paths.annotationMessages(id), jsonInit("POST", opts)),
     verdict: (attemptId: number, verdict: "accept" | "reject") =>
         fetchJson<{ attempt: AttemptDto; annotation: AnnotationDto; card: CardDto }>(
             paths.attemptVerdict(attemptId),
@@ -76,8 +76,8 @@ export const boardsApi = {
         ),
     dispatch: (slug: string) =>
         fetchJson<{ opened: number[]; releasedQuestions: number[] }>(paths.boardDispatch(slug), { method: "POST" }),
-    boardMessage: (slug: string, body: string, author?: string) =>
-        fetchJson<MessageDto>(paths.boardMessages(slug), jsonInit("POST", { body, author })),
+    boardMessage: (slug: string, opts: { body: string; author?: string }) =>
+        fetchJson<MessageDto>(paths.boardMessages(slug), jsonInit("POST", opts)),
     syncSet: (slug: string, body: { project: string; branch: string; selector: string }) =>
         fetchJson<{ updated: number; skippedFiles: string[] }>(paths.boardSyncSet(slug), jsonInit("POST", body)),
     getOperator: () => fetchJson<{ operator: string }>(paths.boardsOperator()),

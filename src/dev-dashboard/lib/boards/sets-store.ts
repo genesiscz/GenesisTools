@@ -1,3 +1,4 @@
+import { logger } from "@app/logger";
 import type { DatabaseClient } from "@app/utils/database/client";
 import { SafeJSON } from "@app/utils/json";
 import { type Selectable, sql } from "kysely";
@@ -67,8 +68,9 @@ function parseManifest(entries: TarEntry[]): ManifestJson | null {
     try {
         const text = new TextDecoder().decode(manifestEntry.data);
         return SafeJSON.parse(text, { strict: true }) as ManifestJson;
-    } catch {
+    } catch (err) {
         // Corrupted/absent manifest: ingest files without meta rather than failing the push.
+        logger.debug({ error: err }, "boards: failed to parse manifest.json; ingesting without meta");
         return null;
     }
 }

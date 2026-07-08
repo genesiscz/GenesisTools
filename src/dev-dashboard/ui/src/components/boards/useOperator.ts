@@ -53,6 +53,10 @@ export function useOperator(): UseOperatorResult {
 
     const commit = (name: string) => {
         const trimmed = name.trim();
+        if (trimmed === "") {
+            setPromptOpen(false);
+            return;
+        }
         window.localStorage.setItem(STORAGE_KEY, trimmed);
         setOperator(trimmed);
         setPromptOpen(false);

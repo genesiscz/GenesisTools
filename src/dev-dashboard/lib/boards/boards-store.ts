@@ -2,7 +2,15 @@ import type { DatabaseClient } from "@app/utils/database/client";
 import { SafeJSON } from "@app/utils/json";
 import type { Kysely, Selectable } from "kysely";
 import { getBoardAnnotations } from "./annotations-store";
-import type { BoardCardsTable, BoardEdgesTable, BoardStrokesTable, BoardsDb, BoardsTable } from "./db-types";
+import type {
+    AnnotationMessagesTable,
+    BoardCardsTable,
+    BoardEdgesTable,
+    BoardQuestionsTable,
+    BoardStrokesTable,
+    BoardsDb,
+    BoardsTable,
+} from "./db-types";
 import { NotFoundError, setRefOf } from "./sets-store";
 import { nowIso } from "./time";
 import type {
@@ -32,6 +40,7 @@ export const RESERVED_SLUGS = new Set([
 ]);
 
 export class SlugConflictError extends Error {}
+export class InvalidInputError extends Error {}
 
 const IMPORT_COLS = 4;
 const IMPORT_CELL_W = 420;
@@ -97,14 +106,7 @@ function toEdgeDto(row: Selectable<BoardEdgesTable>): EdgeDto {
     };
 }
 
-function toMessageDto(row: {
-    id: number;
-    annotation_id: number;
-    board_id: number;
-    author: string;
-    body: string;
-    created_at: string;
-}): MessageDto {
+function toMessageDto(row: Selectable<AnnotationMessagesTable>): MessageDto {
     return {
         id: row.id,
         annotationId: row.annotation_id === 0 ? null : row.annotation_id,
@@ -115,20 +117,7 @@ function toMessageDto(row: {
     };
 }
 
-function toQuestionDto(row: {
-    id: number;
-    board_id: number;
-    card_id: number;
-    prompt: string;
-    options: string;
-    answer: string;
-    answered_by: string;
-    delivered: number;
-    staged: number;
-    multi: number;
-    created_at: string;
-    answered_at: string;
-}): QuestionDto {
+function toQuestionDto(row: Selectable<BoardQuestionsTable>): QuestionDto {
     return {
         id: row.id,
         boardId: row.board_id,
@@ -168,20 +157,32 @@ export async function createBoard(
         throw new SlugConflictError(`board slug already exists: ${input.slug}`);
     }
     const now = nowIso();
-    const inserted = await db.kysely
-        .insertInto("boards")
-        .values({
-            slug: input.slug,
-            title: input.title ?? "",
-            project: input.project ?? "",
-            board_type: input.boardType ?? "board",
-            elem_seq: 0,
-            created_at: now,
-            updated_at: now,
-            archived_at: "",
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
+    let inserted: Selectable<BoardsTable>;
+    try {
+        inserted = await db.kysely
+            .insertInto("boards")
+            .values({
+                slug: input.slug,
+                title: input.title ?? "",
+                project: input.project ?? "",
+                board_type: input.boardType ?? "board",
+                elem_seq: 0,
+                created_at: now,
+                updated_at: now,
+                archived_at: "",
+            })
+            .returningAll()
+            .executeTakeFirstOrThrow();
+    } catch (err) {
+        if (
+            err instanceof Error &&
+            err.message.includes("UNIQUE constraint failed") &&
+            err.message.includes("boards.slug")
+        ) {
+            throw new SlugConflictError(`board slug already exists: ${input.slug}`);
+        }
+        throw err;
+    }
     return toBoardDto(inserted);
 }
 
@@ -407,11 +408,15 @@ export async function patchCard(
 }
 
 export async function softDeleteCard(db: DatabaseClient<BoardsDb>, cardId: number): Promise<void> {
-    await db.kysely
+    const updated = await db.kysely
         .updateTable("board_cards")
         .set({ deleted_at: nowIso(), updated_at: nowIso() })
         .where("id", "=", cardId)
-        .execute();
+        .returningAll()
+        .executeTakeFirst();
+    if (!updated) {
+        throw new NotFoundError(`card not found: ${cardId}`);
+    }
 }
 
 export async function restoreCard(db: DatabaseClient<BoardsDb>, cardId: number): Promise<CardDto> {
@@ -505,7 +510,7 @@ export async function bulkLayout(
     moves: Array<{ id: number; x: number; y: number }>
 ): Promise<void> {
     if (moves.length < 1 || moves.length > 500) {
-        throw new Error(`bulkLayout: expected 1-500 moves, got ${moves.length}`);
+        throw new InvalidInputError(`bulkLayout: expected 1-500 moves, got ${moves.length}`);
     }
     const board = await getBoardRow(db, boardSlug);
     const now = nowIso();

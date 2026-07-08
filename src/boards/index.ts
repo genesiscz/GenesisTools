@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { logger } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { Command } from "commander";
 import { registerAddCommand } from "./commands/add";
@@ -17,6 +18,7 @@ registerBoardFromSetCommand(program);
 registerWatchCommand(program);
 
 await runTool(program, { tool: "boards" }).catch((err) => {
+    logger.error({ err }, "boards CLI failed");
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);
 });

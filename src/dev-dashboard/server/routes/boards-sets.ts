@@ -36,13 +36,14 @@ async function setOperator(operator: string): Promise<void> {
 }
 
 /** Publishes `set_version` to every board with a live card on an older version of this set. */
-async function notifyStaleCards(
-    project: string,
-    branch: string,
-    key: string,
-    version: number,
-    setRef: string
-): Promise<void> {
+async function notifyStaleCards(opts: {
+    project: string;
+    branch: string;
+    key: string;
+    version: number;
+    setRef: string;
+}): Promise<void> {
+    const { project, branch, key, version, setRef } = opts;
     const db = getBoardsDb();
     const stale = await db.kysely
         .selectFrom("board_cards")
@@ -99,13 +100,13 @@ export function boardsSetsRoutes(): RouteDef[] {
                         entries,
                     });
 
-                    await notifyStaleCards(
-                        result.set.project,
-                        result.set.branch,
-                        result.set.key,
-                        result.set.version,
-                        `${result.set.project}/${result.set.branch}/${result.set.key}`
-                    );
+                    await notifyStaleCards({
+                        project: result.set.project,
+                        branch: result.set.branch,
+                        key: result.set.key,
+                        version: result.set.version,
+                        setRef: `${result.set.project}/${result.set.branch}/${result.set.key}`,
+                    });
 
                     return {
                         kind: "json",
