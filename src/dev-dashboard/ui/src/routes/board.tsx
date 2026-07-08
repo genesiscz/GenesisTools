@@ -67,6 +67,7 @@ export function BoardRoute() {
     const [selectedAnnotationId, setSelectedAnnotationId] = useState<number | null>(null);
     const [panelOpen, setPanelOpen] = useState(false);
     const [syncBanner, setSyncBanner] = useState<SetVersionPayload | null>(null);
+    const [dispatchedNote, setDispatchedNote] = useState<number | null>(null);
     const { operator, promptOpen, serverDefault, commit } = useOperator();
 
     const boardQuery = useQuery({
@@ -83,7 +84,11 @@ export function BoardRoute() {
 
     const dispatchMutation = useMutation({
         mutationFn: () => boardsApi.dispatch(slug),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["board", slug] }),
+        onSuccess: (res) => {
+            setDispatchedNote(res.opened.length + res.releasedQuestions.length);
+            window.setTimeout(() => setDispatchedNote(null), 2500);
+            void queryClient.invalidateQueries({ queryKey: ["board", slug] });
+        },
         onError: (err) => console.error("[boards] dispatch failed", err),
     });
 
@@ -105,7 +110,10 @@ export function BoardRoute() {
 
     useLockPageScroll(true);
 
-    const stagedCount = boardQuery.data?.annotations.filter((a) => a.status === "staged").length ?? 0;
+    const stagedAnnotations = boardQuery.data?.annotations.filter((a) => a.status === "staged").length ?? 0;
+    // Answered-but-not-yet-dispatched questions ride the same staged→dispatch wire (Part II).
+    const stagedQuestions = (boardQuery.data?.questions ?? []).filter((q) => q.staged && q.answer).length;
+    const stagedCount = stagedAnnotations + stagedQuestions;
     const selectedAnnotation = boardQuery.data?.annotations.find((a) => a.id === selectedAnnotationId) ?? null;
 
     return (
@@ -127,16 +135,6 @@ export function BoardRoute() {
                     >
                         thread
                     </button>
-                    {stagedCount > 0 ? (
-                        <button
-                            type="button"
-                            onClick={() => dispatchMutation.mutate()}
-                            disabled={dispatchMutation.isPending}
-                            className="dd-btn-accent rounded-full px-3 py-1 text-xs"
-                        >
-                            ↑ Send to Claude ({stagedCount})
-                        </button>
-                    ) : null}
                 </div>
             </div>
             {syncBanner ? (
@@ -187,6 +185,22 @@ export function BoardRoute() {
                     />
                 ) : null}
             </div>
+            {stagedCount > 0 ? (
+                <div className="absolute bottom-4 left-1/2 z-40 -translate-x-1/2">
+                    <button
+                        type="button"
+                        onClick={() => dispatchMutation.mutate()}
+                        disabled={dispatchMutation.isPending}
+                        className="dd-btn-accent flex items-center gap-2 rounded-full px-4 py-2 text-sm shadow-lg"
+                    >
+                        {stagedCount} staged — Send to Claude
+                    </button>
+                </div>
+            ) : dispatchedNote !== null ? (
+                <div className="absolute bottom-4 left-1/2 z-40 -translate-x-1/2 rounded-full bg-[var(--dd-bg-panel)] px-4 py-2 text-sm text-[var(--dd-text-secondary)] shadow-lg">
+                    dispatched {dispatchedNote}
+                </div>
+            ) : null}
             {promptOpen ? <OperatorDialog defaultValue={serverDefault} onSubmit={commit} /> : null}
         </div>
     );
