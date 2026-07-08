@@ -10,6 +10,27 @@ import { WirePanel } from "@/components/boards/WirePanel";
 import { LiveSseIndicator } from "@/components/LiveSseIndicator";
 import { useLockPageScroll } from "@/hooks/useLockPageScroll";
 
+interface SetVersionPayload {
+    project: string;
+    branch: string;
+    version: number;
+    key: string;
+}
+
+function isSetVersionPayload(payload: unknown): payload is SetVersionPayload {
+    if (typeof payload !== "object" || payload === null) {
+        return false;
+    }
+
+    const p = payload as Record<string, unknown>;
+    return (
+        typeof p.project === "string" &&
+        typeof p.branch === "string" &&
+        typeof p.version === "number" &&
+        typeof p.key === "string"
+    );
+}
+
 function OperatorDialog({ defaultValue, onSubmit }: { defaultValue: string; onSubmit: (name: string) => void }) {
     const [name, setName] = useState(defaultValue);
 
@@ -45,6 +66,7 @@ export function BoardRoute() {
     const [tool, setTool] = useState<Tool>("move");
     const [selectedAnnotationId, setSelectedAnnotationId] = useState<number | null>(null);
     const [panelOpen, setPanelOpen] = useState(false);
+    const [syncBanner, setSyncBanner] = useState<SetVersionPayload | null>(null);
     const { operator, promptOpen, serverDefault, commit } = useOperator();
 
     const boardQuery = useQuery({
@@ -53,11 +75,30 @@ export function BoardRoute() {
         staleTime: 500,
         refetchInterval: 15_000,
     });
-    const { live } = useBoardEvents(slug);
+    const { live } = useBoardEvents(slug, (e) => {
+        if (e.type === "set_version" && isSetVersionPayload(e.payload)) {
+            setSyncBanner(e.payload);
+        }
+    });
 
     const dispatchMutation = useMutation({
         mutationFn: () => boardsApi.dispatch(slug),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["board", slug] }),
+    });
+
+    const syncMutation = useMutation({
+        mutationFn: () => {
+            const banner = syncBanner as SetVersionPayload;
+            return boardsApi.syncSet(slug, {
+                project: banner.project,
+                branch: banner.branch,
+                selector: String(banner.version),
+            });
+        },
+        onSuccess: () => {
+            setSyncBanner(null);
+            queryClient.invalidateQueries({ queryKey: ["board", slug] });
+        },
     });
 
     useLockPageScroll(true);
@@ -96,6 +137,21 @@ export function BoardRoute() {
                     ) : null}
                 </div>
             </div>
+            {syncBanner ? (
+                <div className="flex shrink-0 items-center gap-3 border-b border-[var(--dd-border)] bg-[var(--dd-bg-panel)] px-4 py-1.5 text-xs text-[var(--dd-text-secondary)]">
+                    <span>
+                        set {syncBanner.key} has v{syncBanner.version} — sync board
+                    </span>
+                    <button
+                        type="button"
+                        onClick={() => syncMutation.mutate()}
+                        disabled={syncMutation.isPending}
+                        className="dd-btn-accent rounded-full px-2 py-0.5"
+                    >
+                        sync
+                    </button>
+                </div>
+            ) : null}
             <div className="flex min-h-0 flex-1">
                 <div className="min-h-0 min-w-0 flex-1">
                     {boardQuery.isPending ? (
