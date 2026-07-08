@@ -32,7 +32,7 @@ export function BoardRoute() {
                         {boardQuery.error instanceof Error ? boardQuery.error.message : String(boardQuery.error)}
                     </p>
                 ) : (
-                    <BoardCanvas doc={boardQuery.data} />
+                    <BoardCanvas slug={slug} doc={boardQuery.data} />
                 )}
             </div>
         </div>

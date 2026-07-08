@@ -1,9 +1,14 @@
 import type { BoardDocDto } from "@app/dev-dashboard/contract/dto";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { boardsApi } from "./boards-api";
+import { CardView } from "./CardView";
+import { EdgeLayer } from "./EdgeLayer";
 import { fitBounds, panBy, useViewport, zoomAt } from "./useViewport";
 
 interface BoardCanvasProps {
+    slug: string;
     doc: BoardDocDto;
 }
 
@@ -20,14 +25,67 @@ function isTypingTarget(target: EventTarget | null): boolean {
     );
 }
 
-/**
- * The pan/zoom stage. Card/edge/ink/annotation rendering is layered in on top of the
- * world-transformed group by later tasks (23-24) — for now cards render as bare
- * positioned rects so the viewport itself is visually verifiable.
- */
-export function BoardCanvas({ doc }: BoardCanvasProps) {
+export function BoardCanvas({ slug, doc }: BoardCanvasProps) {
     const { vp, setVp, containerRef, spaceDown } = useViewport();
     const panState = useRef<PanState | null>(null);
+    const queryClient = useQueryClient();
+    const [selectedId, setSelectedId] = useState<number | null>(null);
+    const [dragOverrides, setDragOverrides] = useState<Record<number, { x: number; y: number }>>({});
+
+    const invalidate = () => {
+        void queryClient.invalidateQueries({ queryKey: ["board", slug] });
+    };
+
+    const patchCardMutation = useMutation({
+        mutationFn: ({ id, x, y }: { id: number; x: number; y: number }) => boardsApi.patchCard(id, { x, y }),
+        onSuccess: (_card, variables) => {
+            setDragOverrides((prev) => {
+                if (!(variables.id in prev)) {
+                    return prev;
+                }
+
+                const next = { ...prev };
+                delete next[variables.id];
+                return next;
+            });
+            invalidate();
+        },
+    });
+
+    const deleteCardMutation = useMutation({
+        mutationFn: (id: number) => boardsApi.deleteCard(id),
+        onSuccess: () => {
+            setSelectedId(null);
+            invalidate();
+        },
+    });
+
+    const noteMutation = useMutation({
+        mutationFn: ({ id, text }: { id: number; text: string }) => {
+            const card = doc.cards.find((c) => c.id === id);
+            return boardsApi.patchCard(id, { payload: { ...(card?.payload ?? {}), text } });
+        },
+        onSuccess: invalidate,
+    });
+
+    const pendingAttemptCardIds = useMemo(() => {
+        const ids = new Set<number>();
+
+        for (const annotation of doc.annotations) {
+            const latest = annotation.attempts[annotation.attempts.length - 1];
+
+            if (latest && latest.verdict === "") {
+                ids.add(annotation.cardId);
+            }
+        }
+
+        return ids;
+    }, [doc.annotations]);
+
+    const cards = doc.cards.map((card) => {
+        const override = dragOverrides[card.id];
+        return override ? { ...card, x: override.x, y: override.y } : card;
+    });
 
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
@@ -69,6 +127,9 @@ export function BoardCanvas({ doc }: BoardCanvasProps) {
                     }
                 );
                 setVp(fitBounds(bounds, el.clientWidth, el.clientHeight));
+            } else if ((e.key === "Backspace" || e.key === "Delete") && selectedId != null) {
+                e.preventDefault();
+                deleteCardMutation.mutate(selectedId);
             }
         };
         const onKeyUp = (e: KeyboardEvent) => {
@@ -83,15 +144,16 @@ export function BoardCanvas({ doc }: BoardCanvasProps) {
             window.removeEventListener("keydown", onKeyDown);
             window.removeEventListener("keyup", onKeyUp);
         };
-    }, [doc.cards, setVp, containerRef, spaceDown]);
+    }, [doc.cards, setVp, containerRef, spaceDown, selectedId, deleteCardMutation]);
 
     const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
         // Pan only from the stage background, or anywhere while Space is held —
-        // a card's own pointerdown handler (Task 23) stops propagation to opt out.
+        // a card's own pointerdown handler stops this from firing (different target).
         if (e.target !== e.currentTarget && !spaceDown.current) {
             return;
         }
 
+        setSelectedId(null);
         e.currentTarget.setPointerCapture(e.pointerId);
         panState.current = { pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY };
     };
@@ -116,6 +178,30 @@ export function BoardCanvas({ doc }: BoardCanvasProps) {
         }
     };
 
+    const handleDragBy = (id: number, dxWorld: number, dyWorld: number) => {
+        setDragOverrides((prev) => {
+            const base = prev[id] ?? cards.find((c) => c.id === id);
+
+            if (!base) {
+                return prev;
+            }
+
+            return { ...prev, [id]: { x: base.x + dxWorld, y: base.y + dyWorld } };
+        });
+    };
+
+    const handleDragEnd = (id: number) => {
+        const override = dragOverrides[id];
+
+        if (override) {
+            patchCardMutation.mutate({ id, x: override.x, y: override.y });
+        }
+    };
+
+    const handleNoteChange = (id: number, text: string) => {
+        noteMutation.mutate({ id, text });
+    };
+
     return (
         <div
             ref={containerRef}
@@ -133,13 +219,20 @@ export function BoardCanvas({ doc }: BoardCanvasProps) {
                 className="absolute top-0 left-0"
                 style={{ transform: `translate(${vp.x}px, ${vp.y}px) scale(${vp.scale})`, transformOrigin: "0 0" }}
             >
-                {doc.cards.map((card) => (
-                    <div
+                {cards.map((card) => (
+                    <CardView
                         key={card.id}
-                        className="absolute rounded-md bg-[var(--dd-bg-panel)] ring-1 ring-[var(--dd-border)]"
-                        style={{ left: card.x, top: card.y, width: card.w, height: card.h, zIndex: card.z }}
+                        card={card}
+                        selected={selectedId === card.id}
+                        scale={vp.scale}
+                        hasPendingAttempt={pendingAttemptCardIds.has(card.id)}
+                        onSelect={setSelectedId}
+                        onDragBy={handleDragBy}
+                        onDragEnd={handleDragEnd}
+                        onNoteChange={handleNoteChange}
                     />
                 ))}
+                <EdgeLayer edges={doc.edges} cards={cards} />
             </div>
         </div>
     );

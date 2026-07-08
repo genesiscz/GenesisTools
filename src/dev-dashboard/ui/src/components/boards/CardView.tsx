@@ -1,0 +1,165 @@
+import type { CardDto } from "@app/dev-dashboard/contract/dto";
+import { paths } from "@app/dev-dashboard/contract/endpoints";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import { useRef, useState } from "react";
+import { renderMdLite } from "./md-lite";
+
+interface CardViewProps {
+    card: CardDto;
+    selected: boolean;
+    scale: number;
+    hasPendingAttempt: boolean;
+    onSelect: (id: number) => void;
+    onDragBy: (id: number, dxWorld: number, dyWorld: number) => void;
+    onDragEnd: (id: number) => void;
+    onNoteChange: (id: number, text: string) => void;
+}
+
+interface DragState {
+    pointerId: number;
+    lastClientX: number;
+    lastClientY: number;
+}
+
+function stringField(payload: Record<string, unknown>, key: string): string {
+    const value = payload[key];
+    return typeof value === "string" ? value : "";
+}
+
+export function CardView({
+    card,
+    selected,
+    scale,
+    hasPendingAttempt,
+    onSelect,
+    onDragBy,
+    onDragEnd,
+    onNoteChange,
+}: CardViewProps) {
+    const dragRef = useRef<DragState | null>(null);
+    const [editingNote, setEditingNote] = useState(false);
+    const [noteDraft, setNoteDraft] = useState(() => stringField(card.payload, "text"));
+
+    const beginDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
+        onSelect(card.id);
+        e.currentTarget.setPointerCapture(e.pointerId);
+        dragRef.current = { pointerId: e.pointerId, lastClientX: e.clientX, lastClientY: e.clientY };
+    };
+
+    const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+        const drag = dragRef.current;
+
+        if (!drag || drag.pointerId !== e.pointerId) {
+            return;
+        }
+
+        const dx = (e.clientX - drag.lastClientX) / scale;
+        const dy = (e.clientY - drag.lastClientY) / scale;
+        drag.lastClientX = e.clientX;
+        drag.lastClientY = e.clientY;
+        onDragBy(card.id, dx, dy);
+    };
+
+    const onPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+        if (dragRef.current?.pointerId === e.pointerId) {
+            dragRef.current = null;
+            onDragEnd(card.id);
+        }
+    };
+
+    const style: CSSProperties = {
+        position: "absolute",
+        left: card.x,
+        top: card.y,
+        width: card.w,
+        height: card.h,
+        zIndex: card.z,
+    };
+    const ring = selected ? "ring-2 ring-[var(--dd-accent-from)]" : "ring-1 ring-[var(--dd-border)]";
+
+    if (card.kind === "shot" || card.kind === "media") {
+        const label = stringField(card.payload, "route") || stringField(card.payload, "label");
+
+        return (
+            <div style={style} onPointerDown={beginDrag} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
+                <img
+                    src={paths.boardsBlob(card.blobKey)}
+                    draggable={false}
+                    alt={label || `card ${card.id}`}
+                    className={`h-full w-full rounded-md object-cover shadow-lg ${ring}`}
+                />
+                {label ? (
+                    <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 font-mono text-[10px] text-white">
+                        {label}
+                    </span>
+                ) : null}
+                {card.currentVersion > 1 && hasPendingAttempt ? (
+                    <span
+                        title="face advanced by an attempt — verdict pending"
+                        className="absolute top-1 right-1 h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--dd-accent-from)]"
+                    />
+                ) : null}
+            </div>
+        );
+    }
+
+    if (card.kind === "note") {
+        const color = stringField(card.payload, "color") || "#f7d774";
+        const author = stringField(card.payload, "author");
+
+        return (
+            <div
+                style={{ ...style, background: color }}
+                className={`overflow-auto rounded-md p-3 text-sm whitespace-pre-wrap text-neutral-900 ${ring}`}
+                onPointerDown={editingNote ? undefined : beginDrag}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+                onDoubleClick={() => setEditingNote(true)}
+            >
+                {editingNote ? (
+                    <textarea
+                        autoFocus
+                        value={noteDraft}
+                        onChange={(e) => setNoteDraft(e.target.value)}
+                        onBlur={() => {
+                            setEditingNote(false);
+                            onNoteChange(card.id, noteDraft);
+                        }}
+                        className="h-full w-full resize-none bg-transparent text-neutral-900 outline-none"
+                    />
+                ) : (
+                    noteDraft
+                )}
+                {author ? <span className="absolute right-2 bottom-1 text-[9px] opacity-70">{author}</span> : null}
+            </div>
+        );
+    }
+
+    if (card.kind === "text") {
+        const md = stringField(card.payload, "md");
+
+        return (
+            <div
+                style={style}
+                className={`dd-markdown overflow-auto rounded-md bg-[var(--dd-bg-panel)] p-3 text-sm ${ring}`}
+                onPointerDown={beginDrag}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+            >
+                {renderMdLite(md)}
+            </div>
+        );
+    }
+
+    return (
+        <div
+            style={style}
+            className={`flex items-center justify-center rounded-md bg-[var(--dd-bg-panel)] text-xs text-[var(--dd-text-muted)] ${ring}`}
+            onPointerDown={beginDrag}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+        >
+            {card.kind}
+        </div>
+    );
+}
