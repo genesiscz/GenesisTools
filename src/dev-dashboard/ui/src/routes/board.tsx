@@ -6,6 +6,7 @@ import { boardsApi } from "@/components/boards/boards-api";
 import type { Tool } from "@/components/boards/Toolbar";
 import { useBoardEvents } from "@/components/boards/useBoardEvents";
 import { useOperator } from "@/components/boards/useOperator";
+import { WirePanel } from "@/components/boards/WirePanel";
 import { LiveSseIndicator } from "@/components/LiveSseIndicator";
 import { useLockPageScroll } from "@/hooks/useLockPageScroll";
 
@@ -43,6 +44,7 @@ export function BoardRoute() {
     const queryClient = useQueryClient();
     const [tool, setTool] = useState<Tool>("move");
     const [selectedAnnotationId, setSelectedAnnotationId] = useState<number | null>(null);
+    const [panelOpen, setPanelOpen] = useState(false);
     const { operator, promptOpen, serverDefault, commit } = useOperator();
 
     const boardQuery = useQuery({
@@ -61,6 +63,7 @@ export function BoardRoute() {
     useLockPageScroll(true);
 
     const stagedCount = boardQuery.data?.annotations.filter((a) => a.status === "staged").length ?? 0;
+    const selectedAnnotation = boardQuery.data?.annotations.find((a) => a.id === selectedAnnotationId) ?? null;
 
     return (
         <div className="relative flex h-full min-h-0 flex-col">
@@ -74,6 +77,13 @@ export function BoardRoute() {
                 <span className="dd-accent-text font-mono text-sm font-bold">{slug}</span>
                 <div className="ml-auto flex items-center gap-3">
                     <LiveSseIndicator live={live} count={boardQuery.data?.cards.length ?? 0} />
+                    <button
+                        type="button"
+                        onClick={() => setPanelOpen((v) => !v)}
+                        className="text-sm text-[var(--dd-text-secondary)] hover:text-[var(--dd-text-primary)]"
+                    >
+                        thread
+                    </button>
                     {stagedCount > 0 ? (
                         <button
                             type="button"
@@ -86,24 +96,38 @@ export function BoardRoute() {
                     ) : null}
                 </div>
             </div>
-            <div className="min-h-0 flex-1">
-                {boardQuery.isPending ? (
-                    <p className="p-4 text-sm text-[var(--dd-text-muted)]">Loading board...</p>
-                ) : boardQuery.isError ? (
-                    <p className="p-4 text-sm text-[var(--dd-danger)]">
-                        {boardQuery.error instanceof Error ? boardQuery.error.message : String(boardQuery.error)}
-                    </p>
-                ) : (
-                    <BoardCanvas
+            <div className="flex min-h-0 flex-1">
+                <div className="min-h-0 min-w-0 flex-1">
+                    {boardQuery.isPending ? (
+                        <p className="p-4 text-sm text-[var(--dd-text-muted)]">Loading board...</p>
+                    ) : boardQuery.isError ? (
+                        <p className="p-4 text-sm text-[var(--dd-danger)]">
+                            {boardQuery.error instanceof Error ? boardQuery.error.message : String(boardQuery.error)}
+                        </p>
+                    ) : (
+                        <BoardCanvas
+                            slug={slug}
+                            doc={boardQuery.data}
+                            tool={tool}
+                            onToolChange={setTool}
+                            operator={operator}
+                            selectedAnnotationId={selectedAnnotationId}
+                            onSelectAnnotation={(id) => {
+                                setSelectedAnnotationId(id);
+                                setPanelOpen(true);
+                            }}
+                        />
+                    )}
+                </div>
+                {panelOpen ? (
+                    <WirePanel
                         slug={slug}
-                        doc={boardQuery.data}
-                        tool={tool}
-                        onToolChange={setTool}
+                        annotation={selectedAnnotation}
+                        boardMessages={boardQuery.data?.boardMessages ?? []}
                         operator={operator}
-                        selectedAnnotationId={selectedAnnotationId}
-                        onSelectAnnotation={setSelectedAnnotationId}
+                        onClose={() => setPanelOpen(false)}
                     />
-                )}
+                ) : null}
             </div>
             {promptOpen ? <OperatorDialog defaultValue={serverDefault} onSubmit={commit} /> : null}
         </div>
