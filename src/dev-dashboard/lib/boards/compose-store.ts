@@ -638,7 +638,7 @@ export async function composeBoard(
         ...(cardsIn[i].ref ? { ref: cardsIn[i].ref } : {}),
     }));
 
-    notifyLayoutChanged(board.id);
+    notifyLayoutChanged(db, slug);
 
     return {
         ok: true,

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resetBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { resetEventHub, subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
+import { __resetLayoutDebounce } from "@app/dev-dashboard/lib/boards/layout-engine";
 import { resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
 import { env } from "@app/utils/env";
@@ -103,6 +104,7 @@ describe("boardsRoutes", () => {
     });
 
     afterEach(() => {
+        __resetLayoutDebounce();
         resetBoardsDb();
         resetDevDashboardStorage();
         resetEventHub();

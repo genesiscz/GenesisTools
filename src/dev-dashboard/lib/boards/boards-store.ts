@@ -515,7 +515,7 @@ export async function deleteEdge(db: DatabaseClient<BoardsDb>, edgeId: number): 
 export async function bulkLayout(
     db: DatabaseClient<BoardsDb>,
     boardSlug: string,
-    moves: Array<{ id: number; x: number; y: number }>
+    moves: Array<{ id: number; x: number; y: number; w?: number; h?: number }>
 ): Promise<void> {
     if (moves.length < 1 || moves.length > 500) {
         throw new InvalidInputError(`bulkLayout: expected 1-500 moves, got ${moves.length}`);
@@ -527,7 +527,13 @@ export async function bulkLayout(
         for (const m of moves) {
             await trx
                 .updateTable("board_cards")
-                .set({ x: m.x, y: m.y, updated_at: now })
+                .set({
+                    x: m.x,
+                    y: m.y,
+                    ...(m.w !== undefined ? { w: m.w } : {}),
+                    ...(m.h !== undefined ? { h: m.h } : {}),
+                    updated_at: now,
+                })
                 .where("id", "=", m.id)
                 .where("board_id", "=", board.id)
                 .execute();

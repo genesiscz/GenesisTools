@@ -23,6 +23,7 @@ import {
 import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { publishBoardEvent, subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
 import { readImageDims } from "@app/dev-dashboard/lib/boards/image-size";
+import { notifyLayoutChanged } from "@app/dev-dashboard/lib/boards/layout-engine";
 import { sectionsToJSON } from "@app/dev-dashboard/lib/boards/sections";
 import { getSet } from "@app/dev-dashboard/lib/boards/sets-store";
 import { dispatchBoard } from "@app/dev-dashboard/lib/boards/work-store";
@@ -173,6 +174,7 @@ export function boardsRoutes(): RouteDef[] {
                         createdBy: body.createdBy ?? (await actorFrom(ctx)),
                     });
                     publishBoardEvent(ctx.params.slug, { type: "card", payload: card });
+                    notifyLayoutChanged(getBoardsDb(), ctx.params.slug);
                     return { kind: "json", status: 201, body: card };
                 } catch (err) {
                     return boardsError(err);
@@ -200,6 +202,7 @@ export function boardsRoutes(): RouteDef[] {
                     const slug = await boardSlugForCardId(id);
                     if (slug) {
                         publishBoardEvent(slug, { type: "card", payload: card });
+                        notifyLayoutChanged(getBoardsDb(), slug);
                     }
                     return { kind: "json", status: 200, body: card };
                 } catch (err) {
@@ -217,6 +220,7 @@ export function boardsRoutes(): RouteDef[] {
                     await softDeleteCard(getBoardsDb(), id);
                     if (slug) {
                         publishBoardEvent(slug, { type: "card_deleted", payload: { id } });
+                        notifyLayoutChanged(getBoardsDb(), slug);
                     }
                     return { kind: "json", status: 200, body: { ok: true } };
                 } catch (err) {
@@ -234,6 +238,7 @@ export function boardsRoutes(): RouteDef[] {
                     const slug = await boardSlugForCardId(id);
                     if (slug) {
                         publishBoardEvent(slug, { type: "card", payload: card });
+                        notifyLayoutChanged(getBoardsDb(), slug);
                     }
                     return { kind: "json", status: 200, body: card };
                 } catch (err) {
@@ -364,6 +369,7 @@ export function boardsRoutes(): RouteDef[] {
                     for (const edge of result.edges) {
                         publishBoardEvent(ctx.params.slug, { type: "edge", payload: edge });
                     }
+                    notifyLayoutChanged(getBoardsDb(), ctx.params.slug);
                     return { kind: "json", status: 200, body: result };
                 } catch (err) {
                     return boardsError(err);
@@ -415,6 +421,7 @@ export function boardsRoutes(): RouteDef[] {
                         createdBy: await actorFrom(ctx),
                     });
                     publishBoardEvent(ctx.params.slug, { type: "card", payload: card });
+                    notifyLayoutChanged(getBoardsDb(), ctx.params.slug);
                     return { kind: "json", status: 201, body: card };
                 } catch (err) {
                     return boardsError(err);
