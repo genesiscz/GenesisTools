@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
-import { rename, writeFile } from "node:fs/promises";
+import { readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { configureLogger, logger } from "@app/logger";
 import { getLogsBaseDir, getPidFile } from "./lib/config";
@@ -66,7 +66,7 @@ export async function attemptStaleTakeover(pidFile: string, expectedContent: str
     let stolen: string | null = null;
 
     try {
-        stolen = readFileSync(tempPath, "utf-8");
+        stolen = await readFile(tempPath, "utf-8");
     } catch {
         stolen = null;
     }
