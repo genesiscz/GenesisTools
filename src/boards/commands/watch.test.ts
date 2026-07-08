@@ -1,0 +1,182 @@
+import { afterEach, describe, expect, it } from "bun:test";
+import { runWatch } from "./watch";
+
+describe("runWatch", () => {
+    let server: ReturnType<typeof Bun.serve> | undefined;
+
+    afterEach(() => {
+        server?.stop(true);
+        server = undefined;
+    });
+
+    it("announces open work, then exits 2 on a live-holder conflict", async () => {
+        let waitCall = 0;
+        server = Bun.serve({
+            port: 0,
+            fetch(req) {
+                const url = new URL(req.url);
+
+                if (url.pathname === "/api/boards/work/wait") {
+                    waitCall += 1;
+                    if (waitCall === 1) {
+                        return Response.json({ idle: true, listener: 1 });
+                    }
+                    if (waitCall === 2) {
+                        return Response.json({
+                            work: [{ id: 1, board: "demo", capsule: "..." }],
+                            pending: 1,
+                            listener: 1,
+                        });
+                    }
+                    return Response.json(
+                        {
+                            error: "scope held by a live listener",
+                            live: true,
+                            holder: {
+                                id: 9,
+                                scopeKind: "board",
+                                scope: "demo",
+                                branch: "",
+                                actor: "someone-else",
+                                session: "otherhost:123",
+                                createdAt: "",
+                                lastSeen: "",
+                            },
+                        },
+                        { status: 409 }
+                    );
+                }
+
+                if (url.pathname === "/api/boards/work") {
+                    return Response.json({
+                        work: [
+                            {
+                                id: 1,
+                                board: "demo",
+                                cardId: 1,
+                                intent: "fix",
+                                status: "open",
+                                prompt: "tighten the spacing",
+                                createdAt: "2026-07-08T00:00:00.000Z",
+                                updatedAt: "2026-07-08T00:00:00.000Z",
+                            },
+                        ],
+                    });
+                }
+
+                if (url.pathname.startsWith("/api/boards/work/listeners/")) {
+                    return Response.json({ reverted: [] });
+                }
+
+                return new Response("not found", { status: 404 });
+            },
+        });
+
+        const lines: string[] = [];
+        const exitCode = await runWatch({
+            base: `http://127.0.0.1:${server.port}`,
+            scope: { kind: "board", board: "demo" },
+            session: "testhost:1",
+            actor: "tester",
+            once: false,
+            takeover: false,
+            print: async (line) => {
+                lines.push(line);
+            },
+        });
+
+        expect(exitCode).toBe(2);
+        expect(lines).toEqual([
+            "№1 [fix] demo: tighten the spacing",
+            "⚠ boards scope held by live listener otherhost:123",
+        ]);
+    });
+
+    it("--once exits 3 on an idle wait, printing nothing", async () => {
+        server = Bun.serve({
+            port: 0,
+            fetch(req) {
+                const url = new URL(req.url);
+                if (url.pathname === "/api/boards/work/wait") {
+                    return Response.json({ idle: true });
+                }
+                return new Response("not found", { status: 404 });
+            },
+        });
+
+        const lines: string[] = [];
+        const exitCode = await runWatch({
+            base: `http://127.0.0.1:${server.port}`,
+            scope: { kind: "all" },
+            session: "testhost:1",
+            actor: "tester",
+            once: true,
+            takeover: false,
+            print: async (line) => {
+                lines.push(line);
+            },
+        });
+
+        expect(exitCode).toBe(3);
+        expect(lines).toEqual([]);
+    });
+
+    it("--once exits 0 and prints announcements when work is open", async () => {
+        server = Bun.serve({
+            port: 0,
+            fetch(req) {
+                const url = new URL(req.url);
+                if (url.pathname === "/api/boards/work/wait") {
+                    return Response.json({ work: [{ id: 5, board: "demo", capsule: "..." }], pending: 1 });
+                }
+                if (url.pathname === "/api/boards/work") {
+                    return Response.json({
+                        work: [
+                            {
+                                id: 5,
+                                board: "demo",
+                                cardId: 2,
+                                intent: "redesign",
+                                status: "open",
+                                prompt: "make it pop",
+                                createdAt: "2026-07-08T00:00:00.000Z",
+                                updatedAt: "2026-07-08T00:00:00.000Z",
+                            },
+                        ],
+                    });
+                }
+                return new Response("not found", { status: 404 });
+            },
+        });
+
+        const lines: string[] = [];
+        const exitCode = await runWatch({
+            base: `http://127.0.0.1:${server.port}`,
+            scope: { kind: "project", project: "demo", branch: "main" },
+            session: "testhost:1",
+            actor: "tester",
+            once: true,
+            takeover: false,
+            print: async (line) => {
+                lines.push(line);
+            },
+        });
+
+        expect(exitCode).toBe(0);
+        expect(lines).toEqual(["№5 [redesign] demo: make it pop"]);
+    });
+
+    it("--once exits 1 when the server is unreachable", async () => {
+        const exitCode = await runWatch({
+            base: "http://127.0.0.1:1", // nothing listens on port 1
+            scope: { kind: "all" },
+            session: "testhost:1",
+            actor: "tester",
+            once: true,
+            takeover: false,
+            print: async () => {},
+        });
+
+        expect(exitCode).toBe(1);
+    });
+});
