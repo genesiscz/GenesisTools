@@ -6,7 +6,13 @@ import { Storage } from "@app/utils/storage/storage";
 import { parseInterval } from "./interval";
 import type { DaemonConfig, DaemonTask } from "./types";
 
-const storage = new Storage("daemon");
+// Resolved lazily per call — a module-level instance captures the storage
+// base dir at import time, which bypasses GENESIS_TOOLS_HOME overrides set
+// later (the per-file test sandbox trips its real-path guard exactly this
+// way when another test file imported us first).
+function getStorage(): Storage {
+    return new Storage("daemon");
+}
 
 function resolveBaseDir(): string {
     const override = env.getTrimmed("GENESIS_TOOLS_DAEMON_DIR");
@@ -27,7 +33,7 @@ export function getPidFile(): string {
 }
 
 export async function ensureStorage(): Promise<void> {
-    await storage.ensureDirs();
+    await getStorage().ensureDirs();
     mkdirSync(getLogsBaseDir(), { recursive: true });
 }
 
@@ -44,7 +50,7 @@ export function validateTaskIntervals(tasks: DaemonTask[]): DaemonTask[] {
 }
 
 export async function loadConfig(): Promise<DaemonConfig> {
-    const config = await storage.getConfig<DaemonConfig>();
+    const config = await getStorage().getConfig<DaemonConfig>();
 
     if (!config || !Array.isArray(config.tasks)) {
         return { tasks: [] };
@@ -59,7 +65,7 @@ export async function getTask(name: string): Promise<DaemonTask | undefined> {
 }
 
 export async function upsertTask(task: DaemonTask): Promise<void> {
-    await storage.atomicConfigUpdate<DaemonConfig>((config) => {
+    await getStorage().atomicConfigUpdate<DaemonConfig>((config) => {
         if (!Array.isArray(config.tasks)) {
             config.tasks = [];
         }
@@ -77,7 +83,7 @@ export async function upsertTask(task: DaemonTask): Promise<void> {
 export async function removeTask(name: string): Promise<boolean> {
     let removed = false;
 
-    await storage.atomicConfigUpdate<DaemonConfig>((config) => {
+    await getStorage().atomicConfigUpdate<DaemonConfig>((config) => {
         if (!Array.isArray(config.tasks)) {
             config.tasks = [];
             return;
@@ -92,7 +98,7 @@ export async function removeTask(name: string): Promise<boolean> {
 }
 
 export async function setTaskEnabled(name: string, enabled: boolean): Promise<void> {
-    await storage.atomicConfigUpdate<DaemonConfig>((config) => {
+    await getStorage().atomicConfigUpdate<DaemonConfig>((config) => {
         const task = config.tasks?.find((t) => t.name === name);
 
         if (!task) {

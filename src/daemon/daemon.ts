@@ -189,7 +189,9 @@ export async function startDaemon(): Promise<void> {
     };
 
     try {
-        await runSchedulerLoop(getLogsBaseDir());
+        await runSchedulerLoop(getLogsBaseDir(), {
+            verifyOwnership: () => verifyPidfileOwnership(pidFile),
+        });
     } catch (err) {
         log.error({ err }, "[daemon] crashed");
         throw err;
