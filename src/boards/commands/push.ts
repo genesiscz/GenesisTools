@@ -9,6 +9,7 @@ import { printLn } from "@app/utils/cli";
 import type { Command } from "commander";
 import { putRaw, resolveBaseUrl } from "../lib/client";
 import { CONFIG_FILE, captureRoot, gitProvenance, readSetConfig, slugifyBranch, writeSetConfig } from "../lib/config";
+import { resolveActor } from "../lib/operator";
 
 interface PushResult {
     url: string;
@@ -55,7 +56,8 @@ export function registerPushCommand(program: Command): void {
         .option("--title <title>", "set title (persisted back into the sticky config)")
         .option("--source <source>", "source ref (persisted back into the sticky config)")
         .option("--base <url>", "dev-dashboard base URL")
-        .action(async (opts: { dir?: string; title?: string; source?: string; base?: string }) => {
+        .option("--actor <name>", "operator identity to attribute this write to")
+        .action(async (opts: { dir?: string; title?: string; source?: string; base?: string; actor?: string }) => {
             const cwd = process.cwd();
             const root = captureRoot(cwd, opts.dir);
             const cfg = await readSetConfig(root);
@@ -112,6 +114,7 @@ export function registerPushCommand(program: Command): void {
                 "boards push: uploading set content"
             );
 
+            const actor = await resolveActor(opts.actor);
             let result: PushResult;
             try {
                 result = await putRaw<PushResult>(
@@ -119,7 +122,8 @@ export function registerPushCommand(program: Command): void {
                     targetPath,
                     packed,
                     "application/gzip",
-                    AbortSignal.timeout(120_000)
+                    AbortSignal.timeout(120_000),
+                    actor
                 );
             } catch (err) {
                 logger.error({ err, url: `${base}${targetPath}` }, "boards push: upload failed");

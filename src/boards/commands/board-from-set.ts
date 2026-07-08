@@ -4,6 +4,7 @@ import { printLn } from "@app/utils/cli";
 import type { Command } from "commander";
 import { BoardsHttpError, postJson, resolveBaseUrl } from "../lib/client";
 import { captureRoot, readSetConfig, slugifyBranch } from "../lib/config";
+import { resolveActor } from "../lib/operator";
 
 interface ImportSetResult {
     cards: CardDto[];
@@ -28,7 +29,8 @@ export function registerBoardFromSetCommand(program: Command): void {
         .option("--title <title>", "board title")
         .option("--dir <path>", "capture root directory")
         .option("--base <url>", "dev-dashboard base URL")
-        .action(async (opts: { slug?: string; title?: string; dir?: string; base?: string }) => {
+        .option("--actor <name>", "operator identity to attribute this write to")
+        .action(async (opts: { slug?: string; title?: string; dir?: string; base?: string; actor?: string }) => {
             const cwd = process.cwd();
             const root = captureRoot(cwd, opts.dir);
             const cfg = await readSetConfig(root);
@@ -41,10 +43,12 @@ export function registerBoardFromSetCommand(program: Command): void {
             const base = resolveBaseUrl(opts.base);
             const slug = boardSlugFrom(opts.slug ?? cfg.key);
             const title = opts.title ?? cfg.title ?? cfg.key;
+            const actor = await resolveActor(opts.actor);
 
             try {
                 await postJson<BoardSummaryDto>(base, paths.boards(), {
                     payload: { slug, title, project: cfg.project },
+                    actor,
                 });
             } catch (err) {
                 if (!(err instanceof BoardsHttpError) || err.status !== 409) {
@@ -59,6 +63,7 @@ export function registerBoardFromSetCommand(program: Command): void {
                     branch: slugifyBranch(cfg.branch),
                     selector: cfg.key,
                 },
+                actor,
             });
 
             await printLn(
