@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { stopWithEscalation } from "./wait-for-restart";
+import { defaultIsAlive, defaultKill, stopWithEscalation } from "./wait-for-restart";
+
+function errnoException(code: string): NodeJS.ErrnoException {
+    const err = new Error(code) as NodeJS.ErrnoException;
+    err.code = code;
+    return err;
+}
 
 // All seams injected — no real signals, no real sleeps.
 const instantSleep = async (): Promise<void> => {};
@@ -87,5 +93,48 @@ describe("stopWithEscalation", () => {
 
         expect(result).toEqual({ exited: true, step: "sigterm-again" });
         expect(sent).toEqual(["SIGTERM", "SIGTERM"]);
+    });
+});
+
+describe("defaultIsAlive / defaultKill", () => {
+    test("EPERM: process exists but belongs to another user — alive, and kill doesn't throw", () => {
+        const original = process.kill;
+        process.kill = (() => {
+            throw errnoException("EPERM");
+        }) as typeof process.kill;
+
+        try {
+            expect(defaultIsAlive(4242)).toBe(true);
+            expect(() => defaultKill(4242, "SIGTERM")).not.toThrow();
+        } finally {
+            process.kill = original;
+        }
+    });
+
+    test("ESRCH: process is gone — dead, and kill doesn't throw", () => {
+        const original = process.kill;
+        process.kill = (() => {
+            throw errnoException("ESRCH");
+        }) as typeof process.kill;
+
+        try {
+            expect(defaultIsAlive(4242)).toBe(false);
+            expect(() => defaultKill(4242, "SIGTERM")).not.toThrow();
+        } finally {
+            process.kill = original;
+        }
+    });
+
+    test("other errno (EINVAL): kill rethrows", () => {
+        const original = process.kill;
+        process.kill = (() => {
+            throw errnoException("EINVAL");
+        }) as typeof process.kill;
+
+        try {
+            expect(() => defaultKill(4242, "SIGTERM")).toThrow();
+        } finally {
+            process.kill = original;
+        }
     });
 });

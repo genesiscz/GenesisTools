@@ -1,11 +1,12 @@
 import { getDaemonPid } from "@app/daemon/daemon";
 import { getDaemonStatus, uninstallLaunchd } from "@app/daemon/lib/launchd";
+import type { EscalationStep } from "@app/daemon/lib/wait-for-restart";
 import { stopWithEscalation, waitForDaemonRestart } from "@app/daemon/lib/wait-for-restart";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
 
-const STEP_LABEL: Record<string, string> = {
+const STEP_LABEL: Record<EscalationStep, string> = {
     sigterm: "graceful SIGTERM",
     "sigterm-again": "second SIGTERM (force-exit handler)",
     sigkill: "SIGKILL",

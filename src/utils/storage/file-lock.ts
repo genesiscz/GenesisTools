@@ -67,9 +67,10 @@ export async function attemptRenameSteal(lockPath: string, expectedContent: stri
         if (stolen !== null) {
             try {
                 await writeFile(lockPath, stolen, { flag: "wx" });
-            } catch {
+            } catch (err) {
                 // Slot already re-claimed; the robbed holder's release is
                 // ownership-checked, so worst case is one early-released lock.
+                logger.debug(`Steal-restore skipped at ${lockPath} (slot re-claimed): ${err}`);
             }
         }
 

@@ -29,7 +29,7 @@ export type EscalationResult = {
     step: EscalationStep | null;
 };
 
-type EscalationSeams = {
+export type EscalationSeams = {
     firstGraceMs?: number;
     secondGraceMs?: number;
     killGraceMs?: number;
@@ -38,7 +38,7 @@ type EscalationSeams = {
     sleep?: (ms: number) => Promise<void>;
 };
 
-function defaultIsAlive(pid: number): boolean {
+export function defaultIsAlive(pid: number): boolean {
     try {
         process.kill(pid, 0);
         return true;
@@ -48,11 +48,13 @@ function defaultIsAlive(pid: number): boolean {
     }
 }
 
-function defaultKill(pid: number, signal: NodeJS.Signals): void {
+export function defaultKill(pid: number, signal: NodeJS.Signals): void {
     try {
         process.kill(pid, signal);
     } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
+        const code = (err as NodeJS.ErrnoException).code;
+        // EPERM = exists but not ours to signal; let the ladder finish and report instead of crashing.
+        if (code !== "ESRCH" && code !== "EPERM") {
             throw err;
         }
     }
