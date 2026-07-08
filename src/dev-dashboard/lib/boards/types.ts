@@ -207,8 +207,13 @@ export interface WorkItemDto {
     board: string;
     cardId: number;
     intent: string;
+    /** For intent "other", the operator's custom label (rendered in place of "other"). */
+    intentOther?: string;
     status: AnnotationStatus;
     prompt: string;
+    boardTitle?: string;
+    setRef?: string;
+    file?: string;
     createdAt: string;
     updatedAt: string;
 }

@@ -51,4 +51,16 @@ describe("computeAnnouncements", () => {
         const { lines } = computeAnnouncements(new Map(), [item({ prompt: `  ${long}  \n more  ` })]);
         expect(lines[0]).toBe(`№1 [fix] demo: ${"a".repeat(100)}…`);
     });
+
+    it("substitutes the custom intentOther label when intent is 'other'", () => {
+        const { lines } = computeAnnouncements(new Map(), [
+            item({ intent: "other", intentOther: "a11y", board: "b", prompt: "p" }),
+        ]);
+        expect(lines).toEqual(["№1 [a11y] b: p"]);
+    });
+
+    it("falls back to the raw intent when intentOther is absent for intent 'other'", () => {
+        const { lines } = computeAnnouncements(new Map(), [item({ intent: "other", board: "b", prompt: "p" })]);
+        expect(lines).toEqual(["№1 [other] b: p"]);
+    });
 });

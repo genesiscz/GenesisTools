@@ -9,7 +9,7 @@ import { wakefulSleep } from "@app/utils/wakeful";
 import type { Command } from "commander";
 import { computeAnnouncements, type SeenMap } from "../lib/announce";
 import { getJson, postJson, rawRequest, resolveBaseUrl } from "../lib/client";
-import { currentBranch, defaultProject } from "../lib/config";
+import { currentBranch, defaultProject, slugifyBranch } from "../lib/config";
 
 export type Scope =
     | { kind: "all" }
@@ -52,17 +52,21 @@ export function resolveScope(
     if (opts.board) {
         return { kind: "board", board: opts.board };
     }
+    // Slugify the branch exactly as push/board-from-set do when they WRITE it (config.slugifyBranch),
+    // otherwise a branch like `feat/Cool-Thing` would watch a scope that never matches its own work
+    // (filed under `feat-cool-thing`). Project passes through unchanged, mirroring push.
     if (opts.project) {
-        return { kind: "project", project: opts.project, branch: opts.branch ?? currentBranch(cwd) };
+        return { kind: "project", project: opts.project, branch: slugifyBranch(opts.branch ?? currentBranch(cwd)) };
     }
-    return { kind: "project", project: defaultProject(cwd), branch: currentBranch(cwd) };
+    return { kind: "project", project: defaultProject(cwd), branch: slugifyBranch(currentBranch(cwd)) };
 }
 
 interface AttemptDeps {
     base: string;
     scope: Scope;
-    session: string;
-    actor: string;
+    /** Omitted in --once mode so the probe is lease-free (never claims/conflicts). */
+    session?: string;
+    actor?: string;
     takeover: boolean;
     timeoutSec: number;
     seen: SeenMap;
@@ -77,8 +81,8 @@ type AttemptResult =
 async function watchAttempt(deps: AttemptDeps): Promise<AttemptResult> {
     const query = scopeToWaitQuery(deps.scope, {
         timeout: String(deps.timeoutSec),
-        session: deps.session,
-        actor: deps.actor,
+        ...(deps.session ? { session: deps.session } : {}),
+        ...(deps.actor ? { actor: deps.actor } : {}),
         ...(deps.takeover ? { takeover: "1" } : {}),
     });
     const { status, body } = await rawRequest<WaitResultDto | ConflictBody>(deps.base, paths.workWait(query), {
@@ -169,9 +173,11 @@ export async function runWatch(opts: RunWatchOptions): Promise<number> {
                 const result = await watchAttempt({
                     base: opts.base,
                     scope: opts.scope,
-                    session: opts.session,
-                    actor: opts.actor,
-                    takeover: opts.takeover,
+                    // --once is a lease-free probe: no session/actor (never claims a lease, so it can't
+                    // conflict with a live watcher) and no takeover (nothing to steal without a lease).
+                    session: opts.once ? undefined : opts.session,
+                    actor: opts.once ? undefined : opts.actor,
+                    takeover: opts.once ? false : opts.takeover,
                     timeoutSec: opts.once ? 1 : 55,
                     seen,
                     signal: controller.signal,
@@ -223,8 +229,10 @@ export async function runWatch(opts: RunWatchOptions): Promise<number> {
                 }
 
                 if (opts.once) {
+                    // Two-outcome contract for probes: a transport failure reads as "no work" (3),
+                    // never a distinct error code — matches vitrinka's anonymous --once.
                     await writeStderr(`boards watch: ${err instanceof Error ? err.message : String(err)}\n`);
-                    return 1;
+                    return 3;
                 }
 
                 downSince ??= Date.now();
@@ -259,7 +267,7 @@ export function registerWatchCommand(program: Command): void {
         .option("--project <name>", "scope to a project (matches the card's set_ref prefix)")
         .option("--branch <name>", "branch within --project (defaults to the current git branch)")
         .option("--all", "scope to every board/project")
-        .option("--once", "single wait cycle then exit (0=work announced, 3=idle, 2=conflict)")
+        .option("--once", "single lease-free wait cycle then exit (0=work announced, 3=idle/unreachable)")
         .option("--base <url>", "dev-dashboard base URL")
         .option("--takeover", "accepted for CLI parity — expired leases are reaped automatically")
         .action(

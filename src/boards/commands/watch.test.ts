@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { ANNOUNCED_POLL_PACE_MS, runWatch } from "./watch";
+import { ANNOUNCED_POLL_PACE_MS, resolveScope, runWatch } from "./watch";
+
+describe("resolveScope", () => {
+    it("slugifies the branch exactly as push writes it, so watch matches its own work", () => {
+        const scope = resolveScope({ project: "p", branch: "feat/Cool-Thing" }, "/tmp");
+        expect(scope).toEqual({ kind: "project", project: "p", branch: "feat-cool-thing" });
+    });
+});
 
 describe("runWatch", () => {
     let server: ReturnType<typeof Bun.serve> | undefined;
@@ -204,6 +211,35 @@ describe("runWatch", () => {
         expect(lines).toEqual([]);
     });
 
+    it("--once is lease-free: the wait URL carries no session or actor", async () => {
+        let waitSearch = "";
+        server = Bun.serve({
+            port: 0,
+            fetch(req) {
+                const url = new URL(req.url);
+                if (url.pathname === "/api/boards/work/wait") {
+                    waitSearch = url.search;
+                    return Response.json({ idle: true });
+                }
+                return new Response("not found", { status: 404 });
+            },
+        });
+
+        const exitCode = await runWatch({
+            base: `http://127.0.0.1:${server.port}`,
+            scope: { kind: "all" },
+            session: "testhost:1",
+            actor: "tester",
+            once: true,
+            takeover: false,
+            print: async () => {},
+        });
+
+        expect(exitCode).toBe(3);
+        expect(waitSearch).not.toContain("session=");
+        expect(waitSearch).not.toContain("actor=");
+    });
+
     it("--once exits 0 and prints announcements when work is open", async () => {
         server = Bun.serve({
             port: 0,
@@ -249,7 +285,7 @@ describe("runWatch", () => {
         expect(lines).toEqual(["№5 [redesign] demo: make it pop"]);
     });
 
-    it("--once exits 1 when the server is unreachable", async () => {
+    it("--once exits 3 (not a distinct error code) when the server is unreachable", async () => {
         const exitCode = await runWatch({
             base: "http://127.0.0.1:1", // nothing listens on port 1
             scope: { kind: "all" },
@@ -260,6 +296,6 @@ describe("runWatch", () => {
             print: async () => {},
         });
 
-        expect(exitCode).toBe(1);
+        expect(exitCode).toBe(3); // two-outcome probe contract: transport failure reads as "no work"
     });
 });

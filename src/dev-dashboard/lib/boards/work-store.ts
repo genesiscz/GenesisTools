@@ -80,9 +80,13 @@ export async function listWork(
         .select([
             "annotations.id as id",
             "boards.slug as board",
+            "boards.title as boardTitle",
             "annotations.card_id as cardId",
             "annotations.intent as intent",
+            "annotations.intent_other as intentOther",
             "annotations.status as status",
+            "board_cards.set_ref as setRef",
+            "board_cards.file_path as file",
             "annotations.created_at as createdAt",
             "annotations.updated_at as updatedAt",
         ])
@@ -115,10 +119,14 @@ export async function listWork(
     return rows.map((r) => ({
         id: r.id,
         board: r.board,
+        boardTitle: r.boardTitle,
         cardId: r.cardId,
         intent: r.intent,
+        intentOther: r.intentOther || undefined,
         status: r.status as AnnotationStatus,
         prompt: promptByAnnotation.get(r.id) ?? "",
+        setRef: r.setRef,
+        file: r.file,
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
     }));
