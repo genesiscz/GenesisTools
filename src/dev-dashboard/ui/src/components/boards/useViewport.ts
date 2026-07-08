@@ -33,9 +33,7 @@ export function resetZoom(vp: Viewport, width: number, height: number): Viewport
 /** Fit a world bounding box into a screen rect with padding. */
 export function fitBounds(
     bounds: { minX: number; minY: number; maxX: number; maxY: number },
-    width: number,
-    height: number,
-    pad = 64
+    { width, height, pad = 64 }: { width: number; height: number; pad?: number }
 ): Viewport {
     const w = Math.max(1, bounds.maxX - bounds.minX);
     const h = Math.max(1, bounds.maxY - bounds.minY);

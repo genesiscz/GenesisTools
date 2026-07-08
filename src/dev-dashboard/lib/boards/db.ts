@@ -161,6 +161,9 @@ export const BOOTSTRAP_DDL: string[] = [
     // 'all' leases are deliberately per-session duplicates (every concurrent "all" listener keeps
     // its own row); the WHERE excludes them so only "board"/"project" scopes get a single holder.
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_listeners_scope ON listeners(scope_kind, scope, branch) WHERE scope_kind != 'all'`,
+    // One row per session for "all" scope: two overlapping "all" waits from the SAME session must
+    // renew the same row rather than race two INSERTs into duplicate rows.
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_listeners_all_session ON listeners(session) WHERE scope_kind = 'all'`,
     `CREATE TABLE IF NOT EXISTS board_questions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         board_id INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,

@@ -111,6 +111,18 @@ describe("sets-store", () => {
         expect(second.set.version).toBe(2);
     });
 
+    it("syncSet rejects reserved/numeric keys (defense-in-depth; route already validates)", async () => {
+        await expect(
+            syncSet(db, { project: "proj", branchRaw: "main", key: "123", entries: [file("a.txt", "A")] })
+        ).rejects.toBeInstanceOf(NameConflictError);
+        await expect(
+            syncSet(db, { project: "proj", branchRaw: "main", key: "latest", entries: [file("a.txt", "A")] })
+        ).rejects.toBeInstanceOf(NameConflictError);
+        await expect(
+            syncSet(db, { project: "proj", branchRaw: "main", key: "has space", entries: [file("a.txt", "A")] })
+        ).rejects.toBeInstanceOf(NameConflictError);
+    });
+
     it("manifest.json meta lands on matching file rows and is not itself a file row", async () => {
         const manifest = SafeJSON.stringify({
             journey: { name: "Onboarding" },

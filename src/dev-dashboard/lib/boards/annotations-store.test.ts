@@ -140,7 +140,9 @@ describe("annotations-store", () => {
         await cancelAnnotation(db, ann.id);
 
         await expect(patchAnnotation(db, ann.id, { region: REGION })).rejects.toBeInstanceOf(CancelledError);
-        await expect(addRevision(db, ann.id, "new prompt", "user")).rejects.toBeInstanceOf(CancelledError);
+        await expect(addRevision(db, ann.id, { prompt: "new prompt", createdBy: "user" })).rejects.toBeInstanceOf(
+            CancelledError
+        );
         await expect(addMessage(db, { annotationId: ann.id, author: "user", body: "hi" })).rejects.toBeInstanceOf(
             CancelledError
         );
@@ -278,7 +280,7 @@ describe("annotations-store", () => {
             status: "staged",
         });
         expect(staged.revisions.length).toBe(1);
-        const edited = await addRevision(db, staged.id, "v1-edited", "user");
+        const edited = await addRevision(db, staged.id, { prompt: "v1-edited", createdBy: "user" });
         expect(edited.revisions.length).toBe(1);
         expect(edited.revisions[0].prompt).toBe("v1-edited");
 
@@ -290,7 +292,7 @@ describe("annotations-store", () => {
             prompt: "o1",
             status: "open",
         });
-        const appended = await addRevision(db, open.id, "o2", "user");
+        const appended = await addRevision(db, open.id, { prompt: "o2", createdBy: "user" });
         expect(appended.revisions.length).toBe(2);
         expect(appended.prompt).toBe("o2");
     });
@@ -323,6 +325,26 @@ describe("annotations-store", () => {
         const result = await setVerdict(db, attempt.id, "accept");
         expect(result.annotation.status).toBe("resolved");
         expect(result.card.blobKey).toBe("hash2.png");
+    });
+
+    it("setVerdict is a CAS: a second call on the same attempt throws InvalidStatusError", async () => {
+        const ann = await createAnnotation(db, {
+            boardSlug,
+            cardId,
+            region: REGION,
+            intent: "fix",
+            prompt: "p",
+            status: "open",
+        });
+        const { attempt } = await addAttempt(db, {
+            annotationId: ann.id,
+            afterSetRef: "proj/main/s1",
+            afterVersion: 2,
+            afterFile: "a.png",
+            afterBlobKey: "hash2.png",
+        });
+        await setVerdict(db, attempt.id, "accept");
+        await expect(setVerdict(db, attempt.id, "accept")).rejects.toBeInstanceOf(InvalidStatusError);
     });
 
     it("addAttempt leaves the card's payload untouched when the caller doesn't supply after-dims", async () => {

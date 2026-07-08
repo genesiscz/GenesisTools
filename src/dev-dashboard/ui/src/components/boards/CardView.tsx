@@ -89,7 +89,13 @@ export function CardView({
         const label = stringField(card.payload, "route") || stringField(card.payload, "label");
 
         return (
-            <div style={style} onPointerDown={beginDrag} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
+            <div
+                style={style}
+                onPointerDown={beginDrag}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+                onPointerCancel={onPointerUp}
+            >
                 <img
                     src={paths.boardsBlob(card.blobKey)}
                     draggable={false}
@@ -97,7 +103,7 @@ export function CardView({
                     className={`h-full w-full rounded-md object-cover shadow-lg ${ring}`}
                 />
                 {label ? (
-                    <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 font-mono text-[10px] text-white">
+                    <span className="absolute bottom-1 left-1 rounded bg-[color-mix(in_srgb,var(--dd-bg-base)_70%,transparent)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--dd-text-primary)]">
                         {label}
                     </span>
                 ) : null}
@@ -122,7 +128,11 @@ export function CardView({
                 onPointerDown={editingNote ? undefined : beginDrag}
                 onPointerMove={onPointerMove}
                 onPointerUp={onPointerUp}
-                onDoubleClick={() => setEditingNote(true)}
+                onPointerCancel={onPointerUp}
+                onDoubleClick={() => {
+                    setNoteDraft(stringField(card.payload, "text"));
+                    setEditingNote(true);
+                }}
             >
                 {editingNote ? (
                     <textarea
@@ -136,7 +146,7 @@ export function CardView({
                         className="h-full w-full resize-none bg-transparent text-neutral-900 outline-none"
                     />
                 ) : (
-                    noteDraft
+                    stringField(card.payload, "text")
                 )}
                 {author ? <span className="absolute right-2 bottom-1 text-[9px] opacity-70">{author}</span> : null}
             </div>
@@ -153,6 +163,7 @@ export function CardView({
                 onPointerDown={beginDrag}
                 onPointerMove={onPointerMove}
                 onPointerUp={onPointerUp}
+                onPointerCancel={onPointerUp}
             >
                 {renderMdLite(md)}
             </div>
@@ -166,6 +177,7 @@ export function CardView({
             onPointerDown={beginDrag}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
         >
             {card.kind}
         </div>

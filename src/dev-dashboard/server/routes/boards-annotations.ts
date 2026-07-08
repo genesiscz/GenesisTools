@@ -16,25 +16,15 @@ import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { publishBoardEvent, wakeWorkWaiters } from "@app/dev-dashboard/lib/boards/events";
 import { getSet, getSetFile, setRefOf } from "@app/dev-dashboard/lib/boards/sets-store";
 import type { Region } from "@app/dev-dashboard/lib/boards/types";
-import type { RouteContext, RouteDef } from "@app/dev-dashboard/server/types";
+import type { RouteDef } from "@app/dev-dashboard/server/types";
 import { boardsError } from "./boards-errors";
-import { getOperator } from "./boards-sets";
-
-/** Actor fallback chain (plan §Task 9 note): body override (handled by callers) →
- *  `x-board-actor` header → the `operator` settings row → the literal `"operator"`. */
-async function actorFrom(ctx: RouteContext): Promise<string> {
-    const header = ctx.headers["x-board-actor"];
-    if (header) {
-        return header;
-    }
-    const operator = await getOperator();
-    return operator || "operator";
-}
+import { actorFrom } from "./boards-sets";
 
 async function listenerIdForSession(session: string | undefined): Promise<number | undefined> {
     if (!session) {
         return undefined;
     }
+
     const row = await getBoardsDb()
         .kysely.selectFrom("listeners")
         .select("id")
@@ -201,7 +191,10 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
                 try {
                     const id = Number(ctx.params.id);
                     const body = await ctx.readJson<{ prompt: string }>();
-                    const annotation = await addRevision(getBoardsDb(), id, body.prompt, await actorFrom(ctx));
+                    const annotation = await addRevision(getBoardsDb(), id, {
+                        prompt: body.prompt,
+                        createdBy: await actorFrom(ctx),
+                    });
                     publishBoardEvent(annotation.boardSlug, { type: "annotation", payload: annotation });
                     return { kind: "json", status: 200, body: annotation };
                 } catch (err) {
@@ -251,6 +244,7 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
                     if (!file) {
                         return { kind: "json", status: 404, body: { error: `file not found in set: ${body.file}` } };
                     }
+
                     const result = await addAttempt(getBoardsDb(), {
                         annotationId: id,
                         afterSetRef: setRefOf(set),

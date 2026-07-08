@@ -152,7 +152,8 @@ export const paths = {
     boardLayout: (slug: string) => `/api/boards/${slug}/layout`,
     boardImportSet: (slug: string) => `/api/boards/${slug}/import-set`,
     boardSyncSet: (slug: string) => `/api/boards/${slug}/sync-set`,
-    boardUpload: (slug: string, name: string, mime: string) => `/api/boards/${slug}/upload${qs({ name, mime })}`,
+    boardUpload: (params: { slug: string; name: string; mime: string }) =>
+        `/api/boards/${params.slug}/upload${qs({ name: params.name, mime: params.mime })}`,
     boardMessages: (slug: string) => `/api/boards/${slug}/messages`,
     boardDispatch: (slug: string) => `/api/boards/${slug}/dispatch`,
     annotations: () => "/api/boards/annotations",
@@ -171,10 +172,14 @@ export const paths = {
     workListener: (id: number) => `/api/boards/work/listeners/${id}`,
     boardsSets: (project: string, branch?: string) =>
         branch ? `/api/boards/sets/${project}/${branch}` : `/api/boards/sets/${project}`,
-    boardsSet: (project: string, branch: string, selector: string) =>
-        `/api/boards/sets/${project}/${branch}/${selector}`,
-    boardsSetContent: (project: string, branch: string, key: string, q: Record<string, string | undefined> = {}) =>
-        `/api/boards/sets/${project}/${branch}/${key}/content${qs(q)}`,
+    boardsSet: (params: { project: string; branch: string; selector: string }) =>
+        `/api/boards/sets/${params.project}/${params.branch}/${params.selector}`,
+    boardsSetContent: (params: {
+        project: string;
+        branch: string;
+        key: string;
+        q?: Record<string, string | undefined>;
+    }) => `/api/boards/sets/${params.project}/${params.branch}/${params.key}/content${qs(params.q ?? {})}`,
     boardsBlob: (key: string) => `/api/boards/blobs/${key}`,
     boardsOperator: () => "/api/boards/operator",
 } as const;

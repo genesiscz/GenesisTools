@@ -94,13 +94,18 @@ export function registerPushCommand(program: Command): void {
             const base = resolveBaseUrl(opts.base);
             const branchSlug = slugifyBranch(cfg.branch);
             const provenance = gitProvenance(root); // best-effort; omitted outside a git repo
-            const targetPath = paths.boardsSetContent(cfg.project, branchSlug, cfg.key, {
-                kind: cfg.kind,
-                title,
-                branch: cfg.branch,
-                source,
-                commit: provenance.commit,
-                repo: provenance.repo,
+            const targetPath = paths.boardsSetContent({
+                project: cfg.project,
+                branch: branchSlug,
+                key: cfg.key,
+                q: {
+                    kind: cfg.kind,
+                    title,
+                    branch: cfg.branch,
+                    source,
+                    commit: provenance.commit,
+                    repo: provenance.repo,
+                },
             });
             logger.debug(
                 {
@@ -117,14 +122,11 @@ export function registerPushCommand(program: Command): void {
             const actor = await resolveActor(opts.actor);
             let result: PushResult;
             try {
-                result = await putRaw<PushResult>(
-                    base,
-                    targetPath,
-                    packed,
-                    "application/gzip",
-                    AbortSignal.timeout(120_000),
-                    actor
-                );
+                result = await putRaw<PushResult>(base, targetPath, packed, {
+                    contentType: "application/gzip",
+                    signal: AbortSignal.timeout(120_000),
+                    actor,
+                });
             } catch (err) {
                 logger.error({ err, url: `${base}${targetPath}` }, "boards push: upload failed");
                 throw err;

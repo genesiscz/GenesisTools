@@ -90,6 +90,7 @@ export function WirePanel({ slug, annotation, boardMessages, operator, onClose }
     const reviseMutation = useMutation({
         mutationFn: (prompt: string) => boardsApi.reviseAnnotation(annotation?.id ?? -1, prompt),
         onSuccess: invalidate,
+        onError: (err) => console.error("[boards] revise annotation failed", err),
     });
     const deleteMutation = useMutation({
         mutationFn: () => boardsApi.deleteAnnotation(annotation?.id ?? -1),
@@ -97,18 +98,22 @@ export function WirePanel({ slug, annotation, boardMessages, operator, onClose }
             invalidate();
             onClose();
         },
+        onError: (err) => console.error("[boards] delete annotation failed", err),
     });
     const cancelMutation = useMutation({
         mutationFn: () => boardsApi.cancelAnnotation(annotation?.id ?? -1),
         onSuccess: invalidate,
+        onError: (err) => console.error("[boards] cancel annotation failed", err),
     });
     const reactivateMutation = useMutation({
         mutationFn: () => boardsApi.reactivateAnnotation(annotation?.id ?? -1),
         onSuccess: invalidate,
+        onError: (err) => console.error("[boards] reactivate annotation failed", err),
     });
     const reopenMutation = useMutation({
         mutationFn: () => boardsApi.patchAnnotation(annotation?.id ?? -1, { status: "staged" }),
         onSuccess: invalidate,
+        onError: (err) => console.error("[boards] reopen annotation failed", err),
     });
     const verdictMutation = useMutation({
         mutationFn: (verdict: "accept" | "reject") => {
@@ -116,14 +121,17 @@ export function WirePanel({ slug, annotation, boardMessages, operator, onClose }
             return boardsApi.verdict(latest?.id ?? -1, verdict);
         },
         onSuccess: invalidate,
+        onError: (err) => console.error("[boards] verdict failed", err),
     });
     const replyMutation = useMutation({
         mutationFn: (body: string) => boardsApi.reply(annotation?.id ?? -1, { body, author: operator }),
         onSuccess: invalidate,
+        onError: (err) => console.error("[boards] reply failed", err),
     });
     const boardMessageMutation = useMutation({
         mutationFn: (body: string) => boardsApi.boardMessage(slug, { body, author: operator }),
         onSuccess: invalidate,
+        onError: (err) => console.error("[boards] board message failed", err),
     });
 
     const send = () => {
@@ -248,7 +256,7 @@ export function WirePanel({ slug, annotation, boardMessages, operator, onClose }
 
             <div className="min-h-0 flex-1 overflow-y-auto px-3">
                 {annotation
-                    ? feed.map((item, i) => <FeedRow key={i} item={item} />)
+                    ? feed.map((item) => <FeedRow key={`${item.kind}-${item.data.id}`} item={item} />)
                     : boardMessages.map((m) => (
                           <FeedRow key={m.id} item={{ kind: "message", createdAt: m.createdAt, data: m }} />
                       ))}

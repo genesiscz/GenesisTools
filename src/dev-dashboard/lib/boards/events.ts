@@ -1,3 +1,4 @@
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 
 export interface BoardEvent {
@@ -29,12 +30,13 @@ export function publishBoardEvent(slug: string, event: BoardEvent): void {
     if (!set || set.size === 0) {
         return;
     }
+
     const frame = SafeJSON.stringify(event);
     for (const fn of set) {
         try {
             fn(frame);
-        } catch {
-            // one dead sink must not break the fan-out
+        } catch (err) {
+            logger.warn({ err, slug }, "boards event sink threw");
         }
     }
 }

@@ -17,8 +17,9 @@ export function sanitizeOperator(name: string): string {
             const code = ch.codePointAt(0) ?? 0;
             return code >= 0x20 && code !== 0x7f;
         })
+        .slice(0, MAX_LEN)
         .join("");
-    return printable.trim().slice(0, MAX_LEN);
+    return printable.trim();
 }
 
 export async function readLocalOperator(): Promise<string> {

@@ -1,4 +1,5 @@
 import type { CardDto, StrokeDto } from "@app/dev-dashboard/contract/dto";
+import { useMemo } from "react";
 
 /** Convert a stroke's stored path to world-space points. Card-scoped strokes are stored in
  * the card's natural-image pixel space and need scaling by card.w / naturalWidth; board-level
@@ -65,7 +66,7 @@ interface InkLayerProps {
 /** Persisted + in-progress ink, rendered inside the world transform. Purely visual — the
  * gesture capture that drives `liveStroke` lives in BoardCanvas's shared overlay. */
 export function InkLayer({ strokes, cards, liveStroke }: InkLayerProps) {
-    const cardById = new Map(cards.map((c) => [c.id, c]));
+    const cardById = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
 
     return (
         <svg className="absolute top-0 left-0 overflow-visible" style={{ pointerEvents: "none" }}>

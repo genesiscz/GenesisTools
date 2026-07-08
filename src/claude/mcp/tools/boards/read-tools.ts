@@ -21,7 +21,7 @@ export async function handleListSets(args: { project: string; branch?: string })
 }
 
 export async function handleGetSet(args: { project: string; branch: string; selector: string }): Promise<string> {
-    const path = paths.boardsSet(args.project, args.branch, args.selector);
+    const path = paths.boardsSet(args);
     const res = await boardsFetch<SetDetailDto>(path);
     log.debug(
         { project: args.project, branch: args.branch, selector: args.selector, path, count: res.files.length },

@@ -1,13 +1,17 @@
 import type { AnnotationDto, AttemptDto, CardDto, MessageDto, StrokeDto } from "@app/dev-dashboard/contract/dto";
 import { paths } from "@app/dev-dashboard/contract/endpoints";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { boardsFetch, compact } from "./http";
+
+const log = logger.child({ component: "claude:mcp:boards:work" });
 
 export async function handleSetStatus(args: { id: number; status: "open" | "working" | "in_review" }): Promise<string> {
     const a = await boardsFetch<AnnotationDto>(paths.annotation(args.id), {
         method: "PATCH",
         body: SafeJSON.stringify({ status: args.status, actor: "claude" }),
     });
+    log.debug({ id: args.id, status: args.status }, "boards mcp: set_status");
     return compact(a);
 }
 
@@ -16,6 +20,7 @@ export async function handleReply(args: { id: number; text: string }): Promise<s
         method: "POST",
         body: SafeJSON.stringify({ body: args.text, author: "claude" }),
     });
+    log.debug({ id: args.id }, "boards mcp: reply");
     return compact(m);
 }
 
@@ -38,6 +43,10 @@ export async function handleAttachAfter(args: {
             commit: args.commit ?? "",
         }),
     });
+    log.debug(
+        { id: args.id, project: args.project, branch: args.branch, selector: args.selector },
+        "boards mcp: attach_after"
+    );
     return compact(r);
 }
 
@@ -68,5 +77,6 @@ export async function handleHighlight(args: {
             strokes: [{ cardId: a.cardId, path, color: args.color ?? "#ffb020", width: 3, createdBy: "claude" }],
         }),
     });
+    log.debug({ id: args.id, boardSlug: a.boardSlug, cardId: a.cardId }, "boards mcp: highlight");
     return compact(s);
 }

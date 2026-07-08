@@ -16,12 +16,14 @@ export function buildCapsule(a: AnnotationDto, card: CardDto, boardSlug: string)
         `**Region:** ${a.region.x},${a.region.y} ${a.region.w}×${a.region.h} px on \`${card.filePath || card.kind}\`` +
             (card.blobKey ? ` — image: ${blobUrl(card.blobKey)}` : "")
     );
+
     if (card.setRef) {
         lines.push(
             `**Source:** set \`${card.setRef}\` v${card.setVersion} (card ${card.id}, drawn on v${a.cardVersion})`
         );
     }
     const thread = a.messages.slice(-THREAD_LIMIT);
+
     if (thread.length > 0) {
         lines.push("**Thread (latest):**");
         for (const m of thread) {

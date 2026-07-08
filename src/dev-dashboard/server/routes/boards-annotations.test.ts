@@ -20,6 +20,7 @@ function findRoute(method: string, pattern: string): RouteDef {
     if (!def) {
         throw new Error(`route not found: ${method} ${pattern}`);
     }
+
     return def;
 }
 
@@ -28,6 +29,7 @@ function findSetsRoute(method: string, pattern: string): RouteDef {
     if (!def) {
         throw new Error(`route not found: ${method} ${pattern}`);
     }
+
     return def;
 }
 
@@ -53,6 +55,7 @@ function asJson(result: RouteResult): { status: number; body: Record<string, unk
     if (result.kind !== "json") {
         throw new Error(`expected json result, got ${result.kind}`);
     }
+
     return { status: result.status, body: result.body as Record<string, unknown> };
 }
 

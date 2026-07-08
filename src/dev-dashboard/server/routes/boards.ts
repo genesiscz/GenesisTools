@@ -25,22 +25,11 @@ import { publishBoardEvent, subscribeBoard } from "@app/dev-dashboard/lib/boards
 import { readImageDims } from "@app/dev-dashboard/lib/boards/image-size";
 import { getSet } from "@app/dev-dashboard/lib/boards/sets-store";
 import { dispatchBoard } from "@app/dev-dashboard/lib/boards/work-store";
-import type { RouteContext, RouteDef } from "@app/dev-dashboard/server/types";
+import type { RouteDef } from "@app/dev-dashboard/server/types";
 import { boardsError } from "./boards-errors";
-import { getOperator } from "./boards-sets";
+import { actorFrom } from "./boards-sets";
 
 const UPLOAD_MAX_WIDTH = 480;
-
-/** Actor fallback chain (plan §Task 9 note): body override (handled by callers) →
- *  `x-board-actor` header → the `operator` settings row → the literal `"operator"`. */
-async function actorFrom(ctx: RouteContext): Promise<string> {
-    const header = ctx.headers["x-board-actor"];
-    if (header) {
-        return header;
-    }
-    const operator = await getOperator();
-    return operator || "operator";
-}
 
 async function boardSlugForCardId(cardId: number): Promise<string | null> {
     const row = await getBoardsDb()
@@ -243,8 +232,12 @@ export function boardsRoutes(): RouteDef[] {
             method: "GET",
             pattern: "/api/boards/cards/:id/versions",
             handler: async (ctx) => {
-                const versions = await listCardVersions(getBoardsDb(), Number(ctx.params.id));
-                return { kind: "json", status: 200, body: { versions } };
+                try {
+                    const versions = await listCardVersions(getBoardsDb(), Number(ctx.params.id));
+                    return { kind: "json", status: 200, body: { versions } };
+                } catch (err) {
+                    return boardsError(err);
+                }
             },
         },
         {

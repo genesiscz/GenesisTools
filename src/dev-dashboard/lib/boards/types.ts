@@ -128,7 +128,7 @@ export interface AnnotationDto {
     boardSlug: string;
     cardId: number;
     region: Region;
-    intent: string;
+    intent: AnnotationIntent;
     intentOther: string;
     status: AnnotationStatus;
     assignee: string;
@@ -206,7 +206,7 @@ export interface WorkItemDto {
     id: number;
     board: string;
     cardId: number;
-    intent: string;
+    intent: AnnotationIntent;
     /** For intent "other", the operator's custom label (rendered in place of "other"). */
     intentOther?: string;
     status: AnnotationStatus;

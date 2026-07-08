@@ -14,11 +14,13 @@ interface ImportSetResult {
 
 /** Board slugs must satisfy the server's `BOARD_SLUG_RE` (`^[a-z0-9][a-z0-9-]{0,63}$`). */
 export function boardSlugFrom(key: string): string {
-    return key
-        .toLowerCase()
-        .replace(/[^a-z0-9-]+/g, "-")
-        .replace(/^-+/, "")
-        .slice(0, 64);
+    return (
+        key
+            .toLowerCase()
+            .replace(/[^a-z0-9-]+/g, "-")
+            .replace(/^-+/, "")
+            .slice(0, 64) || "board"
+    );
 }
 
 export function registerBoardFromSetCommand(program: Command): void {
