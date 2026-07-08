@@ -2,6 +2,22 @@ import { logger } from "@app/logger";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+    handleGetAnnotation,
+    handleGetCapsule,
+    handleGetSet,
+    handleListBoards,
+    handleListSets,
+    handleListWork,
+} from "./tools/boards/read-tools";
+import {
+    GET_ANNOTATION_SCHEMA,
+    GET_CAPSULE_SCHEMA,
+    GET_SET_SCHEMA,
+    LIST_BOARDS_SCHEMA,
+    LIST_SETS_SCHEMA,
+    LIST_WORK_SCHEMA,
+} from "./tools/boards/schemas";
 import { handleQuestionAnswer, QUESTION_ANSWER_INPUT_SCHEMA, type QuestionAnswerArgs } from "./tools/question-answer";
 
 const log = logger.child({ component: "claude:mcp" });
@@ -43,6 +59,43 @@ function buildToolRegistry(): Record<string, ToolEntry> {
                 const r = await handleQuestionAnswer(args as unknown as QuestionAnswerArgs);
                 return r.summary;
             },
+        },
+        boards_list_boards: {
+            description: "List dev-dashboard boards, optionally filtered by project.",
+            inputSchema: LIST_BOARDS_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleListBoards(args as { project?: string }),
+        },
+        boards_list_sets: {
+            description: "List artifact-set versions for a project (optionally scoped to a branch).",
+            inputSchema: LIST_SETS_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleListSets(args as { project: string; branch?: string }),
+        },
+        boards_get_set: {
+            description:
+                "Fetch one set version's file manifest (project/branch/selector — selector is a version " +
+                "number, 'latest', a set name, or a set key).",
+            inputSchema: GET_SET_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleGetSet(args as { project: string; branch: string; selector: string }),
+        },
+        boards_list_work: {
+            description:
+                "FIFO work queue of board annotations. Filter by status/board/project+branch — always scope " +
+                "to YOUR board or repo+branch.",
+            inputSchema: LIST_WORK_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) =>
+                handleListWork(args as { status?: string; board?: string; project?: string; branch?: string }),
+        },
+        boards_get_annotation: {
+            description: "Fetch one annotation's full detail — status, region, thread, revisions, attempts.",
+            inputSchema: GET_ANNOTATION_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleGetAnnotation(args as { id: number }),
+        },
+        boards_get_capsule: {
+            description:
+                "Fetch the compact markdown work-brief for one annotation (ask, region, image URL, thread, " +
+                "protocol reminder) — the same capsule delivered by boards_wait_for_work.",
+            inputSchema: GET_CAPSULE_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleGetCapsule(args as { id: number }),
         },
     };
 }
