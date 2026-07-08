@@ -1,13 +1,18 @@
 import type { CardDto, EdgeDto } from "@app/dev-dashboard/contract/dto";
+import { nearestSidePair, nearestSideToPoint } from "./edge-anchor";
 
 interface EdgeLayerProps {
     edges: EdgeDto[];
     cards: CardDto[];
+    /** The connect tool's in-progress drag, drawn as a dashed preview. */
+    liveEdge?: { fromCardId: number; current: { x: number; y: number } } | null;
 }
 
 /** One absolutely-positioned SVG spanning the world; overflow-visible so it never clips lines. */
-export function EdgeLayer({ edges, cards }: EdgeLayerProps) {
+export function EdgeLayer({ edges, cards, liveEdge }: EdgeLayerProps) {
     const cardById = new Map(cards.map((c) => [c.id, c]));
+    const liveFrom = liveEdge ? cardById.get(liveEdge.fromCardId) : null;
+    const liveStart = liveFrom && liveEdge ? nearestSideToPoint(liveFrom, liveEdge.current) : null;
 
     return (
         <svg className="absolute top-0 left-0 overflow-visible" style={{ pointerEvents: "none" }}>
@@ -38,26 +43,25 @@ export function EdgeLayer({ edges, cards }: EdgeLayerProps) {
                     return null;
                 }
 
-                const x1 = from.x + from.w;
-                const y1 = from.y + from.h / 2;
-                const x2 = to ? to.x : edge.toX;
-                const y2 = to ? to.y + to.h / 2 : edge.toY;
+                const [p1, p2] = to
+                    ? nearestSidePair(from, to)
+                    : [nearestSideToPoint(from, { x: edge.toX, y: edge.toY }), { x: edge.toX, y: edge.toY }];
 
                 return (
                     <g key={edge.id}>
                         <line
-                            x1={x1}
-                            y1={y1}
-                            x2={x2}
-                            y2={y2}
+                            x1={p1.x}
+                            y1={p1.y}
+                            x2={p2.x}
+                            y2={p2.y}
                             stroke="var(--dd-text-muted)"
                             strokeWidth={1.5}
                             markerEnd="url(#dd-edge-arrow)"
                         />
                         {edge.label ? (
                             <text
-                                x={(x1 + x2) / 2}
-                                y={(y1 + y2) / 2 - 4}
+                                x={(p1.x + p2.x) / 2}
+                                y={(p1.y + p2.y) / 2 - 4}
                                 textAnchor="middle"
                                 fontFamily="monospace"
                                 fontSize={10}
@@ -69,6 +73,17 @@ export function EdgeLayer({ edges, cards }: EdgeLayerProps) {
                     </g>
                 );
             })}
+            {liveStart && liveEdge ? (
+                <line
+                    x1={liveStart.x}
+                    y1={liveStart.y}
+                    x2={liveEdge.current.x}
+                    y2={liveEdge.current.y}
+                    stroke="var(--dd-accent-from)"
+                    strokeWidth={1.5}
+                    strokeDasharray="4 3"
+                />
+            ) : null}
         </svg>
     );
 }

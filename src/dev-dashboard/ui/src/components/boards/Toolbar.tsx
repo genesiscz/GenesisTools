@@ -1,7 +1,7 @@
-import { MousePointer2, Pen, SquareDashedMousePointer, StickyNote } from "lucide-react";
+import { Frame, MousePointer2, Pen, Spline, SquareDashedMousePointer, StickyNote } from "lucide-react";
 import type { ComponentType } from "react";
 
-export type Tool = "move" | "ink" | "annotate" | "note";
+export type Tool = "move" | "ink" | "annotate" | "note" | "connect" | "section";
 
 interface ToolDef {
     tool: Tool;
@@ -15,6 +15,8 @@ const TOOLS: ToolDef[] = [
     { tool: "ink", label: "Ink", key: "P", Icon: Pen },
     { tool: "annotate", label: "Annotate", key: "A", Icon: SquareDashedMousePointer },
     { tool: "note", label: "Note", key: "N", Icon: StickyNote },
+    { tool: "connect", label: "Connect", key: "C", Icon: Spline },
+    { tool: "section", label: "Section", key: "S", Icon: Frame },
 ];
 
 interface ToolbarProps {
