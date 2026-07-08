@@ -5,6 +5,7 @@ import { Router } from "@app/dev-dashboard/server/router";
 import { attentionRoutes } from "@app/dev-dashboard/server/routes/attention";
 import { boardsRoutes } from "@app/dev-dashboard/server/routes/boards";
 import { boardsAnnotationsRoutes } from "@app/dev-dashboard/server/routes/boards-annotations";
+import { boardsComposeRoutes } from "@app/dev-dashboard/server/routes/boards-compose";
 import { boardsSetsRoutes } from "@app/dev-dashboard/server/routes/boards-sets";
 import { boardsWorkRoutes } from "@app/dev-dashboard/server/routes/boards-work";
 import { claudeRoutes } from "@app/dev-dashboard/server/routes/claude";
@@ -37,6 +38,7 @@ export function createDashboardRouter(): Router {
         ...boardsSetsRoutes(),
         ...boardsWorkRoutes(),
         ...boardsAnnotationsRoutes(),
+        ...boardsComposeRoutes(),
         ...boardsRoutes(),
         ...systemRoutes(),
         ...netRoutes(),
