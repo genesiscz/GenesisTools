@@ -63,6 +63,8 @@ export interface ComposeRegion {
     w: number;
     h: number;
 }
+export type ErrorResult = { ok: false; code: ComposeErrorCode; index: number; message: string };
+
 export type ComposeResult =
     | {
           ok: true;
@@ -72,7 +74,7 @@ export type ComposeResult =
           region: ComposeRegion;
           events: { cards: CardDto[]; edges: EdgeDto[]; questions: QuestionDto[]; boardId: number };
       }
-    | { ok: false; code: ComposeErrorCode; index: number; message: string };
+    | ErrorResult;
 
 interface PlaceCard {
     kind: ComposeKind;
@@ -82,7 +84,7 @@ interface PlaceCard {
     h: number;
 }
 
-function err(code: ComposeErrorCode, index: number, message: string): ComposeResult {
+function err(code: ComposeErrorCode, index: number, message: string): ErrorResult {
     return { ok: false, code, index, message };
 }
 
@@ -317,7 +319,7 @@ export async function composeBoard(
             cardIdx = ci;
             withQuestion.add(ci);
         }
-        if (q.cardId && q.cardId > 0 && !existingIds.has(q.cardId)) {
+        if (q.cardId && (q.cardId <= 0 || !existingIds.has(q.cardId))) {
             return err("not_found", i, `question cardId ${q.cardId} is not on this board`);
         }
         const opts = normalizeOptions(q.options);
@@ -457,7 +459,12 @@ export async function composeBoard(
     // 8) ONE transaction: adopt/create journey frame, insert cards + edges + questions, grow section.
     const now = nowIso();
     const written = await db.kysely.transaction().execute(async (trx) => {
-        let elemSeq = board.elem_seq;
+        const currentBoard = await trx
+            .selectFrom("boards")
+            .select("elem_seq")
+            .where("id", "=", board.id)
+            .executeTakeFirstOrThrow();
+        let elemSeq = currentBoard.elem_seq;
         let createdSection: CardDto | null = null;
 
         if (adopt) {
@@ -674,7 +681,7 @@ export interface UpdateCardsBody {
 
 export type UpdateCardsResult =
     | { ok: true; patched: number; removed: number; restored: number; events: { cards: CardDto[]; deleted: number[] } }
-    | { ok: false; code: ComposeErrorCode; index: number; message: string };
+    | ErrorResult;
 
 /** Batch edit of the agent's OWN layer: patch geometry/payload, soft-remove, and restore — every op
  *  restricted to payload.layer === "ai" cards (sections count, being shared journey structure).
@@ -690,10 +697,30 @@ export async function updateCards(
     const restore = body.restore ?? [];
     const n = patch.length + remove.length + restore.length;
     if (n === 0) {
-        return err("empty", -1, "patch+remove+restore: at least 1 entry required") as UpdateCardsResult;
+        return err("empty", -1, "patch+remove+restore: at least 1 entry required");
     }
     if (n > UPDATE_MAX_OPS) {
-        return err("limit", -1, `patch+remove+restore: at most ${UPDATE_MAX_OPS} entries`) as UpdateCardsResult;
+        return err("limit", -1, `patch+remove+restore: at most ${UPDATE_MAX_OPS} entries`);
+    }
+
+    const seenIds = new Set<number>();
+    for (const p of patch) {
+        if (seenIds.has(p.id)) {
+            return err("bad_payload", -1, `duplicate card ID ${p.id} in batch`);
+        }
+        seenIds.add(p.id);
+    }
+    for (const id of remove) {
+        if (seenIds.has(id)) {
+            return err("bad_payload", -1, `duplicate card ID ${id} in batch`);
+        }
+        seenIds.add(id);
+    }
+    for (const id of restore) {
+        if (seenIds.has(id)) {
+            return err("bad_payload", -1, `duplicate card ID ${id} in batch`);
+        }
+        seenIds.add(id);
     }
 
     const doc = await getBoardDoc(db, slug); // throws NotFoundError → route maps to 404
@@ -713,12 +740,12 @@ export async function updateCards(
     // Validate everything first (all-or-nothing).
     for (let i = 0; i < patch.length; i += 1) {
         if (!aiCards.has(patch[i].id)) {
-            return err("not_ai_layer", i, `card ${patch[i].id} is not on the AI layer`) as UpdateCardsResult;
+            return err("not_ai_layer", i, `card ${patch[i].id} is not on the AI layer`);
         }
     }
     for (let i = 0; i < remove.length; i += 1) {
         if (!aiCards.has(remove[i])) {
-            return err("not_ai_layer", i, `card ${remove[i]} is not on the AI layer`) as UpdateCardsResult;
+            return err("not_ai_layer", i, `card ${remove[i]} is not on the AI layer`);
         }
     }
     if (restore.length > 0) {
@@ -732,11 +759,7 @@ export async function updateCards(
         }
         for (let i = 0; i < restore.length; i += 1) {
             if (!trashAI.has(restore[i])) {
-                return err(
-                    "not_ai_layer",
-                    i,
-                    `card ${restore[i]} is not an AI-layer card in this board's trash`
-                ) as UpdateCardsResult;
+                return err("not_ai_layer", i, `card ${restore[i]} is not an AI-layer card in this board's trash`);
             }
         }
     }

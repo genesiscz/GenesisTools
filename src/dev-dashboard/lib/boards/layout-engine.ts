@@ -203,13 +203,18 @@ export function arrangeMoves(sel: CardRect[], opts: ArrangeOpts): Move[] {
             }
             packedW -= gap;
             const axisW = Math.max(opts.wrapW ?? 0, packedW);
-            const t0 = new Date(gs[0].c.createdAt ?? 0).getTime();
-            const span = (new Date(gs[gs.length - 1].c.createdAt ?? 0).getTime() - t0) / 1000;
+            const getTime = (d: string | undefined) => {
+                const t = d ? Date.parse(d) : 0;
+                return Number.isNaN(t) ? 0 : t;
+            };
+            const t0 = getTime(gs[0].c.createdAt);
+            const span = (getTime(gs[gs.length - 1].c.createdAt) - t0) / 1000;
             let x = minX;
             for (const g of gs) {
                 let gx = x;
                 if (span > 0) {
-                    const frac = (new Date(g.c.createdAt ?? 0).getTime() - t0) / 1000 / span;
+                    const t = getTime(g.c.createdAt);
+                    const frac = (t - t0) / 1000 / span;
                     gx = Math.max(x, minX + frac * (axisW - g.w));
                 }
                 moves.push({ id: g.c.id, x: snap(gx), y: snap(minY) });

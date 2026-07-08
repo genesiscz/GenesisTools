@@ -56,6 +56,10 @@ export const MAX_OPTION_HINT = 300;
 export const MAX_QUESTION_PROMPT = 1000;
 export const MAX_ANSWER_LEN = 500;
 
+// Per-kind payload size caps.
+export const MAX_CHECKLIST_ITEMS = 50;
+export const MAX_WIREFRAME_NODES = 40;
+
 // arrange gap/padding token map (S/M/L). M matches composeGap.
 export const SPACING = { S: 12, M: 24, L: 48 } as const;
 

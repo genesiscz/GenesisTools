@@ -4,9 +4,9 @@ import { normalizeOptions } from "@app/dev-dashboard/lib/boards/compose-validate
 import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { publishBoardEvent } from "@app/dev-dashboard/lib/boards/events";
 import type { QuestionDto } from "@app/dev-dashboard/lib/boards/types";
-import type { RouteContext, RouteDef } from "@app/dev-dashboard/server/types";
+import type { RouteDef } from "@app/dev-dashboard/server/types";
 import { boardsError } from "./boards-errors";
-import { getOperator } from "./boards-sets";
+import { actorFrom } from "./boards-sets";
 
 /** vitrinka's always-present free-text escape (handlers_questions.go) — rendered on every
  *  response, never stored: the answer endpoint accepts any string regardless. */
@@ -14,16 +14,6 @@ const OTHER_LABEL = "Other / Něco jiného";
 
 function toQuestionResponse(q: QuestionDto): Record<string, unknown> {
     return { ...q, otherLabel: OTHER_LABEL };
-}
-
-/** Answering a question is a human/UI action by default (mirrors boards.ts's actorFrom). */
-async function actorFrom(ctx: RouteContext): Promise<string> {
-    const header = ctx.headers["x-board-actor"];
-    if (header) {
-        return header;
-    }
-    const operator = await getOperator();
-    return operator || "operator";
 }
 
 async function boardSlugForQuestionId(id: number): Promise<string | null> {

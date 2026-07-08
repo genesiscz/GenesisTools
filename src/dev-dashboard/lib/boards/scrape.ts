@@ -289,13 +289,13 @@ export function scrapeBoard(opts: { doc: BoardDocDto; base?: string; section?: s
         }
     }
 
+    const { sections, journeys } = sectionsToJSON(cards);
     const body: Record<string, unknown> = {
         board,
-        sections: sectionsToJSON(cards).sections,
+        sections,
         flow,
         cards: outCards,
     };
-    const journeys = sectionsToJSON(cards).journeys;
     if (journeys.length > 0) {
         body.journeys = journeys;
     }

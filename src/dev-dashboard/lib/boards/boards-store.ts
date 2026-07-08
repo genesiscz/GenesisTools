@@ -943,6 +943,17 @@ export async function answerQuestion(
         if (!existing) {
             throw new NotFoundError(`question not found: ${questionId}`);
         }
+        if (existing.multi === 1) {
+            let parsed: unknown;
+            try {
+                parsed = SafeJSON.parse(answer, { strict: true });
+            } catch {
+                throw new InvalidInputError("multi-select answer must be a JSON array");
+            }
+            if (!Array.isArray(parsed)) {
+                throw new InvalidInputError("multi-select answer must be a JSON array");
+            }
+        }
         const stored = existing.multi === 1 ? answer : SafeJSON.stringify([answer]);
         const row = await trx
             .updateTable("board_questions")

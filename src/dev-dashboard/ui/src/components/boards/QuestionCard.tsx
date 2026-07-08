@@ -28,10 +28,11 @@ function QuestionCard({ slug, question }: { slug: string; question: QuestionDto 
     }
 
     const submit = (labels: string[]) => {
-        if (labels.length === 0) {
+        const trimmed = labels.map((l) => l.trim()).filter((l) => l.length > 0);
+        if (trimmed.length === 0) {
             return;
         }
-        answerMutation.mutate(question.multi ? SafeJSON.stringify(labels) : labels[0]);
+        answerMutation.mutate(question.multi ? SafeJSON.stringify(trimmed) : trimmed[0]);
     };
 
     const toggle = (label: string) => {
@@ -60,7 +61,7 @@ function QuestionCard({ slug, question }: { slug: string; question: QuestionDto 
                         className={`rounded border px-2 py-1 text-left ${
                             picked.has(opt.label)
                                 ? "border-[var(--dd-accent-from)] bg-[var(--dd-accent-from)]/10"
-                                : "border-[var(--dd-border)] hover:bg-white/5"
+                                : "border-[var(--dd-border)] hover:bg-[var(--dd-bg-hover)]"
                         } ${opt.recommended ? "ring-1 ring-[var(--dd-accent-from)]" : ""}`}
                     >
                         {question.multi ? (picked.has(opt.label) ? "☑ " : "☐ ") : ""}
@@ -78,7 +79,14 @@ function QuestionCard({ slug, question }: { slug: string; question: QuestionDto 
                     {otherText ? (
                         <button
                             type="button"
-                            onClick={() => (question.multi ? toggle(otherText) : submit([otherText]))}
+                            onClick={() => {
+                                if (question.multi) {
+                                    toggle(otherText);
+                                    setOtherText("");
+                                } else {
+                                    submit([otherText]);
+                                }
+                            }}
                             className="dd-btn-accent rounded px-2"
                         >
                             {question.multi ? "add" : "send"}

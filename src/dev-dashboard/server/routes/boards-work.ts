@@ -90,9 +90,18 @@ export function boardsWorkRoutes(): RouteDef[] {
                         const { items, total } = await listOpenWorkDetailed(db, effectiveScope, 3);
                         const choices = await drainChoices(db, effectiveScope);
                         if (items.length > 0 || choices.length > 0) {
+                            const docCache = new Map<string, ReturnType<typeof getBoardDoc>>();
+                            const docFor = (slug: string) => {
+                                let doc = docCache.get(slug);
+                                if (!doc) {
+                                    doc = getBoardDoc(db, slug);
+                                    docCache.set(slug, doc);
+                                }
+                                return doc;
+                            };
                             const work = await Promise.all(
                                 items.map(async (it) => {
-                                    const doc = await getBoardDoc(db, it.boardSlug);
+                                    const doc = await docFor(it.boardSlug);
                                     return {
                                         id: it.annotation.id,
                                         board: it.boardSlug,

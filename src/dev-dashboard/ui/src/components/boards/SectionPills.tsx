@@ -29,7 +29,7 @@ export function SectionPills({ slug, onSelect }: SectionPillsProps) {
                     type="button"
                     title={`${s.name} — ${s.cards} card${s.cards === 1 ? "" : "s"}`}
                     onClick={() => onSelect({ minX: s.x, minY: s.y, maxX: s.x + s.w, maxY: s.y + s.h })}
-                    className="shrink-0 rounded-full px-2 py-0.5 text-xs whitespace-nowrap text-[var(--dd-text-secondary)] hover:bg-white/5 hover:text-[var(--dd-text-primary)]"
+                    className="shrink-0 rounded-full px-2 py-0.5 text-xs whitespace-nowrap text-[var(--dd-text-secondary)] hover:bg-[var(--dd-bg-hover)] hover:text-[var(--dd-text-primary)]"
                 >
                     {s.name}
                     {s.pass != null ? <span className="ml-1 opacity-60">· pass {s.pass}</span> : null}

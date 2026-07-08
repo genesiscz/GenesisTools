@@ -259,7 +259,7 @@ export function resolveJourneyPass(opts: {
     } else if (opts.pass === "next") {
         want = maxPass + 1;
         create = true;
-    } else if (typeof opts.pass === "number" && opts.pass >= 1) {
+    } else if (typeof opts.pass === "number" && Number.isInteger(opts.pass) && opts.pass >= 1) {
         want = opts.pass;
         if (want === maxPass + 1) {
             create = true;

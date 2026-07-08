@@ -149,12 +149,16 @@ export function BoardCanvas({
     const renameSectionMutation = useMutation({
         mutationFn: ({ id, title }: { id: number; title: string }) => {
             const card = doc.cards.find((c) => c.id === id);
-            return boardsApi.patchCard(id, { payload: { ...(card?.payload ?? {}), title } });
+            if (!card) {
+                throw new Error(`section card not found: ${id}`);
+            }
+            return boardsApi.patchCard(id, { payload: { ...card.payload, title } });
         },
         onSuccess: () => {
             setRenamingSectionId(null);
             invalidate();
         },
+        onError: (err) => console.error("[boards] rename section failed", err),
     });
 
     const createAnnotationMutation = useMutation({
