@@ -56,6 +56,6 @@ export async function diffCommand(v1: string, v2: string, opts: DiffOptions): Pr
         await Bun.write(opts.output, output);
         out.log.success(`diff written to ${opts.output}`);
     } else {
-        out.print(output);
+        out.println(output);
     }
 }

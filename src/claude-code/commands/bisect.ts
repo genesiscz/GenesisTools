@@ -86,18 +86,18 @@ export async function bisectCommand(from: string, to: string, opts: BisectOption
             opts.mode === "probe"
                 ? s.state
                 : `chunks:${s.state === "" ? 0 : s.state.split(",").length}#${String(Bun.hash(s.state)).slice(0, 8)}`;
-        out.print(`${s.version}\t${s.published?.slice(0, 10) ?? "?"}\t${display}`);
+        out.println(`${s.version}\t${s.published?.slice(0, 10) ?? "?"}\t${display}`);
     }
 
     if (transitions.length === 0) {
-        out.print("\nNo transition found in range.");
+        out.println("\nNo transition found in range.");
     }
 
     for (const t of transitions) {
-        out.print(
+        out.println(
             `\nTransition: ${t.before.version} → ${t.after.version} (published ${t.before.published?.slice(0, 10)} → ${t.after.published?.slice(0, 10)})`
         );
-        out.print(
+        out.println(
             `Inspect: tools claude-code diff ${t.before.version} ${t.after.version} --pattern ${opts.pattern.map((p) => `'${p}'`).join(" ")}`
         );
     }
