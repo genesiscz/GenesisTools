@@ -263,6 +263,48 @@ describe("work-store", () => {
         }
     });
 
+    it("takeover=1 steals an expired (but unreaped) lease and reverts its claimed items", async () => {
+        await createBoard(db, { slug: "b1" });
+        const card = await makeCard(db, "b1", "proj/main/s1");
+        const ann = await createAnnotation(db, {
+            boardSlug: "b1",
+            cardId: card.id,
+            region: REGION,
+            intent: "fix",
+            prompt: "p",
+            status: "open",
+        });
+
+        const lease = await claimOrRenewLease(db, { kind: "board", board: "b1" }, "session-a", "alice");
+        const l1 = (lease as { id: number }).id;
+        await patchAnnotation(db, ann.id, { status: "working", claimedBy: "alice", claimedListener: l1 });
+
+        // Age L1 past TTL WITHOUT reaping it (the window takeover exists to cover).
+        const staleIso = new Date(Date.now() - listenerTtlMs() - 1000).toISOString();
+        await db.kysely.updateTable("listeners").set({ last_seen: staleIso }).where("id", "=", l1).execute();
+
+        const stolen = await claimOrRenewLease(db, { kind: "board", board: "b1" }, "session-b", "bob", true);
+        expect(stolen.conflict).toBe(false);
+
+        const row = await db.kysely
+            .selectFrom("annotations")
+            .selectAll()
+            .where("id", "=", ann.id)
+            .executeTakeFirstOrThrow();
+        expect(row.status).toBe("open"); // L1's claim was reverted
+        expect((await listListeners(db)).map((l) => l.session)).toEqual(["session-b"]);
+    });
+
+    it("takeover=1 against a LIVE holder still conflicts — a live lease is never stolen", async () => {
+        await claimOrRenewLease(db, { kind: "board", board: "b1" }, "session-a", "alice");
+        const conflict = await claimOrRenewLease(db, { kind: "board", board: "b1" }, "session-b", "bob", true);
+        expect(conflict.conflict).toBe(true);
+        if (conflict.conflict) {
+            expect(conflict.live).toBe(true);
+            expect(conflict.holder.session).toBe("session-a");
+        }
+    });
+
     it("'all' scope never conflicts — each session keeps its own row", async () => {
         const a = await claimOrRenewLease(db, { kind: "all" }, "session-a", "alice");
         const b = await claimOrRenewLease(db, { kind: "all" }, "session-b", "bob");

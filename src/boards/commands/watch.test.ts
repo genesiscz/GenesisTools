@@ -182,6 +182,52 @@ describe("runWatch", () => {
         ]);
     });
 
+    it("prints a --takeover hint when the conflicting holder's lease has expired", async () => {
+        server = Bun.serve({
+            port: 0,
+            fetch(req) {
+                const url = new URL(req.url);
+                if (url.pathname === "/api/boards/work/wait") {
+                    return Response.json(
+                        {
+                            error: "scope held by an expired listener",
+                            live: false,
+                            holder: {
+                                id: 9,
+                                scopeKind: "board",
+                                scope: "demo",
+                                branch: "",
+                                actor: "someone",
+                                session: "otherhost:99",
+                                createdAt: "",
+                                lastSeen: "2026-07-08T00:00:00.000Z",
+                            },
+                        },
+                        { status: 409 }
+                    );
+                }
+                return new Response("not found", { status: 404 });
+            },
+        });
+
+        const lines: string[] = [];
+        const exitCode = await runWatch({
+            base: `http://127.0.0.1:${server.port}`,
+            scope: { kind: "board", board: "demo" },
+            session: "testhost:1",
+            actor: "tester",
+            once: false,
+            takeover: false,
+            print: async (line) => {
+                lines.push(line);
+            },
+            sleep: async () => {},
+        });
+
+        expect(exitCode).toBe(2);
+        expect(lines.some((l) => l.includes("expired") && l.includes("--takeover"))).toBe(true);
+    });
+
     it("--once exits 3 on an idle wait, printing nothing", async () => {
         server = Bun.serve({
             port: 0,

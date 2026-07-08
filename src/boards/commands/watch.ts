@@ -18,7 +18,7 @@ export type Scope =
 
 interface ConflictBody {
     error: string;
-    live: true;
+    live: boolean;
     holder: ListenerDto;
 }
 
@@ -76,7 +76,7 @@ interface AttemptDeps {
 type AttemptResult =
     | { kind: "idle"; leaseId?: number; seen: SeenMap }
     | { kind: "announced"; leaseId?: number; seen: SeenMap; lines: string[] }
-    | { kind: "conflict"; holder: ListenerDto };
+    | { kind: "conflict"; holder: ListenerDto; live: boolean };
 
 async function watchAttempt(deps: AttemptDeps): Promise<AttemptResult> {
     const query = scopeToWaitQuery(deps.scope, {
@@ -90,7 +90,8 @@ async function watchAttempt(deps: AttemptDeps): Promise<AttemptResult> {
     });
 
     if (status === 409) {
-        return { kind: "conflict", holder: (body as ConflictBody).holder };
+        const conflict = body as ConflictBody;
+        return { kind: "conflict", holder: conflict.holder, live: conflict.live };
     }
     if (status < 200 || status >= 300) {
         throw new Error(`work/wait -> ${status}: ${SafeJSON.stringify(body)}`);
@@ -192,10 +193,18 @@ export async function runWatch(opts: RunWatchOptions): Promise<number> {
                 backoffMs = BACKOFF_START_MS;
 
                 if (result.kind === "conflict") {
+                    const { session, actor, lastSeen } = result.holder;
                     await writeStderr(
-                        `boards watch: scope held by ${result.holder.session} (actor=${result.holder.actor})\n`
+                        `boards watch: scope held by ${session} (actor=${actor}, lastSeen=${lastSeen})\n`
                     );
-                    await print(`⚠ boards scope held by live listener ${result.holder.session}`);
+                    if (result.live) {
+                        await print(`⚠ boards scope held by live listener ${session}`);
+                    } else {
+                        await print(
+                            `⚠ boards scope held by expired listener ${session}` +
+                                `  → retry with --takeover to steal the expired lease`
+                        );
+                    }
                     await release();
                     return 2;
                 }
