@@ -1,4 +1,9 @@
-import { type ComposeBody, composeBoard } from "@app/dev-dashboard/lib/boards/compose-store";
+import {
+    type ComposeBody,
+    composeBoard,
+    type UpdateCardsBody,
+    updateCards,
+} from "@app/dev-dashboard/lib/boards/compose-store";
 import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { publishBoardEvent } from "@app/dev-dashboard/lib/boards/events";
 import { type ArrangeBody, runArrange } from "@app/dev-dashboard/lib/boards/layout-engine";
@@ -53,6 +58,37 @@ export function boardsComposeRoutes(): RouteDef[] {
                             questions: result.questions,
                             region: result.region,
                         },
+                    };
+                } catch (err) {
+                    return boardsError(err);
+                }
+            },
+        },
+        {
+            method: "POST",
+            pattern: "/api/boards/:slug/update-cards",
+            handler: async (ctx) => {
+                try {
+                    const body = await ctx.readJson<UpdateCardsBody>();
+                    const result = await updateCards(getBoardsDb(), ctx.params.slug, body);
+                    if (!result.ok) {
+                        const status = STATUS_BY_CODE[result.code] ?? 400;
+                        return {
+                            kind: "json",
+                            status,
+                            body: { error: result.message, code: result.code, index: result.index },
+                        };
+                    }
+                    for (const card of result.events.cards) {
+                        publishBoardEvent(ctx.params.slug, { type: "card", payload: card });
+                    }
+                    for (const id of result.events.deleted) {
+                        publishBoardEvent(ctx.params.slug, { type: "card_deleted", payload: { id } });
+                    }
+                    return {
+                        kind: "json",
+                        status: 200,
+                        body: { ok: true, patched: result.patched, removed: result.removed, restored: result.restored },
                     };
                 } catch (err) {
                     return boardsError(err);
