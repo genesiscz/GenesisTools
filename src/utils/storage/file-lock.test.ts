@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LockTimeoutError, tryAcquireLock, withFileLock } from "./file-lock";
+import { attemptRenameSteal, LockTimeoutError, tryAcquireLock, withFileLock } from "./file-lock";
 
 describe("file-lock: stale/orphaned lock handling", () => {
     let dir: string;
@@ -115,5 +115,19 @@ describe("file-lock: stale/orphaned lock handling", () => {
         expect(readFileSync(lockPath, "utf-8").trim()).toBe(String(process.pid));
 
         expect(readdirSync(dir)).toEqual(["target.lock"]);
+    });
+
+    it("a steal that grabs a FRESH lock restores it and loses (TOCTOU guard)", async () => {
+        // The stealer validated "999999999" as dead, but by the time its
+        // rename lands a live holder has re-acquired the lock. The steal must
+        // detect the content mismatch, restore the fresh lock, and lose.
+        const lockPath = join(dir, "target.lock");
+        writeFileSync(lockPath, "12345");
+
+        const won = await attemptRenameSteal(lockPath, "999999999");
+
+        expect(won).toBe(false);
+        expect(readFileSync(lockPath, "utf-8").trim()).toBe("12345"); // restored, not clobbered
+        expect(readdirSync(dir)).toEqual(["target.lock"]); // no temp litter
     });
 });

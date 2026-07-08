@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { attemptStaleTakeover, verifyPidfileOwnership } from "./daemon";
 
 /**
  * Waits for `marker` to appear in `stream`, reading incrementally so callers don't have to
@@ -70,5 +71,68 @@ describe("daemon SIGTERM shutdown ordering", () => {
         await proc.exited;
 
         expect(existsSync(pidFile)).toBe(false);
+    });
+});
+
+describe("daemon pidfile atomic takeover", () => {
+    let dir: string;
+    let pidFile: string;
+
+    beforeEach(() => {
+        dir = mkdtempSync(join(tmpdir(), "daemon-takeover-test-"));
+        pidFile = join(dir, "daemon.pid");
+    });
+
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    test("exactly one of N concurrent racers wins a stale-pidfile takeover", async () => {
+        // Regression test for the Jul 3 incident: a launchd respawn storm got
+        // 31 daemon instances past a check-then-unlink-then-write pidfile
+        // takeover within 8 seconds, and every one of them "won". The
+        // content-verified rename takeover must guarantee exactly one winner —
+        // rename alone is NOT enough (a late racer can rename the previous
+        // winner's fresh pidfile; this exact test caught 2 winners without
+        // the content check).
+        writeFileSync(pidFile, "999999999"); // dead PID — eligible for takeover
+
+        const RACER_COUNT = 12;
+        const results = await Promise.all(
+            Array.from({ length: RACER_COUNT }, () => attemptStaleTakeover(pidFile, "999999999"))
+        );
+
+        expect(results.filter((won) => won === true)).toHaveLength(1);
+
+        expect(existsSync(pidFile)).toBe(true);
+        expect(readFileSync(pidFile, "utf-8").trim()).toBe(String(process.pid));
+        expect(readdirSync(dir)).toEqual(["daemon.pid"]);
+    });
+
+    test("a takeover that grabs a FRESH pidfile restores it and loses", async () => {
+        // TOCTOU guard: the racer validated "999999999" as stale, but by the
+        // time its rename lands, a live owner has re-claimed the slot. The
+        // steal must detect the content mismatch, put the fresh file back,
+        // and report defeat.
+        writeFileSync(pidFile, "12345"); // a "fresh" owner (content ≠ what the racer validated)
+
+        const won = await attemptStaleTakeover(pidFile, "999999999");
+
+        expect(won).toBe(false);
+        expect(readFileSync(pidFile, "utf-8").trim()).toBe("12345"); // restored, not clobbered
+        expect(readdirSync(dir)).toEqual(["daemon.pid"]); // no temp litter
+    });
+
+    test("verifyPidfileOwnership reports loss when the pidfile is stolen out from under us", () => {
+        writeFileSync(pidFile, String(process.pid));
+        expect(verifyPidfileOwnership(pidFile)).toBe(true);
+
+        // Simulate a usurper stealing the pidfile (e.g. we lost a takeover
+        // race we didn't know about, or the file was manually removed).
+        writeFileSync(pidFile, "424242");
+        expect(verifyPidfileOwnership(pidFile)).toBe(false);
+
+        rmSync(pidFile);
+        expect(verifyPidfileOwnership(pidFile)).toBe(false);
     });
 });

@@ -24,14 +24,25 @@ function isEnoent(err: unknown): boolean {
 }
 
 /**
- * Atomically steal a stale/orphaned lock file.
+ * Atomically steal a stale/orphaned lock file whose content was pre-validated.
  *
  * Renames the lock to a unique temp path first — `rename` is atomic on POSIX,
  * so under N concurrent stealers exactly one rename succeeds; every loser gets
  * ENOENT (the source is already gone under them) and returns false. Only the
  * rename winner proceeds to claim the path with its own `wx` write.
+ *
+ * The rename alone is NOT sufficient: it steals whatever currently sits at
+ * the path, so a late stealer can grab the lock a legitimate holder just
+ * (re-)acquired (TOCTOU — the daemon pidfile twin of this code reproduced
+ * two "winners" in a 12-racer test without the guard). After the rename the
+ * stolen content must still equal `expectedContent` — the exact stale
+ * artifact the caller validated (a dead pid, or "" for the orphaned-empty
+ * case). On mismatch the fresh file is restored best-effort and the steal
+ * reports defeat.
+ *
+ * Exported for direct race testing (see file-lock.test.ts).
  */
-async function attemptRenameSteal(lockPath: string): Promise<boolean> {
+export async function attemptRenameSteal(lockPath: string, expectedContent: string): Promise<boolean> {
     const tempPath = `${lockPath}.stale-${process.pid}-${crypto.randomUUID().slice(0, 8)}`;
 
     try {
@@ -42,6 +53,33 @@ async function attemptRenameSteal(lockPath: string): Promise<boolean> {
         }
 
         throw err;
+    }
+
+    let stolen: string | null = null;
+
+    try {
+        stolen = readFileSync(tempPath, "utf-8");
+    } catch {
+        stolen = null;
+    }
+
+    if (stolen === null || stolen.trim() !== expectedContent.trim()) {
+        if (stolen !== null) {
+            try {
+                await writeFile(lockPath, stolen, { flag: "wx" });
+            } catch {
+                // Slot already re-claimed; the robbed holder's release is
+                // ownership-checked, so worst case is one early-released lock.
+            }
+        }
+
+        try {
+            await unlink(tempPath);
+        } catch {
+            // best-effort cleanup
+        }
+
+        return false;
     }
 
     try {
@@ -125,9 +163,10 @@ export async function tryAcquireLock(lockPath: string): Promise<boolean> {
                 // the normal alive/dead check below.
                 lockPid = recheckPid;
             } else {
-                // Still empty after grace — orphaned. Steal.
+                // Still empty after grace — orphaned. Steal (expecting the
+                // empty artifact we validated).
                 logger.debug(`Stealing orphaned lock at ${lockPath} (no PID content)`);
-                return await attemptRenameSteal(lockPath);
+                return await attemptRenameSteal(lockPath, "");
             }
         }
 
@@ -135,9 +174,9 @@ export async function tryAcquireLock(lockPath: string): Promise<boolean> {
             return false;
         }
 
-        // Stale lock (process is dead) — steal it
+        // Stale lock (process is dead) — steal exactly the artifact we validated
         logger.debug(`Stealing stale lock at ${lockPath} (PID ${lockPid} is dead)`);
-        return await attemptRenameSteal(lockPath);
+        return await attemptRenameSteal(lockPath, String(lockPid));
     }
 }
 
