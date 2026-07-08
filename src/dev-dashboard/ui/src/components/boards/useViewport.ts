@@ -24,6 +24,12 @@ export function panBy(vp: Viewport, dx: number, dy: number): Viewport {
     return { ...vp, x: vp.x + dx, y: vp.y + dy };
 }
 
+/** Reset zoom to 1 while keeping the world point currently at the viewport center in place
+ *  (vitrinka's ⌘0 semantics) — not a jump to world origin. */
+export function resetZoom(vp: Viewport, width: number, height: number): Viewport {
+    return zoomAt(vp, 1 / vp.scale, width / 2, height / 2);
+}
+
 /** Fit a world bounding box into a screen rect with padding. */
 export function fitBounds(
     bounds: { minX: number; minY: number; maxX: number; maxY: number },

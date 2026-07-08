@@ -1,6 +1,6 @@
 import type { CardDto } from "@app/dev-dashboard/contract/dto";
 import { paths } from "@app/dev-dashboard/contract/endpoints";
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from "react";
 import { useRef, useState } from "react";
 import { renderMdLite } from "./md-lite";
 
@@ -13,6 +13,8 @@ interface CardViewProps {
     onDragBy: (id: number, dxWorld: number, dyWorld: number) => void;
     onDragEnd: (id: number) => void;
     onNoteChange: (id: number, text: string) => void;
+    /** True while a space-drag pan is arbitrating — the card yields so the canvas owns the gesture. */
+    panningRef: RefObject<boolean>;
 }
 
 interface DragState {
@@ -35,12 +37,18 @@ export function CardView({
     onDragBy,
     onDragEnd,
     onNoteChange,
+    panningRef,
 }: CardViewProps) {
     const dragRef = useRef<DragState | null>(null);
     const [editingNote, setEditingNote] = useState(false);
     const [noteDraft, setNoteDraft] = useState(() => stringField(card.payload, "text"));
 
     const beginDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
+        // A space-drag pan owns the gesture: don't also start a card drag. The event bubbles to the
+        // canvas (we don't capture the pointer), which begins the pan since space is held.
+        if (panningRef.current) {
+            return;
+        }
         onSelect(card.id);
         e.currentTarget.setPointerCapture(e.pointerId);
         dragRef.current = { pointerId: e.pointerId, lastClientX: e.clientX, lastClientY: e.clientY };

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { fitBounds, MAX_SCALE, MIN_SCALE, screenToWorld, zoomAt } from "./useViewport";
+import { fitBounds, MAX_SCALE, MIN_SCALE, resetZoom, screenToWorld, zoomAt } from "./useViewport";
 
 describe("zoomAt", () => {
     test("keeps the anchor screen point fixed on the world plane", () => {
@@ -25,6 +25,30 @@ describe("zoomAt", () => {
         const before = { x: 0, y: 0, scale: MIN_SCALE };
         const after = zoomAt(before, 0.01, 0, 0);
         expect(after.scale).toBe(MIN_SCALE);
+    });
+});
+
+describe("resetZoom", () => {
+    test("resets scale to 1 while keeping the viewport-center world point fixed", () => {
+        const before = { x: 137, y: -84, scale: 2.6 };
+        const width = 1000;
+        const height = 700;
+        const worldBefore = screenToWorld(before, width / 2, height / 2);
+
+        const after = resetZoom(before, width, height);
+        const worldAfter = screenToWorld(after, width / 2, height / 2);
+
+        expect(after.scale).toBe(1);
+        expect(Math.abs(worldAfter.x - worldBefore.x)).toBeLessThan(1e-9);
+        expect(Math.abs(worldAfter.y - worldBefore.y)).toBeLessThan(1e-9);
+    });
+
+    test("is a no-op on the world center when already at scale 1", () => {
+        const before = { x: 12, y: 34, scale: 1 };
+        const after = resetZoom(before, 800, 600);
+        expect(after.scale).toBe(1);
+        expect(after.x).toBeCloseTo(12, 9);
+        expect(after.y).toBeCloseTo(34, 9);
     });
 });
 
