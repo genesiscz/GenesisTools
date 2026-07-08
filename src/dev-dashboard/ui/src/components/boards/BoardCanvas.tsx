@@ -9,7 +9,7 @@ import { CardView } from "./CardView";
 import { EdgeLayer } from "./EdgeLayer";
 import { distanceToPolyline, InkLayer, strokeToWorldPath } from "./InkLayer";
 import { type Tool, Toolbar } from "./Toolbar";
-import { fitBounds, panBy, screenToWorld, useViewport, zoomAt } from "./useViewport";
+import { fitBounds, panBy, resetZoom, screenToWorld, useViewport, zoomAt } from "./useViewport";
 
 interface BoardCanvasProps {
     slug: string;
@@ -189,7 +189,9 @@ export function BoardCanvas({
 
             if (meta && e.key === "0") {
                 e.preventDefault();
-                setVp({ x: 0, y: 0, scale: 1 });
+                if (el) {
+                    setVp((v) => resetZoom(v, el.clientWidth, el.clientHeight));
+                }
             } else if (meta && (e.key === "=" || e.key === "+")) {
                 e.preventDefault();
                 setVp((v) => zoomAt(v, 1.2, cx, cy));
@@ -509,6 +511,7 @@ export function BoardCanvas({
                         onDragBy={handleDragBy}
                         onDragEnd={handleDragEnd}
                         onNoteChange={(id, text) => noteMutation.mutate({ id, text })}
+                        panningRef={spaceDown}
                     />
                 ))}
                 <EdgeLayer edges={doc.edges} cards={cards} />
