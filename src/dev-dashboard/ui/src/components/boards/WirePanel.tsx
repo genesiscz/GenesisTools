@@ -1,19 +1,20 @@
-import type { AnnotationDto, AttemptDto, MessageDto, RevisionDto } from "@app/dev-dashboard/contract/dto";
+import type { AnnotationDto, MessageDto, RevisionDto } from "@app/dev-dashboard/contract/dto";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { STATUS_COLOR } from "./AnnotationLayer";
 import { boardsApi } from "./boards-api";
+import { CompareDeck } from "./CompareDeck";
 
+// Attempts render as the CompareDeck (before/after), not a feed row — only revisions +
+// messages are merged chronologically here.
 type FeedItem =
     | { kind: "revision"; createdAt: string; data: RevisionDto }
-    | { kind: "message"; createdAt: string; data: MessageDto }
-    | { kind: "attempt"; createdAt: string; data: AttemptDto };
+    | { kind: "message"; createdAt: string; data: MessageDto };
 
 function buildFeed(annotation: AnnotationDto): FeedItem[] {
     const items: FeedItem[] = [
         ...annotation.revisions.map((data) => ({ kind: "revision" as const, createdAt: data.createdAt, data })),
         ...annotation.messages.map((data) => ({ kind: "message" as const, createdAt: data.createdAt, data })),
-        ...annotation.attempts.map((data) => ({ kind: "attempt" as const, createdAt: data.createdAt, data })),
     ];
     // Fixed-width ISO timestamps sort correctly as strings.
     return items.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
@@ -43,25 +44,12 @@ function FeedRow({ item }: { item: FeedItem }) {
         );
     }
 
-    if (item.kind === "revision") {
-        return (
-            <div className="border-b border-[var(--dd-border)]/50 py-2 text-sm text-[var(--dd-text-secondary)]">
-                <span className="font-mono text-[10px] text-[var(--dd-text-muted)] uppercase">
-                    {item.data.createdBy || "unknown"} revised
-                </span>
-                <div className="whitespace-pre-wrap">{item.data.prompt}</div>
-            </div>
-        );
-    }
-
     return (
-        <div className="border-b border-[var(--dd-border)]/50 py-2 text-sm">
+        <div className="border-b border-[var(--dd-border)]/50 py-2 text-sm text-[var(--dd-text-secondary)]">
             <span className="font-mono text-[10px] text-[var(--dd-text-muted)] uppercase">
-                {item.data.agent || "agent"} attempt
+                {item.data.createdBy || "unknown"} revised
             </span>
-            <div className="text-[var(--dd-text-secondary)]">
-                {item.data.commitRef || "no commit ref"} · {item.data.verdict === "" ? "pending" : item.data.verdict}
-            </div>
+            <div className="whitespace-pre-wrap">{item.data.prompt}</div>
         </div>
     );
 }
@@ -257,6 +245,8 @@ export function WirePanel({ slug, annotation, boardMessages, operator, onClose }
                     ) : null}
                 </div>
             ) : null}
+
+            {annotation && annotation.attempts.length > 0 ? <CompareDeck slug={slug} annotation={annotation} /> : null}
 
             <div className="min-h-0 flex-1 overflow-y-auto px-3">
                 {annotation
