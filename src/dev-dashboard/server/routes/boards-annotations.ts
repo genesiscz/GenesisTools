@@ -286,7 +286,12 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
                             payload: { id: result.annotation.id, status: result.annotation.status },
                         });
                     } else {
+                        // reject may roll the face back (card event) and re-stages the thread (status event).
                         publishBoardEvent(result.annotation.boardSlug, { type: "card", payload: result.card });
+                        publishBoardEvent(result.annotation.boardSlug, {
+                            type: "status",
+                            payload: { id: result.annotation.id, status: result.annotation.status },
+                        });
                     }
                     return { kind: "json", status: 200, body: result };
                 } catch (err) {
