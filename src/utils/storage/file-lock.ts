@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
-import { unlink, writeFile } from "node:fs/promises";
+import { rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { logger } from "@app/logger";
 import { isProcessAlive } from "@app/utils/process-alive";
@@ -19,12 +19,60 @@ function isEexist(err: unknown): boolean {
     return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EEXIST";
 }
 
+function isEnoent(err: unknown): boolean {
+    return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+/**
+ * Atomically steal a stale/orphaned lock file.
+ *
+ * Renames the lock to a unique temp path first — `rename` is atomic on POSIX,
+ * so under N concurrent stealers exactly one rename succeeds; every loser gets
+ * ENOENT (the source is already gone under them) and returns false. Only the
+ * rename winner proceeds to claim the path with its own `wx` write.
+ */
+async function attemptRenameSteal(lockPath: string): Promise<boolean> {
+    const tempPath = `${lockPath}.stale-${process.pid}-${crypto.randomUUID().slice(0, 8)}`;
+
+    try {
+        await rename(lockPath, tempPath);
+    } catch (err) {
+        if (isEnoent(err)) {
+            return false;
+        }
+
+        throw err;
+    }
+
+    try {
+        await writeFile(lockPath, String(process.pid), { flag: "wx" });
+    } catch (err) {
+        if (isEexist(err)) {
+            return false;
+        }
+
+        throw err;
+    } finally {
+        try {
+            await unlink(tempPath);
+        } catch {
+            // best-effort cleanup; ENOENT if somehow already gone
+        }
+    }
+
+    return true;
+}
+
 /**
  * Try to acquire a lock file atomically.
  * Uses O_CREAT|O_EXCL semantics (writeFile flag:'wx') so two processes
  * cannot both "acquire" the lock simultaneously.
+ *
+ * Exported for direct concurrency testing (see file-lock.test.ts) —
+ * exercising `withFileLock`'s polling loop end-to-end would obscure the
+ * single-winner guarantee this function itself must provide.
  */
-async function tryAcquireLock(lockPath: string): Promise<boolean> {
+export async function tryAcquireLock(lockPath: string): Promise<boolean> {
     const dir = dirname(lockPath);
 
     if (!existsSync(dir)) {
@@ -79,21 +127,7 @@ async function tryAcquireLock(lockPath: string): Promise<boolean> {
             } else {
                 // Still empty after grace — orphaned. Steal.
                 logger.debug(`Stealing orphaned lock at ${lockPath} (no PID content)`);
-
-                try {
-                    const confirmContent = await Bun.file(lockPath).text();
-
-                    if (confirmContent.trim() !== "") {
-                        // Someone wrote content between our checks — retry
-                        return false;
-                    }
-
-                    await unlink(lockPath);
-                    await writeFile(lockPath, String(process.pid), { flag: "wx" });
-                    return true;
-                } catch {
-                    return false;
-                }
+                return await attemptRenameSteal(lockPath);
             }
         }
 
@@ -103,23 +137,7 @@ async function tryAcquireLock(lockPath: string): Promise<boolean> {
 
         // Stale lock (process is dead) — steal it
         logger.debug(`Stealing stale lock at ${lockPath} (PID ${lockPid} is dead)`);
-
-        try {
-            // Re-read before unlinking to confirm ownership hasn't changed
-            const confirmContent = await Bun.file(lockPath).text();
-
-            if (confirmContent.trim() !== String(lockPid)) {
-                // Another process already rewrote the lock — don't steal it
-                return false;
-            }
-
-            await unlink(lockPath);
-            await writeFile(lockPath, String(process.pid), { flag: "wx" });
-            return true;
-        } catch {
-            // Another process stole it between our read and write
-            return false;
-        }
+        return await attemptRenameSteal(lockPath);
     }
 }
 
