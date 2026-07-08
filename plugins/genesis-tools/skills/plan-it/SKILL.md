@@ -9,6 +9,8 @@ description: Write comprehensive implementation plans (subsumes writing-plans - 
 
 This skill **subsumes `writing-plans`** — same comprehensive planning discipline (bite-sized tasks, TDD, complete code, exact paths, self-review, execution handoff), plus an executor-proof contract on top. Never invoke both; this is the superset.
 
+**Planner floor: Sonnet-class or better.** A five-run evaluation showed Haiku-class models reproduce the contract's *structure* reliably but hallucinate dry-run intermediates and skip do-work requirements (running the empirical trace, resolving design uncertainty); they are executor-tier, not planner-tier. The plan is where all judgment lives — spend a strong model on it.
+
 The plan, not the executor, carries the intelligence. Written under this contract, a plan produces near-identical results whether a frontier model or a small one executes it — because every decision is already made, every line of nontrivial code is already written, and every checkpoint is mechanically checkable. The output looks like the planner's code because the code in the plan IS the planner's.
 
 Why this works: weak models match strong ones only when nothing is left to fill in — they fail precisely by filling gaps with their own judgment, and they silently drop project conventions under complexity unless the conventions are restated in-context. Separating REASON (judgment) from ACT (mechanics) is the best-transferring shape.
