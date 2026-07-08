@@ -3,9 +3,11 @@ import {
     COMPOSE_KINDS,
     type ComposeErrorCode,
     type ComposeKind,
+    MAX_CHECKLIST_ITEMS,
     MAX_OPTION_HINT,
     MAX_OPTION_LABEL,
     MAX_QUESTION_OPTIONS,
+    MAX_WIREFRAME_NODES,
     STEP_STATUSES,
     VIZ_KINDS,
     WIREFRAME_DEVICES,
@@ -136,7 +138,7 @@ export function validateComposeCard(input: { kind: string; payload: Payload }): 
             break;
         case "checklist": {
             const items = payload.items;
-            if (!Array.isArray(items) || items.length === 0 || items.length > 50) {
+            if (!Array.isArray(items) || items.length === 0 || items.length > MAX_CHECKLIST_ITEMS) {
                 return bad;
             }
             for (const it of items) {
@@ -152,7 +154,7 @@ export function validateComposeCard(input: { kind: string; payload: Payload }): 
         }
         case "wireframe": {
             const nodes = payload.nodes;
-            if (!Array.isArray(nodes) || nodes.length === 0 || nodes.length > 40) {
+            if (!Array.isArray(nodes) || nodes.length === 0 || nodes.length > MAX_WIREFRAME_NODES) {
                 return bad;
             }
             for (const nd of nodes) {

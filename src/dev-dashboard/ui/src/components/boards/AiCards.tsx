@@ -328,6 +328,7 @@ function WireframeNode({ node }: { node: Payload }) {
     if (t === "divider") {
         return <div className="my-1 h-px bg-[var(--dd-border)]" />;
     }
+
     if (t === "img") {
         const h = str(node, "h") || "m";
         const height = h === "s" ? "h-8" : h === "l" ? "h-24" : "h-14";
@@ -339,6 +340,7 @@ function WireframeNode({ node }: { node: Payload }) {
             </div>
         );
     }
+
     if (t === "list") {
         const n = num(node, "n") ?? 3;
         return (
@@ -349,6 +351,7 @@ function WireframeNode({ node }: { node: Payload }) {
             </div>
         );
     }
+
     if (t === "button") {
         return (
             <div
@@ -360,6 +363,7 @@ function WireframeNode({ node }: { node: Payload }) {
             </div>
         );
     }
+
     if (t === "input") {
         return (
             <div className="rounded border border-[var(--dd-border)] px-2 py-1 text-[10px] text-[var(--dd-text-muted)]">
@@ -367,9 +371,11 @@ function WireframeNode({ node }: { node: Payload }) {
             </div>
         );
     }
+
     if (t === "heading") {
         return <div className="text-xs font-semibold">{NODE_LABEL.heading(node)}</div>;
     }
+
     const label = NODE_LABEL[t]?.(node);
     return label ? (
         <div className="text-[10px] text-[var(--dd-text-muted)]">{label}</div>

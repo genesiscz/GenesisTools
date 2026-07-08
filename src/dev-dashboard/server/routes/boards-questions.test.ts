@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createCard } from "@app/dev-dashboard/lib/boards/boards-store";
+import { createCard, createBoard as storeCreateBoard } from "@app/dev-dashboard/lib/boards/boards-store";
 import { getBoardsDb, resetBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { resetEventHub, subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
 import { resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
@@ -40,7 +40,6 @@ function asJson(result: RouteResult): { status: number; body: Record<string, unk
 }
 
 async function createBoard(slug: string): Promise<void> {
-    const { createBoard: storeCreateBoard } = await import("@app/dev-dashboard/lib/boards/boards-store");
     await storeCreateBoard(getBoardsDb(), { slug });
 }
 

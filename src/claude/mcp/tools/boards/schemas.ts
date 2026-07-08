@@ -318,6 +318,8 @@ export const ARRANGE_SCHEMA = {
     additionalProperties: false,
 } as const;
 
+export type ArrangeMode = (typeof ARRANGE_SCHEMA)["properties"]["mode"]["enum"][number];
+
 export const UPDATE_CARDS_SCHEMA = {
     type: "object",
     properties: {
@@ -356,6 +358,8 @@ export const SCRAPE_BOARD_SCHEMA = {
         diff: {
             type: "array",
             items: { type: "string" },
+            minItems: 2,
+            maxItems: 2,
             description:
                 "Exactly two section names — the ITERATION DIFF: members matched pairwise as {pairs:[{a,b}]} " +
                 "plus unpaired leftovers. Mutually exclusive with section.",

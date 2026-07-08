@@ -4,6 +4,7 @@
 import { paths } from "@app/dev-dashboard/contract/endpoints";
 import { SafeJSON } from "@app/utils/json";
 import { boardsFetch, compact } from "./http";
+import type { ArrangeMode } from "./schemas";
 
 type OptionInput = string | { label: string; hint?: string; recommended?: boolean };
 
@@ -55,7 +56,7 @@ export async function handleComposeBoard(args: {
 
 export async function handleArrange(args: {
     board: string;
-    mode: string;
+    mode: ArrangeMode;
     save?: boolean;
     sections?: string[];
     scope?: string;
@@ -102,7 +103,7 @@ export async function handleUpdateCards(args: {
 export async function handleScrapeBoard(args: { board: string; section?: string; diff?: string[] }): Promise<string> {
     const path = paths.boardScrape(args.board, {
         section: args.section,
-        diff: args.diff && args.diff.length === 2 ? args.diff.join(",") : undefined,
+        diff: args.diff?.join(","),
     });
     const res = await boardsFetch<Record<string, unknown>>(path);
     return compact(res);
@@ -132,10 +133,13 @@ export async function handleUpdateSet(args: {
     if (args.title !== undefined) {
         patch.title = args.title;
     }
-    const res = await boardsFetch<Record<string, unknown>>(paths.boardsSet({ project: args.project, branch: args.branch, selector: args.selector }), {
-        method: "PATCH",
-        body: SafeJSON.stringify(patch),
-    });
+    const res = await boardsFetch<Record<string, unknown>>(
+        paths.boardsSet({ project: args.project, branch: args.branch, selector: args.selector }),
+        {
+            method: "PATCH",
+            body: SafeJSON.stringify(patch),
+        }
+    );
     return compact(res);
 }
 

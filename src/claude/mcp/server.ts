@@ -23,6 +23,7 @@ import {
 } from "./tools/boards/read-tools";
 import {
     ARRANGE_SCHEMA,
+    type ArrangeMode,
     ASK_BOARD_SCHEMA,
     ATTACH_AFTER_SCHEMA,
     COMPOSE_BOARD_SCHEMA,
@@ -249,7 +250,7 @@ function buildToolRegistry(): Record<string, ToolEntry> {
                 handleArrange(
                     args as {
                         board: string;
-                        mode: string;
+                        mode: ArrangeMode;
                         save?: boolean;
                         sections?: string[];
                         scope?: string;

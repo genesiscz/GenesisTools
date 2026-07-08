@@ -33,6 +33,7 @@ boards_compose_board {
   ]
 }
 ```
+
 Then: `boards_arrange {"board":"<slug>","scope":"section:Checkout","mode":"lanes","save":true}`
 (steps carry `payload.lane` when testing per-device).
 
@@ -47,6 +48,7 @@ boards_compose_board: {"board":"<slug>","journey":"checkout","pass":"next","card
 boards_arrange:       {"board":"<slug>","mode":"compare","sections":["Checkout","Checkout — pass 2"]}
 boards_scrape_board:  {"board":"<slug>","diff":["Checkout","Checkout — pass 2"]}  → matched pairs, one line each
 ```
+
 `boards_list_sections` → `journeys:[{journey,passes,latest}]` orients a fresh
 session; `{"journey":"checkout"}` without pass composes into the LATEST pass.
 Pixel-level: a `compare` card `{a:{cardId:v1},b:{cardId:v2},"mode":"wipe"}` per
@@ -95,6 +97,7 @@ boards_compose_board: {"board":"<slug>","cards":[
   {"ref":"co3","kind":"callout","payload":{"tone":"decision","md":"Ship behind a flag; measure for a week"}}
 ]}
 ```
+
 Per-slide layout: `boards_arrange {"board":"<slug>","scope":"section:1 · Problem","mode":"column","save":true}`
 (or grid for denser slides).
 
@@ -127,6 +130,7 @@ boards_compose_board: {"board":"<slug>","layout":"row","cards":[
     {"t":"tabbar","label":"home · search · profile"}]}}],
  "questions":[{"prompt":"Which login direction?","options":["A — classic","B — social-first"],"cardRef":"a"}]}
 ```
+
 Escalate to a TW4 artifact only after a direction wins.
 
 ---

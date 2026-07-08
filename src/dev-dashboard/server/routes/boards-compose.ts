@@ -32,8 +32,12 @@ export function boardsComposeRoutes(): RouteDef[] {
             method: "GET",
             pattern: "/api/boards/templates.md",
             handler: async () => {
-                const body = await Bun.file(TEMPLATES_PATH).text();
-                return { kind: "text", status: 200, contentType: "text/markdown", body };
+                try {
+                    const body = await Bun.file(TEMPLATES_PATH).text();
+                    return { kind: "text", status: 200, contentType: "text/markdown", body };
+                } catch (err) {
+                    return boardsError(err);
+                }
             },
         },
         {

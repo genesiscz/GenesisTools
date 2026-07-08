@@ -168,6 +168,16 @@ describe("handleUpdateCards", () => {
             stop();
         }
     });
+
+    it("includes restore when given", async () => {
+        const { requests, stop } = await stubServer(() => ({ status: 200, body: { ok: true } }));
+        try {
+            await handleUpdateCards({ board: "b1", restore: [5] });
+            expect(requests[0].body).toEqual({ patch: [], remove: [], restore: [5] });
+        } finally {
+            stop();
+        }
+    });
 });
 
 describe("handleScrapeBoard", () => {

@@ -72,6 +72,20 @@ describe("composeBoard", () => {
         expect(r).toMatchObject({ ok: false, code: "not_found", index: 0 });
     });
 
+    it("rejects a negative question cardId while still accepting the cardId:0 sentinel", async () => {
+        const r = await composeBoard(db, "b1", {
+            cards: [textCard("a", "A")],
+            questions: [{ prompt: "Which?", options: ["one", "two"], cardId: -1 }],
+        });
+        expect(r).toMatchObject({ ok: false, code: "not_found", index: 0 });
+
+        const ok = await composeBoard(db, "b1", {
+            cards: [textCard("b", "B")],
+            questions: [{ prompt: "Which?", options: ["one", "two"], cardId: 0 }],
+        });
+        expect(ok.ok).toBe(true);
+    });
+
     it("rejects both section and anchor together (bad_payload)", async () => {
         const anchor = await createCard(db, "b1", { kind: "note", x: 0, y: 0, w: 100, h: 100, payload: { text: "x" } });
         const r = await composeBoard(db, "b1", {

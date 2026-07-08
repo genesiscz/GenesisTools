@@ -45,9 +45,10 @@ function asJson(result: RouteResult): { status: number; body: Record<string, unk
     return { status: result.status, body: result.body as Record<string, unknown> };
 }
 
-describe("POST /api/boards/:slug/compose", () => {
+/** Shared per-test board DB fixture (mkdtemp'd home + in-memory db, reset on both ends). */
+function setupBoardsTestEnv(prefix: string): void {
     beforeEach(() => {
-        const dir = mkdtempSync(join(tmpdir(), "boards-compose-route-"));
+        const dir = mkdtempSync(join(tmpdir(), prefix));
         env.testing.set("GENESIS_TOOLS_HOME", dir);
         env.testing.set("BOARDS_DB_PATH", ":memory:");
         resetDevDashboardStorage();
@@ -62,6 +63,10 @@ describe("POST /api/boards/:slug/compose", () => {
         env.testing.unset("GENESIS_TOOLS_HOME");
         env.testing.unset("BOARDS_DB_PATH");
     });
+}
+
+describe("POST /api/boards/:slug/compose", () => {
+    setupBoardsTestEnv("boards-compose-route-");
 
     async function compose(body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
         const route = findRoute("POST", "/api/boards/:slug/compose");
@@ -105,22 +110,7 @@ describe("POST /api/boards/:slug/compose", () => {
 });
 
 describe("POST /api/boards/:slug/arrange", () => {
-    beforeEach(() => {
-        const dir = mkdtempSync(join(tmpdir(), "boards-arrange-route-"));
-        env.testing.set("GENESIS_TOOLS_HOME", dir);
-        env.testing.set("BOARDS_DB_PATH", ":memory:");
-        resetDevDashboardStorage();
-        resetBoardsDb();
-        resetEventHub();
-    });
-    afterEach(() => {
-        __resetLayoutDebounce();
-        resetEventHub();
-        resetBoardsDb();
-        resetDevDashboardStorage();
-        env.testing.unset("GENESIS_TOOLS_HOME");
-        env.testing.unset("BOARDS_DB_PATH");
-    });
+    setupBoardsTestEnv("boards-arrange-route-");
 
     function findArrange(): RouteDef {
         const def = boardsComposeRoutes().find((d) => d.method === "POST" && d.pattern === "/api/boards/:slug/arrange");
@@ -164,22 +154,7 @@ describe("POST /api/boards/:slug/arrange", () => {
 });
 
 describe("POST /api/boards/:slug/update-cards", () => {
-    beforeEach(() => {
-        const dir = mkdtempSync(join(tmpdir(), "boards-update-route-"));
-        env.testing.set("GENESIS_TOOLS_HOME", dir);
-        env.testing.set("BOARDS_DB_PATH", ":memory:");
-        resetDevDashboardStorage();
-        resetBoardsDb();
-        resetEventHub();
-    });
-    afterEach(() => {
-        __resetLayoutDebounce();
-        resetEventHub();
-        resetBoardsDb();
-        resetDevDashboardStorage();
-        env.testing.unset("GENESIS_TOOLS_HOME");
-        env.testing.unset("BOARDS_DB_PATH");
-    });
+    setupBoardsTestEnv("boards-update-route-");
 
     function findUpdate(): RouteDef {
         const def = boardsComposeRoutes().find(
@@ -267,22 +242,7 @@ describe("POST /api/boards/:slug/update-cards", () => {
 });
 
 describe("GET /api/boards/:slug/scrape", () => {
-    beforeEach(() => {
-        const dir = mkdtempSync(join(tmpdir(), "boards-scrape-route-"));
-        env.testing.set("GENESIS_TOOLS_HOME", dir);
-        env.testing.set("BOARDS_DB_PATH", ":memory:");
-        resetDevDashboardStorage();
-        resetBoardsDb();
-        resetEventHub();
-    });
-    afterEach(() => {
-        __resetLayoutDebounce();
-        resetEventHub();
-        resetBoardsDb();
-        resetDevDashboardStorage();
-        env.testing.unset("GENESIS_TOOLS_HOME");
-        env.testing.unset("BOARDS_DB_PATH");
-    });
+    setupBoardsTestEnv("boards-scrape-route-");
 
     it("returns the board digest, 404s an unknown section", async () => {
         const db = getBoardsDb();
