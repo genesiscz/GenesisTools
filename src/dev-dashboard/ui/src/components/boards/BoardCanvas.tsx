@@ -667,7 +667,7 @@ export function BoardCanvas({
                 onSelect={(bounds) => {
                     const el = containerRef.current;
                     if (el) {
-                        setVp(fitBounds(bounds, el.clientWidth, el.clientHeight));
+                        setVp(fitBounds(bounds, { width: el.clientWidth, height: el.clientHeight }));
                     }
                 }}
             />
