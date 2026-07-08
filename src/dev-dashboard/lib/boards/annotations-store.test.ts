@@ -231,24 +231,41 @@ describe("annotations-store", () => {
         await expect(deleteAnnotation(db, withMessage.id)).rejects.toBeInstanceOf(NotUndoableError);
     });
 
-    it("a user reply on in_review/working re-queues to open and clears the claim; an agent reply does not", async () => {
-        const ann = await createAnnotation(db, {
-            boardSlug,
-            cardId,
-            region: REGION,
-            intent: "fix",
-            prompt: "p",
-            status: "open",
-            assignee: "claude",
-        });
-        await patchAnnotation(db, ann.id, { status: "working", claimedBy: "claude", claimedListener: 7 });
-        await patchAnnotation(db, ann.id, { status: "in_review" });
+    it("a user reply restages in_review and resolved threads; working and agent replies are left alone", async () => {
+        const mk = async (target: "in_review" | "working" | "resolved"): Promise<number> => {
+            const a = await createAnnotation(db, {
+                boardSlug,
+                cardId,
+                region: REGION,
+                intent: "fix",
+                prompt: "p",
+                status: "open",
+                assignee: "claude",
+            });
+            if (target === "working") {
+                await patchAnnotation(db, a.id, { status: "working", claimedBy: "claude", claimedListener: 7 });
+            } else {
+                await patchAnnotation(db, a.id, { status: target });
+            }
+            return a.id;
+        };
+        const inReview = await mk("in_review");
+        const working = await mk("working");
+        const resolved = await mk("resolved");
 
-        await addMessage(db, { annotationId: ann.id, author: "claude", body: "done" });
-        expect((await getAnnotation(db, ann.id)).status).toBe("in_review");
+        // An agent reply (author === assignee) never changes status.
+        await addMessage(db, { annotationId: inReview, author: "claude", body: "done" });
+        expect((await getAnnotation(db, inReview)).status).toBe("in_review");
 
-        await addMessage(db, { annotationId: ann.id, author: "user", body: "not quite" });
-        expect((await getAnnotation(db, ann.id)).status).toBe("open");
+        // A user reply (author !== assignee) restages in_review and resolved; an actively-working
+        // thread is not interrupted (decision §0.1.1 — vitrinka parity).
+        await addMessage(db, { annotationId: inReview, author: "user", body: "not quite" });
+        await addMessage(db, { annotationId: working, author: "user", body: "still going?" });
+        await addMessage(db, { annotationId: resolved, author: "user", body: "reopen please" });
+
+        expect((await getAnnotation(db, inReview)).status).toBe("staged");
+        expect((await getAnnotation(db, resolved)).status).toBe("staged");
+        expect((await getAnnotation(db, working)).status).toBe("working");
     });
 
     it("a staged prompt edit replaces the revision in place; a post-dispatch edit appends", async () => {
@@ -327,7 +344,7 @@ describe("annotations-store", () => {
         expect(card.payload).toEqual({});
     });
 
-    it("reject rolls the card face back to the pre-attempt blob; history keeps both versions", async () => {
+    it("reject reverts its own pending face and restages the thread", async () => {
         const ann = await createAnnotation(db, {
             boardSlug,
             cardId,
@@ -343,13 +360,62 @@ describe("annotations-store", () => {
             afterFile: "a.png",
             afterBlobKey: "hash2.png",
         });
+        await patchAnnotation(db, ann.id, { status: "in_review" });
+
         const result = await setVerdict(db, attempt.id, "reject");
         expect(result.card.blobKey).toBe("hash1.png");
         expect(result.card.currentVersion).toBe(1);
-        expect(result.annotation.status).toBe("open");
+        expect(result.annotation.status).toBe("staged"); // reject re-stages for the next dispatch
 
         const versions = await listCardVersions(db, cardId);
         expect(versions.map((v) => v.blobKey)).toEqual(["hash1.png", "hash2.png"]);
+    });
+
+    it("reject leaves a superseded face alone (newer-attach guard) but still restages the thread", async () => {
+        // Two annotations on the SAME card, each landing an attempt: T2 supersedes T1's face.
+        const a1 = await createAnnotation(db, {
+            boardSlug,
+            cardId,
+            region: REGION,
+            intent: "fix",
+            prompt: "p1",
+            status: "open",
+        });
+        const t1 = await addAttempt(db, {
+            annotationId: a1.id,
+            afterSetRef: "proj/main/s1",
+            afterVersion: 2,
+            afterFile: "a.png",
+            afterBlobKey: "hash2.png",
+        });
+        const a2 = await createAnnotation(db, {
+            boardSlug,
+            cardId,
+            region: REGION,
+            intent: "fix",
+            prompt: "p2",
+            status: "open",
+        });
+        const t2 = await addAttempt(db, {
+            annotationId: a2.id,
+            afterSetRef: "proj/main/s1",
+            afterVersion: 3,
+            afterFile: "a.png",
+            afterBlobKey: "hash3.png",
+        });
+        expect(t2.card.blobKey).toBe("hash3.png"); // T2 owns the live face now
+
+        await patchAnnotation(db, a1.id, { status: "in_review" });
+        const result = await setVerdict(db, t1.attempt.id, "reject");
+
+        // Guard: T1's face (v2) was already superseded by T2's v3, so the live face must NOT roll back.
+        expect(result.card.blobKey).toBe("hash3.png");
+        expect(result.card.currentVersion).toBe(3);
+        // ...but the rejected thread still re-stages.
+        expect(result.annotation.status).toBe("staged");
+        // History is untouched — all three versions remain.
+        const versions = await listCardVersions(db, cardId);
+        expect(versions.map((v) => v.blobKey)).toEqual(["hash1.png", "hash2.png", "hash3.png"]);
     });
 
     it("a chain of attempt/reject cycles always lands on the last surviving (non-rejected) face", async () => {

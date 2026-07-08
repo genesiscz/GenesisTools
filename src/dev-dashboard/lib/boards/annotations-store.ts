@@ -527,12 +527,14 @@ export async function addMessage(
         .returningAll()
         .executeTakeFirstOrThrow();
 
-    // A user reply (author != assignee) re-queues in-flight work; agent replies never change status.
+    // A user reply (author != assignee) re-stages a reviewed/resolved thread so it re-enters the
+    // dispatch queue (decision §0.1.1 — vitrinka parity); an actively-working thread is not
+    // interrupted, and agent replies never change status.
     const isUserReply = input.author !== row.assignee;
-    if (isUserReply && (row.status === "in_review" || row.status === "working")) {
+    if (isUserReply && (row.status === "in_review" || row.status === "resolved")) {
         await db.kysely
             .updateTable("annotations")
-            .set({ status: "open", claimed_by: "", claimed_listener: 0, claimed_at: "", updated_at: now })
+            .set({ status: "staged", claimed_by: "", claimed_listener: 0, claimed_at: "", updated_at: now })
             .where("id", "=", annotationId)
             .execute();
     }
@@ -727,31 +729,52 @@ export async function setVerdict(
                 .executeTakeFirstOrThrow();
         }
 
-        // reject: roll the card's live face back to the last surviving (non-rejected) version
-        // that predates this attempt's appended version.
-        const appended = await trx
-            .selectFrom("card_versions")
-            .select("version")
-            .where("card_id", "=", annotationRow.card_id)
-            .where("attempt_id", "=", attemptId)
-            .executeTakeFirst();
-        const target = appended ? await findRevertTarget(trx, annotationRow.card_id, appended.version) : undefined;
-        if (!target) {
-            throw new NotFoundError(`no prior version to revert to for card ${annotationRow.card_id}`);
-        }
-        return trx
-            .updateTable("board_cards")
-            .set({
-                set_ref: target.set_ref,
-                set_version: target.set_version,
-                file_path: target.file_path,
-                blob_key: target.blob_key,
-                current_version: target.version,
-                updated_at: now,
-            })
+        // reject: verdict is already recorded above. Roll the card's live face back to the last
+        // surviving (non-rejected) version — BUT only if this attempt still owns the current face.
+        // A newer attach that superseded it must not be clobbered (parity with store.RevertCardFace
+        // guard, boards.go:1702-1704).
+        const cardRow = await trx
+            .selectFrom("board_cards")
+            .selectAll()
             .where("id", "=", annotationRow.card_id)
-            .returningAll()
             .executeTakeFirstOrThrow();
+        const faceRow = await trx
+            .selectFrom("card_versions")
+            .select("attempt_id")
+            .where("card_id", "=", annotationRow.card_id)
+            .where("version", "=", cardRow.current_version)
+            .executeTakeFirst();
+        let finalCard = cardRow;
+        if ((faceRow?.attempt_id ?? 0) === attemptId) {
+            const target = await findRevertTarget(trx, annotationRow.card_id, cardRow.current_version);
+            if (!target) {
+                throw new NotFoundError(`no prior version to revert to for card ${annotationRow.card_id}`);
+            }
+            finalCard = await trx
+                .updateTable("board_cards")
+                .set({
+                    set_ref: target.set_ref,
+                    set_version: target.set_version,
+                    file_path: target.file_path,
+                    blob_key: target.blob_key,
+                    current_version: target.version,
+                    updated_at: now,
+                })
+                .where("id", "=", annotationRow.card_id)
+                .returningAll()
+                .executeTakeFirstOrThrow();
+        }
+
+        // Reject re-stages the thread so it re-enters the dispatch queue (decision §0.1.2). Only from
+        // in_review — leave any other state alone (defensive).
+        if (annotationRow.status === "in_review") {
+            await trx
+                .updateTable("annotations")
+                .set({ status: "staged", claimed_by: "", claimed_listener: 0, claimed_at: "", updated_at: now })
+                .where("id", "=", annotationRow.id)
+                .execute();
+        }
+        return finalCard;
     });
 
     return {

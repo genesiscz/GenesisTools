@@ -209,9 +209,10 @@ describe("boardsAnnotationsRoutes", () => {
 
         const getRoute = findRoute("GET", "/api/boards/annotations/:id");
         const afterReply = asJson(await getRoute.handler(makeCtx({ params: { id: String(annotationId) } })));
-        expect(afterReply.body.status).toBe("open");
+        expect(afterReply.body.status).toBe("staged"); // reply re-stages the thread (decision §0.1.1)
 
-        // Reclaim, move to in_review, and accept.
+        // Dispatch releases the re-staged thread back onto the wire, then reclaim → in_review → accept.
+        await dispatchBoard(db, "b1");
         await patch.handler(
             makeCtx({ method: "PATCH", params: { id: String(annotationId) }, body: { status: "working" } })
         );
