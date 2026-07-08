@@ -4,7 +4,9 @@ import { useState } from "react";
 import { BoardCanvas } from "@/components/boards/BoardCanvas";
 import { boardsApi } from "@/components/boards/boards-api";
 import type { Tool } from "@/components/boards/Toolbar";
+import { useBoardEvents } from "@/components/boards/useBoardEvents";
 import { useOperator } from "@/components/boards/useOperator";
+import { LiveSseIndicator } from "@/components/LiveSseIndicator";
 import { useLockPageScroll } from "@/hooks/useLockPageScroll";
 
 function OperatorDialog({ defaultValue, onSubmit }: { defaultValue: string; onSubmit: (name: string) => void }) {
@@ -46,7 +48,10 @@ export function BoardRoute() {
     const boardQuery = useQuery({
         queryKey: ["board", slug],
         queryFn: () => boardsApi.doc(slug),
+        staleTime: 500,
+        refetchInterval: 15_000,
     });
+    const { live } = useBoardEvents(slug);
 
     const dispatchMutation = useMutation({
         mutationFn: () => boardsApi.dispatch(slug),
@@ -67,16 +72,19 @@ export function BoardRoute() {
                     ← boards
                 </Link>
                 <span className="dd-accent-text font-mono text-sm font-bold">{slug}</span>
-                {stagedCount > 0 ? (
-                    <button
-                        type="button"
-                        onClick={() => dispatchMutation.mutate()}
-                        disabled={dispatchMutation.isPending}
-                        className="dd-btn-accent ml-auto rounded-full px-3 py-1 text-xs"
-                    >
-                        ↑ Send to Claude ({stagedCount})
-                    </button>
-                ) : null}
+                <div className="ml-auto flex items-center gap-3">
+                    <LiveSseIndicator live={live} count={boardQuery.data?.cards.length ?? 0} />
+                    {stagedCount > 0 ? (
+                        <button
+                            type="button"
+                            onClick={() => dispatchMutation.mutate()}
+                            disabled={dispatchMutation.isPending}
+                            className="dd-btn-accent rounded-full px-3 py-1 text-xs"
+                        >
+                            ↑ Send to Claude ({stagedCount})
+                        </button>
+                    ) : null}
+                </div>
             </div>
             <div className="min-h-0 flex-1">
                 {boardQuery.isPending ? (
