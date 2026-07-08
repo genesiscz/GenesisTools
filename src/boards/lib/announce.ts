@@ -20,7 +20,8 @@ export function computeAnnouncements(seen: SeenMap, items: WorkItemDto[]): Annou
         if (seen.get(it.id) !== sig) {
             const prompt = it.prompt.replace(/\s+/g, " ").trim();
             const clipped = prompt.length > PROMPT_CLIP ? `${prompt.slice(0, PROMPT_CLIP)}…` : prompt;
-            lines.push(`№${it.id} [${it.intent}] ${it.board}: ${clipped}`);
+            const label = it.intent === "other" && it.intentOther ? it.intentOther : it.intent;
+            lines.push(`№${it.id} [${label}] ${it.board}: ${clipped}`);
         }
     }
     return { lines, next };

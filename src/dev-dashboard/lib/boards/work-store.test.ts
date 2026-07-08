@@ -89,6 +89,27 @@ describe("work-store", () => {
         expect(boardAOnly.map((w) => w.prompt)).toEqual(["a-open"]);
     });
 
+    it("listWork enriches each item with intentOther, boardTitle, setRef and file", async () => {
+        await createBoard(db, { slug: "board-a", title: "Board A" });
+        const card = await makeCard(db, "board-a", "proj/main/s1");
+        await createAnnotation(db, {
+            boardSlug: "board-a",
+            cardId: card.id,
+            region: REGION,
+            intent: "other",
+            intentOther: "a11y",
+            prompt: "contrast",
+            status: "open",
+        });
+
+        const [item] = await listWork(db, { board: "board-a" });
+        expect(item.intent).toBe("other");
+        expect(item.intentOther).toBe("a11y");
+        expect(item.boardTitle).toBe("Board A");
+        expect(item.setRef).toBe("proj/main/s1");
+        expect(item.file).toBe("a.png");
+    });
+
     it("project/branch scope matches the card's set_ref prefix", async () => {
         await createBoard(db, { slug: "b1" });
         const cardMain = await makeCard(db, "b1", "proj/main/s1");
