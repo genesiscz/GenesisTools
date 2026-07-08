@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resetBoardsDb } from "@app/dev-dashboard/lib/boards/db";
+import { createBoard, importSet } from "@app/dev-dashboard/lib/boards/boards-store";
+import { getBoardsDb, resetBoardsDb } from "@app/dev-dashboard/lib/boards/db";
+import { resetEventHub, subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
+import { getSet } from "@app/dev-dashboard/lib/boards/sets-store";
 import { tarGz } from "@app/dev-dashboard/lib/boards/tar";
 import { resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
@@ -103,9 +106,11 @@ describe("boardsSetsRoutes", () => {
         env.testing.set("BOARDS_DB_PATH", ":memory:");
         resetDevDashboardStorage();
         resetBoardsDb();
+        resetEventHub();
     });
 
     afterEach(() => {
+        resetEventHub();
         resetBoardsDb();
         resetDevDashboardStorage();
         env.testing.unset("GENESIS_TOOLS_HOME");
@@ -128,6 +133,25 @@ describe("boardsSetsRoutes", () => {
         expect(second.body.created).toBe(false);
         expect(second.body.version).toBe(1);
         expect(second.body.files).toBe(1);
+    });
+
+    it("PUT of a new key under the same project/branch publishes set_version to boards holding older-key cards", async () => {
+        const db = getBoardsDb();
+        // K1 push + import: board b1 now holds a version-1 shot card.
+        await putContent("proj", "main", "s1", [{ path: "a.png", data: buildPng(320, 200) }]);
+        await createBoard(db, { slug: "b1" });
+        await importSet(db, "b1", await getSet(db, "proj", "main", "s1"));
+
+        const frames: Array<{ type: string; payload: Record<string, unknown> }> = [];
+        const unsub = subscribeBoard("b1", (frame) => frames.push(SafeJSON.parse(frame, { strict: true })));
+
+        // K2 is a NEW key under the same (proj, main) → shared counter mints version 2 → strands b1's card.
+        await putContent("proj", "main", "s2", [{ path: "a.png", data: buildPng(400, 260) }]);
+        unsub();
+
+        const setVersionEvents = frames.filter((f) => f.type === "set_version");
+        expect(setVersionEvents.length).toBeGreaterThanOrEqual(1);
+        expect(setVersionEvents[0].payload).toMatchObject({ project: "proj", branch: "main", version: 2, key: "s2" });
     });
 
     it("rejects an invalid or reserved set key with 400", async () => {

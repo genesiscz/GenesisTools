@@ -14,6 +14,8 @@ import {
 } from "@app/dev-dashboard/lib/boards/sets-store";
 import { untarGz } from "@app/dev-dashboard/lib/boards/tar";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
+import { escapeLike } from "@app/utils/database/predicates";
+import { type SqlBool, sql } from "kysely";
 import { boardsError } from "./boards-errors";
 
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
@@ -35,21 +37,25 @@ async function setOperator(operator: string): Promise<void> {
         .execute();
 }
 
-/** Publishes `set_version` to every board with a live card on an older version of this set. */
+/** Publishes `set_version` to every board holding a live shot card from this (project, branch)
+ *  at a version below the one just pushed. Scope is the whole prefix, not the new key's exact ref:
+ *  the version counter is shared per (project, branch), so a fresh key strands older keys' cards
+ *  (mirrors store.BoardsWithStaleCards, boards.go:892-899). */
 async function notifyStaleCards(opts: {
     project: string;
     branch: string;
     key: string;
     version: number;
-    setRef: string;
 }): Promise<void> {
-    const { project, branch, key, version, setRef } = opts;
+    const { project, branch, key, version } = opts;
     const db = getBoardsDb();
+    const pattern = `${escapeLike(`${project}/${branch}/`)}%`;
     const stale = await db.kysely
         .selectFrom("board_cards")
         .innerJoin("boards", "boards.id", "board_cards.board_id")
         .select(["boards.slug"])
-        .where("board_cards.set_ref", "=", setRef)
+        .where("board_cards.kind", "=", "shot")
+        .where(sql<SqlBool>`board_cards.set_ref LIKE ${pattern} ESCAPE '\\'`)
         .where("board_cards.deleted_at", "=", "")
         .where("board_cards.set_version", "<", version)
         .groupBy("boards.slug")
@@ -105,7 +111,6 @@ export function boardsSetsRoutes(): RouteDef[] {
                         branch: result.set.branch,
                         key: result.set.key,
                         version: result.set.version,
-                        setRef: `${result.set.project}/${result.set.branch}/${result.set.key}`,
                     });
 
                     return {
