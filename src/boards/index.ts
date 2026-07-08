@@ -5,6 +5,7 @@ import { Command } from "commander";
 import { registerAddCommand } from "./commands/add";
 import { registerBoardFromSetCommand } from "./commands/board-from-set";
 import { registerInitCommand } from "./commands/init";
+import { registerOperatorCommand } from "./commands/operator";
 import { registerPushCommand } from "./commands/push";
 import { registerWatchCommand } from "./commands/watch";
 
@@ -16,6 +17,7 @@ registerAddCommand(program);
 registerPushCommand(program);
 registerBoardFromSetCommand(program);
 registerWatchCommand(program);
+registerOperatorCommand(program);
 
 await runTool(program, { tool: "boards" }).catch((err) => {
     logger.error({ err }, "boards CLI failed");

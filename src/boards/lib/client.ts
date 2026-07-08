@@ -54,15 +54,22 @@ export async function getJson<T>(base: string, path: string, signal?: AbortSigna
     return body;
 }
 
+/** Bun's fetch UTF-8-encodes header values (unlike Go's latin1 net/http), so — unlike vitrinka's
+ *  latin1 pre-encode — the actor is sent RAW: pre-encoding would double-encode under Bun. Operator
+ *  names are sanitized to printable, ≤40-char strings, so they carry as-is; ASCII round-trips exactly. */
+function actorHeader(actor: string): Record<string, string> {
+    return { "x-board-actor": actor };
+}
+
 export async function postJson<T>(
     base: string,
     path: string,
-    options?: { payload?: unknown; method?: string; signal?: AbortSignal }
+    options?: { payload?: unknown; method?: string; signal?: AbortSignal; actor?: string }
 ): Promise<T> {
-    const { payload, method = "POST", signal } = options ?? {};
+    const { payload, method = "POST", signal, actor } = options ?? {};
     const { status, body } = await rawRequest<T>(base, path, {
         method,
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...(actor ? actorHeader(actor) : {}) },
         body: SafeJSON.stringify(payload ?? {}),
         signal,
     });
@@ -77,11 +84,12 @@ export async function putRaw<T>(
     path: string,
     data: Uint8Array,
     contentType: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    actor?: string
 ): Promise<T> {
     const { status, body } = await rawRequest<T>(base, path, {
         method: "PUT",
-        headers: { "content-type": contentType },
+        headers: { "content-type": contentType, ...(actor ? actorHeader(actor) : {}) },
         // A bare `Uint8Array` parameter type-widens to Uint8Array<ArrayBufferLike>, which isn't
         // assignable to fetch's BodyInit under TS 5.7 typed-array generics (same quirk as
         // dev-dashboard/lib/boards/tar.ts); copy into a concrete ArrayBuffer-backed view.
