@@ -55,6 +55,7 @@ export function boardsWorkRoutes(): RouteDef[] {
                     const scope = parseScope(ctx.query);
                     const session = ctx.query.get("session") ?? "";
                     const actor = ctx.query.get("actor") ?? "";
+                    const takeover = ctx.query.get("takeover") === "1";
                     if (session && !scope) {
                         return {
                             kind: "json",
@@ -67,12 +68,18 @@ export function boardsWorkRoutes(): RouteDef[] {
                     for (;;) {
                         await reapExpiredListeners(db);
                         if (session && scope) {
-                            const lease = await claimOrRenewLease(db, scope, session, actor);
+                            const lease = await claimOrRenewLease(db, scope, session, actor, takeover);
                             if (lease.conflict) {
                                 return {
                                     kind: "json",
                                     status: 409,
-                                    body: { error: "scope held by a live listener", live: true, holder: lease.holder },
+                                    body: {
+                                        error: lease.live
+                                            ? "scope held by a live listener"
+                                            : "scope held by an expired listener — retry with takeover=1 to steal it",
+                                        live: lease.live,
+                                        holder: lease.holder,
+                                    },
                                 };
                             }
                             leaseId = lease.id;

@@ -28,6 +28,9 @@ export function listenerTtlMs(): number {
 export interface LeaseConflict {
     conflict: true;
     holder: ListenerDto;
+    /** Whether the holder's lease is still within TTL. An expired holder is reported (not
+     *  silently stolen) unless the claim carried `takeover`. */
+    live: boolean;
 }
 export interface LeaseOk {
     conflict: false;
@@ -233,7 +236,8 @@ export async function claimOrRenewLease(
     db: DatabaseClient<BoardsDb>,
     scope: WorkScope,
     session: string,
-    actor: string
+    actor: string,
+    takeover = false
 ): Promise<LeaseOk | LeaseConflict> {
     const cols = scopeColumns(scope);
     const now = nowIso();
@@ -278,7 +282,15 @@ export async function claimOrRenewLease(
                 .execute();
             return { conflict: false, id: holder.id };
         }
-        return { conflict: true, holder: toListenerDto(holder) };
+        // Steal expired leases ONLY, and only when the caller asked (takeover) — a live holder is
+        // never displaced (parity with listeners.stealExpired, listeners.go:155-178). reapExpired
+        // usually clears expired rows first; this covers the window where it hasn't run or TTLs differ.
+        const cutoff = new Date(Date.now() - listenerTtlMs()).toISOString();
+        const live = holder.last_seen >= cutoff;
+        if (!(takeover && !live)) {
+            return { conflict: true, holder: toListenerDto(holder), live };
+        }
+        await releaseLease(db, holder.id); // revert its claimed items + delete, then claim fresh below
     }
 
     // Upsert against idx_listeners_scope (db.ts BOOTSTRAP_DDL): if another racer inserted the

@@ -142,7 +142,10 @@ describe("boardsWorkRoutes", () => {
             await wait.handler(makeCtx({ query: { board: "b1", timeout: "1", session: "session-b", actor: "bob" } }))
         );
         expect(res.status).toBe(409);
-        expect((res.body.holder as { session: string }).session).toBe("session-a");
+        expect(res.body.live).toBe(true); // holder is fresh — honestly reported as live
+        const holder = res.body.holder as { session: string; lastSeen: string };
+        expect(holder.session).toBe("session-a");
+        expect(holder.lastSeen).not.toBe("");
     }, 10000);
 
     it("(d2) an anonymous wait (no session) never leases, so it coexists with a live watch lease on the same scope", async () => {
