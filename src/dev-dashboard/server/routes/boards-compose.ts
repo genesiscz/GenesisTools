@@ -1,6 +1,7 @@
 import { type ComposeBody, composeBoard } from "@app/dev-dashboard/lib/boards/compose-store";
 import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { publishBoardEvent } from "@app/dev-dashboard/lib/boards/events";
+import { type ArrangeBody, runArrange } from "@app/dev-dashboard/lib/boards/layout-engine";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
 import { boardsError } from "./boards-errors";
 import { getOperator } from "./boards-sets";
@@ -52,6 +53,27 @@ export function boardsComposeRoutes(): RouteDef[] {
                             questions: result.questions,
                             region: result.region,
                         },
+                    };
+                } catch (err) {
+                    return boardsError(err);
+                }
+            },
+        },
+        {
+            method: "POST",
+            pattern: "/api/boards/:slug/arrange",
+            handler: async (ctx) => {
+                try {
+                    const body = await ctx.readJson<ArrangeBody>();
+                    const outcome = await runArrange(getBoardsDb(), ctx.params.slug, body);
+                    if (!outcome.ok) {
+                        return { kind: "json", status: outcome.status, body: { error: outcome.message } };
+                    }
+                    // runArrange publishes the layout/card SSE events itself (after its writes commit).
+                    return {
+                        kind: "json",
+                        status: 200,
+                        body: { ok: true, moved: outcome.moved, cards: outcome.cards, saved: outcome.saved },
                     };
                 } catch (err) {
                     return boardsError(err);

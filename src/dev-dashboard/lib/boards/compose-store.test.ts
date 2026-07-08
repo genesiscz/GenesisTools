@@ -4,6 +4,7 @@ import { createBoard, createCard, getBoardDoc } from "./boards-store";
 import { composeBoard } from "./compose-store";
 import { BOOTSTRAP_DDL } from "./db";
 import type { BoardsDb } from "./db-types";
+import { __resetLayoutDebounce } from "./layout-engine";
 
 function makeTestDb(): DatabaseClient<BoardsDb> {
     return createKyselyClient<BoardsDb>({ path: ":memory:", bootstrap: BOOTSTRAP_DDL, pragmas: { foreignKeys: true } });
@@ -18,7 +19,10 @@ describe("composeBoard", () => {
         db = makeTestDb();
         await createBoard(db, { slug: "b1" });
     });
-    afterEach(() => db.close());
+    afterEach(() => {
+        __resetLayoutDebounce();
+        db.close();
+    });
 
     it("rejects an empty batch", async () => {
         const r = await composeBoard(db, "b1", { cards: [] });
