@@ -1,6 +1,7 @@
 import type { DatabaseClient } from "@app/utils/database/client";
+import { escapeLike } from "@app/utils/database/predicates";
 import { SafeJSON } from "@app/utils/json";
-import type { Kysely, Selectable } from "kysely";
+import { type Kysely, type Selectable, type SqlBool, sql } from "kysely";
 import { getBoardAnnotations } from "./annotations-store";
 import type {
     AnnotationMessagesTable,
@@ -671,11 +672,16 @@ export async function syncSetCards(
 ): Promise<{ updated: number; skippedFiles: string[] }> {
     const board = await getBoardRow(db, boardSlug);
     const setRef = setRefOf(set);
+    // Staleness is scoped to the whole (project, branch) prefix, not the exact target ref:
+    // the version counter is shared per (project, branch), so a newer key strands the older
+    // key's cards at a lower version (mirrors vitrinka store.SyncCards, boards.go:811-868).
+    const pattern = `${escapeLike(`${set.project}/${set.branch}/`)}%`;
     const staleCards = await db.kysely
         .selectFrom("board_cards")
         .selectAll()
         .where("board_id", "=", board.id)
-        .where("set_ref", "=", setRef)
+        .where("kind", "=", "shot")
+        .where(sql<SqlBool>`set_ref LIKE ${pattern} ESCAPE '\\'`)
         .where("set_version", "<", set.version)
         .where("deleted_at", "=", "")
         .execute();
@@ -710,6 +716,7 @@ export async function syncSetCards(
             await trx
                 .updateTable("board_cards")
                 .set({
+                    set_ref: setRef, // re-point onto the target key (parity with store.SyncCards)
                     blob_key: file.blobKey,
                     set_version: set.version,
                     current_version: nextVersion,

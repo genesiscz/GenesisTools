@@ -28,7 +28,7 @@ import {
 } from "./boards-store";
 import { BOOTSTRAP_DDL } from "./db";
 import type { BoardsDb } from "./db-types";
-import { getSet, NotFoundError, setRefOf, syncSet } from "./sets-store";
+import { getSet, NotFoundError, syncSet } from "./sets-store";
 
 function makeTestDb(): DatabaseClient<BoardsDb> {
     return createKyselyClient<BoardsDb>({ path: ":memory:", bootstrap: BOOTSTRAP_DDL, pragmas: { foreignKeys: true } });
@@ -263,8 +263,9 @@ describe("boards-store", () => {
         expect(cards[0].payload.naturalHeight).toBe(2796);
     });
 
-    it("syncSetCards refreshes payload.naturalWidth/Height for a stale card, preserving other payload keys", async () => {
+    it("syncSetCards re-points cards to a newer key under the same project/branch, refreshing dims and preserving other payload keys", async () => {
         await createBoard(db, { slug: "b1" });
+        // Push K1 (version 1) and import it — the card lands tagged with set_ref proj/main/s1.
         await syncSet(db, {
             project: "proj",
             branchRaw: "main",
@@ -272,32 +273,37 @@ describe("boards-store", () => {
             entries: [pngFile("a.png", 1170, 2532)],
         });
         const set1 = await getSet(db, "proj", "main", "s1");
+        const { cards } = await importSet(db, "b1", set1);
+        const cardId = cards[0].id;
+        expect(cards[0].setRef).toBe("proj/main/s1");
 
-        // Construct a card already tagged with this set_ref but an older set_version, standing in
-        // for however staleness gets produced upstream — syncSetCards only needs set_ref match +
-        // set_version < set.version, which this directly satisfies without depending on how/whether
-        // a real re-push of the same key ever bumps `version` (a separate, out-of-scope question).
-        const card = await createCard(db, "b1", {
-            kind: "shot",
-            x: 0,
-            y: 0,
-            w: 420,
-            h: 907,
-            setRef: setRefOf(set1),
-            setVersion: set1.version - 1,
-            filePath: "a.png",
-            blobKey: "stale-hash",
-            payload: { note: "keep me" },
+        // Annotate an unrelated payload key to prove the remap preserves it.
+        const before = await getBoardDoc(db, "b1");
+        const priorPayload = before.cards.find((c) => c.id === cardId)?.payload ?? {};
+        await patchCard(db, cardId, { payload: { ...priorPayload, note: "keep me" } });
+
+        // Push K2 — a NEW key under the SAME (proj, main). The version counter is shared per
+        // (project, branch), so K2 mints version 2, which strands K1's card at version 1. Same
+        // file path (so path-match remap fires) but different content (so the blob key changes).
+        await syncSet(db, {
+            project: "proj",
+            branchRaw: "main",
+            key: "s2",
+            entries: [pngFile("a.png", 1290, 2796)],
         });
+        const set2 = await getSet(db, "proj", "main", "s2"); // latest === K2
+        expect(set2.version).toBe(2);
 
-        const result = await syncSetCards(db, "b1", set1);
+        const result = await syncSetCards(db, "b1", set2);
         expect(result.updated).toBe(1);
 
         const doc = await getBoardDoc(db, "b1");
-        const updated = doc.cards.find((c) => c.id === card.id);
-        expect(updated?.blobKey).toBe(set1.files[0].blobKey);
-        expect(updated?.payload.naturalWidth).toBe(1170);
-        expect(updated?.payload.naturalHeight).toBe(2532);
+        const updated = doc.cards.find((c) => c.id === cardId);
+        expect(updated?.setRef).toBe("proj/main/s2"); // re-pointed onto the newer key
+        expect(updated?.blobKey).toBe(set2.files[0].blobKey);
+        expect(updated?.blobKey).not.toBe(set1.files[0].blobKey); // genuinely a new blob
+        expect(updated?.payload.naturalWidth).toBe(1290);
+        expect(updated?.payload.naturalHeight).toBe(2796);
         expect(updated?.payload.note).toBe("keep me"); // unrelated payload key untouched
     });
 
