@@ -68,6 +68,8 @@ Each step is ONE action (2–5 minutes): write the failing test → run it, expe
 
 ## Task skeleton (mandatory)
 
+Use exactly this heading format — `### Task N: [Component Name]` (three `#`) — executors and graders match on it.
+
 ````markdown
 ### Task N: [Component Name]
 
@@ -113,6 +115,8 @@ re-apply once">. Still red after that: STOP, append to `## Deviations`, do not s
 Task N+1.
 ````
 
+ON-FAIL is one sentence, one action. It may NEVER modify anything declared in the interface freeze (names, signatures, frozen constants/sets), and it is not a debugging expedition — if one bounded action doesn't fix it, the answer is STOP, not a second idea.
+
 No test infrastructure in the target repo? Replace test steps with the strongest available observable (`tsgo --noEmit`, lint, a runnable command with expected output) — never drop verification.
 
 ## No placeholders — the altitude rule
@@ -137,6 +141,7 @@ Run this checklist yourself — not a subagent dispatch:
 4. **Stranger test** — could a model that has never seen this conversation execute it, alone, from the file?
 5. **Observable verification** — every task's checks name expected output, not "check it works".
 6. **Bounded failure** — every task has exactly one ON-FAIL fallback, then stop.
+7. **Dry-run trace** — take the least trivial example/test input in the plan and trace it through the planned code line by line; the traced output must equal the test's expected value. A plan whose own tests fail its own implementation strands the executor at the first VERIFY — the worst possible leak, because the executor is forbidden from fixing it.
 
 Fix and move on; no re-review loop.
 
