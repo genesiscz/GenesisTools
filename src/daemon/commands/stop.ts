@@ -1,9 +1,15 @@
 import { getDaemonPid } from "@app/daemon/daemon";
 import { getDaemonStatus, uninstallLaunchd } from "@app/daemon/lib/launchd";
-import { safeSigterm, waitForDaemonRestart } from "@app/daemon/lib/wait-for-restart";
+import { stopWithEscalation, waitForDaemonRestart } from "@app/daemon/lib/wait-for-restart";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
+
+const STEP_LABEL: Record<string, string> = {
+    sigterm: "graceful SIGTERM",
+    "sigterm-again": "second SIGTERM (force-exit handler)",
+    sigkill: "SIGKILL",
+};
 
 export function registerStopCommand(program: Command): void {
     program
@@ -26,12 +32,24 @@ export function registerStopCommand(program: Command): void {
                 return;
             }
 
+            let stepNote = "";
+
             if (pid) {
-                safeSigterm(pid);
+                const s = p.spinner();
+                s.start(`Stopping daemon (PID ${pid})...`);
+                const result = await stopWithEscalation(pid);
+                stepNote = result.step ? ` via ${STEP_LABEL[result.step] ?? result.step}` : "";
+
+                if (!result.exited) {
+                    s.stop(`Daemon (PID ${pid}) survived SIGTERM→SIGTERM→SIGKILL — inspect it manually`);
+                    return;
+                }
+
+                s.stop(`Daemon stopped${stepNote}`);
             }
 
             if (!status.installed) {
-                p.log.success(`Sent SIGTERM to daemon (PID ${pid})`);
+                p.log.success(`Daemon stopped (PID ${pid})${stepNote}`);
                 return;
             }
 
