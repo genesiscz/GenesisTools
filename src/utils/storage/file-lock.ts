@@ -58,7 +58,7 @@ export async function attemptRenameSteal(lockPath: string, expectedContent: stri
     let stolen: string | null = null;
 
     try {
-        stolen = readFileSync(tempPath, "utf-8");
+        stolen = await Bun.file(tempPath).text();
     } catch {
         stolen = null;
     }
