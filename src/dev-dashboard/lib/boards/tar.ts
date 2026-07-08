@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { gunzipSync } from "node:zlib";
 import { extract, pack } from "tar-stream";
 
 export interface TarEntry {
@@ -10,10 +11,17 @@ const MAX_DECOMPRESSED_BYTES = 500 * 1024 * 1024; // 500 MiB ceiling on the extr
 
 /** Unpack a gzipped tar body into memory. Rejects absolute / traversal paths. */
 export async function untarGz(body: Uint8Array): Promise<TarEntry[]> {
-    // A bare `Uint8Array` parameter type-widens to Uint8Array<ArrayBufferLike>, which isn't
-    // assignable to Bun.gunzipSync's Uint8Array<ArrayBuffer> parameter under TS 5.7 typed-array
-    // generics; `new Uint8Array(body)` copies into a concrete ArrayBuffer-backed view.
-    const tarBuf = Buffer.from(Bun.gunzipSync(new Uint8Array(body)));
+    // node:zlib's maxOutputLength aborts mid-inflation, so a gzip bomb can't materialize the
+    // full tar in memory before the cap runs (Bun.gunzipSync has no such bound).
+    let tarBuf: Buffer;
+    try {
+        tarBuf = gunzipSync(Buffer.from(body), { maxOutputLength: MAX_DECOMPRESSED_BYTES });
+    } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ERR_BUFFER_TOO_LARGE") {
+            throw new Error(`tar body exceeds ${MAX_DECOMPRESSED_BYTES} bytes decompressed`, { cause: err });
+        }
+        throw err;
+    }
     const ex = extract();
     const entries: TarEntry[] = [];
     let totalBytes = 0;
