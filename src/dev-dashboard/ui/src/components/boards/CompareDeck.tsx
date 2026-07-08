@@ -107,6 +107,11 @@ export function CompareDeck({ slug, annotation }: CompareDeckProps) {
     const face = faces[Math.min(index, faces.length - 1)];
     const cycle = () => setIndex((i) => (i + 1) % faces.length);
 
+    // Only the newest attempt may still own the live face — verdict buttons target it alone, so an
+    // older (superseded) pending attempt can't be accepted/rejected out from under a newer one.
+    const lastAttempt = annotation.attempts[annotation.attempts.length - 1];
+    const newestPendingAttemptId = lastAttempt && lastAttempt.verdict === "" ? lastAttempt.id : null;
+
     return (
         <div className="border-b border-[var(--dd-border)] p-3">
             <div
@@ -144,7 +149,7 @@ export function CompareDeck({ slug, annotation }: CompareDeckProps) {
                 ) : null}
                 <span>{face.caption}</span>
             </div>
-            {face.pending && face.attemptId != null ? (
+            {face.attemptId != null && face.attemptId === newestPendingAttemptId ? (
                 <div className="mt-1 flex gap-2 text-xs">
                     <button
                         type="button"

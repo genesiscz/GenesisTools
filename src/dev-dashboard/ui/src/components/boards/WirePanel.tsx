@@ -197,29 +197,27 @@ export function WirePanel({ slug, annotation, boardMessages, operator, onClose }
                             </button>
                         ) : null}
                         {annotation.status === "in_review" ? (
-                            <>
-                                <button
-                                    type="button"
-                                    onClick={() => verdictMutation.mutate("accept")}
-                                    className="text-[var(--dd-accent-from)] hover:underline"
-                                >
-                                    ✓ accept
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => verdictMutation.mutate("reject")}
-                                    className="text-[var(--dd-danger)] hover:underline"
-                                >
-                                    ✗ reject
-                                </button>
+                            // Single verdict surface: accept lives here, reject is the CompareDeck's
+                            // per-face affordance (which re-stages the thread). A user reply re-stages too.
+                            <button
+                                type="button"
+                                onClick={() => verdictMutation.mutate("accept")}
+                                className="text-[var(--dd-accent-from)] hover:underline"
+                            >
+                                ✓ accept
+                            </button>
+                        ) : null}
+                        {annotation.status === "resolved" ? (
+                            <span className="flex items-center gap-2 text-[var(--dd-text-muted)]">
+                                resolved —
                                 <button
                                     type="button"
                                     onClick={() => reopenMutation.mutate()}
                                     className="hover:underline"
                                 >
-                                    ↩ reopen
+                                    ↩ reopen to iterate
                                 </button>
-                            </>
+                            </span>
                         ) : null}
                         {annotation.status === "cancelled" ? (
                             <button

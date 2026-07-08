@@ -140,13 +140,27 @@ export function BoardCanvas({
     });
 
     const pendingAttemptCardIds = useMemo(() => {
-        const ids = new Set<number>();
+        // Mirror vitrinka's FacePending (cardCols, boards.go:353-360): a card pulses iff its CURRENT
+        // face is an unreviewed attempt — not iff ANY thread on it has a pending attempt. Approximated
+        // doc-side by the newest attempt across all annotations on the card, so a card whose latest
+        // attempt was accepted/rejected can't keep a ghost dot from an older, superseded thread.
+        const newestByCard = new Map<number, { createdAt: string; verdict: string }>();
 
         for (const annotation of doc.annotations) {
             const latest = annotation.attempts[annotation.attempts.length - 1];
+            if (!latest) {
+                continue;
+            }
+            const prev = newestByCard.get(annotation.cardId);
+            if (!prev || latest.createdAt > prev.createdAt) {
+                newestByCard.set(annotation.cardId, { createdAt: latest.createdAt, verdict: latest.verdict });
+            }
+        }
 
-            if (latest && latest.verdict === "") {
-                ids.add(annotation.cardId);
+        const ids = new Set<number>();
+        for (const [cardId, latest] of newestByCard) {
+            if (latest.verdict === "") {
+                ids.add(cardId);
             }
         }
 
