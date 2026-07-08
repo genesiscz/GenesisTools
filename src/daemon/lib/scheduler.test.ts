@@ -6,6 +6,10 @@ import type { DaemonTask, TaskState } from "./types";
 
 const logsBaseDir = mkdtempSync(join(tmpdir(), "scheduler-test-"));
 
+// No-op notifier: bun test must NEVER fire real macOS notification banners
+// (they spammed the user's notification center before this seam existed).
+const noopNotify = async () => {};
+
 let runDurationMs = 1;
 
 const runTaskMock = mock(async () => {
@@ -20,11 +24,7 @@ const runTaskMock = mock(async () => {
     };
 });
 
-mock.module("./runner", () => ({
-    runTask: runTaskMock,
-}));
-
-const { dispatchDueTasks, jitteredNow } = await import("./scheduler");
+import { dispatchDueTasks, EXIT_OWNERSHIP_LOST, EXIT_WEDGED, jitteredNow, runSchedulerLoop } from "./scheduler";
 
 async function drainActiveRuns(activeRuns: Set<string>): Promise<void> {
     const deadline = Date.now() + 5_000;
@@ -106,7 +106,15 @@ describe("scheduler logging consolidation", () => {
         });
 
         try {
-            dispatchDueTasks({ tasks, taskStates, activeRuns, logsBaseDir, now });
+            dispatchDueTasks({
+                tasks,
+                taskStates,
+                activeRuns,
+                logsBaseDir,
+                now,
+                notify: noopNotify,
+                runTask: runTaskMock,
+            });
             await drainActiveRuns(activeRuns);
 
             const completionLogs = (infoSpy.mock.calls as unknown[][]).filter((call) => {
@@ -164,7 +172,15 @@ describe("scheduler grid anchoring", () => {
         });
 
         runDurationMs = 50;
-        dispatchDueTasks({ tasks, taskStates, activeRuns, logsBaseDir, now: scheduledAt });
+        dispatchDueTasks({
+            tasks,
+            taskStates,
+            activeRuns,
+            logsBaseDir,
+            now: scheduledAt,
+            notify: noopNotify,
+            runTask: runTaskMock,
+        });
         await drainActiveRuns(activeRuns);
 
         const afterSlowRun = taskStates.get("slow-task");
@@ -173,7 +189,15 @@ describe("scheduler grid anchoring", () => {
 
         runDurationMs = 1;
         runTaskMock.mockClear();
-        dispatchDueTasks({ tasks, taskStates, activeRuns, logsBaseDir, now: afterSlowRun?.nextRunAt });
+        dispatchDueTasks({
+            tasks,
+            taskStates,
+            activeRuns,
+            logsBaseDir,
+            now: afterSlowRun?.nextRunAt,
+            notify: noopNotify,
+            runTask: runTaskMock,
+        });
         await drainActiveRuns(activeRuns);
 
         expect(runTaskMock).toHaveBeenCalledTimes(1);
@@ -207,7 +231,7 @@ describe("scheduler task .finally() resilience", () => {
             running: false,
         });
 
-        dispatchDueTasks({ tasks, taskStates, activeRuns, logsBaseDir, now });
+        dispatchDueTasks({ tasks, taskStates, activeRuns, logsBaseDir, now, notify: noopNotify, runTask: runTaskMock });
         await drainActiveRuns(activeRuns);
 
         expect(runTaskMock).toHaveBeenCalledTimes(1);
@@ -216,9 +240,65 @@ describe("scheduler task .finally() resilience", () => {
         expect(state?.nextRunAt.getTime()).toBeGreaterThan(now.getTime() + 59_000);
 
         runTaskMock.mockClear();
-        dispatchDueTasks({ tasks, taskStates, activeRuns, logsBaseDir, now });
+        dispatchDueTasks({ tasks, taskStates, activeRuns, logsBaseDir, now, notify: noopNotify, runTask: runTaskMock });
         await drainActiveRuns(activeRuns);
 
         expect(runTaskMock).toHaveBeenCalledTimes(0);
+    });
+});
+
+describe("runSchedulerLoop resilience (Jul 3/6 incident class)", () => {
+    test("per-tick ownership check: a usurped daemon self-terminates instead of running as a zombie", async () => {
+        const codes: number[] = [];
+
+        await runSchedulerLoop(logsBaseDir, {
+            verifyOwnership: () => false,
+            loadConfig: async () => ({ tasks: [] }),
+            exit: (code) => {
+                codes.push(code);
+            },
+            notify: noopNotify,
+        });
+
+        expect(codes).toEqual([EXIT_OWNERSHIP_LOST]);
+    });
+
+    test("wedge watchdog exits with EXIT_WEDGED when the loop goes silent past the threshold", async () => {
+        const codes: number[] = [];
+
+        await runSchedulerLoop(logsBaseDir, {
+            verifyOwnership: () => true,
+            watchdogIntervalMs: 25,
+            wedgeThresholdMs: 80,
+            loadConfig: async () => ({ tasks: [] }),
+            exit: (code) => {
+                codes.push(code);
+                // Unwind the (deliberately silent) loop so the test completes.
+                process.emit("SIGINT");
+            },
+            notify: noopNotify,
+        });
+
+        expect(codes[0]).toBe(EXIT_WEDGED);
+    });
+
+    test("a second shutdown signal force-exits immediately (no more unkillable daemons)", async () => {
+        const codes: number[] = [];
+
+        const loop = runSchedulerLoop(logsBaseDir, {
+            verifyOwnership: () => true,
+            loadConfig: async () => ({ tasks: [] }),
+            exit: (code) => {
+                codes.push(code);
+            },
+            notify: noopNotify,
+        });
+
+        await Bun.sleep(20); // let the loop install its signal handlers
+        process.emit("SIGINT"); // graceful: flips running=false, arms grace timer
+        process.emit("SIGINT"); // impatient: must exit immediately
+        await loop;
+
+        expect(codes).toEqual([1]);
     });
 });
