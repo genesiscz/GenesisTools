@@ -132,7 +132,7 @@ export async function handleUpdateSet(args: {
     if (args.title !== undefined) {
         patch.title = args.title;
     }
-    const res = await boardsFetch<Record<string, unknown>>(paths.boardsSet(args.project, args.branch, args.selector), {
+    const res = await boardsFetch<Record<string, unknown>>(paths.boardsSet({ project: args.project, branch: args.branch, selector: args.selector }), {
         method: "PATCH",
         body: SafeJSON.stringify(patch),
     });
