@@ -8,7 +8,7 @@ import { concurrentMap } from "@app/utils/async";
 import { printLn } from "@app/utils/cli";
 import type { Command } from "commander";
 import { putRaw, resolveBaseUrl } from "../lib/client";
-import { CONFIG_FILE, captureRoot, readSetConfig, slugifyBranch, writeSetConfig } from "../lib/config";
+import { CONFIG_FILE, captureRoot, gitProvenance, readSetConfig, slugifyBranch, writeSetConfig } from "../lib/config";
 
 interface PushResult {
     url: string;
@@ -22,23 +22,25 @@ interface PushResult {
     created: boolean;
 }
 
-/** Every file under `root` (recursive), forward-slash relative paths, `CONFIG_FILE` excluded.
+/** Names that must never land in a pushed set: the sticky config, macOS Finder droppings
+ *  (`.DS_Store`, AppleDouble `._*`), and the capture lock file. */
+function isJunkName(name: string): boolean {
+    return name === CONFIG_FILE || name === ".DS_Store" || name.startsWith("._") || name === ".active";
+}
+
+/** Every file under `root` (recursive), forward-slash relative paths, junk excluded.
  *  `manifest.json` (if present) is deliberately included — the server parses it for per-shot
  *  metadata but skips creating a row for it. */
-async function collectFiles(root: string): Promise<string[]> {
+export async function collectFiles(root: string): Promise<string[]> {
     const entries = await readdir(root, { recursive: true, withFileTypes: true });
     const files: string[] = [];
 
     for (const entry of entries) {
-        if (!entry.isFile()) {
+        if (!entry.isFile() || isJunkName(entry.name)) {
             continue;
         }
 
         const rel = relative(root, join(entry.parentPath, entry.name)).split(sep).join("/");
-        if (rel === CONFIG_FILE) {
-            continue;
-        }
-
         files.push(rel);
     }
 
@@ -89,11 +91,14 @@ export function registerPushCommand(program: Command): void {
 
             const base = resolveBaseUrl(opts.base);
             const branchSlug = slugifyBranch(cfg.branch);
+            const provenance = gitProvenance(root); // best-effort; omitted outside a git repo
             const targetPath = paths.boardsSetContent(cfg.project, branchSlug, cfg.key, {
                 kind: cfg.kind,
                 title,
                 branch: cfg.branch,
                 source,
+                commit: provenance.commit,
+                repo: provenance.repo,
             });
             logger.debug(
                 {

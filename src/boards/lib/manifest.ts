@@ -23,14 +23,16 @@ export const MANIFEST_FILE = "manifest.json";
 export async function readManifest(root: string): Promise<Manifest> {
     const path = join(root, MANIFEST_FILE);
     if (!existsSync(path)) {
-        return { shots: [] };
+        return { shots: [] }; // legit first-run path
     }
 
+    const raw = await readFile(path, "utf8");
     try {
-        const parsed = SafeJSON.parse(await readFile(path, "utf8")) as Partial<Manifest>;
+        const parsed = SafeJSON.parse(raw) as Partial<Manifest>;
         return { ...parsed, shots: parsed.shots ?? [] };
     } catch {
-        return { shots: [] };
+        // Refuse to silently reset history — the next add/push would overwrite it with an empty one.
+        throw new Error(`manifest.json is corrupt at ${path} — refusing to overwrite; fix or delete it`);
     }
 }
 

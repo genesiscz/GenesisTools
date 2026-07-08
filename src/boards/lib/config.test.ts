@@ -9,8 +9,10 @@ import {
     DEFAULT_ROOT,
     defaultProject,
     ensureGitExclude,
+    gitProvenance,
     mintKey,
     readSetConfig,
+    repoSlugFromRemote,
     slugifyBranch,
     writeSetConfig,
 } from "./config";
@@ -87,5 +89,36 @@ describe("ensureGitExclude", () => {
     it("is a no-op outside a git repo", async () => {
         const dir = mkdtempSync(join(tmpdir(), "boards-nogit2-"));
         await expect(ensureGitExclude(dir, DEFAULT_ROOT)).resolves.toBeUndefined();
+    });
+});
+
+describe("repoSlugFromRemote", () => {
+    it("strips the git@github.com: prefix and .git suffix", () => {
+        expect(repoSlugFromRemote("git@github.com:LEFTEQ/vitrinka.git")).toBe("LEFTEQ/vitrinka");
+    });
+
+    it("strips the https://github.com/ prefix and .git suffix", () => {
+        expect(repoSlugFromRemote("https://github.com/LEFTEQ/vitrinka.git")).toBe("LEFTEQ/vitrinka");
+    });
+
+    it("leaves an already-bare slug untouched", () => {
+        expect(repoSlugFromRemote("owner/name")).toBe("owner/name");
+    });
+});
+
+describe("gitProvenance", () => {
+    it("reports a short commit and owner/name repo for a repo with an origin remote", () => {
+        const repo = initGitRepo();
+        execFileSync("git", ["remote", "add", "origin", "git@github.com:LEFTEQ/vitrinka.git"], { cwd: repo });
+        execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "init"], { cwd: repo });
+
+        const { commit, repo: slug } = gitProvenance(repo);
+        expect(commit).toMatch(/^[0-9a-f]{7,}$/);
+        expect(slug).toBe("LEFTEQ/vitrinka");
+    });
+
+    it("omits both fields outside a git repo", () => {
+        const dir = mkdtempSync(join(tmpdir(), "boards-noprov-"));
+        expect(gitProvenance(dir)).toEqual({ commit: undefined, repo: undefined });
     });
 });
