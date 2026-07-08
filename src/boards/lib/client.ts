@@ -1,10 +1,11 @@
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 
-// Canonical HTTP client for the dev-dashboard boards API — a thin fetch wrapper. This is
-// the one place that duplicates as `src/claude/mcp/tools/boards/http.ts` when the MCP
-// tools land (Phase 4 of the plan); whichever task lands second should import from here
-// instead of re-duplicating it (see plan §Phase 5 preamble).
+// Canonical HTTP client for the dev-dashboard boards API — a thin fetch wrapper.
+// `src/claude/mcp/tools/boards/http.ts` is a deliberately separate client with a different
+// contract: it throws BoardsHttpError on any non-2xx response and only parses 2xx bodies.
+// This client never throws on non-2xx — `watch.ts` depends on that to read the 409
+// ConflictBody — so the two are intentionally not unified.
 
 export const DEFAULT_BASE_URL = "http://127.0.0.1:3042";
 
@@ -34,8 +35,15 @@ export interface HttpResult<T> {
 export async function rawRequest<T>(base: string, path: string, init?: RequestInit): Promise<HttpResult<T>> {
     const res = await fetch(`${base}${path}`, init);
     const text = await res.text();
-    const body = (text.length > 0 ? SafeJSON.parse(text, { strict: true }) : undefined) as T;
-    return { status: res.status, body };
+    let body: T | undefined;
+    if (text.length > 0) {
+        try {
+            body = SafeJSON.parse(text, { strict: true }) as T;
+        } catch {
+            body = undefined;
+        }
+    }
+    return { status: res.status, body: body as T };
 }
 
 export async function getJson<T>(base: string, path: string, signal?: AbortSignal): Promise<T> {
@@ -49,10 +57,9 @@ export async function getJson<T>(base: string, path: string, signal?: AbortSigna
 export async function postJson<T>(
     base: string,
     path: string,
-    payload?: unknown,
-    method = "POST",
-    signal?: AbortSignal
+    options?: { payload?: unknown; method?: string; signal?: AbortSignal }
 ): Promise<T> {
+    const { payload, method = "POST", signal } = options ?? {};
     const { status, body } = await rawRequest<T>(base, path, {
         method,
         headers: { "content-type": "application/json" },
@@ -65,7 +72,13 @@ export async function postJson<T>(
     return body;
 }
 
-export async function putRaw<T>(base: string, path: string, data: Uint8Array, contentType: string): Promise<T> {
+export async function putRaw<T>(
+    base: string,
+    path: string,
+    data: Uint8Array,
+    contentType: string,
+    signal?: AbortSignal
+): Promise<T> {
     const { status, body } = await rawRequest<T>(base, path, {
         method: "PUT",
         headers: { "content-type": contentType },
@@ -73,6 +86,7 @@ export async function putRaw<T>(base: string, path: string, data: Uint8Array, co
         // assignable to fetch's BodyInit under TS 5.7 typed-array generics (same quirk as
         // dev-dashboard/lib/boards/tar.ts); copy into a concrete ArrayBuffer-backed view.
         body: new Uint8Array(data),
+        signal,
     });
     if (status < 200 || status >= 300) {
         throw new BoardsHttpError(status, body);

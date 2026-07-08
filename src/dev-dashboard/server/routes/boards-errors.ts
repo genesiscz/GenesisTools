@@ -4,7 +4,7 @@ import {
     NotCancellableError,
     NotUndoableError,
 } from "@app/dev-dashboard/lib/boards/annotations-store";
-import { SlugConflictError } from "@app/dev-dashboard/lib/boards/boards-store";
+import { InvalidInputError, SlugConflictError } from "@app/dev-dashboard/lib/boards/boards-store";
 import { NameConflictError, NotFoundError } from "@app/dev-dashboard/lib/boards/sets-store";
 import type { RouteResult } from "@app/dev-dashboard/server/types";
 import { errorResult } from "./error";
@@ -27,6 +27,9 @@ export function boardsError(err: unknown): RouteResult {
     }
     if (err instanceof InvalidStatusError) {
         return { kind: "json", status: 400, body: { error: err.message || "invalid status" } };
+    }
+    if (err instanceof InvalidInputError) {
+        return { kind: "json", status: 400, body: { error: err.message } };
     }
     return errorResult(err);
 }

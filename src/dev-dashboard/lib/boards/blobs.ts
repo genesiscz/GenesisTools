@@ -12,6 +12,9 @@ const EXT_BY_MIME: Record<string, string> = {
     "text/html": "html",
     "text/markdown": "md",
     "application/json": "json",
+    "text/plain": "txt",
+    "text/css": "css",
+    "text/javascript": "js",
 };
 
 export const MIME_BY_EXT: Record<string, string> = {

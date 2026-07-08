@@ -27,11 +27,19 @@ import { getSet } from "@app/dev-dashboard/lib/boards/sets-store";
 import { dispatchBoard } from "@app/dev-dashboard/lib/boards/work-store";
 import type { RouteContext, RouteDef } from "@app/dev-dashboard/server/types";
 import { boardsError } from "./boards-errors";
+import { getOperator } from "./boards-sets";
 
 const UPLOAD_MAX_WIDTH = 480;
 
-function actorFrom(ctx: RouteContext): string {
-    return ctx.headers["x-board-actor"] ?? "";
+/** Actor fallback chain (plan §Task 9 note): body override (handled by callers) →
+ *  `x-board-actor` header → the `operator` settings row → the literal `"operator"`. */
+async function actorFrom(ctx: RouteContext): Promise<string> {
+    const header = ctx.headers["x-board-actor"];
+    if (header) {
+        return header;
+    }
+    const operator = await getOperator();
+    return operator || "operator";
 }
 
 async function boardSlugForCardId(cardId: number): Promise<string | null> {
@@ -160,7 +168,7 @@ export function boardsRoutes(): RouteDef[] {
                     }>();
                     const card = await createCard(getBoardsDb(), ctx.params.slug, {
                         ...body,
-                        createdBy: body.createdBy ?? actorFrom(ctx),
+                        createdBy: body.createdBy ?? (await actorFrom(ctx)),
                     });
                     publishBoardEvent(ctx.params.slug, { type: "card", payload: card });
                     return { kind: "json", status: 201, body: card };
@@ -253,7 +261,7 @@ export function boardsRoutes(): RouteDef[] {
                             createdBy?: string;
                         }>;
                     }>();
-                    const actor = actorFrom(ctx);
+                    const actor = await actorFrom(ctx);
                     const strokes = await addStrokes(
                         getBoardsDb(),
                         ctx.params.slug,
@@ -298,7 +306,7 @@ export function boardsRoutes(): RouteDef[] {
                     }>();
                     const edge = await addEdge(getBoardsDb(), ctx.params.slug, {
                         ...body,
-                        createdBy: body.createdBy ?? actorFrom(ctx),
+                        createdBy: body.createdBy ?? (await actorFrom(ctx)),
                     });
                     publishBoardEvent(ctx.params.slug, { type: "edge", payload: edge });
                     return { kind: "json", status: 201, body: edge };
@@ -398,7 +406,7 @@ export function boardsRoutes(): RouteDef[] {
                         filePath: name,
                         blobKey,
                         payload: { naturalWidth, naturalHeight },
-                        createdBy: actorFrom(ctx),
+                        createdBy: await actorFrom(ctx),
                     });
                     publishBoardEvent(ctx.params.slug, { type: "card", payload: card });
                     return { kind: "json", status: 201, body: card };
@@ -415,7 +423,7 @@ export function boardsRoutes(): RouteDef[] {
                     const body = await ctx.readJson<{ body: string; author?: string }>();
                     const message = await addMessage(getBoardsDb(), {
                         boardSlug: ctx.params.slug,
-                        author: body.author ?? actorFrom(ctx),
+                        author: body.author ?? (await actorFrom(ctx)),
                         body: body.body,
                     });
                     publishBoardEvent(ctx.params.slug, { type: "board_message", payload: message });

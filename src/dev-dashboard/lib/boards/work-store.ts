@@ -2,10 +2,10 @@ import type { DatabaseClient } from "@app/utils/database/client";
 import { escapeLike } from "@app/utils/database/predicates";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
-import { type SqlBool, sql, type Transaction } from "kysely";
+import { type Selectable, type SqlBool, sql, type Transaction } from "kysely";
 import { getAnnotation } from "./annotations-store";
 import { toCardDto } from "./boards-store";
-import type { BoardsDb } from "./db-types";
+import type { BoardsDb, ListenersTable } from "./db-types";
 import { publishBoardEvent, wakeWorkWaiters } from "./events";
 import { NotFoundError, slugifyBranch } from "./sets-store";
 import { nowIso } from "./time";
@@ -159,9 +159,13 @@ export async function listOpenWorkDetailed(db: DatabaseClient<BoardsDb>, scope: 
     return result;
 }
 
-/** Reverts a listener's claimed ("working") annotations back to "open" and publishes `status`
- *  events for each. Returns the reverted annotation ids. Caller deletes the listener row. */
-async function revertClaimsForListener(trx: Transaction<BoardsDb>, listenerId: number): Promise<number[]> {
+/** Reverts a listener's claimed ("working") annotations back to "open". Returns the reverted
+ *  {id, boardSlug} pairs so callers can publish `status` events AFTER their transaction commits
+ *  (mirrors dispatchBoard's publish-after-commit pattern). Caller deletes the listener row. */
+async function revertClaimsForListener(
+    trx: Transaction<BoardsDb>,
+    listenerId: number
+): Promise<Array<{ id: number; boardSlug: string }>> {
     const claimed = await trx
         .selectFrom("annotations")
         .innerJoin("boards", "boards.id", "annotations.board_id")
@@ -179,34 +183,38 @@ async function revertClaimsForListener(trx: Transaction<BoardsDb>, listenerId: n
             .execute();
     }
 
-    for (const c of claimed) {
-        publishBoardEvent(c.boardSlug, { type: "status", payload: { id: c.id, status: "open" } });
-    }
-    return claimed.map((c) => c.id);
+    return claimed;
 }
 
-/** Deletes leases with last_seen older than the TTL, reverting their claimed items. */
+/** Deletes leases with last_seen older than the TTL, reverting their claimed items. The expired
+ *  SELECT and the DELETE both run inside the same transaction, and the DELETE re-checks
+ *  `last_seen < cutoff`, so a listener that renewed between the SELECT and commit survives
+ *  (no TOCTOU reap of a listener that's actually still alive). */
 export async function reapExpiredListeners(db: DatabaseClient<BoardsDb>): Promise<number[]> {
     const cutoff = new Date(Date.now() - listenerTtlMs()).toISOString();
-    const expired = await db.kysely.selectFrom("listeners").select("id").where("last_seen", "<", cutoff).execute();
-    if (expired.length === 0) {
-        return [];
-    }
-    const expiredIds = expired.map((l) => l.id);
 
-    const revertedIds = await db.kysely.transaction().execute(async (trx) => {
-        const reverted: number[] = [];
-        for (const listenerId of expiredIds) {
-            reverted.push(...(await revertClaimsForListener(trx, listenerId)));
+    const reverted = await db.kysely.transaction().execute(async (trx) => {
+        const expired = await trx.selectFrom("listeners").select("id").where("last_seen", "<", cutoff).execute();
+        if (expired.length === 0) {
+            return [];
         }
-        await trx.deleteFrom("listeners").where("id", "in", expiredIds).execute();
-        return reverted;
+        const expiredIds = expired.map((l) => l.id);
+
+        const items: Array<{ id: number; boardSlug: string }> = [];
+        for (const listenerId of expiredIds) {
+            items.push(...(await revertClaimsForListener(trx, listenerId)));
+        }
+        await trx.deleteFrom("listeners").where("id", "in", expiredIds).where("last_seen", "<", cutoff).execute();
+        return items;
     });
 
-    if (revertedIds.length > 0) {
+    for (const item of reverted) {
+        publishBoardEvent(item.boardSlug, { type: "status", payload: { id: item.id, status: "open" } });
+    }
+    if (reverted.length > 0) {
         wakeWorkWaiters();
     }
-    return revertedIds;
+    return reverted.map((item) => item.id);
 }
 
 /** One live lease per exact (scope_kind, scope, branch) for "board"/"project" scopes — the
@@ -265,32 +273,35 @@ export async function claimOrRenewLease(
         return { conflict: true, holder: toListenerDto(holder) };
     }
 
-    const inserted = await db.kysely
-        .insertInto("listeners")
-        .values({
-            scope_kind: cols.scope_kind,
-            scope: cols.scope,
-            branch: cols.branch,
-            actor,
-            session,
-            created_at: now,
-            last_seen: now,
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-    return { conflict: false, id: inserted.id };
+    // Upsert against idx_listeners_scope (db.ts BOOTSTRAP_DDL): if another racer inserted the
+    // row between our SELECT above and this INSERT, we take over the lease (session/actor/
+    // last_seen overwritten to us) rather than throwing a raw UNIQUE-constraint error. The
+    // racer we displaced discovers the loss on its own next SELECT. Kysely's onConflict
+    // builder can't target a partial unique index's WHERE clause, so this is raw SQL.
+    const upsertResult = await sql<Selectable<ListenersTable>>`
+        INSERT INTO listeners (scope_kind, scope, branch, actor, session, created_at, last_seen)
+        VALUES (${cols.scope_kind}, ${cols.scope}, ${cols.branch}, ${actor}, ${session}, ${now}, ${now})
+        ON CONFLICT (scope_kind, scope, branch) WHERE scope_kind != 'all'
+        DO UPDATE SET session = excluded.session, actor = excluded.actor, last_seen = excluded.last_seen
+        RETURNING *
+    `.execute(db.kysely);
+    const upserted = upsertResult.rows[0];
+    return { conflict: false, id: upserted.id };
 }
 
 export async function releaseLease(db: DatabaseClient<BoardsDb>, id: number): Promise<number[]> {
-    const revertedIds = await db.kysely.transaction().execute(async (trx) => {
-        const reverted = await revertClaimsForListener(trx, id);
+    const reverted = await db.kysely.transaction().execute(async (trx) => {
+        const items = await revertClaimsForListener(trx, id);
         await trx.deleteFrom("listeners").where("id", "=", id).execute();
-        return reverted;
+        return items;
     });
-    if (revertedIds.length > 0) {
+    for (const item of reverted) {
+        publishBoardEvent(item.boardSlug, { type: "status", payload: { id: item.id, status: "open" } });
+    }
+    if (reverted.length > 0) {
         wakeWorkWaiters();
     }
-    return revertedIds;
+    return reverted.map((item) => item.id);
 }
 
 export async function listListeners(db: DatabaseClient<BoardsDb>): Promise<ListenerDto[]> {

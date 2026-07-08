@@ -1,8 +1,10 @@
 import { hostname } from "node:os";
 import type { ListenerDto, WaitResultDto } from "@app/dev-dashboard/contract/dto";
 import { paths, type WorkListRes } from "@app/dev-dashboard/contract/endpoints";
+import { logger } from "@app/logger";
 import { printLn } from "@app/utils/cli";
 import { writeStderr } from "@app/utils/cli/stderr";
+import { SafeJSON } from "@app/utils/json";
 import { wakefulSleep } from "@app/utils/wakeful";
 import type { Command } from "commander";
 import { computeAnnouncements, type SeenMap } from "../lib/announce";
@@ -87,7 +89,7 @@ async function watchAttempt(deps: AttemptDeps): Promise<AttemptResult> {
         return { kind: "conflict", holder: (body as ConflictBody).holder };
     }
     if (status < 200 || status >= 300) {
-        throw new Error(`work/wait -> ${status}`);
+        throw new Error(`work/wait -> ${status}: ${SafeJSON.stringify(body)}`);
     }
 
     const wait = body as WaitResultDto;
@@ -149,9 +151,10 @@ export async function runWatch(opts: RunWatchOptions): Promise<number> {
             return;
         }
         try {
-            await postJson(opts.base, paths.workListener(leaseId), undefined, "DELETE");
-        } catch {
+            await postJson(opts.base, paths.workListener(leaseId), { method: "DELETE" });
+        } catch (err) {
             // Best-effort — the process is exiting either way.
+            logger.debug({ leaseId, err }, "boards watch: lease release failed");
         }
     };
 
@@ -278,8 +281,9 @@ export function registerWatchCommand(program: Command): void {
                 try {
                     const op = await getJson<{ operator: string }>(base, paths.boardsOperator());
                     actor = op.operator || "operator";
-                } catch {
+                } catch (err) {
                     // Keep the default actor; the loop's own error handling covers connectivity issues.
+                    logger.debug({ base, err }, "boards watch: operator fetch failed");
                 }
 
                 const exitCode = await runWatch({

@@ -36,6 +36,7 @@ export async function boardsFetch<T>(path: string, init?: RequestInit & { rawTex
             headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
         });
     } catch (err) {
+        cachedBase = null;
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(
             `dev-dashboard unreachable at ${base} (${msg}). Start it with \`tools dev-dashboard\` ` +
