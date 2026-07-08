@@ -23,6 +23,7 @@ import {
 import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { publishBoardEvent, subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
 import { readImageDims } from "@app/dev-dashboard/lib/boards/image-size";
+import { sectionsToJSON } from "@app/dev-dashboard/lib/boards/sections";
 import { getSet } from "@app/dev-dashboard/lib/boards/sets-store";
 import { dispatchBoard } from "@app/dev-dashboard/lib/boards/work-store";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
@@ -103,6 +104,18 @@ export function boardsRoutes(): RouteDef[] {
                 try {
                     const doc = await getBoardDoc(getBoardsDb(), ctx.params.slug);
                     return { kind: "json", status: 200, body: doc };
+                } catch (err) {
+                    return boardsError(err);
+                }
+            },
+        },
+        {
+            method: "GET",
+            pattern: "/api/boards/:slug/sections",
+            handler: async (ctx) => {
+                try {
+                    const doc = await getBoardDoc(getBoardsDb(), ctx.params.slug);
+                    return { kind: "json", status: 200, body: sectionsToJSON(doc.cards) };
                 } catch (err) {
                     return boardsError(err);
                 }

@@ -110,6 +110,30 @@ describe("boardsRoutes", () => {
         env.testing.unset("BOARDS_DB_PATH");
     });
 
+    it("GET /api/boards/:slug/sections returns spatial sections with member counts and journeys", async () => {
+        const { getBoardsDb } = await import("@app/dev-dashboard/lib/boards/db");
+        const { createCard: storeCreateCard } = await import("@app/dev-dashboard/lib/boards/boards-store");
+        await createBoard("b1");
+        const db = getBoardsDb();
+        await storeCreateCard(db, "b1", {
+            kind: "section",
+            x: 0,
+            y: 0,
+            w: 400,
+            h: 400,
+            payload: { title: "Checkout", journey: "checkout", pass: 1 },
+        });
+        await storeCreateCard(db, "b1", { kind: "note", x: 100, y: 100, w: 50, h: 50, payload: { text: "hi" } });
+
+        const route = findRoute("GET", "/api/boards/:slug/sections");
+        const res = asJson(await route.handler(makeCtx({ params: { slug: "b1" } })));
+        expect(res.status).toBe(200);
+        const sections = res.body.sections as Array<{ name: string; cards: number; journey?: string }>;
+        expect(sections).toHaveLength(1);
+        expect(sections[0]).toMatchObject({ name: "Checkout", cards: 1, journey: "checkout", pass: 1 });
+        expect(res.body.journeys).toEqual([{ journey: "checkout", title: "Checkout", passes: 1, latest: "Checkout" }]);
+    });
+
     it("creates a board (201) and rejects a duplicate slug (409)", async () => {
         const post = findRoute("POST", "/api/boards");
         const first = await post.handler(makeCtx({ method: "POST", body: { slug: "b1" } }));
