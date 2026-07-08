@@ -1,9 +1,9 @@
 // biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ string literals — production plugins do not apply to test code
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LockTimeoutError, withFileLock } from "./file-lock";
+import { LockTimeoutError, tryAcquireLock, withFileLock } from "./file-lock";
 
 describe("file-lock: stale/orphaned lock handling", () => {
     let dir: string;
@@ -92,5 +92,28 @@ describe("file-lock: stale/orphaned lock handling", () => {
         expect(result).toBe("ok");
         // The parent dir was created and persists — only the lock file itself is cleaned up.
         expect(existsSync(nestedDir)).toBe(true);
+    });
+
+    it("exactly one of N concurrent racers steals a stale lock (rename-based takeover regression test)", async () => {
+        // Regression test for the Jul 3 incident: launchd respawn storm got 31
+        // daemon instances racing the same stale pidfile/lock past a
+        // check-then-unlink-then-write takeover, and N of them "won". The
+        // rename-based steal must guarantee exactly one winner no matter how
+        // many racers hit it concurrently.
+        const lockPath = join(dir, "target.lock");
+        writeFileSync(lockPath, "999999999"); // dead PID — eligible for steal
+
+        const RACER_COUNT = 12;
+        const results = await Promise.all(Array.from({ length: RACER_COUNT }, () => tryAcquireLock(lockPath)));
+
+        const winners = results.filter((won) => won === true);
+        expect(winners).toHaveLength(1);
+
+        // Exactly one lock file remains, owned by us (the single process all
+        // racers ran in), and no leftover `.stale-*` temp files.
+        expect(existsSync(lockPath)).toBe(true);
+        expect(readFileSync(lockPath, "utf-8").trim()).toBe(String(process.pid));
+
+        expect(readdirSync(dir)).toEqual(["target.lock"]);
     });
 });
