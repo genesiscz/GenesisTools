@@ -114,7 +114,9 @@ git commit -m "feat: <concise why>"
 `## Deviations`, do not start Task N+1.
 ````
 
-ON-FAIL is one sentence, one action. It may NEVER modify anything declared in the interface freeze (names, signatures, frozen constants/sets), may NEVER weaken, loosen, or delete a test to make it pass, and is not a debugging expedition — if one bounded action doesn't fix it, the answer is STOP, not a second idea. Commit steps always `git add` explicit paths — never `git add -A`.
+ON-FAIL is one sentence, one action, **25 words maximum**. It may NEVER modify anything declared in the interface freeze (names, signatures, frozen constants/sets), may NEVER weaken, loosen, or delete a test to make it pass, and is not a debugging expedition — if one bounded action doesn't fix it, the answer is STOP, not a second idea. Commit steps always `git add` explicit paths — never `git add -A`.
+
+Granularity guard: one exported symbol (or one cohesive component) per task. If a task's ACT creates two unrelated exports, split it.
 
 No test infrastructure in the target repo? Replace test steps with the strongest available observable (`tsgo --noEmit`, lint, a runnable command with expected output) — never drop verification.
 
@@ -146,7 +148,7 @@ Fix and move on; no re-review loop.
 
 ## Dry-run trace section (mandatory)
 
-Every plan contains, immediately before `## Deviations`, a `## Dry-run trace` section: take the least trivial test input in the plan and walk it through the final planned implementation step by step, SHOWING the intermediate values (the token array after each stage, not just the conclusion), ending with `traced result == expected ✓`. If the trace and the test disagree, the plan is wrong — fix the code or the test before publishing. A plan without this section is incomplete and must not be published. (This exists because a silently-run self-check gets skipped; a required section cannot be.)
+Every plan contains, immediately before `## Deviations`, a `## Dry-run trace` section for the least trivial test input in the plan. The trace must be **empirical, not mental**: paste the planned function into a throwaway eval (e.g. `bun -e '<planned function code>; console.log(fn(<input>))'` — touches no repo files, so it is still PLAN ONLY) and paste the REAL printed output into the section, alongside the per-stage intermediate values (log the token array after each stage). Mental simulation is forbidden — models routinely mis-simulate regex and string operations and then assert wrong intermediates with full confidence. If the actual output and the test's expected value disagree, the plan is wrong — fix the code or the test before publishing. A plan without this section, or with a trace that was not actually executed, is incomplete and must not be published.
 
 ## Deviations section
 
