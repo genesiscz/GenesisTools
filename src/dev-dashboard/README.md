@@ -24,6 +24,19 @@ APIs (`/api/tmux/*`, Obsidian share, ttyd) behave the same in both modes. Harnes
 
 Config is stored at `~/.genesis-tools/dev-dashboard/config.json`.
 
+## Boards
+
+Screenshot annotation boards (`tools boards` CLI + `boards_*` MCP tools — see
+`src/boards/README.md` for the CLI/listening workflow). Routes live under `/api/boards/*`
+(static-prefix routes like `/api/boards/sets/*` and `/api/boards/work/*` are registered
+before the `/api/boards/:slug` catch-all, since the router is first-match). Storage:
+`<GENESIS_TOOLS_HOME>/dev-dashboard/boards.db` (override with `BOARDS_DB_PATH`) plus a
+content-addressed blob store at `<...>/dev-dashboard/boards/blobs/<sha256[:2]>/<sha256>.<ext>`.
+Live updates go out over `GET /api/boards/:slug/events` (SSE). Annotations follow a
+`staged → open → working → in_review → resolved` status machine (plus `cancelled`); a new
+annotation is `staged` by default (invisible to the work queue) until a `dispatch` call flips
+it to `open`, so a human can review/edit the prompt before it goes live to an agent.
+
 ## Public surface
 
 When tunneled (host, allowed identities, and tunnel name are read from local config, not committed here):

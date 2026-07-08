@@ -1,11 +1,38 @@
 # tools boards
 
-CLI for the dev-dashboard annotation boards: push a directory of screenshots as a versioned
-set, spin up a board from it, and listen for live annotation work as a zero-token-idle
-background process. Talks HTTP only, to `http://127.0.0.1:3042` by default (the loopback
-dev-dashboard server) — no database/file access, no auth tokens needed.
+![Status](https://img.shields.io/badge/Status-Active-success?style=flat-square)
+![Runtime](https://img.shields.io/badge/Runtime-Bun-orange?style=flat-square)
+
+> **Push a directory of screenshots as a versioned set, spin up an annotation board from it, and listen for live review work as a zero-token-idle background process.**
+
+Talks HTTP only, to `http://127.0.0.1:3042` by default (the loopback dev-dashboard server) —
+no database/file access, no auth tokens needed.
+
+---
+
+## Quick Start
+
+```bash
+tools boards init --project my-app                  # writes .boards.json
+tools boards add ./screenshot.png --route /home
+tools boards push                                    # tar+push as a new set version
+tools boards board-from-set                          # create/reuse the board, import cards
+
+tools boards watch                                   # zero-token-idle listener, blocks
+tools boards watch --board my-board --once           # single check, for scripting/CI
+```
+
+---
 
 ## Commands
+
+| Command | Purpose |
+|---------|---------|
+| `init` | Create (or print) the sticky set config for this capture directory. |
+| `add <file>` | Copy a screenshot into the capture root and append it to the manifest. |
+| `push` | Tar+push the capture root as a new set version. |
+| `board-from-set` | Create (or reuse) a board and import the current shot set. |
+| `watch` | Long-poll for open annotation work; print one line per new-or-changed item. |
 
 ### init — create the sticky set config
 
@@ -70,6 +97,26 @@ decide whether to wake an idle agent. Silence means healthy + idle. Diagnostics 
   leases are reaped automatically at the top of every wait.
 - SIGINT/SIGTERM releases the lease (`DELETE /api/boards/work/listeners/:id`) before exiting 0,
   which immediately reverts any work the listener had claimed.
+- An MCP client's `boards_wait_for_work` called anonymously (no session) never leases, so it
+  freely coexists with a live `watch` listener on the same scope — it just drains whatever's open.
+
+---
+
+## Listening from Claude Code
+
+`watch`'s stdout is a wake signal, not a work queue — draining still goes through the MCP
+tools (which carry the full capsule per item, not just the one-line announcement):
+
+```text
+Monitor({ command: "tools boards watch --board my-board", persistent: true })
+→ on each stdout line, drain with boards_wait_for_work({ board: "my-board", timeoutSec: 1 }) until idle.
+```
+
+Scope every `list_work`/`wait_for_work` call to the board (or project+branch) you're working
+in — an unscoped call surfaces every board's queue, and items belonging to other boards/sessions
+should be left alone.
+
+---
 
 ## Environment variables
 
