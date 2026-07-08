@@ -2,7 +2,17 @@ import type { CardDto } from "@app/dev-dashboard/contract/dto";
 import { paths } from "@app/dev-dashboard/contract/endpoints";
 import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from "react";
 import { useRef, useState } from "react";
-import { renderMdLite } from "./md-lite";
+import {
+    CalloutCard,
+    ChecklistCard,
+    ClusterFrame,
+    CompareRefCard,
+    ShapeCard,
+    StepCard,
+    TextCard,
+    VizCard,
+    WireframeCard,
+} from "./AiCards";
 
 interface CardViewProps {
     card: CardDto;
@@ -153,9 +163,12 @@ export function CardView({
         );
     }
 
-    if (card.kind === "text") {
-        const md = stringField(card.payload, "md");
+    // Section frames render as always-visible background layers via SectionLayer.tsx, not here.
+    if (card.kind === "section") {
+        return null;
+    }
 
+    if (card.kind === "text") {
         return (
             <div
                 style={style}
@@ -165,7 +178,118 @@ export function CardView({
                 onPointerUp={onPointerUp}
                 onPointerCancel={onPointerUp}
             >
-                {renderMdLite(md)}
+                <TextCard payload={card.payload} />
+            </div>
+        );
+    }
+
+    if (card.kind === "callout") {
+        return (
+            <div
+                style={style}
+                className={ring}
+                onPointerDown={beginDrag}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+            >
+                <CalloutCard payload={card.payload} />
+            </div>
+        );
+    }
+
+    if (card.kind === "step") {
+        return (
+            <div
+                style={style}
+                className={`rounded-md bg-[var(--dd-bg-panel)] ${ring}`}
+                onPointerDown={beginDrag}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+            >
+                <StepCard payload={card.payload} />
+            </div>
+        );
+    }
+
+    if (card.kind === "checklist") {
+        return (
+            <div
+                style={style}
+                className={`rounded-md bg-[var(--dd-bg-panel)] ${ring}`}
+                onPointerDown={beginDrag}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+            >
+                <ChecklistCard payload={card.payload} />
+            </div>
+        );
+    }
+
+    if (card.kind === "viz") {
+        return (
+            <div
+                style={style}
+                className={`rounded-md bg-[var(--dd-bg-panel)] ${ring}`}
+                onPointerDown={beginDrag}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+            >
+                <VizCard payload={card.payload} />
+            </div>
+        );
+    }
+
+    if (card.kind === "wireframe") {
+        return (
+            <div
+                style={style}
+                className={ring}
+                onPointerDown={beginDrag}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+            >
+                <WireframeCard payload={card.payload} />
+            </div>
+        );
+    }
+
+    if (card.kind === "shape") {
+        return (
+            <div
+                style={style}
+                className={ring}
+                onPointerDown={beginDrag}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+            >
+                <ShapeCard payload={card.payload} />
+            </div>
+        );
+    }
+
+    if (card.kind === "compare") {
+        return (
+            <div
+                style={style}
+                className={`rounded-md bg-[var(--dd-bg-panel)] ${ring}`}
+                onPointerDown={beginDrag}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+            >
+                <CompareRefCard payload={card.payload} />
+            </div>
+        );
+    }
+
+    if (card.kind === "cluster") {
+        return (
+            <div style={style}>
+                <ClusterFrame
+                    payload={card.payload}
+                    onTitlePointerDown={beginDrag}
+                    onPointerMove={onPointerMove}
+                    onPointerUp={onPointerUp}
+                />
             </div>
         );
     }

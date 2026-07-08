@@ -4,10 +4,11 @@ import { SafeJSON } from "@app/utils/json";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
-/** Coarse P0 strategy: every SSE event invalidates ["board", slug] — correct but not
- * granular. A per-event-type cache patch is explicitly out of P0 scope (see plan §Task 25).
- * `onEvent` is an additional hook for callers that need a specific event's payload (e.g. the
- * set_version sync banner) — invalidation stays the default behavior regardless. */
+/** Coarse P0 strategy: every SSE event invalidates ["board", slug] (and the sibling
+ * ["board-sections", slug] query — section membership/journeys can change on any card write) —
+ * correct but not granular. A per-event-type cache patch is explicitly out of P0 scope (see plan
+ * §Task 25). `onEvent` is an additional hook for callers that need a specific event's payload
+ * (e.g. the set_version sync banner) — invalidation stays the default behavior regardless. */
 export function useBoardEvents(slug: string, onEvent?: (e: BoardEventDto) => void): { live: boolean } {
     const [live, setLive] = useState(false);
     const qc = useQueryClient();
@@ -21,16 +22,21 @@ export function useBoardEvents(slug: string, onEvent?: (e: BoardEventDto) => voi
         let attempt = 0;
         const MAX_RETRY_MS = 30_000;
 
+        const invalidate = () => {
+            void qc.invalidateQueries({ queryKey: ["board", slug] });
+            void qc.invalidateQueries({ queryKey: ["board-sections", slug] });
+        };
+
         const connect = () => {
             es = new EventSource(paths.boardEvents(slug));
             es.onopen = () => {
                 setLive(true);
                 attempt = 0;
                 // Full refetch on (re)connect — recovers any gap missed while disconnected.
-                void qc.invalidateQueries({ queryKey: ["board", slug] });
+                invalidate();
             };
             es.onmessage = (ev) => {
-                void qc.invalidateQueries({ queryKey: ["board", slug] });
+                invalidate();
 
                 try {
                     onEventRef.current?.(SafeJSON.parse(ev.data, { strict: true }) as BoardEventDto);

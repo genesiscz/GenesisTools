@@ -8,6 +8,9 @@ import { boardsApi } from "./boards-api";
 import { CardView } from "./CardView";
 import { EdgeLayer } from "./EdgeLayer";
 import { distanceToPolyline, InkLayer, strokeToWorldPath } from "./InkLayer";
+import { AnchoredQuestions, BoardLevelQuestions } from "./QuestionCard";
+import { SectionLayer } from "./SectionLayer";
+import { SectionPills } from "./SectionPills";
 import { type Tool, Toolbar } from "./Toolbar";
 import { fitBounds, panBy, resetZoom, screenToWorld, useViewport, zoomAt } from "./useViewport";
 
@@ -29,7 +32,9 @@ interface PanState {
 
 type Gesture =
     | { kind: "ink"; points: number[][] }
-    | { kind: "region"; cardId: number; start: { x: number; y: number }; current: { x: number; y: number } };
+    | { kind: "region"; cardId: number; start: { x: number; y: number }; current: { x: number; y: number } }
+    | { kind: "connect"; fromCardId: number; current: { x: number; y: number } }
+    | { kind: "section"; start: { x: number; y: number }; current: { x: number; y: number } };
 
 interface PendingRegion {
     cardId: number;
@@ -39,7 +44,8 @@ interface PendingRegion {
 }
 
 const ERASE_THRESHOLD_SCREEN_PX = 8;
-const TOOL_KEYS: Record<string, Tool> = { v: "move", p: "ink", a: "annotate", n: "note" };
+const MIN_SECTION_SIZE = 40;
+const TOOL_KEYS: Record<string, Tool> = { v: "move", p: "ink", a: "annotate", n: "note", c: "connect", s: "section" };
 
 function isTypingTarget(target: EventTarget | null): boolean {
     return (
@@ -65,6 +71,7 @@ export function BoardCanvas({
     const [dragOverrides, setDragOverrides] = useState<Record<number, { x: number; y: number }>>({});
     const [gesture, setGesture] = useState<Gesture | null>(null);
     const [pendingRegion, setPendingRegion] = useState<PendingRegion | null>(null);
+    const [renamingSectionId, setRenamingSectionId] = useState<number | null>(null);
 
     const invalidate = () => {
         void queryClient.invalidateQueries({ queryKey: ["board", slug] });
@@ -122,6 +129,32 @@ export function BoardCanvas({
         mutationFn: (id: number) => boardsApi.deleteStroke(id),
         onSuccess: invalidate,
         onError: (err) => console.error("[boards] delete stroke failed", err),
+    });
+
+    const addEdgeMutation = useMutation({
+        mutationFn: (edge: { fromCard: number; toCard?: number; toX?: number; toY?: number }) =>
+            boardsApi.addEdge(slug, edge),
+        onSuccess: invalidate,
+    });
+
+    const createSectionMutation = useMutation({
+        mutationFn: (region: { x: number; y: number; w: number; h: number }) =>
+            boardsApi.createCard(slug, { kind: "section", ...region, payload: { title: "Section" } }),
+        onSuccess: (card) => {
+            setRenamingSectionId(card.id as number);
+            invalidate();
+        },
+    });
+
+    const renameSectionMutation = useMutation({
+        mutationFn: ({ id, title }: { id: number; title: string }) => {
+            const card = doc.cards.find((c) => c.id === id);
+            return boardsApi.patchCard(id, { payload: { ...(card?.payload ?? {}), title } });
+        },
+        onSuccess: () => {
+            setRenamingSectionId(null);
+            invalidate();
+        },
     });
 
     const createAnnotationMutation = useMutation({
@@ -281,6 +314,16 @@ export function BoardCanvas({
         return hits.length === 0 ? null : hits.reduce((top, c) => (c.z > top.z ? c : top));
     };
 
+    // Connect tool: any card kind is a valid wire endpoint EXCEPT section frames (journey
+    // structure, not a connectable node).
+    const findAnyCardAt = (point: { x: number; y: number }): CardDto | null => {
+        const hits = cards.filter(
+            (c) =>
+                c.kind !== "section" && point.x >= c.x && point.x <= c.x + c.w && point.y >= c.y && point.y <= c.y + c.h
+        );
+        return hits.length === 0 ? null : hits.reduce((top, c) => (c.z > top.z ? c : top));
+    };
+
     const eraseStrokeNear = (point: { x: number; y: number }) => {
         const cardById = new Map(cards.map((c) => [c.id, c]));
         const threshold = ERASE_THRESHOLD_SCREEN_PX / vp.scale;
@@ -403,6 +446,28 @@ export function BoardCanvas({
             gestureRef.current = { pointerId: e.pointerId };
             const local = { x: point.x - card.x, y: point.y - card.y };
             setGesture({ kind: "region", cardId: card.id, start: local, current: local });
+            return;
+        }
+
+        if (tool === "connect") {
+            const point = worldPointFromEvent(e);
+            const card = findAnyCardAt(point);
+
+            if (!card) {
+                return;
+            }
+
+            e.currentTarget.setPointerCapture(e.pointerId);
+            gestureRef.current = { pointerId: e.pointerId };
+            setGesture({ kind: "connect", fromCardId: card.id, current: point });
+            return;
+        }
+
+        if (tool === "section") {
+            const point = worldPointFromEvent(e);
+            e.currentTarget.setPointerCapture(e.pointerId);
+            gestureRef.current = { pointerId: e.pointerId };
+            setGesture({ kind: "section", start: point, current: point });
         }
     };
 
@@ -423,6 +488,10 @@ export function BoardCanvas({
 
             if (g.kind === "ink") {
                 return { ...g, points: [...g.points, [point.x, point.y]] };
+            }
+
+            if (g.kind === "connect" || g.kind === "section") {
+                return { ...g, current: point };
             }
 
             const card = cards.find((c) => c.id === g.cardId);
@@ -465,6 +534,31 @@ export function BoardCanvas({
 
             if (path.length > 1) {
                 addStrokeMutation.mutate(path);
+            }
+
+            return;
+        }
+
+        if (g.kind === "connect") {
+            const target = findAnyCardAt(endPoint);
+
+            if (target && target.id !== g.fromCardId) {
+                addEdgeMutation.mutate({ fromCard: g.fromCardId, toCard: target.id });
+            } else if (!target) {
+                addEdgeMutation.mutate({ fromCard: g.fromCardId, toX: endPoint.x, toY: endPoint.y });
+            }
+
+            return;
+        }
+
+        if (g.kind === "section") {
+            const minX = Math.min(g.start.x, endPoint.x);
+            const minY = Math.min(g.start.y, endPoint.y);
+            const w = Math.abs(endPoint.x - g.start.x);
+            const h = Math.abs(endPoint.y - g.start.y);
+
+            if (w >= MIN_SECTION_SIZE && h >= MIN_SECTION_SIZE) {
+                createSectionMutation.mutate({ x: minX, y: minY, w, h });
             }
 
             return;
@@ -518,6 +612,11 @@ export function BoardCanvas({
                 className="absolute top-0 left-0"
                 style={{ transform: `translate(${vp.x}px, ${vp.y}px) scale(${vp.scale})`, transformOrigin: "0 0" }}
             >
+                <SectionLayer
+                    cards={cards}
+                    renamingId={renamingSectionId}
+                    onRename={(id, title) => renameSectionMutation.mutate({ id, title })}
+                />
                 {cards.map((card) => (
                     <CardView
                         key={card.id}
@@ -532,7 +631,7 @@ export function BoardCanvas({
                         panningRef={spaceDown}
                     />
                 ))}
-                <EdgeLayer edges={doc.edges} cards={cards} />
+                <EdgeLayer edges={doc.edges} cards={cards} liveEdge={gesture?.kind === "connect" ? gesture : null} />
                 <InkLayer
                     strokes={doc.strokes}
                     cards={cards}
@@ -547,13 +646,41 @@ export function BoardCanvas({
                     onReviseStaged={(id, prompt) => reviseAnnotationMutation.mutate({ id, prompt })}
                     onDeleteStaged={(id) => deleteAnnotationMutation.mutate(id)}
                 />
+                <AnchoredQuestions slug={slug} questions={doc.questions} cards={cards} />
+                {gesture?.kind === "section" ? (
+                    <div
+                        style={{
+                            position: "absolute",
+                            left: Math.min(gesture.start.x, gesture.current.x),
+                            top: Math.min(gesture.start.y, gesture.current.y),
+                            width: Math.abs(gesture.current.x - gesture.start.x),
+                            height: Math.abs(gesture.current.y - gesture.start.y),
+                            pointerEvents: "none",
+                        }}
+                        className="rounded-lg border-2 border-dashed border-[var(--dd-accent-from)]"
+                    />
+                ) : null}
             </div>
+
+            <SectionPills
+                slug={slug}
+                onSelect={(bounds) => {
+                    const el = containerRef.current;
+                    if (el) {
+                        setVp(fitBounds(bounds, el.clientWidth, el.clientHeight));
+                    }
+                }}
+            />
+            <BoardLevelQuestions slug={slug} questions={doc.questions} />
 
             <div
                 className="absolute inset-0"
                 style={{
                     pointerEvents: tool === "move" ? "none" : "auto",
-                    cursor: tool === "annotate" ? "crosshair" : tool === "ink" ? "crosshair" : "default",
+                    cursor:
+                        tool === "annotate" || tool === "ink" || tool === "connect" || tool === "section"
+                            ? "crosshair"
+                            : "default",
                 }}
                 onPointerDown={onOverlayPointerDown}
                 onPointerMove={onOverlayPointerMove}

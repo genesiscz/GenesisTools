@@ -8,6 +8,7 @@ import type {
     CardDto,
     EdgeDto,
     MessageDto,
+    QuestionDto,
     Region,
     StrokeDto,
 } from "@app/dev-dashboard/contract/dto";
@@ -24,6 +25,29 @@ export interface CardVersionDto {
     blobKey: string;
     attemptId: number | null;
     createdAt: string;
+}
+
+/** GET .../sections shapes — not part of the type-only contract (sections.ts isn't in dto.ts's
+ *  re-export allowlist), so declared here. */
+export interface SectionSummaryDto {
+    id: number;
+    name: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    cards: number;
+    order: number;
+    by?: string;
+    journey?: string;
+    pass?: number;
+}
+
+export interface JourneySummaryDto {
+    journey: string;
+    title: string;
+    passes: number;
+    latest: string;
 }
 
 function jsonInit(method: string, body: unknown): RequestInit {
@@ -83,4 +107,8 @@ export const boardsApi = {
     getOperator: () => fetchJson<{ operator: string }>(paths.boardsOperator()),
     setOperator: (operator: string) =>
         fetchJson<{ operator: string }>(paths.boardsOperator(), jsonInit("PUT", { operator })),
+    sections: (slug: string) =>
+        fetchJson<{ sections: SectionSummaryDto[]; journeys: JourneySummaryDto[] }>(paths.boardSections(slug)),
+    answerQuestion: (id: number, answer: string) =>
+        fetchJson<QuestionDto>(paths.boardQuestionAnswer(id), jsonInit("POST", { answer })),
 };
