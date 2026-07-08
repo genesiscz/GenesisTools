@@ -7,7 +7,7 @@ export function regionToWorldRect(card: CardDto, region: Region): { x: number; y
     return { x: card.x + region.x * factor, y: card.y + region.y * factor, w: region.w * factor, h: region.h * factor };
 }
 
-const STATUS_COLOR: Record<AnnotationStatus, string> = {
+export const STATUS_COLOR: Record<AnnotationStatus, string> = {
     staged: "var(--dd-text-muted)",
     open: "#f4f7f8",
     working: "#f59e0b",
