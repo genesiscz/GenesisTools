@@ -1,3 +1,4 @@
+import { getBoardDoc } from "@app/dev-dashboard/lib/boards/boards-store";
 import {
     type ComposeBody,
     composeBoard,
@@ -7,6 +8,7 @@ import {
 import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { publishBoardEvent } from "@app/dev-dashboard/lib/boards/events";
 import { type ArrangeBody, runArrange } from "@app/dev-dashboard/lib/boards/layout-engine";
+import { scrapeBoard } from "@app/dev-dashboard/lib/boards/scrape";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
 import { boardsError } from "./boards-errors";
 import { getOperator } from "./boards-sets";
@@ -90,6 +92,27 @@ export function boardsComposeRoutes(): RouteDef[] {
                         status: 200,
                         body: { ok: true, patched: result.patched, removed: result.removed, restored: result.restored },
                     };
+                } catch (err) {
+                    return boardsError(err);
+                }
+            },
+        },
+        {
+            method: "GET",
+            pattern: "/api/boards/:slug/scrape",
+            handler: async (ctx) => {
+                try {
+                    const doc = await getBoardDoc(getBoardsDb(), ctx.params.slug);
+                    const result = scrapeBoard({
+                        doc,
+                        base: ctx.query.get("base") ?? "",
+                        section: ctx.query.get("section") ?? undefined,
+                        diff: ctx.query.get("diff") ?? undefined,
+                    });
+                    if (!result.ok) {
+                        return { kind: "json", status: result.status, body: { error: result.message } };
+                    }
+                    return { kind: "json", status: 200, body: result.body };
                 } catch (err) {
                     return boardsError(err);
                 }

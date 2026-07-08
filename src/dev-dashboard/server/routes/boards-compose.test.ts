@@ -265,3 +265,46 @@ describe("POST /api/boards/:slug/update-cards", () => {
         expect(doc.cards.map((c) => c.id)).toContain(doomed.id);
     });
 });
+
+describe("GET /api/boards/:slug/scrape", () => {
+    beforeEach(() => {
+        const dir = mkdtempSync(join(tmpdir(), "boards-scrape-route-"));
+        env.testing.set("GENESIS_TOOLS_HOME", dir);
+        env.testing.set("BOARDS_DB_PATH", ":memory:");
+        resetDevDashboardStorage();
+        resetBoardsDb();
+        resetEventHub();
+    });
+    afterEach(() => {
+        __resetLayoutDebounce();
+        resetEventHub();
+        resetBoardsDb();
+        resetDevDashboardStorage();
+        env.testing.unset("GENESIS_TOOLS_HOME");
+        env.testing.unset("BOARDS_DB_PATH");
+    });
+
+    it("returns the board digest, 404s an unknown section", async () => {
+        const db = getBoardsDb();
+        await createBoard(db, { slug: "b1", title: "T" });
+        await createCard(db, "b1", { kind: "text", x: 0, y: 0, w: 50, h: 50, payload: { md: "hi", layer: "ai" } });
+        const route = boardsComposeRoutes().find((d) => d.method === "GET" && d.pattern === "/api/boards/:slug/scrape");
+        if (!route) {
+            throw new Error("scrape route not found");
+        }
+        const ctx = (query: Record<string, string>): RouteContext => ({
+            method: "GET",
+            pathname: "/",
+            query: new URLSearchParams(query),
+            params: { slug: "b1" },
+            headers: {},
+            readJson: async <T>() => ({}) as T,
+            readRawBody: async () => new Uint8Array(),
+            services: {} as RouteContext["services"],
+        });
+        const ok = asJson(await route.handler(ctx({})));
+        expect(ok.status).toBe(200);
+        expect((ok.body.cards as unknown[]).length).toBe(1);
+        expect(asJson(await route.handler(ctx({ section: "nope" }))).status).toBe(404);
+    });
+});
