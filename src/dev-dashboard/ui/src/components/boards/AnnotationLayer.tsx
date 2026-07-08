@@ -87,14 +87,17 @@ export function AnnotationLayer({
                                 borderColor: color,
                                 color,
                                 background: "var(--dd-bg-base)",
+                                // Cards carry zIndex: card.z (z-order feature) — without an explicit
+                                // stack the pin paints under its own card and is unclickable.
+                                zIndex: 9999,
                             }}
                         >
                             {annotation.id}
                         </button>
                         {annotation.status === "staged" ? (
                             <div
-                                className="absolute z-10 w-56 rounded-md border border-[var(--dd-border)] bg-[var(--dd-bg-panel)] p-2 text-xs shadow-lg"
-                                style={{ left: rect.x + 16, top: rect.y + 16 }}
+                                className="absolute w-56 rounded-md border border-[var(--dd-border)] bg-[var(--dd-bg-panel)] p-2 text-xs shadow-lg"
+                                style={{ left: rect.x + 16, top: rect.y + 16, zIndex: 10000 }}
                             >
                                 <textarea
                                     defaultValue={annotation.prompt}
