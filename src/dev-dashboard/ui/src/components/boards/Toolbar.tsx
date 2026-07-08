@@ -30,11 +30,12 @@ export function Toolbar({ tool, onToolChange }: ToolbarProps) {
                     key={t}
                     type="button"
                     title={`${label} (${key})`}
+                    aria-pressed={tool === t}
                     onClick={() => onToolChange(t)}
                     className={
                         tool === t
                             ? "dd-btn-accent flex h-8 w-8 items-center justify-center rounded-full"
-                            : "flex h-8 w-8 items-center justify-center rounded-full text-[var(--dd-text-secondary)] hover:bg-white/5 hover:text-[var(--dd-text-primary)]"
+                            : "flex h-8 w-8 items-center justify-center rounded-full text-[var(--dd-text-secondary)] hover:bg-[var(--dd-bg-hover)] hover:text-[var(--dd-text-primary)]"
                     }
                 >
                     <Icon size={16} />

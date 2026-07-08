@@ -80,7 +80,7 @@ export function AnnotationLayer({
                             title={annotation.prompt}
                             className={`absolute flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border text-[10px] font-bold ${
                                 annotation.status === "cancelled" ? "line-through opacity-60" : ""
-                            } ${selected ? "ring-2 ring-white" : ""}`}
+                            } ${selected ? "ring-2 ring-[var(--dd-accent-from)]" : ""}`}
                             style={{
                                 left: rect.x,
                                 top: rect.y,

@@ -70,19 +70,27 @@ export function BoardCanvas({
         void queryClient.invalidateQueries({ queryKey: ["board", slug] });
     };
 
+    const clearDragOverride = (id: number) => {
+        setDragOverrides((prev) => {
+            if (!(id in prev)) {
+                return prev;
+            }
+
+            const next = { ...prev };
+            delete next[id];
+            return next;
+        });
+    };
+
     const patchCardMutation = useMutation({
         mutationFn: ({ id, x, y }: { id: number; x: number; y: number }) => boardsApi.patchCard(id, { x, y }),
         onSuccess: (_card, variables) => {
-            setDragOverrides((prev) => {
-                if (!(variables.id in prev)) {
-                    return prev;
-                }
-
-                const next = { ...prev };
-                delete next[variables.id];
-                return next;
-            });
+            clearDragOverride(variables.id);
             invalidate();
+        },
+        onError: (err, variables) => {
+            console.error("[boards] card move failed", err);
+            clearDragOverride(variables.id);
         },
     });
 
@@ -92,6 +100,7 @@ export function BoardCanvas({
             setSelectedId(null);
             invalidate();
         },
+        onError: (err) => console.error("[boards] delete card failed", err),
     });
 
     const noteMutation = useMutation({
@@ -100,16 +109,19 @@ export function BoardCanvas({
             return boardsApi.patchCard(id, { payload: { ...(card?.payload ?? {}), text } });
         },
         onSuccess: invalidate,
+        onError: (err) => console.error("[boards] note update failed", err),
     });
 
     const addStrokeMutation = useMutation({
         mutationFn: (path: number[][]) => boardsApi.addStrokes(slug, [{ path, color: "#e33352", width: 3 }]),
         onSuccess: invalidate,
+        onError: (err) => console.error("[boards] add stroke failed", err),
     });
 
     const deleteStrokeMutation = useMutation({
         mutationFn: (id: number) => boardsApi.deleteStroke(id),
         onSuccess: invalidate,
+        onError: (err) => console.error("[boards] delete stroke failed", err),
     });
 
     const createAnnotationMutation = useMutation({
@@ -127,16 +139,19 @@ export function BoardCanvas({
             setPendingRegion(null);
             invalidate();
         },
+        onError: (err) => console.error("[boards] create annotation failed", err),
     });
 
     const reviseAnnotationMutation = useMutation({
         mutationFn: ({ id, prompt }: { id: number; prompt: string }) => boardsApi.reviseAnnotation(id, prompt),
         onSuccess: invalidate,
+        onError: (err) => console.error("[boards] revise annotation failed", err),
     });
 
     const deleteAnnotationMutation = useMutation({
         mutationFn: (id: number) => boardsApi.deleteAnnotation(id),
         onSuccess: invalidate,
+        onError: (err) => console.error("[boards] delete annotation failed", err),
     });
 
     const pendingAttemptCardIds = useMemo(() => {
@@ -171,6 +186,9 @@ export function BoardCanvas({
         const override = dragOverrides[card.id];
         return override ? { ...card, x: override.x, y: override.y } : card;
     });
+
+    const deleteCardMutationRef = useRef(deleteCardMutation);
+    deleteCardMutationRef.current = deleteCardMutation;
 
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
@@ -213,10 +231,10 @@ export function BoardCanvas({
                         maxY: Number.NEGATIVE_INFINITY,
                     }
                 );
-                setVp(fitBounds(bounds, el.clientWidth, el.clientHeight));
+                setVp(fitBounds(bounds, { width: el.clientWidth, height: el.clientHeight }));
             } else if ((e.key === "Backspace" || e.key === "Delete") && selectedId != null) {
                 e.preventDefault();
-                deleteCardMutation.mutate(selectedId);
+                deleteCardMutationRef.current.mutate(selectedId);
             } else if (!meta && !e.shiftKey && TOOL_KEYS[e.key.toLowerCase()]) {
                 onToolChange(TOOL_KEYS[e.key.toLowerCase()]);
             }
@@ -233,7 +251,7 @@ export function BoardCanvas({
             window.removeEventListener("keydown", onKeyDown);
             window.removeEventListener("keyup", onKeyUp);
         };
-    }, [doc.cards, setVp, containerRef, spaceDown, selectedId, deleteCardMutation, onToolChange]);
+    }, [doc.cards, setVp, containerRef, spaceDown, selectedId, onToolChange]);
 
     const worldPointFromEvent = (e: ReactPointerEvent<HTMLDivElement>): { x: number; y: number } => {
         const el = containerRef.current;

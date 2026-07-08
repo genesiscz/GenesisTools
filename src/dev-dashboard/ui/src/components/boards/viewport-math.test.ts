@@ -55,7 +55,7 @@ describe("resetZoom", () => {
 describe("fitBounds", () => {
     test("centers a 100x100 box in a 1000x350 screen", () => {
         const bounds = { minX: 0, minY: 0, maxX: 100, maxY: 100 };
-        const vp = fitBounds(bounds, 1000, 350, 0);
+        const vp = fitBounds(bounds, { width: 1000, height: 350, pad: 0 });
 
         // Square box, screen is much wider than tall -> scale is bound by height.
         expect(vp.scale).toBeCloseTo(3.5, 5);
@@ -71,7 +71,7 @@ describe("fitBounds", () => {
 
     test("respects padding when computing scale", () => {
         const bounds = { minX: 0, minY: 0, maxX: 100, maxY: 100 };
-        const vp = fitBounds(bounds, 1000, 600, 150);
+        const vp = fitBounds(bounds, { width: 1000, height: 600, pad: 150 });
 
         // (600 - 300) / 100 = 3 is the binding dimension.
         expect(vp.scale).toBeCloseTo(3, 5);

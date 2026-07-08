@@ -6,6 +6,8 @@ export interface TarEntry {
     data: Uint8Array;
 }
 
+const MAX_DECOMPRESSED_BYTES = 500 * 1024 * 1024; // 500 MiB ceiling on the extracted tar body
+
 /** Unpack a gzipped tar body into memory. Rejects absolute / traversal paths. */
 export async function untarGz(body: Uint8Array): Promise<TarEntry[]> {
     // A bare `Uint8Array` parameter type-widens to Uint8Array<ArrayBufferLike>, which isn't
@@ -14,10 +16,19 @@ export async function untarGz(body: Uint8Array): Promise<TarEntry[]> {
     const tarBuf = Buffer.from(Bun.gunzipSync(new Uint8Array(body)));
     const ex = extract();
     const entries: TarEntry[] = [];
+    let totalBytes = 0;
     const done = new Promise<void>((resolve, reject) => {
         ex.on("entry", (header, stream, next) => {
             const chunks: Buffer[] = [];
-            stream.on("data", (c: Buffer) => chunks.push(c));
+            stream.on("data", (c: Buffer) => {
+                totalBytes += c.length;
+                if (totalBytes > MAX_DECOMPRESSED_BYTES) {
+                    reject(new Error(`tar body exceeds ${MAX_DECOMPRESSED_BYTES} bytes decompressed`));
+                    ex.destroy();
+                    return;
+                }
+                chunks.push(c);
+            });
             stream.on("end", () => {
                 if (header.type === "file") {
                     const clean = header.name.replace(/^\.\//, "");

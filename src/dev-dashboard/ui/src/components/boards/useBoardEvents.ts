@@ -18,11 +18,14 @@ export function useBoardEvents(slug: string, onEvent?: (e: BoardEventDto) => voi
         let es: EventSource | null = null;
         let retry: ReturnType<typeof setTimeout> | null = null;
         let closed = false;
+        let attempt = 0;
+        const MAX_RETRY_MS = 30_000;
 
         const connect = () => {
             es = new EventSource(paths.boardEvents(slug));
             es.onopen = () => {
                 setLive(true);
+                attempt = 0;
                 // Full refetch on (re)connect — recovers any gap missed while disconnected.
                 void qc.invalidateQueries({ queryKey: ["board", slug] });
             };
@@ -31,8 +34,8 @@ export function useBoardEvents(slug: string, onEvent?: (e: BoardEventDto) => voi
 
                 try {
                     onEventRef.current?.(SafeJSON.parse(ev.data, { strict: true }) as BoardEventDto);
-                } catch {
-                    /* ignore malformed frame — the invalidate above still covers it */
+                } catch (err) {
+                    console.warn("[boards] failed to parse SSE frame", err);
                 }
             };
             es.onerror = () => {
@@ -40,7 +43,9 @@ export function useBoardEvents(slug: string, onEvent?: (e: BoardEventDto) => voi
                 es?.close();
 
                 if (!closed) {
-                    retry = setTimeout(connect, 2000);
+                    const delay = Math.min(MAX_RETRY_MS, 2000 * 2 ** attempt);
+                    attempt += 1;
+                    retry = setTimeout(connect, delay);
                 }
             };
         };

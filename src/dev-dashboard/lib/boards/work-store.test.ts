@@ -171,14 +171,16 @@ describe("work-store", () => {
             status: "open",
         });
 
-        const items = await listOpenWorkDetailed(db, { kind: "board", board: "b1" });
+        const { items, total: b1Total } = await listOpenWorkDetailed(db, { kind: "board", board: "b1" });
         expect(items.length).toBe(1);
+        expect(b1Total).toBe(1);
         expect(items[0].boardSlug).toBe("b1");
         expect(items[0].annotation.prompt).toBe("b1-item");
         expect(items[0].card.id).toBe(cardB1.id);
 
         const all = await listOpenWorkDetailed(db, { kind: "all" });
-        expect(all.length).toBe(2);
+        expect(all.items.length).toBe(2);
+        expect(all.total).toBe(2);
     });
 
     it("dispatchBoard flips staged annotations to open and releases answered staged questions", async () => {

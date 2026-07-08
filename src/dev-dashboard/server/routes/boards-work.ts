@@ -51,7 +51,8 @@ export function boardsWorkRoutes(): RouteDef[] {
             handler: async (ctx) => {
                 try {
                     const db = getBoardsDb();
-                    const timeoutSec = Math.min(55, Math.max(1, Number(ctx.query.get("timeout") ?? "25") || 25));
+                    const rawTimeout = Number(ctx.query.get("timeout") ?? "25");
+                    const timeoutSec = Math.min(55, Math.max(1, Number.isNaN(rawTimeout) ? 25 : rawTimeout));
                     const scope = parseScope(ctx.query);
                     const session = ctx.query.get("session") ?? "";
                     const actor = ctx.query.get("actor") ?? "";
@@ -85,10 +86,10 @@ export function boardsWorkRoutes(): RouteDef[] {
                             leaseId = lease.id;
                         }
                         const effectiveScope = scope ?? ({ kind: "all" } as const);
-                        const items = await listOpenWorkDetailed(db, effectiveScope);
+                        const { items, total } = await listOpenWorkDetailed(db, effectiveScope, 3);
                         const choices = await drainChoices(db, effectiveScope);
                         if (items.length > 0 || choices.length > 0) {
-                            const work = items.slice(0, 3).map((it) => ({
+                            const work = items.map((it) => ({
                                 id: it.annotation.id,
                                 board: it.boardSlug,
                                 capsule: buildCapsule(it.annotation, it.card, it.boardSlug),
@@ -99,7 +100,7 @@ export function boardsWorkRoutes(): RouteDef[] {
                                 body: {
                                     work,
                                     choices,
-                                    pending: items.length,
+                                    pending: total,
                                     ...(leaseId ? { listener: leaseId } : {}),
                                 },
                             };
@@ -131,7 +132,12 @@ export function boardsWorkRoutes(): RouteDef[] {
             method: "DELETE",
             pattern: "/api/boards/work/listeners/:id",
             handler: async (ctx) => {
-                const reverted = await releaseLease(getBoardsDb(), Number(ctx.params.id));
+                const id = Number(ctx.params.id);
+                if (!Number.isInteger(id)) {
+                    return { kind: "json", status: 400, body: { error: "invalid listener id" } };
+                }
+
+                const reverted = await releaseLease(getBoardsDb(), id);
                 return { kind: "json", status: 200, body: { reverted } };
             },
         },

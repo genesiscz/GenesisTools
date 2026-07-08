@@ -29,7 +29,7 @@ function Lightbox({ blobKey, region, onClose }: { blobKey: string; region: Regio
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" onClick={onClose}>
-            <div className="relative">
+            <div className="relative" onClick={(e) => e.stopPropagation()}>
                 <img
                     src={paths.boardsBlob(blobKey)}
                     alt="attempt face"
@@ -98,6 +98,7 @@ export function CompareDeck({ slug, annotation }: CompareDeckProps) {
         onSuccess: () => {
             void queryClient.invalidateQueries({ queryKey: ["board", slug] });
         },
+        onError: (err) => console.error("[boards] verdict failed", err),
     });
 
     if (faces.length === 0) {
@@ -123,7 +124,7 @@ export function CompareDeck({ slug, annotation }: CompareDeckProps) {
                         setIndex((i) => (i - 1 + faces.length) % faces.length);
                     }
                 }}
-                className="relative outline-none"
+                className="relative outline-none focus-visible:ring-2 focus-visible:ring-[var(--dd-accent-from)]"
             >
                 <button type="button" onClick={() => setLightboxOpen(true)} className="block w-full">
                     <img
@@ -150,13 +151,14 @@ export function CompareDeck({ slug, annotation }: CompareDeckProps) {
                 <span>{face.caption}</span>
             </div>
             {face.attemptId != null && face.attemptId === newestPendingAttemptId ? (
-                <div className="mt-1 flex gap-2 text-xs">
+                <div className="mt-1 flex items-center gap-2 text-xs">
                     <button
                         type="button"
                         onClick={() =>
                             verdictMutation.mutate({ attemptId: face.attemptId as number, verdict: "accept" })
                         }
-                        className="text-[var(--dd-accent-from)] hover:underline"
+                        disabled={verdictMutation.isPending}
+                        className="text-[var(--dd-accent-from)] hover:underline disabled:opacity-50"
                     >
                         ✓ accept
                     </button>
@@ -165,10 +167,14 @@ export function CompareDeck({ slug, annotation }: CompareDeckProps) {
                         onClick={() =>
                             verdictMutation.mutate({ attemptId: face.attemptId as number, verdict: "reject" })
                         }
-                        className="text-[var(--dd-danger)] hover:underline"
+                        disabled={verdictMutation.isPending}
+                        className="text-[var(--dd-danger)] hover:underline disabled:opacity-50"
                     >
                         ✗ reject
                     </button>
+                    {verdictMutation.isError ? (
+                        <span className="text-[var(--dd-danger)]">verdict failed — try again</span>
+                    ) : null}
                 </div>
             ) : null}
             {lightboxOpen ? (

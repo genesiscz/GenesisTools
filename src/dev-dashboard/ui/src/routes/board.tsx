@@ -50,6 +50,7 @@ function OperatorDialog({ defaultValue, onSubmit }: { defaultValue: string; onSu
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="your name..."
+                    aria-label="your name"
                     className="mb-3 w-full rounded border border-[var(--dd-border)] bg-transparent px-2 py-1.5 text-sm text-[var(--dd-text-primary)] outline-none focus:border-[var(--dd-accent-from)]"
                 />
                 <button type="submit" className="dd-btn-accent w-full rounded-md px-3 py-1.5 text-sm">

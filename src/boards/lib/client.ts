@@ -9,6 +9,9 @@ import { SafeJSON } from "@app/utils/json";
 
 export const DEFAULT_BASE_URL = "http://127.0.0.1:3042";
 
+/** Fallback abort timeout for requests that don't supply their own signal. */
+const DEFAULT_TIMEOUT_MS = 30_000;
+
 /** `--base` flag > `BOARDS_BASE_URL` env override > loopback default. */
 export function resolveBaseUrl(explicit?: string): string {
     return explicit ?? env.boards.getBaseUrl() ?? DEFAULT_BASE_URL;
@@ -33,7 +36,10 @@ export interface HttpResult<T> {
 /** Low-level request — never throws on a non-2xx status, so callers that need to
  *  branch on the status code (409 conflicts, transport-error backoff) can inspect it. */
 export async function rawRequest<T>(base: string, path: string, init?: RequestInit): Promise<HttpResult<T>> {
-    const res = await fetch(`${base}${path}`, init);
+    const res = await fetch(`${base}${path}`, {
+        ...init,
+        signal: init?.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+    });
     const text = await res.text();
     let body: T | undefined;
     if (text.length > 0) {
@@ -83,10 +89,9 @@ export async function putRaw<T>(
     base: string,
     path: string,
     data: Uint8Array,
-    contentType: string,
-    signal?: AbortSignal,
-    actor?: string
+    options: { contentType: string; signal?: AbortSignal; actor?: string }
 ): Promise<T> {
+    const { contentType, signal, actor } = options;
     const { status, body } = await rawRequest<T>(base, path, {
         method: "PUT",
         headers: { "content-type": contentType, ...(actor ? actorHeader(actor) : {}) },

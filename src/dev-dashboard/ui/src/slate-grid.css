@@ -1,6 +1,7 @@
 :root {
     --dd-bg-base: #0c0e10;
     --dd-bg-panel: #101316;
+    --dd-bg-hover: rgba(255, 255, 255, 0.05);
     --dd-border: #1e2428;
     --dd-grid: rgba(52, 211, 153, 0.04);
     --dd-accent-from: #34d399;

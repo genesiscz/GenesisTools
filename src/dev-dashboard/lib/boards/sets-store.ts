@@ -128,6 +128,10 @@ async function resolveSetRow(
  *  meta: { journey?: {...}, shots?: [{ file, route?, label?, title?, note?, action?, ts? }] }.
  *  Blobs are written (content-addressed) BEFORE the tx; file rows reference blob keys. */
 export async function syncSet(db: DatabaseClient<BoardsDb>, input: SyncSetInput): Promise<SyncSetResult> {
+    if (!KEY_RE.test(input.key) || isReservedKey(input.key)) {
+        throw new NameConflictError(`invalid set key: ${input.key}`);
+    }
+
     const branchSlug = slugifyBranch(input.branchRaw);
     const manifest = parseManifest(input.entries);
     const shotsByFile = new Map<string, Record<string, unknown>>();
@@ -145,21 +149,22 @@ export async function syncSet(db: DatabaseClient<BoardsDb>, input: SyncSetInput)
         width: number;
         height: number;
         meta: string;
-    }> = [];
-    for (const entry of fileEntries) {
-        const mime = mimeForPath(entry.path);
-        const dims = mime.startsWith("image/") ? readImageDims(entry.data) : null;
-        const blobKey = await putBlob(entry.data, mime);
-        prepared.push({
-            path: entry.path,
-            mime,
-            bytes: entry.data.length,
-            blobKey,
-            width: dims?.width ?? 0,
-            height: dims?.height ?? 0,
-            meta: SafeJSON.stringify(shotsByFile.get(entry.path) ?? {}),
-        });
-    }
+    }> = await Promise.all(
+        fileEntries.map(async (entry) => {
+            const mime = mimeForPath(entry.path);
+            const dims = mime.startsWith("image/") ? readImageDims(entry.data) : null;
+            const blobKey = await putBlob(entry.data, mime);
+            return {
+                path: entry.path,
+                mime,
+                bytes: entry.data.length,
+                blobKey,
+                width: dims?.width ?? 0,
+                height: dims?.height ?? 0,
+                meta: SafeJSON.stringify(shotsByFile.get(entry.path) ?? {}),
+            };
+        })
+    );
 
     const totalBytes = prepared.reduce((sum, f) => sum + f.bytes, 0);
     const journeyJson = manifest?.journey ? SafeJSON.stringify(manifest.journey) : "";

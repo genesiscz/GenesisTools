@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 
 export interface BoardsSetConfig {
@@ -28,7 +29,8 @@ export async function readSetConfig(root: string): Promise<BoardsSetConfig | nul
 
     try {
         return SafeJSON.parse(await readFile(path, "utf8")) as BoardsSetConfig;
-    } catch {
+    } catch (err) {
+        logger.warn({ path, err }, "boards: failed to parse set config, treating as missing");
         return null;
     }
 }
@@ -125,7 +127,8 @@ export async function ensureGitExclude(cwd: string, rootRelative: string): Promi
     let content = "";
     try {
         content = await readFile(excludePath, "utf8");
-    } catch {
+    } catch (err) {
+        logger.debug({ excludePath, err }, "boards: failed to read git exclude file, treating as empty");
         content = "";
     }
 

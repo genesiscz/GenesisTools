@@ -13,7 +13,7 @@ import {
     syncSet,
 } from "@app/dev-dashboard/lib/boards/sets-store";
 import { untarGz } from "@app/dev-dashboard/lib/boards/tar";
-import type { RouteDef } from "@app/dev-dashboard/server/types";
+import type { RouteContext, RouteDef } from "@app/dev-dashboard/server/types";
 import { escapeLike } from "@app/utils/database/predicates";
 import { type SqlBool, sql } from "kysely";
 import { boardsError } from "./boards-errors";
@@ -21,11 +21,23 @@ import { boardsError } from "./boards-errors";
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 
 /** Reads the `operator` settings row — the fallback actor identity for board writes that
- *  arrive without an `x-board-actor` header (see boards-annotations.ts's actorFrom). */
+ *  arrive without an `x-board-actor` header (see actorFrom below). */
 export async function getOperator(): Promise<string> {
     const db = getBoardsDb();
     const row = await db.kysely.selectFrom("settings").select("value").where("key", "=", "operator").executeTakeFirst();
     return row?.value ?? "";
+}
+
+/** Actor fallback chain (plan §Task 9 note): body override (handled by callers) →
+ *  `x-board-actor` header → the `operator` settings row → the literal `"operator"`. */
+export async function actorFrom(ctx: RouteContext): Promise<string> {
+    const header = ctx.headers["x-board-actor"];
+    if (header) {
+        return header;
+    }
+
+    const operator = await getOperator();
+    return operator || "operator";
 }
 
 async function setOperator(operator: string): Promise<void> {

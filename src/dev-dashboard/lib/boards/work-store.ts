@@ -11,6 +11,7 @@ import { NotFoundError, slugifyBranch } from "./sets-store";
 import { nowIso } from "./time";
 import type {
     AnnotationDto,
+    AnnotationIntent,
     AnnotationStatus,
     CardDto,
     ChoiceItemDto,
@@ -124,7 +125,7 @@ export async function listWork(
         board: r.board,
         boardTitle: r.boardTitle,
         cardId: r.cardId,
-        intent: r.intent,
+        intent: r.intent as AnnotationIntent,
         intentOther: r.intentOther || undefined,
         status: r.status as AnnotationStatus,
         prompt: promptByAnnotation.get(r.id) ?? "",
@@ -151,11 +152,18 @@ export interface OpenWorkItem {
     boardSlug: string;
 }
 
-/** Same scoping as listWork, but resolved to full AnnotationDto + CardDto (for capsule building). */
-export async function listOpenWorkDetailed(db: DatabaseClient<BoardsDb>, scope: WorkScope): Promise<OpenWorkItem[]> {
-    const items = await listWork(db, { status: "open", ...scopeToListWorkFilter(scope) });
+/** Same scoping as listWork, but resolved to full AnnotationDto + CardDto (for capsule building).
+ *  Only the first `limit` items (if given) are hydrated; `total` reports the full open count so
+ *  callers can report pending work without paying to hydrate all of it. */
+export async function listOpenWorkDetailed(
+    db: DatabaseClient<BoardsDb>,
+    scope: WorkScope,
+    limit?: number
+): Promise<{ items: OpenWorkItem[]; total: number }> {
+    const openItems = await listWork(db, { status: "open", ...scopeToListWorkFilter(scope) });
+    const slice = limit !== undefined ? openItems.slice(0, limit) : openItems;
     const result: OpenWorkItem[] = [];
-    for (const item of items) {
+    for (const item of slice) {
         const annotation = await getAnnotation(db, item.id);
         const cardRow = await db.kysely
             .selectFrom("board_cards")
@@ -167,7 +175,7 @@ export async function listOpenWorkDetailed(db: DatabaseClient<BoardsDb>, scope: 
         }
         result.push({ annotation, card: toCardDto(cardRow), boardSlug: annotation.boardSlug });
     }
-    return result;
+    return { items: result, total: openItems.length };
 }
 
 /** Reverts a listener's claimed ("working") annotations back to "open". Returns the reverted
@@ -243,26 +251,19 @@ export async function claimOrRenewLease(
     const now = nowIso();
 
     if (cols.scope_kind === "all") {
-        const existing = await db.kysely
-            .selectFrom("listeners")
-            .selectAll()
-            .where("scope_kind", "=", "all")
-            .where("session", "=", session)
-            .executeTakeFirst();
-        if (existing) {
-            await db.kysely
-                .updateTable("listeners")
-                .set({ last_seen: now, actor })
-                .where("id", "=", existing.id)
-                .execute();
-            return { conflict: false, id: existing.id };
-        }
-        const inserted = await db.kysely
-            .insertInto("listeners")
-            .values({ scope_kind: "all", scope: "", branch: "", actor, session, created_at: now, last_seen: now })
-            .returningAll()
-            .executeTakeFirstOrThrow();
-        return { conflict: false, id: inserted.id };
+        // Upsert against idx_listeners_all_session (db.ts BOOTSTRAP_DDL): two overlapping "all"
+        // waits from the SAME session must renew one row, not race two INSERTs into duplicates.
+        // Kysely's onConflict builder can't target a partial unique index's WHERE clause, so this
+        // mirrors the raw-SQL upsert used for board/project scope below.
+        const upsertResult = await sql<Selectable<ListenersTable>>`
+            INSERT INTO listeners (scope_kind, scope, branch, actor, session, created_at, last_seen)
+            VALUES ('all', '', '', ${actor}, ${session}, ${now}, ${now})
+            ON CONFLICT (session) WHERE scope_kind = 'all'
+            DO UPDATE SET actor = excluded.actor, last_seen = excluded.last_seen
+            RETURNING *
+        `.execute(db.kysely);
+        const upserted = upsertResult.rows[0];
+        return { conflict: false, id: upserted.id };
     }
 
     const holder = await db.kysely

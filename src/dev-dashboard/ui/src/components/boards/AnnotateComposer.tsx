@@ -23,7 +23,7 @@ export function AnnotateComposer({ screenX, screenY, onSubmit, onCancel }: Annot
     const [prompt, setPrompt] = useState("");
 
     const submit = () => {
-        if (!prompt.trim()) {
+        if (!prompt.trim() || (intent === "other" && !intentOther.trim())) {
             return;
         }
 

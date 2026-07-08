@@ -4,7 +4,16 @@ import type { Kysely, Selectable } from "kysely";
 import type { BoardCardsTable, BoardsDb } from "./db-types";
 import { NotFoundError } from "./sets-store";
 import { nowIso } from "./time";
-import type { AnnotationDto, AnnotationStatus, AttemptDto, CardDto, MessageDto, Region, RevisionDto } from "./types";
+import type {
+    AnnotationDto,
+    AnnotationIntent,
+    AnnotationStatus,
+    AttemptDto,
+    CardDto,
+    MessageDto,
+    Region,
+    RevisionDto,
+} from "./types";
 
 export const PATCHABLE_STATUSES: ReadonlySet<string> = new Set(["staged", "open", "working", "in_review", "resolved"]);
 export const CANCELLABLE_FROM: ReadonlySet<string> = new Set(["staged", "open", "working"]);
@@ -126,7 +135,7 @@ function toAnnotationDto(
         boardSlug,
         cardId: row.card_id,
         region: SafeJSON.parse(row.region, { strict: true }) as Region,
-        intent: row.intent,
+        intent: row.intent as AnnotationIntent,
         intentOther: row.intent_other,
         status: row.status as AnnotationStatus,
         assignee: row.assignee,
@@ -441,8 +450,7 @@ export async function deleteAnnotation(db: DatabaseClient<BoardsDb>, id: number)
 export async function addRevision(
     db: DatabaseClient<BoardsDb>,
     id: number,
-    prompt: string,
-    createdBy: string
+    input: { prompt: string; createdBy: string }
 ): Promise<AnnotationDto> {
     const row = await db.kysely.selectFrom("annotations").select(["status"]).where("id", "=", id).executeTakeFirst();
     if (!row) {
@@ -452,6 +460,7 @@ export async function addRevision(
         throw new CancelledError(`annotation ${id} is cancelled`);
     }
 
+    const { prompt, createdBy } = input;
     const now = nowIso();
     if (row.status === "staged") {
         const latest = await db.kysely
@@ -714,7 +723,15 @@ export async function setVerdict(
 
     const now = nowIso();
     const card = await db.kysely.transaction().execute(async (trx) => {
-        await trx.updateTable("annotation_attempts").set({ verdict }).where("id", "=", attemptId).execute();
+        const verdictResult = await trx
+            .updateTable("annotation_attempts")
+            .set({ verdict })
+            .where("id", "=", attemptId)
+            .where("verdict", "=", "")
+            .executeTakeFirst();
+        if (Number(verdictResult.numUpdatedRows ?? 0) === 0) {
+            throw new InvalidStatusError(`attempt ${attemptId} already has a verdict`);
+        }
 
         if (verdict === "accept") {
             await trx
@@ -778,19 +795,7 @@ export async function setVerdict(
     });
 
     return {
-        attempt: {
-            id: attemptRow.id,
-            annotationId: attemptRow.annotation_id,
-            revisionId: attemptRow.revision_id,
-            afterSetRef: attemptRow.after_set_ref,
-            afterVersion: attemptRow.after_version,
-            afterFile: attemptRow.after_file,
-            afterBlobKey: attemptRow.after_blob_key,
-            agent: attemptRow.agent,
-            commitRef: attemptRow.commit_ref,
-            verdict,
-            createdAt: attemptRow.created_at,
-        },
+        attempt: toAttemptDto({ ...attemptRow, verdict }),
         annotation: await loadAnnotationDto(db.kysely, annotationRow.id),
         card: toCardDto(card),
     };

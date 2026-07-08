@@ -30,9 +30,11 @@ export async function readManifest(root: string): Promise<Manifest> {
     try {
         const parsed = SafeJSON.parse(raw) as Partial<Manifest>;
         return { ...parsed, shots: parsed.shots ?? [] };
-    } catch {
+    } catch (err) {
         // Refuse to silently reset history — the next add/push would overwrite it with an empty one.
-        throw new Error(`manifest.json is corrupt at ${path} — refusing to overwrite; fix or delete it`);
+        throw new Error(`manifest.json is corrupt at ${path} — refusing to overwrite; fix or delete it`, {
+            cause: err,
+        });
     }
 }
 

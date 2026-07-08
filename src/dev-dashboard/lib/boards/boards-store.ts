@@ -139,6 +139,7 @@ async function getBoardRow(db: DatabaseClient<BoardsDb>, slug: string): Promise<
     if (!row) {
         throw new NotFoundError(`board not found: ${slug}`);
     }
+
     return row;
 }
 
@@ -149,6 +150,7 @@ export async function createBoard(
     if (!BOARD_SLUG_RE.test(input.slug) || RESERVED_SLUGS.has(input.slug)) {
         throw new SlugConflictError(`invalid board slug: ${input.slug}`);
     }
+
     const existing = await db.kysely
         .selectFrom("boards")
         .select("id")
@@ -157,6 +159,7 @@ export async function createBoard(
     if (existing) {
         throw new SlugConflictError(`board slug already exists: ${input.slug}`);
     }
+
     const now = nowIso();
     let inserted: Selectable<BoardsTable>;
     try {
@@ -321,6 +324,7 @@ export async function createCard(
         if (!board) {
             throw new NotFoundError(`board not found: ${boardSlug}`);
         }
+
         const elemNo = board.elem_seq + 1;
         await trx.updateTable("boards").set({ elem_seq: elemNo, updated_at: now }).where("id", "=", board.id).execute();
 
@@ -379,6 +383,7 @@ export async function getCard(db: DatabaseClient<BoardsDb>, cardId: number): Pro
     if (!row) {
         throw new NotFoundError(`card not found: ${cardId}`);
     }
+
     return toCardDto(row);
 }
 
@@ -391,6 +396,7 @@ export async function patchCard(
     if (!existing) {
         throw new NotFoundError(`card not found: ${cardId}`);
     }
+
     const updated = await db.kysely
         .updateTable("board_cards")
         .set({
@@ -430,6 +436,7 @@ export async function restoreCard(db: DatabaseClient<BoardsDb>, cardId: number):
     if (!updated) {
         throw new NotFoundError(`card not found: ${cardId}`);
     }
+
     return toCardDto(updated);
 }
 
@@ -513,6 +520,7 @@ export async function bulkLayout(
     if (moves.length < 1 || moves.length > 500) {
         throw new InvalidInputError(`bulkLayout: expected 1-500 moves, got ${moves.length}`);
     }
+
     const board = await getBoardRow(db, boardSlug);
     const now = nowIso();
     await db.kysely.transaction().execute(async (trx) => {
@@ -567,26 +575,33 @@ export async function importSet(
     boardSlug: string,
     set: SetDetailDto
 ): Promise<{ cards: CardDto[]; edges: EdgeDto[]; skipped: number }> {
-    const board = await getBoardRow(db, boardSlug);
     const setRef = setRefOf(set);
     const images = set.files.filter((f) => f.width > 0 && f.height > 0);
-
-    const existingRows = await db.kysely
-        .selectFrom("board_cards")
-        .select(["file_path"])
-        .where("board_id", "=", board.id)
-        .where("set_ref", "=", setRef)
-        .where("deleted_at", "=", "")
-        .execute();
-    const existingPaths = new Set(existingRows.map((r) => r.file_path));
-
-    const toImport = images.filter((f) => !existingPaths.has(f.path));
-    const skipped = images.length - toImport.length;
-    const heights = toImport.map((f) => Math.round((IMPORT_CELL_W * f.height) / f.width));
-    const positions = serpentinePositions(heights);
     const now = nowIso();
 
     return db.kysely.transaction().execute(async (trx) => {
+        // Board row + dedup lookup read INSIDE the tx (mirrors createCard): reading them before
+        // the tx starts would let a concurrent write land between the read and the insert loop,
+        // staling both the elem_seq counter and the dedup set.
+        const board = await trx.selectFrom("boards").selectAll().where("slug", "=", boardSlug).executeTakeFirst();
+        if (!board) {
+            throw new NotFoundError(`board not found: ${boardSlug}`);
+        }
+
+        const existingRows = await trx
+            .selectFrom("board_cards")
+            .select(["file_path"])
+            .where("board_id", "=", board.id)
+            .where("set_ref", "=", setRef)
+            .where("deleted_at", "=", "")
+            .execute();
+        const existingPaths = new Set(existingRows.map((r) => r.file_path));
+
+        const toImport = images.filter((f) => !existingPaths.has(f.path));
+        const skipped = images.length - toImport.length;
+        const heights = toImport.map((f) => Math.round((IMPORT_CELL_W * f.height) / f.width));
+        const positions = serpentinePositions(heights);
+
         const cards: CardDto[] = [];
         let elemSeq = board.elem_seq;
 
@@ -745,6 +760,7 @@ export async function appendCardVersion(
     if (!card) {
         throw new NotFoundError(`card not found: ${cardId}`);
     }
+
     const now = nowIso();
     return db.kysely.transaction().execute(async (trx) => {
         const nextVersion = await nextCardVersionNumber(trx, cardId);
@@ -796,6 +812,7 @@ export async function revertCardFace(
     if (!versionRow) {
         throw new NotFoundError(`card version not found: card ${cardId} v${toVersion}`);
     }
+
     const updated = await db.kysely
         .updateTable("board_cards")
         .set({
@@ -812,6 +829,7 @@ export async function revertCardFace(
     if (!updated) {
         throw new NotFoundError(`card not found: ${cardId}`);
     }
+
     return toCardDto(updated);
 }
 
