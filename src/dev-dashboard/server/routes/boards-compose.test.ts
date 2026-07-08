@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createBoard, createCard, getBoardDoc } from "@app/dev-dashboard/lib/boards/boards-store";
+import {
+    createBoard,
+    createCard,
+    getBoardDoc,
+    listTrash,
+    softDeleteCard,
+} from "@app/dev-dashboard/lib/boards/boards-store";
 import { getBoardsDb, resetBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { resetEventHub } from "@app/dev-dashboard/lib/boards/events";
 import { __resetLayoutDebounce } from "@app/dev-dashboard/lib/boards/layout-engine";
@@ -154,5 +160,108 @@ describe("POST /api/boards/:slug/arrange", () => {
         const doc = await getBoardDoc(db, "b1");
         const sec = doc.cards.find((c) => c.kind === "section");
         expect((sec?.payload.layout as { mode?: string })?.mode).toBe("grid");
+    });
+});
+
+describe("POST /api/boards/:slug/update-cards", () => {
+    beforeEach(() => {
+        const dir = mkdtempSync(join(tmpdir(), "boards-update-route-"));
+        env.testing.set("GENESIS_TOOLS_HOME", dir);
+        env.testing.set("BOARDS_DB_PATH", ":memory:");
+        resetDevDashboardStorage();
+        resetBoardsDb();
+        resetEventHub();
+    });
+    afterEach(() => {
+        __resetLayoutDebounce();
+        resetEventHub();
+        resetBoardsDb();
+        resetDevDashboardStorage();
+        env.testing.unset("GENESIS_TOOLS_HOME");
+        env.testing.unset("BOARDS_DB_PATH");
+    });
+
+    function findUpdate(): RouteDef {
+        const def = boardsComposeRoutes().find(
+            (d) => d.method === "POST" && d.pattern === "/api/boards/:slug/update-cards"
+        );
+        if (!def) {
+            throw new Error("update-cards route not found");
+        }
+        return def;
+    }
+    async function update(body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
+        return asJson(await findUpdate().handler(makeCtx({ params: { slug: "b1" }, body })));
+    }
+    const aiText = async (db: ReturnType<typeof getBoardsDb>) =>
+        createCard(db, "b1", { kind: "text", x: 0, y: 0, w: 100, h: 100, payload: { md: "x", layer: "ai" } });
+
+    it("400 empty on zero ops, 413 on >100", async () => {
+        await createBoard(getBoardsDb(), { slug: "b1" });
+        expect((await update({})).status).toBe(400);
+        expect((await update({ remove: Array.from({ length: 101 }, (_, i) => i + 1) })).status).toBe(413);
+    });
+
+    it("403 not_ai_layer when patching a card that isn't on the AI layer", async () => {
+        const db = getBoardsDb();
+        await createBoard(db, { slug: "b1" });
+        const shot = await createCard(db, "b1", { kind: "shot", x: 0, y: 0, w: 100, h: 100, payload: {} });
+        const res = await update({ patch: [{ id: shot.id, x: 50 }] });
+        expect(res.status).toBe(403);
+        expect(res.body).toMatchObject({ code: "not_ai_layer", index: 0 });
+    });
+
+    it("allows patching a section card and re-stamps layer:ai on a non-section patch", async () => {
+        const db = getBoardsDb();
+        await createBoard(db, { slug: "b1" });
+        const section = await createCard(db, "b1", {
+            kind: "section",
+            x: 0,
+            y: 0,
+            w: 300,
+            h: 200,
+            payload: { title: "S" },
+        });
+        const text = await aiText(db);
+        const res = await update({
+            patch: [
+                { id: section.id, w: 400 },
+                { id: text.id, payload: { md: "edited" } }, // omits layer → must be re-stamped
+            ],
+        });
+        expect(res.status).toBe(200);
+        expect(res.body.patched).toBe(2);
+
+        const doc = await getBoardDoc(db, "b1");
+        const sec = doc.cards.find((c) => c.id === section.id);
+        expect(sec?.w).toBe(400);
+        expect("layer" in (sec?.payload ?? {})).toBe(false); // section stays layer-neutral
+        const txt = doc.cards.find((c) => c.id === text.id);
+        expect(txt?.payload.layer).toBe("ai"); // re-stamped
+        expect(txt?.payload.md).toBe("edited");
+    });
+
+    it("remove soft-deletes into the trash", async () => {
+        const db = getBoardsDb();
+        await createBoard(db, { slug: "b1" });
+        const text = await aiText(db);
+        expect((await update({ remove: [text.id] })).body.removed).toBe(1);
+        const trash = await listTrash(db, "b1");
+        expect(trash.map((c) => c.id)).toContain(text.id);
+    });
+
+    it("restore 403s a live (non-trashed) card, and restores a trashed AI card", async () => {
+        const db = getBoardsDb();
+        await createBoard(db, { slug: "b1" });
+        const live = await aiText(db);
+        expect((await update({ restore: [live.id] })).status).toBe(403); // not in trash
+
+        const doomed = await aiText(db);
+        await softDeleteCard(db, doomed.id);
+        const res = await update({ restore: [doomed.id] });
+        expect(res.status).toBe(200);
+        expect(res.body.restored).toBe(1);
+        const doc = await getBoardDoc(db, "b1");
+        expect(doc.cards.map((c) => c.id)).toContain(doomed.id);
     });
 });

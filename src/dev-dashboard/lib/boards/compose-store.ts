@@ -1,6 +1,6 @@
 import type { DatabaseClient } from "@app/utils/database/client";
 import { SafeJSON } from "@app/utils/json";
-import { toCardDto } from "./boards-store";
+import { getBoardDoc, listTrash, patchCard, restoreCard, softDeleteCard, toCardDto } from "./boards-store";
 import {
     COMPOSE_GAP,
     COMPOSE_GRID,
@@ -17,7 +17,7 @@ import {
     SECTION_PAD_TOP,
     SECTION_PAD_X,
 } from "./compose-types";
-import { composeDefaultSize, normalizeOptions, validateComposeCard } from "./compose-validate";
+import { composeDefaultSize, normalizeOptions, stampLayer, validateComposeCard } from "./compose-validate";
 import type { BoardsDb } from "./db-types";
 import { notifyLayoutChanged } from "./layout-engine";
 import { containingSection, resolveJourneyPass, type SectionCard, sectionByName, sectionFrames } from "./sections";
@@ -653,5 +653,123 @@ export async function composeBoard(
             questions: written.createdQuestions,
             boardId: board.id,
         },
+    };
+}
+
+const UPDATE_MAX_OPS = 100;
+
+export interface UpdateCardsBody {
+    patch?: Array<{
+        id: number;
+        x?: number;
+        y?: number;
+        w?: number;
+        h?: number;
+        z?: number;
+        payload?: Record<string, unknown>;
+    }>;
+    remove?: number[];
+    restore?: number[];
+}
+
+export type UpdateCardsResult =
+    | { ok: true; patched: number; removed: number; restored: number; events: { cards: CardDto[]; deleted: number[] } }
+    | { ok: false; code: ComposeErrorCode; index: number; message: string };
+
+/** Batch edit of the agent's OWN layer: patch geometry/payload, soft-remove, and restore — every op
+ *  restricted to payload.layer === "ai" cards (sections count, being shared journey structure).
+ *  Mirrors handlers_compose.go:1221-1372. Validated as a whole, then applied per-op (GT's helpers
+ *  are self-transacting and can't nest — same shape as vitrinka's per-op application). */
+export async function updateCards(
+    db: DatabaseClient<BoardsDb>,
+    slug: string,
+    body: UpdateCardsBody
+): Promise<UpdateCardsResult> {
+    const patch = body.patch ?? [];
+    const remove = body.remove ?? [];
+    const restore = body.restore ?? [];
+    const n = patch.length + remove.length + restore.length;
+    if (n === 0) {
+        return err("empty", -1, "patch+remove+restore: at least 1 entry required") as UpdateCardsResult;
+    }
+    if (n > UPDATE_MAX_OPS) {
+        return err("limit", -1, `patch+remove+restore: at most ${UPDATE_MAX_OPS} entries`) as UpdateCardsResult;
+    }
+
+    const doc = await getBoardDoc(db, slug); // throws NotFoundError → route maps to 404
+    const aiCards = new Set<number>();
+    const sectionCards = new Set<number>();
+    const kindById = new Map<number, string>();
+    for (const c of doc.cards) {
+        kindById.set(c.id, c.kind);
+        if (c.kind === "section") {
+            aiCards.add(c.id);
+            sectionCards.add(c.id);
+        } else if (c.payload.layer === "ai") {
+            aiCards.add(c.id);
+        }
+    }
+
+    // Validate everything first (all-or-nothing).
+    for (let i = 0; i < patch.length; i += 1) {
+        if (!aiCards.has(patch[i].id)) {
+            return err("not_ai_layer", i, `card ${patch[i].id} is not on the AI layer`) as UpdateCardsResult;
+        }
+    }
+    for (let i = 0; i < remove.length; i += 1) {
+        if (!aiCards.has(remove[i])) {
+            return err("not_ai_layer", i, `card ${remove[i]} is not on the AI layer`) as UpdateCardsResult;
+        }
+    }
+    if (restore.length > 0) {
+        // Removals are SOFT (trash) — restore is validated against the board's TRASH, not its live cards.
+        const trash = await listTrash(db, slug);
+        const trashAI = new Set<number>();
+        for (const c of trash) {
+            if (c.kind === "section" || c.payload.layer === "ai") {
+                trashAI.add(c.id);
+            }
+        }
+        for (let i = 0; i < restore.length; i += 1) {
+            if (!trashAI.has(restore[i])) {
+                return err(
+                    "not_ai_layer",
+                    i,
+                    `card ${restore[i]} is not an AI-layer card in this board's trash`
+                ) as UpdateCardsResult;
+            }
+        }
+    }
+
+    const cardEvents: CardDto[] = [];
+    const deleted: number[] = [];
+    for (const p of patch) {
+        const kind = (kindById.get(p.id) ?? "text") as ComposeKind;
+        const card = await patchCard(db, p.id, {
+            x: p.x,
+            y: p.y,
+            w: p.w,
+            h: p.h,
+            z: p.z,
+            // Re-stamp layer:ai (agent can't unstamp itself by omitting it); sections stay neutral.
+            payload: p.payload !== undefined ? stampLayer(kind, p.payload) : undefined,
+        });
+        cardEvents.push(card);
+    }
+    for (const id of remove) {
+        await softDeleteCard(db, id);
+        deleted.push(id);
+    }
+    for (const id of restore) {
+        cardEvents.push(await restoreCard(db, id));
+    }
+
+    notifyLayoutChanged(db, slug);
+    return {
+        ok: true,
+        patched: patch.length,
+        removed: remove.length,
+        restored: restore.length,
+        events: { cards: cardEvents, deleted },
     };
 }
