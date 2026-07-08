@@ -8,6 +8,8 @@ interface ShellProps {
     children: ReactNode;
 }
 
+const BOARD_CANVAS_PATTERN = /^\/boards\/[^/]+$/;
+
 export function Shell({ children }: ShellProps) {
     const { pathname } = useLocation();
     const routeKey = pathname.startsWith("/ttyd") ? "ttyd" : pathname.startsWith("/cmux") ? "cmux" : null;
@@ -16,7 +18,10 @@ export function Shell({ children }: ShellProps) {
     const { mode } = useLayoutMode(routeKey ?? "");
     // Focused mode (mobile ≤768 OR desktop toggle) on /ttyd or /cmux owns its
     // own edge nav, so the icon rail is redundant and the page goes edge-to-edge.
-    const focused = routeKey !== null && mode === "focused";
+    // The board canvas (/boards/$slug) always goes edge-to-edge — it owns its own
+    // pan/zoom viewport and a page scrollbar or sidebar padding would fight it.
+    const isBoardCanvas = BOARD_CANVAS_PATTERN.test(pathname);
+    const focused = (routeKey !== null && mode === "focused") || isBoardCanvas;
 
     return (
         <IconTooltipProvider>
