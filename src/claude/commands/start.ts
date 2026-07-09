@@ -1,11 +1,50 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { logger, out } from "@app/logger";
 import { AIConfig } from "@app/utils/ai/AIConfig";
 import { findClaudeCommand } from "@app/utils/claude";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { env } from "@app/utils/env";
+import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
+
+const CLAUDE_JSON = join(homedir(), ".claude.json");
+
+/**
+ * Claude Code's interactive onboarding ignores CLAUDE_CODE_OAUTH_TOKEN and shows
+ * the OAuth login screen when hasCompletedOnboarding is false (e.g. after /logout).
+ * See anthropics/claude-code#8938, #46259 — token auth works once onboarding is skipped.
+ */
+async function ensureOnboardingSkippedForOAuthToken(): Promise<void> {
+    const file = Bun.file(CLAUDE_JSON);
+    if (!(await file.exists())) {
+        return;
+    }
+
+    const text = await file.text();
+    if (/"hasCompletedOnboarding"\s*:\s*true/.test(text)) {
+        return;
+    }
+
+    let updated = text;
+    if (/"hasCompletedOnboarding"\s*:\s*false/.test(text)) {
+        updated = text.replace(/"hasCompletedOnboarding"\s*:\s*false/, '"hasCompletedOnboarding": true');
+    } else {
+        try {
+            const config = SafeJSON.parse(text) as Record<string, unknown>;
+            config.hasCompletedOnboarding = true;
+            updated = SafeJSON.stringify(config, null, 2);
+        } catch (error) {
+            logger.warn({ error, path: CLAUDE_JSON }, "Could not patch hasCompletedOnboarding in ~/.claude.json");
+            return;
+        }
+    }
+
+    await Bun.write(CLAUDE_JSON, updated);
+    logger.debug({ path: CLAUDE_JSON }, "Set hasCompletedOnboarding for CLAUDE_CODE_OAUTH_TOKEN launch");
+}
 
 async function main(nameArg: string | undefined): Promise<never> {
     const aiConfig = await AIConfig.load();
@@ -69,6 +108,8 @@ async function main(nameArg: string | undefined): Promise<never> {
 
     const account = withToken.find((a) => a.name === accountName)!;
     const token = account.tokens.longLivedToken!;
+
+    await ensureOnboardingSkippedForOAuthToken();
 
     const cmd = await findClaudeCommand();
     const shell = env.paths.getShell("/bin/sh");
