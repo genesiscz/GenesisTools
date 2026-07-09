@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnnotateComposer, type AnnotateSubmitInput } from "./AnnotateComposer";
-import { AnnotationLayer } from "./AnnotationLayer";
+import { AnnotationLayer, getCardScaleFactor } from "./AnnotationLayer";
 import { boardsApi } from "./boards-api";
 import { CardView } from "./CardView";
 import { EdgeLayer } from "./EdgeLayer";
@@ -590,8 +590,7 @@ export function BoardCanvas({
             return;
         }
 
-        const naturalWidth = typeof card.payload.naturalWidth === "number" ? card.payload.naturalWidth : card.w;
-        const factor = naturalWidth / card.w; // source px per world px
+        const factor = 1 / getCardScaleFactor(card); // source px per world px
         const region = {
             x: Math.round(minX * factor),
             y: Math.round(minY * factor),

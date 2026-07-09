@@ -87,7 +87,7 @@ export function AnnotateComposer({ screenX, screenY, onSubmit, onCancel }: Annot
                 <button
                     type="button"
                     onClick={submit}
-                    disabled={!prompt.trim()}
+                    disabled={!prompt.trim() || (intent === "other" && !intentOther.trim())}
                     className="dd-btn-accent rounded-full px-3 py-1 text-xs"
                 >
                     add

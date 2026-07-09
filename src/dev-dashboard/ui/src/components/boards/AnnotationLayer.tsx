@@ -1,9 +1,15 @@
 import type { AnnotationDto, AnnotationStatus, CardDto, Region } from "@app/dev-dashboard/contract/dto";
+import { useMemo } from "react";
+
+/** World px per source px: card.w / naturalWidth (falls back to card.w when naturalWidth is unknown). */
+export function getCardScaleFactor(card: CardDto): number {
+    const naturalWidth = typeof card.payload.naturalWidth === "number" ? card.payload.naturalWidth : card.w;
+    return card.w / naturalWidth;
+}
 
 /** Source-image px (as stored on the annotation) -> world px (as rendered on the card). */
 export function regionToWorldRect(card: CardDto, region: Region): { x: number; y: number; w: number; h: number } {
-    const naturalWidth = typeof card.payload.naturalWidth === "number" ? card.payload.naturalWidth : card.w;
-    const factor = card.w / naturalWidth; // world px per source px
+    const factor = getCardScaleFactor(card);
     return { x: card.x + region.x * factor, y: card.y + region.y * factor, w: region.w * factor, h: region.h * factor };
 }
 
@@ -43,7 +49,7 @@ export function AnnotationLayer({
     onReviseStaged,
     onDeleteStaged,
 }: AnnotationLayerProps) {
-    const cardById = new Map(cards.map((c) => [c.id, c]));
+    const cardById = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
 
     return (
         <>

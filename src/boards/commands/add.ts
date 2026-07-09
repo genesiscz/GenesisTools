@@ -1,25 +1,9 @@
-import { existsSync } from "node:fs";
 import { copyFile, mkdir } from "node:fs/promises";
-import { basename, extname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { printLn } from "@app/utils/cli";
 import type { Command } from "commander";
 import { captureRoot, readSetConfig } from "../lib/config";
-import { appendShot, readManifest, writeManifest } from "../lib/manifest";
-
-/** Picks a collision-free destination basename: `shot.png`, `shot-2.png`, `shot-3.png`, ... */
-function uniqueDestName(root: string, name: string): string {
-    if (!existsSync(join(root, name))) {
-        return name;
-    }
-
-    const ext = extname(name);
-    const stem = name.slice(0, name.length - ext.length);
-    let i = 2;
-    while (existsSync(join(root, `${stem}-${i}${ext}`))) {
-        i += 1;
-    }
-    return `${stem}-${i}${ext}`;
-}
+import { appendShot, readManifest, uniqueDestName, writeManifest } from "../lib/manifest";
 
 export function registerAddCommand(program: Command): void {
     program
@@ -39,6 +23,7 @@ export function registerAddCommand(program: Command): void {
                 const cwd = process.cwd();
                 const root = captureRoot(cwd, opts.dir);
                 const cfg = await readSetConfig(root);
+
                 if (!cfg) {
                     process.stderr.write("no set config found — run `tools boards init` first\n");
                     process.exitCode = 1;

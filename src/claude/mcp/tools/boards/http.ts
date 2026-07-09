@@ -4,6 +4,9 @@ import { SafeJSON } from "@app/utils/json";
 
 let cachedBase: string | null = null;
 
+/** Guards non-long-poll calls against a hung dev-dashboard; long-poll callers pass their own signal. */
+const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
+
 export async function boardsBaseUrl(): Promise<string> {
     if (cachedBase) {
         return cachedBase;
@@ -33,6 +36,7 @@ export async function boardsFetch<T>(path: string, init?: RequestInit & { rawTex
     try {
         res = await fetch(`${base}${path}`, {
             ...init,
+            signal: init?.signal ?? AbortSignal.timeout(DEFAULT_FETCH_TIMEOUT_MS),
             headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
         });
     } catch (err) {

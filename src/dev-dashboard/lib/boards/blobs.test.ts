@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
@@ -7,8 +7,10 @@ import { env } from "@app/utils/env";
 import { blobPath, putBlob } from "./blobs";
 
 describe("blob store", () => {
+    let dir = "";
+
     beforeEach(() => {
-        const dir = mkdtempSync(join(tmpdir(), "boards-blob-"));
+        dir = mkdtempSync(join(tmpdir(), "boards-blob-"));
         env.testing.set("GENESIS_TOOLS_HOME", dir);
         resetDevDashboardStorage();
     });
@@ -16,6 +18,7 @@ describe("blob store", () => {
     afterEach(() => {
         env.testing.unset("GENESIS_TOOLS_HOME");
         resetDevDashboardStorage();
+        rmSync(dir, { recursive: true, force: true });
     });
 
     it("writes a blob and returns a 64-hex key with the mime's extension", async () => {

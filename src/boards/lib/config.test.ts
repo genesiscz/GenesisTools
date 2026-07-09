@@ -1,6 +1,6 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import {
@@ -17,8 +17,22 @@ import {
     writeSetConfig,
 } from "./config";
 
+const tempDirs: string[] = [];
+
+function makeTempDir(prefix: string): string {
+    const dir = mkdtempSync(join(tmpdir(), prefix));
+    tempDirs.push(dir);
+    return dir;
+}
+
+afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 function initGitRepo(): string {
-    const dir = mkdtempSync(join(tmpdir(), "boards-cfg-"));
+    const dir = makeTempDir("boards-cfg-");
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
     execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: dir });
     execFileSync("git", ["config", "user.name", "Test"], { cwd: dir });
@@ -37,14 +51,14 @@ describe("captureRoot", () => {
 
 describe("readSetConfig / writeSetConfig", () => {
     it("round-trips a config", async () => {
-        const root = mkdtempSync(join(tmpdir(), "boards-root-"));
+        const root = makeTempDir("boards-root-");
         const cfg = { project: "demo", branch: "main", key: "s-20260101-0000", kind: "screenshots" };
         await writeSetConfig(root, cfg);
         expect(await readSetConfig(root)).toEqual(cfg);
     });
 
     it("returns null when no config exists", async () => {
-        const root = mkdtempSync(join(tmpdir(), "boards-root-"));
+        const root = makeTempDir("boards-root-");
         expect(await readSetConfig(root)).toBeNull();
     });
 });
@@ -57,7 +71,7 @@ describe("defaultProject / currentBranch", () => {
     });
 
     it("falls back to the cwd basename outside a git repo", () => {
-        const dir = mkdtempSync(join(tmpdir(), "boards-nogit-"));
+        const dir = makeTempDir("boards-nogit-");
         expect(defaultProject(dir)).toBe(basename(dir));
         expect(currentBranch(dir)).toBe("main");
     });
@@ -87,7 +101,7 @@ describe("ensureGitExclude", () => {
     });
 
     it("is a no-op outside a git repo", async () => {
-        const dir = mkdtempSync(join(tmpdir(), "boards-nogit2-"));
+        const dir = makeTempDir("boards-nogit2-");
         await expect(ensureGitExclude(dir, DEFAULT_ROOT)).resolves.toBeUndefined();
     });
 });
@@ -118,7 +132,7 @@ describe("gitProvenance", () => {
     });
 
     it("omits both fields outside a git repo", () => {
-        const dir = mkdtempSync(join(tmpdir(), "boards-noprov-"));
+        const dir = makeTempDir("boards-noprov-");
         expect(gitProvenance(dir)).toEqual({ commit: undefined, repo: undefined });
     });
 });

@@ -1,5 +1,6 @@
 import type { CardDto, StrokeDto } from "@app/dev-dashboard/contract/dto";
 import { useMemo } from "react";
+import { getCardScaleFactor } from "./AnnotationLayer";
 
 /** Convert a stroke's stored path to world-space points. Card-scoped strokes are stored in
  * the card's natural-image pixel space and need scaling by card.w / naturalWidth; board-level
@@ -18,8 +19,7 @@ export function strokeToWorldPath(
         return [];
     }
 
-    const naturalWidth = typeof card.payload.naturalWidth === "number" ? card.payload.naturalWidth : card.w;
-    const factor = card.w / naturalWidth;
+    const factor = getCardScaleFactor(card);
     return stroke.path.map(([x, y]) => [card.x + x * factor, card.y + y * factor]);
 }
 

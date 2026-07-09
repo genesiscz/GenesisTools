@@ -93,7 +93,7 @@ export function registerPushCommand(program: Command): void {
 
             const base = resolveBaseUrl(opts.base);
             const branchSlug = slugifyBranch(cfg.branch);
-            const provenance = gitProvenance(root); // best-effort; omitted outside a git repo
+            const provenance = gitProvenance(cwd); // best-effort; omitted outside a git repo
             const targetPath = paths.boardsSetContent({
                 project: cfg.project,
                 branch: branchSlug,
