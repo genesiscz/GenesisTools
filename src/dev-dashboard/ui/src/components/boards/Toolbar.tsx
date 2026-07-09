@@ -1,3 +1,4 @@
+import { IconTooltip } from "@ui/components/icon-button";
 import { Frame, MousePointer2, Pen, Spline, SquareDashedMousePointer, StickyNote } from "lucide-react";
 import type { ComponentType } from "react";
 
@@ -28,20 +29,20 @@ export function Toolbar({ tool, onToolChange }: ToolbarProps) {
     return (
         <div className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 gap-1 rounded-full border border-[var(--dd-border)] bg-[var(--dd-bg-panel)] p-1">
             {TOOLS.map(({ tool: t, label, key, Icon }) => (
-                <button
-                    key={t}
-                    type="button"
-                    title={`${label} (${key})`}
-                    aria-pressed={tool === t}
-                    onClick={() => onToolChange(t)}
-                    className={
-                        tool === t
-                            ? "dd-btn-accent flex h-8 w-8 items-center justify-center rounded-full"
-                            : "flex h-8 w-8 items-center justify-center rounded-full text-[var(--dd-text-secondary)] hover:bg-[var(--dd-bg-hover)] hover:text-[var(--dd-text-primary)]"
-                    }
-                >
-                    <Icon size={16} />
-                </button>
+                <IconTooltip key={t} tooltip={`${label} (${key})`} tooltipSide="top">
+                    <button
+                        type="button"
+                        aria-pressed={tool === t}
+                        onClick={() => onToolChange(t)}
+                        className={
+                            tool === t
+                                ? "dd-btn-accent flex h-8 w-8 items-center justify-center rounded-full"
+                                : "flex h-8 w-8 items-center justify-center rounded-full text-[var(--dd-text-secondary)] hover:bg-[var(--dd-bg-hover)] hover:text-[var(--dd-text-primary)]"
+                        }
+                    >
+                        <Icon size={16} />
+                    </button>
+                </IconTooltip>
             ))}
         </div>
     );

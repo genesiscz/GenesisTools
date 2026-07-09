@@ -194,6 +194,15 @@ export function BoardCanvas({
         onError: (err) => console.error("[boards] delete annotation failed", err),
     });
 
+    const pasteImageMutation = useMutation({
+        mutationFn: async ({ file, x, y }: { file: Blob; x: number; y: number }) => {
+            const card = await boardsApi.uploadImage(slug, file, `pasted-${Date.now()}.png`);
+            return boardsApi.patchCard(card.id, { x: Math.round(x - card.w / 2), y: Math.round(y - card.h / 2) });
+        },
+        onSuccess: invalidate,
+        onError: (err) => console.error("[boards] paste image failed", err),
+    });
+
     const pendingAttemptCardIds = useMemo(() => {
         // Mirror vitrinka's FacePending (cardCols, boards.go:353-360): a card pulses iff its CURRENT
         // face is an unreviewed attempt — not iff ANY thread on it has a pending attempt. Approximated
@@ -229,6 +238,38 @@ export function BoardCanvas({
 
     const deleteCardMutationRef = useRef(deleteCardMutation);
     deleteCardMutationRef.current = deleteCardMutation;
+
+    const pasteImageMutationRef = useRef(pasteImageMutation);
+    pasteImageMutationRef.current = pasteImageMutation;
+
+    useEffect(() => {
+        const onPaste = (e: ClipboardEvent) => {
+            if (isTypingTarget(e.target)) {
+                return;
+            }
+
+            const items = [...(e.clipboardData?.items ?? [])];
+            const images = items
+                .filter((i) => i.type.startsWith("image/"))
+                .map((i) => i.getAsFile())
+                .filter((f): f is File => f !== null);
+
+            if (images.length === 0) {
+                return;
+            }
+
+            e.preventDefault();
+            const el = containerRef.current;
+            const center = el ? screenToWorld(vp, el.clientWidth / 2, el.clientHeight / 2) : screenToWorld(vp, 0, 0);
+
+            for (const [i, file] of images.entries()) {
+                pasteImageMutationRef.current.mutate({ file, x: center.x + i * 24, y: center.y + i * 24 });
+            }
+        };
+
+        window.addEventListener("paste", onPaste);
+        return () => window.removeEventListener("paste", onPaste);
+    }, [containerRef, vp]);
 
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
