@@ -1,15 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { resetBoardsDb } from "@app/dev-dashboard/lib/boards/db";
-import { resetEventHub, subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
-import { __resetLayoutDebounce } from "@app/dev-dashboard/lib/boards/layout-engine";
-import { resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
+import { describe, expect, it } from "bun:test";
+import { subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
-import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { boardsRoutes } from "./boards";
+import { setupBoardsTestEnv } from "./boards-route-test-utils";
 
 function findRoute(method: string, pattern: string): RouteDef {
     const def = boardsRoutes().find((d) => d.method === method && d.pattern === pattern);
@@ -94,23 +88,7 @@ async function createCard(slug: string, kind = "note"): Promise<Record<string, u
 }
 
 describe("boardsRoutes", () => {
-    beforeEach(() => {
-        const dir = mkdtempSync(join(tmpdir(), "boards-routes-"));
-        env.testing.set("GENESIS_TOOLS_HOME", dir);
-        env.testing.set("BOARDS_DB_PATH", ":memory:");
-        resetDevDashboardStorage();
-        resetBoardsDb();
-        resetEventHub();
-    });
-
-    afterEach(() => {
-        __resetLayoutDebounce();
-        resetBoardsDb();
-        resetDevDashboardStorage();
-        resetEventHub();
-        env.testing.unset("GENESIS_TOOLS_HOME");
-        env.testing.unset("BOARDS_DB_PATH");
-    });
+    setupBoardsTestEnv("boards-routes-");
 
     it("GET /api/boards/:slug/sections returns spatial sections with member counts and journeys", async () => {
         const { getBoardsDb } = await import("@app/dev-dashboard/lib/boards/db");

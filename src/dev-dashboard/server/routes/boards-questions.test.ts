@@ -1,15 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, it } from "bun:test";
 import { createCard, createBoard as storeCreateBoard } from "@app/dev-dashboard/lib/boards/boards-store";
-import { getBoardsDb, resetBoardsDb } from "@app/dev-dashboard/lib/boards/db";
-import { resetEventHub, subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
-import { resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
+import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
+import { subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
-import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { boardsQuestionsRoutes } from "./boards-questions";
+import { setupBoardsTestEnv } from "./boards-route-test-utils";
 
 function findRoute(method: string, pattern: string): RouteDef {
     const def = boardsQuestionsRoutes().find((d) => d.method === method && d.pattern === pattern);
@@ -49,21 +45,7 @@ async function create(body: unknown, slug = "b1"): Promise<{ status: number; bod
 }
 
 describe("boardsQuestionsRoutes", () => {
-    beforeEach(() => {
-        const dir = mkdtempSync(join(tmpdir(), "boards-questions-route-"));
-        env.testing.set("GENESIS_TOOLS_HOME", dir);
-        env.testing.set("BOARDS_DB_PATH", ":memory:");
-        resetDevDashboardStorage();
-        resetBoardsDb();
-        resetEventHub();
-    });
-    afterEach(() => {
-        resetEventHub();
-        resetBoardsDb();
-        resetDevDashboardStorage();
-        env.testing.unset("GENESIS_TOOLS_HOME");
-        env.testing.unset("BOARDS_DB_PATH");
-    });
+    setupBoardsTestEnv("boards-questions-route-");
 
     it("201 questionJSON on the happy path, with otherLabel added at render time", async () => {
         await createBoard("b1");
@@ -150,6 +132,23 @@ describe("boardsQuestionsRoutes", () => {
             )
         );
         expect(offVocab.status).toBe(200);
+    });
+
+    it("answer: 400 on a malformed multi-select answer; a subsequent read stays clean", async () => {
+        await createBoard("b1");
+        const created = await create({ prompt: "pick some", options: ["a", "b"], multiSelect: true });
+        const answerRoute = findRoute("POST", "/api/boards/questions/:id/answer");
+        const res = asJson(
+            await answerRoute.handler(
+                makeCtx({ params: { id: String(created.body.id) }, body: { answer: "not a json array" } })
+            )
+        );
+        expect(res.status).toBe(400);
+
+        const listRoute = findRoute("GET", "/api/boards/:slug/questions");
+        const listRes = asJson(await listRoute.handler(makeCtx({ params: { slug: "b1" } })));
+        expect(listRes.status).toBe(200);
+        expect((listRes.body.questions as Array<{ answer: unknown }>)[0].answer).toBeNull();
     });
 
     it("answer: 404 on an unknown question id", async () => {

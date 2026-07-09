@@ -1,18 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, it } from "bun:test";
 import { blobUrl } from "@app/dev-dashboard/lib/boards/blobs";
 import { createBoard, createCard, softDeleteCard } from "@app/dev-dashboard/lib/boards/boards-store";
-import { getBoardsDb, resetBoardsDb } from "@app/dev-dashboard/lib/boards/db";
-import { resetEventHub, subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
+import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
+import { subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
 import { getSet, syncSet } from "@app/dev-dashboard/lib/boards/sets-store";
 import { dispatchBoard } from "@app/dev-dashboard/lib/boards/work-store";
-import { resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
-import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { boardsAnnotationsRoutes } from "./boards-annotations";
+import { setupBoardsTestEnv } from "./boards-route-test-utils";
 import { boardsSetsRoutes } from "./boards-sets";
 
 function findRoute(method: string, pattern: string): RouteDef {
@@ -96,22 +92,7 @@ function buildPng(width: number, height: number): Uint8Array {
 }
 
 describe("boardsAnnotationsRoutes", () => {
-    beforeEach(() => {
-        const dir = mkdtempSync(join(tmpdir(), "boards-ann-routes-"));
-        env.testing.set("GENESIS_TOOLS_HOME", dir);
-        env.testing.set("BOARDS_DB_PATH", ":memory:");
-        resetDevDashboardStorage();
-        resetBoardsDb();
-        resetEventHub();
-    });
-
-    afterEach(() => {
-        resetBoardsDb();
-        resetDevDashboardStorage();
-        resetEventHub();
-        env.testing.unset("GENESIS_TOOLS_HOME");
-        env.testing.unset("BOARDS_DB_PATH");
-    });
+    setupBoardsTestEnv("boards-ann-routes-");
 
     it("full lifecycle: staged create -> dispatch -> claim -> attempt swaps the face -> user reply re-queues -> accept resolves", async () => {
         const db = getBoardsDb();

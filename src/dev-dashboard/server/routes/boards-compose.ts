@@ -45,7 +45,7 @@ export function boardsComposeRoutes(): RouteDef[] {
             pattern: "/api/boards/:slug/compose",
             handler: async (ctx) => {
                 try {
-                    const body = await ctx.readJson<ComposeBody>();
+                    const body = (await ctx.readJson<ComposeBody>()) ?? ({} as ComposeBody);
                     const actor = await actorOf(ctx.headers["x-board-actor"]);
                     const result = await composeBoard(getBoardsDb(), ctx.params.slug, body, actor);
                     if (!result.ok) {
@@ -86,7 +86,7 @@ export function boardsComposeRoutes(): RouteDef[] {
             pattern: "/api/boards/:slug/update-cards",
             handler: async (ctx) => {
                 try {
-                    const body = await ctx.readJson<UpdateCardsBody>();
+                    const body = (await ctx.readJson<UpdateCardsBody>()) ?? ({} as UpdateCardsBody);
                     const result = await updateCards(getBoardsDb(), ctx.params.slug, body);
                     if (!result.ok) {
                         const status = STATUS_BY_CODE[result.code] ?? 400;
@@ -138,7 +138,7 @@ export function boardsComposeRoutes(): RouteDef[] {
             pattern: "/api/boards/:slug/arrange",
             handler: async (ctx) => {
                 try {
-                    const body = await ctx.readJson<ArrangeBody>();
+                    const body = (await ctx.readJson<ArrangeBody>()) ?? ({} as ArrangeBody);
                     const outcome = await runArrange(getBoardsDb(), ctx.params.slug, body);
                     if (!outcome.ok) {
                         return { kind: "json", status: outcome.status, body: { error: outcome.message } };

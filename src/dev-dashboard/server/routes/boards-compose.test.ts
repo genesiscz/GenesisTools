@@ -1,7 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, it } from "bun:test";
 import {
     createBoard,
     createCard,
@@ -9,13 +6,10 @@ import {
     listTrash,
     softDeleteCard,
 } from "@app/dev-dashboard/lib/boards/boards-store";
-import { getBoardsDb, resetBoardsDb } from "@app/dev-dashboard/lib/boards/db";
-import { resetEventHub } from "@app/dev-dashboard/lib/boards/events";
-import { __resetLayoutDebounce } from "@app/dev-dashboard/lib/boards/layout-engine";
-import { resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
+import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
-import { env } from "@app/utils/env";
 import { boardsComposeRoutes } from "./boards-compose";
+import { setupBoardsTestEnv } from "./boards-route-test-utils";
 
 function findRoute(method: string, pattern: string): RouteDef {
     const def = boardsComposeRoutes().find((d) => d.method === method && d.pattern === pattern);
@@ -43,26 +37,6 @@ function asJson(result: RouteResult): { status: number; body: Record<string, unk
         throw new Error(`expected json result, got ${result.kind}`);
     }
     return { status: result.status, body: result.body as Record<string, unknown> };
-}
-
-/** Shared per-test board DB fixture (mkdtemp'd home + in-memory db, reset on both ends). */
-function setupBoardsTestEnv(prefix: string): void {
-    beforeEach(() => {
-        const dir = mkdtempSync(join(tmpdir(), prefix));
-        env.testing.set("GENESIS_TOOLS_HOME", dir);
-        env.testing.set("BOARDS_DB_PATH", ":memory:");
-        resetDevDashboardStorage();
-        resetBoardsDb();
-        resetEventHub();
-    });
-    afterEach(() => {
-        __resetLayoutDebounce();
-        resetEventHub();
-        resetBoardsDb();
-        resetDevDashboardStorage();
-        env.testing.unset("GENESIS_TOOLS_HOME");
-        env.testing.unset("BOARDS_DB_PATH");
-    });
 }
 
 describe("POST /api/boards/:slug/compose", () => {

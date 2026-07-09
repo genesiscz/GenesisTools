@@ -35,12 +35,7 @@ export function SectionLayer({ cards, renamingId, onRename }: SectionLayerProps)
                                 autoFocus
                                 defaultValue={title}
                                 onFocus={(e) => e.currentTarget.select()}
-                                onBlur={(e) => {
-                                    const next = e.currentTarget.value.trim();
-                                    if (next && next !== title) {
-                                        onRename?.(s.id, next);
-                                    }
-                                }}
+                                onBlur={(e) => onRename?.(s.id, e.currentTarget.value)}
                                 onKeyDown={(e) => {
                                     if (e.key === "Enter") {
                                         e.currentTarget.blur();

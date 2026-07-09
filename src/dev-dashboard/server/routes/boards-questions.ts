@@ -33,12 +33,13 @@ export function boardsQuestionsRoutes(): RouteDef[] {
             pattern: "/api/boards/:slug/questions",
             handler: async (ctx) => {
                 try {
-                    const body = await ctx.readJson<{
-                        cardId?: number;
-                        prompt?: string;
-                        options?: unknown;
-                        multiSelect?: boolean;
-                    }>();
+                    const body =
+                        (await ctx.readJson<{
+                            cardId?: number;
+                            prompt?: string;
+                            options?: unknown;
+                            multiSelect?: boolean;
+                        }>()) ?? {};
                     const prompt = (body.prompt ?? "").trim();
                     if (!prompt || prompt.length > MAX_QUESTION_PROMPT) {
                         return {
@@ -88,7 +89,7 @@ export function boardsQuestionsRoutes(): RouteDef[] {
             handler: async (ctx) => {
                 try {
                     const id = Number(ctx.params.id);
-                    const body = await ctx.readJson<{ answer?: string }>();
+                    const body = (await ctx.readJson<{ answer?: string }>()) ?? {};
                     const answer = (body.answer ?? "").trim();
                     if (!answer || answer.length > MAX_ANSWER_LEN) {
                         return {
