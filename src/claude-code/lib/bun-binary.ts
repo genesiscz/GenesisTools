@@ -45,6 +45,11 @@ function parseAtTrailer(buf: Buffer, trailerPos: number): BunModule[] {
         const contentsOff = buf.readUInt32LE(entry + 8);
         const contentsLen = buf.readUInt32LE(entry + 12);
         const loader = buf[entry + stride - 3] ?? 0;
+
+        if (nameOff + nameLen > byteCount || contentsOff + contentsLen > byteCount) {
+            throw new Error(`module ${i} offsets out of bounds`);
+        }
+
         const name = buf.subarray(blobStart + nameOff, blobStart + nameOff + nameLen).toString("utf8");
 
         if (!/^[\x20-\x7e]+$/.test(name)) {

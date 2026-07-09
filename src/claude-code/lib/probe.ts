@@ -25,7 +25,12 @@ export function probeCooccurrence({ source, primary, secondary, before = 800, af
         const end = Math.min(source.length, (match.index ?? 0) + match[0].length + after);
         const window = source.slice(start, end);
 
-        if (secondary.every((s) => s.test(window))) {
+        if (
+            secondary.every((s) => {
+                s.lastIndex = 0;
+                return s.test(window);
+            })
+        ) {
             windows.push(window);
         }
     }

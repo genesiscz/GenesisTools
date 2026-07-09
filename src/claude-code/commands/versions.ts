@@ -12,6 +12,11 @@ export interface VersionsOptions {
 
 export async function versionsCommand(opts: VersionsOptions): Promise<void> {
     const packument = await cachedPackument({ force: opts.force });
+
+    if ((opts.from === undefined) !== (opts.to === undefined)) {
+        throw new Error("--from and --to must be provided together");
+    }
+
     const versions =
         opts.from !== undefined && opts.to !== undefined
             ? resolveRange({ all: packument.versions, from: opts.from, to: opts.to })
