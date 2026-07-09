@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage/storage";
@@ -54,9 +54,12 @@ export async function cachedPackument({
     const cachePath = join(storage.getCacheDir(), "packument.json");
 
     if (!force && existsSync(cachePath)) {
-        const cached = SafeJSON.parse(await Bun.file(cachePath).text()) as { fetchedAt: string; packument: Packument };
+        const cached = SafeJSON.parse(await Bun.file(cachePath).text()) as
+            | { fetchedAt?: string; packument?: Packument }
+            | null
+            | undefined;
 
-        if (Date.now() - Date.parse(cached.fetchedAt) < PACKUMENT_TTL_MS) {
+        if (cached?.fetchedAt && cached?.packument && Date.now() - Date.parse(cached.fetchedAt) < PACKUMENT_TTL_MS) {
             return cached.packument;
         }
     }
@@ -85,7 +88,9 @@ async function downloadTarball({
 
     const bytes = new Uint8Array(await res.arrayBuffer());
 
-    if (integrity?.startsWith("sha512-")) {
+    if (integrity === undefined) {
+        logger.warn({ url }, "no integrity hash provided by registry — tarball contents unverified");
+    } else if (integrity.startsWith("sha512-")) {
         const hasher = new Bun.CryptoHasher("sha512");
         hasher.update(bytes);
         const actual = hasher.digest("base64");
@@ -94,10 +99,20 @@ async function downloadTarball({
         if (actual !== expected) {
             throw new Error(`integrity mismatch for ${url}: expected ${expected}, got ${actual}`);
         }
+    } else {
+        logger.warn({ url, integrity }, "unsupported integrity hash algorithm — tarball contents unverified");
     }
 
-    logger.debug({ bytes: bytes.length, url }, "tarball downloaded + verified");
+    logger.debug({ bytes: bytes.length, url }, "tarball downloaded");
     return bytes;
+}
+
+const SAFE_PATH_SEGMENT = /^[^/\\\0]+$/;
+
+function assertSafePathSegment(value: string, label: string): void {
+    if (value === "." || value === ".." || !SAFE_PATH_SEGMENT.test(value)) {
+        throw new Error(`unsafe ${label}: ${SafeJSON.stringify(value)}`);
+    }
 }
 
 export async function ensureBundle({
@@ -106,16 +121,26 @@ export async function ensureBundle({
     force = false,
     fetcher = fetch,
 }: EnsureBundleArgs): Promise<BundleRef> {
+    assertSafePathSegment(version, "version");
+    assertSafePathSegment(platform, "platform");
     const dir = join(storage.getCacheDir(), "bundles", `${version}-${platform}`);
     const metaPath = join(dir, "meta.json");
 
     if (!force && existsSync(metaPath)) {
-        const meta = SafeJSON.parse(await Bun.file(metaPath).text()) as BundleMeta;
-        logger.debug({ version, platform, dir }, "bundle cache hit");
-        return { version, platform, dir, entrypointPath: join(dir, meta.entrypoint), meta };
+        const meta = SafeJSON.parse(await Bun.file(metaPath).text()) as BundleMeta | null | undefined;
+
+        if (meta?.entrypoint) {
+            logger.debug({ version, platform, dir }, "bundle cache hit");
+            return { version, platform, dir, entrypointPath: join(dir, meta.entrypoint), meta };
+        }
     }
 
     const mainManifest = await fetchManifest({ pkg: MAIN_PKG, version, fetcher });
+
+    if (!mainManifest?.dist?.tarball) {
+        throw new Error(`failed to fetch or parse manifest for ${MAIN_PKG}@${version}`);
+    }
+
     const mainTarball = untarGz(
         await downloadTarball({ url: mainManifest.dist.tarball, integrity: mainManifest.dist.integrity, fetcher })
     );
@@ -159,8 +184,20 @@ export async function ensureBundle({
     const modules: BundleMeta["modules"] = [];
     let entrypoint = "";
 
+    const usedFiles = new Set<string>();
+
     for (const m of jsModules) {
-        const file = m.isEntrypoint ? "cli.js" : basename(m.name);
+        let file = m.isEntrypoint ? "cli.js" : m.name.replace(/^\/\$bunfs\/root\//, "").replace(/[^a-zA-Z0-9.-]/g, "_");
+        let suffix = 0;
+
+        while (usedFiles.has(file)) {
+            suffix += 1;
+            file = m.isEntrypoint
+                ? "cli.js"
+                : `${m.name.replace(/^\/\$bunfs\/root\//, "").replace(/[^a-zA-Z0-9.-]/g, "_")}.${suffix}`;
+        }
+
+        usedFiles.add(file);
         await Bun.write(join(dir, file), m.contents);
         modules.push({ name: m.name, file, bytes: m.contents.length, loader: m.loader });
 
@@ -184,10 +221,12 @@ export async function ensureBundle({
 async function ensureDerived({
     ref,
     file,
+    raw,
     produce,
 }: {
     ref: BundleRef;
     file: string;
+    raw?: string;
     produce: (raw: string) => Promise<string> | string;
 }): Promise<string> {
     const path = join(ref.dir, file);
@@ -196,8 +235,8 @@ async function ensureDerived({
         return Bun.file(path).text();
     }
 
-    const raw = await Bun.file(ref.entrypointPath).text();
-    const derived = await produce(raw);
+    const input = raw ?? (await Bun.file(ref.entrypointPath).text());
+    const derived = await produce(input);
     await Bun.write(path, derived);
     logger.debug({ file, version: ref.version, bytes: derived.length }, "derived artifact cached");
     return derived;
@@ -209,13 +248,10 @@ export async function ensureBeautified(ref: BundleRef): Promise<string> {
 
 export async function ensureNormalized(ref: BundleRef): Promise<string> {
     const beautified = await ensureBeautified(ref);
-    const path = join(ref.dir, "normalized.js");
-
-    if (existsSync(path)) {
-        return Bun.file(path).text();
-    }
-
-    const normalized = normalizeIdentifiers(beautified, `${ref.version}.js`);
-    await Bun.write(path, normalized);
-    return normalized;
+    return ensureDerived({
+        ref,
+        file: "normalized.js",
+        raw: beautified,
+        produce: (raw) => normalizeIdentifiers(raw, `${ref.version}.js`),
+    });
 }

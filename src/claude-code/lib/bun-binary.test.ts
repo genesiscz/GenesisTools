@@ -35,7 +35,7 @@ function cat(...parts: Uint8Array[]): Uint8Array {
 }
 
 /** Builds [junk+decoy][data][OFFSETS][TRAILER] like a real Bun binary's __bun section. */
-function buildFixture(modules: FixtureModule[], entryPointId: number): Uint8Array {
+function buildFixture(modules: FixtureModule[], entryPointId: number, STRIDE = 52): Uint8Array {
     const enc = new TextEncoder();
     const strings: Uint8Array[] = [];
     const pointers: Array<{ nameOff: number; nameLen: number; cOff: number; cLen: number }> = [];
@@ -54,7 +54,6 @@ function buildFixture(modules: FixtureModule[], entryPointId: number): Uint8Arra
         dataLen += nameBytes.length + contentBytes.length;
     }
 
-    const STRIDE = 52;
     const table = new Uint8Array(STRIDE * modules.length);
 
     for (let i = 0; i < modules.length; i++) {
@@ -69,10 +68,7 @@ function buildFixture(modules: FixtureModule[], entryPointId: number): Uint8Arra
         table.set(u32(p.nameLen), i * STRIDE + 4);
         table.set(u32(p.cOff), i * STRIDE + 8);
         table.set(u32(p.cLen), i * STRIDE + 12);
-        table[i * STRIDE + 48] = 1;
-        table[i * STRIDE + 49] = m.loader;
-        table[i * STRIDE + 50] = 2;
-        table[i * STRIDE + 51] = 0;
+        table[i * STRIDE + (STRIDE - 3)] = m.loader;
     }
 
     const modulesOff = dataLen;
@@ -115,5 +111,23 @@ describe("extractBunModules", () => {
 
     test("throws a diagnosable error when no trailer exists", () => {
         expect(() => extractBunModules(new Uint8Array(64))).toThrow(/Bun trailer/);
+    });
+
+    test("parses the old 36-byte module table stride", () => {
+        const fixture = buildFixture(
+            [
+                { name: "/$bunfs/root/src/entrypoints/cli.js", contents: "// @bun\nconsole.log(1)", loader: 1 },
+                { name: "/$bunfs/root/extra.node", contents: "\x00\x01binary", loader: 10 },
+            ],
+            1,
+            36
+        );
+        const modules = extractBunModules(fixture);
+        expect(modules.length).toBe(2);
+        expect(modules[0]?.name).toBe("/$bunfs/root/src/entrypoints/cli.js");
+        expect(modules[0]?.loader).toBe(1);
+        expect(modules[1]?.name).toBe("/$bunfs/root/extra.node");
+        expect(modules[1]?.loader).toBe(10);
+        expect(modules[1]?.isEntrypoint).toBe(true);
     });
 });

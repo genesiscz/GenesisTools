@@ -98,7 +98,7 @@ tools claude-code bisect 2.1.185 2.1.197 \
 
 Under `~/.genesis-tools/claude-code/`:
 
-```
+```text
 cache/
   packument.json                      # { fetchedAt, packument }  (TTL 1h)
   bundles/<version>-<platform>/
@@ -123,7 +123,7 @@ tools claude-code bisect 2.1.185 2.1.197 \
 
 Expected output:
 
-```
+```text
 2.1.185	2026-06-20	absent
 2.1.186	2026-06-22	absent
 2.1.187	...	absent
@@ -135,7 +135,7 @@ Expected output:
 2.1.197	2026-06-30	PRESENT
 
 Transition: 2.1.195 → 2.1.196 (published 2026-06-26 → 2026-06-29)
-Inspect: tools claude-code diff 2.1.195 2.1.196 --pattern 'cron_fire'
+Inspect: tools claude-code diff 2.1.195 2.1.196 --pattern 'cron_fire' 'skipSlashCommands'
 ```
 
 Inspect the culprit diff:

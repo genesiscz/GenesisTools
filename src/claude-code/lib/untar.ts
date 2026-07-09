@@ -40,6 +40,12 @@ export function untarGz(body: Uint8Array): Map<string, Uint8Array> {
                 throw new Error(`tar path traversal rejected: ${full}`);
             }
 
+            if (off + size > tar.length) {
+                throw new Error(
+                    `tar entry ${full} is truncated: expected ${size} bytes, only ${tar.length - off} remaining`
+                );
+            }
+
             entries.set(full, tar.subarray(off, off + size));
         }
 

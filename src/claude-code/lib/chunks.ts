@@ -103,7 +103,14 @@ export function chunkSetDiff(a: Chunk[], b: Chunk[]): ChunkSetDiff {
 }
 
 export function filterByPatterns(chunks: Chunk[], patterns: RegExp[]): Chunk[] {
-    return chunks.filter((c) => patterns.every((p) => p.test(c.text) || p.test(c.display)));
+    return chunks.filter((c) =>
+        patterns.every((p) => {
+            p.lastIndex = 0;
+            const textMatch = p.test(c.text);
+            p.lastIndex = 0;
+            return textMatch || p.test(c.display);
+        })
+    );
 }
 
 const STRING_LITERAL = /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g;

@@ -12,12 +12,20 @@ export interface DiffOptions {
     output?: string;
 }
 
+function parseNonNegativeInt(value: string, flag: string): number {
+    if (!/^\d+$/.test(value)) {
+        throw new Error(`${flag} must be a non-negative integer, got "${value}"`);
+    }
+
+    return Number.parseInt(value, 10);
+}
+
 export async function diffCommand(v1: string, v2: string, opts: DiffOptions): Promise<void> {
     const [refA, refB] = await Promise.all([
         ensureBundle({ version: v1, platform: opts.platform }),
         ensureBundle({ version: v2, platform: opts.platform }),
     ]);
-    const context = Number.parseInt(opts.context, 10);
+    const context = parseNonNegativeInt(opts.context, "--context");
     let output: string;
 
     if (opts.mode === "raw" || opts.mode === "normalized") {
@@ -39,7 +47,8 @@ export async function diffCommand(v1: string, v2: string, opts: DiffOptions): Pr
         const onlyA = patterns.length > 0 ? filterByPatterns(d.onlyA, patterns) : d.onlyA;
         const onlyB = patterns.length > 0 ? filterByPatterns(d.onlyB, patterns) : d.onlyB;
         const pairs = pairChunks(onlyA, onlyB);
-        const cap = patterns.length > 0 ? Number.POSITIVE_INFINITY : Number.parseInt(opts.maxChunks, 10);
+        const cap =
+            patterns.length > 0 ? Number.POSITIVE_INFINITY : parseNonNegativeInt(opts.maxChunks, "--max-chunks");
         const header = [
             `# claude-code ${v1} → ${v2} (chunks mode${patterns.length > 0 ? `, patterns: ${patterns.map(String).join(" ")}` : ""})`,
             `# identical chunks: ${d.sameCount}, changed: ${d.onlyA.length} → ${d.onlyB.length}${patterns.length > 0 ? `, matching patterns: ${onlyA.length} → ${onlyB.length}` : ""}`,
