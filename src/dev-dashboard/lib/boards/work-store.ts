@@ -1,3 +1,4 @@
+import { logger } from "@app/logger";
 import type { DatabaseClient } from "@app/utils/database/client";
 import { escapeLike } from "@app/utils/database/predicates";
 import { env } from "@app/utils/env";
@@ -212,12 +213,14 @@ async function revertClaimsForListener(
 export async function reapExpiredListeners(db: DatabaseClient<BoardsDb>): Promise<number[]> {
     const cutoff = new Date(Date.now() - listenerTtlMs()).toISOString();
 
+    let reapedIds: number[] = [];
     const reverted = await db.kysely.transaction().execute(async (trx) => {
         const expired = await trx.selectFrom("listeners").select("id").where("last_seen", "<", cutoff).execute();
         if (expired.length === 0) {
             return [];
         }
         const expiredIds = expired.map((l) => l.id);
+        reapedIds = expiredIds;
 
         const items: Array<{ id: number; boardSlug: string }> = [];
         for (const listenerId of expiredIds) {
@@ -226,6 +229,13 @@ export async function reapExpiredListeners(db: DatabaseClient<BoardsDb>): Promis
         await trx.deleteFrom("listeners").where("id", "in", expiredIds).where("last_seen", "<", cutoff).execute();
         return items;
     });
+
+    if (reapedIds.length > 0) {
+        logger.info(
+            { listeners: reapedIds, revertedAnnotations: reverted.map((item) => item.id), cutoff },
+            "boards listeners: reaped expired leases"
+        );
+    }
 
     for (const item of reverted) {
         publishBoardEvent(item.boardSlug, { type: "status", payload: { id: item.id, status: "open" } });
@@ -263,6 +273,7 @@ export async function claimOrRenewLease(
             RETURNING *
         `.execute(db.kysely);
         const upserted = upsertResult.rows[0];
+        logger.debug({ id: upserted.id, session, actor }, "boards lease: all-scope claim/renew");
         return { conflict: false, id: upserted.id };
     }
 
@@ -281,6 +292,7 @@ export async function claimOrRenewLease(
                 .set({ last_seen: now, actor })
                 .where("id", "=", holder.id)
                 .execute();
+            logger.debug({ id: holder.id, ...cols, session }, "boards lease: renewed");
             return { conflict: false, id: holder.id };
         }
         // Steal expired leases ONLY, and only when the caller asked (takeover) — a live holder is
@@ -289,8 +301,16 @@ export async function claimOrRenewLease(
         const cutoff = new Date(Date.now() - listenerTtlMs()).toISOString();
         const live = holder.last_seen >= cutoff;
         if (!(takeover && !live)) {
+            logger.warn(
+                { ...cols, requestor: session, holderId: holder.id, holderSession: holder.session, live, takeover },
+                "boards lease: claim conflict"
+            );
             return { conflict: true, holder: toListenerDto(holder), live };
         }
+        logger.info(
+            { ...cols, requestor: session, holderId: holder.id, holderSession: holder.session },
+            "boards lease: taking over expired lease"
+        );
         await releaseLease(db, holder.id); // revert its claimed items + delete, then claim fresh below
     }
 
@@ -307,6 +327,7 @@ export async function claimOrRenewLease(
         RETURNING *
     `.execute(db.kysely);
     const upserted = upsertResult.rows[0];
+    logger.info({ id: upserted.id, ...cols, session, actor }, "boards lease: claimed");
     return { conflict: false, id: upserted.id };
 }
 
@@ -316,6 +337,7 @@ export async function releaseLease(db: DatabaseClient<BoardsDb>, id: number): Pr
         await trx.deleteFrom("listeners").where("id", "=", id).execute();
         return items;
     });
+    logger.debug({ id, revertedAnnotations: reverted.map((item) => item.id) }, "boards lease: released");
     for (const item of reverted) {
         publishBoardEvent(item.boardSlug, { type: "status", payload: { id: item.id, status: "open" } });
     }
@@ -380,6 +402,7 @@ export async function dispatchBoard(
         };
     });
 
+    logger.info({ board: boardSlug, opened, releasedQuestions }, "boards dispatch: staged items released");
     for (const id of opened) {
         publishBoardEvent(boardSlug, { type: "status", payload: { id, status: "open" } });
     }
@@ -402,6 +425,7 @@ export async function drainChoices(db: DatabaseClient<BoardsDb>, scope: WorkScop
         }
         const ids = rows.map((r) => r.id);
         await trx.updateTable("board_questions").set({ delivered: 1 }).where("id", "in", ids).execute();
+        logger.info({ scope, questionIds: ids }, "boards choices: drained answered questions");
 
         return rows.map((r) => ({
             type: "choice" as const,

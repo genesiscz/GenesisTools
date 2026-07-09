@@ -28,9 +28,11 @@ export function subscribeBoard(slug: string, fn: Subscriber): () => void {
 export function publishBoardEvent(slug: string, event: BoardEvent): void {
     const set = subscribers.get(slug);
     if (!set || set.size === 0) {
+        logger.debug({ slug, type: event.type }, "boards sse: publish with no subscribers (dropped)");
         return;
     }
 
+    logger.debug({ slug, type: event.type, subscribers: set.size }, "boards sse: publish");
     const frame = SafeJSON.stringify(event);
     for (const fn of set) {
         try {
@@ -47,6 +49,9 @@ let waiters: Array<() => void> = [];
 export function wakeWorkWaiters(): void {
     const current = waiters;
     waiters = [];
+    if (current.length > 0) {
+        logger.debug({ waiters: current.length }, "boards work signal: waking long-pollers");
+    }
     for (const fn of current) {
         fn();
     }
