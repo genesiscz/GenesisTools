@@ -90,11 +90,13 @@ export function boardsSetsRoutes(): RouteDef[] {
             handler: async (ctx) => {
                 const { project, branch, key } = ctx.params;
                 if (!KEY_RE.test(key) || isReservedKey(key)) {
+                    logger.warn({ project, branch, key }, "boards sets: push rejected — invalid key");
                     return { kind: "json", status: 400, body: { error: `invalid set key: ${key}` } };
                 }
 
                 const raw = await ctx.readRawBody();
                 if (raw.length > MAX_UPLOAD_BYTES) {
+                    logger.warn({ project, branch, key, bytes: raw.length }, "boards sets: push rejected — too large");
                     return { kind: "json", status: 413, body: { error: "upload too large (max 200 MiB)" } };
                 }
 
@@ -102,6 +104,7 @@ export function boardsSetsRoutes(): RouteDef[] {
                 try {
                     entries = await untarGz(raw);
                 } catch (err) {
+                    logger.warn({ err, project, branch, key }, "boards sets: push rejected — unparseable tar.gz");
                     return {
                         kind: "json",
                         status: 400,
@@ -122,6 +125,19 @@ export function boardsSetsRoutes(): RouteDef[] {
                         sourceRef: ctx.query.get("source") ?? undefined,
                         entries,
                     });
+
+                    logger.info(
+                        {
+                            project: result.set.project,
+                            branch: result.set.branch,
+                            key: result.set.key,
+                            version: result.set.version,
+                            files: result.set.fileCount,
+                            bytes: result.set.bytes,
+                            created: result.created,
+                        },
+                        "boards sets: set pushed"
+                    );
 
                     try {
                         await notifyStaleCards({
@@ -228,6 +244,7 @@ export function boardsSetsRoutes(): RouteDef[] {
                         ctx.params.selector,
                         body
                     );
+                    logger.info({ ...ctx.params, patch: Object.keys(body) }, "boards sets: set renamed/retitled");
                     return { kind: "json", status: 200, body: updated };
                 } catch (err) {
                     return boardsError(err);
@@ -264,6 +281,7 @@ export function boardsSetsRoutes(): RouteDef[] {
                 const body = await ctx.readJson<{ operator: string }>();
                 const operator = sanitizeOperator(body.operator);
                 await setOperator(operator);
+                logger.info({ operator }, "boards: operator identity changed");
                 return { kind: "json", status: 200, body: { operator } };
             },
         },

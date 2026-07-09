@@ -5,6 +5,7 @@ import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { publishBoardEvent } from "@app/dev-dashboard/lib/boards/events";
 import type { QuestionDto } from "@app/dev-dashboard/lib/boards/types";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
+import { logger } from "@app/logger";
 import { boardsError } from "./boards-errors";
 import { actorFrom } from "./boards-sets";
 
@@ -42,6 +43,10 @@ export function boardsQuestionsRoutes(): RouteDef[] {
                         }>()) ?? {};
                     const prompt = (body.prompt ?? "").trim();
                     if (!prompt || prompt.length > MAX_QUESTION_PROMPT) {
+                        logger.warn(
+                            { slug: ctx.params.slug, promptChars: prompt.length },
+                            "boards question: rejected — missing/oversized prompt"
+                        );
                         return {
                             kind: "json",
                             status: 400,
@@ -50,6 +55,7 @@ export function boardsQuestionsRoutes(): RouteDef[] {
                     }
                     const normalized = normalizeOptions(body.options);
                     if (!normalized.ok) {
+                        logger.warn({ slug: ctx.params.slug }, "boards question: rejected — invalid options");
                         return {
                             kind: "json",
                             status: 422,
@@ -64,6 +70,16 @@ export function boardsQuestionsRoutes(): RouteDef[] {
                         options: normalized.options,
                         multi: Boolean(body.multiSelect),
                     });
+                    logger.info(
+                        {
+                            slug: ctx.params.slug,
+                            id: question.id,
+                            cardId: question.cardId,
+                            options: normalized.options.length,
+                            multi: Boolean(body.multiSelect),
+                        },
+                        "boards question: created"
+                    );
                     publishBoardEvent(ctx.params.slug, { type: "question", payload: question });
                     return { kind: "json", status: 201, body: toQuestionResponse(question) };
                 } catch (err) {
@@ -101,6 +117,10 @@ export function boardsQuestionsRoutes(): RouteDef[] {
                     const actor = await actorFrom(ctx);
                     const question = await answerQuestion(getBoardsDb(), id, answer, actor);
                     const slug = await boardSlugForQuestionId(id);
+                    logger.info(
+                        { id, slug, actor, staged: question.staged, answerChars: answer.length },
+                        "boards question: answered"
+                    );
                     if (slug) {
                         publishBoardEvent(slug, { type: "question", payload: question });
                     }

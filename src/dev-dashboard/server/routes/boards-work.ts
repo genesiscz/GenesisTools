@@ -13,6 +13,7 @@ import {
     releaseLease,
 } from "@app/dev-dashboard/lib/boards/work-store";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
+import { logger } from "@app/logger";
 import { boardsError } from "./boards-errors";
 
 function parseScope(q: URLSearchParams): WorkScope | null {
@@ -36,12 +37,14 @@ export function boardsWorkRoutes(): RouteDef[] {
             method: "GET",
             pattern: "/api/boards/work",
             handler: async (ctx) => {
-                const work = await listWork(getBoardsDb(), {
+                const filter = {
                     status: ctx.query.get("status") ?? undefined,
                     board: ctx.query.get("board") ?? undefined,
                     project: ctx.query.get("project") ?? undefined,
                     branch: ctx.query.get("branch") ?? undefined,
-                });
+                };
+                const work = await listWork(getBoardsDb(), filter);
+                logger.debug({ ...filter, count: work.length }, "boards work: list");
                 return { kind: "json", status: 200, body: { work } };
             },
         },
@@ -58,20 +61,36 @@ export function boardsWorkRoutes(): RouteDef[] {
                     const session = ctx.query.get("session") ?? "";
                     const actor = ctx.query.get("actor") ?? "";
                     const takeover = ctx.query.get("takeover") === "1";
+                    logger.debug({ scope, session, actor, timeoutSec, takeover }, "boards wait: armed");
                     if (session && !scope) {
+                        logger.warn({ session, actor }, "boards wait: leased wait without a scope rejected");
                         return {
                             kind: "json",
                             status: 400,
                             body: { error: "leased waits require a scope (board | project | all=1)" },
                         };
                     }
-                    const deadline = Date.now() + timeoutSec * 1000;
+                    const startedAt = Date.now();
+                    const deadline = startedAt + timeoutSec * 1000;
                     let leaseId: number | undefined;
                     for (;;) {
                         await reapExpiredListeners(db);
                         if (session && scope) {
                             const lease = await claimOrRenewLease(db, scope, session, actor, takeover);
                             if (lease.conflict) {
+                                logger.warn(
+                                    {
+                                        scope,
+                                        session,
+                                        actor,
+                                        takeover,
+                                        holderId: lease.holder.id,
+                                        holderSession: lease.holder.session,
+                                        holderLastSeen: lease.holder.lastSeen,
+                                        live: lease.live,
+                                    },
+                                    "boards wait: lease conflict"
+                                );
                                 return {
                                     kind: "json",
                                     status: 409,
@@ -111,6 +130,18 @@ export function boardsWorkRoutes(): RouteDef[] {
                                     };
                                 })
                             );
+                            logger.info(
+                                {
+                                    scope,
+                                    session,
+                                    listener: leaseId,
+                                    workIds: work.map((w) => w.id),
+                                    choiceIds: choices.map((c) => c.id),
+                                    pending: total,
+                                    waitedMs: Date.now() - startedAt,
+                                },
+                                "boards wait: returning work"
+                            );
                             return {
                                 kind: "json",
                                 status: 200,
@@ -124,6 +155,10 @@ export function boardsWorkRoutes(): RouteDef[] {
                         }
                         const remaining = deadline - Date.now();
                         if (remaining <= 0) {
+                            logger.debug(
+                                { scope, session, listener: leaseId, waitedMs: Date.now() - startedAt },
+                                "boards wait: idle timeout"
+                            );
                             return {
                                 kind: "json",
                                 status: 200,
@@ -151,10 +186,12 @@ export function boardsWorkRoutes(): RouteDef[] {
             handler: async (ctx) => {
                 const id = Number(ctx.params.id);
                 if (!Number.isInteger(id)) {
+                    logger.warn({ raw: ctx.params.id }, "boards listeners: delete with invalid id");
                     return { kind: "json", status: 400, body: { error: "invalid listener id" } };
                 }
 
                 const reverted = await releaseLease(getBoardsDb(), id);
+                logger.info({ id, reverted }, "boards listeners: lease released via DELETE");
                 return { kind: "json", status: 200, body: { reverted } };
             },
         },

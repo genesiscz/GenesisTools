@@ -17,6 +17,7 @@ import { publishBoardEvent, wakeWorkWaiters } from "@app/dev-dashboard/lib/board
 import { getSet, getSetFile, setRefOf } from "@app/dev-dashboard/lib/boards/sets-store";
 import type { MessageAttachmentDto, Region } from "@app/dev-dashboard/lib/boards/types";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
+import { logger } from "@app/logger";
 import { boardsError } from "./boards-errors";
 import { actorFrom } from "./boards-sets";
 
@@ -61,6 +62,17 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
                         createdBy: body.createdBy ?? (await actorFrom(ctx)),
                         status: body.status,
                     });
+                    logger.info(
+                        {
+                            id: annotation.id,
+                            board: annotation.boardSlug,
+                            cardId: body.cardId,
+                            intent: body.intent,
+                            status: annotation.status,
+                            createdBy: annotation.createdBy,
+                        },
+                        "boards annotation: created"
+                    );
                     publishBoardEvent(annotation.boardSlug, { type: "annotation", payload: annotation });
                     if (annotation.status === "open") {
                         wakeWorkWaiters();
@@ -103,6 +115,17 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
                         claimedBy: body.actor ?? "claude",
                         claimedListener,
                     });
+                    logger.info(
+                        {
+                            id,
+                            board: annotation.boardSlug,
+                            status: body.status,
+                            regionPatched: body.region !== undefined,
+                            actor: body.actor ?? "claude",
+                            claimedListener,
+                        },
+                        "boards annotation: patched"
+                    );
                     if (body.status !== undefined) {
                         publishBoardEvent(annotation.boardSlug, {
                             type: "status",
@@ -125,6 +148,7 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
                 try {
                     const id = Number(ctx.params.id);
                     const annotation = await cancelAnnotation(getBoardsDb(), id);
+                    logger.info({ id, board: annotation.boardSlug }, "boards annotation: cancelled");
                     publishBoardEvent(annotation.boardSlug, {
                         type: "status",
                         payload: { id, status: annotation.status },
@@ -142,6 +166,10 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
                 try {
                     const id = Number(ctx.params.id);
                     const annotation = await reactivateAnnotation(getBoardsDb(), id);
+                    logger.info(
+                        { id, board: annotation.boardSlug, status: annotation.status },
+                        "boards annotation: reactivated"
+                    );
                     publishBoardEvent(annotation.boardSlug, {
                         type: "status",
                         payload: { id, status: annotation.status },
@@ -160,6 +188,10 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
                     const id = Number(ctx.params.id);
                     const annotation = await getAnnotation(getBoardsDb(), id);
                     await deleteAnnotation(getBoardsDb(), id);
+                    logger.info(
+                        { id, board: annotation.boardSlug, status: annotation.status },
+                        "boards annotation: deleted"
+                    );
                     publishBoardEvent(annotation.boardSlug, { type: "annotation_deleted", payload: { id } });
                     return { kind: "json", status: 200, body: { ok: true } };
                 } catch (err) {
@@ -199,6 +231,10 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
                         prompt: body.prompt,
                         createdBy: await actorFrom(ctx),
                     });
+                    logger.info(
+                        { id, board: annotation.boardSlug, revisions: annotation.revisions.length },
+                        "boards annotation: prompt revised"
+                    );
                     publishBoardEvent(annotation.boardSlug, { type: "annotation", payload: annotation });
                     return { kind: "json", status: 200, body: annotation };
                 } catch (err) {
@@ -225,10 +261,18 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
                         body: body.body,
                         attachments: body.attachments,
                     });
+                    logger.debug(
+                        { id, board: before.boardSlug, author, chars: body.body.length },
+                        "boards annotation: message posted"
+                    );
                     publishBoardEvent(before.boardSlug, { type: "message", payload: message });
 
                     const after = await getAnnotation(getBoardsDb(), id);
                     if (after.status !== before.status) {
+                        logger.info(
+                            { id, board: before.boardSlug, from: before.status, to: after.status, author },
+                            "boards annotation: message flipped status"
+                        );
                         publishBoardEvent(before.boardSlug, { type: "status", payload: { id, status: after.status } });
                         wakeWorkWaiters();
                     }
@@ -270,6 +314,18 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
                         commitRef: body.commit,
                     });
                     const annotation = await getAnnotation(getBoardsDb(), id);
+                    logger.info(
+                        {
+                            id,
+                            board: annotation.boardSlug,
+                            attemptId: result.attempt.id,
+                            afterSet: setRefOf(set),
+                            afterVersion: set.version,
+                            file: body.file,
+                            agent: body.agent,
+                        },
+                        "boards annotation: attempt attached"
+                    );
                     publishBoardEvent(annotation.boardSlug, { type: "attempt", payload: result.attempt });
                     publishBoardEvent(annotation.boardSlug, { type: "card", payload: result.card });
                     return { kind: "json", status: 201, body: result };
@@ -286,6 +342,16 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
                     const attemptId = Number(ctx.params.id);
                     const body = await ctx.readJson<{ verdict: "accept" | "reject" }>();
                     const result = await setVerdict(getBoardsDb(), attemptId, body.verdict);
+                    logger.info(
+                        {
+                            attemptId,
+                            annotationId: result.annotation.id,
+                            board: result.annotation.boardSlug,
+                            verdict: body.verdict,
+                            status: result.annotation.status,
+                        },
+                        "boards annotation: verdict set"
+                    );
                     publishBoardEvent(result.annotation.boardSlug, { type: "attempt", payload: result.attempt });
                     if (body.verdict === "accept") {
                         publishBoardEvent(result.annotation.boardSlug, {

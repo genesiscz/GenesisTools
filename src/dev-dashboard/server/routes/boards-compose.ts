@@ -12,6 +12,7 @@ import { type ArrangeBody, runArrange } from "@app/dev-dashboard/lib/boards/layo
 import { scrapeBoard } from "@app/dev-dashboard/lib/boards/scrape";
 import { boardPageUrl } from "@app/dev-dashboard/lib/public-base";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
+import { logger } from "@app/logger";
 import { boardsError } from "./boards-errors";
 import { getOperator } from "./boards-sets";
 
@@ -51,12 +52,34 @@ export function boardsComposeRoutes(): RouteDef[] {
                     const result = await composeBoard(getBoardsDb(), ctx.params.slug, body, actor);
                     if (!result.ok) {
                         const status = STATUS_BY_CODE[result.code] ?? 400;
+                        logger.warn(
+                            {
+                                slug: ctx.params.slug,
+                                actor,
+                                code: result.code,
+                                index: result.index,
+                                message: result.message,
+                            },
+                            "boards compose: rejected"
+                        );
                         return {
                             kind: "json",
                             status,
                             body: { error: result.message, code: result.code, index: result.index },
                         };
                     }
+                    logger.info(
+                        {
+                            slug: ctx.params.slug,
+                            actor,
+                            section: body.section,
+                            layout: body.layout,
+                            cards: result.cards.length,
+                            edges: result.edges.length,
+                            questions: result.questions.length,
+                        },
+                        "boards compose: placed"
+                    );
                     // SSE publishes AFTER the transaction commits.
                     if (result.events.cards.length > 0) {
                         publishBoardEvent(ctx.params.slug, { type: "cards", payload: result.events.cards });
@@ -92,12 +115,25 @@ export function boardsComposeRoutes(): RouteDef[] {
                     const result = await updateCards(getBoardsDb(), ctx.params.slug, body);
                     if (!result.ok) {
                         const status = STATUS_BY_CODE[result.code] ?? 400;
+                        logger.warn(
+                            { slug: ctx.params.slug, code: result.code, message: result.message },
+                            "boards update-cards: rejected"
+                        );
                         return {
                             kind: "json",
                             status,
                             body: { error: result.message, code: result.code, index: result.index },
                         };
                     }
+                    logger.info(
+                        {
+                            slug: ctx.params.slug,
+                            patched: result.patched,
+                            removed: result.removed,
+                            restored: result.restored,
+                        },
+                        "boards update-cards: applied"
+                    );
                     for (const card of result.events.cards) {
                         publishBoardEvent(ctx.params.slug, { type: "card", payload: card });
                     }
@@ -143,8 +179,22 @@ export function boardsComposeRoutes(): RouteDef[] {
                     const body = (await ctx.readJson<ArrangeBody>()) ?? ({} as ArrangeBody);
                     const outcome = await runArrange(getBoardsDb(), ctx.params.slug, body);
                     if (!outcome.ok) {
+                        logger.warn(
+                            { slug: ctx.params.slug, mode: body.mode, scope: body.scope, message: outcome.message },
+                            "boards arrange: rejected"
+                        );
                         return { kind: "json", status: outcome.status, body: { error: outcome.message } };
                     }
+                    logger.info(
+                        {
+                            slug: ctx.params.slug,
+                            mode: body.mode,
+                            scope: body.scope,
+                            moved: outcome.moved,
+                            saved: outcome.saved,
+                        },
+                        "boards arrange: applied"
+                    );
                     // runArrange publishes the layout/card SSE events itself (after its writes commit).
                     return {
                         kind: "json",

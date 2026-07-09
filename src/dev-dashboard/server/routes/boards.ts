@@ -31,6 +31,7 @@ import type { MessageAttachmentDto } from "@app/dev-dashboard/lib/boards/types";
 import { dispatchBoard } from "@app/dev-dashboard/lib/boards/work-store";
 import { publicBaseUrl } from "@app/dev-dashboard/lib/public-base";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
+import { logger } from "@app/logger";
 import { boardsError } from "./boards-errors";
 import { actorFrom } from "./boards-sets";
 
@@ -97,6 +98,10 @@ export function boardsRoutes(): RouteDef[] {
                         project?: string;
                     }>();
                     const board = await createBoard(getBoardsDb(), body);
+                    logger.info(
+                        { slug: board.slug, boardType: body.boardType, project: body.project },
+                        "boards: board created"
+                    );
                     const url = `${await publicBaseUrl()}/boards/${board.slug}`;
                     return { kind: "json", status: 201, body: { ...board, url } };
                 } catch (err) {
@@ -144,6 +149,7 @@ export function boardsRoutes(): RouteDef[] {
                 try {
                     const body = await ctx.readJson<{ title?: string; project?: string; archived?: boolean }>();
                     const board = await patchBoard(getBoardsDb(), ctx.params.slug, body);
+                    logger.info({ slug: ctx.params.slug, patch: Object.keys(body) }, "boards: board patched");
                     return { kind: "json", status: 200, body: board };
                 } catch (err) {
                     return boardsError(err);
@@ -185,6 +191,10 @@ export function boardsRoutes(): RouteDef[] {
                         ...body,
                         createdBy: body.createdBy ?? (await actorFrom(ctx)),
                     });
+                    logger.info(
+                        { slug: ctx.params.slug, id: card.id, kind: body.kind, createdBy: card.createdBy },
+                        "boards: card created"
+                    );
                     publishBoardEvent(ctx.params.slug, { type: "card", payload: card });
                     notifyLayoutChanged(getBoardsDb(), ctx.params.slug);
                     return { kind: "json", status: 201, body: card };
@@ -212,6 +222,7 @@ export function boardsRoutes(): RouteDef[] {
                         >();
                     const card = await patchCard(getBoardsDb(), id, body);
                     const slug = await boardSlugForCardId(id);
+                    logger.debug({ id, slug, patch: Object.keys(body) }, "boards: card patched");
                     if (slug) {
                         publishBoardEvent(slug, { type: "card", payload: card });
                         notifyLayoutChanged(getBoardsDb(), slug);
@@ -230,6 +241,7 @@ export function boardsRoutes(): RouteDef[] {
                     const id = Number(ctx.params.id);
                     const slug = await boardSlugForCardId(id);
                     await softDeleteCard(getBoardsDb(), id);
+                    logger.info({ id, slug }, "boards: card soft-deleted");
                     if (slug) {
                         publishBoardEvent(slug, { type: "card_deleted", payload: { id } });
                         notifyLayoutChanged(getBoardsDb(), slug);
@@ -248,6 +260,7 @@ export function boardsRoutes(): RouteDef[] {
                     const id = Number(ctx.params.id);
                     const card = await restoreCard(getBoardsDb(), id);
                     const slug = await boardSlugForCardId(id);
+                    logger.info({ id, slug }, "boards: card restored from trash");
                     if (slug) {
                         publishBoardEvent(slug, { type: "card", payload: card });
                         notifyLayoutChanged(getBoardsDb(), slug);
@@ -290,6 +303,7 @@ export function boardsRoutes(): RouteDef[] {
                         ctx.params.slug,
                         body.strokes.map((s) => ({ ...s, createdBy: s.createdBy ?? actor }))
                     );
+                    logger.debug({ slug: ctx.params.slug, count: strokes.length, actor }, "boards: strokes added");
                     publishBoardEvent(ctx.params.slug, { type: "strokes", payload: strokes });
                     return { kind: "json", status: 201, body: { strokes } };
                 } catch (err) {
@@ -349,6 +363,10 @@ export function boardsRoutes(): RouteDef[] {
                         ...body,
                         createdBy: body.createdBy ?? (await actorFrom(ctx)),
                     });
+                    logger.debug(
+                        { slug: ctx.params.slug, id: edge.id, fromCard: body.fromCard, toCard: body.toCard },
+                        "boards: edge added"
+                    );
                     publishBoardEvent(ctx.params.slug, { type: "edge", payload: edge });
                     return { kind: "json", status: 201, body: edge };
                 } catch (err) {
@@ -380,6 +398,7 @@ export function boardsRoutes(): RouteDef[] {
                 try {
                     const body = await ctx.readJson<{ moves: Array<{ id: number; x: number; y: number }> }>();
                     await bulkLayout(getBoardsDb(), ctx.params.slug, body.moves);
+                    logger.debug({ slug: ctx.params.slug, moves: body.moves.length }, "boards: bulk layout applied");
                     publishBoardEvent(ctx.params.slug, { type: "layout", payload: { moves: body.moves } });
                     return { kind: "json", status: 200, body: { ok: true } };
                 } catch (err) {
@@ -395,6 +414,10 @@ export function boardsRoutes(): RouteDef[] {
                     const body = await ctx.readJson<{ project: string; branch: string; selector: string }>();
                     const set = await getSet(getBoardsDb(), body.project, body.branch, body.selector);
                     const result = await importSet(getBoardsDb(), ctx.params.slug, set);
+                    logger.info(
+                        { slug: ctx.params.slug, ...body, imported: result.cards.length, edges: result.edges.length },
+                        "boards: set imported"
+                    );
                     publishBoardEvent(ctx.params.slug, { type: "cards", payload: result.cards });
                     for (const edge of result.edges) {
                         publishBoardEvent(ctx.params.slug, { type: "edge", payload: edge });
@@ -414,6 +437,15 @@ export function boardsRoutes(): RouteDef[] {
                     const body = await ctx.readJson<{ project: string; branch: string; selector: string }>();
                     const set = await getSet(getBoardsDb(), body.project, body.branch, body.selector);
                     const result = await syncSetCards(getBoardsDb(), ctx.params.slug, set);
+                    logger.info(
+                        {
+                            slug: ctx.params.slug,
+                            ...body,
+                            updated: result.updated,
+                            skipped: result.skippedFiles.length,
+                        },
+                        "boards: set cards synced"
+                    );
                     const doc = await getBoardDoc(getBoardsDb(), ctx.params.slug);
                     publishBoardEvent(ctx.params.slug, { type: "cards", payload: doc.cards });
                     return { kind: "json", status: 200, body: result };
@@ -450,6 +482,10 @@ export function boardsRoutes(): RouteDef[] {
                         payload: { naturalWidth, naturalHeight },
                         createdBy: await actorFrom(ctx),
                     });
+                    logger.info(
+                        { slug: ctx.params.slug, id: card.id, name, mime, bytes: bytes.length, w, h },
+                        "boards: image uploaded as media card"
+                    );
                     publishBoardEvent(ctx.params.slug, { type: "card", payload: card });
                     notifyLayoutChanged(getBoardsDb(), ctx.params.slug);
                     return { kind: "json", status: 201, body: card };
@@ -492,6 +528,10 @@ export function boardsRoutes(): RouteDef[] {
                         body: body.body,
                         attachments: body.attachments,
                     });
+                    logger.debug(
+                        { slug: ctx.params.slug, id: message.id, author: message.author, chars: body.body.length },
+                        "boards: board-level message posted"
+                    );
                     publishBoardEvent(ctx.params.slug, { type: "board_message", payload: message });
                     return { kind: "json", status: 201, body: message };
                 } catch (err) {
@@ -520,11 +560,13 @@ export function boardsRoutes(): RouteDef[] {
             handler: (ctx) => ({
                 kind: "sse",
                 start: (emit) => {
+                    logger.debug({ slug: ctx.params.slug }, "boards sse: stream opened");
                     emit.comment(` board ${ctx.params.slug} stream open`);
                     const unsubscribe = subscribeBoard(ctx.params.slug, (frame) => emit.data(frame));
                     const keepAlive = setInterval(() => emit.comment(" ping"), 12_000);
                     return {
                         close: () => {
+                            logger.debug({ slug: ctx.params.slug }, "boards sse: stream closed");
                             clearInterval(keepAlive);
                             unsubscribe();
                         },
