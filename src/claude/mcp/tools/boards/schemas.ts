@@ -105,6 +105,7 @@ export const WAIT_FOR_WORK_SCHEMA = {
         branch: { type: "string" },
         timeoutSec: { type: "number", minimum: 1, maximum: 55 },
     },
+    anyOf: [{ required: ["board"] }, { required: ["project"] }],
     additionalProperties: false,
 } as const;
 

@@ -28,6 +28,7 @@ describe("runWatch", () => {
                     if (waitCall === 1) {
                         return Response.json({ idle: true, listener: 1 });
                     }
+
                     if (waitCall === 2) {
                         return Response.json({
                             work: [{ id: 1, board: "demo", capsule: "..." }],
@@ -35,6 +36,7 @@ describe("runWatch", () => {
                             listener: 1,
                         });
                     }
+
                     return Response.json(
                         {
                             error: "scope held by a live listener",
@@ -115,6 +117,7 @@ describe("runWatch", () => {
                     if (waitCall <= 2) {
                         return Response.json({ work: [{ id: 1, board: "demo", capsule: "..." }], pending: 1 });
                     }
+
                     return Response.json(
                         {
                             error: "scope held by a live listener",
@@ -187,6 +190,7 @@ describe("runWatch", () => {
             port: 0,
             fetch(req) {
                 const url = new URL(req.url);
+
                 if (url.pathname === "/api/boards/work/wait") {
                     return Response.json(
                         {
@@ -206,6 +210,7 @@ describe("runWatch", () => {
                         { status: 409 }
                     );
                 }
+
                 return new Response("not found", { status: 404 });
             },
         });
@@ -233,9 +238,11 @@ describe("runWatch", () => {
             port: 0,
             fetch(req) {
                 const url = new URL(req.url);
+
                 if (url.pathname === "/api/boards/work/wait") {
                     return Response.json({ idle: true });
                 }
+
                 return new Response("not found", { status: 404 });
             },
         });
@@ -263,10 +270,12 @@ describe("runWatch", () => {
             port: 0,
             fetch(req) {
                 const url = new URL(req.url);
+
                 if (url.pathname === "/api/boards/work/wait") {
                     waitSearch = url.search;
                     return Response.json({ idle: true });
                 }
+
                 return new Response("not found", { status: 404 });
             },
         });
@@ -291,9 +300,11 @@ describe("runWatch", () => {
             port: 0,
             fetch(req) {
                 const url = new URL(req.url);
+
                 if (url.pathname === "/api/boards/work/wait") {
                     return Response.json({ work: [{ id: 5, board: "demo", capsule: "..." }], pending: 1 });
                 }
+
                 if (url.pathname === "/api/boards/work") {
                     return Response.json({
                         work: [
@@ -310,6 +321,7 @@ describe("runWatch", () => {
                         ],
                     });
                 }
+
                 return new Response("not found", { status: 404 });
             },
         });

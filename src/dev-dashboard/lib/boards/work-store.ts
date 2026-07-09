@@ -67,7 +67,7 @@ function scopeColumns(scope: WorkScope): { scope_kind: string; scope: string; br
     if (scope.kind === "board") {
         return { scope_kind: "board", scope: scope.board, branch: "" };
     }
-    return { scope_kind: "project", scope: scope.project, branch: scope.branch };
+    return { scope_kind: "project", scope: scope.project, branch: slugifyBranch(scope.branch) };
 }
 
 /** default status "open"; FIFO by created_at. project/branch matches the annotated card's

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
@@ -80,9 +80,10 @@ function pngFile(path: string, width: number, height: number) {
 
 describe("boards-store", () => {
     let db: DatabaseClient<BoardsDb>;
+    let dir = "";
 
     beforeEach(() => {
-        const dir = mkdtempSync(join(tmpdir(), "boards-store-"));
+        dir = mkdtempSync(join(tmpdir(), "boards-store-"));
         env.testing.set("GENESIS_TOOLS_HOME", dir);
         resetDevDashboardStorage();
         db = makeTestDb();
@@ -92,6 +93,7 @@ describe("boards-store", () => {
         db.close();
         env.testing.unset("GENESIS_TOOLS_HOME");
         resetDevDashboardStorage();
+        rmSync(dir, { recursive: true, force: true });
     });
 
     it("creates, lists, gets, and patches a board", async () => {

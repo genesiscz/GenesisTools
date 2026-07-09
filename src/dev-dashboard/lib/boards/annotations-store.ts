@@ -720,6 +720,9 @@ export async function setVerdict(
     if (!annotationRow) {
         throw new NotFoundError(`annotation not found: ${attemptRow.annotation_id}`);
     }
+    if (annotationRow.status === "cancelled") {
+        throw new CancelledError(`annotation ${annotationRow.id} is cancelled`);
+    }
 
     const now = nowIso();
     const card = await db.kysely.transaction().execute(async (trx) => {

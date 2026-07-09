@@ -698,15 +698,6 @@ export async function syncSetCards(
     // the version counter is shared per (project, branch), so a newer key strands the older
     // key's cards at a lower version (mirrors vitrinka store.SyncCards, boards.go:811-868).
     const pattern = `${escapeLike(`${set.project}/${set.branch}/`)}%`;
-    const staleCards = await db.kysely
-        .selectFrom("board_cards")
-        .selectAll()
-        .where("board_id", "=", board.id)
-        .where("kind", "=", "shot")
-        .where(sql<SqlBool>`set_ref LIKE ${pattern} ESCAPE '\\'`)
-        .where("set_version", "<", set.version)
-        .where("deleted_at", "=", "")
-        .execute();
 
     const filesByPath = new Map(set.files.map((f) => [f.path, f]));
     const skippedFiles: string[] = [];
@@ -714,6 +705,19 @@ export async function syncSetCards(
     const now = nowIso();
 
     await db.kysely.transaction().execute(async (trx) => {
+        // Read staleCards (and each row's payload) inside the tx: reading them beforehand would
+        // let a concurrent patchCard/appendCardVersion land between the read and this loop, and
+        // the payload merge below would silently clobber that write with the stale snapshot.
+        const staleCards = await trx
+            .selectFrom("board_cards")
+            .selectAll()
+            .where("board_id", "=", board.id)
+            .where("kind", "=", "shot")
+            .where(sql<SqlBool>`set_ref LIKE ${pattern} ESCAPE '\\'`)
+            .where("set_version", "<", set.version)
+            .where("deleted_at", "=", "")
+            .execute();
+
         for (const card of staleCards) {
             const file = filesByPath.get(card.file_path);
             if (!file) {

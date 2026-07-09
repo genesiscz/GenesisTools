@@ -1,3 +1,4 @@
+import { sanitizeOperator } from "@app/boards/lib/operator";
 import { blobPath, blobUrl, mimeForPath } from "@app/dev-dashboard/lib/boards/blobs";
 import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { publishBoardEvent } from "@app/dev-dashboard/lib/boards/events";
@@ -14,6 +15,7 @@ import {
 } from "@app/dev-dashboard/lib/boards/sets-store";
 import { untarGz } from "@app/dev-dashboard/lib/boards/tar";
 import type { RouteContext, RouteDef } from "@app/dev-dashboard/server/types";
+import { logger } from "@app/logger";
 import { escapeLike } from "@app/utils/database/predicates";
 import { type SqlBool, sql } from "kysely";
 import { boardsError } from "./boards-errors";
@@ -33,7 +35,10 @@ export async function getOperator(): Promise<string> {
 export async function actorFrom(ctx: RouteContext): Promise<string> {
     const header = ctx.headers["x-board-actor"];
     if (header) {
-        return header;
+        const sanitized = sanitizeOperator(header);
+        if (sanitized) {
+            return sanitized;
+        }
     }
 
     const operator = await getOperator();
@@ -118,12 +123,19 @@ export function boardsSetsRoutes(): RouteDef[] {
                         entries,
                     });
 
-                    await notifyStaleCards({
-                        project: result.set.project,
-                        branch: result.set.branch,
-                        key: result.set.key,
-                        version: result.set.version,
-                    });
+                    try {
+                        await notifyStaleCards({
+                            project: result.set.project,
+                            branch: result.set.branch,
+                            key: result.set.key,
+                            version: result.set.version,
+                        });
+                    } catch (err) {
+                        logger.warn(
+                            { err, project: result.set.project, branch: result.set.branch },
+                            "notifyStaleCards failed after syncSet already committed"
+                        );
+                    }
 
                     return {
                         kind: "json",
@@ -250,8 +262,9 @@ export function boardsSetsRoutes(): RouteDef[] {
             pattern: "/api/boards/operator",
             handler: async (ctx) => {
                 const body = await ctx.readJson<{ operator: string }>();
-                await setOperator(body.operator);
-                return { kind: "json", status: 200, body: { operator: body.operator } };
+                const operator = sanitizeOperator(body.operator);
+                await setOperator(operator);
+                return { kind: "json", status: 200, body: { operator } };
             },
         },
     ];

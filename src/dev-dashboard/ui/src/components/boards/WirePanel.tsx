@@ -141,13 +141,13 @@ export function WirePanel({ slug, annotation, boardMessages, operator, onClose }
             return;
         }
 
-        if (annotation) {
-            replyMutation.mutate(body);
-        } else {
-            boardMessageMutation.mutate(body);
-        }
-
         setDraft("");
+
+        if (annotation) {
+            replyMutation.mutate(body, { onError: () => setDraft(body) });
+        } else {
+            boardMessageMutation.mutate(body, { onError: () => setDraft(body) });
+        }
     };
 
     const feed = annotation ? buildFeed(annotation) : [];

@@ -23,8 +23,15 @@ export async function handleWaitForWork(args: {
             q.branch = args.branch;
         }
     }
-    q.timeout = String(Math.min(55, Math.max(1, args.timeoutSec ?? 50)));
+    const timeoutSec = Math.min(55, Math.max(1, args.timeoutSec ?? 50));
+    q.timeout = String(timeoutSec);
     q.session = `${hostname()}:${process.pid}`;
     q.actor = "claude";
-    return compact(await boardsFetch<WorkWaitRes>(paths.workWait(q)));
+    // This is a long-poll: the server holds the connection open for up to timeoutSec, so the
+    // client abort must exceed that (boardsFetch's default is too short and would cut it off).
+    return compact(
+        await boardsFetch<WorkWaitRes>(paths.workWait(q), {
+            signal: AbortSignal.timeout((timeoutSec + 10) * 1000),
+        })
+    );
 }

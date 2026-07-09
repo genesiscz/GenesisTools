@@ -1,3 +1,4 @@
+import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 
@@ -45,7 +46,8 @@ export async function rawRequest<T>(base: string, path: string, init?: RequestIn
     if (text.length > 0) {
         try {
             body = SafeJSON.parse(text, { strict: true }) as T;
-        } catch {
+        } catch (err) {
+            logger.debug({ err, status: res.status, path }, "boards: non-JSON response body");
             body = undefined;
         }
     }

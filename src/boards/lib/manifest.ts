@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 
 export interface ManifestShot {
@@ -45,4 +45,19 @@ export async function writeManifest(root: string, m: Manifest): Promise<void> {
 /** Appends `shot`, replacing any existing entry for the same file. */
 export function appendShot(m: Manifest, shot: ManifestShot): Manifest {
     return { ...m, shots: [...m.shots.filter((s) => s.file !== shot.file), shot] };
+}
+
+/** Picks a collision-free destination basename: `shot.png`, `shot-2.png`, `shot-3.png`, ... */
+export function uniqueDestName(root: string, name: string): string {
+    if (!existsSync(join(root, name))) {
+        return name;
+    }
+
+    const ext = extname(name);
+    const stem = name.slice(0, name.length - ext.length);
+    let i = 2;
+    while (existsSync(join(root, `${stem}-${i}${ext}`))) {
+        i += 1;
+    }
+    return `${stem}-${i}${ext}`;
 }

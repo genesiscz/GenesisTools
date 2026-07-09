@@ -26,6 +26,7 @@ export function registerInitCommand(program: Command): void {
             const root = captureRoot(cwd, opts.dir);
 
             const existing = await readSetConfig(root);
+
             if (existing) {
                 await printLn(`set ${existing.project}/${existing.branch}/${existing.key} (already initialized)`);
                 return;
