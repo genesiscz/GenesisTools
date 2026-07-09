@@ -1,8 +1,8 @@
 import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { probeCooccurrence } from "@app/utils/string";
 import { cachedPackument, ensureBeautified, ensureBundle, ensureNormalized } from "../lib/bundle";
 import { filterByPatterns, splitChunks } from "../lib/chunks";
-import { probeCooccurrence } from "../lib/probe";
 import { resolveRange } from "../lib/registry";
 
 export interface BisectOptions {

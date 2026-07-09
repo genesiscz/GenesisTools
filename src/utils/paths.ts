@@ -7,6 +7,7 @@
 import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir as osTmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
+import { SafeJSON } from "./json";
 import { collapsePathForDisplay as collapsePathHeuristic } from "./paths.client";
 
 /**
@@ -198,4 +199,18 @@ export function tmpPath(...segments: string[]): string {
  */
 export function makeTempDir(prefix: string, options?: TmpdirOptions): string {
     return mkdtempSync(join(tmpdir(options), prefix));
+}
+
+const SAFE_PATH_SEGMENT = /^[^/\\\0]+$/;
+
+/**
+ * Throws if `value` isn't safe to use as a single path segment (e.g. joined into a
+ * directory name) — rejects `.`, `..`, empty strings, separators, and NUL bytes.
+ * Guards against path traversal from untrusted input (CLI args, API responses, etc.)
+ * that gets concatenated into a filesystem path.
+ */
+export function assertSafePathSegment(value: string, label: string): void {
+    if (value === "." || value === ".." || !SAFE_PATH_SEGMENT.test(value)) {
+        throw new Error(`unsafe ${label}: ${SafeJSON.stringify(value)}`);
+    }
 }
