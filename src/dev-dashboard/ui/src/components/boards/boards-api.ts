@@ -111,4 +111,9 @@ export const boardsApi = {
         fetchJson<{ sections: SectionSummaryDto[]; journeys: JourneySummaryDto[] }>(paths.boardSections(slug)),
     answerQuestion: (id: number, answer: string) =>
         fetchJson<QuestionDto>(paths.boardQuestionAnswer(id), jsonInit("POST", { answer })),
+    uploadImage: (slug: string, file: Blob, name: string) =>
+        fetchJson<CardDto>(paths.boardUpload({ slug, name, mime: file.type || "application/octet-stream" }), {
+            method: "POST",
+            body: file,
+        }),
 };
