@@ -1,4 +1,5 @@
 import { logger, out } from "@app/logger";
+import { parseNonNegativeInt } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { probeCooccurrence } from "@app/utils/string";
 import { cachedPackument, ensureBeautified, ensureBundle, ensureNormalized } from "../lib/bundle";
@@ -30,6 +31,8 @@ export async function bisectCommand(from: string, to: string, opts: BisectOption
         );
     }
 
+    const windowBefore = parseNonNegativeInt(opts.windowBefore, "--window-before");
+    const windowAfter = parseNonNegativeInt(opts.windowAfter, "--window-after");
     const states: VersionState[] = [];
 
     for (const version of versions) {
@@ -43,8 +46,8 @@ export async function bisectCommand(from: string, to: string, opts: BisectOption
                 source,
                 primary: new RegExp(primary ?? ""),
                 secondary: rest.map((p) => new RegExp(p)),
-                before: Number.parseInt(opts.windowBefore, 10),
-                after: Number.parseInt(opts.windowAfter, 10),
+                before: windowBefore,
+                after: windowAfter,
             });
             state = result.matched ? "PRESENT" : "absent";
         } else {
