@@ -1,16 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, it } from "bun:test";
 import { createBoard, importSet } from "@app/dev-dashboard/lib/boards/boards-store";
-import { getBoardsDb, resetBoardsDb } from "@app/dev-dashboard/lib/boards/db";
-import { resetEventHub, subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
+import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
+import { subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
 import { getSet } from "@app/dev-dashboard/lib/boards/sets-store";
 import { tarGz } from "@app/dev-dashboard/lib/boards/tar";
-import { resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
-import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
+import { setupBoardsTestEnv } from "./boards-route-test-utils";
 import { boardsSetsRoutes } from "./boards-sets";
 
 function findRoute(method: string, pattern: string): RouteDef {
@@ -98,25 +94,7 @@ async function putContent(
 }
 
 describe("boardsSetsRoutes", () => {
-    let dir: string;
-
-    beforeEach(() => {
-        dir = mkdtempSync(join(tmpdir(), "boards-sets-route-"));
-        env.testing.set("GENESIS_TOOLS_HOME", dir);
-        env.testing.set("BOARDS_DB_PATH", ":memory:");
-        resetDevDashboardStorage();
-        resetBoardsDb();
-        resetEventHub();
-    });
-
-    afterEach(() => {
-        resetEventHub();
-        resetBoardsDb();
-        resetDevDashboardStorage();
-        env.testing.unset("GENESIS_TOOLS_HOME");
-        env.testing.unset("BOARDS_DB_PATH");
-        rmSync(dir, { recursive: true, force: true });
-    });
+    setupBoardsTestEnv("boards-sets-route-");
 
     it("PUT content: first push 201, re-push 200 with the same version and replaced file rows", async () => {
         const first = await putContent("proj", "main", "s1", [

@@ -1,16 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, it } from "bun:test";
 import { createAnnotation } from "@app/dev-dashboard/lib/boards/annotations-store";
 import { createBoard, createCard } from "@app/dev-dashboard/lib/boards/boards-store";
-import { getBoardsDb, resetBoardsDb } from "@app/dev-dashboard/lib/boards/db";
-import { resetEventHub } from "@app/dev-dashboard/lib/boards/events";
+import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { claimOrRenewLease, dispatchBoard } from "@app/dev-dashboard/lib/boards/work-store";
-import { resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
-import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
+import { setupBoardsTestEnv } from "./boards-route-test-utils";
 import { boardsWorkRoutes } from "./boards-work";
 
 function findRoute(method: string, pattern: string): RouteDef {
@@ -44,22 +39,7 @@ function asJson(result: RouteResult): { status: number; body: Record<string, unk
 const REGION = { x: 0, y: 0, w: 1, h: 1 };
 
 describe("boardsWorkRoutes", () => {
-    beforeEach(() => {
-        const dir = mkdtempSync(join(tmpdir(), "boards-work-routes-"));
-        env.testing.set("GENESIS_TOOLS_HOME", dir);
-        env.testing.set("BOARDS_DB_PATH", ":memory:");
-        resetDevDashboardStorage();
-        resetBoardsDb();
-        resetEventHub();
-    });
-
-    afterEach(() => {
-        resetBoardsDb();
-        resetDevDashboardStorage();
-        resetEventHub();
-        env.testing.unset("GENESIS_TOOLS_HOME");
-        env.testing.unset("BOARDS_DB_PATH");
-    });
+    setupBoardsTestEnv("boards-work-routes-");
 
     it("(a) wait returns immediately when open work exists, capped at 3 capsules, with the right pending count", async () => {
         const db = getBoardsDb();

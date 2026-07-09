@@ -158,7 +158,10 @@ export function BoardCanvas({
             setRenamingSectionId(null);
             invalidate();
         },
-        onError: (err) => console.error("[boards] rename section failed", err),
+        onError: (err) => {
+            console.error("[boards] rename section failed", err);
+            setRenamingSectionId(null);
+        },
     });
 
     const createAnnotationMutation = useMutation({
@@ -619,7 +622,14 @@ export function BoardCanvas({
                 <SectionLayer
                     cards={cards}
                     renamingId={renamingSectionId}
-                    onRename={(id, title) => renameSectionMutation.mutate({ id, title })}
+                    onRename={(id, title) => {
+                        const trimmed = title.trim();
+                        if (trimmed) {
+                            renameSectionMutation.mutate({ id, title: trimmed });
+                        } else {
+                            setRenamingSectionId(null);
+                        }
+                    }}
                 />
                 {cards.map((card) => (
                     <CardView
