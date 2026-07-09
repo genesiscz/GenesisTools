@@ -185,16 +185,18 @@ export async function ensureBundle({
     let entrypoint = "";
 
     const usedFiles = new Set<string>();
+    const orderedModules = [...jsModules].sort((a, b) => Number(b.isEntrypoint) - Number(a.isEntrypoint));
 
-    for (const m of jsModules) {
-        let file = m.isEntrypoint ? "cli.js" : m.name.replace(/^\/\$bunfs\/root\//, "").replace(/[^a-zA-Z0-9.-]/g, "_");
+    for (const m of orderedModules) {
+        const base = m.isEntrypoint
+            ? "cli.js"
+            : m.name.replace(/^\/\$bunfs\/root\//, "").replace(/[^a-zA-Z0-9.-]/g, "_");
+        let file = base;
         let suffix = 0;
 
         while (usedFiles.has(file)) {
             suffix += 1;
-            file = m.isEntrypoint
-                ? "cli.js"
-                : `${m.name.replace(/^\/\$bunfs\/root\//, "").replace(/[^a-zA-Z0-9.-]/g, "_")}.${suffix}`;
+            file = `${base}.${suffix}`;
         }
 
         usedFiles.add(file);
