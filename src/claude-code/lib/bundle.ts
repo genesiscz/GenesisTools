@@ -160,6 +160,11 @@ export async function ensureBundle({
         }
 
         const nativeManifest = await fetchManifest({ pkg, version, fetcher });
+
+        if (!nativeManifest?.dist?.tarball) {
+            throw new Error(`failed to fetch or parse manifest for ${pkg}@${version}`);
+        }
+
         const nativeTarball = untarGz(
             await downloadTarball({
                 url: nativeManifest.dist.tarball,

@@ -12,30 +12,29 @@ export interface BunModule {
     isEntrypoint: boolean;
 }
 
-function parseAtTrailer(buf: Buffer, trailerPos: number): BunModule[] {
-    const offsetsPos = trailerPos - SIZEOF_OFFSETS;
-
-    if (offsetsPos < 0) {
-        throw new Error("offsets struct out of range");
-    }
-
-    const byteCount = Number(buf.readBigUInt64LE(offsetsPos));
-    const modulesOff = buf.readUInt32LE(offsetsPos + 8);
-    const modulesLen = buf.readUInt32LE(offsetsPos + 12);
-    const entryPointId = buf.readUInt32LE(offsetsPos + 16);
-    const blobStart = trailerPos + TRAILER.length - (byteCount + SIZEOF_OFFSETS + TRAILER.length);
-
-    if (blobStart < 0 || modulesOff + modulesLen > byteCount) {
-        throw new Error("implausible offsets — likely a decoy trailer");
-    }
-
-    const stride = modulesLen % STRIDE_NEW === 0 ? STRIDE_NEW : modulesLen % STRIDE_OLD === 0 ? STRIDE_OLD : 0;
-
-    if (stride === 0 || modulesLen === 0) {
-        throw new Error(`modules table length ${modulesLen} fits no known stride`);
-    }
-
+function parseModuleTable({
+    buf,
+    blobStart,
+    byteCount,
+    modulesOff,
+    modulesLen,
+    entryPointId,
+    stride,
+}: {
+    buf: Buffer;
+    blobStart: number;
+    byteCount: number;
+    modulesOff: number;
+    modulesLen: number;
+    entryPointId: number;
+    stride: number;
+}): BunModule[] {
     const count = modulesLen / stride;
+
+    if (entryPointId >= count) {
+        throw new Error(`entrypoint id ${entryPointId} out of range for ${count} modules (stride ${stride})`);
+    }
+
     const modules: BunModule[] = [];
 
     for (let i = 0; i < count; i++) {
@@ -69,6 +68,45 @@ function parseAtTrailer(buf: Buffer, trailerPos: number): BunModule[] {
     }
 
     return modules;
+}
+
+function parseAtTrailer(buf: Buffer, trailerPos: number): BunModule[] {
+    const offsetsPos = trailerPos - SIZEOF_OFFSETS;
+
+    if (offsetsPos < 0) {
+        throw new Error("offsets struct out of range");
+    }
+
+    const byteCount = Number(buf.readBigUInt64LE(offsetsPos));
+    const modulesOff = buf.readUInt32LE(offsetsPos + 8);
+    const modulesLen = buf.readUInt32LE(offsetsPos + 12);
+    const entryPointId = buf.readUInt32LE(offsetsPos + 16);
+    const blobStart = trailerPos + TRAILER.length - (byteCount + SIZEOF_OFFSETS + TRAILER.length);
+
+    if (blobStart < 0 || modulesOff + modulesLen > byteCount) {
+        throw new Error("implausible offsets — likely a decoy trailer");
+    }
+
+    // 36×13 === 52×9, so a table length can satisfy both strides: try every compatible
+    // stride and accept the first that yields a plausible module list.
+    const strides = [STRIDE_NEW, STRIDE_OLD].filter((s) => modulesLen % s === 0);
+
+    if (strides.length === 0 || modulesLen === 0) {
+        throw new Error(`modules table length ${modulesLen} fits no known stride`);
+    }
+
+    let lastError: unknown = null;
+
+    for (const stride of strides) {
+        try {
+            return parseModuleTable({ buf, blobStart, byteCount, modulesOff, modulesLen, entryPointId, stride });
+        } catch (err) {
+            lastError = err;
+            logger.debug({ error: err, stride, modulesLen }, "bun-binary: stride candidate rejected");
+        }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 /**

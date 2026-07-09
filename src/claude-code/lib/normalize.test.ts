@@ -17,6 +17,16 @@ describe("normalizeIdentifiers", () => {
         expect(out).not.toContain("zK9");
     });
 
+    test("shorthand object properties keep their (semantic) name", () => {
+        const out = normalizeIdentifiers("let o = { foo, bar: 1 };");
+        expect(out).toBe("let ID = { foo, bar: 1 };");
+    });
+
+    test("shorthand destructuring patterns keep their (semantic) name", () => {
+        const out = normalizeIdentifiers("let { foo } = obj;");
+        expect(out).toBe("let { foo } = ID;");
+    });
+
     test("computed member expressions ARE normalized", () => {
         const out = normalizeIdentifiers("obj[key] = 1;");
         expect(out).toBe("ID[ID] = 1;");

@@ -1,3 +1,14 @@
+import { posix, win32 } from "node:path";
+
+function assertSafeTarPath(full: string): void {
+    const hasTraversal = full.split(/[\\/]+/).includes("..");
+    const hasDrivePrefix = /^[A-Za-z]:/.test(full);
+
+    if (hasTraversal || posix.isAbsolute(full) || win32.isAbsolute(full) || hasDrivePrefix) {
+        throw new Error(`tar path traversal rejected: ${full}`);
+    }
+}
+
 function readCString(block: Uint8Array, offset: number, length: number): string {
     let end = offset;
 
@@ -28,24 +39,26 @@ export function untarGz(body: Uint8Array): Map<string, Uint8Array> {
         const name = readCString(block, 0, 100);
         const prefix = readCString(block, 345, 155);
         const sizeField = readCString(block, 124, 12).trim();
+
+        if (sizeField.length > 0 && !/^[0-7]+$/.test(sizeField)) {
+            throw new Error(`tar entry ${name} has invalid size field: ${sizeField}`);
+        }
+
         const size = sizeField.length > 0 ? Number.parseInt(sizeField, 8) : 0;
         const typeflag = block[156] ?? 0;
         const full = prefix.length > 0 ? `${prefix}/${name}` : name;
         off += 512;
 
+        if (off + size > tar.length) {
+            throw new Error(
+                `tar entry ${full} is truncated: expected ${size} bytes, only ${tar.length - off} remaining`
+            );
+        }
+
         const isFile = typeflag === 48 || typeflag === 0;
 
         if (isFile && full.length > 0) {
-            if (full.split("/").includes("..")) {
-                throw new Error(`tar path traversal rejected: ${full}`);
-            }
-
-            if (off + size > tar.length) {
-                throw new Error(
-                    `tar entry ${full} is truncated: expected ${size} bytes, only ${tar.length - off} remaining`
-                );
-            }
-
+            assertSafeTarPath(full);
             entries.set(full, tar.subarray(off, off + size));
         }
 

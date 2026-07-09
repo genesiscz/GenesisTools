@@ -141,7 +141,7 @@ Inspect: tools claude-code diff 2.1.195 2.1.196 --pattern 'cron_fire' 'skipSlash
 Inspect the culprit diff:
 
 ```bash
-tools claude-code diff 2.1.195 2.1.196 --pattern cron_fire -o /tmp/cron-diff.txt
+tools claude-code diff 2.1.195 2.1.196 --pattern 'cron_fire' 'skipSlashCommands' -o /tmp/cron-diff.txt
 ```
 
 The `+` side shows `skipSlashCommands: true, modelScheduledOrigin: true` on the cron enqueue call; the `-` side lacks both.

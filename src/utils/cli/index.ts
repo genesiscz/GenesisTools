@@ -3,6 +3,7 @@ export { getVerbosity, isVerbose, runTool } from "./commander";
 export type { ExecResult, ExecutorOptions } from "./executor";
 export { buildCommand, Executor, enhanceHelp, isInteractive, suggestCommand } from "./executor";
 export { isQuietOutput } from "./output-mode";
+export { parseNonNegativeInt } from "./parse";
 export { printLn, writeStdout } from "./stdout";
 export type { RunToolOptions } from "./tools";
 export { execTool, execToolInteractive } from "./tools";

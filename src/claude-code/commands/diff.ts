@@ -1,4 +1,5 @@
 import { logger, out } from "@app/logger";
+import { parseNonNegativeInt } from "@app/utils/cli";
 import { renderUnifiedDiff } from "@app/utils/diff";
 import { ensureBeautified, ensureBundle, ensureNormalized } from "../lib/bundle";
 import { chunkSetDiff, filterByPatterns, pairChunks, splitChunks } from "../lib/chunks";
@@ -10,14 +11,6 @@ export interface DiffOptions {
     maxChunks: string;
     platform?: string;
     output?: string;
-}
-
-function parseNonNegativeInt(value: string, flag: string): number {
-    if (!/^\d+$/.test(value)) {
-        throw new Error(`${flag} must be a non-negative integer, got "${value}"`);
-    }
-
-    return Number.parseInt(value, 10);
 }
 
 export async function diffCommand(v1: string, v2: string, opts: DiffOptions): Promise<void> {

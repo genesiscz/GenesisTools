@@ -10,8 +10,12 @@ interface AstNode {
     start?: number;
     end?: number;
     computed?: boolean;
+    shorthand?: boolean;
+    key?: unknown;
     [key: string]: unknown;
 }
+
+const PROPERTY_TYPES = new Set(["Property", "ObjectProperty", "BindingProperty"]);
 
 const IDENTIFIER_TYPES = new Set(["Identifier", "IdentifierReference", "BindingIdentifier"]);
 const SKIP_KEY_BY_PARENT: Record<string, string> = {
@@ -38,6 +42,9 @@ export function normalizeIdentifiers(source: string, filename = "bundle.js"): st
     }
 
     const spans: Span[] = [];
+    // Shorthand `{ foo }` uses one span for both key and value; rewriting it would hide
+    // the (semantic) property name, so identifiers on these exact spans are preserved.
+    const shorthandKeySpans = new Set<string>();
     const stack: AstNode[] = [parsed.program as unknown as AstNode];
 
     while (stack.length > 0) {
@@ -63,8 +70,19 @@ export function normalizeIdentifiers(source: string, filename = "bundle.js"): st
             typeof node.start === "number" &&
             typeof node.end === "number"
         ) {
-            spans.push({ start: node.start, end: node.end });
+            if (!shorthandKeySpans.has(`${node.start}:${node.end}`)) {
+                spans.push({ start: node.start, end: node.end });
+            }
+
             continue;
+        }
+
+        if (type !== undefined && PROPERTY_TYPES.has(type) && node.shorthand === true) {
+            const key = node.key as AstNode | null | undefined;
+
+            if (key && typeof key.start === "number" && typeof key.end === "number") {
+                shorthandKeySpans.add(`${key.start}:${key.end}`);
+            }
         }
 
         const skipKey = type !== undefined ? SKIP_KEY_BY_PARENT[type] : undefined;

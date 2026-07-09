@@ -113,6 +113,19 @@ describe("extractBunModules", () => {
         expect(() => extractBunModules(new Uint8Array(64))).toThrow(/Bun trailer/);
     });
 
+    test("falls back to the old stride when the table length fits both (13×36 === 9×52)", () => {
+        const modules: FixtureModule[] = Array.from({ length: 13 }, (_, i) => ({
+            name: i === 0 ? "/$bunfs/root/src/entrypoints/cli.js" : `/$bunfs/root/mod${i}.js`,
+            contents: `// @bun\nconsole.log(${i})`,
+            loader: 1,
+        }));
+        const parsed = extractBunModules(buildFixture(modules, 0, 36));
+        expect(parsed.length).toBe(13);
+        expect(parsed[0]?.name).toBe("/$bunfs/root/src/entrypoints/cli.js");
+        expect(parsed[0]?.isEntrypoint).toBe(true);
+        expect(parsed[12]?.name).toBe("/$bunfs/root/mod12.js");
+    });
+
     test("parses the old 36-byte module table stride", () => {
         const fixture = buildFixture(
             [
