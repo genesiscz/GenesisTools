@@ -130,7 +130,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
         [pollIntervalSeconds]
     );
 
-    const poll = useCallback(async () => {
+    const poll = useCallback(async (force = false) => {
         if (pollingRef.current) {
             return;
         }
@@ -154,8 +154,9 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
 
             // All consumers (daemon, dashboard, this TUI, watch) share one cache
             // bucket: Anthropic is hit at most once per 30s and every live fetch
-            // write-throughs to history.
-            const resolvedUsages = await getSharedAccountsUsage({ accountFilter });
+            // write-throughs to history. The R key forces past that cap; interval
+            // polls stay unforced so background polling keeps the courtesy limit.
+            const resolvedUsages = await getSharedAccountsUsage({ accountFilter, force });
 
             // Block on notification-state load so the first poll never races
             // ahead of loadState() and re-fires every over-threshold alert.
@@ -179,6 +180,8 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
             setPollingLabel(null);
         }
     }, [accountFilter, pollIntervalSeconds, processAccountUsages]);
+
+    const forceRefresh = useCallback(() => poll(true), [poll]);
 
     useEffect(() => {
         poll();
@@ -210,6 +213,6 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
         db: dbRef.current,
         dbVersion,
         notifications: notifRef.current,
-        forceRefresh: poll,
+        forceRefresh,
     };
 }
