@@ -1,7 +1,10 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "@app/logger";
+import { untarGz } from "@app/utils/fs";
+import { verifySriIntegrity } from "@app/utils/hash";
 import { SafeJSON } from "@app/utils/json";
+import { assertSafePathSegment } from "@app/utils/paths";
 import { Storage } from "@app/utils/storage/storage";
 import { beautify } from "./beautify";
 import { extractBunModules } from "./bun-binary";
@@ -15,7 +18,6 @@ import {
     type Packument,
     platformPkg,
 } from "./registry";
-import { untarGz } from "./untar";
 
 export interface EnsureBundleArgs {
     version: string;
@@ -87,32 +89,28 @@ async function downloadTarball({
     }
 
     const bytes = new Uint8Array(await res.arrayBuffer());
+    const verification = verifySriIntegrity(bytes, integrity);
 
-    if (integrity === undefined) {
-        logger.warn({ url }, "no integrity hash provided by registry — tarball contents unverified");
-    } else if (integrity.startsWith("sha512-")) {
-        const hasher = new Bun.CryptoHasher("sha512");
-        hasher.update(bytes);
-        const actual = hasher.digest("base64");
-        const expected = integrity.slice("sha512-".length);
-
-        if (actual !== expected) {
-            throw new Error(`integrity mismatch for ${url}: expected ${expected}, got ${actual}`);
-        }
-    } else {
-        logger.warn({ url, integrity }, "unsupported integrity hash algorithm — tarball contents unverified");
+    switch (verification.status) {
+        case "missing":
+            logger.warn({ url }, "no integrity hash provided by registry — tarball contents unverified");
+            break;
+        case "unsupported":
+            logger.warn(
+                { url, algorithm: verification.algorithm },
+                "unsupported integrity hash algorithm — tarball contents unverified"
+            );
+            break;
+        case "mismatch":
+            throw new Error(
+                `integrity mismatch for ${url}: expected ${verification.expected}, got ${verification.actual}`
+            );
+        case "verified":
+            break;
     }
 
     logger.debug({ bytes: bytes.length, url }, "tarball downloaded");
     return bytes;
-}
-
-const SAFE_PATH_SEGMENT = /^[^/\\\0]+$/;
-
-function assertSafePathSegment(value: string, label: string): void {
-    if (value === "." || value === ".." || !SAFE_PATH_SEGMENT.test(value)) {
-        throw new Error(`unsafe ${label}: ${SafeJSON.stringify(value)}`);
-    }
 }
 
 export async function ensureBundle({

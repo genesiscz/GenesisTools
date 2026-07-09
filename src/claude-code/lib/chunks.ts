@@ -1,3 +1,5 @@
+import { xxhash } from "@app/utils/hash";
+
 export interface Chunk {
     hash: string;
     text: string;
@@ -36,7 +38,7 @@ export function splitChunks(normalized: string, display?: string): Chunk[] {
             .map((l) => `${l}\n`)
             .join("");
         chunks.push({
-            hash: String(Bun.hash(text)),
+            hash: xxhash(text),
             text,
             display: dispLines
                 .slice(start, end)
