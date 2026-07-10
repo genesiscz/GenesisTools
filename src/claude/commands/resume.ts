@@ -22,7 +22,7 @@ const PROMPT_PREVIEW_LEN = 60;
 
 // --- Types ---
 
-interface DisplaySession {
+export interface DisplaySession {
     sessionId: string;
     name: string;
     summary: string;
@@ -316,9 +316,21 @@ async function resumeSession(session: DisplaySession): Promise<never> {
 
 // --- Main logic ---
 
-async function main(query: string | undefined, opts: ResumeOptions) {
-    p.intro(pc.bgCyan(pc.black(" claude resume ")));
-    const limit = parseInt(opts.limit, 10) || 20;
+export interface SessionPickOptions {
+    list?: boolean;
+    allProjects?: boolean;
+    limit?: number;
+}
+
+/**
+ * Interactive session selection (load → match → content-search → select).
+ * Shared by `tools claude resume` and `tools claude start --resume <query>`.
+ */
+export async function pickSessionForResume(
+    query: string | undefined,
+    opts: SessionPickOptions = {}
+): Promise<DisplaySession> {
+    const limit = opts.limit ?? 20;
 
     const spinner = p.spinner();
     spinner.start("Loading sessions...");
@@ -391,7 +403,17 @@ async function main(query: string | undefined, opts: ResumeOptions) {
         }
     }
 
-    const selected = await selectSession(candidates);
+    return selectSession(candidates);
+}
+
+async function main(query: string | undefined, opts: ResumeOptions) {
+    p.intro(pc.bgCyan(pc.black(" claude resume ")));
+
+    const selected = await pickSessionForResume(query, {
+        list: opts.list,
+        allProjects: opts.allProjects,
+        limit: parseInt(opts.limit, 10) || 20,
+    });
     await resumeSession(selected);
 }
 

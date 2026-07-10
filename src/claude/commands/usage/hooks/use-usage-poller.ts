@@ -130,56 +130,59 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
         [pollIntervalSeconds]
     );
 
-    const poll = useCallback(async (force = false) => {
-        if (pollingRef.current) {
-            return;
-        }
-
-        pollingRef.current = true;
-        setPollingLabel("...");
-
-        try {
-            // Resolve which accounts to poll from AIConfig
-            const { AIConfig } = await import("@app/utils/ai/AIConfig");
-            const aiConfig = await AIConfig.load();
-            let allAccounts = aiConfig.getAccountsByProvider("anthropic-sub");
-
-            if (accountFilter) {
-                allAccounts = allAccounts.filter((a) => a.name === accountFilter);
+    const poll = useCallback(
+        async (force = false) => {
+            if (pollingRef.current) {
+                return;
             }
 
-            const accountNames = allAccounts.map((a) => a.name);
-            accountNamesRef.current = accountNames;
-            setPollingLabel(accountNames.join(", ") || "...");
+            pollingRef.current = true;
+            setPollingLabel("...");
 
-            // All consumers (daemon, dashboard, this TUI, watch) share one cache
-            // bucket: Anthropic is hit at most once per 30s and every live fetch
-            // write-throughs to history. The R key forces past that cap; interval
-            // polls stay unforced so background polling keeps the courtesy limit.
-            const resolvedUsages = await getSharedAccountsUsage({ accountFilter, force });
+            try {
+                // Resolve which accounts to poll from AIConfig
+                const { AIConfig } = await import("@app/utils/ai/AIConfig");
+                const aiConfig = await AIConfig.load();
+                let allAccounts = aiConfig.getAccountsByProvider("anthropic-sub");
 
-            // Block on notification-state load so the first poll never races
-            // ahead of loadState() and re-fires every over-threshold alert.
-            if (notifReadyRef.current) {
-                await notifReadyRef.current;
+                if (accountFilter) {
+                    allAccounts = allAccounts.filter((a) => a.name === accountFilter);
+                }
+
+                const accountNames = allAccounts.map((a) => a.name);
+                accountNamesRef.current = accountNames;
+                setPollingLabel(accountNames.join(", ") || "...");
+
+                // All consumers (daemon, dashboard, this TUI, watch) share one cache
+                // bucket: Anthropic is hit at most once per 30s and every live fetch
+                // write-throughs to history. The R key forces past that cap; interval
+                // polls stay unforced so background polling keeps the courtesy limit.
+                const resolvedUsages = await getSharedAccountsUsage({ accountFilter, force });
+
+                // Block on notification-state load so the first poll never races
+                // ahead of loadState() and re-fires every over-threshold alert.
+                if (notifReadyRef.current) {
+                    await notifReadyRef.current;
+                }
+
+                if (resolvedUsages.length > 0) {
+                    processAccountUsages(resolvedUsages, new Date());
+                }
+            } catch (error) {
+                // Keep whatever we last rendered — a failed poll (no cache to fall
+                // back on) shouldn't blank out data the user is already looking at.
+                setResults((prev) => ({
+                    accounts: prev?.accounts ?? [],
+                    timestamp: new Date(),
+                    error: error instanceof Error ? error.message : String(error),
+                }));
+            } finally {
+                pollingRef.current = false;
+                setPollingLabel(null);
             }
-
-            if (resolvedUsages.length > 0) {
-                processAccountUsages(resolvedUsages, new Date());
-            }
-        } catch (error) {
-            // Keep whatever we last rendered — a failed poll (no cache to fall
-            // back on) shouldn't blank out data the user is already looking at.
-            setResults((prev) => ({
-                accounts: prev?.accounts ?? [],
-                timestamp: new Date(),
-                error: error instanceof Error ? error.message : String(error),
-            }));
-        } finally {
-            pollingRef.current = false;
-            setPollingLabel(null);
-        }
-    }, [accountFilter, pollIntervalSeconds, processAccountUsages]);
+        },
+        [accountFilter, pollIntervalSeconds, processAccountUsages]
+    );
 
     const forceRefresh = useCallback(() => poll(true), [poll]);
 

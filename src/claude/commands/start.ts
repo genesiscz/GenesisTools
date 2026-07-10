@@ -1,16 +1,29 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { type LaunchableModel, modelFamilyOf, resolveModelSpec } from "@app/claude/lib/models";
+import { type ScoredAccount, scoreAccounts } from "@app/claude/lib/usage/account-picker";
+import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
 import { logger, out } from "@app/logger";
 import { AIConfig } from "@app/utils/ai/AIConfig";
 import { findClaudeCommand } from "@app/utils/claude";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
+import type { AIAccountEntry } from "@app/utils/config/ai.types";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { pickSessionForResume } from "./resume";
 
 const CLAUDE_JSON = join(homedir(), ".claude.json");
+
+interface StartOptions {
+    pick?: boolean;
+    autopick?: boolean;
+    model?: string;
+    resume?: string | boolean;
+    continue?: boolean;
+}
 
 /**
  * Claude Code's interactive onboarding ignores CLAUDE_CODE_OAUTH_TOKEN and shows
@@ -46,17 +59,216 @@ async function ensureOnboardingSkippedForOAuthToken(): Promise<void> {
     logger.debug({ path: CLAUDE_JSON }, "Set hasCompletedOnboarding for CLAUDE_CODE_OAUTH_TOKEN launch");
 }
 
-async function main(nameArg: string | undefined): Promise<never> {
+function shellQuote(arg: string): string {
+    return `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+function modelOption(model: LaunchableModel) {
+    return { value: model.id, label: model.id, hint: model.label };
+}
+
+/** Resolve a --model spec to an exact id, showing a filter-picker on multiple matches. */
+async function resolveModel(spec: string): Promise<string> {
+    const resolution = resolveModelSpec(spec);
+
+    if (resolution.kind === "none") {
+        out.error(pc.red(`No Claude model matches "${spec}".`));
+        out.printlnErr(pc.dim("Try: fable, opus, sonnet, haiku, 4.8, opus 1m, claude-opus-4-8[1m], ..."));
+        await out.flush();
+        process.exit(1);
+    }
+
+    if (resolution.kind === "exact") {
+        return resolution.model.id;
+    }
+
+    if (!isInteractive()) {
+        out.error(pc.red(`Model "${spec}" is ambiguous in non-interactive mode.`));
+        out.printlnErr(pc.dim(`Matches: ${resolution.candidates.map((m) => m.id).join(", ")}`));
+        await out.flush();
+        process.exit(1);
+    }
+
+    const picked = await p.select({
+        message: `Model matching "${spec}":`,
+        options: resolution.candidates.map(modelOption),
+    });
+
+    if (p.isCancel(picked)) {
+        p.cancel("Cancelled");
+        process.exit(0);
+    }
+
+    return picked as string;
+}
+
+const TIER_BADGE: Record<ScoredAccount["tier"], string> = {
+    ready: pc.green("●"),
+    "session-starved": pc.yellow("◐"),
+    "weekly-blocked": pc.red("○"),
+    "no-data": pc.dim("?"),
+};
+
+async function scoreTokenAccounts(
+    withToken: AIAccountEntry[],
+    modelId: string | undefined
+): Promise<ScoredAccount[] | null> {
+    const spinner = p.spinner();
+    spinner.start("Checking usage across accounts...");
+
+    try {
+        const usage = await getSharedAccountsUsage({ accountFilter: withToken.map((a) => a.name) });
+        if (usage.length === 0) {
+            spinner.stop(pc.yellow("No usage data available"));
+            return null;
+        }
+
+        const scored = scoreAccounts(usage, {
+            modelFamily: modelId ? modelFamilyOf(modelId) : undefined,
+        });
+        spinner.stop(`Ranked ${scored.length} account${scored.length === 1 ? "" : "s"} by usage headroom`);
+        return scored;
+    } catch (error) {
+        spinner.stop(pc.yellow("Usage check failed"));
+        logger.warn({ error }, "Account scoring failed, falling back to plain selection");
+        return null;
+    }
+}
+
+function scoredHint(account: ScoredAccount): string {
+    return account.dataNote ? `${account.why} ${pc.yellow(`[${account.dataNote}]`)}` : account.why;
+}
+
+/** Plain alphabetical select — fallback when usage data is unavailable. */
+async function plainSelect(withToken: AIAccountEntry[], defaultName: string): Promise<string> {
+    const picked = await p.select({
+        message: "Launch Claude Code as which account?",
+        initialValue: defaultName,
+        options: withToken.map((acc) => ({
+            value: acc.name,
+            label: acc.label ? `${acc.name} ${pc.dim(`(${acc.label})`)}` : acc.name,
+        })),
+    });
+
+    if (p.isCancel(picked)) {
+        p.cancel("Cancelled");
+        process.exit(0);
+    }
+
+    return picked as string;
+}
+
+async function pickAccount(
+    withToken: AIAccountEntry[],
+    opts: StartOptions,
+    modelId: string | undefined,
+    aiConfig: AIConfig
+): Promise<string> {
+    if (withToken.length === 1 && !opts.pick && !opts.autopick) {
+        return withToken[0].name;
+    }
+
+    if (!opts.autopick && !isInteractive()) {
+        out.error(pc.red("Account name required in non-interactive mode (or use --autopick)."));
+        out.printlnErr(suggestCommand("tools claude start", { add: ["--autopick"] }));
+        await out.flush();
+        process.exit(1);
+    }
+
+    const scored = await scoreTokenAccounts(withToken, modelId);
+
+    if (opts.autopick) {
+        if (!scored) {
+            out.error(pc.red("Cannot autopick: usage data unavailable."));
+            await out.flush();
+            process.exit(1);
+        }
+
+        const best = scored[0];
+        if (best.tier === "no-data") {
+            out.printlnErr(pc.yellow("No account has usage data; picking the first configured account."));
+        }
+
+        out.printlnErr(`${TIER_BADGE[best.tier]} ${pc.cyan(best.accountName)} — ${scoredHint(best)}`);
+
+        const runnerUp = scored[1];
+        if (runnerUp) {
+            out.printlnErr(pc.dim(`  vs ${runnerUp.accountName} — ${runnerUp.why}`));
+        }
+
+        return best.accountName;
+    }
+
+    if (!scored) {
+        const defaultAccount = aiConfig.getDefaultAccount("claude");
+        const defaultName =
+            defaultAccount && withToken.some((a) => a.name === defaultAccount.name)
+                ? defaultAccount.name
+                : withToken[0].name;
+        return plainSelect(withToken, defaultName);
+    }
+
+    const labelByName = new Map(withToken.map((a) => [a.name, a.label]));
+    const picked = await p.select({
+        message: "Launch Claude Code as which account? (best first)",
+        initialValue: scored[0].accountName,
+        options: scored.map((acc, i) => {
+            const label = labelByName.get(acc.accountName);
+            return {
+                value: acc.accountName,
+                label: `${TIER_BADGE[acc.tier]} ${acc.accountName}${label ? ` ${pc.dim(`(${label})`)}` : ""}${i === 0 ? pc.green(" ★") : ""}`,
+                hint: scoredHint(acc),
+            };
+        }),
+    });
+
+    if (p.isCancel(picked)) {
+        p.cancel("Cancelled");
+        process.exit(0);
+    }
+
+    return picked as string;
+}
+
+async function resolveResumeArgs(opts: StartOptions): Promise<string[]> {
+    if (opts.continue) {
+        if (opts.resume) {
+            out.printlnErr(pc.dim("Both --continue and --resume given; using --continue."));
+        }
+
+        return ["--continue"];
+    }
+
+    if (opts.resume === true) {
+        return ["--resume"];
+    }
+
+    if (typeof opts.resume === "string") {
+        const session = await pickSessionForResume(opts.resume, { allProjects: false });
+        if (!/^[\w-]+$/.test(session.sessionId)) {
+            throw new Error(`Invalid session ID: ${session.sessionId}`);
+        }
+
+        return ["--resume", session.sessionId];
+    }
+
+    return [];
+}
+
+async function main(nameArg: string | undefined, opts: StartOptions, passthrough: string[]): Promise<never> {
     const aiConfig = await AIConfig.load();
     const withToken = aiConfig.getAccountsByProvider("anthropic-sub").filter((a) => Boolean(a.tokens.longLivedToken));
 
     if (withToken.length === 0) {
         out.error(pc.red("No accounts with a long-lived token."));
-        out.println(
+        out.printlnErr(
             pc.dim(`Run ${pc.cyan("tools claude login-long")} first to save one (see \`claude setup-token\`).`)
         );
+        await out.flush();
         process.exit(1);
     }
+
+    const modelId = opts.model ? await resolveModel(opts.model) : undefined;
 
     let accountName: string;
 
@@ -66,59 +278,50 @@ async function main(nameArg: string | undefined): Promise<never> {
             const hasEntry = aiConfig.getAccount(nameArg);
             if (hasEntry) {
                 out.error(pc.red(`Account "${nameArg}" has no long-lived token.`));
-                out.println(pc.dim(`Save one with: ${pc.cyan(`tools claude login-long ${nameArg}`)}`));
+                out.printlnErr(pc.dim(`Save one with: ${pc.cyan(`tools claude login-long ${nameArg}`)}`));
             } else {
                 out.error(pc.red(`Account "${nameArg}" not found.`));
-                out.println(pc.dim(`With token: ${withToken.map((a) => a.name).join(", ")}`));
+                out.printlnErr(pc.dim(`With token: ${withToken.map((a) => a.name).join(", ")}`));
             }
+            await out.flush();
             process.exit(1);
         }
         accountName = match.name;
-    } else if (withToken.length === 1) {
-        accountName = withToken[0].name;
     } else {
-        if (!isInteractive()) {
-            out.error(pc.red("Account name required in non-interactive mode."));
-            out.println(suggestCommand("tools claude start", { add: [withToken[0].name] }));
-            process.exit(1);
-        }
-
-        const defaultAccount = aiConfig.getDefaultAccount("claude");
-        const defaultName =
-            defaultAccount && withToken.some((a) => a.name === defaultAccount.name)
-                ? defaultAccount.name
-                : withToken[0].name;
-
-        const picked = await p.select({
-            message: "Launch Claude Code as which account?",
-            initialValue: defaultName,
-            options: withToken.map((acc) => ({
-                value: acc.name,
-                label: acc.label ? `${acc.name} ${pc.dim(`(${acc.label})`)}` : acc.name,
-            })),
-        });
-
-        if (p.isCancel(picked)) {
-            p.cancel("Cancelled");
-            process.exit(0);
-        }
-
-        accountName = picked as string;
+        accountName = await pickAccount(withToken, opts, modelId, aiConfig);
     }
 
     const account = withToken.find((a) => a.name === accountName)!;
     const token = account.tokens.longLivedToken!;
+
+    const resumeArgs = await resolveResumeArgs(opts);
 
     await ensureOnboardingSkippedForOAuthToken();
 
     const cmd = await findClaudeCommand();
     const shell = env.paths.getShell("/bin/sh");
 
-    out.println(pc.dim(`Starting Claude as ${pc.cyan(accountName)}${account.label ? ` (${account.label})` : ""}...`));
-    logger.debug({ cmd, accountName }, "Spawning claude with long-lived token");
+    const extraArgs: string[] = [];
+    if (modelId) {
+        extraArgs.push("--model", modelId);
+    }
+
+    extraArgs.push(...resumeArgs, ...passthrough);
+
+    const suffix = extraArgs.length > 0 ? ` ${extraArgs.map(shellQuote).join(" ")}` : "";
+    const detail = [
+        account.label ? `(${account.label})` : "",
+        modelId ? `model ${pc.magenta(modelId)}` : "",
+        resumeArgs.length > 0 ? pc.dim(resumeArgs.join(" ")) : "",
+    ]
+        .filter(Boolean)
+        .join(" ");
+
+    out.printlnErr(pc.dim(`Starting Claude as ${pc.cyan(accountName)}${detail ? ` ${detail}` : ""}...`));
+    logger.debug({ cmd, accountName, modelId, resumeArgs, passthrough }, "Spawning claude with long-lived token");
 
     const proc = Bun.spawn({
-        cmd: [shell, "-ic", `exec ${cmd}`],
+        cmd: [shell, "-ic", `exec ${cmd}${suffix}`],
         stdio: ["inherit", "inherit", "inherit"],
         env: {
             ...process.env,
@@ -136,10 +339,29 @@ async function main(nameArg: string | undefined): Promise<never> {
 export function registerStartCommand(program: Command): void {
     const startCmd = program
         .command("start [name]")
-        .description("Launch Claude Code using a saved long-lived token (CLAUDE_CODE_OAUTH_TOKEN)")
-        .action(async (name?: string) => {
+        .description(
+            "Launch Claude Code using a saved long-lived token (CLAUDE_CODE_OAUTH_TOKEN). " +
+                "Args after -- are passed through to claude."
+        )
+        .allowExcessArguments(true)
+        .option("--pick", "Pick the account from a usage-ranked list (best first, with reasoning)")
+        .option("-a, --autopick", "Auto-pick the best account by usage headroom heuristic")
+        .option("-m, --model <spec>", "Model to launch: alias or substring filter (fable, opus, 4.8 1m, ...)")
+        .option("-r, --resume [query]", "Resume a session: bare uses claude's own picker, query searches locally")
+        .option("-c, --continue", "Continue the most recent session")
+        .action(async (name: string | undefined, opts: StartOptions, command: Command) => {
+            const operands = command.args;
+            let nameArg = name;
+            let passthrough = operands.slice(1);
+
+            // `start -- --foo` binds "--foo" to [name]; treat leading-dash names as passthrough
+            if (nameArg?.startsWith("-")) {
+                nameArg = undefined;
+                passthrough = operands;
+            }
+
             try {
-                await main(name);
+                await main(nameArg, opts, passthrough);
             } catch (error) {
                 if (error instanceof Error && (error.name === "ExitPromptError" || error.message === "Cancelled")) {
                     process.exit(0);
