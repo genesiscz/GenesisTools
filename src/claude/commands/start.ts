@@ -329,6 +329,11 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
             // Interactive CC can't resolve the tier from an inference-only setup token,
             // which blocks opus/sonnet [1m] model switches (see claude-code#70124).
             CLAUDE_CODE_SUBSCRIPTION_TYPE: account.label?.split(" ")[0] ?? "max",
+            // The /model catalog comes from /api/claude_cli/bootstrap, which 403s for
+            // inference-only setup tokens ("scope requirement user:profile") — so Fable
+            // never appears. This env var is CC's escape hatch: it forces the Fable
+            // availability gate open and makes /model fable (and fable[1m]) selectable.
+            ANTHROPIC_DEFAULT_FABLE_MODEL: "claude-fable-5",
         },
     });
 
