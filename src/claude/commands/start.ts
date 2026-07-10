@@ -120,7 +120,13 @@ async function main(nameArg: string | undefined): Promise<never> {
     const proc = Bun.spawn({
         cmd: [shell, "-ic", `exec ${cmd}`],
         stdio: ["inherit", "inherit", "inherit"],
-        env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: token },
+        env: {
+            ...process.env,
+            CLAUDE_CODE_OAUTH_TOKEN: token,
+            // Interactive CC can't resolve the tier from an inference-only setup token,
+            // which blocks opus/sonnet [1m] model switches (see claude-code#70124).
+            CLAUDE_CODE_SUBSCRIPTION_TYPE: account.label?.split(" ")[0] ?? "max",
+        },
     });
 
     const exitCode = await proc.exited;
