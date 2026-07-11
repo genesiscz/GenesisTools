@@ -83,8 +83,14 @@ export interface AiProxyAnthropicSubAccountConfig {
 }
 
 export interface AiProxyOpenAiSubAccountConfig {
-    /** Name of the openai-sub account in ~/.genesis-tools/ai/config.json to bill. */
-    accountName: string;
+    /**
+     * Name of the openai-sub account in ~/.genesis-tools/ai/config.json to bill
+     * (refreshed + persisted on use). When omitted, the provider reads the token
+     * from the Codex CLI cache (~/.codex/auth.json, read-only, CLI-refreshed).
+     */
+    accountName?: string;
+    /** Override path to the Codex CLI auth.json (defaults to ~/.codex/auth.json). */
+    codexAuthPath?: string;
 }
 
 export interface AiProxyAccountConfig {

@@ -1,6 +1,7 @@
 import { loadCatalogFile } from "@app/ai-proxy/lib/catalog-file";
 import { resolveCopilotModelRecords } from "@app/ai-proxy/lib/copilot-models-cache";
 import { ANTHROPIC_SUB_ALIASES, resolveAnthropicSubModel } from "@app/ai-proxy/lib/providers/anthropic-sub-models";
+import { OPENAI_SUB_MODELS } from "@app/ai-proxy/lib/providers/openai-sub-models";
 import { providerKey } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
 import { toProxyId as toCopilotProxyId } from "@app/utils/ai/github-copilot/models";
@@ -120,6 +121,30 @@ export function listAnthropicSubProxyModels(account: AiProxyAccountConfig): Prox
         billingPlane: "subscription",
         source: "static",
         description: `Claude ${alias} via subscription (${resolveAnthropicSubModel(alias)})`,
+        object: "model",
+        created: 1_740_960_000,
+        owned_by: providerKey(account),
+    }));
+}
+
+export const WHAM_RESPONSES_BASE_URL = "https://chatgpt.com/backend-api/wham";
+
+export function listOpenAiSubProxyModels(account: AiProxyAccountConfig): ProxyModelMeta[] {
+    return OPENAI_SUB_MODELS.map((id) => ({
+        proxyId: toProxyId(account.name, account.providerSlug, id),
+        accountName: account.name,
+        providerSlug: account.providerSlug,
+        upstreamId: id,
+        provider: account.provider,
+        baseUrl: WHAM_RESPONSES_BASE_URL,
+        visibility: "high",
+        speed: "medium",
+        thinking: "reasoning",
+        contextWindow: 272_000,
+        supportsTools: true,
+        billingPlane: "subscription",
+        source: "static",
+        description: `${id} via ChatGPT/Codex subscription`,
         object: "model",
         created: 1_740_960_000,
         owned_by: providerKey(account),
