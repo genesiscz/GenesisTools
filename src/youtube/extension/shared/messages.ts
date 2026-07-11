@@ -12,7 +12,7 @@ import type { ExtensionConfig } from "@ext/shared/types";
 
 export type ExtensionRequest =
     | { type: "config:get" }
-    | { type: "config:set"; apiBaseUrl: string }
+    | { type: "config:set"; apiBaseUrl: string; serviceKey?: string }
     | { type: "api:listChannels" }
     | { type: "api:addChannel"; handle: ChannelHandle }
     | { type: "api:getVideo"; id: VideoId }
