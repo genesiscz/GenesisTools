@@ -2,10 +2,11 @@ import { detectMode } from "@app/indexer/lib/search-mode";
 import type { ChunkRecord } from "@app/indexer/lib/types";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { formatError, getManager } from "../shared";
+import { formatError, getManager, registerTool } from "../shared";
 
 export function registerSearchTools(server: McpServer): void {
-    server.tool(
+    registerTool(
+        server,
         "indexer_search",
         "Search across indexed codebases. Returns matching code chunks with file paths, line numbers, and relevance scores. Supports fulltext (BM25), vector (semantic), or hybrid search modes.",
         {
