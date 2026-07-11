@@ -69,7 +69,11 @@ export interface AnthropicTool {
     input_schema: unknown;
 }
 
-export type AnthropicToolChoice = { type: "auto" } | { type: "any" } | { type: "none" } | { type: "tool"; name: string };
+export type AnthropicToolChoice =
+    | { type: "auto" }
+    | { type: "any" }
+    | { type: "none" }
+    | { type: "tool"; name: string };
 
 export interface AnthropicMessagesBody {
     model: string;
