@@ -329,11 +329,21 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
             // Interactive CC can't resolve the tier from an inference-only setup token,
             // which blocks opus/sonnet [1m] model switches (see claude-code#70124).
             CLAUDE_CODE_SUBSCRIPTION_TYPE: account.label?.split(" ")[0] ?? "max",
-            // The /model catalog comes from /api/claude_cli/bootstrap, which 403s for
+            // The /model *catalog* comes from /api/claude_cli/bootstrap, which 403s for
             // inference-only setup tokens ("scope requirement user:profile") — so Fable
-            // never appears. This env var is CC's escape hatch: it forces the Fable
-            // availability gate open and makes /model fable (and fable[1m]) selectable.
+            // never loads. These two env vars are CC's escape hatches:
+            //  1. ANTHROPIC_DEFAULT_FABLE_MODEL opens the Fable availability gate (vYe()),
+            //     so `/model fable` and Fable inference are allowed. But it does NOT add
+            //     Fable to the *picker list* for first-party OAuth (that path is gated by
+            //     Xf()/firstParty and stays empty).
+            //  2. ANTHROPIC_CUSTOM_MODEL_OPTION pushes an entry straight into the picker
+            //     list, ungated by first-party — so "Fable 5" shows up in `/model` without
+            //     the user having to type it. `[1m]` selects the 1M-context Fable.
             ANTHROPIC_DEFAULT_FABLE_MODEL: "claude-fable-5",
+            ANTHROPIC_CUSTOM_MODEL_OPTION: "claude-fable-5[1m]",
+            ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: "Fable 5",
+            ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:
+                "Fable 5 · Most capable for hardest and longest-running tasks",
         },
     });
 
