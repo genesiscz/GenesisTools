@@ -13,7 +13,7 @@ export const presetStepSchema = z.object({
     id: z.string().regex(/^[a-zA-Z0-9_-]+$/, "Step ID must be alphanumeric with hyphens/underscores"),
     name: z.string(),
     action: z.string(),
-    params: z.record(z.unknown()).optional(),
+    params: z.record(z.string(), z.unknown()).optional(),
     output: z.string().optional(),
     onError: z.enum(["stop", "continue", "skip"]).optional(),
     interactive: z.boolean().optional(),
@@ -34,7 +34,7 @@ export const presetSchema = z.object({
             interval: z.string().min(1, "Schedule interval is required"),
         }),
     ]),
-    vars: z.record(presetVariableSchema).optional(),
+    vars: z.record(z.string(), presetVariableSchema).optional(),
     steps: z.array(presetStepSchema).min(1, "At least one step is required"),
 });
 
