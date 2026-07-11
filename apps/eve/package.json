@@ -1,0 +1,32 @@
+{
+  "name": "genesis-eve",
+  "version": "0.0.0",
+  "type": "module",
+  "imports": {
+    "#*": "./agent/*",
+    "#evals/*": "./evals/*"
+  },
+  "scripts": {
+    "build": "eve build",
+    "dev": "eve dev",
+    "start": "eve start",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@vercel/connect": "0.2.2",
+    "ai": "^7.0.0",
+    "eve": "^0.19.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.x",
+    "typescript": "7.0.1-rc"
+  },
+  "overrides": {
+    "ai": "^7.0.0"
+  },
+  "engines": {
+    "node": "24.x"
+  }
+
+}
