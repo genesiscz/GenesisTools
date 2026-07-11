@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
@@ -84,6 +85,68 @@ let globalConfig: LoggerConfig = {
 let fileLogWarningShown = false;
 
 /**
+ * Sync file destination that follows the local date: each write lands in
+ * today's `<YYYY-MM-DD>.log`, re-opening the file when midnight passes.
+ * A static `pino.destination` pins the file chosen at process start, so
+ * long-running processes (TUIs, daemons) kept writing "today's" events into
+ * yesterday's log — which broke time-window forensics across day files.
+ */
+function createDailyFileStream(logDir: string): Writable {
+    fs.mkdirSync(logDir, { recursive: true });
+
+    let fd: number | null = null;
+    let nextRolloverAt = 0;
+
+    const ensureFd = (): number => {
+        const now = Date.now();
+
+        if (fd === null || now >= nextRolloverAt) {
+            if (fd !== null) {
+                try {
+                    fs.closeSync(fd);
+                } catch (err) {
+                    process.stderr.write(`[logger] Failed to close rolled-over log file: ${err}\n`);
+                }
+            }
+
+            const day = new Date(now);
+            fd = fs.openSync(path.join(logDir, `${formatLocalDate(day)}.log`), "a");
+            const midnight = new Date(day);
+            midnight.setHours(24, 0, 0, 0);
+            nextRolloverAt = midnight.getTime();
+        }
+
+        return fd;
+    };
+
+    // Open eagerly so createLogger's try/catch reports permission/disk errors
+    // at startup, matching the old pino.destination behavior.
+    ensureFd();
+
+    return new Writable({
+        decodeStrings: false,
+        write(chunk: string | Uint8Array, _enc, cb) {
+            try {
+                const fdNow = ensureFd();
+
+                if (typeof chunk === "string") {
+                    fs.writeSync(fdNow, chunk);
+                } else {
+                    fs.writeSync(fdNow, chunk);
+                }
+            } catch (err) {
+                if (!fileLogWarningShown && process.stderr && typeof process.stderr.write === "function") {
+                    fileLogWarningShown = true;
+                    process.stderr.write(`[logger] Log file write failed: ${err}\n`);
+                }
+            }
+
+            cb();
+        },
+    });
+}
+
+/**
  * Create a pino logger with pretty printing
  */
 export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
@@ -100,21 +163,19 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
     // File stream (if enabled) — ALWAYS debug+, independent of the console
     // gate, so the file never starves no matter how high the console threshold.
     if (logToFile) {
-        const date = formatLocalDate(new Date());
         const logDir = path.join(homedir(), ".genesis-tools", "logs");
-        const logFilePath = path.join(logDir, `${date}.log`);
 
         try {
             streams.push({
                 level: "debug" as pino.Level,
-                stream: pino.destination({ dest: logFilePath, sync: true, mkdir: true }),
+                stream: createDailyFileStream(logDir),
             });
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
 
             if (!fileLogWarningShown && process.stderr && typeof process.stderr.write === "function") {
                 fileLogWarningShown = true;
-                process.stderr.write(`[logger] Failed to open log file ${logFilePath}: ${message}\n`);
+                process.stderr.write(`[logger] Failed to open log file in ${logDir}: ${message}\n`);
             }
         }
     }
