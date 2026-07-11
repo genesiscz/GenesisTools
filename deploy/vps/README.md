@@ -85,6 +85,11 @@ sudo ufw deny 8317 && sudo ufw deny 9876 && sudo ufw deny 2000
 sudo ufw enable
 ```
 
+> Both ai-proxy and youtube bind loopback (`127.0.0.1`) by default, so nginx is
+> the only path to them; the firewall rules are defense in depth. To reach the
+> youtube API directly (e.g. LAN testing), set `YOUTUBE_HOST=0.0.0.0` in
+> `genesis.env` (or the systemd unit) — and keep the firewall in front.
+
 > Chicken-and-egg on step 6/7: certbot `--webroot` needs nginx answering :80.
 > Either bring nginx up with a plain `:80` server first (the config's HTTP block
 > already serves `/.well-known/acme-challenge/`), run certbot, then reload; or

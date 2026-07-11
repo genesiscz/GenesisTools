@@ -41,6 +41,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
 
     const configuredPort = await youtube.config.get("apiPort");
     const port = opts.port ?? configuredPort;
+    const hostname = env.youtube.getHost();
     const serviceKeys = parseServiceKeys(env.youtube.getServiceKey());
 
     if (serviceKeys.length > 0) {
@@ -50,6 +51,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
     const websocket = setupWebsocket(youtube);
     const server = Bun.serve<WebsocketState>({
         port,
+        hostname,
         websocket: websocket.handler,
         async fetch(req: Request, server): Promise<Response | undefined> {
             try {
@@ -140,7 +142,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
         });
     }
 
-    logger.info({ port: serverPort }, "youtube API server listening");
+    logger.info({ port: serverPort, hostname }, "youtube API server listening");
 
     return {
         port: serverPort,

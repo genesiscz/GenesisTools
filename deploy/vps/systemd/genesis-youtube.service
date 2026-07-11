@@ -10,11 +10,13 @@ User=genesis
 Group=genesis
 WorkingDirectory=/opt/genesis-tools
 EnvironmentFile=/etc/genesis-tools/genesis.env
+# Bind loopback so the server is reachable only through nginx (127.0.0.1:9876),
+# not directly from the public internet. Set YOUTUBE_HOST=0.0.0.0 (or a LAN IP)
+# only if you want direct access; keep the firewall in front regardless.
+Environment=YOUTUBE_HOST=127.0.0.1
 # Run the server entry directly (foreground, systemd-supervised) rather than
-# `tools youtube server up`, which daemonizes. It reads YOUTUBE_SERVICE_KEY from
-# the EnvironmentFile and binds 0.0.0.0:9876 — the VPS firewall MUST block 9876
-# from the public internet so nginx (127.0.0.1:9876) is the only path in.
-# Adjust the bun path to `which bun` on the box.
+# `tools youtube server up`, which daemonizes. It reads YOUTUBE_SERVICE_KEY and
+# YOUTUBE_HOST from the environment above. Adjust the bun path to `which bun`.
 ExecStart=/usr/local/bin/bun run ./src/youtube/lib/server/index.ts --port 9876
 Restart=always
 RestartSec=3

@@ -73,4 +73,13 @@ describe("requireServiceKey", () => {
         const req = makeRequest({ url: "http://localhost:9876/api/v1/events?access_token=alice-key" });
         expect(requireServiceKey(req, ["alice-key"])).toBeNull();
     });
+
+    it("matches keys of differing lengths (hash-normalized compare)", () => {
+        const keys = ["short", "a-much-longer-service-key-value-0123456789"];
+        expect(requireServiceKey(makeRequest({ auth: "Bearer short" }), keys)).toBeNull();
+        expect(
+            requireServiceKey(makeRequest({ auth: "Bearer a-much-longer-service-key-value-0123456789" }), keys)
+        ).toBeNull();
+        expect(requireServiceKey(makeRequest({ auth: "Bearer a-much-longer" }), keys)?.status).toBe(401);
+    });
 });

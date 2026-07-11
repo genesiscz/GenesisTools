@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { SafeJSON } from "@app/utils/json";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 
@@ -51,15 +51,18 @@ export function extractServiceToken(req: Request): string | null {
 }
 
 function tokenMatchesAny(presented: string, keys: string[]): boolean {
-    const presentedBuffer = Buffer.from(presented);
+    // Hash both sides to fixed 32-byte SHA-256 digests before comparing: a raw
+    // length guard before timingSafeEqual would leak the configured keys' lengths
+    // via loop timing. Digests are always equal length, so the compare never
+    // varies with the presented token's length. No early-exit so a valid key
+    // later in the list is not distinguishable by timing from one earlier.
+    const presentedHash = createHash("sha256").update(presented).digest();
     let matched = false;
 
-    // Compare against every key without early-exit so a valid key later in the
-    // list is not distinguishable by timing from one earlier in the list.
     for (const key of keys) {
-        const expectedBuffer = Buffer.from(key);
+        const keyHash = createHash("sha256").update(key).digest();
 
-        if (presentedBuffer.length === expectedBuffer.length && timingSafeEqual(presentedBuffer, expectedBuffer)) {
+        if (timingSafeEqual(presentedHash, keyHash)) {
             matched = true;
         }
     }
