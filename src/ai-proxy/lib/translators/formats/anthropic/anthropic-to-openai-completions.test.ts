@@ -76,7 +76,12 @@ describe("anthropicMessageToOpenAiCompletion", () => {
 
         expect(completion.choices[0]?.message.content).toBeNull();
         expect(completion.choices[0]?.message.tool_calls).toEqual([
-            { index: 0, id: "toolu_1", type: "function", function: { name: "get_weather", arguments: '{"city":"Prague"}' } },
+            {
+                index: 0,
+                id: "toolu_1",
+                type: "function",
+                function: { name: "get_weather", arguments: '{"city":"Prague"}' },
+            },
         ]);
         expect(completion.choices[0]?.finish_reason).toBe("tool_calls");
     });
@@ -115,7 +120,7 @@ describe("anthropicSseToOpenAiChatStream", () => {
 
         // reassembled content
         const content = chunks
-            .flatMap((c) => (c.choices as Array<{ delta: { content?: string } }>))
+            .flatMap((c) => c.choices as Array<{ delta: { content?: string } }>)
             .map((choice) => choice.delta.content ?? "")
             .join("");
         expect(content).toBe("Hello");
@@ -142,7 +147,14 @@ describe("anthropicSseToOpenAiChatStream", () => {
         const chunks = parseChunks(out);
 
         const toolCalls = chunks
-            .flatMap((c) => c.choices as Array<{ delta: { tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> } }>)
+            .flatMap(
+                (c) =>
+                    c.choices as Array<{
+                        delta: {
+                            tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }>;
+                        };
+                    }>
+            )
             .flatMap((choice) => choice.delta.tool_calls ?? []);
 
         // first tool_call chunk names the function

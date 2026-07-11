@@ -36,9 +36,7 @@ export interface AnthropicTextBlock {
 
 export interface AnthropicImageBlock {
     type: "image";
-    source:
-        | { type: "base64"; media_type: string; data: string }
-        | { type: "url"; url: string };
+    source: { type: "base64"; media_type: string; data: string } | { type: "url"; url: string };
 }
 
 export interface AnthropicToolUseBlock {
@@ -71,10 +69,7 @@ export interface AnthropicTool {
     input_schema: unknown;
 }
 
-export type AnthropicToolChoice =
-    | { type: "auto" }
-    | { type: "any" }
-    | { type: "tool"; name: string };
+export type AnthropicToolChoice = { type: "auto" } | { type: "any" } | { type: "tool"; name: string };
 
 export interface AnthropicMessagesBody {
     model: string;
@@ -136,7 +131,6 @@ function contentToBlocks(content: unknown): AnthropicContentBlock[] {
 
         if (part.type === "image_url" && isObject(part.image_url) && typeof part.image_url.url === "string") {
             blocks.push(imageBlockFromUrl(part.image_url.url));
-            continue;
         }
     }
 
@@ -217,7 +211,10 @@ function mapMessage(message: Record<string, unknown>): AnthropicMessage | null {
     }
 
     if (role === "assistant") {
-        const blocks: AnthropicContentBlock[] = [...contentToBlocks(message.content), ...toolUseBlocksFromToolCalls(message.tool_calls)];
+        const blocks: AnthropicContentBlock[] = [
+            ...contentToBlocks(message.content),
+            ...toolUseBlocksFromToolCalls(message.tool_calls),
+        ];
 
         if (blocks.length === 0) {
             return null;

@@ -1,9 +1,6 @@
 import { loadCatalogFile } from "@app/ai-proxy/lib/catalog-file";
 import { resolveCopilotModelRecords } from "@app/ai-proxy/lib/copilot-models-cache";
-import {
-    ANTHROPIC_SUB_ALIASES,
-    resolveAnthropicSubModel,
-} from "@app/ai-proxy/lib/providers/anthropic-sub-models";
+import { ANTHROPIC_SUB_ALIASES, resolveAnthropicSubModel } from "@app/ai-proxy/lib/providers/anthropic-sub-models";
 import { providerKey } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
 import { toProxyId as toCopilotProxyId } from "@app/utils/ai/github-copilot/models";

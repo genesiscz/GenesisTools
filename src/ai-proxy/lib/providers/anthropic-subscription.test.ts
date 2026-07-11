@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
-import { SafeJSON } from "@app/utils/json";
 import { SUBSCRIPTION_BETAS } from "@app/utils/claude/subscription-billing";
+import { SafeJSON } from "@app/utils/json";
 
 const TEST_TOKEN = "sk-ant-oat01-TESTTOKEN";
 

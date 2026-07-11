@@ -43,7 +43,11 @@ describe("openAiChatToAnthropicMessages", () => {
                         role: "assistant",
                         content: null,
                         tool_calls: [
-                            { id: "call_1", type: "function", function: { name: "get_weather", arguments: '{"city":"Prague"}' } },
+                            {
+                                id: "call_1",
+                                type: "function",
+                                function: { name: "get_weather", arguments: '{"city":"Prague"}' },
+                            },
                         ],
                     },
                     { role: "tool", tool_call_id: "call_1", content: "sunny" },
@@ -66,7 +70,11 @@ describe("openAiChatToAnthropicMessages", () => {
         const body = openAiChatToAnthropicMessages(
             {
                 messages: [
-                    { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "f", arguments: "{}" } }] },
+                    {
+                        role: "assistant",
+                        content: null,
+                        tool_calls: [{ id: "c1", type: "function", function: { name: "f", arguments: "{}" } }],
+                    },
                     { role: "tool", tool_call_id: "c1", content: "r1" },
                     { role: "user", content: "and now this" },
                 ],
@@ -103,17 +111,25 @@ describe("openAiChatToAnthropicMessages", () => {
         );
 
         expect(body.tools).toEqual([
-            { name: "search", description: "search the web", input_schema: { type: "object", properties: { q: { type: "string" } } } },
+            {
+                name: "search",
+                description: "search the web",
+                input_schema: { type: "object", properties: { q: { type: "string" } } },
+            },
         ]);
         expect(body.tool_choice).toEqual({ type: "tool", name: "search" });
     });
 
     it("maps string and array stop to stop_sequences", () => {
         expect(
-            openAiChatToAnthropicMessages({ messages: [{ role: "user", content: "x" }], stop: "END" }, { model: MODEL }).stop_sequences
+            openAiChatToAnthropicMessages({ messages: [{ role: "user", content: "x" }], stop: "END" }, { model: MODEL })
+                .stop_sequences
         ).toEqual(["END"]);
         expect(
-            openAiChatToAnthropicMessages({ messages: [{ role: "user", content: "x" }], stop: ["A", "B"] }, { model: MODEL }).stop_sequences
+            openAiChatToAnthropicMessages(
+                { messages: [{ role: "user", content: "x" }], stop: ["A", "B"] },
+                { model: MODEL }
+            ).stop_sequences
         ).toEqual(["A", "B"]);
     });
 

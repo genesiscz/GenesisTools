@@ -154,13 +154,18 @@ export function anthropicSseToOpenAiChatStream(
     let nextToolIndex = 0;
     const blockToToolIndex = new Map<number, number>();
 
-    function handleEvent(event: Record<string, unknown>, controller: ReadableStreamDefaultController<Uint8Array>): void {
+    function handleEvent(
+        event: Record<string, unknown>,
+        controller: ReadableStreamDefaultController<Uint8Array>
+    ): void {
         const type = event.type;
 
         if (type === "message_start") {
             if (!roleEmitted) {
                 roleEmitted = true;
-                controller.enqueue(encoder.encode(chunk({ id, model, created, delta: { role: "assistant" }, finishReason: null })));
+                controller.enqueue(
+                    encoder.encode(chunk({ id, model, created, delta: { role: "assistant" }, finishReason: null }))
+                );
             }
 
             return;
@@ -182,7 +187,10 @@ export function anthropicSseToOpenAiChatStream(
                                 tool_calls: [
                                     {
                                         index: toolIndex,
-                                        id: typeof contentBlock.id === "string" ? contentBlock.id : `call_${crypto.randomUUID()}`,
+                                        id:
+                                            typeof contentBlock.id === "string"
+                                                ? contentBlock.id
+                                                : `call_${crypto.randomUUID()}`,
                                         type: "function",
                                         function: {
                                             name: typeof contentBlock.name === "string" ? contentBlock.name : "unknown",
@@ -204,7 +212,9 @@ export function anthropicSseToOpenAiChatStream(
             const delta = event.delta;
 
             if (delta.type === "text_delta" && typeof delta.text === "string") {
-                controller.enqueue(encoder.encode(chunk({ id, model, created, delta: { content: delta.text }, finishReason: null })));
+                controller.enqueue(
+                    encoder.encode(chunk({ id, model, created, delta: { content: delta.text }, finishReason: null }))
+                );
                 return;
             }
 
@@ -216,7 +226,11 @@ export function anthropicSseToOpenAiChatStream(
                             id,
                             model,
                             created,
-                            delta: { tool_calls: [{ index: toolIndex, type: "function", function: { arguments: delta.partial_json } }] },
+                            delta: {
+                                tool_calls: [
+                                    { index: toolIndex, type: "function", function: { arguments: delta.partial_json } },
+                                ],
+                            },
                             finishReason: null,
                         })
                     )
@@ -272,7 +286,9 @@ export function anthropicSseToOpenAiChatStream(
                         buffer = "";
                     }
 
-                    controller.enqueue(encoder.encode(chunk({ id, model, created, delta: {}, finishReason: finishReason ?? "stop" })));
+                    controller.enqueue(
+                        encoder.encode(chunk({ id, model, created, delta: {}, finishReason: finishReason ?? "stop" }))
+                    );
                     controller.enqueue(encoder.encode("data: [DONE]\n\n"));
                     controller.close();
                     return;

@@ -1,7 +1,6 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { ANTHROPIC_SUB_ALIASES, resolveAnthropicSubModel } from "@app/ai-proxy/lib/providers/anthropic-sub-models";
 import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
-import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
 import {
     anthropicMessageToOpenAiCompletion,
     anthropicSseToOpenAiChatStream,
@@ -10,6 +9,7 @@ import {
     type OpenAiChatBody,
     openAiChatToAnthropicMessages,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/openai-to-anthropic-messages";
+import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
 import { logger } from "@app/logger";
 import { resolveAccountToken } from "@app/utils/claude/subscription-auth";
 import {
@@ -81,7 +81,10 @@ export class AnthropicSubscriptionProvider implements ProxyProvider {
                 { err, account: this.account.name, billingAccount: this.billingAccountName },
                 "ai-proxy: anthropic-subscription token resolution failed"
             );
-            return jsonError(502, `Anthropic subscription token unavailable: ${err instanceof Error ? err.message : String(err)}`);
+            return jsonError(
+                502,
+                `Anthropic subscription token unavailable: ${err instanceof Error ? err.message : String(err)}`
+            );
         }
 
         const started = performance.now();
@@ -121,7 +124,13 @@ export class AnthropicSubscriptionProvider implements ProxyProvider {
         }
 
         logger.debug(
-            { account: this.account.name, upstreamModel: concreteModel, requestedModel: proxyModelId, streaming, elapsedMs },
+            {
+                account: this.account.name,
+                upstreamModel: concreteModel,
+                requestedModel: proxyModelId,
+                streaming,
+                elapsedMs,
+            },
             "ai-proxy: anthropic upstream request ok"
         );
 
