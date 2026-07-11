@@ -1,5 +1,9 @@
 import { loadCatalogFile } from "@app/ai-proxy/lib/catalog-file";
 import { resolveCopilotModelRecords } from "@app/ai-proxy/lib/copilot-models-cache";
+import {
+    ANTHROPIC_SUB_ALIASES,
+    resolveAnthropicSubModel,
+} from "@app/ai-proxy/lib/providers/anthropic-sub-models";
 import { providerKey } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
 import { toProxyId as toCopilotProxyId } from "@app/utils/ai/github-copilot/models";
@@ -99,6 +103,30 @@ export function copilotRecordToProxyMeta(
 
 export function listGrokProxyModels(account: AiProxyAccountConfig, baseUrl: string): ProxyModelMeta[] {
     return GROK_STATIC_CATALOG.map((record) => grokRecordToProxyMeta(account, record, baseUrl));
+}
+
+export const ANTHROPIC_MESSAGES_BASE_URL = "https://api.anthropic.com/v1";
+
+export function listAnthropicSubProxyModels(account: AiProxyAccountConfig): ProxyModelMeta[] {
+    return ANTHROPIC_SUB_ALIASES.map((alias) => ({
+        proxyId: toProxyId(account.name, account.providerSlug, alias),
+        accountName: account.name,
+        providerSlug: account.providerSlug,
+        upstreamId: alias,
+        provider: account.provider,
+        baseUrl: ANTHROPIC_MESSAGES_BASE_URL,
+        visibility: "high",
+        speed: "medium",
+        thinking: alias === "opus" || alias === "fable" ? "reasoning" : "none",
+        contextWindow: 200_000,
+        supportsTools: true,
+        billingPlane: "subscription",
+        source: "static",
+        description: `Claude ${alias} via subscription (${resolveAnthropicSubModel(alias)})`,
+        object: "model",
+        created: 1_740_960_000,
+        owned_by: providerKey(account),
+    }));
 }
 
 function catalogCopilotRecords(account: AiProxyAccountConfig): CopilotModelRecord[] {

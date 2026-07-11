@@ -1,3 +1,4 @@
+import { AnthropicSubscriptionProvider } from "@app/ai-proxy/lib/providers/anthropic-subscription";
 import { GithubCopilotSubscriptionProvider } from "@app/ai-proxy/lib/providers/github-copilot-subscription";
 import { GrokSubscriptionProvider } from "@app/ai-proxy/lib/providers/grok-subscription";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
@@ -13,7 +14,11 @@ export function routeProviderKey(route: { accountName: string; providerSlug: str
 }
 
 export function isProviderImplemented(provider: AiProxyAccountConfig["provider"]): boolean {
-    return provider === "grok-subscription" || provider === "github-copilot-subscription";
+    return (
+        provider === "grok-subscription" ||
+        provider === "github-copilot-subscription" ||
+        provider === "anthropic-subscription"
+    );
 }
 
 export async function buildProviderMap(
@@ -48,6 +53,10 @@ export async function createProvider(account: AiProxyAccountConfig): Promise<Pro
 
     if (account.provider === "github-copilot-subscription") {
         return GithubCopilotSubscriptionProvider.create(account);
+    }
+
+    if (account.provider === "anthropic-subscription") {
+        return AnthropicSubscriptionProvider.create(account);
     }
 
     throw new Error(`Provider not implemented yet: ${account.provider}`);

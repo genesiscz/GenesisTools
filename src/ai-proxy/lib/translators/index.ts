@@ -22,7 +22,9 @@ export function shouldTranslateChatRequest({
 
     // Grok subscription chat/completions already streams Cursor-native reasoning_content.
     // Re-encoding via /responses drops role coalescing and breaks the thinking UI.
-    if (providerId === "grok-subscription") {
+    // anthropic-subscription has no Responses upstream — its chatCompletions is the
+    // only supported path, so never route it through the /responses translation.
+    if (providerId === "grok-subscription" || providerId === "anthropic-subscription") {
         return false;
     }
 
