@@ -234,6 +234,12 @@ export const env = {
     youtube: {
         getGitSha: () => getTrimmed("YOUTUBE_GIT_SHA"),
         getUiPort: () => getTrimmed("YOUTUBE_UI_PORT"),
+        /**
+         * Optional per-user service key(s) for the YouTube API server. A
+         * comma-separated list — one key per user. When unset the server stays
+         * open (localhost development is unaffected).
+         */
+        getServiceKey: () => getTrimmed("YOUTUBE_SERVICE_KEY"),
     },
 
     db: {
