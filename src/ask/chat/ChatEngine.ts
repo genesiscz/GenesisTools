@@ -8,7 +8,7 @@ import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { AnthropicModelCategory, OpenAIModelCategory } from "@ask/providers/ModelResolver";
 import type { ChatConfig, ChatMessage, DetectedProvider, ProviderChoice } from "@ask/types";
 import type { LanguageModel, LanguageModelUsage, ModelMessage, ToolSet } from "ai";
-import { generateText, streamText } from "ai";
+import { generateText, stepCountIs, streamText } from "ai";
 
 export interface ChatResponse {
     content: string;
@@ -188,7 +188,7 @@ export class ChatEngine {
             temperature: this.config.temperature,
             providerOptions: buildProviderOptions(this.config.providerType),
             ...(this.config.maxTokens && { maxOutputTokens: this.config.maxTokens }),
-            ...(hasTools && { tools, maxSteps: 5 }),
+            ...(hasTools && { tools, stopWhen: stepCountIs(5) }),
             onFinish: async ({ usage }) => {
                 // This is called when the stream completes - usage is available HERE
                 logger.debug(
@@ -282,19 +282,17 @@ export class ChatEngine {
             );
             usage = finishUsage;
             cost = finishCost;
-        } else if (result.usage instanceof Promise) {
-            // If usage is a Promise, await it
-            logger.debug(`[ChatEngine] result.usage is a Promise, awaiting...`);
+        } else {
+            // streamText exposes usage as a promise-like; await handles both shapes
             usage = await result.usage;
-            logger.debug({ usage: SafeJSON.stringify(usage, null, 2) }, `[ChatEngine] Resolved usage from Promise`);
+            logger.debug(
+                { usage: SafeJSON.stringify(usage, null, 2) },
+                `[ChatEngine] Resolved usage from result.usage`
+            );
+
             if (usage) {
                 cost = await dynamicPricingManager.calculateCost(this.config.provider, this.config.modelName, usage);
             }
-        } else if (result.usage) {
-            // If usage is already available
-            usage = result.usage;
-            logger.debug({ usage: SafeJSON.stringify(usage, null, 2) }, `[ChatEngine] result.usage available directly`);
-            cost = await dynamicPricingManager.calculateCost(this.config.provider, this.config.modelName, usage);
         }
 
         if (!usage) {
@@ -325,7 +323,7 @@ export class ChatEngine {
             temperature: this.config.temperature,
             providerOptions: buildProviderOptions(this.config.providerType),
             ...(this.config.maxTokens && { maxOutputTokens: this.config.maxTokens }),
-            ...(hasTools && { tools, maxSteps: 5 }),
+            ...(hasTools && { tools, stopWhen: stepCountIs(5) }),
         });
 
         // DEBUG: Log the full result object structure

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { SafeJSON } from "@app/utils/json";
+import { toLanguageModelUsage } from "@ask/utils/helpers";
 import { z } from "zod";
 
 const generateObjectMock = mock();
@@ -42,9 +43,10 @@ afterEach(() => {
 describe("callLLMStructured", () => {
     it("returns the typed object, JSON-stringified content, and usage", async () => {
         const { callLLMStructured } = await import("@app/utils/ai/call-llm");
+        const fakeUsage = toLanguageModelUsage({ inputTokens: 100, outputTokens: 20, totalTokens: 120 });
         generateObjectMock.mockResolvedValueOnce({
             object: { tldr: "hello", points: ["a", "b"] },
-            usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
+            usage: fakeUsage,
         });
 
         const schema = z.object({
@@ -60,7 +62,7 @@ describe("callLLMStructured", () => {
 
         expect(result.object).toEqual({ tldr: "hello", points: ["a", "b"] });
         expect(result.content).toBe(SafeJSON.stringify({ tldr: "hello", points: ["a", "b"] }, null, 2));
-        expect(result.usage).toEqual({ inputTokens: 100, outputTokens: 20, totalTokens: 120 });
+        expect(result.usage).toEqual(fakeUsage);
         expect(generateObjectMock).toHaveBeenCalledTimes(1);
         const args = generateObjectMock.mock.calls[0][0] as Record<string, unknown>;
         expect(args.system).toBe("you summarise");

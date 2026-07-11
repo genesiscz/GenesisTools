@@ -6,6 +6,7 @@ import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { ChatMessage, ChatSession, ConversationMetadata } from "@ask/types";
+import { usageCacheReadTokens } from "@ask/utils/helpers";
 import { write } from "bun";
 
 const DEFAULT_CONVERSATIONS_DIR = resolve(homedir(), ".genesis-tools", "ask", "conversations");
@@ -172,7 +173,7 @@ export class ConversationManager {
                 totalUsage.inputTokens += msg.usage.inputTokens || 0;
                 totalUsage.outputTokens += msg.usage.outputTokens || 0;
                 totalUsage.totalTokens += msg.usage.totalTokens || 0;
-                totalUsage.cachedInputTokens += msg.usage.cachedInputTokens || 0;
+                totalUsage.cachedInputTokens += usageCacheReadTokens(msg.usage);
             }
         });
 
