@@ -1,9 +1,11 @@
 import { getModelsForType, MODEL_REGISTRY } from "@app/indexer/lib/model-registry";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { registerTool } from "../shared";
 
 export function registerModelsTools(server: McpServer): void {
-    server.tool(
+    registerTool(
+        server,
         "indexer_models",
         "List available embedding models. Optionally filter by index type to see best recommendations.",
         {

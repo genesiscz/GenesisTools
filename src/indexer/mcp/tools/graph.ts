@@ -1,10 +1,11 @@
 import { buildCodeGraph, getGraphStats, toMermaidDiagram } from "@app/indexer/lib/code-graph";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { formatError, getManager } from "../shared";
+import { formatError, getManager, registerTool } from "../shared";
 
 export function registerGraphTools(server: McpServer): void {
-    server.tool(
+    registerTool(
+        server,
         "indexer_graph_build",
         "Build a code dependency graph using static import analysis. The index must already exist.",
         {
@@ -15,7 +16,8 @@ export function registerGraphTools(server: McpServer): void {
         })
     );
 
-    server.tool(
+    registerTool(
+        server,
         "indexer_graph_query",
         "Query the dependency graph for a specific file. Shows what the file imports and what files depend on it.",
         {
@@ -27,7 +29,8 @@ export function registerGraphTools(server: McpServer): void {
         })
     );
 
-    server.tool(
+    registerTool(
+        server,
         "indexer_graph_stats",
         "Get statistics about the code dependency graph: total files, edges, most connected files, orphans.",
         {
@@ -38,7 +41,8 @@ export function registerGraphTools(server: McpServer): void {
         })
     );
 
-    server.tool(
+    registerTool(
+        server,
         "indexer_graph_visualize",
         "Generate a Mermaid diagram of the code dependency graph. Shows the top N most-connected files.",
         {

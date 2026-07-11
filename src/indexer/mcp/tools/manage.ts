@@ -1,10 +1,11 @@
 import { formatBytes, formatDuration, formatRelativeTime } from "@app/utils/format";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { formatError, getManager } from "../shared";
+import { formatError, getManager, registerTool } from "../shared";
 
 export function registerManageTools(server: McpServer): void {
-    server.tool(
+    registerTool(
+        server,
         "indexer_status",
         "Check index status. Without a name, shows a summary of all indexes. With a name, shows detailed stats for that index.",
         {
@@ -15,7 +16,8 @@ export function registerManageTools(server: McpServer): void {
         })
     );
 
-    server.tool(
+    registerTool(
+        server,
         "indexer_remove",
         "Remove an index entirely. Stops watchers, closes the database, and deletes all stored data.",
         {
@@ -26,7 +28,8 @@ export function registerManageTools(server: McpServer): void {
         })
     );
 
-    server.tool(
+    registerTool(
+        server,
         "indexer_stop",
         "Request cancellation of an in-progress sync/index operation. The current batch finishes and checkpoints. Progress is preserved.",
         {
