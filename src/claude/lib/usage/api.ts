@@ -1,4 +1,5 @@
 import { logger } from "@app/logger";
+import { abortableSleep } from "@app/utils/async";
 import { resolveAccountToken } from "@app/utils/claude/subscription-auth";
 import type { AIAccountEntry } from "@app/utils/config/ai.types";
 
@@ -106,6 +107,9 @@ export function isUsageBucket(value: unknown): value is UsageBucket {
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 
+/** How long to wait before the single same-token retry after a 429. */
+const RATE_LIMIT_RETRY_DELAY_MS = 2_000;
+
 export async function fetchUsage(
     accessToken: string,
     signal?: AbortSignal,
@@ -183,7 +187,20 @@ export async function fetchAllAccountsUsage(
                     throw err;
                 }
 
-                // 401/429 — force-refresh token and retry once
+                // 429 is a per-account/IP rate limit on the usage endpoint — a fresh
+                // token cannot fix it, and force-refreshing here rotated the
+                // single-use refresh token on every 429 (~100 rotations/day at peak),
+                // which exhausts Anthropic's server-side grant budget and kills the
+                // account with invalid_grant "Refresh token expired". Never refresh
+                // on 429: retry once with the SAME token, then fall back to stale cache.
+                if (err.statusCode === 429) {
+                    logger.warn(`${tag} got 429, retrying with same token after backoff`);
+                    await abortableSleep(RATE_LIMIT_RETRY_DELAY_MS, signal);
+                    const usage = await fetchUsage(token, signal, account.name);
+                    return { accountName: account.name, label: account.label, usage } satisfies AccountUsage;
+                }
+
+                // 401 — token rejected: force-refresh and retry once
                 logger.warn(`${tag} got ${err.statusCode}, attempting force-refresh`);
                 const { token: freshToken, refreshed } = await resolveAccountToken(account.name, {
                     staleAccessToken: token,

@@ -1,5 +1,10 @@
+import { appendFileSync, chmodSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { logger } from "@app/logger";
 import { retry } from "@app/utils/async";
+import { env } from "@app/utils/env";
+import { SafeJSON } from "@app/utils/json";
 import type { OAuthTokens } from "./auth";
 import { claudeOAuth } from "./auth";
 
@@ -31,8 +36,13 @@ export interface ResolvedToken {
 }
 
 /**
- * Returns true for errors that are transient and worth retrying:
- * 5xx server errors and network-level failures.
+ * Returns true for errors where the refresh request provably never reached
+ * token issuance, so retrying the SAME refresh token is safe: 5xx responses
+ * and connection-refused. Ambiguous failures (ECONNRESET, ETIMEDOUT, socket
+ * hang up) are NOT retried — the server may have already rotated the
+ * single-use refresh token before the connection died, and re-sending the
+ * consumed token is a reuse signal that can revoke the whole grant family.
+ * The next poll retries naturally if the token was never consumed.
  */
 function isTransientRefreshError(error: unknown): boolean {
     const msg = error instanceof Error ? error.message : String(error);
@@ -41,11 +51,53 @@ function isTransientRefreshError(error: unknown): boolean {
         return true;
     }
 
-    if (/fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up/i.test(msg)) {
+    if (/ECONNREFUSED/i.test(msg)) {
         return true;
     }
 
     return false;
+}
+
+/**
+ * Per-account cooldown after invalid_grant. A dead refresh token stays dead
+ * until re-login; without this every poll re-hammers the token endpoint with
+ * a known-dead token (~1 POST/30s per consumer).
+ */
+const INVALID_GRANT_COOLDOWN_MS = 10 * 60 * 1000;
+const invalidGrantAt = new Map<string, number>();
+
+/**
+ * Append the old and freshly-issued token pair to a journal BEFORE the config
+ * write. Refresh tokens are single-use: if the process dies (or the write is
+ * lost) between Anthropic issuing the new pair and the config save, the new
+ * pair exists nowhere else and the account is bricked until re-login. The
+ * journal makes that window recoverable. Same sensitivity as config.json
+ * (plaintext tokens), so chmod 600. Failures never block the refresh itself.
+ */
+function journalTokenRotation(account: string, oldTokens: Partial<OAuthTokens>, newTokens: OAuthTokens): void {
+    try {
+        const dir = join(env.tools.getHome() || homedir(), ".genesis-tools", "ai");
+        const path = join(dir, "token-journal.jsonl");
+        const isNew = !existsSync(path);
+        appendFileSync(
+            path,
+            `${SafeJSON.stringify({
+                ts: new Date().toISOString(),
+                account,
+                oldAccessToken: oldTokens.accessToken,
+                oldRefreshToken: oldTokens.refreshToken,
+                newAccessToken: newTokens.accessToken,
+                newRefreshToken: newTokens.refreshToken,
+                newExpiresAt: newTokens.expiresAt,
+            })}\n`
+        );
+
+        if (isNew) {
+            chmodSync(path, 0o600);
+        }
+    } catch (err) {
+        logger.warn({ err, account }, "[token-refresh] journal append failed");
+    }
 }
 
 /**
@@ -72,8 +124,10 @@ export async function listAvailableAccounts(): Promise<SubscriptionAccount[]> {
  * - Acquires config file lock before any mutation
  * - Re-reads config from disk inside lock (prevents TOCTOU)
  * - Detects if another process already refreshed (prevents double-refresh of single-use tokens)
- * - Retries on transient errors (5xx, network) up to 2 times with 1s fixed delay
- * - Detects invalid_grant and provides actionable error message
+ * - Retries only errors where the single-use refresh token provably wasn't
+ *   consumed (5xx, ECONNREFUSED) up to 2 times with 1s fixed delay
+ * - Detects invalid_grant, applies a per-account cooldown, and provides an
+ *   actionable error message
  * - Persists new tokens to disk immediately after refresh, before returning
  */
 export async function resolveAccountToken(accountName?: string, options?: ResolveOptions): Promise<ResolvedToken> {
@@ -109,6 +163,11 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
             },
             refreshed: false,
         };
+    }
+
+    const lastInvalidGrant = invalidGrantAt.get(name);
+    if (lastInvalidGrant && Date.now() - lastInvalidGrant < INVALID_GRANT_COOLDOWN_MS) {
+        throw new Error(`Token expired (invalid_grant). Run: tools claude login ${name}`);
     }
 
     const caller = forceRefresh ? "force-refresh" : "token-expired";
@@ -152,6 +211,7 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
             });
         } catch (err) {
             if (String(err).includes("invalid_grant")) {
+                invalidGrantAt.set(name, Date.now());
                 throw new Error(`Token expired (invalid_grant). Run: tools claude login ${name}`);
             }
 
@@ -160,6 +220,8 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
                     `Run \`tools claude login ${name}\` if this persists.`
             );
         }
+
+        journalTokenRotation(name, diskAccount.tokens, newTokens);
 
         // Persist by mutating data in place — withLock handles save automatically
         const idx = data.accounts.findIndex((a) => a.name === name);
@@ -173,6 +235,7 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
             },
         };
 
+        invalidGrantAt.delete(name);
         logger.info(
             `[token-refresh] ${name}: refreshed successfully ` +
                 `(new expires ${new Date(newTokens.expiresAt).toISOString()})`
