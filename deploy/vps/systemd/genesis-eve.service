@@ -1,0 +1,20 @@
+[Unit]
+Description=GenesisTools eve agent (Nitro server)
+Documentation=https://github.com/ (deploy/vps/README.md)
+After=network-online.target genesis-ai-proxy.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=genesis
+Group=genesis
+# The built eve output (apps/eve on feat/eve-01-foundation → `bun run build`).
+WorkingDirectory=/opt/eve
+EnvironmentFile=/etc/genesis-tools/genesis.env
+# Nitro listens on $PORT (2000, set in genesis.env). Adjust the bun path.
+ExecStart=/usr/local/bin/bun .output/server/index.mjs
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

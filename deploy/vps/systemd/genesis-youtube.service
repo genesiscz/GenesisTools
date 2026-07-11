@@ -1,0 +1,23 @@
+[Unit]
+Description=GenesisTools youtube AI API server
+Documentation=https://github.com/ (deploy/vps/README.md)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=genesis
+Group=genesis
+WorkingDirectory=/opt/genesis-tools
+EnvironmentFile=/etc/genesis-tools/genesis.env
+# Run the server entry directly (foreground, systemd-supervised) rather than
+# `tools youtube server up`, which daemonizes. It reads YOUTUBE_SERVICE_KEY from
+# the EnvironmentFile and binds 0.0.0.0:9876 — the VPS firewall MUST block 9876
+# from the public internet so nginx (127.0.0.1:9876) is the only path in.
+# Adjust the bun path to `which bun` on the box.
+ExecStart=/usr/local/bin/bun run ./src/youtube/lib/server/index.ts --port 9876
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
