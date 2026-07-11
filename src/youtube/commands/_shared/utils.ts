@@ -107,6 +107,7 @@ export function toJobStages(values: string[]): JobStage[] {
     const allowed = new Set<JobStage>([
         "discover",
         "metadata",
+        "comments",
         "captions",
         "audio",
         "video",
