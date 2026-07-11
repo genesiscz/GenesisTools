@@ -1,3 +1,4 @@
+import { logger, setConsoleLevel } from "@app/logger";
 import { type RenderOptions, render } from "ink";
 import type { ReactNode } from "react";
 
@@ -33,10 +34,18 @@ export async function renderFullScreen(node: ReactNode, options?: RenderOptions)
     // Restore the primary buffer even on hard exits (uncaught throw, signals).
     process.once("exit", leaveAltScreen);
 
+    // Console log lines (pino-pretty on stderr) land on the alternate screen
+    // and corrupt Ink's frame — every background log forces a visible flicker.
+    // Silence the console threshold while Ink owns the screen; file logging
+    // is unaffected and the previous threshold is restored on exit.
+    const prevConsoleLevel = logger.level as Parameters<typeof setConsoleLevel>[0];
+    setConsoleLevel("silent");
+
     try {
         await render(node, options).waitUntilExit();
     } finally {
         process.off("exit", leaveAltScreen);
+        setConsoleLevel(prevConsoleLevel);
         leaveAltScreen();
     }
 }

@@ -1,5 +1,4 @@
 import { logger } from "@app/logger";
-import { abortableSleep } from "@app/utils/async";
 import { resolveAccountToken } from "@app/utils/claude/subscription-auth";
 import type { AIAccountEntry } from "@app/utils/config/ai.types";
 
@@ -107,9 +106,6 @@ export function isUsageBucket(value: unknown): value is UsageBucket {
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 
-/** How long to wait before the single same-token retry after a 429. */
-const RATE_LIMIT_RETRY_DELAY_MS = 2_000;
-
 export async function fetchUsage(
     accessToken: string,
     signal?: AbortSignal,
@@ -130,8 +126,14 @@ export async function fetchUsage(
 
     if (res.status === 401 || res.status === 429) {
         const body = await res.text().catch(() => "");
-        const label = res.status === 429 ? "rate-limited" : "auth failed";
-        logger.warn(`${tag} ${res.status} ${label}: ${body.slice(0, 200)}`);
+
+        // 429 is routine under shared polling — debug keeps it out of consoles.
+        if (res.status === 429) {
+            logger.debug(`${tag} 429 rate-limited: ${body.slice(0, 200)}`);
+        } else {
+            logger.warn(`${tag} 401 auth failed: ${body.slice(0, 200)}`);
+        }
+
         throw new RetryableApiError(res.status, `Usage API ${res.status}: ${body.slice(0, 200)}`);
     }
 
@@ -187,21 +189,13 @@ export async function fetchAllAccountsUsage(
                     throw err;
                 }
 
-                // 429 is a per-account/IP rate limit on the usage endpoint — a fresh
-                // token cannot fix it, and force-refreshing here rotated the
-                // single-use refresh token on every 429 (~100 rotations/day at peak),
-                // which exhausts Anthropic's server-side grant budget and kills the
-                // account with invalid_grant "Refresh token expired". Never refresh
-                // on 429: retry once with the SAME token, then fall back to stale cache.
-                if (err.statusCode === 429) {
-                    logger.warn(`${tag} got 429, retrying with same token after backoff`);
-                    await abortableSleep(RATE_LIMIT_RETRY_DELAY_MS, signal);
-                    const usage = await fetchUsage(token, signal, account.name);
-                    return { accountName: account.name, label: account.label, usage } satisfies AccountUsage;
-                }
-
-                // 401 — token rejected: force-refresh and retry once
-                logger.warn(`${tag} got ${err.statusCode}, attempting force-refresh`);
+                // The usage endpoint allows exactly 5 requests per access token
+                // (verified empirically 2026-07-11: fresh token = 5x 200 then 429,
+                // no refill, strictly per-token). Rotating the token on 429 is the
+                // intended unlock — resolveAccountToken's on-disk staleAccessToken
+                // check keeps concurrent consumers to one rotation per exhausted
+                // token. 401 (token rejected) takes the same path.
+                logger.debug(`${tag} got ${err.statusCode}, attempting force-refresh`);
                 const { token: freshToken, refreshed } = await resolveAccountToken(account.name, {
                     staleAccessToken: token,
                     forceRefresh: true,

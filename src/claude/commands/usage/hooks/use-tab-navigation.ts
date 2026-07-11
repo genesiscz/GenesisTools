@@ -1,11 +1,18 @@
 import { useInput } from "ink";
 import { useState } from "react";
 import { TABS, type TabId } from "../types";
+import { isModalOpen } from "./input-scope";
 
 export function useTabNavigation(defaultTab: number = 0) {
     const [activeIndex, setActiveIndex] = useState(defaultTab);
 
     useInput((input, key) => {
+        // A modal (Sessions action menu) owns digits/arrows while open —
+        // switching tabs here would unmount the view mid-action.
+        if (isModalOpen()) {
+            return;
+        }
+
         if (key.leftArrow) {
             setActiveIndex((i) => (i > 0 ? i - 1 : TABS.length - 1));
         }
