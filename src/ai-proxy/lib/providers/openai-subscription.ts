@@ -54,7 +54,12 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
 
         let parsed: Record<string, unknown>;
         try {
-            parsed = SafeJSON.parse(bodyText, { strict: true }) as Record<string, unknown>;
+            const parsedBody = SafeJSON.parse(bodyText, { strict: true });
+            if (!isObject(parsedBody)) {
+                return jsonError(400, "Invalid JSON body");
+            }
+
+            parsed = parsedBody;
         } catch (err) {
             logger.debug({ err }, "ai-proxy: openai-subscription got invalid JSON body");
             return jsonError(400, "Invalid JSON body");

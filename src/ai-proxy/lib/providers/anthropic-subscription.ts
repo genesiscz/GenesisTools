@@ -19,6 +19,7 @@ import {
     SUBSCRIPTION_SYSTEM_PREFIX,
 } from "@app/utils/claude/subscription-billing";
 import { SafeJSON } from "@app/utils/json";
+import { isObject } from "@app/utils/object";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
@@ -63,7 +64,12 @@ export class AnthropicSubscriptionProvider implements ProxyProvider {
 
         let openAiBody: OpenAiChatBody;
         try {
-            openAiBody = SafeJSON.parse(bodyText, { strict: true }) as OpenAiChatBody;
+            const parsedBody = SafeJSON.parse(bodyText, { strict: true });
+            if (!isObject(parsedBody)) {
+                return jsonError(400, "Invalid JSON body");
+            }
+
+            openAiBody = parsedBody as OpenAiChatBody;
         } catch (err) {
             logger.debug({ err }, "ai-proxy: anthropic-subscription got invalid JSON body");
             return jsonError(400, "Invalid JSON body");

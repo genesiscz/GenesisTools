@@ -87,6 +87,16 @@ describe("AnthropicSubscriptionProvider", () => {
         expect(sentBody.messages).toHaveLength(1);
     });
 
+    it("returns 400 (not a 502) for a non-object JSON body", async () => {
+        const { AnthropicSubscriptionProvider } = await import("./anthropic-subscription");
+        const provider = await AnthropicSubscriptionProvider.create(account);
+
+        const req = new Request("http://localhost/v1/chat/completions", { method: "POST", body: "null" });
+        const res = await provider.chatCompletions(req, "haiku", "null");
+
+        expect(res.status).toBe(400);
+    });
+
     it("streams as text/event-stream ending in [DONE]", async () => {
         const anthropicSse =
             'event: message_start\ndata: {"type":"message_start","message":{"id":"m","model":"claude-haiku-4-5-20251001"}}\n\n' +

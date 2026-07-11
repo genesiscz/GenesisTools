@@ -83,9 +83,12 @@ describe("openAiChatToAnthropicMessages", () => {
         );
 
         // the tool_result user turn and the plain user turn must merge into one
-        const userTurns = body.messages.filter((m) => m.role === "user");
-        expect(userTurns).toHaveLength(1);
-        expect(userTurns[0]?.content).toEqual([
+        // (the leading synthetic user turn from the first-user rule is separate)
+        const toolResultTurns = body.messages.filter(
+            (m) => m.role === "user" && m.content.some((block) => block.type === "tool_result")
+        );
+        expect(toolResultTurns).toHaveLength(1);
+        expect(toolResultTurns[0]?.content).toEqual([
             { type: "tool_result", tool_use_id: "c1", content: "r1" },
             { type: "text", text: "and now this" },
         ]);
@@ -118,6 +121,35 @@ describe("openAiChatToAnthropicMessages", () => {
             },
         ]);
         expect(body.tool_choice).toEqual({ type: "tool", name: "search" });
+    });
+
+    it("maps tool_choice 'none' to Anthropic's native none while keeping tools", () => {
+        const body = openAiChatToAnthropicMessages(
+            {
+                messages: [{ role: "user", content: "go" }],
+                tools: [{ type: "function", function: { name: "search", parameters: { type: "object" } } }],
+                tool_choice: "none",
+            },
+            { model: MODEL }
+        );
+
+        expect(body.tools).toHaveLength(1);
+        expect(body.tool_choice).toEqual({ type: "none" });
+    });
+
+    it("prepends a user turn when the first message is an assistant turn", () => {
+        const body = openAiChatToAnthropicMessages(
+            {
+                messages: [
+                    { role: "assistant", content: "earlier reply" },
+                    { role: "user", content: "follow-up" },
+                ],
+            },
+            { model: MODEL }
+        );
+
+        expect(body.messages[0]?.role).toBe("user");
+        expect(body.messages[1]?.role).toBe("assistant");
     });
 
     it("maps string and array stop to stop_sequences", () => {

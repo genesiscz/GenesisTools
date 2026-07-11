@@ -69,7 +69,7 @@ export interface AnthropicTool {
     input_schema: unknown;
 }
 
-export type AnthropicToolChoice = { type: "auto" } | { type: "any" } | { type: "tool"; name: string };
+export type AnthropicToolChoice = { type: "auto" } | { type: "any" } | { type: "none" } | { type: "tool"; name: string };
 
 export interface AnthropicMessagesBody {
     model: string;
@@ -307,7 +307,10 @@ function mapToolChoice(toolChoice: unknown): AnthropicToolChoice | undefined {
     }
 
     if (toolChoice === "none") {
-        return undefined;
+        // Anthropic's native tool_choice "none" keeps the tools attached (so they
+        // stay visible to the model / extended thinking) but forbids calling them.
+        // Omitting it would let Anthropic default to "auto" with tools present.
+        return { type: "none" };
     }
 
     if (isObject(toolChoice) && toolChoice.type === "function" && isObject(toolChoice.function)) {
@@ -342,10 +345,19 @@ export function openAiChatToAnthropicMessages(
         }
     }
 
+    const messages = coalesce(mapped);
+
+    // Anthropic requires the first message to use the "user" role. Client-side
+    // history truncation can leave an assistant turn first — prepend a minimal
+    // user turn so the request is not rejected with a 400.
+    if (messages[0]?.role === "assistant") {
+        messages.unshift({ role: "user", content: [{ type: "text", text: "(continue)" }] });
+    }
+
     const result: AnthropicMessagesBody = {
         model: options.model,
         max_tokens: body.max_tokens ?? body.max_completion_tokens ?? options.maxTokensDefault ?? DEFAULT_MAX_TOKENS,
-        messages: coalesce(mapped),
+        messages,
     };
 
     const system = extractSystem(objectMessages);

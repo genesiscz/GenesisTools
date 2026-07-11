@@ -158,4 +158,14 @@ describe("OpenAiSubscriptionProvider", () => {
         expect(text).toContain("CODEX");
         expect(text).toContain("[DONE]");
     });
+
+    it("returns 400 (not a 502) for a non-object JSON body", async () => {
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+
+        const req = new Request("http://localhost/v1/responses", { method: "POST", body: "null" });
+        const res = await provider.responses(req, "gpt-5.5", "null");
+
+        expect(res.status).toBe(400);
+    });
 });
