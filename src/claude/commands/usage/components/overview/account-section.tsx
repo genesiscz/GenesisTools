@@ -169,14 +169,62 @@ function SpendRow({ spend, barWidth }: SpendRowProps) {
     );
 }
 
+function visibleLimitsFor(account: AccountUsage, prominentBuckets: string[]): NormalizedLimit[] {
+    if (!account.usage) {
+        return [];
+    }
+
+    const limits = normalizeLimits(account.usage);
+    const sessionAt100 = limits.some((l) => l.bucket === "five_hour" && l.percent >= 100);
+    const weeklyAt100 = limits.some((l) => l.bucket === "seven_day" && l.percent >= 100);
+
+    if (sessionAt100 || weeklyAt100) {
+        return limits;
+    }
+
+    return limits.filter((l) => prominentBuckets.includes(l.bucket) || l.percent > 0);
+}
+
+/**
+ * Rendered line count of an AccountSection, used by OverviewView to decide
+ * when the account list overflows the viewport and must split into columns.
+ */
+export function estimateAccountHeight(account: AccountUsage, prominentBuckets: string[]): number {
+    // Header + marginBottom are always present.
+    if (!account.usage) {
+        // Error line or "No usage data" line.
+        return 3;
+    }
+
+    let lines = 2;
+
+    if (account.stale) {
+        lines += 1;
+    }
+
+    for (const limit of visibleLimitsFor(account, prominentBuckets)) {
+        const notUsed = !limit.resets_at && limit.percent === 0;
+        lines += notUsed || limit.resets_at ? 2 : 1;
+    }
+
+    const spend = normalizeSpend(account.usage);
+    if (spend?.enabled) {
+        lines += 2;
+    }
+
+    return lines;
+}
+
 interface AccountSectionProps {
     account: AccountUsage;
     prominentBuckets: string[];
+    /** Column width in cells; defaults to the full terminal width. */
+    width?: number;
 }
 
-export function AccountSection({ account, prominentBuckets }: AccountSectionProps) {
+export function AccountSection({ account, prominentBuckets, width }: AccountSectionProps) {
     const { columns: termWidth } = useTerminalSize();
-    const barWidth = Math.max(MIN_BAR_WIDTH, termWidth - FIXED_OVERHEAD);
+    const barWidth = Math.max(MIN_BAR_WIDTH, (width ?? termWidth) - FIXED_OVERHEAD);
 
     const header = account.label ? `${account.accountName} (${account.label})` : account.accountName;
 
@@ -203,14 +251,8 @@ export function AccountSection({ account, prominentBuckets }: AccountSectionProp
         : null;
     const staleReason = account.stale ? shortStaleReason(account.stale.reason) : null;
 
-    const limits = normalizeLimits(account.usage);
     const spend = normalizeSpend(account.usage);
-
-    const sessionAt100 = limits.some((l) => l.bucket === "five_hour" && l.percent >= 100);
-    const weeklyAt100 = limits.some((l) => l.bucket === "seven_day" && l.percent >= 100);
-    const showAll = sessionAt100 || weeklyAt100;
-
-    const visibleLimits = showAll ? limits : limits.filter((l) => prominentBuckets.includes(l.bucket) || l.percent > 0);
+    const visibleLimits = visibleLimitsFor(account, prominentBuckets);
 
     return (
         <Box flexDirection="column" marginBottom={1}>
