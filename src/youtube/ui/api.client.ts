@@ -10,6 +10,7 @@ import type {
     TimestampedSummaryEntry,
     Transcript,
     Video,
+    VideoComment,
     VideoId,
     VideoLongSummary,
     YoutubeConfigShape,
@@ -109,6 +110,7 @@ export const apiClient = {
                 ["source", opts.source],
             ])
         ),
+    getComments: (id: VideoId) => api<{ comments: VideoComment[] }>(`/videos/${encodeURIComponent(id)}/comments`),
     getSummary: async (id: VideoId, mode: "short" | "timestamped" | "long") => {
         const response = await api<{
             summary?: string | TimestampedSummaryEntry[] | VideoLongSummary | null;
