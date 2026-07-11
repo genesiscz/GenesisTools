@@ -69,12 +69,19 @@ describe("buildWhamResponsesBody", () => {
         const body = buildWhamResponsesBody(
             {
                 messages: [{ role: "user", content: "go" }],
-                tools: [{ type: "function", function: { name: "search", description: "d", parameters: { type: "object" } } }],
+                tools: [
+                    {
+                        type: "function",
+                        function: { name: "search", description: "d", parameters: { type: "object" } },
+                    },
+                ],
             },
             "gpt-5.5"
         );
 
-        expect(body.tools).toEqual([{ type: "function", name: "search", description: "d", parameters: { type: "object" } }]);
+        expect(body.tools).toEqual([
+            { type: "function", name: "search", description: "d", parameters: { type: "object" } },
+        ]);
     });
 });
 
@@ -118,7 +125,12 @@ describe("OpenAiSubscriptionProvider", () => {
         expect(headers.get("openai-beta")).toBe("responses=experimental");
 
         // body was converted to Responses shape with the concrete model + stream
-        const sentBody = SafeJSON.parse(String(capturedInit?.body)) as { model: string; stream: boolean; instructions: string; input: unknown[] };
+        const sentBody = SafeJSON.parse(String(capturedInit?.body)) as {
+            model: string;
+            stream: boolean;
+            instructions: string;
+            input: unknown[];
+        };
         expect(sentBody.model).toBe("gpt-5.5");
         expect(sentBody.stream).toBe(true);
         expect(sentBody.instructions).toBe("Be terse.");
@@ -126,7 +138,8 @@ describe("OpenAiSubscriptionProvider", () => {
     });
 
     it("streams chat.completion.chunk when the client requests streaming", async () => {
-        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) => whamStreamResponse()) as typeof fetch;
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) =>
+            whamStreamResponse()) as typeof fetch;
 
         const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
         const provider = await OpenAiSubscriptionProvider.create(account);

@@ -69,7 +69,10 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             ({ token, accountId } = await resolveOpenAiSubToken(this.account));
         } catch (err) {
             logger.warn({ err, account: this.account.name }, "ai-proxy: openai-subscription token resolution failed");
-            return jsonError(502, `Codex subscription token unavailable: ${err instanceof Error ? err.message : String(err)}`);
+            return jsonError(
+                502,
+                `Codex subscription token unavailable: ${err instanceof Error ? err.message : String(err)}`
+            );
         }
 
         const started = performance.now();
@@ -93,7 +96,13 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         if (!upstream.ok) {
             const errorText = await upstream.text();
             logger.warn(
-                { account: this.account.name, model: concreteModel, status: upstream.status, elapsedMs, body: errorText.slice(0, 500) },
+                {
+                    account: this.account.name,
+                    model: concreteModel,
+                    status: upstream.status,
+                    elapsedMs,
+                    body: errorText.slice(0, 500),
+                },
                 "ai-proxy: WHAM upstream request failed"
             );
 
@@ -149,9 +158,7 @@ function extractText(content: unknown): string {
     }
 
     if (Array.isArray(content)) {
-        return content
-            .map((part) => (isObject(part) && typeof part.text === "string" ? part.text : ""))
-            .join("");
+        return content.map((part) => (isObject(part) && typeof part.text === "string" ? part.text : "")).join("");
     }
 
     return "";
