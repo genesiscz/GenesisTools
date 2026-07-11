@@ -1,3 +1,4 @@
+import { setModalOpen } from "@app/claude/commands/usage/hooks/input-scope";
 import { useScroll } from "@app/claude/commands/usage/hooks/use-scroll";
 import { type SessionRow, useSessions } from "@app/claude/commands/usage/hooks/use-sessions";
 import type { NotificationManager } from "@app/claude/lib/usage/notification-manager";
@@ -77,6 +78,17 @@ export function SessionsView({ notifications }: SessionsViewProps) {
             }
         };
     }, []);
+
+    // While the action menu is open, its digit keys must not double as tab
+    // switches — that unmounts this view mid-action and reads as a crash.
+    useEffect(() => {
+        if (!actionMenu.open) {
+            return;
+        }
+
+        setModalOpen(true);
+        return () => setModalOpen(false);
+    }, [actionMenu.open]);
 
     // TabBar(1) + StatusBar(3) + paddingY(2) + hint(1) + colHeader(1) = 8 fixed lines
     // Each group header takes 1 line + marginTop(1) for non-first groups
@@ -293,8 +305,10 @@ export function SessionsView({ notifications }: SessionsViewProps) {
                 const isSelected = entry.flatIndex === selectedIndex;
                 const pingState = pingStatuses.get(s.sessionId);
                 const cacheColor = CACHE_STATUS_COLOR[s.cacheStatus] ?? "white";
-                const sessionLabel = s.title
-                    ? `${s.title.slice(0, 32)} (${s.sessionId.slice(0, 8)})`
+                // Control chars / newlines in titles break Ink's row layout.
+                const cleanTitle = s.title?.replace(/\p{Cc}+/gu, " ").trim();
+                const sessionLabel = cleanTitle
+                    ? `${cleanTitle.slice(0, 32)} (${s.sessionId.slice(0, 8)})`
                     : `(unnamed) (${s.sessionId.slice(0, 8)})`;
 
                 let pingIndicator = "";

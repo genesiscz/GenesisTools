@@ -9,6 +9,22 @@ import { Box, Text } from "ink";
 import { useEffect, useState } from "react";
 import { UsageBar } from "./usage-bar";
 
+function shortStaleReason(reason: string): string {
+    if (reason.includes("429")) {
+        return "rate limited";
+    }
+
+    if (reason.includes("invalid_grant")) {
+        return "needs re-login";
+    }
+
+    if (reason.includes("401")) {
+        return "auth failed";
+    }
+
+    return "fetch failing";
+}
+
 function formatResetCountdown(resetsAt: string | null): string | null {
     if (!resetsAt) {
         return null;
@@ -185,6 +201,7 @@ export function AccountSection({ account, prominentBuckets }: AccountSectionProp
     const staleAgo = account.stale
         ? formatRelativeTime(new Date(account.stale.lastSuccessAt), { compact: true })
         : null;
+    const staleReason = account.stale ? shortStaleReason(account.stale.reason) : null;
 
     const limits = normalizeLimits(account.usage);
     const spend = normalizeSpend(account.usage);
@@ -198,7 +215,7 @@ export function AccountSection({ account, prominentBuckets }: AccountSectionProp
     return (
         <Box flexDirection="column" marginBottom={1}>
             <Text bold>{`── ${header} ${"─".repeat(Math.max(0, 40 - header.length))}`}</Text>
-            {staleAgo ? <Text color="yellow">{`  ⚠ stale · updated ${staleAgo} · fetch failing`}</Text> : null}
+            {staleAgo ? <Text color="yellow">{`  ⚠ stale · updated ${staleAgo} · ${staleReason}`}</Text> : null}
             {visibleLimits.map((limit) => (
                 <BucketRow key={`${limit.bucket}:${limit.scope_model ?? ""}`} limit={limit} barWidth={barWidth} />
             ))}
