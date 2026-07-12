@@ -99,7 +99,10 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             });
         } catch (err) {
             logger.warn({ err, account: this.account.name }, "ai-proxy: WHAM upstream fetch failed");
-            return jsonError(502, `Failed to reach ChatGPT upstream: ${err instanceof Error ? err.message : String(err)}`);
+            return jsonError(
+                502,
+                `Failed to reach ChatGPT upstream: ${err instanceof Error ? err.message : String(err)}`
+            );
         }
 
         const elapsedMs = Math.round(performance.now() - started);
@@ -151,7 +154,10 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             accumulated = await accumulateResponsesJson(upstream.body);
         } catch (err) {
             logger.warn({ err, account: this.account.name }, "ai-proxy: failed to accumulate WHAM response");
-            return jsonError(502, `Failed to read ChatGPT upstream response: ${err instanceof Error ? err.message : String(err)}`);
+            return jsonError(
+                502,
+                `Failed to read ChatGPT upstream response: ${err instanceof Error ? err.message : String(err)}`
+            );
         }
 
         if (accumulated.failed) {

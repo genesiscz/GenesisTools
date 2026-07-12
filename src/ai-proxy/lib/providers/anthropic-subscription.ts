@@ -113,7 +113,10 @@ export class AnthropicSubscriptionProvider implements ProxyProvider {
                 { err, account: this.account.name, model: concreteModel },
                 "ai-proxy: anthropic upstream fetch failed"
             );
-            return jsonError(502, `Failed to reach Anthropic upstream: ${err instanceof Error ? err.message : String(err)}`);
+            return jsonError(
+                502,
+                `Failed to reach Anthropic upstream: ${err instanceof Error ? err.message : String(err)}`
+            );
         }
 
         const elapsedMs = Math.round(performance.now() - started);
