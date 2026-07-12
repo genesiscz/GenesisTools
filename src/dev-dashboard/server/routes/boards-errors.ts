@@ -17,7 +17,7 @@ export function boardsError(err: unknown): RouteResult {
         return { kind: "json", status: 404, body: { error: err.message || "not found" } };
     }
     if (err instanceof CancelledError) {
-        logger.info({ err: err.message }, "boards error: write against a cancelled annotation");
+        logger.warn({ err: err.message }, "boards error: write against a cancelled annotation");
         return { kind: "json", status: 409, body: { error: "annotation cancelled", code: "cancelled" } };
     }
     if (err instanceof NotCancellableError) {
@@ -29,7 +29,7 @@ export function boardsError(err: unknown): RouteResult {
         return { kind: "json", status: 409, body: { error: "not undoable", code: "not_undoable" } };
     }
     if (err instanceof NameConflictError || err instanceof SlugConflictError) {
-        logger.info({ err: err.message }, "boards error: name/slug conflict");
+        logger.warn({ err: err.message }, "boards error: name/slug conflict");
         return { kind: "json", status: 409, body: { error: err.message || "conflict", code: "conflict" } };
     }
     if (err instanceof InvalidStatusError) {

@@ -61,7 +61,9 @@ export function boardsWorkRoutes(): RouteDef[] {
                     const session = ctx.query.get("session") ?? "";
                     const actor = ctx.query.get("actor") ?? "";
                     const takeover = ctx.query.get("takeover") === "1";
+
                     logger.debug({ scope, session, actor, timeoutSec, takeover }, "boards wait: armed");
+
                     if (session && !scope) {
                         logger.warn({ session, actor }, "boards wait: leased wait without a scope rejected");
                         return {
@@ -70,6 +72,7 @@ export function boardsWorkRoutes(): RouteDef[] {
                             body: { error: "leased waits require a scope (board | project | all=1)" },
                         };
                     }
+
                     const startedAt = Date.now();
                     const deadline = startedAt + timeoutSec * 1000;
                     let leaseId: number | undefined;
