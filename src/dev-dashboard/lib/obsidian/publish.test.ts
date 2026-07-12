@@ -1,35 +1,35 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
     findPublishedByPath,
     findPublishedBySlug,
     publishNote,
     unpublishNote,
 } from "@app/dev-dashboard/lib/obsidian/publish";
-import { getDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
-
-const storage = getDevDashboardStorage();
-
-let originalConfig: string | null = null;
+import { getDevDashboardStorage, resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
+import { env } from "@app/utils/env";
 
 describe("obsidian publish registry", () => {
-    beforeAll(async () => {
-        const configPath = storage.getConfigPath();
-        originalConfig = existsSync(configPath) ? await Bun.file(configPath).text() : null;
-    });
+    let dir = "";
 
     beforeEach(async () => {
-        await storage.setConfig({ port: 3042, obsidianVault: "/x", publishedNotes: [], cmuxPollIntervalMs: 2000 });
+        dir = mkdtempSync(join(tmpdir(), "publish-registry-"));
+        env.testing.set("GENESIS_TOOLS_HOME", dir);
+        resetDevDashboardStorage();
+        await getDevDashboardStorage().setConfig({
+            port: 3042,
+            obsidianVault: "/x",
+            publishedNotes: [],
+            cmuxPollIntervalMs: 2000,
+        });
     });
 
-    afterAll(async () => {
-        if (originalConfig === null) {
-            await storage.clearConfig();
-            return;
-        }
-
-        await storage.ensureDirs();
-        await Bun.write(storage.getConfigPath(), originalConfig);
+    afterEach(() => {
+        env.testing.unset("GENESIS_TOOLS_HOME");
+        resetDevDashboardStorage();
+        rmSync(dir, { recursive: true, force: true });
     });
 
     test("publishNote stores a unique slug and round-trips by slug", async () => {

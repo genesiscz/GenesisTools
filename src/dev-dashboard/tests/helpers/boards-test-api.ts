@@ -1,4 +1,5 @@
 import { appendFileSync } from "node:fs";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import type { APIRequestContext } from "@playwright/test";
 import { expect } from "@playwright/test";
@@ -34,7 +35,7 @@ export async function freshBoard(request: APIRequestContext, prefix: string): Pr
     const res = await request.post("/api/boards", { data: { slug, title: `Playwright ${prefix}` } });
     expect(res.status(), `create board ${slug}`).toBe(201);
 
-    const slugsFile = process.env.PW_RUN_SLUGS_FILE;
+    const slugsFile = env.get("PW_RUN_SLUGS_FILE");
 
     if (slugsFile) {
         appendFileSync(slugsFile, `${slug}\n`);

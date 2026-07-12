@@ -8,7 +8,7 @@ import { SafeJSON } from "@app/utils/json";
  *  singleton dev-dashboard server (localhost:3042) don't archive each other's boards. Archive,
  *  not delete — the server has no hard-delete and the data stays recoverable. */
 export default async function globalTeardown(): Promise<void> {
-    const slugsFile = process.env.PW_RUN_SLUGS_FILE;
+    const slugsFile = env.get("PW_RUN_SLUGS_FILE");
 
     if (!slugsFile || !existsSync(slugsFile)) {
         return;
@@ -37,6 +37,11 @@ export default async function globalTeardown(): Promise<void> {
         const { boards } = SafeJSON.parse(await res.text(), { strict: true }) as {
             boards: Array<{ slug: string; archived: boolean }>;
         };
+
+        if (!Array.isArray(boards)) {
+            logger.warn("[boards tests] teardown GET /api/boards returned unexpected shape");
+            return;
+        }
 
         for (const board of boards) {
             if (!created.has(board.slug) || board.archived) {
