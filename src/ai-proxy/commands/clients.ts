@@ -30,6 +30,18 @@ export async function clientsAdd(input: {
     costCap?: number;
     providers?: AiProxyProviderType[];
 }): Promise<void> {
+    if (input.tokenCap !== undefined && (!Number.isFinite(input.tokenCap) || input.tokenCap <= 0)) {
+        out.log.error("--token-cap must be a positive number");
+        process.exitCode = 1;
+        return;
+    }
+
+    if (input.costCap !== undefined && (!Number.isFinite(input.costCap) || input.costCap <= 0)) {
+        out.log.error("--cost-cap must be a positive number");
+        process.exitCode = 1;
+        return;
+    }
+
     const config = await loadConfigFresh();
     const key = randomBytes(24).toString("base64url");
     const client: AiProxyClientConfig = {

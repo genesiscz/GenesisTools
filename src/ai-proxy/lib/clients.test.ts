@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
-    OWNER_CLIENT_NAME,
     clientProviderDenial,
+    OWNER_CLIENT_NAME,
     resolveClient,
     SUBSCRIPTION_PROVIDER_TYPES,
     validateClients,
@@ -34,6 +34,19 @@ describe("validateClients", () => {
         expect(problems.some((p) => p.includes("subscription providers cannot be granted"))).toBe(true);
         expect(SUBSCRIPTION_PROVIDER_TYPES.has("anthropic-subscription")).toBe(true);
     });
+
+    it("reports malformed name/key/allowedProviders instead of throwing", () => {
+        const malformed = { name: 123, key: true, allowedProviders: {} } as unknown as AiProxyClientConfig;
+        const problems = validateClients([malformed]);
+        expect(problems.some((p) => p.includes("not a string"))).toBe(true);
+        expect(problems.some((p) => p.includes("key must be a string"))).toBe(true);
+        expect(problems.some((p) => p.includes("allowedProviders must be an array"))).toBe(true);
+    });
+
+    it("reports a non-array clients config instead of throwing", () => {
+        const malformed = { owner: true } as unknown as AiProxyClientConfig[];
+        expect(validateClients(malformed)).toEqual(["clients config must be an array of client entries"]);
+    });
 });
 
 function reqWithBearer(token: string | null): Request {
@@ -65,6 +78,23 @@ describe("resolveClient", () => {
         expect(resolveClient(reqWithBearer(null), cfg())).toBeNull();
         expect(resolveClient(reqWithBearer("mallory-key-0123456"), cfg([disabled]))).toBeNull();
     });
+
+    it("skips a non-string client key and doesn't throw", () => {
+        const malformed = { name: "mallory", key: 12345 } as unknown as NonNullable<AiProxyConfig["clients"]>[number];
+        expect(resolveClient(reqWithBearer("owner-key-0123456789"), cfg([malformed]))).toEqual({
+            name: "owner",
+            isOwner: true,
+        });
+        expect(resolveClient(reqWithBearer("anything"), cfg([malformed]))).toBeNull();
+    });
+
+    it("treats a non-array clients config as empty instead of throwing", () => {
+        const malformed = { owner: true } as unknown as AiProxyConfig["clients"];
+        expect(resolveClient(reqWithBearer("owner-key-0123456789"), cfg(malformed))).toEqual({
+            name: "owner",
+            isOwner: true,
+        });
+    });
 });
 
 describe("clientProviderDenial", () => {
@@ -94,5 +124,15 @@ describe("clientProviderDenial", () => {
     it("allowedProviders restricts to the listed set", () => {
         expect(clientProviderDenial(bob, "xai-api-key")).toBeNull();
         expect(clientProviderDenial(bob, "openai")).toContain("not allowed");
+    });
+
+    it("treats a non-array allowedProviders as unrestricted instead of throwing", () => {
+        const malformed = {
+            name: "eve",
+            isOwner: false,
+            config: { name: "eve", key: "e".repeat(24), allowedProviders: {} },
+        } as unknown as Parameters<typeof clientProviderDenial>[0];
+        expect(clientProviderDenial(malformed, "xai-api-key")).toBeNull();
+        expect(clientProviderDenial(malformed, "anthropic-subscription")).toContain("subscription");
     });
 });

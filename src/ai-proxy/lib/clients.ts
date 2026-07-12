@@ -20,7 +20,15 @@ export const SUBSCRIPTION_PROVIDER_TYPES: ReadonlySet<AiProxyProviderType> = new
 ]);
 
 export function validateClients(clients: AiProxyClientConfig[] | undefined): string[] {
-    if (!clients || clients.length === 0) {
+    if (clients === undefined) {
+        return [];
+    }
+
+    if (!Array.isArray(clients)) {
+        return ["clients config must be an array of client entries"];
+    }
+
+    if (clients.length === 0) {
         return [];
     }
 
@@ -29,8 +37,8 @@ export function validateClients(clients: AiProxyClientConfig[] | undefined): str
     const keys = new Set<string>();
 
     for (const client of clients) {
-        if (!client.name || client.name.trim() !== client.name || client.name.length === 0) {
-            problems.push(`client name ${SafeStr(client.name)} is empty or has surrounding whitespace`);
+        if (typeof client.name !== "string" || client.name.trim() !== client.name || client.name.length === 0) {
+            problems.push(`client name ${SafeStr(client.name)} is empty, not a string, or has surrounding whitespace`);
         }
 
         if (client.name === OWNER_CLIENT_NAME) {
@@ -43,8 +51,8 @@ export function validateClients(clients: AiProxyClientConfig[] | undefined): str
 
         names.add(client.name);
 
-        if (!client.key || client.key.length < MIN_KEY_LENGTH) {
-            problems.push(`client "${client.name}": key must be at least ${MIN_KEY_LENGTH} characters`);
+        if (typeof client.key !== "string" || client.key.length < MIN_KEY_LENGTH) {
+            problems.push(`client "${client.name}": key must be a string of at least ${MIN_KEY_LENGTH} characters`);
         }
 
         if (keys.has(client.key)) {
@@ -53,11 +61,15 @@ export function validateClients(clients: AiProxyClientConfig[] | undefined): str
 
         keys.add(client.key);
 
-        for (const provider of client.allowedProviders ?? []) {
-            if (SUBSCRIPTION_PROVIDER_TYPES.has(provider)) {
-                problems.push(
-                    `client "${client.name}": subscription providers cannot be granted to clients (${provider})`
-                );
+        if (client.allowedProviders !== undefined && !Array.isArray(client.allowedProviders)) {
+            problems.push(`client "${client.name}": allowedProviders must be an array`);
+        } else {
+            for (const provider of client.allowedProviders ?? []) {
+                if (SUBSCRIPTION_PROVIDER_TYPES.has(provider)) {
+                    problems.push(
+                        `client "${client.name}": subscription providers cannot be granted to clients (${provider})`
+                    );
+                }
             }
         }
     }
@@ -99,7 +111,11 @@ export function resolveClient(req: Request, config: AiProxyConfig): ResolvedClie
         resolved = { name: OWNER_CLIENT_NAME, isOwner: true };
     }
 
-    for (const client of config.clients ?? []) {
+    for (const client of Array.isArray(config.clients) ? config.clients : []) {
+        if (typeof client.key !== "string") {
+            continue;
+        }
+
         const matches = digestsEqual(token, client.key);
 
         if (matches && !client.disabled && resolved === null) {
@@ -127,7 +143,7 @@ export function clientProviderDenial(client: ResolvedClient, providerType: AiPro
 
     const allowed = client.config?.allowedProviders;
 
-    if (allowed && !allowed.includes(providerType)) {
+    if (Array.isArray(allowed) && !allowed.includes(providerType)) {
         return `provider "${providerType}" is not allowed for client "${client.name}"`;
     }
 

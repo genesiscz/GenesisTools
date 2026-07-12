@@ -23,10 +23,12 @@ export interface ClientLedgerStore {
 }
 
 let dirOverride: string | null = null;
+let cachedLedger: ClientLedgerStore | null = null;
 
 /** Test hook — point the ledger at a temp dir. Pass null to restore. */
 export function setClientLedgerDirForTests(dir: string | null): void {
     dirOverride = dir;
+    cachedLedger = null;
 }
 
 function ledgerDir(): string {
@@ -46,17 +48,24 @@ export function monthKeyFromTs(ts: string): string {
 }
 
 export function readClientLedger(): ClientLedgerStore {
+    if (cachedLedger) {
+        return cachedLedger;
+    }
+
     const path = ledgerPath();
 
     if (!existsSync(path)) {
-        return emptyLedger();
+        cachedLedger = emptyLedger();
+        return cachedLedger;
     }
 
     try {
-        return SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as ClientLedgerStore;
+        cachedLedger = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as ClientLedgerStore;
+        return cachedLedger;
     } catch (err) {
         logger.warn({ err, path }, "ai-proxy: client ledger unreadable, starting fresh");
-        return emptyLedger();
+        cachedLedger = emptyLedger();
+        return cachedLedger;
     }
 }
 
