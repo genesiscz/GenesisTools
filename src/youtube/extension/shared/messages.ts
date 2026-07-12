@@ -6,6 +6,7 @@ import type {
     PipelineJob,
     Transcript,
     Video,
+    VideoComment,
     VideoId,
 } from "@app/youtube/lib/types";
 import type { ExtensionConfig } from "@ext/shared/types";
@@ -17,6 +18,7 @@ export type ExtensionRequest =
     | { type: "api:addChannel"; handle: ChannelHandle }
     | { type: "api:getVideo"; id: VideoId }
     | { type: "api:getTranscript"; id: VideoId; lang?: string; source?: "captions" | "ai" }
+    | { type: "api:getComments"; id: VideoId }
     | { type: "api:getSummary"; id: VideoId; mode: "short" | "timestamped" }
     | {
           type: "api:generateSummary";
@@ -42,6 +44,7 @@ export interface ExtensionApiMap {
     "api:addChannel": { added: ChannelHandle[] };
     "api:getVideo": { video: Video; transcripts: Transcript[] };
     "api:getTranscript": { transcript: Transcript };
+    "api:getComments": { comments: VideoComment[] };
     "api:getSummary": {
         summary?: string | Array<{ startSec: number; endSec: number; text: string }>;
         mode?: "short" | "timestamped";

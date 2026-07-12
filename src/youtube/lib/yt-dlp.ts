@@ -2,6 +2,8 @@ import { stat } from "node:fs/promises";
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
+import type { FetchCommentsOpts, FetchedComment } from "@app/youtube/lib/comments.types";
+import type { VideoId } from "@app/youtube/lib/video.types";
 import type {
     DownloadAudioOpts,
     DownloadAudioResult,
@@ -43,6 +45,20 @@ interface RawDumpJson {
     uploader_id?: string;
     channel_id?: string;
     channel?: string;
+}
+
+interface RawComment {
+    id?: string;
+    text?: string;
+    author?: string;
+    author_id?: string;
+    like_count?: number;
+    timestamp?: number;
+    parent?: string;
+}
+
+interface RawCommentsDump {
+    comments?: RawComment[];
 }
 
 export async function checkYtDlp(): Promise<YtDlpAvailability> {
@@ -184,6 +200,33 @@ export async function dumpVideoMetadata(
         channelId: raw.channel_id ?? null,
         channelTitle: raw.channel ?? null,
     };
+}
+
+export async function fetchComments(videoId: VideoId, opts: FetchCommentsOpts = {}): Promise<FetchedComment[]> {
+    const target = normalizeVideoTarget(videoId);
+    logger.info({ videoId, max: opts.max }, "yt-dlp fetchComments started");
+    const args = ["yt-dlp", "--skip-download", "--write-comments", "--dump-single-json", "--no-warnings"];
+
+    if (opts.max && opts.max > 0) {
+        args.push("--extractor-args", `youtube:max_comments=${opts.max},all,all`);
+    }
+
+    args.push(target);
+    const proc = Bun.spawn(args, { stdio: ["ignore", "pipe", "pipe"], signal: opts.signal });
+    const stdout = await new Response(proc.stdout).text();
+    const exit = await proc.exited;
+
+    if (exit !== 0) {
+        const stderr = await new Response(proc.stderr).text();
+        logger.error({ videoId, exit, stderr: stderr.trim() }, "yt-dlp fetchComments failed");
+        throw new Error(`yt-dlp fetchComments failed: ${stderr.trim()}`);
+    }
+
+    const raw = SafeJSON.parse(stdout, { strict: true }) as RawCommentsDump | undefined;
+    const comments = (raw?.comments ?? []).flatMap(normalizeComment);
+    logger.info({ videoId, comments: comments.length }, "yt-dlp fetchComments completed");
+
+    return comments;
 }
 
 export async function downloadAudio(opts: DownloadAudioOpts): Promise<DownloadAudioResult> {
@@ -348,6 +391,32 @@ function normalizeListedVideo(entry: RawListedVideo, tab: ChannelTab): ListedVid
             isLive: entry.live_status === "is_live" || entry.live_status === "is_upcoming",
         },
     ];
+}
+
+function normalizeComment(raw: RawComment): FetchedComment[] {
+    if (!raw.id || typeof raw.text !== "string") {
+        return [];
+    }
+
+    return [
+        {
+            commentId: raw.id,
+            author: raw.author ?? null,
+            authorId: raw.author_id ?? null,
+            text: raw.text,
+            likeCount: typeof raw.like_count === "number" ? raw.like_count : null,
+            publishedAt: normalizeTimestampToIso(raw.timestamp),
+            parentCommentId: raw.parent && raw.parent !== "root" ? raw.parent : null,
+        },
+    ];
+}
+
+function normalizeTimestampToIso(unixSeconds?: number): string | null {
+    if (typeof unixSeconds !== "number" || !Number.isFinite(unixSeconds) || unixSeconds <= 0) {
+        return null;
+    }
+
+    return new Date(unixSeconds * 1000).toISOString();
 }
 
 function normalizeUploadDate(uploadDate?: string): string | null {

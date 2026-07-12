@@ -10,6 +10,7 @@ import type {
     TimestampedSummaryEntry,
     Transcript,
     Video,
+    VideoComment,
     VideoId,
     VideoLongSummary,
 } from "@app/youtube/lib/types";
@@ -53,6 +54,14 @@ export function useTranscript(id: VideoId | null, opts: { lang?: string; source?
                 lang: opts.lang,
                 source: opts.source,
             }),
+        enabled: id !== null,
+    });
+}
+
+export function useComments(id: VideoId | null) {
+    return useQuery({
+        queryKey: ["comments", id],
+        queryFn: () => send<{ comments: VideoComment[] }>({ type: "api:getComments", id: id as VideoId }),
         enabled: id !== null,
     });
 }
@@ -154,6 +163,7 @@ export function useJob(id: number | null) {
 export const dataSource: VideoDetailDataSource = {
     useVideo,
     useTranscript,
+    useComments,
     useSummary,
     useGenerateSummary,
     useAskVideo,

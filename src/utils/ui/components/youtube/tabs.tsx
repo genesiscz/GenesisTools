@@ -10,6 +10,7 @@ import type {
     TimestampedSummaryEntry,
     Transcript,
     Video,
+    VideoComment,
     VideoId,
     VideoLongSummary,
 } from "@app/youtube/lib/types";
@@ -31,6 +32,10 @@ export interface VideoDetailDataSource {
         id: VideoId | null,
         opts?: { lang?: string; source?: "captions" | "ai" }
     ) => { data: { transcript: Transcript } | undefined; isPending: boolean };
+    useComments: (id: VideoId | null) => {
+        data: { comments: VideoComment[] } | undefined;
+        isPending: boolean;
+    };
     useSummary: (
         id: VideoId | null,
         mode: "short" | "timestamped" | "long"
@@ -110,7 +115,7 @@ export function VideoDetailTabs({ videoId, ds, active, onActiveChange, onSeek, r
                 <SummaryTab videoId={videoId} useSummary={ds.useSummary} useGenerateSummary={ds.useGenerateSummary} />
             </TabsContent>
             <TabsContent value="comments">
-                <CommentsTab />
+                <CommentsTab videoId={videoId} useComments={ds.useComments} runPipeline={runPipeline} />
             </TabsContent>
             <TabsContent value="transcript">
                 <TranscriptTab

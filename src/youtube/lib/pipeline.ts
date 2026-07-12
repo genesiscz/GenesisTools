@@ -246,6 +246,7 @@ export class Pipeline {
         switch (stage) {
             case "discover":
             case "metadata":
+            case "comments":
             case "captions":
             case "audio":
                 return Math.max(1, concurrency.download);
@@ -270,7 +271,16 @@ export class Pipeline {
     }
 }
 
-const JOB_STAGES: JobStage[] = ["discover", "metadata", "captions", "audio", "video", "transcribe", "summarize"];
+const JOB_STAGES: JobStage[] = [
+    "discover",
+    "metadata",
+    "comments",
+    "captions",
+    "audio",
+    "video",
+    "transcribe",
+    "summarize",
+];
 
 function remainingStagesAfter(job: PipelineJob, claimedStage: JobStage): JobStage[] {
     if (job.targetKind === "channel" && claimedStage === "discover") {

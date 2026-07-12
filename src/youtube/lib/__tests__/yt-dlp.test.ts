@@ -9,6 +9,7 @@ import {
     downloadAudio,
     downloadVideo,
     dumpVideoMetadata,
+    fetchComments,
     listChannelVideos,
 } from "@app/youtube/lib/yt-dlp";
 
@@ -216,6 +217,90 @@ describe("dumpVideoMetadata", () => {
         spyOn(Bun, "spawn").mockImplementation(() => mockProcess("", "bad video", 1));
 
         await expect(dumpVideoMetadata("bad")).rejects.toThrow("yt-dlp dumpVideoMetadata failed: bad video");
+    });
+});
+
+describe("fetchComments", () => {
+    it("parses the single-json comments array and maps parent/root + timestamps", async () => {
+        spyOn(Bun, "spawn").mockImplementation((cmd) => {
+            spawnCalls.push(cmd as string[]);
+
+            return mockProcess(
+                SafeJSON.stringify({
+                    id: "abc123def45",
+                    title: "A video",
+                    comments: [
+                        {
+                            id: "c1",
+                            text: "Top comment",
+                            author: "@alice",
+                            author_id: "UCalice",
+                            like_count: 42,
+                            timestamp: 1_760_000_000,
+                            parent: "root",
+                        },
+                        {
+                            id: "c1.1",
+                            text: "A reply",
+                            author: "@bob",
+                            author_id: "UCbob",
+                            like_count: 0,
+                            timestamp: 1_760_000_500,
+                            parent: "c1",
+                        },
+                    ],
+                })
+            );
+        });
+
+        const comments = await fetchComments("abc123def45", { max: 50 });
+
+        expect(comments).toEqual([
+            {
+                commentId: "c1",
+                author: "@alice",
+                authorId: "UCalice",
+                text: "Top comment",
+                likeCount: 42,
+                publishedAt: new Date(1_760_000_000 * 1000).toISOString(),
+                parentCommentId: null,
+            },
+            {
+                commentId: "c1.1",
+                author: "@bob",
+                authorId: "UCbob",
+                text: "A reply",
+                likeCount: 0,
+                publishedAt: new Date(1_760_000_500 * 1000).toISOString(),
+                parentCommentId: "c1",
+            },
+        ]);
+        expect(spawnCalls[0]).toEqual([
+            "yt-dlp",
+            "--skip-download",
+            "--write-comments",
+            "--dump-single-json",
+            "--no-warnings",
+            "--extractor-args",
+            "youtube:max_comments=50,all,all",
+            "https://www.youtube.com/watch?v=abc123def45",
+        ]);
+    });
+
+    it("returns an empty array when there are no comments", async () => {
+        spyOn(Bun, "spawn").mockImplementation((cmd) => {
+            spawnCalls.push(cmd as string[]);
+
+            return mockProcess(SafeJSON.stringify({ id: "abc123def45", title: "A video" }));
+        });
+
+        await expect(fetchComments("abc123def45")).resolves.toEqual([]);
+    });
+
+    it("throws stderr when comment extraction fails", async () => {
+        spyOn(Bun, "spawn").mockImplementation(() => mockProcess("", "no comments allowed", 1));
+
+        await expect(fetchComments("bad")).rejects.toThrow("yt-dlp fetchComments failed: no comments allowed");
     });
 });
 
