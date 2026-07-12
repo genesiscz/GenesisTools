@@ -128,6 +128,21 @@ The proxy appends one JSON object per completed request under `~/.genesis-tools/
 
 Data stays on disk locally only. To reset history, truncate or delete `requests.jsonl` (and optionally `daily.json`).
 
+### Client billing (2026-07)
+
+Multi-user (VPS) mode: give each downstream user its own key via `clients` in `~/.genesis-tools/ai-proxy/config.json`, while `proxyApiKey` stays the owner key. Example:
+
+```json
+"clients": [
+  { "name": "eve-service", "key": "<32+ char secret>", "monthlyTokenCap": 5000000, "monthlyCostCapUsd": 25 }
+]
+```
+
+- **No-resale invariant:** client keys can NEVER route to subscription providers (grok / copilot / anthropic / openai subscription) — only `proxyApiKey` (owner) can. Client attempts get `403 {"type":"forbidden","code":"provider_not_allowed"}`; a config that grants a subscription provider to a client refuses to boot.
+- **Quotas:** `monthlyTokenCap` / `monthlyCostCapUsd` are enforced per UTC month against `usage/clients.json`; over-cap requests get `429 {"type":"quota_exceeded","code":"monthly_quota_exceeded"}`.
+- **Manage:** `tools ai-proxy clients add <name> [--token-cap N] [--cost-cap USD] [--provider <type>...]` prints the generated key ONCE; `tools ai-proxy clients list` (keys masked); `tools ai-proxy clients usage [--month YYYY-MM] [--csv]` (CSV = the v1 invoicing export).
+- **eve-service:** eve connects as ONE client key (`eve-service`) with its own caps — set that key as eve's OpenAI-compatible API key against the proxy; splitting eve traffic per end-user is a later plan.
+
 ## Internal
 
 ```bash
