@@ -1,9 +1,16 @@
 import type { PortInfo, PortsResult } from "@app/dev-dashboard/lib/ports/types";
+import { fuzzySearchByHaystack } from "@app/utils/fuzzy-search";
+import { useState } from "react";
+import { SearchInput } from "@/components/SearchInput";
 
 interface PortsTableProps {
     result: PortsResult;
     onKill: (port: PortInfo) => void;
     killingPid: number | null;
+}
+
+function portHaystack(p: PortInfo): string {
+    return [p.port, p.command, p.fullCommand, p.title, p.pid, p.address].filter(Boolean).join(" ");
 }
 
 function protoLabel(proto: PortInfo["proto"]): string {
@@ -15,6 +22,8 @@ function sortByPortAsc(ports: PortInfo[]): PortInfo[] {
 }
 
 export function PortsTable({ result, onKill, killingPid }: PortsTableProps) {
+    const [query, setQuery] = useState("");
+
     if (!result.lsofAvailable) {
         return (
             <div className="dd-panel flex h-full items-center justify-center p-8 text-center text-[var(--dd-text-muted)]">
@@ -23,11 +32,23 @@ export function PortsTable({ result, onKill, killingPid }: PortsTableProps) {
         );
     }
 
-    const ports = sortByPortAsc(result.ports);
+    const sorted = sortByPortAsc(result.ports);
+    const ports = fuzzySearchByHaystack(sorted, query, portHaystack).items;
 
     return (
         <div className="dd-panel flex flex-col gap-4 p-4">
-            <h3 className="dd-accent-text text-lg font-semibold">Listening ports ({ports.length})</h3>
+            <div className="flex items-center justify-between gap-4">
+                <h3 className="dd-accent-text text-lg font-semibold">
+                    Listening ports ({ports.length}
+                    {query ? ` / ${sorted.length}` : ""})
+                </h3>
+                <SearchInput
+                    value={query}
+                    onChange={setQuery}
+                    placeholder="Search ports — command, pid, address…"
+                    className="max-w-xs"
+                />
+            </div>
             <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                     <thead>
@@ -85,7 +106,9 @@ export function PortsTable({ result, onKill, killingPid }: PortsTableProps) {
                     </tbody>
                 </table>
                 {ports.length === 0 ? (
-                    <p className="px-2 py-4 text-[var(--dd-text-muted)]">No listening ports.</p>
+                    <p className="px-2 py-4 text-[var(--dd-text-muted)]">
+                        {query ? `No ports match "${query}".` : "No listening ports."}
+                    </p>
                 ) : null}
             </div>
         </div>
