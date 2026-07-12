@@ -8,8 +8,14 @@ import type { ArrangeMode } from "./schemas";
 
 type OptionInput = string | { label: string; hint?: string; recommended?: boolean };
 
-/** The authoritative clickable page for a board — relay THIS to the user, never a guessed host/port. */
-async function boardPageUrl(slug: string): Promise<string> {
+/** The authoritative clickable page for a board — relay THIS to the user, never a guessed
+ *  host/port. The server's response `url` (built from its public-host config) wins; the API
+ *  base is only the fallback for servers that predate the field. */
+async function boardPageUrl(res: Record<string, unknown>, slug: string): Promise<string> {
+    if (typeof res.url === "string") {
+        return res.url;
+    }
+
     return `${await boardsBaseUrl()}/boards/${slug}`;
 }
 
@@ -22,7 +28,7 @@ export async function handleCreateBoard(args: { slug: string; title?: string; pr
             ...(args.project ? { project: args.project } : {}),
         }),
     });
-    return compact({ ...res, url: await boardPageUrl(args.slug) });
+    return compact({ ...res, url: await boardPageUrl(res, args.slug) });
 }
 
 export async function handleAskBoard(args: {
@@ -69,7 +75,7 @@ export async function handleComposeBoard(args: {
                 questions: args.questions ?? [],
             }),
         });
-        return compact({ ...res, url: await boardPageUrl(args.board) });
+        return compact({ ...res, url: await boardPageUrl(res, args.board) });
     } catch (err) {
         if (err instanceof BoardsHttpError && err.status === 404) {
             throw new Error(

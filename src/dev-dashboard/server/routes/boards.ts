@@ -26,6 +26,7 @@ import { publishBoardEvent, subscribeBoard } from "@app/dev-dashboard/lib/boards
 import { readImageDims } from "@app/dev-dashboard/lib/boards/image-size";
 import { notifyLayoutChanged } from "@app/dev-dashboard/lib/boards/layout-engine";
 import { sectionsToJSON } from "@app/dev-dashboard/lib/boards/sections";
+import { publicBaseUrl } from "@app/dev-dashboard/lib/public-base";
 import { getSet } from "@app/dev-dashboard/lib/boards/sets-store";
 import type { MessageAttachmentDto } from "@app/dev-dashboard/lib/boards/types";
 import { dispatchBoard } from "@app/dev-dashboard/lib/boards/work-store";
@@ -73,7 +74,15 @@ export function boardsRoutes(): RouteDef[] {
             handler: async (ctx) => {
                 const project = ctx.query.get("project") ?? undefined;
                 const boards = await listBoards(getBoardsDb(), project);
-                return { kind: "json", status: 200, body: { boards } };
+                // Each row carries its user-facing page url (public host when configured) so
+                // clients relay the authoritative link instead of assembling one from the
+                // loopback base they called in on.
+                const base = await publicBaseUrl();
+                return {
+                    kind: "json",
+                    status: 200,
+                    body: { boards: boards.map((b) => ({ ...b, url: `${base}/boards/${b.slug}` })) },
+                };
             },
         },
         {
@@ -88,7 +97,8 @@ export function boardsRoutes(): RouteDef[] {
                         project?: string;
                     }>();
                     const board = await createBoard(getBoardsDb(), body);
-                    return { kind: "json", status: 201, body: board };
+                    const url = `${await publicBaseUrl()}/boards/${board.slug}`;
+                    return { kind: "json", status: 201, body: { ...board, url } };
                 } catch (err) {
                     return boardsError(err);
                 }

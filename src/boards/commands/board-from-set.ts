@@ -47,11 +47,15 @@ export function registerBoardFromSetCommand(program: Command): void {
             const title = opts.title ?? cfg.title ?? cfg.key;
             const actor = await resolveActor(opts.actor);
 
+            // Prefer the server-built page url (public host when configured); the loopback
+            // base is only the fallback for the 409-reuse path and pre-`url` servers.
+            let pageUrl = `${base}/boards/${slug}`;
             try {
-                await postJson<BoardSummaryDto>(base, paths.boards(), {
+                const created = await postJson<BoardSummaryDto & { url?: string }>(base, paths.boards(), {
                     payload: { slug, title, project: cfg.project },
                     actor,
                 });
+                pageUrl = created.url ?? pageUrl;
             } catch (err) {
                 if (!(err instanceof BoardsHttpError) || err.status !== 409) {
                     throw err;
@@ -69,7 +73,7 @@ export function registerBoardFromSetCommand(program: Command): void {
             });
 
             await printLn(
-                `board → ${base}/boards/${slug} (imported ${result.cards.length} cards, skipped ${result.skipped})`
+                `board → ${pageUrl} (imported ${result.cards.length} cards, skipped ${result.skipped})`
             );
         });
 }

@@ -10,6 +10,7 @@ import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { publishBoardEvent } from "@app/dev-dashboard/lib/boards/events";
 import { type ArrangeBody, runArrange } from "@app/dev-dashboard/lib/boards/layout-engine";
 import { scrapeBoard } from "@app/dev-dashboard/lib/boards/scrape";
+import { boardPageUrl } from "@app/dev-dashboard/lib/public-base";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
 import { boardsError } from "./boards-errors";
 import { getOperator } from "./boards-sets";
@@ -74,6 +75,7 @@ export function boardsComposeRoutes(): RouteDef[] {
                             edges: result.edges,
                             questions: result.questions,
                             region: result.region,
+                            url: await boardPageUrl(ctx.params.slug),
                         },
                     };
                 } catch (err) {

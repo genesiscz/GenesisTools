@@ -11,9 +11,10 @@ export async function handleListBoards(args: { project?: string }): Promise<stri
     const res = await boardsFetch<BoardsRes>(path);
     log.debug({ project: args.project, path, count: res.boards.length }, "boards mcp: list_boards");
     // Each row carries its clickable page url so agents relay the authoritative
-    // dev-dashboard link instead of guessing a host/port.
+    // dev-dashboard link instead of guessing a host/port. The server builds it from its
+    // public host config; fall back to the API base for servers that predate `url`.
     const base = await boardsBaseUrl();
-    return compact({ boards: res.boards.map((b) => ({ ...b, url: `${base}/boards/${b.slug}` })) });
+    return compact({ boards: res.boards.map((b) => ({ ...b, url: b.url ?? `${base}/boards/${b.slug}` })) });
 }
 
 export async function handleListSets(args: { project: string; branch?: string }): Promise<string> {

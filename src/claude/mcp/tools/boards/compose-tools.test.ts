@@ -87,6 +87,19 @@ describe("handleCreateBoard", () => {
         }
     });
 
+    it("prefers the server-provided url over the API base", async () => {
+        const { stop } = await stubServer(() => ({
+            status: 201,
+            body: { id: 1, slug: "b1", url: "https://mac.example.dev/boards/b1" },
+        }));
+        try {
+            const out = SafeJSON.parse(await handleCreateBoard({ slug: "b1" }), { strict: true }) as { url: string };
+            expect(out.url).toBe("https://mac.example.dev/boards/b1");
+        } finally {
+            stop();
+        }
+    });
+
     it("includes title and project when given", async () => {
         const { requests, stop } = await stubServer(() => ({ status: 201, body: { id: 1 } }));
         try {

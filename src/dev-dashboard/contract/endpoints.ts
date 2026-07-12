@@ -219,7 +219,9 @@ export type TimelineRes = TimelineEvent[];
 export type RunTailRes = ClassifiedLogEntry;
 
 // boards
-export type BoardsRes = { boards: Array<BoardSummaryDto & { cardCount: number; openWork: number }> };
+// `url` is the user-facing board page link (public host when configured) — optional so
+// clients stay tolerant of servers that predate it.
+export type BoardsRes = { boards: Array<BoardSummaryDto & { cardCount: number; openWork: number; url?: string }> };
 export type BoardDocRes = BoardDocDto;
 export type BoardsSetsRes = { sets: SetSummaryDto[] };
 export type WorkListRes = { work: WorkItemDto[] };
