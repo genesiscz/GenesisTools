@@ -2,12 +2,14 @@
  * Blockers Hook - Server-first via TanStack Query + SQLite
  */
 
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@tanstack/react-store";
 import { Store } from "@tanstack/store";
 import { useMemo } from "react";
+import { deleteAssistantBlocker, reopenAssistantBlocker } from "@/lib/assistant/blockers.server";
 import type { TaskBlocker, TaskBlockerInput, TaskBlockerUpdate } from "@/lib/assistant/types";
 import { generateBlockerId } from "@/lib/assistant/types";
+import { ASSISTANT_SYNC_CHANNEL, useInvalidateAndBroadcast } from "@/lib/sync/useBroadcastInvalidation";
 import {
     assistantKeys,
     useAssistantBlockersQuery,
@@ -27,12 +29,31 @@ export const blockersStore = new Store<BlockersStoreState>({
 export function useBlockers(userId: string | null) {
     const state = useStore(blockersStore);
     const queryClient = useQueryClient();
+    const invalidateAndBroadcast = useInvalidateAndBroadcast(ASSISTANT_SYNC_CHANNEL);
 
     const blockersQuery = useAssistantBlockersQuery(userId);
 
     const createMutation = useCreateAssistantBlockerMutation();
     const updateMutation = useUpdateAssistantBlockerMutation();
     const resolveMutation = useResolveAssistantBlockerMutation();
+
+    const deleteMutation = useMutation({
+        mutationFn: (id: string) => deleteAssistantBlocker({ data: { id } }),
+        onSuccess: () => {
+            if (userId) {
+                invalidateAndBroadcast(assistantKeys.blockerList(userId));
+            }
+        },
+    });
+
+    const reopenMutation = useMutation({
+        mutationFn: (id: string) => reopenAssistantBlocker({ data: { id } }),
+        onSuccess: () => {
+            if (userId) {
+                invalidateAndBroadcast(assistantKeys.blockerList(userId));
+            }
+        },
+    });
 
     const blockers: TaskBlocker[] = useMemo(() => {
         return (blockersQuery.data ?? []).map((b) => ({
@@ -170,9 +191,43 @@ export function useBlockers(userId: string | null) {
         }
     }
 
+    async function reopenBlocker(id: string): Promise<TaskBlocker | null> {
+        try {
+            const existingBlocker = blockers.find((b) => b.id === id);
+            if (!existingBlocker) {
+                throw new Error("Blocker not found");
+            }
+
+            const result = await reopenMutation.mutateAsync(id);
+            if (!result) {
+                throw new Error("Failed to reopen blocker");
+            }
+
+            return {
+                ...existingBlocker,
+                unblockedAt: undefined,
+                updatedAt: new Date(),
+            };
+        } catch (err) {
+            blockersStore.setState((s) => ({
+                ...s,
+                error: err instanceof Error ? err.message : "Failed to reopen blocker",
+            }));
+            return null;
+        }
+    }
+
     async function deleteBlocker(id: string): Promise<boolean> {
-        const result = await resolveBlocker(id);
-        return result !== null;
+        try {
+            const result = await deleteMutation.mutateAsync(id);
+            return result.success;
+        } catch (err) {
+            blockersStore.setState((s) => ({
+                ...s,
+                error: err instanceof Error ? err.message : "Failed to delete blocker",
+            }));
+            return false;
+        }
     }
 
     function getBlocker(id: string): TaskBlocker | undefined {
@@ -252,6 +307,7 @@ export function useBlockers(userId: string | null) {
         addBlocker,
         updateBlocker,
         resolveBlocker,
+        reopenBlocker,
         deleteBlocker,
         getBlocker,
         getActiveBlockers,

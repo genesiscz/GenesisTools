@@ -14,6 +14,8 @@ import { cn } from "@/lib/utils";
 import { BlockerActions } from "./BlockerActions";
 import { BlockerCard } from "./BlockerCard";
 
+type BlockerSortMode = "urgency" | "due" | "recent";
+
 interface BlockerListProps {
     blockers: TaskBlocker[];
     tasks: Task[];
@@ -21,9 +23,13 @@ interface BlockerListProps {
     onSwitch?: () => void;
     onSetReminder?: (blocker: TaskBlocker, date: Date) => void;
     onResolve?: (blockerId: string) => void;
+    onReopen?: (blockerId: string) => void;
+    onDelete?: (blockerId: string) => void;
+    sortMode?: BlockerSortMode;
     maxItems?: number;
     showHeader?: boolean;
     variant?: "full" | "compact" | "widget";
+    emptyState?: React.ReactNode;
     className?: string;
 }
 
@@ -59,9 +65,13 @@ export function BlockerList({
     onSwitch,
     onSetReminder,
     onResolve,
+    onReopen,
+    onDelete,
+    sortMode = "urgency",
     maxItems,
     showHeader = true,
     variant = "full",
+    emptyState,
     className,
 }: BlockerListProps) {
     // Get task for each blocker
@@ -69,8 +79,17 @@ export function BlockerList({
         return tasks.find((t) => t.id === taskId);
     }
 
-    // Sort blockers: critical first, then by time blocked
-    const sortedBlockers = [...blockers].sort((a, b) => {
+    function sortByDue(a: TaskBlocker, b: TaskBlocker): number {
+        const aDue = a.reminderSet ? new Date(a.reminderSet).getTime() : Number.POSITIVE_INFINITY;
+        const bDue = b.reminderSet ? new Date(b.reminderSet).getTime() : Number.POSITIVE_INFINITY;
+        return aDue - bDue;
+    }
+
+    function sortByRecent(a: TaskBlocker, b: TaskBlocker): number {
+        return new Date(b.blockedSince).getTime() - new Date(a.blockedSince).getTime();
+    }
+
+    function sortByUrgency(a: TaskBlocker, b: TaskBlocker): number {
         const urgencyA = getBlockerUrgency(new Date(a.blockedSince));
         const urgencyB = getBlockerUrgency(new Date(b.blockedSince));
         const urgencyOrder = { critical: 0, warning: 1, normal: 2 };
@@ -80,9 +99,11 @@ export function BlockerList({
             return urgencyDiff;
         }
 
-        // Older blockers first
         return new Date(a.blockedSince).getTime() - new Date(b.blockedSince).getTime();
-    });
+    }
+
+    const comparator = sortMode === "due" ? sortByDue : sortMode === "recent" ? sortByRecent : sortByUrgency;
+    const sortedBlockers = [...blockers].sort(comparator);
 
     const displayBlockers = maxItems ? sortedBlockers.slice(0, maxItems) : sortedBlockers;
     const hasMore = maxItems && sortedBlockers.length > maxItems;
@@ -92,6 +113,10 @@ export function BlockerList({
 
     // Empty state
     if (blockers.length === 0) {
+        if (emptyState !== undefined) {
+            return <>{emptyState}</>;
+        }
+
         return (
             <FeatureCard color="rose" className={className}>
                 <FeatureCardHeader className="text-center py-8">
@@ -310,6 +335,7 @@ export function BlockerList({
                     return (
                         <div
                             key={blocker.id}
+                            data-testid="blocker-card"
                             className="animate-fade-in-up"
                             style={{ animationDelay: `${index * 50}ms` }}
                         >
@@ -320,6 +346,8 @@ export function BlockerList({
                                 onSwitch={onSwitch}
                                 onSetReminder={onSetReminder}
                                 onResolve={onResolve}
+                                onReopen={onReopen}
+                                onDelete={onDelete}
                             />
                         </div>
                     );
