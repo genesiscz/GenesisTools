@@ -69,7 +69,6 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
                             cardId: body.cardId,
                             intent: body.intent,
                             status: annotation.status,
-                            createdBy: annotation.createdBy,
                         },
                         "boards annotation: created"
                     );
