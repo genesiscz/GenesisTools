@@ -1,4 +1,5 @@
 import { SidePanel } from "@ext/side-panel/side-panel";
+import type { PanelTarget } from "@ext/side-panel/target";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -7,7 +8,7 @@ import "@ext/side-panel/side-panel.css";
 let mountedRoot: Root | null = null;
 const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000 } } });
 
-export function mountSidePanel(shadow: ShadowRoot, videoId: string | null, onClose: () => void): void {
+export function mountSidePanel(shadow: ShadowRoot, target: PanelTarget, onClose: () => void): void {
     if (mountedRoot) {
         mountedRoot.unmount();
         mountedRoot = null;
@@ -22,7 +23,7 @@ export function mountSidePanel(shadow: ShadowRoot, videoId: string | null, onClo
     mountedRoot.render(
         <StrictMode>
             <QueryClientProvider client={queryClient}>
-                <SidePanel videoId={videoId} onClose={onClose} />
+                <SidePanel target={target} onClose={onClose} />
             </QueryClientProvider>
         </StrictMode>
     );

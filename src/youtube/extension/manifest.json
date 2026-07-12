@@ -13,7 +13,13 @@
     "background": { "service_worker": "background.js", "type": "module" },
     "content_scripts": [
         {
-            "matches": ["https://www.youtube.com/watch*"],
+            "matches": [
+                "https://www.youtube.com/watch*",
+                "https://www.youtube.com/shorts/*",
+                "https://www.youtube.com/@*",
+                "https://www.youtube.com/channel/*",
+                "https://www.youtube.com/c/*"
+            ],
             "js": ["content-script.js"],
             "run_at": "document_idle"
         }

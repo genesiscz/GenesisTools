@@ -40,6 +40,23 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
                 method: "POST",
                 body: SafeJSON.stringify({ handles: [req.handle] }),
             });
+        case "api:listVideos": {
+            const query = new URLSearchParams();
+            if (req.channel) {
+                query.set("channel", req.channel);
+            }
+            if (req.since) {
+                query.set("since", req.since);
+            }
+            if (typeof req.limit === "number") {
+                query.set("limit", String(req.limit));
+            }
+            if (req.includeShorts) {
+                query.set("includeShorts", "true");
+            }
+            const suffix = query.toString() ? `?${query.toString()}` : "";
+            return apiCall(`${base}/api/v1/videos${suffix}`);
+        }
         case "api:getVideo":
             return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}`);
         case "api:getTranscript": {
@@ -68,6 +85,9 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
                     provider: req.provider,
                     model: req.model,
                     targetBins: req.targetBins,
+                    tone: req.tone,
+                    format: req.format,
+                    length: req.length,
                 }),
             });
         case "api:askVideo":
