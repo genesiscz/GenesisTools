@@ -109,9 +109,21 @@ export interface AiProxyAccountConfig {
     teamId?: string;
 }
 
+export interface AiProxyClientConfig {
+    name: string;
+    key: string;
+    /** Provider types this client may route to. Omitted = all NON-subscription providers. */
+    allowedProviders?: AiProxyProviderType[];
+    monthlyTokenCap?: number;
+    monthlyCostCapUsd?: number;
+    disabled?: boolean;
+}
+
 export interface AiProxyConfig {
     listen: AiProxyListenConfig;
     proxyApiKey: string;
+    /** Per-user keys for multi-client (VPS) mode. proxyApiKey remains the owner key. */
+    clients?: AiProxyClientConfig[];
     translation: AiProxyTranslationConfig;
     public?: AiProxyPublicConfig;
     accounts: AiProxyAccountConfig[];
