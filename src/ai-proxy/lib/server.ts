@@ -1,6 +1,6 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
-import { clientProviderDenial, resolveClient } from "@app/ai-proxy/lib/clients";
+import { clientProviderDenial, resolveClient, validateClients } from "@app/ai-proxy/lib/clients";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import { stripBasePath } from "@app/ai-proxy/lib/path-prefix";
 import { buildProviderMap, routeProviderKey, tryCreateProvider } from "@app/ai-proxy/lib/providers/registry";
@@ -103,6 +103,12 @@ function trackProxyRequest(input: {
 }
 
 export function startAiProxyServer(runtime: AiProxyRuntime) {
+    const clientProblems = validateClients(runtime.config.clients);
+
+    if (clientProblems.length > 0) {
+        throw new Error(`ai-proxy: invalid clients config — ${clientProblems.join("; ")}`);
+    }
+
     const listen = runtime.config.listen;
 
     return Bun.serve({
@@ -220,7 +226,11 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         logger.warn({ client: client.name, reason: quota.reason }, "ai-proxy: quota exceeded");
                         return new Response(
                             SafeJSON.stringify({
-                                error: { message: quota.reason, type: "quota_exceeded", code: "monthly_quota_exceeded" },
+                                error: {
+                                    message: quota.reason,
+                                    type: "quota_exceeded",
+                                    code: "monthly_quota_exceeded",
+                                },
                             }),
                             { status: 429, headers: { "Content-Type": "application/json" } }
                         );
