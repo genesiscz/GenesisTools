@@ -11,6 +11,8 @@ export interface TokenUsage {
 export interface UsageRequestRecord {
     ts: string;
     account: string;
+    /** Proxy client (key identity) that issued the request. Absent on pre-billing records. */
+    client?: string;
     provider: string;
     proxyModel: string;
     upstreamModel: string;
