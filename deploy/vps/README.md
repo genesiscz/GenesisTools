@@ -116,7 +116,7 @@ curl -sS https://$DOMAIN/ai/v1/models \
 ```
 
 An eve session round-trip over `https://$DOMAIN/eve/...` completes the picture
-once eve route protection lands.
+(eve route protection is now in place — see the eve section below).
 
 ## Extension repoint
 
@@ -125,26 +125,34 @@ and the **service key** to the user's key. See the C3 changes (host permissions 
 `Authorization: Bearer` on fetch/WS). The events WebSocket sends the key as
 `?access_token=` because browsers can't set headers on a WS handshake.
 
-## ⚠️ Merge-time follow-up — eve route protection (C1-eve)
+## eve route protection (C1-eve)
 
-**Not implemented in this branch.** eve lives at `apps/eve/` on
-`feat/eve-01-foundation`, not in `feat/vps-service`, so its auth hook must be
-added when those branches merge. Required (per eve docs
-`develop/auth-and-route-protection`):
+**Implemented.** eve protects its HTTP routes with a service-key **route-auth
+walk** on the channel factory (`apps/eve/agent/channels/eve.ts` →
+`serviceKeyAuth()` in `apps/eve/agent/lib/service-key-auth.ts`). This is the
+eve-native equivalent of `src/youtube/lib/server/auth.ts` — eve has **no** Nitro
+`server/middleware/` slot, so the guard lives in eve's own auth walk (eve docs:
+`node_modules/eve/docs/guides/auth-and-route-protection.md`).
 
-- Add a Nitro server middleware (e.g. `apps/eve/server/middleware/auth.ts`) that
-  requires `Authorization: Bearer <key>` on `/eve/v1/*`, mirroring
-  `src/youtube/lib/server/auth.ts` (`requireServiceKey`): open when no key is
-  configured, 401 on missing/wrong key, timing-safe compare, multi-key via a
-  comma-separated env.
-- Read the key from a shared env (reuse `YOUTUBE_SERVICE_KEY`, or add
-  `EVE_SERVICE_KEY` to `genesis.env` and this README) so extension users present
-  one credential to the whole stack.
-- **Leave `/.well-known/workflow/*` and any eve health route UNAUTHENTICATED** —
-  gating them breaks workflow execution (the reason both are forwarded).
+- **Env: `EVE_SERVICE_KEY`** — comma-separated, ONE key per user (same shape as
+  `YOUTUBE_SERVICE_KEY`). Unset → open (localhost dev unaffected); set → 401 on a
+  missing/wrong key, accept on a matching `Authorization: Bearer <key>`.
+  Timing-safe compare (SHA-256 both sides). Generate with `openssl rand -hex 24`.
+- **Gated:** `POST /eve/v1/session`, `POST /eve/v1/session/:id`,
+  `GET /eve/v1/session/:id/stream`.
+- **Always open:** `GET /eve/v1/health` (always public in eve) and
+  `/.well-known/workflow/*` (not a channel route) — gating either breaks
+  workflow execution.
+- **Outbound:** when `YOUTUBE_SERVICE_KEY` is set, eve's youtube connection
+  presents its **first** key as `Authorization: Bearer <key>` to the youtube API
+  (the `/api/v1/openapi.json` spec fetch is an open meta route, so it needs none).
 
-Until this lands, `/eve/*` is open behind TLS; keep the box private (firewalled /
-trusted clients only) if eve must not be publicly reachable.
+Set `EVE_SERVICE_KEY` in `genesis.env`; `genesis-eve.service` reads it via
+`EnvironmentFile=`. Leave it unset ONLY for a fully-private/firewalled box.
+
+Verified with `eve dev --no-ui` on `:2000` — open mode: `POST /eve/v1/session`
+→ 202; keys set: no header → 401, `Bearer <key>` → 202, wrong key → 401,
+`GET /eve/v1/health` → 200, `GET /.well-known/workflow/` → 404 (never 401).
 
 ## ⚠️ Known limitation — service key in the WS handshake URL
 
