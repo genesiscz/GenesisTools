@@ -101,7 +101,7 @@ export async function bisectCommand(from: string, to: string, opts: BisectOption
             `\nTransition: ${t.before.version} → ${t.after.version} (published ${t.before.published?.slice(0, 10)} → ${t.after.published?.slice(0, 10)})`
         );
         out.println(
-            `Inspect: tools claude-code diff ${t.before.version} ${t.after.version} --pattern ${opts.pattern.map((p) => `'${p}'`).join(" ")}`
+            `Inspect: tools claude code diff ${t.before.version} ${t.after.version} --pattern ${opts.pattern.map((p) => `'${p}'`).join(" ")}`
         );
     }
 }
