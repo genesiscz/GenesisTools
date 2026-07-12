@@ -50,6 +50,11 @@ export function renderHuman(report: ScanReport): string {
     return lines.join("\n");
 }
 
+/** Single-quote a path for safe use in a POSIX shell command, escaping embedded quotes. */
+function shQuote(path: string): string {
+    return `'${path.replace(/'/g, "'\\''")}'`;
+}
+
 export function renderKillScript(report: ScanReport): string {
     const dead = report.files.filter((f) => f.status === "dead");
     const lines = [
@@ -60,7 +65,8 @@ export function renderKillScript(report: ScanReport): string {
         "",
     ];
     for (const f of dead) {
-        lines.push(`git rm ${f.path} 2>/dev/null || rm -f ${f.path}`);
+        const quoted = shQuote(f.path);
+        lines.push(`git rm -- ${quoted} 2>/dev/null || rm -f -- ${quoted}`);
     }
 
     return lines.join("\n");

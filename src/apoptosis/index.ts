@@ -6,7 +6,7 @@ import { enhanceHelp, runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { Command } from "commander";
 import { renderHuman, renderJson, renderKillScript, renderPrBody } from "./lib/render";
-import { runScan, type ScanOptions } from "./lib/scan";
+import { canonicalDir, runScan, type ScanOptions } from "./lib/scan";
 import { ApoptosisStateStore } from "./lib/state";
 
 interface RootOptions {
@@ -62,8 +62,8 @@ program
     .option("-d, --days <n>", "Churn lookback window in days", "90")
     .option("-g, --grace <n>", "Grace period in days before a mark graduates", "14")
     .option("-e, --ext <list>", "Comma-separated extensions", DEFAULT_EXTS)
-    .option("-i, --ignore <list>", "Comma-separated path substrings to skip", DEFAULT_IGNORE)
-    .option("--coverage <file>", "lcov/json coverage file to treat as a survival signal")
+    .option("-i, --ignore <list>", "Comma-separated path segments to skip", DEFAULT_IGNORE)
+    .option("--coverage <file>", "Istanbul/nyc-style JSON coverage file to treat as a survival signal")
     .option("--no-state", "Pure scan: do not read or write the state file")
     .option("--json", "Emit the full report as JSON")
     .action(async (dirArg: string | undefined, options: RootOptions) => {
@@ -87,7 +87,7 @@ program
     .description("Show the persisted state file (marked candidates), no scan")
     .argument("[dir]", "Directory whose marks to show", undefined)
     .action(async (dirArg: string | undefined) => {
-        const dir = resolve(dirArg ?? process.cwd());
+        const dir = canonicalDir(resolve(dirArg ?? process.cwd()));
         const store = new ApoptosisStateStore();
         const marks = await store.getMarks(dir);
         out.result(SafeJSON.stringify({ dir, marks }, null, 2));
@@ -100,7 +100,7 @@ program
     .option("-d, --days <n>", "Churn lookback window in days", "90")
     .option("-g, --grace <n>", "Grace period in days", "14")
     .option("-e, --ext <list>", "Comma-separated extensions", DEFAULT_EXTS)
-    .option("-i, --ignore <list>", "Comma-separated path substrings to skip", DEFAULT_IGNORE)
+    .option("-i, --ignore <list>", "Comma-separated path segments to skip", DEFAULT_IGNORE)
     .option("--pr-body", "Emit a Markdown PR-body checklist instead of a shell script")
     .action(async (dirArg: string | undefined, options: RootOptions & { prBody?: boolean }) => {
         const report = await runScan(buildScanOptions(dirArg, options));
@@ -113,7 +113,7 @@ program
     .argument("<file>", "File path to rescue")
     .argument("[dir]", "Scan dir the mark belongs to", undefined)
     .action(async (file: string, dirArg: string | undefined) => {
-        const dir = resolve(dirArg ?? process.cwd());
+        const dir = canonicalDir(resolve(dirArg ?? process.cwd()));
         const store = new ApoptosisStateStore();
         await store.clear(dir, resolve(file));
         out.log.success(`Rescued ${resolve(file)} — mark cleared.`);

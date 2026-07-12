@@ -539,6 +539,14 @@ describe("renderers", () => {
         expect(script).not.toContain("/repo/alive.ts");
     });
 
+    it("renderKillScript quotes paths and terminates option parsing with --", () => {
+        const report = fakeReport();
+        report.files[0].path = "/repo/-rf weird 'name'.ts";
+        const script = renderKillScript(report);
+        expect(script).toContain("git rm -- '/repo/-rf weird '\\''name'\\''.ts'");
+        expect(script).toContain("rm -f -- '/repo/-rf weird '\\''name'\\''.ts'");
+    });
+
     it("renderPrBody lists ready-to-die files as a checklist", () => {
         const body = renderPrBody(fakeReport());
         expect(body).toContain("- [ ] `/repo/dead.ts`");

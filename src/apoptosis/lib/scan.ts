@@ -25,8 +25,9 @@ export interface ScanOptions {
 }
 
 /** Normalize a dir to its realpath so file keys agree with git's toplevel
- *  (which always returns the realpath, e.g. /private/var on macOS). */
-function canonicalDir(dir: string): string {
+ *  (which always returns the realpath, e.g. /private/var on macOS). Exported so
+ *  the `status`/`rescue` commands key marks the same way `runScan` does. */
+export function canonicalDir(dir: string): string {
     try {
         return realpathSync(dir);
     } catch {
