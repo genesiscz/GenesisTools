@@ -1,15 +1,11 @@
 import { eveChannel } from "eve/channels/eve";
-import { localDev, placeholderAuth, vercelOidc } from "eve/channels/auth";
+import { serviceKeyAuth } from "../lib/service-key-auth";
 
 export default eveChannel({
-  auth: [
-    // Lets the eve TUI and your Vercel deployments reach the deployed agent.
-    vercelOidc(),
-    // Open on localhost for `eve dev` and the REPL; ignored in production.
-    localDev(),
-    // This placeholder will not allow browser requests in production.
-    // Replace it with your app's auth provider, like Auth.js or Clerk,
-    // or use none() for a public demo.
-    placeholderAuth(),
-  ],
+  // Service-key route protection — the eve-native equivalent of the youtube
+  // server's `requireServiceKey`. Open when `EVE_SERVICE_KEY` is unset (so
+  // `eve dev` and localhost are unaffected); requires `Authorization: Bearer
+  // <key>` on `/eve/v1/session*` when set. `GET /eve/v1/health` stays public
+  // and `/.well-known/workflow/*` is not a channel route, so both remain open.
+  auth: [serviceKeyAuth()],
 });
