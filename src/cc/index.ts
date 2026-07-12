@@ -12,6 +12,8 @@ const SUBCOMMANDS = new Set([
     "migrate",
     "login",
     "login-long",
+    "login-secondary",
+    "logout",
     "start",
     "run",
 ]);

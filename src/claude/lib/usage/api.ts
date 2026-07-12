@@ -162,6 +162,15 @@ export async function fetchAllAccountsUsage(
         accounts = accounts.filter((a) => filterSet.has(a.name));
     }
 
+    // Logged-out accounts (no OAuth pair — e.g. after `tools claude logout`)
+    // are invisible to polling: they can't fetch usage and would only render
+    // permanent error rows.
+    const loggedOut = accounts.filter((a) => !a.tokens.accessToken && !a.tokens.refreshToken);
+    if (loggedOut.length > 0) {
+        logger.debug(`[usage] skipping logged-out account(s): ${loggedOut.map((a) => a.name).join(", ")}`);
+        accounts = accounts.filter((a) => a.tokens.accessToken || a.tokens.refreshToken);
+    }
+
     if (accounts.length === 0) {
         return [];
     }
@@ -196,10 +205,25 @@ export async function fetchAllAccountsUsage(
                 // check keeps concurrent consumers to one rotation per exhausted
                 // token. 401 (token rejected) takes the same path.
                 logger.debug(`${tag} got ${err.statusCode}, attempting force-refresh`);
-                const { token: freshToken, refreshed } = await resolveAccountToken(account.name, {
-                    staleAccessToken: token,
-                    forceRefresh: true,
-                });
+
+                let freshToken: string;
+                let refreshed: boolean;
+
+                try {
+                    ({ token: freshToken, refreshed } = await resolveAccountToken(account.name, {
+                        staleAccessToken: token,
+                        forceRefresh: true,
+                    }));
+                } catch (refreshErr) {
+                    // A dead refresh token (invalid_grant / cooldown) must not
+                    // upgrade a routine 429 into a hard auth error — the access
+                    // token can still land requests once another consumer rotates
+                    // it. Keep the original status as the account error and carry
+                    // the refresh failure as context.
+                    const detail = refreshErr instanceof Error ? refreshErr.message : String(refreshErr);
+                    logger.warn(`${tag} token refresh after ${err.statusCode} failed: ${detail}`);
+                    throw new RetryableApiError(err.statusCode, `${err.message} (token refresh failed: ${detail})`);
+                }
 
                 if (!refreshed) {
                     logger.warn(`${tag} force-refresh did not produce a new token, re-throwing ${err.statusCode}`);
