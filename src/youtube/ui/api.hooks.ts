@@ -79,6 +79,14 @@ export function useTranscript(id: VideoId | null, opts: { lang?: string; source?
     });
 }
 
+export function useComments(id: VideoId | null) {
+    return useQuery({
+        queryKey: ["comments", id],
+        queryFn: () => apiClient.getComments(id as VideoId),
+        enabled: id !== null,
+    });
+}
+
 export function useSummary(id: VideoId | null, mode: "short" | "timestamped" | "long") {
     return useQuery({
         queryKey: ["summary", id, mode],

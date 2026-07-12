@@ -10,6 +10,7 @@ import {
 import type { JobStage, VideoId } from "@app/youtube/lib/types";
 import {
     useAskVideo,
+    useComments,
     useGenerateSummary,
     useStartPipeline,
     useSummary,
@@ -29,6 +30,7 @@ import { toast } from "sonner";
 const videoDetailDataSource: VideoDetailDataSource = {
     useVideo,
     useTranscript,
+    useComments,
     useSummary,
     useGenerateSummary,
     useAskVideo,
