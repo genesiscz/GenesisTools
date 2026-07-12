@@ -235,7 +235,21 @@ export const env = {
 
     node: envClient.node,
 
-    youtube: envClient.youtube,
+    youtube: {
+        ...envClient.youtube,
+        /**
+         * Optional per-user service key(s) for the YouTube API server. A
+         * comma-separated list — one key per user. When unset the server stays
+         * open (localhost development is unaffected).
+         */
+        getServiceKey: () => getTrimmed("YOUTUBE_SERVICE_KEY"),
+        /**
+         * Bind host for the YouTube API server. Defaults to loopback so a VPS
+         * deploy is not publicly reachable except through the reverse proxy; set
+         * `0.0.0.0` (or a LAN IP) to expose it directly.
+         */
+        getHost: () => getWithDefault("YOUTUBE_HOST", "127.0.0.1"),
+    },
 
     db: envClient.db,
 
