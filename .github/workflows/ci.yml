@@ -150,3 +150,8 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 1
         run: bash scripts/ci/logging-guard.sh
+
+      - name: Package boundary guard
+        if: runner.os == 'Linux'
+        timeout-minutes: 1
+        run: bun scripts/ci/check-package-boundaries.ts
