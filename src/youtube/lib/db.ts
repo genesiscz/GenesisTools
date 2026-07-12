@@ -5,6 +5,7 @@ import { SafeJSON } from "@app/utils/json";
 import { withFileLock } from "@app/utils/storage";
 import { deleteIfExists } from "@app/youtube/lib/cache";
 import type { Channel, ChannelHandle } from "@app/youtube/lib/channel.types";
+import type { FetchedComment, VideoComment } from "@app/youtube/lib/comments.types";
 import type {
     ClaimJobOpts,
     EnqueueJobInput,
@@ -41,7 +42,7 @@ import type { TimestampedSummaryEntry, Video, VideoId, VideoLongSummary } from "
 
 export const DEFAULT_DB_PATH = join(homedir(), ".genesis-tools", "youtube", "youtube.db");
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 export class YoutubeDatabase extends BaseDatabase {
     constructor(dbPath: string = DEFAULT_DB_PATH) {
@@ -229,6 +230,26 @@ export class YoutubeDatabase extends BaseDatabase {
             if (!cols.some((column) => column.name === "summary_long_json")) {
                 this.db.exec("ALTER TABLE videos ADD COLUMN summary_long_json TEXT");
             }
+        });
+
+        this.runMigration("add-comments-table", () => {
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS comments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    video_id TEXT NOT NULL,
+                    comment_id TEXT NOT NULL,
+                    author TEXT,
+                    author_id TEXT,
+                    text TEXT NOT NULL,
+                    like_count INTEGER,
+                    published_at TEXT,
+                    parent_comment_id TEXT,
+                    created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
+                    FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE,
+                    UNIQUE (video_id, comment_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_comments_video ON comments(video_id);
+            `);
         });
 
         const existing = this.db
@@ -551,6 +572,44 @@ export class YoutubeDatabase extends BaseDatabase {
             .all(videoId);
 
         return rows.map(rowToTranscript);
+    }
+
+    upsertComments(videoId: VideoId, comments: FetchedComment[]): void {
+        const insert = this.db.prepare(
+            `INSERT INTO comments (video_id, comment_id, author, author_id, text, like_count, published_at, parent_comment_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(video_id, comment_id) DO UPDATE SET
+                author = excluded.author,
+                author_id = excluded.author_id,
+                text = excluded.text,
+                like_count = excluded.like_count,
+                published_at = excluded.published_at,
+                parent_comment_id = excluded.parent_comment_id`
+        );
+        const insertAll = this.db.transaction((rows: FetchedComment[]) => {
+            for (const row of rows) {
+                insert.run(
+                    videoId,
+                    row.commentId,
+                    row.author,
+                    row.authorId,
+                    row.text,
+                    row.likeCount,
+                    row.publishedAt,
+                    row.parentCommentId
+                );
+            }
+        });
+
+        insertAll(comments);
+    }
+
+    getComments(videoId: VideoId): VideoComment[] {
+        const rows = this.db
+            .query<CommentRow, [string]>("SELECT * FROM comments WHERE video_id = ? ORDER BY id ASC")
+            .all(videoId);
+
+        return rows.map(rowToComment);
     }
 
     searchVideos(query: string, opts: SearchVideosOpts = {}): VideoSearchHit[] {
@@ -1153,6 +1212,19 @@ interface TranscriptSearchRow {
     rank: number;
 }
 
+interface CommentRow {
+    id: number;
+    video_id: VideoId;
+    comment_id: string;
+    author: string | null;
+    author_id: string | null;
+    text: string;
+    like_count: number | null;
+    published_at: string | null;
+    parent_comment_id: string | null;
+    created_at: string;
+}
+
 interface QaChunkRow {
     id: number;
     video_id: VideoId;
@@ -1218,6 +1290,7 @@ function isJobStage(value: unknown): value is JobStage {
     return (
         value === "discover" ||
         value === "metadata" ||
+        value === "comments" ||
         value === "captions" ||
         value === "audio" ||
         value === "video" ||
@@ -1266,6 +1339,21 @@ function rowToQaChunk(row: QaChunkRow): QaChunk {
             : null,
         embeddingDims: row.embedding_dims,
         embedderModel: row.embedder_model,
+        createdAt: row.created_at,
+    };
+}
+
+function rowToComment(row: CommentRow): VideoComment {
+    return {
+        id: row.id,
+        videoId: row.video_id,
+        commentId: row.comment_id,
+        author: row.author,
+        authorId: row.author_id,
+        text: row.text,
+        likeCount: row.like_count,
+        publishedAt: row.published_at,
+        parentCommentId: row.parent_comment_id,
         createdAt: row.created_at,
     };
 }
