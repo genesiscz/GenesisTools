@@ -135,7 +135,7 @@ export function usageInputNoCacheTokens(usage?: LanguageModelUsage | LegacyFlatU
         // Provider didn't break it down: derive from the total minus cache parts.
         const total = usage.inputTokens ?? 0;
         const derived = total - usageCacheReadTokens(usage) - usageCacheWriteTokens(usage);
-        return derived > 0 ? derived : total;
+        return Math.max(0, derived);
     }
 
     // ai@5 flat usage: inputTokens already excluded cache tokens.
