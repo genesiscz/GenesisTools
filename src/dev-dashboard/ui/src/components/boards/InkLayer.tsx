@@ -1,4 +1,5 @@
 import type { CardDto, StrokeDto } from "@app/dev-dashboard/contract/dto";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { useMemo } from "react";
 import { getCardScaleFactor } from "./AnnotationLayer";
 
@@ -61,32 +62,63 @@ interface InkLayerProps {
     strokes: StrokeDto[];
     cards: CardDto[];
     liveStroke: number[][] | null;
+    selectedStrokeId?: number | null;
+    /** Live translation of the stroke being dragged (world units). */
+    dragOverride?: { id: number; dx: number; dy: number } | null;
+    /** When set (move tool), strokes are hit-testable: click selects, drag moves. */
+    onStrokePointerDown?: (stroke: StrokeDto, e: ReactPointerEvent) => void;
 }
 
-/** Persisted + in-progress ink, rendered inside the world transform. Purely visual — the
- * gesture capture that drives `liveStroke` lives in BoardCanvas's shared overlay. */
-export function InkLayer({ strokes, cards, liveStroke }: InkLayerProps) {
+/** Persisted + in-progress ink, rendered inside the world transform. The gesture capture that
+ * drives `liveStroke` lives in BoardCanvas's shared overlay; in move tool each stroke also
+ * exposes a wide invisible hit line for select/drag. */
+export function InkLayer({
+    strokes,
+    cards,
+    liveStroke,
+    selectedStrokeId,
+    dragOverride,
+    onStrokePointerDown,
+}: InkLayerProps) {
     const cardById = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
 
     return (
         <svg className="absolute top-0 left-0 overflow-visible" style={{ pointerEvents: "none" }}>
             {strokes.map((stroke) => {
-                const worldPath = strokeToWorldPath(stroke, cardById);
+                let worldPath = strokeToWorldPath(stroke, cardById);
 
                 if (worldPath.length < 2) {
                     return null;
                 }
 
+                if (dragOverride && dragOverride.id === stroke.id) {
+                    worldPath = worldPath.map(([x, y]) => [x + dragOverride.dx, y + dragOverride.dy]);
+                }
+
+                const points = worldPath.map(([x, y]) => `${x},${y}`).join(" ");
+                const selected = stroke.id === selectedStrokeId;
+
                 return (
-                    <polyline
-                        key={stroke.id}
-                        points={worldPath.map(([x, y]) => `${x},${y}`).join(" ")}
-                        fill="none"
-                        stroke={stroke.color}
-                        strokeWidth={stroke.width}
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                    />
+                    <g key={stroke.id}>
+                        {onStrokePointerDown ? (
+                            <polyline
+                                points={points}
+                                fill="none"
+                                stroke="transparent"
+                                strokeWidth={Math.max(12, stroke.width * 3)}
+                                style={{ pointerEvents: "stroke", cursor: "move" }}
+                                onPointerDown={(e) => onStrokePointerDown(stroke, e)}
+                            />
+                        ) : null}
+                        <polyline
+                            points={points}
+                            fill="none"
+                            stroke={selected ? "var(--dd-accent-from)" : stroke.color}
+                            strokeWidth={stroke.width}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                        />
+                    </g>
                 );
             })}
             {liveStroke && liveStroke.length > 1 ? (

@@ -79,7 +79,7 @@ export function BoardsRoute() {
         refetchInterval: 10_000,
     });
 
-    const boards = boardsQuery.data?.boards ?? [];
+    const boards = (boardsQuery.data?.boards ?? []).filter((board) => !board.archived);
 
     return (
         <div className="flex flex-col gap-4">

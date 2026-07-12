@@ -180,16 +180,29 @@ export function BoardRoute() {
                     <WirePanel
                         slug={slug}
                         annotation={selectedAnnotation}
+                        annotations={boardQuery.data?.annotations ?? []}
+                        questions={boardQuery.data?.questions ?? []}
                         boardMessages={boardQuery.data?.boardMessages ?? []}
                         operator={operator}
-                        onClose={() => setPanelOpen(false)}
+                        onSelectAnnotation={(id) => setSelectedAnnotationId(id)}
+                        onClose={() => {
+                            if (selectedAnnotationId !== null) {
+                                // First Esc/✕ backs out of the thread to the session feed.
+                                setSelectedAnnotationId(null);
+                            } else {
+                                setPanelOpen(false);
+                            }
+                        }}
                     />
                 ) : null}
             </div>
+            {/* Send bar sits top-center, clear of the bottom toolbar — a staged batch must never
+                block tool switching (it used to render exactly over the toolbar). */}
             {stagedCount > 0 ? (
-                <div className="absolute bottom-4 left-1/2 z-40 -translate-x-1/2">
+                <div className="absolute top-14 left-1/2 z-40 -translate-x-1/2">
                     <button
                         type="button"
+                        data-testid="staged-pill"
                         onClick={() => dispatchMutation.mutate()}
                         disabled={dispatchMutation.isPending}
                         className="dd-btn-accent flex items-center gap-2 rounded-full px-4 py-2 text-sm shadow-lg"
@@ -198,7 +211,7 @@ export function BoardRoute() {
                     </button>
                 </div>
             ) : dispatchedNote !== null ? (
-                <div className="absolute bottom-4 left-1/2 z-40 -translate-x-1/2 rounded-full bg-[var(--dd-bg-panel)] px-4 py-2 text-sm text-[var(--dd-text-secondary)] shadow-lg">
+                <div className="absolute top-14 left-1/2 z-40 -translate-x-1/2 rounded-full bg-[var(--dd-bg-panel)] px-4 py-2 text-sm text-[var(--dd-text-secondary)] shadow-lg">
                     dispatched {dispatchedNote}
                 </div>
             ) : null}

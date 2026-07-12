@@ -6,6 +6,7 @@ import { NetworkInfo } from "@/components/pulse/NetworkInfo";
 import { ProcessTable } from "@/components/pulse/ProcessTable";
 import { PulseGraph } from "@/components/pulse/PulseGraph";
 import { WeatherCard } from "@/components/pulse/WeatherCard";
+import { WebappsPanel } from "@/components/webapps/WebappsPanel";
 import { fetchJson } from "@/lib/api";
 
 interface TopProcess {
@@ -182,6 +183,7 @@ export function IndexRoute() {
                         error={weather.data?.error}
                     />
                     <NetworkInfo wifiSsid={s?.wifiSsid ?? null} publicIp={s?.publicIp ?? null} />
+                    <WebappsPanel />
                     <ProcessTable processes={s?.topProcesses ?? []} />
                 </div>
             </div>

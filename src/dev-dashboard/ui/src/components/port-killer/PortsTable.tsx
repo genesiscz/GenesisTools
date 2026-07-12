@@ -50,7 +50,22 @@ export function PortsTable({ result, onKill, killingPid }: PortsTableProps) {
                                 <td className="px-2 py-2 font-mono text-xs text-[var(--dd-text-muted)]">
                                     {protoLabel(p.proto)}
                                 </td>
-                                <td className="px-2 py-2 font-medium">{p.command}</td>
+                                <td className="px-2 py-2">
+                                    <div className="flex items-baseline gap-2">
+                                        <span className="font-medium">{p.command}</span>
+                                        {p.title ? (
+                                            <span className="truncate text-xs text-[var(--dd-accent)]">{p.title}</span>
+                                        ) : null}
+                                    </div>
+                                    {p.fullCommand ? (
+                                        <div
+                                            title={p.fullCommand}
+                                            className="max-w-[36ch] truncate font-mono text-xs text-[var(--dd-text-muted)]"
+                                        >
+                                            {p.fullCommand}
+                                        </div>
+                                    ) : null}
+                                </td>
                                 <td className="px-2 py-2 font-mono text-xs text-[var(--dd-text-muted)]">{p.pid}</td>
                                 <td className="px-2 py-2 font-mono text-xs text-[var(--dd-text-secondary)]">
                                     {p.address}

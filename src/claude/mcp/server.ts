@@ -6,6 +6,7 @@ import {
     handleArrange,
     handleAskBoard,
     handleComposeBoard,
+    handleCreateBoard,
     handleGetTemplates,
     handleListProjects,
     handleListSections,
@@ -27,6 +28,7 @@ import {
     ASK_BOARD_SCHEMA,
     ATTACH_AFTER_SCHEMA,
     COMPOSE_BOARD_SCHEMA,
+    CREATE_BOARD_SCHEMA,
     GET_ANNOTATION_SCHEMA,
     GET_CAPSULE_SCHEMA,
     GET_SET_SCHEMA,
@@ -72,6 +74,11 @@ const SERVER_INSTRUCTIONS =
     "DO NOT use for: routine task instructions you simply execute, pure acknowledgements " +
     '("ok", "thanks", "continue"), or trivial lookups not worth preserving.\n\n' +
     "BOARDS (dev-dashboard annotation boards):\n" +
+    "- Boards live on the DEV-DASHBOARD server (base auto-resolved from its config; default " +
+    "http://127.0.0.1:3042, override BOARDS_BASE_URL). Other local dashboards on other ports (e.g. the " +
+    "log viewer on 7243) have NO boards API. Never hand the user a board link you assembled yourself — " +
+    "boards_list_boards / boards_create_board / boards_compose_board responses all carry the authoritative " +
+    "`url`; relay that.\n" +
     "- The user annotates screenshots on /boards/<slug>; each dispatched annotation is a work item for you.\n" +
     "- Work loop: boards_wait_for_work({board} or {project,branch}) → for each capsule: boards_set_status " +
     "working → fix the app → push a new set version (tools boards push) → boards_attach_after → boards_reply " +
@@ -95,7 +102,8 @@ const SERVER_INSTRUCTIONS =
     'section beside the current one (boards_compose_board {journey,pass:"next"}) instead of mixing takes ' +
     "together — boards_scrape_board {diff:[a,b]} then diffs two sections pairwise. boards_update_cards edits or " +
     "trashes only your own AI-layer cards (plus section frames) — the user's shots and notes are untouchable. " +
-    "boards_ask_board asks a first-class multiple-choice question outside a compose batch. Call " +
+    "boards_ask_board asks a first-class multiple-choice question outside a compose batch. Need a fresh " +
+    "canvas? boards_create_board births a new board (compose never auto-creates). Call " +
     "boards_get_templates once before structuring a new board and start from a matching skeleton instead of " +
     "inventing structure.";
 
@@ -116,7 +124,10 @@ function buildToolRegistry(): Record<string, ToolEntry> {
             },
         },
         boards_list_boards: {
-            description: "List dev-dashboard boards, optionally filtered by project.",
+            description:
+                "List dev-dashboard boards, optionally filtered by project. Each row carries its clickable " +
+                "`url` — when telling the user where a board lives, relay that url verbatim (never guess a " +
+                "host/port; other local dashboards listen on other ports).",
             inputSchema: LIST_BOARDS_SCHEMA as unknown as Record<string, unknown>,
             handler: async (args) => handleListBoards(args as { project?: string }),
         },
@@ -217,12 +228,22 @@ function buildToolRegistry(): Record<string, ToolEntry> {
                     }
                 ),
         },
+        boards_create_board: {
+            description:
+                "Create a new empty board (slug ^[a-z0-9][a-z0-9-]{0,63}$, optional title/project) — the canvas " +
+                "boards_compose_board & co. target. Compose never auto-creates: call this first when presenting " +
+                "on a fresh board. 409 conflict = the slug already exists (just compose onto it). The response " +
+                "carries the board's clickable `url` — relay THAT to the user, never a guessed host/port.",
+            inputSchema: CREATE_BOARD_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleCreateBoard(args as { slug: string; title?: string; project?: string }),
+        },
         boards_compose_board: {
             description:
                 "Place a BATCH of AI-authored content on a board in one call — text blocks, notes, viz, sections " +
                 "and questions, wired together. Batch-or-bust: compose the whole thought in ONE call (never one " +
                 "card per call); the server owns geometry — never send coordinates. All-or-nothing: on 400 the " +
-                "error carries {code,index} pointing at the bad item and nothing was placed.",
+                "error carries {code,index} pointing at the bad item and nothing was placed. The target board " +
+                "must already exist — create a fresh one with boards_create_board.",
             inputSchema: COMPOSE_BOARD_SCHEMA as unknown as Record<string, unknown>,
             handler: async (args) =>
                 handleComposeBoard(

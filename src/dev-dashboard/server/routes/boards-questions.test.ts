@@ -110,6 +110,38 @@ describe("boardsQuestionsRoutes", () => {
         expect(res.body).toMatchObject({ answer: ["picked"], staged: true, answeredBy: "operator" });
     });
 
+    it("answer: re-answering while staged overwrites the prior pick (200, last pick wins)", async () => {
+        await createBoard("b1");
+        const created = await create({ prompt: "pick one", options: ["a", "b"] });
+        const answerRoute = findRoute("POST", "/api/boards/questions/:id/answer");
+        const first = asJson(
+            await answerRoute.handler(makeCtx({ params: { id: String(created.body.id) }, body: { answer: "a" } }))
+        );
+        expect(first.body.answer).toEqual(["a"]);
+        const second = asJson(
+            await answerRoute.handler(makeCtx({ params: { id: String(created.body.id) }, body: { answer: "b" } }))
+        );
+        expect(second.status).toBe(200);
+        expect(second.body.answer).toEqual(["b"]);
+    });
+
+    it("answer: 400 when re-answering a dispatched (unstaged) question — the answer is locked", async () => {
+        await createBoard("b1");
+        const created = await create({ prompt: "pick one", options: ["a", "b"] });
+        const answerRoute = findRoute("POST", "/api/boards/questions/:id/answer");
+        await answerRoute.handler(makeCtx({ params: { id: String(created.body.id) }, body: { answer: "a" } }));
+        // Simulate dispatch releasing the answer onto the work wire.
+        await getBoardsDb()
+            .kysely.updateTable("board_questions")
+            .set({ staged: 0 })
+            .where("id", "=", created.body.id as number)
+            .execute();
+        const res = asJson(
+            await answerRoute.handler(makeCtx({ params: { id: String(created.body.id) }, body: { answer: "b" } }))
+        );
+        expect(res.status).toBe(400);
+    });
+
     it("answer: 400 when empty or over 500 chars; any string is otherwise accepted (off-vocabulary 'Other' text)", async () => {
         await createBoard("b1");
         const created = await create({ prompt: "pick one", options: ["picked"] });

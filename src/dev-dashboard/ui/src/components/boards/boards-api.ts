@@ -67,14 +67,20 @@ export const boardsApi = {
     createCard: (slug: string, body: Record<string, unknown>) =>
         fetchJson<CardDto>(paths.boardCards(slug), jsonInit("POST", body)),
     deleteCard: (id: number) => fetchJson<{ ok: boolean }>(paths.boardCard(id), { method: "DELETE" }),
+    restoreCard: (id: number) => fetchJson<CardDto>(paths.boardCardRestore(id), { method: "POST" }),
     cardVersions: (id: number) => fetchJson<{ versions: CardVersionDto[] }>(paths.boardCardVersions(id)),
     layout: (slug: string, moves: Array<{ id: number; x: number; y: number }>) =>
         fetchJson<{ ok: boolean }>(paths.boardLayout(slug), jsonInit("POST", { moves })),
     addStrokes: (slug: string, strokes: Array<{ cardId?: number; path: number[][]; color?: string; width?: number }>) =>
         fetchJson<{ strokes: StrokeDto[] }>(paths.boardStrokes(slug), jsonInit("POST", { strokes })),
     deleteStroke: (id: number) => fetchJson<{ ok: boolean }>(paths.boardStroke(id), { method: "DELETE" }),
+    patchStroke: (id: number, patch: { path?: number[][]; color?: string; width?: number }) =>
+        fetchJson<StrokeDto>(paths.boardStroke(id), jsonInit("PATCH", patch)),
     addEdge: (slug: string, edge: { fromCard: number; toCard?: number; toX?: number; toY?: number; label?: string }) =>
         fetchJson<EdgeDto>(paths.boardEdges(slug), jsonInit("POST", edge)),
+    deleteEdge: (id: number) => fetchJson<{ ok: boolean }>(paths.boardEdge(id), { method: "DELETE" }),
+    arrange: (slug: string, body: Record<string, unknown>) =>
+        fetchJson<{ ok: boolean; moved: number; cards?: CardDto[] }>(paths.boardArrange(slug), jsonInit("POST", body)),
     createAnnotation: (body: {
         board: string;
         cardId: number;
@@ -116,4 +122,9 @@ export const boardsApi = {
             method: "POST",
             body: file,
         }),
+    uploadMessageImage: (slug: string, file: Blob, name: string) =>
+        fetchJson<{ blobKey: string; name: string; mime: string }>(
+            paths.boardMsgUploads({ slug, name, mime: file.type || "application/octet-stream" }),
+            { method: "POST", body: file }
+        ),
 };

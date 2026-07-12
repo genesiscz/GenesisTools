@@ -88,6 +88,7 @@ describe("buildCapsule", () => {
             boardId: null,
             author: "claude",
             body: i === 6 ? longBody : `msg-${i}`,
+            attachments: [],
             createdAt: "2026-01-01T00:00:00.000Z",
         }));
         const capsule = buildCapsule(makeAnnotation({ messages }), makeCard(), "my-board");

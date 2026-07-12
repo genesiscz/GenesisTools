@@ -1,10 +1,13 @@
 // Inner-content renderers for the AI expression layer's card kinds (payload.layer "ai"). Parity
 // of information, not pixel-perfection (plan decision §0.1.9) — CardView.tsx owns position/drag/
 // selection chrome and just delegates to these for the card BODY.
-import type { PointerEvent as ReactPointerEvent } from "react";
-import { renderMdLite } from "./md-lite";
+import type { FocusEvent as ReactFocusEvent, PointerEvent as ReactPointerEvent } from "react";
+import { BoardMarkdown } from "./markdown";
 
 type Payload = Record<string, unknown>;
+
+/** Commit an inline table-cell edit: kind "col" edits a header label, "cell" edits rows[row][col]. */
+export type EditCellFn = (cardId: number, kind: "col" | "cell", row: number, col: number, text: string) => void;
 
 function str(payload: Payload, key: string): string {
     return typeof payload[key] === "string" ? (payload[key] as string) : "";
@@ -22,11 +25,16 @@ const ROLE_ACCENT: Record<string, string> = {
     risk: "border-l-4 border-[var(--dd-warning)]",
 };
 
-/** kind "text": md-lite render with a left accent strip when payload.role is set. */
+/** kind "text": full markdown render with a left accent strip when payload.role is set.
+ *  Natural height — CardView's measured-height write-back grows the card to fit. */
 export function TextCard({ payload }: { payload: Payload }) {
     const role = str(payload, "role");
     const accent = ROLE_ACCENT[role] ?? "";
-    return <div className={`h-full w-full overflow-auto p-1 pl-2 ${accent}`}>{renderMdLite(str(payload, "md"))}</div>;
+    return (
+        <div className={`w-full p-1 pl-2 ${accent}`}>
+            <BoardMarkdown md={str(payload, "md")} />
+        </div>
+    );
 }
 
 const CALLOUT_TONE: Record<string, string> = {
@@ -36,14 +44,12 @@ const CALLOUT_TONE: Record<string, string> = {
     decision: "border-violet-400 bg-violet-400/10",
 };
 
-/** kind "callout": tone-colored border/background + md-lite body. */
+/** kind "callout": tone-colored border/background + markdown body (natural height). */
 export function CalloutCard({ payload }: { payload: Payload }) {
     const tone = str(payload, "tone") || "info";
     return (
-        <div
-            className={`h-full w-full overflow-auto rounded-md border-l-4 p-2 ${CALLOUT_TONE[tone] ?? CALLOUT_TONE.info}`}
-        >
-            {renderMdLite(str(payload, "md"))}
+        <div className={`min-h-full w-full rounded-md border-l-4 p-2 ${CALLOUT_TONE[tone] ?? CALLOUT_TONE.info}`}>
+            <BoardMarkdown md={str(payload, "md")} />
         </div>
     );
 }
@@ -101,32 +107,56 @@ export function ChecklistCard({ payload }: { payload: Payload }) {
     );
 }
 
-function VizTable({ data }: { data: Payload }) {
+function VizTable({ data, cardId, onEditCell }: { data: Payload; cardId?: number; onEditCell?: EditCellFn }) {
     const cols = Array.isArray(data.cols) ? (data.cols as string[]) : [];
     const rows = Array.isArray(data.rows) ? (data.rows as unknown[][]) : [];
+
+    const editable = cardId !== undefined && onEditCell !== undefined;
+    const commit = (kind: "col" | "cell", row: number, col: number) => (e: ReactFocusEvent<HTMLElement>) => {
+        if (editable) {
+            onEditCell(cardId, kind, row, col, e.currentTarget.textContent ?? "");
+        }
+    };
+
     return (
-        <table className="w-full text-left text-xs">
-            <thead>
-                <tr>
-                    {cols.map((c, i) => (
-                        <th key={i} className="border-b border-[var(--dd-border)] pb-1 font-semibold">
-                            {c}
-                        </th>
+        <div className="dd-viz-scroll">
+            <table className="dd-viz-table">
+                {cols.length > 0 ? (
+                    <thead>
+                        <tr>
+                            {cols.map((c, i) => (
+                                <th
+                                    key={i}
+                                    contentEditable={editable ? "plaintext-only" : undefined}
+                                    suppressContentEditableWarning
+                                    onBlur={commit("col", 0, i)}
+                                    onPointerDown={editable ? (e) => e.stopPropagation() : undefined}
+                                >
+                                    {c}
+                                </th>
+                            ))}
+                        </tr>
+                    </thead>
+                ) : null}
+                <tbody>
+                    {rows.map((row, i) => (
+                        <tr key={i}>
+                            {(Array.isArray(row) ? row : [row]).map((cell, j) => (
+                                <td
+                                    key={j}
+                                    contentEditable={editable ? "plaintext-only" : undefined}
+                                    suppressContentEditableWarning
+                                    onBlur={commit("cell", i, j)}
+                                    onPointerDown={editable ? (e) => e.stopPropagation() : undefined}
+                                >
+                                    {String(cell)}
+                                </td>
+                            ))}
+                        </tr>
                     ))}
-                </tr>
-            </thead>
-            <tbody>
-                {rows.map((row, i) => (
-                    <tr key={i}>
-                        {row.map((cell, j) => (
-                            <td key={j} className="py-0.5">
-                                {String(cell)}
-                            </td>
-                        ))}
-                    </tr>
-                ))}
-            </tbody>
-        </table>
+                </tbody>
+            </table>
+        </div>
     );
 }
 
@@ -183,10 +213,12 @@ function VizMatrix({ data }: { data: Payload }) {
 
 function VizFlow({ data }: { data: Payload }) {
     const steps = Array.isArray(data.steps) ? (data.steps as string[]) : [];
+    // Wrapping, not clipping: a long pipeline folds onto the next line instead of hiding
+    // its tail past the card edge (bug: "send path A" content unreachable).
     return (
-        <div className="flex h-full items-center gap-1 overflow-auto text-xs">
+        <div className="flex h-full flex-wrap content-center items-center gap-x-1 gap-y-1.5 overflow-auto text-xs">
             {steps.map((s, i) => (
-                <span key={i} className="flex items-center gap-1 whitespace-nowrap">
+                <span key={i} className="flex items-center gap-1">
                     <span className="rounded-full bg-[var(--dd-border)] px-2 py-0.5">{s}</span>
                     {i < steps.length - 1 ? <span className="text-[var(--dd-text-muted)]">→</span> : null}
                 </span>
@@ -246,8 +278,17 @@ function VizStat({ data }: { data: Payload }) {
     );
 }
 
-/** kind "viz": dispatch on payload.viz — data-only visualizations, no charting dependency. */
-export function VizCard({ payload }: { payload: Payload }) {
+/** kind "viz": dispatch on payload.viz — data-only visualizations, no charting dependency.
+ *  Table viz supports inline cell editing when cardId/onEditCell are provided. */
+export function VizCard({
+    payload,
+    cardId,
+    onEditCell,
+}: {
+    payload: Payload;
+    cardId?: number;
+    onEditCell?: EditCellFn;
+}) {
     const viz = str(payload, "viz") || "table";
     const data = (typeof payload.data === "object" && payload.data !== null ? payload.data : {}) as Payload;
     const title = str(payload, "title");
@@ -256,7 +297,7 @@ export function VizCard({ payload }: { payload: Payload }) {
             {title ? (
                 <div className="shrink-0 text-xs font-semibold text-[var(--dd-text-secondary)]">{title}</div>
             ) : null}
-            <div className="min-h-0 flex-1">
+            <div className="flex min-h-0 flex-1 flex-col">
                 {viz === "matrix" ? (
                     <VizMatrix data={data} />
                 ) : viz === "flow" ? (
@@ -270,7 +311,7 @@ export function VizCard({ payload }: { payload: Payload }) {
                 ) : viz === "stat" ? (
                     <VizStat data={data} />
                 ) : (
-                    <VizTable data={data} />
+                    <VizTable data={data} cardId={cardId} onEditCell={onEditCell} />
                 )}
             </div>
         </div>

@@ -11,7 +11,11 @@ import { registerWatchCommand } from "./commands/watch";
 
 const program = new Command()
     .name("boards")
-    .description("Dev-dashboard annotation boards: push shot sets, create boards, listen for work");
+    .description(
+        "Dev-dashboard annotation boards: push shot sets, create boards, listen for work. " +
+            "Talks to the dev-dashboard server (default http://127.0.0.1:3042; --base / BOARDS_BASE_URL " +
+            "to override) — boards live at <base>/boards/<slug>."
+    );
 registerInitCommand(program);
 registerAddCommand(program);
 registerPushCommand(program);

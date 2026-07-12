@@ -1,8 +1,29 @@
+import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { getDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import { createKyselyClient, type DatabaseClient } from "@app/utils/database/client";
+import type { Migration } from "@app/utils/database/migrations";
 import { env } from "@app/utils/env";
 import type { BoardsDb } from "./db-types";
+
+function columnExists(db: Database, table: string, column: string): boolean {
+    const rows = db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    return rows.some((r) => r.name === column);
+}
+
+/** Schema evolutions for on-disk boards DBs that predate a BOOTSTRAP_DDL column. Fresh installs
+ *  get the column straight from the CREATE TABLE, so each migration is a no-op there (isApplied
+ *  probes the live schema rather than the _migrations ledger). */
+export const BOARDS_MIGRATIONS: Migration[] = [
+    {
+        id: "0001_message_attachments",
+        description: "annotation_messages.attachments JSON column for message file/image attachments",
+        isApplied: (db) => columnExists(db, "annotation_messages", "attachments"),
+        apply: (db) => {
+            db.run(`ALTER TABLE annotation_messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'`);
+        },
+    },
+];
 
 export const BOOTSTRAP_DDL: string[] = [
     `CREATE TABLE IF NOT EXISTS sets (
@@ -133,6 +154,7 @@ export const BOOTSTRAP_DDL: string[] = [
         board_id INTEGER NOT NULL DEFAULT 0,
         author TEXT NOT NULL DEFAULT '',
         body TEXT NOT NULL,
+        attachments TEXT NOT NULL DEFAULT '[]',
         created_at TEXT NOT NULL
     )`,
     `CREATE TABLE IF NOT EXISTS annotation_attempts (
@@ -196,6 +218,7 @@ export function getBoardsDb(): DatabaseClient<BoardsDb> {
     client ??= createKyselyClient<BoardsDb>({
         path: boardsDbPath(),
         bootstrap: BOOTSTRAP_DDL,
+        migrations: BOARDS_MIGRATIONS,
         migrationContext: { tableName: "dev-dashboard-boards" },
         // The DDL above declares `ON DELETE CASCADE` on several FKs (set_files, board_cards,
         // card_versions, annotation_revisions, annotation_attempts, board_questions, ...) —

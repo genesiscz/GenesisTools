@@ -646,6 +646,120 @@ const ARRANGE_MODES: ReadonlySet<string> = new Set([
     "distribute-v",
 ]);
 
+/** Broad-scope arrange treats each section + its spatial members as ONE unit (the frame is the unit's
+ *  bounding box): arranging moves the frame and applies the same delta to every member, so members
+ *  never scatter out of their frame and their in-frame layout is preserved. Loose cards (no containing
+ *  section) arrange as individual units alongside. Returns null when no section is in scope, so the
+ *  caller falls back to the per-card path. */
+async function arrangeComposite(
+    db: DatabaseClient<BoardsDb>,
+    slug: string,
+    all: CardRect[],
+    frames: SectionCard[],
+    body: ArrangeBody,
+    gap: number
+): Promise<ArrangeOutcome | null> {
+    const memberIds = memberIdsBySection(all);
+    const allById = new Map(all.map((c) => [c.id, c]));
+
+    let seed: (c: CardRect) => boolean;
+    let allFrames = false;
+    if (body.ids && body.ids.length > 0) {
+        const want = new Set(body.ids);
+        seed = (c) => want.has(c.id);
+    } else if (body.scope === "all") {
+        seed = () => true;
+        allFrames = true;
+    } else {
+        seed = (c) => c.payload.layer === "ai";
+    }
+
+    // Section units: every in-scope frame carries ALL its spatial members (container semantics).
+    const unitFrames: CardRect[] = [];
+    for (const f of frames) {
+        const frame = allById.get(f.id);
+        if (!frame) {
+            continue;
+        }
+
+        const mids = memberIds.get(f.id) ?? [];
+        const touched =
+            allFrames ||
+            seed(frame) ||
+            mids.some((id) => {
+                const m = allById.get(id);
+                return m ? seed(m) : false;
+            });
+        if (touched) {
+            unitFrames.push(frame);
+        }
+    }
+    if (unitFrames.length === 0) {
+        return null; // no section involvement → let the per-card path handle it
+    }
+
+    // Loose units: in-scope non-section cards with no containing section.
+    const looseCards: CardRect[] = [];
+    for (const c of all) {
+        if (c.kind === "section" || !seed(c)) {
+            continue;
+        }
+        if (containingSection(frames, c)) {
+            continue;
+        }
+
+        looseCards.push(c);
+    }
+
+    // One pseudo-rect per unit (section units use the frame's own bbox); each maps to the card ids
+    // that travel with it (frame + members, or the lone loose card).
+    const rects: CardRect[] = [];
+    const carry = new Map<number, number[]>();
+    for (const f of unitFrames) {
+        rects.push(f);
+        carry.set(f.id, [f.id, ...(memberIds.get(f.id) ?? [])]);
+    }
+    for (const c of looseCards) {
+        rects.push(c);
+        carry.set(c.id, [c.id]);
+    }
+    if (rects.length < 2) {
+        // A single unit: nothing to rearrange at the top level (members keep their in-frame layout).
+        return { ok: true, status: 200, moved: 0, cards: [], saved: false };
+    }
+
+    const opts: ArrangeOpts = { mode: body.mode as ArrangeMode, gap, cols: body.cols };
+    const unitMoves = arrangeMoves(rects, opts);
+    const rectById = new Map(rects.map((r) => [r.id, r]));
+
+    // Expand each unit move into per-card moves via the unit's delta (preserving in-frame offsets).
+    const writeMoves: Move[] = [];
+    for (const um of unitMoves) {
+        const rect = rectById.get(um.id);
+        if (!rect) {
+            continue;
+        }
+
+        const dx = um.x - rect.x;
+        const dy = um.y - rect.y;
+        for (const cid of carry.get(um.id) ?? []) {
+            const c = allById.get(cid);
+            if (!c) {
+                continue;
+            }
+
+            writeMoves.push({ id: c.id, x: c.x + dx, y: c.y + dy, w: wOf(c), h: hOf(c) });
+        }
+    }
+    if (writeMoves.length === 0) {
+        return { ok: true, status: 200, moved: 0, cards: [], saved: false };
+    }
+
+    await bulkLayout(db, slug, writeMoves);
+    publishBoardEvent(slug, { type: "layout", payload: { moves: writeMoves } });
+    return { ok: true, status: 200, moved: writeMoves.length, cards: writeMoves, saved: false };
+}
+
 export async function runArrange(
     db: DatabaseClient<BoardsDb>,
     slug: string,
@@ -684,6 +798,16 @@ export async function runArrange(
     }
 
     const frames = sectionFrames(all);
+
+    // Broad-scope arrange (all / ai / an id set that spans sections): sections are containers, so
+    // arrange each section+members as ONE unit instead of scattering members across the board.
+    if (!body.scope?.startsWith("section:") && frames.length > 0) {
+        const composite = await arrangeComposite(db, slug, all, frames, body, gap);
+        if (composite) {
+            return composite;
+        }
+    }
+
     let sel: CardRect[];
     let sec: SectionCard | null = null;
     if (body.ids && body.ids.length > 0) {

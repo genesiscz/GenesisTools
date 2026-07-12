@@ -6,10 +6,13 @@ interface EdgeLayerProps {
     cards: CardDto[];
     /** The connect tool's in-progress drag, drawn as a dashed preview. */
     liveEdge?: { fromCardId: number; current: { x: number; y: number } } | null;
+    selectedEdgeId?: number | null;
+    /** When set (move tool), edges get a wide invisible hit line for click-select. */
+    onSelectEdge?: (id: number) => void;
 }
 
 /** One absolutely-positioned SVG spanning the world; overflow-visible so it never clips lines. */
-export function EdgeLayer({ edges, cards, liveEdge }: EdgeLayerProps) {
+export function EdgeLayer({ edges, cards, liveEdge, selectedEdgeId, onSelectEdge }: EdgeLayerProps) {
     const cardById = new Map(cards.map((c) => [c.id, c]));
     const liveFrom = liveEdge ? cardById.get(liveEdge.fromCardId) : null;
     const liveStart = liveFrom && liveEdge ? nearestSideToPoint(liveFrom, liveEdge.current) : null;
@@ -49,13 +52,28 @@ export function EdgeLayer({ edges, cards, liveEdge }: EdgeLayerProps) {
 
                 return (
                     <g key={edge.id}>
+                        {onSelectEdge ? (
+                            <line
+                                x1={p1.x}
+                                y1={p1.y}
+                                x2={p2.x}
+                                y2={p2.y}
+                                stroke="transparent"
+                                strokeWidth={12}
+                                style={{ pointerEvents: "stroke", cursor: "pointer" }}
+                                onPointerDown={(e) => {
+                                    e.stopPropagation();
+                                    onSelectEdge(edge.id);
+                                }}
+                            />
+                        ) : null}
                         <line
                             x1={p1.x}
                             y1={p1.y}
                             x2={p2.x}
                             y2={p2.y}
-                            stroke="var(--dd-text-muted)"
-                            strokeWidth={1.5}
+                            stroke={edge.id === selectedEdgeId ? "var(--dd-accent-from)" : "var(--dd-text-muted)"}
+                            strokeWidth={edge.id === selectedEdgeId ? 2 : 1.5}
                             markerEnd="url(#dd-edge-arrow)"
                         />
                         {edge.label ? (

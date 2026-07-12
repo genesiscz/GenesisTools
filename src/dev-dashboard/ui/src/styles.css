@@ -77,3 +77,179 @@ pre,
     border-radius: 2px;
     padding: 0 1px;
 }
+
+/* ---------------------------------------------------------------------------
+ * Boards canvas typography — fixed px under the world scale() transform
+ * (vitrinka scale: body 13.5/1.55, headings 15/14/13, mono micro-labels).
+ * ------------------------------------------------------------------------- */
+
+.dd-board-md {
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--dd-text-primary);
+    word-break: break-word;
+}
+
+.dd-board-md > * + * {
+    margin-top: 0.45em;
+}
+
+.dd-board-md h1,
+.dd-board-md h2 {
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.dd-board-md h3 {
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.dd-board-md h4,
+.dd-board-md h5,
+.dd-board-md h6 {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.dd-board-md p {
+    margin-block: 0;
+}
+
+.dd-board-md ul,
+.dd-board-md ol {
+    padding-left: 1.2em;
+    list-style: disc;
+}
+
+.dd-board-md ol {
+    list-style: decimal;
+}
+
+.dd-board-md li + li {
+    margin-top: 0.15em;
+}
+
+.dd-board-md code {
+    font-size: 12px;
+    background: color-mix(in srgb, var(--dd-border) 45%, transparent);
+    border-radius: 3px;
+    padding: 0 3px;
+}
+
+.dd-board-md pre {
+    background: color-mix(in srgb, var(--dd-border) 30%, transparent);
+    border-radius: 6px;
+    padding: 8px 10px;
+    overflow-x: auto;
+}
+
+.dd-board-md pre code {
+    background: none;
+    padding: 0;
+    font-size: 11.5px;
+    line-height: 1.5;
+}
+
+.dd-board-md a {
+    color: var(--dd-accent-from);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.dd-board-md blockquote {
+    border-left: 3px solid var(--dd-border);
+    padding-left: 10px;
+    color: var(--dd-text-secondary);
+}
+
+.dd-board-md table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 12.5px;
+    line-height: 1.4;
+}
+
+.dd-board-md th {
+    font-family: "JetBrains Mono", Menlo, monospace;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--dd-text-muted);
+    text-align: left;
+    padding: 4px 10px 4px 0;
+    border-bottom: 1px solid var(--dd-border);
+}
+
+.dd-board-md td {
+    padding: 5px 10px 5px 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--dd-border) 55%, transparent);
+    vertical-align: top;
+}
+
+.dd-board-md tr:last-child td {
+    border-bottom: none;
+}
+
+/* Quiet-wire viz table (bug 9): mono micro-caps headers, hairline rows, scrolls inside card. */
+.dd-viz-scroll {
+    overflow: auto;
+    flex: 1;
+    min-height: 0;
+}
+
+.dd-viz-table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 12.5px;
+    line-height: 1.4;
+    color: var(--dd-text-primary);
+}
+
+.dd-viz-table th {
+    font-family: "JetBrains Mono", Menlo, monospace;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--dd-text-muted);
+    text-align: left;
+    padding: 4px 10px 4px 0;
+    border-bottom: 1px solid var(--dd-border);
+    white-space: nowrap;
+}
+
+.dd-viz-table td {
+    padding: 5px 10px 5px 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--dd-border) 55%, transparent);
+    vertical-align: top;
+    min-width: 72px;
+}
+
+.dd-viz-table tr:last-child td {
+    border-bottom: none;
+}
+
+/* Card resize handles — 8 dots on the solo selection (vitrinka bd-handle). */
+.dd-card-handle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    background: var(--dd-bg-panel);
+    border: 1.5px solid var(--dd-accent-from);
+    z-index: 10001;
+}
+
+.dd-card-handle-nw { top: -5px; left: -5px; cursor: nwse-resize; }
+.dd-card-handle-ne { top: -5px; right: -5px; cursor: nesw-resize; }
+.dd-card-handle-sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
+.dd-card-handle-se { bottom: -5px; right: -5px; cursor: nwse-resize; }
+.dd-card-handle-n { top: -5px; left: calc(50% - 5px); cursor: ns-resize; }
+.dd-card-handle-s { bottom: -5px; left: calc(50% - 5px); cursor: ns-resize; }
+.dd-card-handle-w { left: -5px; top: calc(50% - 5px); cursor: ew-resize; }
+.dd-card-handle-e { right: -5px; top: calc(50% - 5px); cursor: ew-resize; }

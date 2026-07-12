@@ -246,4 +246,78 @@ describe("boardsRoutes", () => {
         expect(res.body.boardId).not.toBeNull();
         expect(events).toEqual(["board_message"]);
     });
+
+    it("PATCH stroke moves/restyles a stroke and emits a `stroke` SSE event", async () => {
+        await createBoard("b1");
+        const strokesRoute = findRoute("POST", "/api/boards/:slug/strokes");
+        const created = asJson(
+            await strokesRoute.handler(
+                makeCtx({ method: "POST", params: { slug: "b1" }, body: { strokes: [{ path: [[1, 2, 0.5]] }] } })
+            )
+        );
+        const stroke = (created.body.strokes as Array<{ id: number }>)[0];
+
+        const events: unknown[] = [];
+        subscribeBoard("b1", (frame) => events.push(SafeJSON.parse(frame, { strict: true })));
+
+        const patch = findRoute("PATCH", "/api/boards/strokes/:id");
+        const res = asJson(
+            await patch.handler(
+                makeCtx({
+                    method: "PATCH",
+                    params: { id: String(stroke.id) },
+                    body: {
+                        path: [
+                            [5, 6, 0.5],
+                            [7, 8, 0.5],
+                        ],
+                        color: "#08f",
+                    },
+                })
+            )
+        );
+        expect(res.status).toBe(200);
+        expect(res.body.path).toEqual([
+            [5, 6, 0.5],
+            [7, 8, 0.5],
+        ]);
+        expect(res.body.color).toBe("#08f");
+        expect(events).toEqual([{ type: "stroke", payload: res.body }]);
+    });
+
+    it("msg-uploads stores a raw image blob and returns its descriptor without creating a card", async () => {
+        await createBoard("b1");
+        const upload = findRoute("POST", "/api/boards/:slug/msg-uploads");
+        const res = asJson(
+            await upload.handler(
+                makeCtx({
+                    method: "POST",
+                    params: { slug: "b1" },
+                    query: { name: "paste.png", mime: "image/png" },
+                    rawBody: buildPng(10, 10),
+                })
+            )
+        );
+        expect(res.status).toBe(201);
+        expect(res.body.name).toBe("paste.png");
+        expect(res.body.mime).toBe("image/png");
+        expect(res.body.blobKey).toMatch(/^[0-9a-f]{64}\.png$/);
+
+        // The board has no cards — the upload did not create one.
+        const doc = asJson(await findRoute("GET", "/api/boards/:slug").handler(makeCtx({ params: { slug: "b1" } })));
+        expect((doc.body.cards as unknown[]).length).toBe(0);
+    });
+
+    it("board messages carry attachments end to end", async () => {
+        await createBoard("b1");
+        const messages = findRoute("POST", "/api/boards/:slug/messages");
+        const attachments = [{ blobKey: "abc.png", name: "shot.png", mime: "image/png" }];
+        const res = asJson(
+            await messages.handler(
+                makeCtx({ method: "POST", params: { slug: "b1" }, body: { body: "look", attachments } })
+            )
+        );
+        expect(res.status).toBe(201);
+        expect(res.body.attachments).toEqual(attachments);
+    });
 });

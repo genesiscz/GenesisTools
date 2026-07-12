@@ -1,5 +1,6 @@
 import type { AnnotationDto, AnnotationStatus, CardDto, Region } from "@app/dev-dashboard/contract/dto";
-import { useMemo } from "react";
+import { Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
 
 /** World px per source px: card.w / naturalWidth (falls back to card.w when naturalWidth is unknown). */
 export function getCardScaleFactor(card: CardDto): number {
@@ -100,29 +101,13 @@ export function AnnotationLayer({
                         >
                             {annotation.id}
                         </button>
-                        {annotation.status === "staged" ? (
-                            <div
-                                className="absolute w-56 rounded-md border border-[var(--dd-border)] bg-[var(--dd-bg-panel)] p-2 text-xs shadow-lg"
-                                style={{ left: rect.x + 16, top: rect.y + 16, zIndex: 10000 }}
-                            >
-                                <textarea
-                                    defaultValue={annotation.prompt}
-                                    onBlur={(e) => {
-                                        if (e.target.value.trim() && e.target.value !== annotation.prompt) {
-                                            onReviseStaged(annotation.id, e.target.value);
-                                        }
-                                    }}
-                                    rows={2}
-                                    className="w-full resize-none bg-transparent text-[var(--dd-text-primary)] outline-none"
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() => onDeleteStaged(annotation.id)}
-                                    className="mt-1 text-[var(--dd-danger)] hover:underline"
-                                >
-                                    ✕ delete
-                                </button>
-                            </div>
+                        {annotation.status === "staged" && selected ? (
+                            <StagedEditor
+                                annotation={annotation}
+                                rect={rect}
+                                onReviseStaged={onReviseStaged}
+                                onDeleteStaged={onDeleteStaged}
+                            />
                         ) : null}
                     </div>
                 );
@@ -130,6 +115,68 @@ export function AnnotationLayer({
 
             {liveRegion ? <LiveRegionRect liveRegion={liveRegion} cardById={cardById} /> : null}
         </>
+    );
+}
+
+/** Floating prompt editor for the SELECTED staged annotation only (an always-open popup used to
+ *  block clicks on everything under it). Trash is a quiet corner icon with an inline confirm. */
+function StagedEditor({
+    annotation,
+    rect,
+    onReviseStaged,
+    onDeleteStaged,
+}: {
+    annotation: AnnotationDto;
+    rect: { x: number; y: number; w: number; h: number };
+    onReviseStaged: (id: number, prompt: string) => void;
+    onDeleteStaged: (id: number) => void;
+}) {
+    const [confirming, setConfirming] = useState(false);
+
+    return (
+        <div
+            className="absolute w-60 rounded-md border border-[var(--dd-border)] bg-[var(--dd-bg-panel)] p-2 text-xs shadow-lg"
+            style={{ left: rect.x + 16, top: rect.y + rect.h + 8, zIndex: 10000 }}
+            onPointerDown={(e) => e.stopPropagation()}
+        >
+            <textarea
+                defaultValue={annotation.prompt}
+                onBlur={(e) => {
+                    if (e.target.value.trim() && e.target.value !== annotation.prompt) {
+                        onReviseStaged(annotation.id, e.target.value);
+                    }
+                }}
+                rows={3}
+                className="w-full resize-none bg-transparent pr-5 text-[var(--dd-text-primary)] outline-none"
+            />
+            {confirming ? (
+                <div className="absolute top-1.5 right-1.5 flex items-center gap-1">
+                    <button
+                        type="button"
+                        onClick={() => onDeleteStaged(annotation.id)}
+                        className="rounded bg-[var(--dd-danger)] px-1.5 py-0.5 text-[10px] font-semibold text-white"
+                    >
+                        delete
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setConfirming(false)}
+                        className="text-[10px] text-[var(--dd-text-muted)] hover:text-[var(--dd-text-primary)]"
+                    >
+                        keep
+                    </button>
+                </div>
+            ) : (
+                <button
+                    type="button"
+                    title="delete annotation"
+                    onClick={() => setConfirming(true)}
+                    className="absolute top-1.5 right-1.5 text-[var(--dd-text-muted)] hover:text-[var(--dd-danger)]"
+                >
+                    <Trash2 size={12} />
+                </button>
+            )}
+        </div>
     );
 }
 

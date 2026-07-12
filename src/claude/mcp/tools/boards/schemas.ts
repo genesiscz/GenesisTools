@@ -1,12 +1,26 @@
-// Hand-written JSON Schemas for the 11 boards_* MCP tools, following
+// Hand-written JSON Schemas for the boards_* MCP tools, following
 // QUESTION_ANSWER_INPUT_SCHEMA's shape (type: object, properties, required,
-// additionalProperties: false). All eleven live here so descriptions stay reviewable
+// additionalProperties: false). They all live here so descriptions stay reviewable
 // in one file; tool descriptions themselves are registered alongside handlers in
 // server.ts.
 
 export const LIST_BOARDS_SCHEMA = {
     type: "object",
     properties: { project: { type: "string", description: "Filter by project name" } },
+    additionalProperties: false,
+} as const;
+
+export const CREATE_BOARD_SCHEMA = {
+    type: "object",
+    properties: {
+        slug: {
+            type: "string",
+            description: "Board slug (URL path segment): ^[a-z0-9][a-z0-9-]{0,63}$",
+        },
+        title: { type: "string", description: "Human title (defaults to the slug)" },
+        project: { type: "string", description: "Project to file the board under" },
+    },
+    required: ["slug"],
     additionalProperties: false,
 } as const;
 
