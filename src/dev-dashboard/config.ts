@@ -76,10 +76,10 @@ export interface DashboardAuthProvision {
     generatedPassword: string | null;
 }
 
-const storage = getDevDashboardStorage();
-
 export async function getConfig(): Promise<DevDashboardConfig> {
-    const raw = await storage.getConfig<Partial<DevDashboardConfig>>();
+    // Resolved per call (not captured at module load) so resetDevDashboardStorage()
+    // + GENESIS_TOOLS_HOME overrides in tests are honored.
+    const raw = await getDevDashboardStorage().getConfig<Partial<DevDashboardConfig>>();
     const parsed = DevDashboardConfigSchema.safeParse(raw ?? {});
 
     if (parsed.success) {
@@ -97,6 +97,7 @@ export async function getConfig(): Promise<DevDashboardConfig> {
 
 export async function saveConfig(config: DevDashboardConfig): Promise<void> {
     DevDashboardConfigSchema.parse(config);
+    const storage = getDevDashboardStorage();
     await storage.ensureDirs();
     await storage.setConfig(config);
 
@@ -160,5 +161,3 @@ export async function saveTtydSessions(ttydSessions: TtydSession[]): Promise<voi
     const config = await getConfig();
     await saveConfig({ ...config, ttydSessions });
 }
-
-export { storage };

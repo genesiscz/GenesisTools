@@ -1,12 +1,14 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { storage } from "@app/dev-dashboard/config";
 import {
     findPublishedByPath,
     findPublishedBySlug,
     publishNote,
     unpublishNote,
 } from "@app/dev-dashboard/lib/obsidian/publish";
+import { getDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
+
+const storage = getDevDashboardStorage();
 
 let originalConfig: string | null = null;
 
