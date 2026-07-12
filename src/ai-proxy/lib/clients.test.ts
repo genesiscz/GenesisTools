@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { OWNER_CLIENT_NAME, SUBSCRIPTION_PROVIDER_TYPES, validateClients } from "@app/ai-proxy/lib/clients";
-import type { AiProxyClientConfig } from "@app/ai-proxy/lib/types";
+import {
+    OWNER_CLIENT_NAME,
+    resolveClient,
+    SUBSCRIPTION_PROVIDER_TYPES,
+    validateClients,
+} from "@app/ai-proxy/lib/clients";
+import type { AiProxyClientConfig, AiProxyConfig } from "@app/ai-proxy/lib/types";
 
 const good: AiProxyClientConfig = { name: "alice", key: "k".repeat(24) };
 
@@ -27,5 +32,36 @@ describe("validateClients", () => {
         const problems = validateClients([{ ...good, allowedProviders: ["anthropic-subscription"] }]);
         expect(problems.some((p) => p.includes("subscription providers cannot be granted"))).toBe(true);
         expect(SUBSCRIPTION_PROVIDER_TYPES.has("anthropic-subscription")).toBe(true);
+    });
+});
+
+function reqWithBearer(token: string | null): Request {
+    const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+    return new Request("http://localhost/v1/chat/completions", { method: "POST", headers });
+}
+
+function cfg(clients?: AiProxyConfig["clients"]): AiProxyConfig {
+    return { proxyApiKey: "owner-key-0123456789", clients } as AiProxyConfig;
+}
+
+describe("resolveClient", () => {
+    it("resolves proxyApiKey to the owner identity", () => {
+        const resolved = resolveClient(reqWithBearer("owner-key-0123456789"), cfg());
+        expect(resolved).toEqual({ name: "owner", isOwner: true });
+    });
+
+    it("resolves a client key to its named identity", () => {
+        const alice = { name: "alice", key: "alice-key-0123456789" };
+        const resolved = resolveClient(reqWithBearer("alice-key-0123456789"), cfg([alice]));
+        expect(resolved?.name).toBe("alice");
+        expect(resolved?.isOwner).toBe(false);
+        expect(resolved?.config).toEqual(alice);
+    });
+
+    it("rejects wrong keys, missing header, and disabled clients", () => {
+        const disabled = { name: "mallory", key: "mallory-key-0123456", disabled: true };
+        expect(resolveClient(reqWithBearer("nope-nope-nope-nope"), cfg([disabled]))).toBeNull();
+        expect(resolveClient(reqWithBearer(null), cfg())).toBeNull();
+        expect(resolveClient(reqWithBearer("mallory-key-0123456"), cfg([disabled]))).toBeNull();
     });
 });

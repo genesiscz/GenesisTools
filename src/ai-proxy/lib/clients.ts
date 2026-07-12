@@ -1,4 +1,6 @@
-import type { AiProxyClientConfig, AiProxyProviderType } from "@app/ai-proxy/lib/types";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { extractBearerToken } from "@app/ai-proxy/lib/auth-middleware";
+import type { AiProxyClientConfig, AiProxyConfig, AiProxyProviderType } from "@app/ai-proxy/lib/types";
 
 export const OWNER_CLIENT_NAME = "owner";
 
@@ -65,4 +67,45 @@ export function validateClients(clients: AiProxyClientConfig[] | undefined): str
 
 function SafeStr(value: string | undefined): string {
     return value === undefined ? "<missing>" : `"${value}"`;
+}
+
+export interface ResolvedClient {
+    name: string;
+    isOwner: boolean;
+    config?: AiProxyClientConfig;
+}
+
+function digestsEqual(a: string, b: string): boolean {
+    const hashA = createHash("sha256").update(a).digest();
+    const hashB = createHash("sha256").update(b).digest();
+    return timingSafeEqual(hashA, hashB);
+}
+
+/**
+ * Resolve the presented Bearer to a client identity. The legacy proxyApiKey is
+ * the implicit "owner". No early exit: every candidate is compared so a match's
+ * list position is not observable via timing.
+ */
+export function resolveClient(req: Request, config: AiProxyConfig): ResolvedClient | null {
+    const token = extractBearerToken(req);
+
+    if (!token) {
+        return null;
+    }
+
+    let resolved: ResolvedClient | null = null;
+
+    if (digestsEqual(token, config.proxyApiKey)) {
+        resolved = { name: OWNER_CLIENT_NAME, isOwner: true };
+    }
+
+    for (const client of config.clients ?? []) {
+        const matches = digestsEqual(token, client.key);
+
+        if (matches && !client.disabled && resolved === null) {
+            resolved = { name: client.name, isOwner: false, config: client };
+        }
+    }
+
+    return resolved;
 }
