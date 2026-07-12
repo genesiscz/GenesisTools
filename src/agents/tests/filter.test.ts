@@ -192,6 +192,31 @@ describe("filter.isVisibleToAgent", () => {
         };
         expect(isVisibleToAgent(loggedIn, agentAlpha, { debug: true })).toBe(false);
     });
+
+    test("hides peer --once login/logout churn even when session debug is on", () => {
+        const onceLoggedIn: FeedEvent = {
+            seq: 12,
+            ts: "2026-01-01T00:00:12Z",
+            type: "logged_in",
+            agent_id: "agt_beta",
+            agent_name: "beta",
+            mode: "once",
+        };
+        const onceLoggedOut: FeedEvent = {
+            seq: 13,
+            ts: "2026-01-01T00:00:13Z",
+            type: "logged_out",
+            agent_id: "agt_beta",
+            reason: "clean_exit",
+            mode: "once",
+        };
+        expect(isVisibleToAgent(onceLoggedIn, agentAlpha, { debug: true })).toBe(false);
+        expect(isVisibleToAgent(onceLoggedOut, agentAlpha, { debug: true })).toBe(false);
+
+        const main: AgentRecord = { ...agentAlpha, agent_id: "main_x", agent_name: "lead", is_main: true };
+        expect(isVisibleToAgent(onceLoggedIn, main, { debug: true })).toBe(false);
+        expect(isVisibleToAgent(onceLoggedOut, main, { debug: true })).toBe(false);
+    });
 });
 
 describe("filter.filterForAgent", () => {
