@@ -62,15 +62,20 @@ export interface TimeMachineReport {
 /**
  * Drive the bisect end-to-end against a real git repo. Returns a structured
  * report; the caller decides how to render it. This is the orchestration seam
- * the integration test exercises — keep it free of process.exit / printing.
+ * the integration test exercises — keep it free of process.exit (it does emit
+ * progress via out.log, but callers/tests should assert on the returned
+ * report, not on exit behavior).
  */
 export async function runTimeMachine(command: string[], options: TimeMachineOptions): Promise<TimeMachineReport> {
     const { depth, good, cwd } = options;
 
     // 1. Probe the CURRENT working tree. If the command already passes there is
-    //    nothing to blame — short-circuit before touching history.
+    //    nothing to blame — short-circuit before touching history. Inherit
+    //    stdio so the user sees exactly why it fails before we start bisecting
+    //    (captured output was otherwise discarded, wasting memory on chatty
+    //    commands like test runners).
     out.log.step(`Running command in current tree: ${command.join(" ")}`);
-    const headRun = await runCommandInDir({ command, cwd, captureOutput: true });
+    const headRun = await runCommandInDir({ command, cwd, captureOutput: false });
     logger.debug({ exitCode: headRun.exitCode }, "time-machine: head probe");
 
     if (headRun.exitCode === 0) {
@@ -90,9 +95,16 @@ export async function runTimeMachine(command: string[], options: TimeMachineOpti
         out.log.info(`Seeded known-good lower bound: ${good} (${goodSha.slice(0, 7)})`);
     }
 
-    // 3. List candidate commits. listCommits returns NEWEST → OLDEST; the
-    //    bisect core needs OLDEST → NEWEST (index 0 = oldest = lower bound),
-    //    so we reverse. Without this the search blames HEAD every time.
+    // 3. Guard against an unborn HEAD (freshly `git init`ed repo with zero
+    //    commits) — `git log HEAD` throws on an unresolvable ref, so resolve
+    //    it first and short-circuit to the "no-commits" report instead of
+    //    letting the error propagate. Otherwise list candidate commits:
+    //    listCommits returns NEWEST → OLDEST; the bisect core needs
+    //    OLDEST → NEWEST (index 0 = oldest = lower bound), so we reverse.
+    if (!(await resolveRef("HEAD", cwd))) {
+        return { status: "no-commits", candidates: 0, probes: 0 };
+    }
+
     const newestFirst = await listCommits({ cwd, startRef: "HEAD", depth, goodRef: goodSha });
     const commits = [...newestFirst].reverse(); // oldest → newest
 
