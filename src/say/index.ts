@@ -184,9 +184,22 @@ const program = new Command()
         }
 
         if (provider !== "macos" && !envForProvider(provider)) {
-            out.error(pc.red(`[say] env var for ${provider} is not set.`));
-            out.error(pc.dim(suggestCommand("tools say", { add: ["--provider", "macos"] })));
-            process.exit(1);
+            if (opts.fallback === false) {
+                out.error(pc.red(`[say] env var for ${provider} is not set.`));
+                out.error(pc.dim(suggestCommand("tools say", { add: ["--provider", "macos"] })));
+                process.exit(1);
+            }
+
+            out.error(pc.yellow(`[say] env var for ${provider} is not set — falling back to macos.`));
+            provider = "macos";
+
+            if (!isFromCLI(cmd, "voice")) {
+                effectiveForRun.voice = null;
+            }
+
+            if (!isFromCLI(cmd, "model")) {
+                effectiveForRun.model = null;
+            }
         }
 
         const stream = opts.stream === true ? true : opts.noStream === true ? false : undefined;
