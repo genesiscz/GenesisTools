@@ -53,6 +53,8 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
             const suffix = query.toString() ? `?${query.toString()}` : "";
             return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/transcript${suffix}`);
         }
+        case "api:getComments":
+            return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/comments`);
         case "api:getSummary":
             return apiCall(
                 `${base}/api/v1/videos/${encodeURIComponent(req.id)}/summary?mode=${encodeURIComponent(req.mode)}`
