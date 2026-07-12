@@ -31,9 +31,20 @@ declare global {
 
         namespace storage {
             const local: {
-                get(keys: string): Promise<Partial<ExtensionConfig>>;
+                get(keys: string | string[]): Promise<Partial<ExtensionConfig>>;
                 set(items: Partial<ExtensionConfig>): Promise<void>;
+                remove(keys: string | string[]): Promise<void>;
             };
+        }
+
+        namespace permissions {
+            interface Permissions {
+                origins?: string[];
+                permissions?: string[];
+            }
+
+            function contains(permissions: Permissions): Promise<boolean>;
+            function request(permissions: Permissions): Promise<boolean>;
         }
     }
 }

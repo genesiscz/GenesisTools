@@ -24,7 +24,7 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
     }
 
     if (req.type === "config:set") {
-        const next = await setExtensionConfig({ apiBaseUrl: req.apiBaseUrl });
+        const next = await setExtensionConfig({ apiBaseUrl: req.apiBaseUrl, serviceKey: req.serviceKey });
         await reconnectWebsocket();
         return { ok: true, data: next };
     }
@@ -91,10 +91,20 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
 }
 
 async function apiCall(url: string, init: RequestInit = {}): Promise<ExtensionResponse> {
+    const { serviceKey } = await getExtensionConfig();
+    const headers = new Headers(init.headers);
+    if (!headers.has("Content-Type")) {
+        headers.set("Content-Type", "application/json");
+    }
+
+    if (serviceKey) {
+        headers.set("Authorization", `Bearer ${serviceKey}`);
+    }
+
     try {
         const res = await fetch(url, {
             ...init,
-            headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
+            headers,
         });
         if (!res.ok) {
             return { ok: false, error: `${res.status} ${res.statusText}` };
@@ -107,6 +117,10 @@ async function apiCall(url: string, init: RequestInit = {}): Promise<ExtensionRe
 
 async function reconnectWebsocket(): Promise<void> {
     if (ws) {
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onclose = null;
+        ws.onerror = null;
         ws.close();
         ws = null;
     }
@@ -117,7 +131,10 @@ async function reconnectWebsocket(): Promise<void> {
     }
 
     const cfg = await getExtensionConfig();
-    const url = `${cfg.apiBaseUrl.replace(/^http/, "ws").replace(/\/$/, "")}/api/v1/events`;
+    const base = `${cfg.apiBaseUrl.replace(/^http/, "ws").replace(/\/$/, "")}/api/v1/events`;
+    // Browsers can't set an Authorization header on a WS handshake, so the
+    // service key rides as a query param (the server reads ?access_token=).
+    const url = cfg.serviceKey ? `${base}?access_token=${encodeURIComponent(cfg.serviceKey)}` : base;
 
     try {
         ws = new WebSocket(url);
