@@ -34,6 +34,7 @@ describe("YoutubeDatabase schema", () => {
         expect(names).toContain("channels");
         expect(names).toContain("videos");
         expect(names).toContain("transcripts");
+        expect(names).toContain("comments");
         expect(names).toContain("jobs");
         expect(names).toContain("qa_chunks");
         expect(names).toContain("schema_version");
@@ -55,11 +56,11 @@ describe("YoutubeDatabase schema", () => {
         expect(triggerNames).toContain("transcripts_au");
     });
 
-    it("records schema version 1 once", () => {
+    it("records the current schema version once", () => {
         const rows = db.getDb().query("SELECT * FROM schema_version").all() as Array<{ version: number }>;
 
         expect(rows.length).toBe(1);
-        expect(rows[0].version).toBe(1);
+        expect(rows[0].version).toBe(2);
     });
 
     it("is idempotent when initSchema is called again", () => {
@@ -67,7 +68,7 @@ describe("YoutubeDatabase schema", () => {
         const rows = db.getDb().query("SELECT * FROM schema_version").all() as Array<{ version: number }>;
 
         expect(rows.length).toBe(1);
-        expect(rows[0].version).toBe(1);
+        expect(rows[0].version).toBe(2);
     });
 
     it("normalizes legacy non-UTC timestamps and leaves modern UTC values untouched", () => {
@@ -338,6 +339,83 @@ describe("YoutubeDatabase transcripts", () => {
 
         expect(hits.length).toBe(1);
         expect(hits[0].videoId).toBe("vid00000001");
+    });
+});
+
+describe("YoutubeDatabase comments", () => {
+    beforeEach(() => {
+        db.upsertChannel({ handle: "@mkbhd" });
+        db.upsertVideo({ id: "vid00000001", channelHandle: "@mkbhd", title: "T" });
+    });
+
+    it("upserts and reads comments preserving fields and insertion order", () => {
+        db.upsertComments("vid00000001", [
+            {
+                commentId: "c1",
+                author: "@alice",
+                authorId: "UCalice",
+                text: "First!",
+                likeCount: 12,
+                publishedAt: "2026-07-01T00:00:00.000Z",
+                parentCommentId: null,
+            },
+            {
+                commentId: "c1.1",
+                author: "@bob",
+                authorId: "UCbob",
+                text: "reply to alice",
+                likeCount: 0,
+                publishedAt: "2026-07-02T00:00:00.000Z",
+                parentCommentId: "c1",
+            },
+        ]);
+        const comments = db.getComments("vid00000001");
+
+        expect(comments.map((comment) => comment.commentId)).toEqual(["c1", "c1.1"]);
+        expect(comments[0]).toMatchObject({
+            videoId: "vid00000001",
+            author: "@alice",
+            authorId: "UCalice",
+            text: "First!",
+            likeCount: 12,
+            publishedAt: "2026-07-01T00:00:00.000Z",
+            parentCommentId: null,
+        });
+        expect(comments[1].parentCommentId).toBe("c1");
+    });
+
+    it("is idempotent on (video_id, comment_id) and updates like_count", () => {
+        db.upsertComments("vid00000001", [
+            {
+                commentId: "c1",
+                author: "@alice",
+                authorId: null,
+                text: "hi",
+                likeCount: 1,
+                publishedAt: null,
+                parentCommentId: null,
+            },
+        ]);
+        db.upsertComments("vid00000001", [
+            {
+                commentId: "c1",
+                author: "@alice",
+                authorId: null,
+                text: "hi (edited)",
+                likeCount: 5,
+                publishedAt: null,
+                parentCommentId: null,
+            },
+        ]);
+        const comments = db.getComments("vid00000001");
+
+        expect(comments.length).toBe(1);
+        expect(comments[0].text).toBe("hi (edited)");
+        expect(comments[0].likeCount).toBe(5);
+    });
+
+    it("returns an empty array for a video with no comments", () => {
+        expect(db.getComments("vid00000001")).toEqual([]);
     });
 });
 

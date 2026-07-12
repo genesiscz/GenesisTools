@@ -3,6 +3,7 @@ import { logger } from "@app/logger";
 import { concurrentMap } from "@app/utils/async";
 import { audioPath, ensureBinaryDir, videoFilePath } from "@app/youtube/lib/cache";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
+import type { VideoComment } from "@app/youtube/lib/comments.types";
 import { DEFAULT_BASE_DIR, YoutubeConfig } from "@app/youtube/lib/config";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { UpsertVideoInput } from "@app/youtube/lib/db.types";
@@ -14,13 +15,22 @@ import { SummaryService } from "@app/youtube/lib/summarize";
 import { TranscriptService } from "@app/youtube/lib/transcripts";
 import type { VideoId } from "@app/youtube/lib/video.types";
 import type { YoutubeDeps, YoutubeOptions } from "@app/youtube/lib/youtube.types";
-import { downloadAudio, downloadVideo, dumpVideoMetadata, listChannelVideos } from "@app/youtube/lib/yt-dlp";
+import {
+    downloadAudio,
+    downloadVideo,
+    dumpVideoMetadata,
+    fetchComments,
+    listChannelVideos,
+} from "@app/youtube/lib/yt-dlp";
 import type { ListedVideo } from "@app/youtube/lib/yt-dlp.types";
 
 const DEFAULT_YOUTUBE_DEPS: YoutubeDeps = {
     listChannelVideos,
     dumpVideoMetadata,
+    fetchComments,
 };
+
+const DEFAULT_MAX_COMMENTS = 100;
 
 export interface SyncDatesOpts {
     channel?: ChannelHandle;
@@ -67,6 +77,10 @@ export class Youtube {
             opts?: { signal?: AbortSignal }
         ) => Promise<NonNullable<ReturnType<YoutubeDatabase["getVideo"]>>>;
         syncDates: (opts?: SyncDatesOpts) => Promise<SyncDatesResult>;
+    };
+    readonly comments: {
+        fetch: (id: VideoId, opts?: { max?: number; signal?: AbortSignal }) => Promise<VideoComment[]>;
+        list: (id: VideoId) => VideoComment[];
     };
 
     constructor(options: YoutubeOptions = {}) {
@@ -231,6 +245,21 @@ export class Youtube {
                 return saved;
             },
         };
+        this.comments = {
+            fetch: async (id: VideoId, opts: { max?: number; signal?: AbortSignal } = {}): Promise<VideoComment[]> => {
+                logger.info({ videoId: id, max: opts.max }, "youtube comments fetch started");
+                await this.videos.ensureMetadata(id, { signal: opts.signal });
+                const fetched = await this.deps.fetchComments(id, {
+                    max: opts.max ?? DEFAULT_MAX_COMMENTS,
+                    signal: opts.signal,
+                });
+                this.db.upsertComments(id, fetched);
+                logger.info({ videoId: id, comments: fetched.length }, "youtube comments fetch completed");
+
+                return this.db.getComments(id);
+            },
+            list: (id: VideoId): VideoComment[] => this.db.getComments(id),
+        };
     }
 
     get db(): YoutubeDatabase {
@@ -331,6 +360,9 @@ export class Youtube {
                 }
 
                 await this.videos.ensureMetadata(ctx.job.target as VideoId, { signal: ctx.signal });
+            },
+            comments: async (ctx) => {
+                await this.comments.fetch(ctx.job.target as VideoId, { signal: ctx.signal });
             },
             captions: async (ctx) => {
                 await this.transcripts.transcribe({ videoId: ctx.job.target as VideoId, signal: ctx.signal });

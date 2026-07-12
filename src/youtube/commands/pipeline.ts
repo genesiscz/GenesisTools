@@ -19,7 +19,7 @@ export function registerPipelineCommand(program: Command): void {
         .argument("<targets...>", "Video IDs, URLs, or @handles")
         .option(
             "--stages <list>",
-            "Comma-separated: metadata,captions,audio,video,transcribe,summarize",
+            "Comma-separated: metadata,comments,captions,audio,video,transcribe,summarize",
             (value) =>
                 value
                     .split(",")

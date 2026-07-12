@@ -76,6 +76,19 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             return handleTranscriptRoute(url, yt, transcriptRoute.id as VideoId);
         }
 
+        const commentsRoute = matchRoute(req, "GET", "/api/v1/videos/:id/comments", url.pathname);
+
+        if (commentsRoute) {
+            const id = commentsRoute.id as VideoId;
+            const video = yt.videos.show(id);
+
+            if (!video) {
+                return jsonError("video not found", 404);
+            }
+
+            return Response.json({ comments: yt.db.getComments(id) }, { headers: CORS_HEADERS });
+        }
+
         const summaryGet = matchRoute(req, "GET", "/api/v1/videos/:id/summary", url.pathname);
 
         if (summaryGet) {
