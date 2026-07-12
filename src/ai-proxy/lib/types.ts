@@ -6,7 +6,13 @@ export type CursorTranslationMode = "auto" | "on" | "off";
 /** How Grok reasoning is presented to Cursor. */
 export type ThinkingPresentationMode = "raw" | "cursor" | "folded";
 
-export type AiProxyProviderType = "grok-subscription" | "github-copilot-subscription" | "xai-api-key" | "openai";
+export type AiProxyProviderType =
+    | "grok-subscription"
+    | "github-copilot-subscription"
+    | "xai-api-key"
+    | "openai"
+    | "anthropic-subscription"
+    | "openai-subscription";
 
 export interface AiProxyListenConfig {
     host: string;
@@ -71,6 +77,22 @@ export interface AiProxyGithubCopilotAccountConfig {
     type?: CopilotAccountType;
 }
 
+export interface AiProxyAnthropicSubAccountConfig {
+    /** Name of the anthropic-sub account in ~/.genesis-tools/ai/config.json to bill. */
+    accountName: string;
+}
+
+export interface AiProxyOpenAiSubAccountConfig {
+    /**
+     * Name of the openai-sub account in ~/.genesis-tools/ai/config.json to bill
+     * (refreshed + persisted on use). When omitted, the provider reads the token
+     * from the Codex CLI cache (~/.codex/auth.json, read-only, CLI-refreshed).
+     */
+    accountName?: string;
+    /** Override path to the Codex CLI auth.json (defaults to ~/.codex/auth.json). */
+    codexAuthPath?: string;
+}
+
 export interface AiProxyAccountConfig {
     name: string;
     label?: string;
@@ -79,6 +101,8 @@ export interface AiProxyAccountConfig {
     enabled: boolean;
     grok?: AiProxyGrokAccountConfig;
     githubCopilot?: AiProxyGithubCopilotAccountConfig;
+    anthropicSub?: AiProxyAnthropicSubAccountConfig;
+    openaiSub?: AiProxyOpenAiSubAccountConfig;
     apiKeyEnv?: string;
     baseUrl?: string;
     managementKeyEnv?: string;
