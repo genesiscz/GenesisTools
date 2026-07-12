@@ -51,7 +51,7 @@ export async function callLLM(options: CallLLMOptions): Promise<CallLLMResult> {
             system: effectiveSystem,
             prompt: userPrompt,
             providerOptions: buildProviderOptions(providerType),
-            ...(maxTokens ? { maxTokens } : {}),
+            ...(maxTokens ? { maxOutputTokens: maxTokens } : {}),
             ...(temperature !== undefined ? { temperature } : {}),
         });
 
@@ -90,7 +90,7 @@ export async function callLLM(options: CallLLMOptions): Promise<CallLLMResult> {
         system: effectiveSystem,
         prompt: userPrompt,
         providerOptions: buildProviderOptions(providerType),
-        ...(maxTokens ? { maxTokens } : {}),
+        ...(maxTokens ? { maxOutputTokens: maxTokens } : {}),
         ...(temperature !== undefined ? { temperature } : {}),
     });
 
@@ -109,7 +109,7 @@ export async function callLLMStructured<T>(options: CallLLMStructuredOptions<T>)
         prompt: userPrompt,
         schema,
         providerOptions: buildProviderOptions(providerType),
-        ...(maxTokens ? { maxTokens } : {}),
+        ...(maxTokens ? { maxOutputTokens: maxTokens } : {}),
         ...(temperature !== undefined ? { temperature } : {}),
     });
 

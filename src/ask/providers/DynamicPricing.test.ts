@@ -4,7 +4,7 @@ import { DynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { PricingInfo } from "@ask/types/provider";
-import type { LanguageModelUsage } from "ai";
+import { toLanguageModelUsage } from "@ask/utils/helpers";
 
 describe("DynamicPricingManager", () => {
     let pricingManager: DynamicPricingManager;
@@ -91,11 +91,11 @@ describe("DynamicPricingManager", () => {
             // biome-ignore lint/suspicious/noExplicitAny: spyOn requires cast for method name type mismatch
             spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
 
-            const usage: LanguageModelUsage = {
+            const usage = toLanguageModelUsage({
                 inputTokens: 1000,
                 outputTokens: 500,
                 totalTokens: 1500,
-            };
+            });
 
             const cost = await pricingManager.calculateCost("openai", "gpt-4o", usage);
 
@@ -114,12 +114,12 @@ describe("DynamicPricingManager", () => {
             // biome-ignore lint/suspicious/noExplicitAny: spyOn requires cast for method name type mismatch
             spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
 
-            const usage: LanguageModelUsage & { cachedInputTokens?: number } = {
+            const usage = toLanguageModelUsage({
                 inputTokens: 1000,
                 outputTokens: 500,
                 totalTokens: 1500,
                 cachedInputTokens: 200,
-            };
+            });
 
             const cost = await pricingManager.calculateCost("openai", "gpt-4o", usage);
 
@@ -140,11 +140,11 @@ describe("DynamicPricingManager", () => {
             spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
 
             // 300k input tokens, 250k output tokens
-            const usage: LanguageModelUsage = {
+            const usage = toLanguageModelUsage({
                 inputTokens: 300_000,
                 outputTokens: 250_000,
                 totalTokens: 550_000,
-            };
+            });
 
             const cost = await pricingManager.calculateCost("anthropic", "claude-3-5-sonnet-20241022", usage);
 
@@ -167,11 +167,11 @@ describe("DynamicPricingManager", () => {
             spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
 
             // Exactly 200k tokens - should use base pricing only
-            const usage: LanguageModelUsage = {
+            const usage = toLanguageModelUsage({
                 inputTokens: 200_000,
                 outputTokens: 0,
                 totalTokens: 200_000,
-            };
+            });
 
             const cost = await pricingManager.calculateCost("anthropic", "claude-3-5-sonnet-20241022", usage);
 
@@ -191,11 +191,11 @@ describe("DynamicPricingManager", () => {
             spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
 
             // 200,001 tokens - should use tiered pricing for 1 token
-            const usage: LanguageModelUsage = {
+            const usage = toLanguageModelUsage({
                 inputTokens: 200_001,
                 outputTokens: 0,
                 totalTokens: 200_001,
-            };
+            });
 
             const cost = await pricingManager.calculateCost("anthropic", "claude-3-5-sonnet-20241022", usage);
 
@@ -204,11 +204,11 @@ describe("DynamicPricingManager", () => {
         });
 
         it("should handle zero tokens", async () => {
-            const usage: LanguageModelUsage = {
+            const usage = toLanguageModelUsage({
                 inputTokens: 0,
                 outputTokens: 0,
                 totalTokens: 0,
-            };
+            });
 
             const cost = await pricingManager.calculateCost("openai", "gpt-4o", usage);
 
@@ -219,11 +219,11 @@ describe("DynamicPricingManager", () => {
             // biome-ignore lint/suspicious/noExplicitAny: spyOn requires cast for method name type mismatch
             spyOn(pricingManager, "getPricing" as any).mockResolvedValue(null);
 
-            const usage: LanguageModelUsage = {
+            const usage = toLanguageModelUsage({
                 inputTokens: 1000,
                 outputTokens: 500,
                 totalTokens: 1500,
-            };
+            });
 
             const cost = await pricingManager.calculateCost("unknown", "unknown-model", usage);
 
@@ -231,17 +231,17 @@ describe("DynamicPricingManager", () => {
         });
 
         it("should handle both promptTokens and inputTokens naming", async () => {
-            const usage1: LanguageModelUsage = {
+            const usage1 = toLanguageModelUsage({
                 inputTokens: 1000,
                 outputTokens: 500,
                 totalTokens: 1500,
-            };
+            });
 
-            const usage2 = {
+            const usage2 = toLanguageModelUsage({
                 inputTokens: 1000,
                 outputTokens: 500,
                 totalTokens: 1500,
-            } as LanguageModelUsage;
+            });
 
             const cost1 = await pricingManager.calculateCost("openai", "gpt-4o", usage1);
             const cost2 = await pricingManager.calculateCost("openai", "gpt-4o", usage2);
@@ -425,11 +425,11 @@ describe("DynamicPricingManager", () => {
             ];
 
             for (const testCase of testCases) {
-                const usage: LanguageModelUsage = {
+                const usage = toLanguageModelUsage({
                     inputTokens: testCase.input,
                     outputTokens: testCase.output,
                     totalTokens: testCase.input + testCase.output,
-                };
+                });
 
                 const cost = await pricingManager.calculateCost("openai", "gpt-4o", usage);
 
@@ -440,11 +440,11 @@ describe("DynamicPricingManager", () => {
 
         it("should calculate costs using real LiteLLM pricing for Claude models", async () => {
             // Real API call to LiteLLM for Claude pricing
-            const usage: LanguageModelUsage = {
+            const usage = toLanguageModelUsage({
                 inputTokens: 300_000, // Above 200k threshold
                 outputTokens: 250_000,
                 totalTokens: 550_000,
-            };
+            });
 
             const cost = await pricingManager.calculateCost("anthropic", "claude-3-5-sonnet-20241022", usage);
 
@@ -473,11 +473,11 @@ describe("DynamicPricingManager", () => {
             ];
 
             for (const edgeCase of edgeCases) {
-                const usage: LanguageModelUsage = {
+                const usage = toLanguageModelUsage({
                     inputTokens: edgeCase.input,
                     outputTokens: edgeCase.output,
                     totalTokens: edgeCase.input + edgeCase.output,
-                };
+                });
 
                 const cost = await pricingManager.calculateCost("anthropic", "claude-3-5-sonnet-20241022", usage);
 
@@ -550,11 +550,11 @@ describe("DynamicPricingManager", () => {
         it("should calculate exact cost for 1M input + 500k output tokens with OpenAI GPT-4o", async () => {
             // ⚠️ BREAKS IF: OpenAI changes GPT-4o pricing
             // Real calculation using current OpenAI pricing: $5/$15 per million
-            const usage: LanguageModelUsage = {
+            const usage = toLanguageModelUsage({
                 inputTokens: 1_000_000,
                 outputTokens: 500_000,
                 totalTokens: 1_500_000,
-            };
+            });
 
             const cost = await pricingManager.calculateCost("openai", "gpt-4o", usage);
 
@@ -566,11 +566,11 @@ describe("DynamicPricingManager", () => {
             // ⚠️ BREAKS IF: Anthropic changes Claude pricing OR LiteLLM updates pricing
             // NOTE: Claude 3.5 Sonnet 20241022 has 200k context window, so no tiered pricing applies
             // Real calculation using current Claude pricing: $3/$15 per million (flat rate)
-            const usage: LanguageModelUsage = {
+            const usage = toLanguageModelUsage({
                 inputTokens: 300_000,
                 outputTokens: 250_000,
                 totalTokens: 550_000,
-            };
+            });
 
             const cost = await pricingManager.calculateCost("anthropic", "claude-3-5-sonnet-20241022", usage);
 

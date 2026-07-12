@@ -219,7 +219,8 @@ export class AIChat {
                                   inputTokens: engineResponse.usage.inputTokens ?? 0,
                                   outputTokens: engineResponse.usage.outputTokens ?? 0,
                                   totalTokens: engineResponse.usage.totalTokens ?? 0,
-                                  cachedInputTokens: engineResponse.usage.cachedInputTokens ?? undefined,
+                                  cachedInputTokens: engineResponse.usage.inputTokenDetails?.cacheReadTokens,
+                                  cacheWriteTokens: engineResponse.usage.inputTokenDetails?.cacheWriteTokens,
                               }
                             : undefined,
                         cost: engineResponse.cost,

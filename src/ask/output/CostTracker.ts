@@ -2,6 +2,7 @@ import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { CostBreakdown } from "@ask/types";
+import { usageCacheReadTokens, usageCacheWriteTokens, usageInputNoCacheTokens } from "@ask/utils/helpers";
 import type { LanguageModelUsage } from "ai";
 import { usageDatabase } from "./UsageDatabase";
 
@@ -51,7 +52,8 @@ export class CostTracker {
         logger.debug({ inputTokens: usage.inputTokens }, `[CostTracker] usage.inputTokens`);
         logger.debug({ outputTokens: usage.outputTokens }, `[CostTracker] usage.outputTokens`);
         logger.debug({ totalTokens: usage.totalTokens }, `[CostTracker] usage.totalTokens`);
-        logger.debug({ cachedInputTokens: usage.cachedInputTokens }, `[CostTracker] usage.cachedInputTokens`);
+        logger.debug({ cachedInputTokens: usageCacheReadTokens(usage) }, `[CostTracker] usage cacheReadTokens`);
+        logger.debug({ cacheWriteTokens: usageCacheWriteTokens(usage) }, `[CostTracker] usage cacheWriteTokens`);
 
         const key = `${provider}/${model}`;
         const cost = await dynamicPricingManager.calculateCost(provider, model, usage);
@@ -69,11 +71,14 @@ export class CostTracker {
             timestamp: new Date(),
         };
 
-        // Extract tokens using new API naming
-        const inputTokens = usage.inputTokens ?? 0;
+        // Store the non-cached input separately from cache reads (ai@7's
+        // `inputTokens` bundles cache tokens on some providers). Keeps the
+        // v5-era column semantics: input_tokens = full-rate input only.
+        const inputTokens = usageInputNoCacheTokens(usage);
         const outputTokens = usage.outputTokens ?? 0;
-        const cachedInputTokens = usage.cachedInputTokens ?? 0;
-        const totalTokens = usage.totalTokens ?? inputTokens + outputTokens;
+        const cachedInputTokens = usageCacheReadTokens(usage);
+        const cacheWriteTokens = usageCacheWriteTokens(usage);
+        const totalTokens = usage.totalTokens ?? inputTokens + cachedInputTokens + cacheWriteTokens + outputTokens;
 
         existing.inputTokens += inputTokens;
         existing.outputTokens += outputTokens;

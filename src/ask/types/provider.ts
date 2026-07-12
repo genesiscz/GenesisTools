@@ -1,6 +1,13 @@
-import type { ProviderV2 } from "@ai-sdk/provider";
+import type { ProviderV2, ProviderV3, ProviderV4 } from "@ai-sdk/provider";
 import type { LanguageModel } from "ai";
 import type { ModelInfo } from "./chat";
+
+/**
+ * Any AI SDK provider spec version we can hold. First-party @ai-sdk/*
+ * providers are V4 as of ai@7; community providers (e.g. OpenRouter) may
+ * still be V3. `streamText`/`generateText` accept models from all three.
+ */
+export type AiSdkProvider = ProviderV2 | ProviderV3 | ProviderV4;
 
 /**
  * OpenAI has 3 text generation API endpoints:
@@ -32,7 +39,7 @@ const RESPONSES_ONLY_PATTERNS = [/codex/i, /^gpt-5(?:\.\d+)?-pro$/i];
  * @param providerType - Optional: pass "openai-sub" for WHAM/Codex subscription
  *   providers, which require the Responses API for ALL models (not just codex/pro).
  */
-export function getLanguageModel(provider: ProviderV2, modelId: string, providerType?: string): LanguageModel {
+export function getLanguageModel(provider: AiSdkProvider, modelId: string, providerType?: string): LanguageModel {
     // For OpenAI-like providers that expose both .chat() and .responses()
     if ("chat" in provider && typeof provider.chat === "function") {
         const hasResponses = "responses" in provider && typeof provider.responses === "function";
@@ -65,7 +72,7 @@ export interface DetectedProvider {
     name: string;
     type: string;
     key: string;
-    provider: ProviderV2;
+    provider: AiSdkProvider;
     models: ModelInfo[];
     config: ProviderConfig;
     systemPromptPrefix?: string;

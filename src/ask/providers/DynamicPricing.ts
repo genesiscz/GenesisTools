@@ -2,6 +2,7 @@ import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
 import type { OpenRouterModelResponse, OpenRouterModelsResponse, OpenRouterPricing, PricingInfo } from "@ask/types";
+import { usageCacheReadTokens, usageCacheWriteTokens, usageInputNoCacheTokens } from "@ask/utils/helpers";
 import type { LanguageModelUsage } from "ai";
 
 export class DynamicPricingManager {
@@ -227,7 +228,8 @@ export class DynamicPricingManager {
         logger.debug({ inputTokens: usage.inputTokens }, `[DynamicPricing] usage.inputTokens`);
         logger.debug({ outputTokens: usage.outputTokens }, `[DynamicPricing] usage.outputTokens`);
         logger.debug({ totalTokens: usage.totalTokens }, `[DynamicPricing] usage.totalTokens`);
-        logger.debug({ cachedInputTokens: usage.cachedInputTokens }, `[DynamicPricing] usage.cachedInputTokens`);
+        logger.debug({ cachedInputTokens: usageCacheReadTokens(usage) }, `[DynamicPricing] usage cacheReadTokens`);
+        logger.debug({ cacheWriteTokens: usageCacheWriteTokens(usage) }, `[DynamicPricing] usage cacheWriteTokens`);
 
         const pricing = await this.getPricing(provider, model);
 
@@ -236,12 +238,14 @@ export class DynamicPricingManager {
             return 0;
         }
 
-        // Extract tokens using new API naming
-        const inputTokens = usage.inputTokens ?? 0;
+        // Base input is the NON-cached portion only — ai@7's `inputTokens`
+        // includes cache read/write on some providers (e.g. anthropic@4), so
+        // pricing it here would double-charge against the cache costs below.
+        const inputTokens = usageInputNoCacheTokens(usage);
         const outputTokens = usage.outputTokens ?? 0;
-        const cachedReadTokens = usage.cachedInputTokens ?? 0;
-        // Note: AI SDK doesn't distinguish cache creation vs read, so we use cachedReadTokens for both
-        const cachedCreateTokens = 0; // Not available from AI SDK usage object
+        const cachedReadTokens = usageCacheReadTokens(usage);
+        // ai@7 distinguishes cache reads from cache writes (inputTokenDetails)
+        const cachedCreateTokens = usageCacheWriteTokens(usage);
 
         logger.debug({ inputTokens, outputTokens, cachedReadTokens }, `[DynamicPricing] Using tokens`);
 
