@@ -1,6 +1,7 @@
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
+import { buildOpenApiDocument } from "@app/youtube/lib/server/openapi";
 
 export interface MetaRouteOptions {
     startedAt: number;
@@ -23,7 +24,7 @@ export async function handleMetaRoute(_req: Request, url: URL, opts: MetaRouteOp
     }
 
     if (url.pathname === "/api/v1/openapi.json") {
-        return Response.json({}, { headers: CORS_HEADERS });
+        return Response.json(buildOpenApiDocument(), { headers: CORS_HEADERS });
     }
 
     return new Response(SafeJSON.stringify({ error: "not found" }, { strict: true }), {
