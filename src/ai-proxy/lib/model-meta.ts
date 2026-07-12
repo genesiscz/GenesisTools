@@ -2,11 +2,19 @@ import { loadCatalogFile } from "@app/ai-proxy/lib/catalog-file";
 import { resolveCopilotModelRecords } from "@app/ai-proxy/lib/copilot-models-cache";
 import { providerKey } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
+import {
+    ANTHROPIC_SUB_ALIASES,
+    ANTHROPIC_SUB_STATIC_CATALOG,
+    inferAnthropicContextWindow,
+    resolveAnthropicSubModel,
+} from "@app/utils/ai/anthropic/models";
 import { toProxyId as toCopilotProxyId } from "@app/utils/ai/github-copilot/models";
 import { COPILOT_INDIVIDUAL_API } from "@app/utils/ai/github-copilot/paths";
 import type { CopilotModelRecord } from "@app/utils/ai/github-copilot/types";
 import type { GrokModelRecord } from "@app/utils/ai/grok";
 import { GROK_STATIC_CATALOG, toProxyId } from "@app/utils/ai/grok";
+import { WHAM_BASE_URL } from "@app/utils/ai/openai/codex-auth";
+import { OPENAI_SUB_STATIC_CATALOG } from "@app/utils/ai/openai/sub-models";
 
 import { SafeJSON } from "@app/utils/json";
 
@@ -99,6 +107,71 @@ export function copilotRecordToProxyMeta(
 
 export function listGrokProxyModels(account: AiProxyAccountConfig, baseUrl: string): ProxyModelMeta[] {
     return GROK_STATIC_CATALOG.map((record) => grokRecordToProxyMeta(account, record, baseUrl));
+}
+
+export const ANTHROPIC_MESSAGES_BASE_URL = "https://api.anthropic.com/v1";
+
+export function listAnthropicSubProxyModels(account: AiProxyAccountConfig): ProxyModelMeta[] {
+    const shared = (upstreamId: string) => ({
+        proxyId: toProxyId(account.name, account.providerSlug, upstreamId),
+        accountName: account.name,
+        providerSlug: account.providerSlug,
+        upstreamId,
+        provider: account.provider,
+        baseUrl: ANTHROPIC_MESSAGES_BASE_URL,
+        visibility: "high" as const,
+        speed: "medium" as const,
+        supportsTools: true,
+        billingPlane: "subscription" as const,
+        source: "static" as const,
+        object: "model" as const,
+        created: 1_740_960_000,
+        owned_by: providerKey(account),
+    });
+
+    const aliases: ProxyModelMeta[] = ANTHROPIC_SUB_ALIASES.map((alias) => {
+        const concrete = resolveAnthropicSubModel(alias);
+
+        return {
+            ...shared(alias),
+            thinking: alias === "haiku" ? "none" : "reasoning",
+            contextWindow: inferAnthropicContextWindow(concrete),
+            description: `Claude ${alias} via subscription (${concrete})`,
+        };
+    });
+
+    const concrete: ProxyModelMeta[] = ANTHROPIC_SUB_STATIC_CATALOG.map((record) => ({
+        ...shared(record.id),
+        thinking: record.thinking,
+        contextWindow: record.contextWindow,
+        description: `${record.displayName} via subscription`,
+    }));
+
+    return [...aliases, ...concrete];
+}
+
+export const WHAM_RESPONSES_BASE_URL = WHAM_BASE_URL;
+
+export function listOpenAiSubProxyModels(account: AiProxyAccountConfig): ProxyModelMeta[] {
+    return OPENAI_SUB_STATIC_CATALOG.filter((record) => record.visibility === "list").map((record) => ({
+        proxyId: toProxyId(account.name, account.providerSlug, record.slug),
+        accountName: account.name,
+        providerSlug: account.providerSlug,
+        upstreamId: record.slug,
+        provider: account.provider,
+        baseUrl: WHAM_RESPONSES_BASE_URL,
+        visibility: "high",
+        speed: "medium",
+        thinking: "reasoning",
+        contextWindow: record.contextWindow,
+        supportsTools: true,
+        billingPlane: "subscription",
+        source: "static",
+        description: `${record.displayName} via ChatGPT/Codex subscription`,
+        object: "model",
+        created: 1_740_960_000,
+        owned_by: providerKey(account),
+    }));
 }
 
 function catalogCopilotRecords(account: AiProxyAccountConfig): CopilotModelRecord[] {

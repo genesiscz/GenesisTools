@@ -1,6 +1,6 @@
 # ai-proxy
 
-OpenAI-compatible local proxy for Grok subscription, GitHub Copilot subscription, and future providers. Cursor connects once; model ids use the `account/provider/model` prefix.
+OpenAI-compatible local proxy for Grok subscription, GitHub Copilot subscription, Anthropic (Claude Max/Pro) subscription, OpenAI (ChatGPT/Codex) subscription, and future providers. Cursor connects once; model ids use the `account/provider/model` prefix.
 
 ## Quick start
 
@@ -41,6 +41,8 @@ Canonical format:
 Examples:
 - `genesiscz/grok/grok-composer-2.5-fast`
 - `genesiscz/github-copilot/claude-sonnet-4`
+- `genesiscz/claude-sub/sonnet` (aliases: `sonnet`, `opus`, `haiku`, `fable` — resolve to the current dated Claude model ids)
+- `genesiscz/codex/gpt-5.5`
 
 ## Auth
 
@@ -70,6 +72,44 @@ Account config shape:
   }
 }
 ```
+
+### Anthropic (Claude Max/Pro) subscription
+
+Speaks OpenAI (`/v1/chat/completions`) to proxy clients and forwards the Claude Code spoof (Bearer OAuth token + billing header + beta flags) to `api.anthropic.com/v1/messages`. There is no interactive `accounts login` flow for this provider yet — add the account to `~/.genesis-tools/ai-proxy/config.json` by hand, pointing `anthropicSub.accountName` at an account already configured for `tools claude` / `tools ask` (run `tools claude login` first if you don't have one):
+
+```json
+{
+  "name": "genesiscz",
+  "provider": "anthropic-subscription",
+  "providerSlug": "claude-sub",
+  "enabled": true,
+  "anthropicSub": {
+    "accountName": "foltyn"
+  }
+}
+```
+
+`accountName` is the name of the account in `~/.genesis-tools/ai/config.json` (the shared AI config used by `tools claude`/`tools ask`) whose OAuth token gets billed — it does not have to match the proxy account's own `name`. The Responses API (`/v1/responses`) is not supported by this provider; use `/v1/chat/completions`.
+
+### OpenAI (ChatGPT/Codex) subscription
+
+Speaks OpenAI to proxy clients on both `/v1/chat/completions` and `/v1/responses`, converting to/from the ChatGPT backend's Responses-only WHAM API (`chatgpt.com/backend-api/wham/responses`, streaming-only — non-streaming callers get the SSE accumulated into a single JSON response). No interactive `accounts login` flow yet — add the account by hand:
+
+```json
+{
+  "name": "genesiscz",
+  "provider": "openai-subscription",
+  "providerSlug": "codex",
+  "enabled": true,
+  "openaiSub": {
+    "accountName": "codex-account"
+  }
+}
+```
+
+Two token sources, tried in order:
+- `openaiSub.accountName` set → the named `openai-sub` account in `~/.genesis-tools/ai/config.json` (refreshed via Codex OAuth and persisted).
+- `openaiSub.accountName` omitted → the Codex CLI's own cache (`~/.codex/auth.json`, read-only; run `codex login` to refresh it). Override the path with `openaiSub.codexAuthPath`.
 
 ## Usage analytics
 
