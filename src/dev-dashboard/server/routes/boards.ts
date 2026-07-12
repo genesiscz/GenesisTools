@@ -191,10 +191,7 @@ export function boardsRoutes(): RouteDef[] {
                         ...body,
                         createdBy: body.createdBy ?? (await actorFrom(ctx)),
                     });
-                    logger.info(
-                        { slug: ctx.params.slug, id: card.id, kind: body.kind },
-                        "boards: card created"
-                    );
+                    logger.info({ slug: ctx.params.slug, id: card.id, kind: body.kind }, "boards: card created");
                     publishBoardEvent(ctx.params.slug, { type: "card", payload: card });
                     notifyLayoutChanged(getBoardsDb(), ctx.params.slug);
                     return { kind: "json", status: 201, body: card };
