@@ -73,6 +73,7 @@
             "**/*.{ts,tsx,js,jsx}",
             "*.{json,mjs,cjs}",
             "!src/claude-history-dashboard",
+            "!apps/eve",
             "!**/routeTree.gen.ts",
             "!scripts/codemod/__fixtures__",
             "!scripts/benchmarks/clones/microbenches"
