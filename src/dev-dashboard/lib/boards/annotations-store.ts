@@ -501,6 +501,7 @@ function normalizeAttachments(raw: MessageAttachmentDto[] | undefined): MessageA
     if (!Array.isArray(raw)) {
         return [];
     }
+
     const out: MessageAttachmentDto[] = [];
     for (const a of raw) {
         if (a && typeof a.blobKey === "string" && a.blobKey.length > 0) {

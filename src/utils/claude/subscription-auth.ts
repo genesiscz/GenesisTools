@@ -163,11 +163,6 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
         };
     }
 
-    const lastInvalidGrant = invalidGrantAt.get(name);
-    if (lastInvalidGrant && Date.now() - lastInvalidGrant < INVALID_GRANT_COOLDOWN_MS) {
-        throw new Error(`Token expired (invalid_grant). Run: tools claude login ${name}`);
-    }
-
     const caller = forceRefresh ? "force-refresh" : "token-expired";
     logger.info(`[token-refresh] ${name}: initiating refresh (reason: ${caller})`);
 
@@ -193,6 +188,16 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
         if (!diskAccount.tokens.refreshToken) {
             logger.warn(`[token-refresh] ${name}: no refresh token available`);
             return null;
+        }
+
+        // Cooldown is checked here — after the disk re-read — not before the lock: if another
+        // process re-logged in, the fresh-token detection above already returned the new token.
+        // Only a refresh token that is still dead on disk hits the cooldown, so a re-login is
+        // picked up immediately instead of being blocked for the full window.
+        const lastInvalidGrant = invalidGrantAt.get(name);
+
+        if (lastInvalidGrant && Date.now() - lastInvalidGrant < INVALID_GRANT_COOLDOWN_MS) {
+            throw new Error(`Token expired (invalid_grant). Run: tools claude login ${name}`);
         }
 
         // Refresh with retry on transient errors (5xx, network)

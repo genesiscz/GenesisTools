@@ -129,6 +129,51 @@ function InlineEditor({
     );
 }
 
+/** Single-line section-title rename input. Same commit-on-unmount guard as InlineEditor: a canvas
+ *  click can tear the input down before the native blur fires, which would silently drop the rename.
+ *  A done-flag prevents double commits (unmount + blur). */
+function SectionTitleInput({ initial, onCommit }: { initial: string; onCommit: (text: string) => void }) {
+    const [draft, setDraft] = useState(initial);
+    const draftRef = useRef(draft);
+    draftRef.current = draft;
+    const done = useRef(false);
+    const commitRef = useRef(onCommit);
+    commitRef.current = onCommit;
+
+    const finish = () => {
+        if (done.current) {
+            return;
+        }
+
+        done.current = true;
+        commitRef.current(draftRef.current);
+    };
+
+    const finishRef = useRef(finish);
+    finishRef.current = finish;
+
+    useEffect(() => {
+        return () => finishRef.current();
+    }, []);
+
+    return (
+        <input
+            autoFocus
+            value={draft}
+            onFocus={(e) => e.currentTarget.select()}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={finish}
+            onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === "Escape") {
+                    e.currentTarget.blur();
+                }
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="absolute -top-6 left-0 w-48 rounded bg-[var(--dd-bg-panel)] px-1 font-mono text-xs font-semibold text-[var(--dd-text-primary)] outline-none"
+        />
+    );
+}
+
 export function CardView({
     card,
     selected,
@@ -287,19 +332,7 @@ export function CardView({
                 {...editHandlers}
             >
                 {editing ? (
-                    <input
-                        autoFocus
-                        defaultValue={title}
-                        onFocus={(e) => e.currentTarget.select()}
-                        onBlur={(e) => onEditCommit(card, e.currentTarget.value)}
-                        onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === "Escape") {
-                                e.currentTarget.blur();
-                            }
-                        }}
-                        onPointerDown={(e) => e.stopPropagation()}
-                        className="absolute -top-6 left-0 w-48 rounded bg-[var(--dd-bg-panel)] px-1 font-mono text-xs font-semibold text-[var(--dd-text-primary)] outline-none"
-                    />
+                    <SectionTitleInput initial={title} onCommit={(text) => onEditCommit(card, text)} />
                 ) : (
                     <span className="absolute -top-6 left-0 cursor-move font-mono text-xs font-semibold text-[var(--dd-text-secondary)]">
                         {title}
