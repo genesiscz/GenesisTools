@@ -2,7 +2,7 @@ import { isUsageBucket } from "@app/claude/lib/usage/api";
 import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
-import { getSharedAccountsUsage, recordAll } from "@app/claude/lib/usage/shared-cache";
+import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
 import { logger, out } from "@app/logger";
 import { Storage } from "@app/utils/storage/storage";
 
@@ -22,20 +22,15 @@ async function main(): Promise<void> {
     try {
         // force:true → poll-daemon stays the every-1-min source of truth; the
         // shared accessor refreshes the cache so consumers in the next 30s read
-        // free. History writes are owned here (recordAll) — other consumers do
-        // not touch the DB.
+        // free. History rows are written by the accessor's write-through
+        // (recordHistory → recordAll) on every live fetch, whichever consumer
+        // wins it — the daemon no longer records separately.
         const results = await getSharedAccountsUsage({ force: true });
 
         if (results.length === 0) {
             logger.warn("[claude-usage] daemon poll found no configured accounts");
             out.error("No accounts configured. Run: tools claude login");
             process.exit(1);
-        }
-
-        try {
-            recordAll(results);
-        } catch (err) {
-            logger.warn({ err }, "[claude-usage] history record failed; continuing");
         }
 
         for (const account of results) {
