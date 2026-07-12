@@ -1,3 +1,4 @@
+import { enrichPorts } from "@app/dev-dashboard/lib/ports/enrich";
 import type { KillPortResult, PortInfo, PortsResult } from "@app/dev-dashboard/lib/ports/types";
 import { logger } from "@app/logger";
 
@@ -73,7 +74,7 @@ export async function listListeningPorts(): Promise<PortsResult> {
         }
 
         const stdout = await new Response(proc.stdout).text();
-        return { lsofAvailable: true, ports: parseLsofListen(stdout) };
+        return { lsofAvailable: true, ports: await enrichPorts(parseLsofListen(stdout)) };
     } catch (err) {
         logger.debug({ err }, "lsof spawn failed; treating as unavailable");
         return { lsofAvailable: false, ports: [] };

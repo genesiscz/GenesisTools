@@ -15,6 +15,7 @@ import {
     listTrash,
     patchBoard,
     patchCard,
+    patchStroke,
     RESERVED_SLUGS,
     restoreCard,
     softDeleteCard,
@@ -26,6 +27,7 @@ import { readImageDims } from "@app/dev-dashboard/lib/boards/image-size";
 import { notifyLayoutChanged } from "@app/dev-dashboard/lib/boards/layout-engine";
 import { sectionsToJSON } from "@app/dev-dashboard/lib/boards/sections";
 import { getSet } from "@app/dev-dashboard/lib/boards/sets-store";
+import type { MessageAttachmentDto } from "@app/dev-dashboard/lib/boards/types";
 import { dispatchBoard } from "@app/dev-dashboard/lib/boards/work-store";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
 import { boardsError } from "./boards-errors";
@@ -286,6 +288,24 @@ export function boardsRoutes(): RouteDef[] {
             },
         },
         {
+            method: "PATCH",
+            pattern: "/api/boards/strokes/:id",
+            handler: async (ctx) => {
+                try {
+                    const id = Number(ctx.params.id);
+                    const body = await ctx.readJson<Partial<{ path: number[][]; color: string; width: number }>>();
+                    const stroke = await patchStroke(getBoardsDb(), id, body);
+                    const slug = await boardSlugForStrokeId(id);
+                    if (slug) {
+                        publishBoardEvent(slug, { type: "stroke", payload: stroke });
+                    }
+                    return { kind: "json", status: 200, body: stroke };
+                } catch (err) {
+                    return boardsError(err);
+                }
+            },
+        },
+        {
             method: "DELETE",
             pattern: "/api/boards/strokes/:id",
             handler: async (ctx) => {
@@ -429,15 +449,38 @@ export function boardsRoutes(): RouteDef[] {
             },
         },
         {
+            // Raw-body upload for a message attachment (image paste/drop or the ＋ button). Stores the
+            // blob and returns its descriptor; the caller then references `blobKey` when sending the
+            // message. Mirrors /upload but does NOT create a card.
+            method: "POST",
+            pattern: "/api/boards/:slug/msg-uploads",
+            handler: async (ctx) => {
+                try {
+                    const bytes = await ctx.readRawBody();
+                    const name = ctx.query.get("name") ?? "";
+                    const mime = ctx.query.get("mime") || mimeForPath(name);
+                    const blobKey = await putBlob(bytes, mime);
+                    return { kind: "json", status: 201, body: { blobKey, name, mime } };
+                } catch (err) {
+                    return boardsError(err);
+                }
+            },
+        },
+        {
             method: "POST",
             pattern: "/api/boards/:slug/messages",
             handler: async (ctx) => {
                 try {
-                    const body = await ctx.readJson<{ body: string; author?: string }>();
+                    const body = await ctx.readJson<{
+                        body: string;
+                        author?: string;
+                        attachments?: MessageAttachmentDto[];
+                    }>();
                     const message = await addMessage(getBoardsDb(), {
                         boardSlug: ctx.params.slug,
                         author: body.author ?? (await actorFrom(ctx)),
                         body: body.body,
+                        attachments: body.attachments,
                     });
                     publishBoardEvent(ctx.params.slug, { type: "board_message", payload: message });
                     return { kind: "json", status: 201, body: message };

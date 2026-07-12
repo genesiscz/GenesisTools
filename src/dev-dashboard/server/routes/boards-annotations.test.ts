@@ -255,6 +255,39 @@ describe("boardsAnnotationsRoutes", () => {
         expect(reply.status).toBe(409);
     });
 
+    it("annotation message reply carries attachments through to the response", async () => {
+        const db = getBoardsDb();
+        await createBoard(db, { slug: "b1" });
+        const card = await createCard(db, "b1", { kind: "note", x: 0, y: 0, w: 10, h: 10 });
+        const create = findRoute("POST", "/api/boards/annotations");
+        const created = asJson(
+            await create.handler(
+                makeCtx({
+                    method: "POST",
+                    body: {
+                        board: "b1",
+                        cardId: card.id,
+                        region: { x: 0, y: 0, w: 1, h: 1 },
+                        intent: "fix",
+                        prompt: "p",
+                        status: "open",
+                    },
+                })
+            )
+        );
+        const id = created.body.id as number;
+
+        const attachments = [{ blobKey: "z.png", name: "z.png", mime: "image/png" }];
+        const messages = findRoute("POST", "/api/boards/annotations/:id/messages");
+        const reply = asJson(
+            await messages.handler(
+                makeCtx({ method: "POST", params: { id: String(id) }, body: { body: "here", attachments } })
+            )
+        );
+        expect(reply.status).toBe(201);
+        expect(reply.body.attachments).toEqual(attachments);
+    });
+
     it("capsule route renders real markdown from the annotation+card, with optional ?base= absolutizing the image URL", async () => {
         const db = getBoardsDb();
         await createBoard(db, { slug: "b1" });

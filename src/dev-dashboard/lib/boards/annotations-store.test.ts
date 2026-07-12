@@ -20,7 +20,7 @@ import { createBoard, createCard, getBoardDoc, listCardVersions } from "./boards
 import { BOOTSTRAP_DDL } from "./db";
 import type { BoardsDb } from "./db-types";
 import { NotFoundError } from "./sets-store";
-import type { Region } from "./types";
+import type { MessageAttachmentDto, Region } from "./types";
 
 function makeTestDb(): DatabaseClient<BoardsDb> {
     return createKyselyClient<BoardsDb>({ path: ":memory:", bootstrap: BOOTSTRAP_DDL, pragmas: { foreignKeys: true } });
@@ -504,5 +504,46 @@ describe("annotations-store", () => {
         expect(embedded.messages.length).toBe(1);
         expect(embedded.attempts.length).toBe(1);
         expect(embedded.attempts[0].id).toBe(attempt.id);
+    });
+
+    it("addMessage persists attachments and they round-trip through the annotation thread", async () => {
+        const ann = await createAnnotation(db, {
+            boardSlug,
+            cardId,
+            region: REGION,
+            intent: "fix",
+            prompt: "fix it",
+            status: "open",
+        });
+        const attachments = [
+            { blobKey: "hash1.png", name: "before.png", mime: "image/png" },
+            { blobKey: "hash2.png", name: "after.png", mime: "image/png" },
+        ];
+        const msg = await addMessage(db, { annotationId: ann.id, author: "user", body: "see these", attachments });
+        expect(msg.attachments).toEqual(attachments);
+
+        const reloaded = await getAnnotation(db, ann.id);
+        expect(reloaded.messages[0].attachments).toEqual(attachments);
+    });
+
+    it("addMessage defaults to an empty attachments array and drops malformed entries (no blobKey)", async () => {
+        const board = await addMessage(db, { boardSlug, author: "user", body: "plain" });
+        expect(board.attachments).toEqual([]);
+
+        // A malformed entry (no blobKey) arrives from untyped JSON at the route boundary; the store's
+        // normalize guard must drop it. Cast through unknown to feed the guard that shape.
+        const rawAttachments = [{ blobKey: "ok.png", name: "ok", mime: "image/png" }, { name: "no-key" }] as unknown;
+        const withJunk = await addMessage(db, {
+            boardSlug,
+            author: "user",
+            body: "mixed",
+            attachments: rawAttachments as MessageAttachmentDto[],
+        });
+        expect(withJunk.attachments).toEqual([{ blobKey: "ok.png", name: "ok", mime: "image/png" }]);
+
+        const doc = await getBoardDoc(db, boardSlug);
+        const bodies = new Map(doc.boardMessages.map((m) => [m.body, m.attachments]));
+        expect(bodies.get("plain")).toEqual([]);
+        expect(bodies.get("mixed")).toEqual([{ blobKey: "ok.png", name: "ok", mime: "image/png" }]);
     });
 });

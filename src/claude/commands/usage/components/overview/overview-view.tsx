@@ -68,14 +68,10 @@ export function OverviewView({ results, config }: OverviewViewProps) {
         );
     }
 
-    const totalHeight = results.accounts.reduce(
-        (sum, a) => sum + estimateAccountHeight(a, config.prominentBuckets),
-        0
-    );
+    const totalHeight = results.accounts.reduce((sum, a) => sum + estimateAccountHeight(a, config.prominentBuckets), 0);
     const availableRows = termHeight - CHROME_LINES - (results.error ? 1 : 0);
     const columnWidth = Math.floor((termWidth - 2 - COLUMN_GAP) / 2);
-    const useTwoColumns =
-        results.accounts.length > 1 && totalHeight > availableRows && columnWidth >= MIN_COLUMN_WIDTH;
+    const useTwoColumns = results.accounts.length > 1 && totalHeight > availableRows && columnWidth >= MIN_COLUMN_WIDTH;
 
     if (!useTwoColumns) {
         return (

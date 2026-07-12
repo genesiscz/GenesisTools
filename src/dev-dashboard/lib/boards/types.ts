@@ -92,12 +92,21 @@ export interface EdgeDto {
     label: string;
 }
 
+/** A file/image attached to a message (image paste/drop or the ＋ button). The blob is uploaded
+ *  first via POST /api/boards/:slug/msg-uploads, then its key referenced when the message is sent. */
+export interface MessageAttachmentDto {
+    blobKey: string;
+    name: string;
+    mime: string;
+}
+
 export interface MessageDto {
     id: number;
     annotationId: number | null;
     boardId: number | null;
     author: string;
     body: string;
+    attachments: MessageAttachmentDto[];
     createdAt: string;
 }
 

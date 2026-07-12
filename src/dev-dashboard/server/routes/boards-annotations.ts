@@ -15,7 +15,7 @@ import { buildCapsule } from "@app/dev-dashboard/lib/boards/capsule";
 import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { publishBoardEvent, wakeWorkWaiters } from "@app/dev-dashboard/lib/boards/events";
 import { getSet, getSetFile, setRefOf } from "@app/dev-dashboard/lib/boards/sets-store";
-import type { Region } from "@app/dev-dashboard/lib/boards/types";
+import type { MessageAttachmentDto, Region } from "@app/dev-dashboard/lib/boards/types";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
 import { boardsError } from "./boards-errors";
 import { actorFrom } from "./boards-sets";
@@ -212,10 +212,19 @@ export function boardsAnnotationsRoutes(): RouteDef[] {
             handler: async (ctx) => {
                 try {
                     const id = Number(ctx.params.id);
-                    const body = await ctx.readJson<{ body: string; author?: string }>();
+                    const body = await ctx.readJson<{
+                        body: string;
+                        author?: string;
+                        attachments?: MessageAttachmentDto[];
+                    }>();
                     const before = await getAnnotation(getBoardsDb(), id);
                     const author = body.author ?? (await actorFrom(ctx));
-                    const message = await addMessage(getBoardsDb(), { annotationId: id, author, body: body.body });
+                    const message = await addMessage(getBoardsDb(), {
+                        annotationId: id,
+                        author,
+                        body: body.body,
+                        attachments: body.attachments,
+                    });
                     publishBoardEvent(before.boardSlug, { type: "message", payload: message });
 
                     const after = await getAnnotation(getBoardsDb(), id);

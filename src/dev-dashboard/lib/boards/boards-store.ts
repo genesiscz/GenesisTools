@@ -13,6 +13,8 @@ import type {
     BoardsDb,
     BoardsTable,
 } from "./db-types";
+import { publishBoardEvent } from "./events";
+import { containingSection, sectionFrames } from "./sections";
 import { NotFoundError, setRefOf } from "./sets-store";
 import { nowIso } from "./time";
 import type {
@@ -115,6 +117,7 @@ function toMessageDto(row: Selectable<AnnotationMessagesTable>): MessageDto {
         boardId: row.board_id === 0 ? null : row.board_id,
         author: row.author,
         body: row.body,
+        attachments: SafeJSON.parse(row.attachments || "[]", { strict: true }) as MessageDto["attachments"],
         createdAt: row.created_at,
     };
 }
@@ -148,8 +151,11 @@ export async function createBoard(
     db: DatabaseClient<BoardsDb>,
     input: { slug: string; title?: string; boardType?: string; project?: string }
 ): Promise<BoardSummaryDto> {
+    // Invalid/reserved slugs are a validation failure (400), not a conflict (409) — clients
+    // treat 409 as "board already exists, reuse it" (board-from-set), which must never fire
+    // for a slug that can't exist.
     if (!BOARD_SLUG_RE.test(input.slug) || RESERVED_SLUGS.has(input.slug)) {
-        throw new SlugConflictError(`invalid board slug: ${input.slug}`);
+        throw new InvalidInputError(`invalid board slug: ${input.slug}`);
     }
 
     const existing = await db.kysely
@@ -398,20 +404,84 @@ export async function patchCard(
         throw new NotFoundError(`card not found: ${cardId}`);
     }
 
-    const updated = await db.kysely
-        .updateTable("board_cards")
-        .set({
-            x: patch.x ?? existing.x,
-            y: patch.y ?? existing.y,
-            w: patch.w ?? existing.w,
-            h: patch.h ?? existing.h,
-            z: patch.z ?? existing.z,
-            payload: patch.payload !== undefined ? SafeJSON.stringify(patch.payload) : existing.payload,
-            updated_at: nowIso(),
-        })
-        .where("id", "=", cardId)
-        .returningAll()
-        .executeTakeFirstOrThrow();
+    const newX = patch.x ?? existing.x;
+    const newY = patch.y ?? existing.y;
+    const newW = patch.w ?? existing.w;
+    const newH = patch.h ?? existing.h;
+    const dx = newX - existing.x;
+    const dy = newY - existing.y;
+    // A section frame that MOVES (x/y changed) WITHOUT resizing (w/h unchanged) carries its spatial
+    // members by the same delta — the frame is a container, so its contents travel with it. A resize
+    // must NOT carry (the frame grows/shrinks around stationary members). The UI's section-drag sends
+    // its member moves through bulkLayout, which never carries, so there is no double-translation.
+    const carriesMembers =
+        existing.kind === "section" && (dx !== 0 || dy !== 0) && newW === existing.w && newH === existing.h;
+
+    const now = nowIso();
+    const memberMoves: Array<{ id: number; x: number; y: number; w: number; h: number }> = [];
+    const updated = await db.kysely.transaction().execute(async (trx) => {
+        if (carriesMembers) {
+            // Membership is resolved on the PRE-move geometry (smallest containing frame), so nested
+            // sections don't double-carry.
+            const boardCards = await trx
+                .selectFrom("board_cards")
+                .selectAll()
+                .where("board_id", "=", existing.board_id)
+                .where("deleted_at", "=", "")
+                .execute();
+            const probes = boardCards.map((c) => ({
+                id: c.id,
+                kind: c.kind,
+                x: c.x,
+                y: c.y,
+                w: c.w,
+                h: c.h,
+                payload: {} as Record<string, unknown>,
+            }));
+            const probeFrames = sectionFrames(probes);
+            for (const p of probes) {
+                if (p.kind === "section" || containingSection(probeFrames, p)?.id !== existing.id) {
+                    continue;
+                }
+
+                const mx = p.x + dx;
+                const my = p.y + dy;
+                await trx
+                    .updateTable("board_cards")
+                    .set({ x: mx, y: my, updated_at: now })
+                    .where("id", "=", p.id)
+                    .execute();
+                memberMoves.push({ id: p.id, x: mx, y: my, w: p.w, h: p.h });
+            }
+        }
+
+        return trx
+            .updateTable("board_cards")
+            .set({
+                x: newX,
+                y: newY,
+                w: newW,
+                h: newH,
+                z: patch.z ?? existing.z,
+                payload: patch.payload !== undefined ? SafeJSON.stringify(patch.payload) : existing.payload,
+                updated_at: now,
+            })
+            .where("id", "=", cardId)
+            .returningAll()
+            .executeTakeFirstOrThrow();
+    });
+
+    if (memberMoves.length > 0) {
+        const board = await db.kysely
+            .selectFrom("boards")
+            .select("slug")
+            .where("id", "=", existing.board_id)
+            .executeTakeFirst();
+        if (board) {
+            publishBoardEvent(board.slug, { type: "layout", payload: { moves: memberMoves } });
+        }
+    }
+
     return toCardDto(updated);
 }
 
@@ -483,6 +553,39 @@ export async function addStrokes(
 
 export async function deleteStroke(db: DatabaseClient<BoardsDb>, strokeId: number): Promise<void> {
     await db.kysely.deleteFrom("board_strokes").where("id", "=", strokeId).execute();
+}
+
+/** Move/restyle a stroke: `path` re-anchors the polyline (a drag), `color`/`width` restyle it.
+ *  Every field is optional; an omitted field keeps its stored value. Returns the updated row. */
+export async function patchStroke(
+    db: DatabaseClient<BoardsDb>,
+    strokeId: number,
+    patch: { path?: number[][]; color?: string; width?: number }
+): Promise<StrokeDto> {
+    const existing = await db.kysely
+        .selectFrom("board_strokes")
+        .selectAll()
+        .where("id", "=", strokeId)
+        .executeTakeFirst();
+    if (!existing) {
+        throw new NotFoundError(`stroke not found: ${strokeId}`);
+    }
+
+    if (patch.path !== undefined && patch.path.length < 1) {
+        throw new InvalidInputError("stroke path must have at least one point");
+    }
+
+    const updated = await db.kysely
+        .updateTable("board_strokes")
+        .set({
+            path: patch.path !== undefined ? SafeJSON.stringify(patch.path) : existing.path,
+            color: patch.color ?? existing.color,
+            width: patch.width ?? existing.width,
+        })
+        .where("id", "=", strokeId)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+    return toStrokeDto(updated);
 }
 
 export async function addEdge(
@@ -941,11 +1044,17 @@ export async function answerQuestion(
     return db.kysely.transaction().execute(async (trx) => {
         const existing = await trx
             .selectFrom("board_questions")
-            .select("multi")
+            .select(["multi", "staged"])
             .where("id", "=", questionId)
             .executeTakeFirst();
         if (!existing) {
             throw new NotFoundError(`question not found: ${questionId}`);
+        }
+        // Re-picks are free while staged (dispatch hasn't released the answer onto the work wire yet),
+        // so a re-answer overwrites in place. Once dispatched (staged=0) the answer is locked —
+        // matches vitrinka's "free until dispatch" (handlers_questions.go).
+        if (existing.staged === 0) {
+            throw new InvalidInputError(`question ${questionId} was already dispatched; its answer is locked`);
         }
         if (existing.multi === 1) {
             let parsed: unknown;

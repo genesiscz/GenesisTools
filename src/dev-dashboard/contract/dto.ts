@@ -26,6 +26,7 @@ export type {
     ChoiceItemDto,
     EdgeDto,
     ListenerDto,
+    MessageAttachmentDto,
     MessageDto,
     QuestionDto,
     Region,

@@ -3,10 +3,27 @@
 // response raw (compact) so agents consume the same shape the HTTP API returns.
 import { paths } from "@app/dev-dashboard/contract/endpoints";
 import { SafeJSON } from "@app/utils/json";
-import { boardsFetch, compact } from "./http";
+import { BoardsHttpError, boardsBaseUrl, boardsFetch, compact } from "./http";
 import type { ArrangeMode } from "./schemas";
 
 type OptionInput = string | { label: string; hint?: string; recommended?: boolean };
+
+/** The authoritative clickable page for a board — relay THIS to the user, never a guessed host/port. */
+async function boardPageUrl(slug: string): Promise<string> {
+    return `${await boardsBaseUrl()}/boards/${slug}`;
+}
+
+export async function handleCreateBoard(args: { slug: string; title?: string; project?: string }): Promise<string> {
+    const res = await boardsFetch<Record<string, unknown>>(paths.boards(), {
+        method: "POST",
+        body: SafeJSON.stringify({
+            slug: args.slug,
+            ...(args.title ? { title: args.title } : {}),
+            ...(args.project ? { project: args.project } : {}),
+        }),
+    });
+    return compact({ ...res, url: await boardPageUrl(args.slug) });
+}
 
 export async function handleAskBoard(args: {
     board: string;
@@ -38,20 +55,30 @@ export async function handleComposeBoard(args: {
     edges?: unknown[];
     questions?: unknown[];
 }): Promise<string> {
-    const res = await boardsFetch<Record<string, unknown>>(paths.boardCompose(args.board), {
-        method: "POST",
-        body: SafeJSON.stringify({
-            ...(args.layout ? { layout: args.layout } : {}),
-            ...(args.anchorCardId !== undefined ? { anchorCardId: args.anchorCardId } : {}),
-            ...(args.section ? { section: args.section } : {}),
-            ...(args.journey ? { journey: args.journey } : {}),
-            ...(args.pass !== undefined ? { pass: args.pass } : {}),
-            cards: args.cards ?? [],
-            edges: args.edges ?? [],
-            questions: args.questions ?? [],
-        }),
-    });
-    return compact(res);
+    try {
+        const res = await boardsFetch<Record<string, unknown>>(paths.boardCompose(args.board), {
+            method: "POST",
+            body: SafeJSON.stringify({
+                ...(args.layout ? { layout: args.layout } : {}),
+                ...(args.anchorCardId !== undefined ? { anchorCardId: args.anchorCardId } : {}),
+                ...(args.section ? { section: args.section } : {}),
+                ...(args.journey ? { journey: args.journey } : {}),
+                ...(args.pass !== undefined ? { pass: args.pass } : {}),
+                cards: args.cards ?? [],
+                edges: args.edges ?? [],
+                questions: args.questions ?? [],
+            }),
+        });
+        return compact({ ...res, url: await boardPageUrl(args.board) });
+    } catch (err) {
+        if (err instanceof BoardsHttpError && err.status === 404) {
+            throw new Error(
+                `${err.message} — compose never auto-creates a board; ` +
+                    `create "${args.board}" first with boards_create_board, then compose onto it.`
+            );
+        }
+        throw err;
+    }
 }
 
 export async function handleArrange(args: {

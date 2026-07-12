@@ -17,6 +17,7 @@ import {
     createQuestion,
     getBoardBySlug,
     getBoardDoc,
+    InvalidInputError,
     importSet,
     listBoards,
     listCardVersions,
@@ -24,6 +25,7 @@ import {
     listTrash,
     patchBoard,
     patchCard,
+    patchStroke,
     restoreCard,
     revertCardFace,
     SlugConflictError,
@@ -115,8 +117,8 @@ describe("boards-store", () => {
     });
 
     it("rejects uppercase slugs, reserved slugs, and duplicate slugs", async () => {
-        await expect(createBoard(db, { slug: "MyBoard" })).rejects.toBeInstanceOf(SlugConflictError);
-        await expect(createBoard(db, { slug: "sets" })).rejects.toBeInstanceOf(SlugConflictError);
+        await expect(createBoard(db, { slug: "MyBoard" })).rejects.toBeInstanceOf(InvalidInputError);
+        await expect(createBoard(db, { slug: "sets" })).rejects.toBeInstanceOf(InvalidInputError);
         await createBoard(db, { slug: "dup" });
         await expect(createBoard(db, { slug: "dup" })).rejects.toBeInstanceOf(SlugConflictError);
     });
@@ -176,6 +178,57 @@ describe("boards-store", () => {
         expect(patched.payload).toEqual({ text: "hi" });
     });
 
+    it("patchCard moving a section carries its spatial members by the same delta", async () => {
+        await createBoard(db, { slug: "b1" });
+        const sec = await createCard(db, "b1", { kind: "section", x: 0, y: 0, w: 400, h: 400, payload: { title: "S" } });
+        const m1 = await createCard(db, "b1", { kind: "note", x: 40, y: 80, w: 100, h: 100 });
+        const m2 = await createCard(db, "b1", { kind: "note", x: 200, y: 250, w: 100, h: 100 });
+        const outside = await createCard(db, "b1", { kind: "note", x: 900, y: 900, w: 100, h: 100 });
+
+        await patchCard(db, sec.id, { x: 100 });
+
+        const byId = new Map((await getBoardDoc(db, "b1")).cards.map((c) => [c.id, c]));
+        expect(byId.get(sec.id)?.x).toBe(100);
+        // Members translated +100 in x, y untouched.
+        expect(byId.get(m1.id)?.x).toBe(140);
+        expect(byId.get(m1.id)?.y).toBe(80);
+        expect(byId.get(m2.id)?.x).toBe(300);
+        expect(byId.get(m2.id)?.y).toBe(250);
+        // A card outside the frame is not a member → untouched.
+        expect(byId.get(outside.id)?.x).toBe(900);
+    });
+
+    it("patchCard resizing a section leaves its members unmoved", async () => {
+        await createBoard(db, { slug: "b1" });
+        const sec = await createCard(db, "b1", { kind: "section", x: 0, y: 0, w: 400, h: 400, payload: { title: "S" } });
+        const m1 = await createCard(db, "b1", { kind: "note", x: 40, y: 80, w: 100, h: 100 });
+
+        await patchCard(db, sec.id, { w: 600, h: 500 });
+
+        const byId = new Map((await getBoardDoc(db, "b1")).cards.map((c) => [c.id, c]));
+        expect(byId.get(sec.id)?.w).toBe(600);
+        expect(byId.get(sec.id)?.h).toBe(500);
+        expect(byId.get(m1.id)?.x).toBe(40);
+        expect(byId.get(m1.id)?.y).toBe(80);
+    });
+
+    it("bulkLayout applies a section+member batch verbatim (no double translation)", async () => {
+        await createBoard(db, { slug: "b1" });
+        const sec = await createCard(db, "b1", { kind: "section", x: 0, y: 0, w: 400, h: 400, payload: { title: "S" } });
+        const m1 = await createCard(db, "b1", { kind: "note", x: 40, y: 80, w: 100, h: 100 });
+
+        // The UI section-drag batch already includes the member's new position.
+        await bulkLayout(db, "b1", [
+            { id: sec.id, x: 100, y: 0 },
+            { id: m1.id, x: 140, y: 80 },
+        ]);
+
+        const byId = new Map((await getBoardDoc(db, "b1")).cards.map((c) => [c.id, c]));
+        expect(byId.get(sec.id)?.x).toBe(100);
+        // Exactly what was sent — not 240 (which a double-carry would produce).
+        expect(byId.get(m1.id)?.x).toBe(140);
+    });
+
     it("bulkLayout moves multiple cards in one call and rejects out-of-range batches", async () => {
         await createBoard(db, { slug: "b1" });
         const c1 = await createCard(db, "b1", { kind: "note", x: 0, y: 0, w: 100, h: 100 });
@@ -214,6 +267,44 @@ describe("boards-store", () => {
         const doc = await getBoardDoc(db, "b1");
         expect(doc.strokes.length).toBe(1);
         expect(doc.edges.length).toBe(1);
+    });
+
+    it("patchStroke re-anchors the path and restyles color/width, leaving omitted fields intact", async () => {
+        await createBoard(db, { slug: "b1" });
+        const [stroke] = await addStrokes(db, "b1", [{ path: [[1, 2, 0.5]], color: "#e33", width: 3 }]);
+
+        // Move: new path only — color/width unchanged.
+        const moved = await patchStroke(db, stroke.id, {
+            path: [
+                [10, 20, 0.5],
+                [30, 40, 0.5],
+            ],
+        });
+        expect(moved.path).toEqual([
+            [10, 20, 0.5],
+            [30, 40, 0.5],
+        ]);
+        expect(moved.color).toBe("#e33");
+        expect(moved.width).toBe(3);
+
+        // Restyle: color/width only — path unchanged.
+        const restyled = await patchStroke(db, stroke.id, { color: "#08f", width: 6 });
+        expect(restyled.path).toEqual([
+            [10, 20, 0.5],
+            [30, 40, 0.5],
+        ]);
+        expect(restyled.color).toBe("#08f");
+        expect(restyled.width).toBe(6);
+
+        const doc = await getBoardDoc(db, "b1");
+        expect(doc.strokes[0]).toMatchObject({ id: stroke.id, color: "#08f", width: 6 });
+    });
+
+    it("patchStroke rejects an empty path and 404s an unknown id", async () => {
+        await createBoard(db, { slug: "b1" });
+        const [stroke] = await addStrokes(db, "b1", [{ path: [[1, 2, 0.5]] }]);
+        await expect(patchStroke(db, stroke.id, { path: [] })).rejects.toBeInstanceOf(InvalidInputError);
+        await expect(patchStroke(db, 999, { color: "#000" })).rejects.toBeInstanceOf(NotFoundError);
     });
 
     it("importSet lays out cards in a serpentine grid, dedupes on re-import, and links edges", async () => {
@@ -445,5 +536,28 @@ describe("boards-store", () => {
 
     it("answerQuestion on an unknown id throws NotFoundError", async () => {
         await expect(answerQuestion(db, 999, "picked", "user")).rejects.toThrow(NotFoundError);
+    });
+
+    it("answerQuestion overwrites a prior answer while the question is still staged (re-picks are free)", async () => {
+        await createBoard(db, { slug: "b1" });
+        const q = await createQuestion(db, "b1", {
+            cardId: 0,
+            prompt: "pick one",
+            options: [{ label: "a" }, { label: "b" }],
+        });
+        const first = await answerQuestion(db, q.id, "a", "user");
+        expect(first.answer).toEqual(["a"]);
+        const second = await answerQuestion(db, q.id, "b", "user");
+        expect(second.answer).toEqual(["b"]); // last pick wins
+        expect(second.staged).toBe(true);
+    });
+
+    it("answerQuestion rejects a re-answer once the question has been dispatched (staged=0, answer locked)", async () => {
+        await createBoard(db, { slug: "b1" });
+        const q = await createQuestion(db, "b1", { cardId: 0, prompt: "pick one", options: [{ label: "a" }] });
+        await answerQuestion(db, q.id, "a", "user");
+        // Simulate dispatch releasing the answer onto the work wire.
+        await db.kysely.updateTable("board_questions").set({ staged: 0 }).where("id", "=", q.id).execute();
+        await expect(answerQuestion(db, q.id, "a", "user")).rejects.toBeInstanceOf(InvalidInputError);
     });
 });

@@ -10,6 +10,7 @@ import type {
     AnnotationStatus,
     AttemptDto,
     CardDto,
+    MessageAttachmentDto,
     MessageDto,
     Region,
     RevisionDto,
@@ -65,6 +66,7 @@ function toMessageDto(row: {
     board_id: number;
     author: string;
     body: string;
+    attachments: string;
     created_at: string;
 }): MessageDto {
     return {
@@ -73,6 +75,7 @@ function toMessageDto(row: {
         boardId: row.board_id === 0 ? null : row.board_id,
         author: row.author,
         body: row.body,
+        attachments: SafeJSON.parse(row.attachments || "[]", { strict: true }) as MessageDto["attachments"],
         createdAt: row.created_at,
     };
 }
@@ -492,9 +495,34 @@ export async function addRevision(
     return loadAnnotationDto(db.kysely, id);
 }
 
+/** Keep only well-formed attachments (each needs a non-empty blobKey); name/mime coerce to strings.
+ *  Defensive because the route hands us raw JSON — a malformed entry must never poison the row. */
+function normalizeAttachments(raw: MessageAttachmentDto[] | undefined): MessageAttachmentDto[] {
+    if (!Array.isArray(raw)) {
+        return [];
+    }
+    const out: MessageAttachmentDto[] = [];
+    for (const a of raw) {
+        if (a && typeof a.blobKey === "string" && a.blobKey.length > 0) {
+            out.push({
+                blobKey: a.blobKey,
+                name: typeof a.name === "string" ? a.name : "",
+                mime: typeof a.mime === "string" ? a.mime : "",
+            });
+        }
+    }
+    return out;
+}
+
 export async function addMessage(
     db: DatabaseClient<BoardsDb>,
-    input: { annotationId?: number; boardSlug?: string; author: string; body: string }
+    input: {
+        annotationId?: number;
+        boardSlug?: string;
+        author: string;
+        body: string;
+        attachments?: MessageAttachmentDto[];
+    }
 ): Promise<MessageDto> {
     const hasAnnotation = input.annotationId !== undefined;
     const hasBoard = input.boardSlug !== undefined;
@@ -503,6 +531,7 @@ export async function addMessage(
     }
 
     const now = nowIso();
+    const attachments = SafeJSON.stringify(normalizeAttachments(input.attachments));
 
     if (input.boardSlug !== undefined) {
         const board = await db.kysely
@@ -515,7 +544,14 @@ export async function addMessage(
         }
         const inserted = await db.kysely
             .insertInto("annotation_messages")
-            .values({ annotation_id: 0, board_id: board.id, author: input.author, body: input.body, created_at: now })
+            .values({
+                annotation_id: 0,
+                board_id: board.id,
+                author: input.author,
+                body: input.body,
+                attachments,
+                created_at: now,
+            })
             .returningAll()
             .executeTakeFirstOrThrow();
         return toMessageDto(inserted);
@@ -532,7 +568,14 @@ export async function addMessage(
 
     const inserted = await db.kysely
         .insertInto("annotation_messages")
-        .values({ annotation_id: annotationId, board_id: 0, author: input.author, body: input.body, created_at: now })
+        .values({
+            annotation_id: annotationId,
+            board_id: 0,
+            author: input.author,
+            body: input.body,
+            attachments,
+            created_at: now,
+        })
         .returningAll()
         .executeTakeFirstOrThrow();
 

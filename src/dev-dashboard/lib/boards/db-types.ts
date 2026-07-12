@@ -133,6 +133,7 @@ export interface AnnotationMessagesTable {
     board_id: number; // 0 = annotation message (then annotation_id set)
     author: string;
     body: string;
+    attachments: Generated<string>; // JSON array of {blobKey,name,mime}; '[]' = none
     created_at: string;
 }
 

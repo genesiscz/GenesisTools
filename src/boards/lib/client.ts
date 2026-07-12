@@ -18,12 +18,26 @@ export function resolveBaseUrl(explicit?: string): string {
     return explicit ?? env.boards.getBaseUrl() ?? DEFAULT_BASE_URL;
 }
 
+/** Best-effort extraction of the server's `{error}` message from a non-2xx JSON body. */
+function serverErrorText(body: unknown): string | undefined {
+    if (body && typeof body === "object" && "error" in body && typeof body.error === "string") {
+        return body.error;
+    }
+
+    return undefined;
+}
+
 export class BoardsHttpError extends Error {
     readonly status: number;
     readonly body: unknown;
 
-    constructor(status: number, body: unknown) {
-        super(`boards request failed: ${status}`);
+    constructor(status: number, body: unknown, requestPath?: string) {
+        const detail = serverErrorText(body);
+        super(
+            `boards request failed: ${status}` +
+                (requestPath ? ` (${requestPath})` : "") +
+                (detail ? ` — ${detail}` : "")
+        );
         this.status = status;
         this.body = body;
     }
@@ -37,10 +51,20 @@ export interface HttpResult<T> {
 /** Low-level request — never throws on a non-2xx status, so callers that need to
  *  branch on the status code (409 conflicts, transport-error backoff) can inspect it. */
 export async function rawRequest<T>(base: string, path: string, init?: RequestInit): Promise<HttpResult<T>> {
-    const res = await fetch(`${base}${path}`, {
-        ...init,
-        signal: init?.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
-    });
+    let res: Response;
+    try {
+        res = await fetch(`${base}${path}`, {
+            ...init,
+            signal: init?.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+        });
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(
+            `boards: cannot reach dev-dashboard at ${base} (${init?.method ?? "GET"} ${path}: ${msg}). ` +
+                "Is it running? Start it with `tools dev-dashboard`, or point at another instance " +
+                "via --base / BOARDS_BASE_URL."
+        );
+    }
     const text = await res.text();
     let body: T | undefined;
     if (text.length > 0) {
@@ -57,7 +81,7 @@ export async function rawRequest<T>(base: string, path: string, init?: RequestIn
 export async function getJson<T>(base: string, path: string, signal?: AbortSignal): Promise<T> {
     const { status, body } = await rawRequest<T>(base, path, { signal });
     if (status < 200 || status >= 300) {
-        throw new BoardsHttpError(status, body);
+        throw new BoardsHttpError(status, body, `GET ${base}${path}`);
     }
     return body;
 }
@@ -82,7 +106,7 @@ export async function postJson<T>(
         signal,
     });
     if (status < 200 || status >= 300) {
-        throw new BoardsHttpError(status, body);
+        throw new BoardsHttpError(status, body, `${method} ${base}${path}`);
     }
     return body;
 }
@@ -104,7 +128,7 @@ export async function putRaw<T>(
         signal,
     });
     if (status < 200 || status >= 300) {
-        throw new BoardsHttpError(status, body);
+        throw new BoardsHttpError(status, body, `PUT ${base}${path}`);
     }
     return body;
 }

@@ -73,6 +73,20 @@ tools boards board-from-set [--slug <s>] [--title <t>] [--dir <path>] [--base <u
 Creates a board (slug defaults to the set key, lowercased) — or reuses it if it already
 exists — then imports the current set's images as cards in a serpentine layout.
 
+All the ways a board can be born, for reference:
+
+- `tools boards board-from-set` (this command) — create + import the pushed set in one go.
+- MCP `boards_create_board {slug, title?, project?}` — for agents presenting on a fresh
+  canvas (`boards_compose_board` never auto-creates; it 404s on an unknown slug).
+- `POST /api/boards {slug, title?, project?}` on the dev-dashboard — what both of the above
+  call. `409` = slug taken (reuse it), `400` = invalid slug (`^[a-z0-9][a-z0-9-]{0,63}$`,
+  non-reserved).
+- The dev-dashboard `/boards` UI.
+
+All of these target the **dev-dashboard** server (default `http://127.0.0.1:3042`) — not any
+other locally running dashboard. If a request fails, the error names the exact URL it tried;
+`tools dev-dashboard` starts the server.
+
 ### operator — the identity attributed to your writes
 
 ```bash

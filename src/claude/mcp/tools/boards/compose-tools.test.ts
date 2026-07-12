@@ -6,6 +6,7 @@ import {
     handleArrange,
     handleAskBoard,
     handleComposeBoard,
+    handleCreateBoard,
     handleGetTemplates,
     handleListProjects,
     handleListSections,
@@ -72,6 +73,31 @@ describe("handleAskBoard", () => {
     });
 });
 
+describe("handleCreateBoard", () => {
+    it("POSTs slug only when title/project are unset, and returns the board page url", async () => {
+        const { requests, stop } = await stubServer(() => ({ status: 201, body: { id: 1, slug: "b1" } }));
+        try {
+            const out = SafeJSON.parse(await handleCreateBoard({ slug: "b1" }), { strict: true }) as { url: string };
+            expect(requests[0].method).toBe("POST");
+            expect(requests[0].path).toBe("/api/boards");
+            expect(requests[0].body).toEqual({ slug: "b1" });
+            expect(out.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/boards\/b1$/);
+        } finally {
+            stop();
+        }
+    });
+
+    it("includes title and project when given", async () => {
+        const { requests, stop } = await stubServer(() => ({ status: 201, body: { id: 1 } }));
+        try {
+            await handleCreateBoard({ slug: "b1", title: "Board One", project: "proj" });
+            expect(requests[0].body).toEqual({ slug: "b1", title: "Board One", project: "proj" });
+        } finally {
+            stop();
+        }
+    });
+});
+
 describe("handleComposeBoard", () => {
     it("POSTs cards/edges/questions defaulting to empty arrays, omitting unset optional fields", async () => {
         const { requests, stop } = await stubServer(() => ({ status: 201, body: { cards: [] } }));
@@ -83,6 +109,30 @@ describe("handleComposeBoard", () => {
                 edges: [],
                 questions: [],
             });
+        } finally {
+            stop();
+        }
+    });
+
+    it("appends the board page url to the compose response", async () => {
+        const { stop } = await stubServer(() => ({ status: 201, body: { cards: [] } }));
+        try {
+            const out = SafeJSON.parse(await handleComposeBoard({ board: "b1" }), { strict: true }) as {
+                url: string;
+            };
+            expect(out.url).toMatch(/\/boards\/b1$/);
+        } finally {
+            stop();
+        }
+    });
+
+    it("rewrites a 404 into a boards_create_board hint", async () => {
+        const { stop } = await stubServer(() => ({
+            status: 404,
+            body: { error: "board not found: ghost", code: "not_found", index: -1 },
+        }));
+        try {
+            await expect(handleComposeBoard({ board: "ghost" })).rejects.toThrow(/boards_create_board/);
         } finally {
             stop();
         }

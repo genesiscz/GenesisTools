@@ -155,6 +155,8 @@ export const paths = {
     boardUpload: (params: { slug: string; name: string; mime: string }) =>
         `/api/boards/${params.slug}/upload${qs({ name: params.name, mime: params.mime })}`,
     boardMessages: (slug: string) => `/api/boards/${slug}/messages`,
+    boardMsgUploads: (params: { slug: string; name: string; mime: string }) =>
+        `/api/boards/${params.slug}/msg-uploads${qs({ name: params.name, mime: params.mime })}`,
     boardDispatch: (slug: string) => `/api/boards/${slug}/dispatch`,
     annotations: () => "/api/boards/annotations",
     annotation: (id: number) => `/api/boards/annotations/${id}`,

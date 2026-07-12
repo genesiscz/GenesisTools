@@ -213,6 +213,7 @@ describe("boards MCP tools (stdio e2e against a real agent-mode dev-dashboard)",
                 const tools = await client.listTools();
                 const names = tools.tools.map((t) => t.name);
                 for (const expected of [
+                    "boards_create_board",
                     "boards_compose_board",
                     "boards_arrange",
                     "boards_update_cards",

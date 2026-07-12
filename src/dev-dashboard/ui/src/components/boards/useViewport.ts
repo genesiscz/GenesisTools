@@ -45,6 +45,42 @@ export function fitBounds(
     };
 }
 
+/** True when some ancestor between the event target and the canvas root both scrolls and can
+ *  still move further in the wheel's dominant direction. */
+function scrollableAncestorCanConsume(e: WheelEvent, root: HTMLElement): boolean {
+    const vertical = Math.abs(e.deltaY) >= Math.abs(e.deltaX);
+    let node = e.target instanceof HTMLElement ? e.target : null;
+
+    while (node && node !== root) {
+        const style = window.getComputedStyle(node);
+        const overflow = vertical ? style.overflowY : style.overflowX;
+
+        if (overflow === "auto" || overflow === "scroll") {
+            if (vertical && node.scrollHeight > node.clientHeight) {
+                const canDown = node.scrollTop + node.clientHeight < node.scrollHeight - 1;
+                const canUp = node.scrollTop > 0;
+
+                if ((e.deltaY > 0 && canDown) || (e.deltaY < 0 && canUp)) {
+                    return true;
+                }
+            }
+
+            if (!vertical && node.scrollWidth > node.clientWidth) {
+                const canRight = node.scrollLeft + node.clientWidth < node.scrollWidth - 1;
+                const canLeft = node.scrollLeft > 0;
+
+                if ((e.deltaX > 0 && canRight) || (e.deltaX < 0 && canLeft)) {
+                    return true;
+                }
+            }
+        }
+
+        node = node.parentElement;
+    }
+
+    return false;
+}
+
 export function useViewport() {
     const [vp, setVp] = useState<Viewport>({ x: 0, y: 0, scale: 1 });
     const spaceDown = useRef(false);
@@ -62,6 +98,13 @@ export function useViewport() {
         }
 
         const onWheel = (e: WheelEvent) => {
+            // A scrollable element inside a card (viz table, long text) owns the wheel when it
+            // can still consume the delta in that direction — otherwise long card content is
+            // unreachable because the canvas pans instead.
+            if (!e.ctrlKey && !e.metaKey && scrollableAncestorCanConsume(e, el)) {
+                return;
+            }
+
             e.preventDefault();
             const rect = el.getBoundingClientRect();
             const sx = e.clientX - rect.left;
