@@ -1,6 +1,6 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
-import { requireProxyApiKey } from "@app/ai-proxy/lib/auth-middleware";
 import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
+import { clientProviderDenial, resolveClient } from "@app/ai-proxy/lib/clients";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import { stripBasePath } from "@app/ai-proxy/lib/path-prefix";
 import { buildProviderMap, routeProviderKey, tryCreateProvider } from "@app/ai-proxy/lib/providers/registry";
@@ -12,6 +12,7 @@ import { handleChatCompletions } from "@app/ai-proxy/lib/translators";
 import { identityPipeline } from "@app/ai-proxy/lib/translators/identity-pipeline";
 import type { AiProxyConfig, ResolvedRoute, ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
 import { scheduleBillingSync } from "@app/ai-proxy/lib/usage/billing-sync";
+import { checkClientQuota } from "@app/ai-proxy/lib/usage/client-ledger";
 import { scheduleUsageTracking } from "@app/ai-proxy/lib/usage/track-response";
 import { logger } from "@app/logger";
 import { CopilotAuthExpiredError } from "@app/utils/ai/github-copilot";
@@ -76,6 +77,7 @@ function normalizePath(pathname: string, basePath?: string): string {
 function trackProxyRequest(input: {
     runtime: AiProxyRuntime;
     route: ResolvedRoute;
+    client: string;
     proxyModel: string;
     path: string;
     status: number;
@@ -87,6 +89,7 @@ function trackProxyRequest(input: {
 }): void {
     scheduleUsageTracking({
         route: input.route,
+        client: input.client,
         proxyModel: input.proxyModel,
         path: input.path,
         status: input.status,
@@ -119,9 +122,13 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
             const config = await loadConfigFresh();
 
             if (path === "/v1/models" && req.method === "GET") {
-                const authError = requireProxyApiKey(req, config.proxyApiKey);
-                if (authError) {
-                    return authError;
+                const client = resolveClient(req, config);
+
+                if (!client) {
+                    return new Response(
+                        SafeJSON.stringify({ error: { message: "Invalid proxy API key", type: "auth_error" } }),
+                        { status: 401, headers: { "Content-Type": "application/json" } }
+                    );
                 }
 
                 const models = await buildProxyModelCatalog(config.accounts);
@@ -142,9 +149,13 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
             }
 
             if ((path === "/v1/chat/completions" || path === "/v1/responses") && req.method === "POST") {
-                const authError = requireProxyApiKey(req, config.proxyApiKey);
-                if (authError) {
-                    return authError;
+                const client = resolveClient(req, config);
+
+                if (!client) {
+                    return new Response(
+                        SafeJSON.stringify({ error: { message: "Invalid proxy API key", type: "auth_error" } }),
+                        { status: 401, headers: { "Content-Type": "application/json" } }
+                    );
                 }
 
                 const requestStarted = performance.now();
@@ -190,6 +201,31 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
 
                 try {
                     const route = resolveModel(parsed.model, config.accounts);
+
+                    const denial = clientProviderDenial(client, route.account.provider);
+
+                    if (denial) {
+                        logger.warn({ client: client.name, model: parsed.model, denial }, "ai-proxy: provider denied");
+                        return new Response(
+                            SafeJSON.stringify({
+                                error: { message: denial, type: "forbidden", code: "provider_not_allowed" },
+                            }),
+                            { status: 403, headers: { "Content-Type": "application/json" } }
+                        );
+                    }
+
+                    const quota = checkClientQuota(client);
+
+                    if (!quota.ok) {
+                        logger.warn({ client: client.name, reason: quota.reason }, "ai-proxy: quota exceeded");
+                        return new Response(
+                            SafeJSON.stringify({
+                                error: { message: quota.reason, type: "quota_exceeded", code: "monthly_quota_exceeded" },
+                            }),
+                            { status: 429, headers: { "Content-Type": "application/json" } }
+                        );
+                    }
+
                     const key = routeProviderKey(route);
                     const fingerprint = accountConfigFingerprint(route.account);
                     let provider = runtime.providers.get(key);
@@ -233,6 +269,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         trackProxyRequest({
                             runtime,
                             route,
+                            client: client.name,
                             proxyModel: parsed.model,
                             path,
                             status: response.status,
@@ -284,6 +321,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                     trackProxyRequest({
                         runtime,
                         route,
+                        client: client.name,
                         proxyModel: parsed.model,
                         path,
                         status: response.status,
