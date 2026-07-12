@@ -186,7 +186,11 @@ export class AnthropicSubscriptionProvider implements ProxyProvider {
                 headers: {
                     "Content-Type": "text/event-stream; charset=utf-8",
                     "Cache-Control": "no-cache",
-                    Connection: "keep-alive",
+                    // Advertising keep-alive on a chunked SSE body breaks Node/undici
+                    // clients on connection reuse (second request dies with
+                    // "TypeError: terminated" / UND_ERR_SOCKET) — verified live via the
+                    // eve tool-loop. curl tolerates it; undici does not. Close per stream.
+                    Connection: "close",
                 },
             });
         }
