@@ -26,8 +26,9 @@ You cannot evaluate a file the harness never loads, and you must not silently tr
 ```bash
 # user scope
 ls -la ~/.claude/CLAUDE.md 2>/dev/null
-# project scope (run from the repo root)
-ls -la ./CLAUDE.md ./.claude/CLAUDE.md ./CLAUDE.local.md ./AGENTS.md 2>/dev/null
+# project scope (run from the repo root) — capture absolute paths for later use
+REPO_ROOT="$(pwd)"
+ls -la "$REPO_ROOT/CLAUDE.md" "$REPO_ROOT/.claude/CLAUDE.md" "$REPO_ROOT/CLAUDE.local.md" "$REPO_ROOT/AGENTS.md" 2>/dev/null
 # nested AGENTS.md (Codex/Cursor read the nearest one per-directory; Claude does not auto-load these)
 fd -H -t f '^AGENTS\.md$' . 2>/dev/null || rg --files -g 'AGENTS.md' . 2>/dev/null
 ```
@@ -140,10 +141,12 @@ Then launch it **through the wrapper, detached**, hiding the full set, and poll 
 ```zsh
 # FILES = the exact set Phase 0 said exists AND the harness loads (+ AGENTS.md if you are
 # evaluating it for other tools — hiding it makes the clean run honest even though Claude
-# ignores it, so a rule in AGENTS.md can't leak in via any path).
+# ignores it, so a rule in AGENTS.md can't leak in via any path). Use the ABSOLUTE paths
+# captured in Phase 0 (REPO_ROOT) — relative paths silently no-op if battery.sh runs from
+# a scratchpad outside the repo.
 nohup <skill-dir>/scripts/with-hidden-instructions.sh \
   --done-marker "$PWD/battery.done" \
-  ~/.claude/CLAUDE.md ./CLAUDE.md ./.claude/CLAUDE.md ./CLAUDE.local.md ./AGENTS.md \
+  ~/.claude/CLAUDE.md "$REPO_ROOT/CLAUDE.md" "$REPO_ROOT/.claude/CLAUDE.md" "$REPO_ROOT/CLAUDE.local.md" "$REPO_ROOT/AGENTS.md" \
   -- zsh battery.sh >/dev/null 2>&1 &
 # then: until [ -f battery.done ] || [ $SECONDS -ge 900 ]; do sleep 5; done
 ```
@@ -151,8 +154,8 @@ nohup <skill-dir>/scripts/with-hidden-instructions.sh \
 Hard rules learned from real failures:
 
 1. **Never let the hide window span a killable foreground command.** Launch via `nohup ... &` (detached) and poll `battery.done`. The Bash tool's timeout once SIGTERM'd a foreground run mid-battery — the wrapper's trap now covers that, but detaching keeps the harness from killing it at all.
-2. **Emergency check after every run**, per hidden file:
-   `for f in ~/.claude/CLAUDE.md ./CLAUDE.md ./AGENTS.md; do [ -f "$f" ] || ls "$f".iamh-hidden.* 2>/dev/null; done` — restore any leftover `*.iamh-hidden.*` by hand.
+2. **Emergency check after every run**, per hidden file (same set as the hide-list above):
+   `for f in ~/.claude/CLAUDE.md "$REPO_ROOT/CLAUDE.md" "$REPO_ROOT/.claude/CLAUDE.md" "$REPO_ROOT/CLAUDE.local.md" "$REPO_ROOT/AGENTS.md"; do [ -f "$f" ] || ls "$f".iamh-hidden.* 2>/dev/null; done` — restore any leftover `*.iamh-hidden.*` by hand.
 3. Call the binary directly (`~/.bun/bin/claude`) — shell functions may inject flags (`--add-dir`) that break subcommands.
 4. `tools cc run <name>` does NOT pass through `-p`/args — replicate its env mechanism (the token export above).
 5. **Multiple models, minimum two tiers** (e.g. `claude-fable-5`/`claude-haiku-4-5` and `claude-sonnet-4-5`/`opus`). The **weakest model in your rotation decides**: if any model you use gets a rule wrong, the rule is not safe to cut. For AGENTS.md this floor drops further — see Phase 5.

@@ -62,18 +62,29 @@ typeset -a hidden_src hidden_dst
 hidden_src=(); hidden_dst=()
 suffix=".iamh-hidden.$$"
 
+restore_failed=0
+
 restore() {
   local i src dst
   for (( i = 1; i <= ${#hidden_src[@]}; i++ )); do
     src="${hidden_src[$i]}"; dst="${hidden_dst[$i]}"
     if [[ -e "$dst" ]]; then
-      mv "$dst" "$src" 2>/dev/null || emit "WARN failed to restore $src"
+      if ! mv "$dst" "$src" 2>/dev/null; then
+        emit "WARN failed to restore $src"
+        restore_failed=1
+      fi
     fi
   done
 }
 
 # trap must be armed BEFORE any mv so a kill during hide still restores.
 trap 'restore' EXIT INT TERM HUP
+
+# A hide failure is FATAL, not a warning: running the command with an instruction
+# file still in place would break the "physical exclusion" contamination proof the
+# companion SKILL.md documents — a completed run must PROVABLY have run without
+# these files.
+hide_failed=0
 
 for f in "${files[@]}"; do
   if [[ -f "$f" ]]; then
@@ -82,12 +93,19 @@ for f in "${files[@]}"; do
       hidden_src+=("$f"); hidden_dst+=("$dst")
       emit "hid $f"
     else
-      emit "WARN could not hide $f (left in place)"
+      emit "FATAL could not hide $f (left in place) — aborting before running the command"
+      hide_failed=1
     fi
   else
     emit "skip (absent) $f"
   fi
 done
+
+if (( hide_failed )); then
+  restore
+  trap - EXIT INT TERM HUP
+  exit 4
+fi
 
 # --- run the command with the files hidden ---
 "$@"
@@ -102,13 +120,18 @@ typeset -i missing=0
 for f in "${files[@]}"; do
   # only assert files we actually hid
   for (( i = 1; i <= ${#hidden_src[@]}; i++ )); do
-    if [[ "${hidden_src[$i]}" == "$f" && ! -e "$f" ]]; then
-      emit "FATAL: $f was hidden but is NOT restored — recover from ${hidden_dst[$i]}"
-      (( missing++ ))
+    if [[ "${hidden_src[$i]}" == "$f" ]]; then
+      if [[ ! -e "$f" ]]; then
+        emit "FATAL: $f was hidden but is NOT restored — recover from ${hidden_dst[$i]}"
+        (( missing++ ))
+      elif [[ -e "${hidden_dst[$i]}" ]]; then
+        emit "FATAL: stray hidden copy ${hidden_dst[$i]} left behind even though $f exists — inspect both"
+        (( missing++ ))
+      fi
     fi
   done
 done
-if (( missing > 0 )); then
+if (( missing > 0 || restore_failed > 0 )); then
   exit 3
 fi
 
