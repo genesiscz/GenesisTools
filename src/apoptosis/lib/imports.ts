@@ -1,11 +1,12 @@
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { logger } from "@app/logger";
 import type { AliasConfig } from "./types";
 
 const SPECIFIER_RE =
     /(?:import|export)[^'"]*?from\s*['"]([^'"]+)['"]|(?:import|require)\s*\(\s*['"]([^'"]+)['"]\s*\)|import\s+['"]([^'"]+)['"]/g;
-const CANDIDATE_SUFFIXES = ["", ".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.tsx", "/index.js", "/index.jsx"];
+const EXT_SUFFIXES = ["", ".ts", ".tsx", ".js", ".jsx"];
+const INDEX_EXTS = [".ts", ".tsx", ".js", ".jsx"];
 /** JS-ish extensions a TS import may carry — NodeNext writes `./x.js` for a `./x.ts` source. */
 const REWRITABLE_JS_EXT = /\.(js|jsx|mjs|cjs)$/;
 
@@ -50,11 +51,20 @@ function compileAliasRules(alias: AliasConfig): AliasRule[] {
 }
 
 /** Check a resolved (extensionless-ish) base path against the known set,
- *  trying extension, `/index`, and NodeNext `.js`→`.ts` variants. */
+ *  trying extension, `/index`, and NodeNext `.js`→`.ts` variants. Index candidates
+ *  are joined with `join()` rather than string-concatenated so the separator
+ *  matches the host platform (Windows `resolve()` output uses `\`). */
 function matchKnown(base: string, known: Set<string>): string | null {
-    for (const suffix of CANDIDATE_SUFFIXES) {
+    for (const suffix of EXT_SUFFIXES) {
         if (known.has(base + suffix)) {
             return base + suffix;
+        }
+    }
+
+    for (const ext of INDEX_EXTS) {
+        const candidate = join(base, `index${ext}`);
+        if (known.has(candidate)) {
+            return candidate;
         }
     }
 
