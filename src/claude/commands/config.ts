@@ -812,9 +812,22 @@ export function registerConfigCommand(program: Command): void {
             out.println();
             out.println(pc.dim("─".repeat(50)));
 
-            // Open browser
-            Bun.spawn(["open", authUrl], { stdio: ["ignore", "ignore", "ignore"] });
-            out.println(pc.dim("(Opening browser...)"));
+            const openBrowser = await p.confirm({
+                message: "Open URL in browser?",
+                initialValue: true,
+            });
+
+            if (p.isCancel(openBrowser)) {
+                out.println(pc.dim("Login cancelled."));
+                process.exit(0);
+            }
+
+            if (openBrowser) {
+                Bun.spawn(["open", authUrl], { stdio: ["ignore", "ignore", "ignore"] });
+            } else {
+                await copyToClipboard(authUrl, { silent: true });
+                out.println(pc.dim("URL copied to clipboard."));
+            }
             out.println();
 
             // Read code from stdin
