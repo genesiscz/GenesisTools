@@ -294,7 +294,7 @@ that consume `@gt/*` packages.
 
 ### 2.2 Dependency graph (target)
 
-```
+```text
                          tools (src/<tool>/) — thin entrypoints
                                    │  (depend on @gt/* only; never on another tool)
         ┌──────────────┬──────────┴───────────┬───────────────┬──────────────┐

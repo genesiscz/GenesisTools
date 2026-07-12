@@ -1,5 +1,6 @@
 export * from "./array";
 export * from "./date";
+export * from "./date-locale";
 export * from "./format";
 export * from "./hash";
 export * from "./json";

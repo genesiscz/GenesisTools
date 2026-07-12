@@ -7,6 +7,10 @@
  * Returns 0 for identical vectors, 2 for opposite vectors.
  */
 export function cosineDistance(a: Float32Array, b: Float32Array): number {
+    if (a.length !== b.length) {
+        throw new RangeError(`Vector lengths must match (got ${a.length} and ${b.length})`);
+    }
+
     let dot = 0;
     let normA = 0;
     let normB = 0;

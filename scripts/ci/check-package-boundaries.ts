@@ -48,7 +48,7 @@ const PACKAGE_LAYER: Record<string, Layer> = {
 };
 
 /** Tool dirs/files under src/ that are NOT shared packages (for tool->tool detection). */
-const TOOL_IMPORT_RE = /@app\/([a-zA-Z0-9._-]+)(?:\/|")/;
+const TOOL_IMPORT_RE = /@app\/([a-zA-Z0-9._-]+)(?:\/|"|')/;
 
 /** A src/ subtree that is shared infra, not a tool (so @app/utils/* is never a "tool" import). */
 const SHARED_SRC_PREFIXES = ["utils", "logger", "ask"];
@@ -67,7 +67,7 @@ async function collectImports(scope: string): Promise<ImportHit[]> {
     const excludeNodeModules = "!node_modules";
     const globTs = "*.ts";
     const globTsx = "*.tsx";
-    const pattern = "from\\s+[\"']([^\"']+)[\"']";
+    const pattern = "(?:from\\s+[\"']([^\"']+)[\"']|^\\s*import\\s+[\"']([^\"']+)[\"'])";
     const raw = await $`rg -n --no-heading -g ${excludeNodeModules} -g ${globTs} -g ${globTsx} ${pattern} ${scope}`
         .nothrow()
         .text();
@@ -84,7 +84,8 @@ async function collectImports(scope: string): Promise<ImportHit[]> {
         }
 
         const [, file, lineNo, rest] = m;
-        const specMatch = rest.match(/from\s+["']([^"']+)["']/);
+        // Match `from "spec"` first, then fall back to bare side-effect `import "spec"`.
+        const specMatch = rest.match(/from\s+["']([^"']+)["']/) ?? rest.match(/^\s*import\s+["']([^"']+)["']/);
         if (!specMatch) {
             continue;
         }

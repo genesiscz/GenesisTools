@@ -16,7 +16,7 @@ These were run in this worktree; re-run on a clean checkout if the baseline is
 ever in doubt.
 
 ```bash
-cd /Users/Martin/Tresors/Projects/GenesisTools-monorepo-3
+# from the repo root
 bun install
 # Master baseline — MUST be 0:
 tsgo --noEmit 2>&1 | rg -c "error TS"        # → 0  (this is the bar)

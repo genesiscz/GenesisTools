@@ -15,14 +15,21 @@ export function isObject(value: unknown): value is Record<string, unknown> {
  */
 export function deepMerge<T extends Record<string, unknown>>(target: T, source: Partial<T>): T {
     const result = { ...target };
-    for (const key in source) {
-        if (source[key] && isObject(source[key]) && isObject(result[key])) {
+    for (const key of Object.keys(source)) {
+        if (key === "__proto__" || key === "constructor" || key === "prototype") {
+            continue;
+        }
+
+        const sourceValue = (source as Record<string, unknown>)[key];
+        const targetValue = (result as Record<string, unknown>)[key];
+
+        if (sourceValue !== undefined && isObject(sourceValue) && isObject(targetValue)) {
             (result as Record<string, unknown>)[key] = deepMerge(
-                result[key] as Record<string, unknown>,
-                source[key] as Record<string, unknown>
+                targetValue as Record<string, unknown>,
+                sourceValue as Record<string, unknown>
             );
-        } else if (source[key] !== undefined) {
-            (result as Record<string, unknown>)[key] = source[key];
+        } else if (sourceValue !== undefined) {
+            (result as Record<string, unknown>)[key] = sourceValue;
         }
     }
     return result;

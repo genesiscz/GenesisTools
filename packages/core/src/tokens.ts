@@ -37,8 +37,20 @@ export function countTokens(text: string): number {
 export function limitToTokens(text: string, maxTokens?: number): { text: string; tokens: number; truncated: boolean } {
     const tokens = countTokens(text);
 
-    if (maxTokens == null || tokens <= maxTokens) {
+    if (maxTokens == null) {
         return { text, tokens, truncated: false };
+    }
+
+    if (!Number.isInteger(maxTokens) || maxTokens < 0) {
+        throw new Error(`maxTokens must be a non-negative integer, got: ${maxTokens}`);
+    }
+
+    if (tokens <= maxTokens) {
+        return { text, tokens, truncated: false };
+    }
+
+    if (maxTokens === 0) {
+        return { text: "", tokens: 0, truncated: text.length > 0 };
     }
 
     try {
