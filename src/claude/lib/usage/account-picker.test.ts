@@ -165,6 +165,21 @@ describe("scoreAccounts — tiers and edge cases", () => {
         expect(ranked[0].weeklyHeadroomPct).toBe(100);
     });
 
+    test("malformed resets_at is treated as unscheduled, never NaN in ranking", () => {
+        const malformed = account("malformed", usage({ seven_day: { utilization: 95, resets_at: "not-a-date" } }));
+        const ok = account("ok", usage({ seven_day: { utilization: 50, resets_at: hoursFromNow(24) } }));
+
+        const ranked = scoreAccounts([malformed, ok], { now: NOW });
+
+        for (const acc of ranked) {
+            expect(Number.isNaN(acc.weeklyRatePctPerHour)).toBe(false);
+        }
+
+        const scored = ranked.find((a) => a.accountName === "malformed");
+        expect(scored?.tier).not.toBe("no-data");
+        expect(scored?.weeklyHeadroomPct).toBe(5);
+    });
+
     test("opus launch binds the worse of seven_day and seven_day_opus", () => {
         const opusHeavy = account(
             "opus-heavy",

@@ -31,32 +31,33 @@ interface StartOptions {
  * See anthropics/claude-code#8938, #46259 — token auth works once onboarding is skipped.
  */
 async function ensureOnboardingSkippedForOAuthToken(): Promise<void> {
-    const file = Bun.file(CLAUDE_JSON);
-    if (!(await file.exists())) {
-        return;
-    }
-
-    const text = await file.text();
-    if (/"hasCompletedOnboarding"\s*:\s*true/.test(text)) {
-        return;
-    }
-
-    let updated = text;
-    if (/"hasCompletedOnboarding"\s*:\s*false/.test(text)) {
-        updated = text.replace(/"hasCompletedOnboarding"\s*:\s*false/, '"hasCompletedOnboarding": true');
-    } else {
-        try {
-            const config = SafeJSON.parse(text) as Record<string, unknown>;
-            config.hasCompletedOnboarding = true;
-            updated = SafeJSON.stringify(config, null, 2);
-        } catch (error) {
-            logger.warn({ error, path: CLAUDE_JSON }, "Could not patch hasCompletedOnboarding in ~/.claude.json");
+    // Best-effort by contract: any fs/parse failure here (permissions, disk, foreign
+    // ~/.claude.json) must log and return — never abort the actual claude launch.
+    try {
+        const file = Bun.file(CLAUDE_JSON);
+        if (!(await file.exists())) {
             return;
         }
-    }
 
-    await Bun.write(CLAUDE_JSON, updated);
-    logger.debug({ path: CLAUDE_JSON }, "Set hasCompletedOnboarding for CLAUDE_CODE_OAUTH_TOKEN launch");
+        const text = await file.text();
+        if (/"hasCompletedOnboarding"\s*:\s*true/.test(text)) {
+            return;
+        }
+
+        let updated = text;
+        if (/"hasCompletedOnboarding"\s*:\s*false/.test(text)) {
+            updated = text.replace(/"hasCompletedOnboarding"\s*:\s*false/, '"hasCompletedOnboarding": true');
+        } else {
+            const config = SafeJSON.parse(text, { strict: true }) as Record<string, unknown>;
+            config.hasCompletedOnboarding = true;
+            updated = SafeJSON.stringify(config, null, 2);
+        }
+
+        await Bun.write(CLAUDE_JSON, updated);
+        logger.debug({ path: CLAUDE_JSON }, "Set hasCompletedOnboarding for CLAUDE_CODE_OAUTH_TOKEN launch");
+    } catch (error) {
+        logger.warn({ error, path: CLAUDE_JSON }, "Could not patch hasCompletedOnboarding in ~/.claude.json");
+    }
 }
 
 function shellQuote(arg: string): string {

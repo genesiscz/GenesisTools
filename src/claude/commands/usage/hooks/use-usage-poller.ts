@@ -32,6 +32,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const pruneIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const pollingRef = useRef(false);
+    const pendingForceRef = useRef(false);
 
     useEffect(() => {
         // Refresh account labels from API profiles on startup (best-effort, non-blocking)
@@ -133,6 +134,12 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
     const poll = useCallback(
         async (force = false) => {
             if (pollingRef.current) {
+                // A forced refresh landing mid-poll must not be silently dropped —
+                // queue it and replay once the in-flight poll settles.
+                if (force) {
+                    pendingForceRef.current = true;
+                }
+
                 return;
             }
 
@@ -179,6 +186,12 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
             } finally {
                 pollingRef.current = false;
                 setPollingLabel(null);
+
+                if (pendingForceRef.current) {
+                    // Cleared before the replay so a queued force runs exactly once.
+                    pendingForceRef.current = false;
+                    void poll(true);
+                }
             }
         },
         [accountFilter, pollIntervalSeconds, processAccountUsages]

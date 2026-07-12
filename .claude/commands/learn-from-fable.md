@@ -67,14 +67,15 @@ Report both numbers. If `--archive-only`, stop here.
 
 ```bash
 FABLE="$HOME/.genesis-tools/claude/fable"
+MAX="$(echo "$ARGUMENTS" | grep -oE '[0-9]+' | head -1)"; MAX="${MAX:-3}"
 find "$FABLE/sessions" -name '*.jsonl' -print0 | xargs -0 ls -t \
 | while read -r f; do grep -qF "\"$f\"" "$FABLE/processed.jsonl" || echo "$f"; done \
   > /tmp/fable-unmined.txt
 grep -cv '^$' /tmp/fable-unmined.txt
-grep -v '/subagents/' /tmp/fable-unmined.txt | head -n MAX
+grep -v '/subagents/' /tmp/fable-unmined.txt | head -n "$MAX"
 ```
 
-Take that final list (main sessions, newest first). If it's empty but `/tmp/fable-unmined.txt` isn't, take `head -n MAX /tmp/fable-unmined.txt` instead (subagent transcripts — execution-heavy but still useful). If nothing is unmined at all: report that and stop (unless `--repack`, then go to Stage 5).
+Take that final list (main sessions, newest first). If it's empty but `/tmp/fable-unmined.txt` isn't, take `head -n "$MAX" /tmp/fable-unmined.txt` instead (subagent transcripts — execution-heavy but still useful). If nothing is unmined at all: report that and stop (unless `--repack`, then go to Stage 5).
 
 ## Stage 3 — Extract per session (subagents only)
 
@@ -111,7 +112,8 @@ Do this once per successfully mined session; skip (and report) any `MINING FAILE
 4. Append one line per mined session to the manifest — only AFTER its merge is done:
 
 ```bash
-echo '{"file":"<FILE>","minedAt":"'"$(date +%F)"'","notes":"<one-line session summary>"}' \
+jq -cn --arg file "<FILE>" --arg minedAt "$(date +%F)" --arg notes "<one-line session summary>" \
+  '{file: $file, minedAt: $minedAt, notes: $notes}' \
   >> "$HOME/.genesis-tools/claude/fable/processed.jsonl"
 ```
 

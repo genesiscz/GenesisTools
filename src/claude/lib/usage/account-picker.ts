@@ -80,7 +80,14 @@ function viewBucket(bucket: UsageBucket | null | undefined, periodHours: number,
     }
 
     const resetsAt = new Date(bucket.resets_at);
-    const hoursToReset = (resetsAt.getTime() - now.getTime()) / MS_PER_HOUR;
+    const resetMs = resetsAt.getTime();
+    if (!Number.isFinite(resetMs)) {
+        // Malformed resets_at from the API — NaN <= 0 is false, so without this guard NaN
+        // would flow into the ranking rates and corrupt --autopick ordering.
+        return { headroomPct, hoursToReset: periodHours, hasScheduledReset: false, resetsAt: null };
+    }
+
+    const hoursToReset = (resetMs - now.getTime()) / MS_PER_HOUR;
     if (hoursToReset <= 0) {
         // Reset already passed (cache lag) — the bucket is effectively fresh.
         return { headroomPct: 100, hoursToReset: periodHours, hasScheduledReset: false, resetsAt: null };
