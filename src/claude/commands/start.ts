@@ -13,6 +13,7 @@ import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { finishKeychainSession, injectSecondaryLogin, inspectKeychainBeforeInject } from "../lib/keychain-session";
 import { pickSessionForResume } from "./resume";
 
 const CLAUDE_JSON = join(homedir(), ".claude.json");
@@ -23,6 +24,7 @@ interface StartOptions {
     model?: string;
     resume?: string | boolean;
     continue?: boolean;
+    keychain?: boolean;
 }
 
 /**
@@ -258,13 +260,20 @@ async function resolveResumeArgs(opts: StartOptions): Promise<string[]> {
 
 async function main(nameArg: string | undefined, opts: StartOptions, passthrough: string[]): Promise<never> {
     const aiConfig = await AIConfig.load();
-    const withToken = aiConfig.getAccountsByProvider("anthropic-sub").filter((a) => Boolean(a.tokens.longLivedToken));
+    const withToken = aiConfig
+        .getAccountsByProvider("anthropic-sub")
+        .filter((a) => (opts.keychain ? Boolean(a.secondary) : Boolean(a.tokens.longLivedToken)));
 
     if (withToken.length === 0) {
-        out.error(pc.red("No accounts with a long-lived token."));
-        out.printlnErr(
-            pc.dim(`Run ${pc.cyan("tools claude login-long")} first to save one (see \`claude setup-token\`).`)
-        );
+        if (opts.keychain) {
+            out.error(pc.red("No accounts with a secondary login."));
+            out.printlnErr(pc.dim(`Run ${pc.cyan("tools claude login-secondary <name>")} first to save one.`));
+        } else {
+            out.error(pc.red("No accounts with a long-lived token."));
+            out.printlnErr(
+                pc.dim(`Run ${pc.cyan("tools claude login-long")} first to save one (see \`claude setup-token\`).`)
+            );
+        }
         await out.flush();
         process.exit(1);
     }
@@ -277,7 +286,10 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         const match = withToken.find((a) => a.name === nameArg);
         if (!match) {
             const hasEntry = aiConfig.getAccount(nameArg);
-            if (hasEntry) {
+            if (hasEntry && opts.keychain) {
+                out.error(pc.red(`Account "${nameArg}" has no secondary login.`));
+                out.printlnErr(pc.dim(`Save one with: ${pc.cyan(`tools claude login-secondary ${nameArg}`)}`));
+            } else if (hasEntry) {
                 out.error(pc.red(`Account "${nameArg}" has no long-lived token.`));
                 out.printlnErr(pc.dim(`Save one with: ${pc.cyan(`tools claude login-long ${nameArg}`)}`));
             } else {
@@ -293,11 +305,60 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     }
 
     const account = withToken.find((a) => a.name === accountName)!;
-    const token = account.tokens.longLivedToken!;
 
     const resumeArgs = await resolveResumeArgs(opts);
 
-    await ensureOnboardingSkippedForOAuthToken();
+    let injectedUuid: string | undefined;
+    let foreignBackupPath: string | undefined;
+
+    if (opts.keychain) {
+        const { preSync, foreign } = await inspectKeychainBeforeInject(aiConfig);
+
+        if (preSync.status === "synced") {
+            out.printlnErr(pc.dim(`Keychain held a rotated login — synced back to "${preSync.account}".`));
+        }
+
+        if (foreign) {
+            const who = foreign.uuid ? `account uuid ${foreign.uuid}` : "an unknown account";
+            if (!isInteractive()) {
+                out.error(
+                    pc.red(
+                        `Keychain holds a Claude Code login for ${who} that no configured secondary login matches. ` +
+                            "Refusing to overwrite it non-interactively."
+                    )
+                );
+                await out.flush();
+                process.exit(1);
+            }
+
+            const proceed = await p.confirm({
+                message:
+                    `The keychain holds a Claude Code login for ${who} (probably a direct /login). ` +
+                    "Back it up and restore it after this session?",
+                initialValue: false,
+            });
+
+            if (p.isCancel(proceed) || !proceed) {
+                p.cancel("Cancelled — keychain untouched.");
+                process.exit(0);
+            }
+        }
+
+        // Re-read: the pre-inject sync may have refreshed this account's secondary tokens.
+        const fresh = aiConfig.getAccount(accountName);
+        const secondary = fresh?.secondary;
+
+        if (!secondary) {
+            out.error(pc.red(`Account "${accountName}" lost its secondary login — run login-secondary again.`));
+            await out.flush();
+            process.exit(1);
+        }
+
+        injectedUuid = secondary.accountUuid;
+        foreignBackupPath = await injectSecondaryLogin(secondary, foreign !== null);
+    } else {
+        await ensureOnboardingSkippedForOAuthToken();
+    }
 
     const cmd = await findClaudeCommand();
     const shell = env.paths.getShell("/bin/sh");
@@ -318,15 +379,22 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         .filter(Boolean)
         .join(" ");
 
-    out.printlnErr(pc.dim(`Starting Claude as ${pc.cyan(accountName)}${detail ? ` ${detail}` : ""}...`));
-    logger.debug({ cmd, accountName, modelId, resumeArgs, passthrough }, "Spawning claude with long-lived token");
+    const mode = opts.keychain ? "keychain login" : "long-lived token";
+    out.printlnErr(pc.dim(`Starting Claude as ${pc.cyan(accountName)} (${mode})${detail ? ` ${detail}` : ""}...`));
+    logger.debug({ cmd, accountName, modelId, resumeArgs, passthrough, mode }, "Spawning claude");
 
-    const proc = Bun.spawn({
-        cmd: [shell, "-ic", `exec ${cmd}${suffix}`],
-        stdio: ["inherit", "inherit", "inherit"],
-        env: {
+    let launchEnv: Record<string, string | undefined>;
+
+    if (opts.keychain) {
+        // Keychain auth: the env token must NOT be set (it takes precedence
+        // over the keychain), and the full-scope login needs none of the
+        // setup-token workarounds — the bootstrap catalog loads natively.
+        launchEnv = { ...process.env };
+        delete launchEnv.CLAUDE_CODE_OAUTH_TOKEN;
+    } else {
+        launchEnv = {
             ...process.env,
-            CLAUDE_CODE_OAUTH_TOKEN: token,
+            CLAUDE_CODE_OAUTH_TOKEN: account.tokens.longLivedToken!,
             // Interactive CC can't resolve the tier from an inference-only setup token,
             // which blocks opus/sonnet [1m] model switches (see claude-code#70124).
             CLAUDE_CODE_SUBSCRIPTION_TYPE: account.label?.split(" ")[0] ?? "max",
@@ -344,10 +412,36 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
             ANTHROPIC_CUSTOM_MODEL_OPTION: "claude-fable-5[1m]",
             ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: "Fable 5",
             ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION: "Fable 5 · Most capable for hardest and longest-running tasks",
-        },
+        };
+    }
+
+    const proc = Bun.spawn({
+        cmd: [shell, "-ic", `exec ${cmd}${suffix}`],
+        stdio: ["inherit", "inherit", "inherit"],
+        env: launchEnv,
     });
 
     const exitCode = await proc.exited;
+
+    if (opts.keychain) {
+        try {
+            const result = await finishKeychainSession(aiConfig, injectedUuid, foreignBackupPath);
+
+            if (result.status === "synced") {
+                out.printlnErr(pc.dim(`Synced rotated keychain tokens back to "${result.account}".`));
+            } else if (result.status === "no-match") {
+                out.printlnErr(
+                    pc.yellow(
+                        `Keychain now holds a different login (uuid ${result.uuid}) — left untouched, nothing synced.`
+                    )
+                );
+            }
+        } catch (err) {
+            logger.error({ err }, "[keychain] post-session sync failed");
+            out.printlnErr(pc.red(`Keychain sync-back failed: ${err instanceof Error ? err.message : err}`));
+        }
+    }
+
     process.exit(exitCode);
 }
 
@@ -364,6 +458,11 @@ export function registerStartCommand(program: Command): void {
         .option("-m, --model <spec>", "Model to launch: alias or substring filter (fable, opus, 4.8 1m, ...)")
         .option("-r, --resume [query]", "Resume a session: bare uses claude's own picker, query searches locally")
         .option("-c, --continue", "Continue the most recent session")
+        .option(
+            "--keychain",
+            "Run logged-in via the account's secondary login injected into the macOS keychain " +
+                "(instead of CLAUDE_CODE_OAUTH_TOKEN); rotated tokens sync back to the account on exit"
+        )
         .action(async (name: string | undefined, opts: StartOptions, command: Command) => {
             const operands = command.args;
             let nameArg = name;

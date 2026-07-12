@@ -22,7 +22,7 @@ function maskToken(token: string): string {
     return `${token.slice(0, 20)}...`;
 }
 
-async function generateAuthUrl(): Promise<string> {
+export async function generateAuthUrl(): Promise<string> {
     const spinner = p.spinner();
     spinner.start("Generating authorization URL...");
     const authUrl = await claudeOAuth.startLogin();
@@ -30,7 +30,7 @@ async function generateAuthUrl(): Promise<string> {
     return authUrl;
 }
 
-async function presentAuthUrl(authUrl: string): Promise<void> {
+export async function presentAuthUrl(authUrl: string): Promise<void> {
     p.note(
         [
             "1. Open the URL below in your browser",
@@ -63,7 +63,7 @@ async function presentAuthUrl(authUrl: string): Promise<void> {
     }
 }
 
-async function promptAndExchangeCode(): Promise<Awaited<ReturnType<typeof claudeOAuth.exchangeCode>> | null> {
+export async function promptAndExchangeCode(): Promise<Awaited<ReturnType<typeof claudeOAuth.exchangeCode>> | null> {
     const code = await p.text({
         message: "Paste the authorization code:",
         placeholder: "code#state",
@@ -90,7 +90,7 @@ async function promptAndExchangeCode(): Promise<Awaited<ReturnType<typeof claude
     }
 }
 
-async function fetchAndDisplayProfile(
+export async function fetchAndDisplayProfile(
     tokens: Awaited<ReturnType<typeof claudeOAuth.exchangeCode>>
 ): Promise<Awaited<ReturnType<typeof fetchOAuthProfile>>> {
     const spinner = p.spinner();
@@ -830,22 +830,25 @@ export function registerConfigCommand(program: Command): void {
             }
             out.println();
 
-            // Read code from stdin
-            process.stdout.write("Paste authorization code: ");
-            const reader = Bun.stdin.stream().getReader();
-            let value: Uint8Array | undefined;
-            try {
-                const result = await reader.read();
-                value = result.value;
-            } finally {
-                reader.releaseLock();
-            }
-            const code = new TextDecoder().decode(value ?? new Uint8Array()).trim();
+            // clack's confirm above pauses stdin on completion — a manual
+            // Bun.stdin.stream() read after it returns instant EOF and kills
+            // the flow. Stay on clack for the code paste.
+            const codeInput = await p.text({
+                message: "Paste authorization code:",
+                placeholder: "code#state",
+                validate: (val) => {
+                    if (!val?.trim()) {
+                        return "Code is required";
+                    }
+                },
+            });
 
-            if (!code) {
-                out.error(pc.red("No code provided."));
-                process.exit(1);
+            if (p.isCancel(codeInput)) {
+                out.println(pc.dim("Login cancelled."));
+                process.exit(0);
             }
+
+            const code = (codeInput as string).trim();
 
             // Exchange code
             out.println(pc.dim("Exchanging code for tokens..."));

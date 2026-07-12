@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 
 export interface OAuthProfileAccount {
@@ -53,13 +54,20 @@ export interface KeychainCredentials {
 }
 
 // Claude Code's official OAuth client ID
-const CLAUDE_CODE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-const AUTH_URL = "https://claude.ai/oauth/authorize";
-const TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
-const REDIRECT_URI = "https://console.anthropic.com/oauth/code/callback";
+export const CLAUDE_CODE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+// Endpoints + scopes mirror Claude Code (verified against the 2.1.206 binary;
+// migrated off claude.ai/console.anthropic.com in CC 2.1.6+).
+const AUTH_URL = "https://claude.com/cai/oauth/authorize";
+const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
+const REDIRECT_URI = "https://platform.claude.com/oauth/code/callback";
 
-// Full scopes for usage monitoring (same as Claude Code login)
-const FULL_SCOPES = "user:inference user:profile user:mcp_servers user:sessions:claude_code";
+// Full scopes in Claude Code's order (its WJo union for normal login)
+const FULL_SCOPES =
+    "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
+
+// Claude Code sends expires_in=31536000 (1 year) on its setup-token and
+// login-from-refresh-token exchanges; we request the same on login.
+const ONE_YEAR_SECONDS = 31536000;
 
 export interface PKCEChallenge {
     verifier: string;
@@ -120,18 +128,36 @@ export class ClaudeOAuthClient {
         // Claude returns "code#state" format
         const [code, state] = codeInput.includes("#") ? codeInput.split("#") : [codeInput, ""];
 
-        const res = await fetch(TOKEN_URL, {
+        const body: Record<string, unknown> = {
+            grant_type: "authorization_code",
+            client_id: CLAUDE_CODE_CLIENT_ID,
+            code,
+            state,
+            redirect_uri: REDIRECT_URI,
+            code_verifier: verifier,
+            expires_in: ONE_YEAR_SECONDS,
+        };
+
+        let res = await fetch(TOKEN_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: SafeJSON.stringify({
-                grant_type: "authorization_code",
-                client_id: CLAUDE_CODE_CLIENT_ID,
-                code,
-                state,
-                redirect_uri: REDIRECT_URI,
-                code_verifier: verifier,
-            }),
+            body: SafeJSON.stringify(body),
         });
+
+        if (!res.ok && res.status >= 400 && res.status < 500) {
+            // Server may reject the 1-year expires_in for this grant type —
+            // retry once without it rather than failing the whole login.
+            const text = await res.text();
+            logger.warn(
+                `[oauth] exchange with expires_in failed (${res.status} ${text.slice(0, 200)}), retrying without`
+            );
+            delete body.expires_in;
+            res = await fetch(TOKEN_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: SafeJSON.stringify(body),
+            });
+        }
 
         if (!res.ok) {
             const text = await res.text();

@@ -15,6 +15,8 @@ import { registerDesktopCommand } from "./commands/desktop";
 import { registerExportCommand } from "./commands/export";
 import { registerHistoryCommand } from "./commands/history";
 import { registerLoginLongCommand } from "./commands/login-long";
+import { registerLoginSecondaryCommand } from "./commands/login-secondary";
+import { registerLogoutCommand } from "./commands/logout";
 import { registerMcpCommand } from "./commands/mcp";
 import { registerMemoryCommand } from "./commands/memory";
 import { registerMigrateCommand } from "./commands/migrate";
@@ -47,6 +49,8 @@ registerMigrateCommand(program);
 registerWarmupCommand(program);
 registerMcpCommand(program);
 registerLoginLongCommand(program);
+registerLoginSecondaryCommand(program);
+registerLogoutCommand(program);
 registerStartCommand(program);
 
 addGlobalVerboseOption(program);

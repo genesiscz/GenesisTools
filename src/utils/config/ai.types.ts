@@ -18,10 +18,29 @@ export interface AIAccountTokens {
     longLivedToken?: string; // Long-lived OAuth token from `claude setup-token` (sk-ant-oat01-...); passed via CLAUDE_CODE_OAUTH_TOKEN
 }
 
+/**
+ * A second, independent OAuth grant for the same Anthropic account —
+ * injected into the macOS keychain by `tools claude start --keychain` so
+ * Claude Code runs fully logged-in, without fighting the primary token
+ * chain that usage polling refreshes (refresh tokens are single-use).
+ */
+export interface AISecondaryLogin {
+    accessToken: string;
+    refreshToken: string;
+    expiresAt?: number; // Unix ms
+    scopes?: string[];
+    subscriptionType?: string | null; // keychain claudeAiOauth field ("max" | "pro" | null)
+    rateLimitTier?: string | null;
+    accountUuid?: string; // Anthropic account uuid — the keychain sync-back match key
+    emailAddress?: string;
+    organizationUuid?: string;
+}
+
 export interface AIAccountEntry {
     name: string;
     provider: AIProvider;
     tokens: AIAccountTokens;
+    secondary?: AISecondaryLogin;
     label?: string; // e.g. "max 20x", "pro"
     apps?: string[]; // which tools use this: ["ask", "claude"]
 }
