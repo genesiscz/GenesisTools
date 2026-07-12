@@ -1,23 +1,41 @@
-import type { PortsResult } from "@app/dev-dashboard/lib/ports/types";
+import type { PortInfo, PortsResult } from "@app/dev-dashboard/lib/ports/types";
 import { selectWebapps } from "@app/dev-dashboard/lib/ports/webapps";
+import { fuzzySearchByHaystack } from "@app/utils/fuzzy-search";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { SearchInput } from "@/components/SearchInput";
 import { portsApi } from "@/lib/api";
 
+function webappHaystack(p: PortInfo): string {
+    return [p.port, p.title, p.command, p.cwd, p.pid].filter(Boolean).join(" ");
+}
+
 export function WebappsPanel() {
+    const [query, setQuery] = useState("");
+
     const { data } = useQuery<PortsResult>({
         queryKey: ["ports"],
         queryFn: () => portsApi.list(),
         refetchInterval: 8000,
     });
 
-    const webapps = data ? selectWebapps(data.ports) : [];
+    const allWebapps = data ? selectWebapps(data.ports) : [];
+    const webapps = fuzzySearchByHaystack(allWebapps, query, webappHaystack).items;
 
     return (
         <div className="dd-panel flex flex-col gap-3 p-4">
-            <h3 className="dd-accent-text text-sm font-bold tracking-widest">WEBAPPS ({webapps.length})</h3>
+            <div className="flex items-center justify-between gap-3">
+                <h3 className="dd-accent-text text-sm font-bold tracking-widest">
+                    WEBAPPS ({webapps.length}
+                    {query ? ` / ${allWebapps.length}` : ""})
+                </h3>
+            </div>
+            {allWebapps.length > 0 ? (
+                <SearchInput value={query} onChange={setQuery} placeholder="Filter webapps…" />
+            ) : null}
             {webapps.length === 0 ? (
                 <p className="font-mono text-sm text-[var(--dd-text-muted)]">
-                    {data ? "No local web servers listening." : "Scanning…"}
+                    {!data ? "Scanning…" : query ? `No webapps match "${query}".` : "No local web servers listening."}
                 </p>
             ) : (
                 <ul className="flex flex-col gap-2">
