@@ -44,6 +44,7 @@ export interface ChatResponse {
         outputTokens: number;
         totalTokens: number;
         cachedInputTokens?: number;
+        cacheWriteTokens?: number;
     };
     cost?: number;
     duration: number;

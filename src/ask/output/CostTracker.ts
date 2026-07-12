@@ -53,6 +53,7 @@ export class CostTracker {
         logger.debug({ outputTokens: usage.outputTokens }, `[CostTracker] usage.outputTokens`);
         logger.debug({ totalTokens: usage.totalTokens }, `[CostTracker] usage.totalTokens`);
         logger.debug({ cachedInputTokens: usageCacheReadTokens(usage) }, `[CostTracker] usage cacheReadTokens`);
+        logger.debug({ cacheWriteTokens: usageCacheWriteTokens(usage) }, `[CostTracker] usage cacheWriteTokens`);
 
         const key = `${provider}/${model}`;
         const cost = await dynamicPricingManager.calculateCost(provider, model, usage);

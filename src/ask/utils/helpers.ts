@@ -157,6 +157,7 @@ export function toLanguageModelUsage(flat: {
     outputTokens?: number;
     totalTokens?: number;
     cachedInputTokens?: number;
+    cacheWriteTokens?: number;
 }): LanguageModelUsage {
     const noCache = flat.inputTokens;
     const cacheRead = flat.cachedInputTokens;
@@ -167,7 +168,7 @@ export function toLanguageModelUsage(flat: {
         inputTokenDetails: {
             noCacheTokens: noCache,
             cacheReadTokens: cacheRead,
-            cacheWriteTokens: undefined,
+            cacheWriteTokens: flat.cacheWriteTokens,
         },
         outputTokens: flat.outputTokens,
         outputTokenDetails: {
@@ -199,7 +200,12 @@ export function formatUsage(usage?: LanguageModelUsage): string {
 
     const cachedTokens = usageCacheReadTokens(usage);
     if (cachedTokens > 0) {
-        parts.push(`Cached: ${formatTokens(cachedTokens)}`);
+        parts.push(`Cached Read: ${formatTokens(cachedTokens)}`);
+    }
+
+    const cacheWriteTokens = usageCacheWriteTokens(usage);
+    if (cacheWriteTokens > 0) {
+        parts.push(`Cached Write: ${formatTokens(cacheWriteTokens)}`);
     }
 
     return parts.join(", ");

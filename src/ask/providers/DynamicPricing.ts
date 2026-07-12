@@ -229,6 +229,7 @@ export class DynamicPricingManager {
         logger.debug({ outputTokens: usage.outputTokens }, `[DynamicPricing] usage.outputTokens`);
         logger.debug({ totalTokens: usage.totalTokens }, `[DynamicPricing] usage.totalTokens`);
         logger.debug({ cachedInputTokens: usageCacheReadTokens(usage) }, `[DynamicPricing] usage cacheReadTokens`);
+        logger.debug({ cacheWriteTokens: usageCacheWriteTokens(usage) }, `[DynamicPricing] usage cacheWriteTokens`);
 
         const pricing = await this.getPricing(provider, model);
 
