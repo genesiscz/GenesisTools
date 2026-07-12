@@ -15,6 +15,7 @@ export const CREATE_BOARD_SCHEMA = {
     properties: {
         slug: {
             type: "string",
+            pattern: "^[a-z0-9][a-z0-9-]{0,63}$",
             description: "Board slug (URL path segment): ^[a-z0-9][a-z0-9-]{0,63}$",
         },
         title: { type: "string", description: "Human title (defaults to the slug)" },

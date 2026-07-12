@@ -50,9 +50,15 @@ function QuestionCard({ slug, question }: { slug: string; question: QuestionDto 
             next.add(label);
         }
 
+        // The last toggle can't empty a staged answer: leaving picked (and the server's staged
+        // answer) as-is beats clearing the checkboxes while the previous answer still dispatches.
+        if (answered && next.size === 0) {
+            return;
+        }
+
         setPicked(next);
 
-        // Re-picks re-POST immediately while staged; the last toggle can't empty the answer.
+        // Re-picks re-POST immediately while staged.
         if (answered && next.size > 0) {
             submit([...next]);
         }

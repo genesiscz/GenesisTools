@@ -14,7 +14,7 @@ import type {
     BoardsTable,
 } from "./db-types";
 import { publishBoardEvent } from "./events";
-import { containingSection, sectionFrames } from "./sections";
+import { cardCenter, type SectionCard, sectionFrames } from "./sections";
 import { NotFoundError, setRefOf } from "./sets-store";
 import { nowIso } from "./time";
 import type {
@@ -394,6 +394,42 @@ export async function getCard(db: DatabaseClient<BoardsDb>, cardId: number): Pro
     return toCardDto(row);
 }
 
+/** Walks the smallest-containing-frame chain up from `probe` (by center, self excluded) and reports
+ *  whether it reaches `targetId`. Used when a section frame moves: every descendant — member cards
+ *  AND nested section frames plus their own members — belongs to the moved subtree. */
+function frameSubtreeReaches(frames: SectionCard[], probe: SectionCard, targetId: number): boolean {
+    const visited = new Set<number>();
+    let node: SectionCard = probe;
+    for (;;) {
+        const { cx, cy } = cardCenter(node);
+        let parent: SectionCard | null = null;
+        let bestArea = Number.POSITIVE_INFINITY;
+        for (const f of frames) {
+            if (f.id === node.id || cx < f.x || cy < f.y || cx > f.x + f.w || cy > f.y + f.h) {
+                continue;
+            }
+
+            const area = f.w * f.h;
+            if (parent === null || area < bestArea) {
+                parent = f;
+                bestArea = area;
+            }
+        }
+        if (!parent) {
+            return false;
+        }
+        if (parent.id === targetId) {
+            return true;
+        }
+        if (visited.has(parent.id)) {
+            return false;
+        }
+
+        visited.add(parent.id);
+        node = parent;
+    }
+}
+
 export async function patchCard(
     db: DatabaseClient<BoardsDb>,
     cardId: number,
@@ -421,8 +457,9 @@ export async function patchCard(
     const memberMoves: Array<{ id: number; x: number; y: number; w: number; h: number }> = [];
     const updated = await db.kysely.transaction().execute(async (trx) => {
         if (carriesMembers) {
-            // Membership is resolved on the PRE-move geometry (smallest containing frame), so nested
-            // sections don't double-carry.
+            // Membership is resolved on the PRE-move geometry, so each element translates exactly
+            // once. The moved frame is a container: its whole transitive subtree travels with it —
+            // member cards, nested section frames, and those nested frames' own members.
             const boardCards = await trx
                 .selectFrom("board_cards")
                 .selectAll()
@@ -440,7 +477,7 @@ export async function patchCard(
             }));
             const probeFrames = sectionFrames(probes);
             for (const p of probes) {
-                if (p.kind === "section" || containingSection(probeFrames, p)?.id !== existing.id) {
+                if (p.id === existing.id || !frameSubtreeReaches(probeFrames, p, existing.id)) {
                     continue;
                 }
 

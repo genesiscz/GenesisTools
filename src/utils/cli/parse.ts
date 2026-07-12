@@ -4,5 +4,11 @@ export function parseNonNegativeInt(value: string, flag: string): number {
         throw new Error(`${flag} must be a non-negative integer, got "${value}"`);
     }
 
-    return Number.parseInt(value, 10);
+    const parsed = Number.parseInt(value, 10);
+
+    if (!Number.isSafeInteger(parsed)) {
+        throw new Error(`${flag} must be a non-negative integer, got "${value}"`);
+    }
+
+    return parsed;
 }

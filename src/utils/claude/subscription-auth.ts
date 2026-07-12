@@ -1,4 +1,4 @@
-import { appendFileSync, chmodSync, existsSync } from "node:fs";
+import { appendFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { logger } from "@app/logger";
@@ -78,7 +78,6 @@ function journalTokenRotation(account: string, oldTokens: Partial<OAuthTokens>, 
     try {
         const dir = join(env.tools.getHome() || homedir(), ".genesis-tools", "ai");
         const path = join(dir, "token-journal.jsonl");
-        const isNew = !existsSync(path);
         appendFileSync(
             path,
             `${SafeJSON.stringify({
@@ -89,12 +88,11 @@ function journalTokenRotation(account: string, oldTokens: Partial<OAuthTokens>, 
                 newAccessToken: newTokens.accessToken,
                 newRefreshToken: newTokens.refreshToken,
                 newExpiresAt: newTokens.expiresAt,
-            })}\n`
+            })}\n`,
+            { mode: 0o600 }
         );
 
-        if (isNew) {
-            chmodSync(path, 0o600);
-        }
+        chmodSync(path, 0o600);
     } catch (err) {
         logger.warn({ err, account }, "[token-refresh] journal append failed");
     }

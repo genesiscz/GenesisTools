@@ -439,6 +439,8 @@ test.describe("ink manipulation + reposition", () => {
 
         // Relative offsets inside the frame are preserved (frame+members moved as one unit).
         expect(doc.cards.find((c) => c.id === memberA.id)!.x - frame.x).toBe(memberA.x - section.x);
+        expect(doc.cards.find((c) => c.id === memberA.id)!.y - frame.y).toBe(memberA.y - section.y);
+        expect(doc.cards.find((c) => c.id === memberB.id)!.x - frame.x).toBe(memberB.x - section.x);
         expect(doc.cards.find((c) => c.id === memberB.id)!.y - frame.y).toBe(memberB.y - section.y);
     });
 

@@ -1,4 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
+import { errors } from "@playwright/test";
 
 export type ToolName = "move" | "ink" | "annotate" | "note" | "connect" | "section" | "table";
 
@@ -30,8 +31,12 @@ export class BoardDetailPage {
 
         try {
             await input.waitFor({ timeout: 1_500 });
-        } catch {
-            return; // already identified (localStorage persisted)
+        } catch (err) {
+            if (err instanceof errors.TimeoutError) {
+                return; // already identified (localStorage persisted)
+            }
+
+            throw err;
         }
 
         await input.fill(name);

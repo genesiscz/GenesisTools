@@ -127,15 +127,10 @@ function createDailyFileStream(logDir: string): Writable {
 
     return new Writable({
         decodeStrings: false,
-        write(chunk: string | Uint8Array, _enc, cb) {
+        write(chunk, _enc, cb) {
             try {
                 const fdNow = ensureFd();
-
-                if (typeof chunk === "string") {
-                    fs.writeSync(fdNow, chunk);
-                } else {
-                    fs.writeSync(fdNow, chunk);
-                }
+                fs.writeSync(fdNow, chunk);
             } catch (err) {
                 if (!fileLogWarningShown && process.stderr && typeof process.stderr.write === "function") {
                     fileLogWarningShown = true;
@@ -144,6 +139,18 @@ function createDailyFileStream(logDir: string): Writable {
             }
 
             cb();
+        },
+        destroy(err, cb) {
+            if (fd !== null) {
+                try {
+                    fs.closeSync(fd);
+                } catch {
+                    // ignore during teardown
+                }
+                fd = null;
+            }
+
+            cb(err);
         },
     });
 }

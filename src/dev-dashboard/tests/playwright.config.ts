@@ -5,6 +5,7 @@ import { defineConfig } from "@playwright/test";
  *  override with DD_QA_BASE_URL. Serial: specs create/mutate boards through the real API. */
 export default defineConfig({
     testDir: `${import.meta.dirname}/specs`,
+    globalSetup: `${import.meta.dirname}/global-setup.ts`,
     globalTeardown: `${import.meta.dirname}/global-teardown.ts`,
     timeout: 60_000,
     retries: 0,

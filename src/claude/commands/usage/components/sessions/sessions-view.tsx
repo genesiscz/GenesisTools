@@ -203,10 +203,12 @@ export function SessionsView({ notifications }: SessionsViewProps) {
             const session = flatRows[selectedIndex];
 
             if (session) {
+                // Control chars / newlines in titles break Ink's row layout.
+                const cleanTitle = session.title?.replace(/\p{Cc}+/gu, " ").trim() ?? null;
                 setActionMenu({
                     open: true,
                     sessionId: session.sessionId,
-                    title: session.title,
+                    title: cleanTitle,
                 });
             }
         }

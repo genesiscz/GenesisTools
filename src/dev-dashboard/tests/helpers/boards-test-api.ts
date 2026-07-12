@@ -1,3 +1,5 @@
+import { appendFileSync } from "node:fs";
+import { SafeJSON } from "@app/utils/json";
 import type { APIRequestContext } from "@playwright/test";
 import { expect } from "@playwright/test";
 
@@ -31,13 +33,20 @@ export async function freshBoard(request: APIRequestContext, prefix: string): Pr
     const slug = `pw-${prefix}-${Date.now().toString(36)}-${seq}`;
     const res = await request.post("/api/boards", { data: { slug, title: `Playwright ${prefix}` } });
     expect(res.status(), `create board ${slug}`).toBe(201);
+
+    const slugsFile = process.env.PW_RUN_SLUGS_FILE;
+
+    if (slugsFile) {
+        appendFileSync(slugsFile, `${slug}\n`);
+    }
+
     return slug;
 }
 
 export async function boardDoc(request: APIRequestContext, slug: string): Promise<TestBoardDoc> {
     const res = await request.get(`/api/boards/${slug}`);
     expect(res.ok(), `GET board ${slug}`).toBeTruthy();
-    return (await res.json()) as TestBoardDoc;
+    return SafeJSON.parse(await res.text(), { strict: true }) as TestBoardDoc;
 }
 
 /** API-seed a card so specs don't depend on UI creation flows they aren't testing. */
@@ -50,7 +59,7 @@ export async function seedCard(
         data: { x: 100, y: 100, w: 240, h: 140, payload: {}, ...card },
     });
     expect(res.ok(), `seed ${card.kind} card on ${slug}`).toBeTruthy();
-    return (await res.json()) as TestCard;
+    return SafeJSON.parse(await res.text(), { strict: true }) as TestCard;
 }
 
 export async function seedNote(

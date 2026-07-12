@@ -44,7 +44,12 @@ function buildSessionFeed(
         })),
         ...questions
             .filter((q) => q.answer !== null)
-            .map((question) => ({ kind: "question" as const, createdAt: question.createdAt, question })),
+            .map((question) => ({
+                kind: "question" as const,
+                // answeredAt is "" until answered; fall back to createdAt so it still sorts.
+                createdAt: question.answeredAt || question.createdAt,
+                question,
+            })),
     ];
     return items.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
 }
@@ -252,9 +257,12 @@ export function WirePanel({
 
         e.preventDefault();
 
-        for (const file of images) {
+        for (const [i, file] of images.entries()) {
+            // MIME-derived extension + per-item index: same-millisecond multi-image paste must
+            // not collide, and a JPEG paste must not masquerade as .png.
+            const ext = file.type.startsWith("image/") ? file.type.split("/")[1] : "png";
             void boardsApi
-                .uploadMessageImage(slug, file, `reply-${Date.now()}.png`)
+                .uploadMessageImage(slug, file, `reply-${Date.now()}-${i}.${ext}`)
                 .then(({ blobKey, name }) => {
                     setDraft(
                         (d) => `${d}${d && !d.endsWith("\n") ? "\n" : ""}![${name}](/api/boards/blobs/${blobKey})\n`

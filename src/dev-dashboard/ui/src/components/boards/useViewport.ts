@@ -49,7 +49,7 @@ export function fitBounds(
  *  still move further in the wheel's dominant direction. */
 function scrollableAncestorCanConsume(e: WheelEvent, root: HTMLElement): boolean {
     const vertical = Math.abs(e.deltaY) >= Math.abs(e.deltaX);
-    let node = e.target instanceof HTMLElement ? e.target : null;
+    let node = e.target instanceof HTMLElement ? e.target : e.target instanceof Node ? e.target.parentElement : null;
 
     while (node && node !== root) {
         const style = window.getComputedStyle(node);

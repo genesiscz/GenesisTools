@@ -26,7 +26,7 @@ import { publishBoardEvent, subscribeBoard } from "@app/dev-dashboard/lib/boards
 import { readImageDims } from "@app/dev-dashboard/lib/boards/image-size";
 import { notifyLayoutChanged } from "@app/dev-dashboard/lib/boards/layout-engine";
 import { sectionsToJSON } from "@app/dev-dashboard/lib/boards/sections";
-import { getSet } from "@app/dev-dashboard/lib/boards/sets-store";
+import { getSet, NotFoundError } from "@app/dev-dashboard/lib/boards/sets-store";
 import type { MessageAttachmentDto } from "@app/dev-dashboard/lib/boards/types";
 import { dispatchBoard } from "@app/dev-dashboard/lib/boards/work-store";
 import { publicBaseUrl } from "@app/dev-dashboard/lib/public-base";
@@ -499,6 +499,15 @@ export function boardsRoutes(): RouteDef[] {
             pattern: "/api/boards/:slug/msg-uploads",
             handler: async (ctx) => {
                 try {
+                    const board = await getBoardsDb()
+                        .kysely.selectFrom("boards")
+                        .select("id")
+                        .where("slug", "=", ctx.params.slug)
+                        .executeTakeFirst();
+                    if (!board) {
+                        throw new NotFoundError(`board not found: ${ctx.params.slug}`);
+                    }
+
                     const bytes = await ctx.readRawBody();
                     const name = ctx.query.get("name") ?? "";
                     const mime = ctx.query.get("mime") || mimeForPath(name);
