@@ -13,6 +13,10 @@ PrivateTmp=true
 # The built eve output (apps/eve on feat/eve-01-foundation → `bun run build`).
 WorkingDirectory=/opt/eve
 EnvironmentFile=/etc/genesis-tools/genesis.env
+# Route protection: eve reads EVE_SERVICE_KEY from the EnvironmentFile above
+# (comma-separated, one key per user). When set, /eve/v1/session* requires
+# `Authorization: Bearer <key>`; /eve/v1/health and /.well-known/workflow/* stay
+# open. When YOUTUBE_SERVICE_KEY is set, eve presents its first key to youtube.
 # Nitro listens on $PORT (2000, set in genesis.env). Adjust the bun path.
 ExecStart=/usr/local/bin/bun .output/server/index.mjs
 Restart=always
