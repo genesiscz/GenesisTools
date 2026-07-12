@@ -255,6 +255,71 @@ describe("runArrange — section-aware broad scope (composite units)", () => {
         expect(byId.get(l1.id)).toBeDefined();
         expect(byId.get(l2.id)).toBeDefined();
     });
+
+    it("rejects an explicit unknown id with 404 even when the selection touches a section", async () => {
+        await createBoard(db, { slug: "b1" });
+        await createCard(db, "b1", { kind: "section", x: 0, y: 0, w: 400, h: 400, payload: { title: "S" } });
+        const m1 = await createCard(db, "b1", { kind: "note", x: 40, y: 80, w: 100, h: 100 });
+
+        const outcome = await runArrange(db, "b1", { mode: "grid", ids: [m1.id, 999999] });
+        expect(outcome.ok).toBe(false);
+        expect(outcome.status).toBe(404);
+    });
+
+    it("two ids inside one section fall through to a per-card arrange (not a no-op success)", async () => {
+        await createBoard(db, { slug: "b1" });
+        await createCard(db, "b1", { kind: "section", x: 0, y: 0, w: 400, h: 400, payload: { title: "S" } });
+        const m1 = await createCard(db, "b1", { kind: "note", x: 40, y: 80, w: 100, h: 100 });
+        const m2 = await createCard(db, "b1", { kind: "note", x: 200, y: 250, w: 100, h: 100 });
+
+        const outcome = await runArrange(db, "b1", { mode: "column", ids: [m1.id, m2.id] });
+        // Composite collapses to one unit; the per-card path actually arranges both members.
+        expect(outcome.ok).toBe(true);
+        expect(outcome.moved).toBe(2);
+        expect(outcome.cards.map((c) => c.id).sort((a, b) => a - b)).toEqual([m1.id, m2.id]);
+    });
+
+    it("rejects save:true on a broad scope when sections are present (400)", async () => {
+        await createBoard(db, { slug: "b1" });
+        await createCard(db, "b1", { kind: "section", x: 0, y: 0, w: 400, h: 400, payload: { title: "S" } });
+        await createCard(db, "b1", { kind: "note", x: 40, y: 80, w: 100, h: 100 });
+        await createCard(db, "b1", { kind: "note", x: 200, y: 250, w: 100, h: 100 });
+        await createCard(db, "b1", { kind: "note", x: 900, y: 0, w: 100, h: 100 }); // a loose unit
+
+        const outcome = await runArrange(db, "b1", { mode: "grid", scope: "all", save: true });
+        expect(outcome.ok).toBe(false);
+        expect(outcome.status).toBe(400);
+        expect(outcome.message).toContain("save needs a section scope");
+    });
+
+    it("rejects sizing:uniform when sections are arranged as units (400)", async () => {
+        await createBoard(db, { slug: "b1" });
+        await createCard(db, "b1", { kind: "section", x: 0, y: 0, w: 400, h: 400, payload: { title: "S" } });
+        await createCard(db, "b1", { kind: "note", x: 40, y: 80, w: 100, h: 100 });
+        await createCard(db, "b1", { kind: "note", x: 900, y: 0, w: 100, h: 100 }); // a loose unit
+
+        const outcome = await runArrange(db, "b1", { mode: "grid", scope: "all", sizing: "uniform" });
+        expect(outcome.ok).toBe(false);
+        expect(outcome.status).toBe(400);
+    });
+
+    it("fails with a clean 400 when composite expansion exceeds the 500-move batch limit", async () => {
+        await createBoard(db, { slug: "b1" });
+        await createCard(db, "b1", { kind: "section", x: 0, y: 0, w: 2000, h: 2000, payload: { title: "S" } });
+        // 500 members inside the section → the unit expands to 501 writes (frame + members).
+        for (let i = 0; i < 500; i += 1) {
+            const x = 100 + (i % 20) * 50;
+            const y = 100 + Math.floor(i / 20) * 50;
+            await createCard(db, "b1", { kind: "note", x, y, w: 40, h: 40 });
+        }
+        // A loose card gives a second unit so the arrange doesn't collapse to a single-unit no-op.
+        await createCard(db, "b1", { kind: "note", x: 4000, y: 4000, w: 40, h: 40 });
+
+        const outcome = await runArrange(db, "b1", { mode: "grid", scope: "all" });
+        expect(outcome.ok).toBe(false);
+        expect(outcome.status).toBe(400);
+        expect(outcome.message).toContain("500");
+    });
 });
 
 describe("displaceSections (bug 7 — section-over-section shifts DOWN, not a wild jump)", () => {

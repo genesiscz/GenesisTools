@@ -197,7 +197,7 @@ export function useBoardOps(slug: string, history: BoardHistory) {
         (stroke: { cardId?: number; path: number[][]; color: string; width: number }) => {
             tempSeq.current -= 1;
             const tempId = tempSeq.current;
-            const optimistic = { id: tempId, cardId: stroke.cardId ?? null, ...stroke } as unknown as StrokeDto;
+            const optimistic = { ...stroke, id: tempId, cardId: stroke.cardId ?? null } as unknown as StrokeDto;
             setDoc((d) => upsertStroke(d, optimistic));
 
             // The history entry tracks the live id across undo/redo cycles (re-adds mint new ids).

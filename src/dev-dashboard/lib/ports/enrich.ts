@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { PortInfo } from "@app/dev-dashboard/lib/ports/types";
 import { selectWebapps } from "@app/dev-dashboard/lib/ports/webapps";
 import { logger } from "@app/logger";
@@ -128,7 +129,7 @@ async function resolveCwd(pid: number): Promise<string | null> {
 
 async function readPackageName(cwd: string): Promise<string | null> {
     try {
-        const file = Bun.file(`${cwd}/package.json`);
+        const file = Bun.file(join(cwd, "package.json"));
         if (!(await file.exists())) {
             return null;
         }
@@ -178,7 +179,7 @@ function pruneExpired(now: number): void {
 }
 
 async function enrichOne(port: PortInfo): Promise<Enrichment> {
-    const key = `${port.pid}:${port.port}`;
+    const key = `${port.pid}:${port.port}:${port.proto}:${port.address}`;
     const cached = cache.get(key);
     if (cached && cached.expiresAt > Date.now()) {
         return cached.value;
@@ -202,9 +203,14 @@ async function enrichOne(port: PortInfo): Promise<Enrichment> {
     const packageName = cwd ? await readPackageName(cwd) : null;
 
     if (registryName) {
-        // A known repo dashboard: authoritative name, and definitionally a web app — no probe needed.
+        // A known repo dashboard: authoritative name always wins over any probed title, but the
+        // dashboard still has to actually be running (probe) before we call it a live web app.
         enrichment.title = registryName;
-        enrichment.isWebapp = true;
+
+        if (isLocalAddress(port.address)) {
+            const probe = await probeHttp(port.port);
+            enrichment.isWebapp = probe.http;
+        }
     } else if (isLocalAddress(port.address)) {
         const probe = await probeHttp(port.port);
         if (probe.http) {

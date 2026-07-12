@@ -152,7 +152,7 @@ export function registerLogoutCommand(program: Command): void {
             let accountName = name;
 
             if (accountName) {
-                if (!aiConfig.getAccount(accountName)) {
+                if (!accounts.some((a) => a.name === accountName)) {
                     out.error(pc.red(`Account "${accountName}" not found.`));
                     out.printlnErr(pc.dim(`Known: ${accounts.map((a) => a.name).join(", ")}`));
                     process.exit(1);

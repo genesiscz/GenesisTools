@@ -520,6 +520,10 @@ interface ArrangeOutcome {
     saved: boolean;
 }
 
+function arrangeFail(status: number, message: string): ArrangeOutcome {
+    return { ok: false, status, message, moved: 0, cards: [], saved: false };
+}
+
 async function arrangeCompare(
     db: DatabaseClient<BoardsDb>,
     slug: string,
@@ -698,6 +702,16 @@ async function arrangeComposite(
         return null; // no section involvement → let the per-card path handle it
     }
 
+    // Sections are arranged as whole-unit containers, so the per-card sizing/save behaviors can't
+    // apply here. Reject them explicitly rather than silently no-op'ing (matches the per-card path's
+    // save error, and never reports success with saved:false when save was requested).
+    if (body.save) {
+        return arrangeFail(400, "save needs a section scope (scope: section:<Name>)");
+    }
+    if (body.sizing === "uniform") {
+        return arrangeFail(400, "sizing: uniform is not supported when sections are arranged as units");
+    }
+
     // Loose units: in-scope non-section cards with no containing section.
     const looseCards: CardRect[] = [];
     for (const c of all) {
@@ -724,7 +738,13 @@ async function arrangeComposite(
         carry.set(c.id, [c.id]);
     }
     if (rects.length < 2) {
-        // A single unit: nothing to rearrange at the top level (members keep their in-frame layout).
+        // An explicit id selection that collapses to a single unit (e.g. two members of the same
+        // section) is not a composite arrange — fall through to the per-card path.
+        if (body.ids && body.ids.length > 0) {
+            return null;
+        }
+        // Implicit seed (scope:all / default ai layer) with a single unit: nothing to rearrange at
+        // the top level (members keep their in-frame layout).
         return { ok: true, status: 200, moved: 0, cards: [], saved: false };
     }
 
@@ -754,6 +774,14 @@ async function arrangeComposite(
     if (writeMoves.length === 0) {
         return { ok: true, status: 200, moved: 0, cards: [], saved: false };
     }
+    // Expanding each unit to frame+members can exceed bulkLayout's 500-move batch cap where a flat
+    // per-card arrange never would; preflight it as a clean 400 instead of a bubbled 500.
+    if (writeMoves.length > 500) {
+        return arrangeFail(
+            400,
+            `section-aware arrange would move ${writeMoves.length} cards, over the 500-move batch limit`
+        );
+    }
 
     await bulkLayout(db, slug, writeMoves);
     publishBoardEvent(slug, { type: "layout", payload: { moves: writeMoves } });
@@ -765,14 +793,7 @@ export async function runArrange(
     slug: string,
     body: ArrangeBody
 ): Promise<ArrangeOutcome> {
-    const fail = (status: number, message: string): ArrangeOutcome => ({
-        ok: false,
-        status,
-        message,
-        moved: 0,
-        cards: [],
-        saved: false,
-    });
+    const fail = arrangeFail;
     if (!ARRANGE_MODES.has(body.mode)) {
         return fail(400, "mode: column|row|grid|flow|lanes|masonry|timeline|timeaxis|compare|align-*|distribute-*");
     }
@@ -798,6 +819,15 @@ export async function runArrange(
     }
 
     const frames = sectionFrames(all);
+
+    // Explicit-id selections must reference cards that exist on this board — validate BEFORE the
+    // composite dispatch so an unknown id can't slip through a section-aware arrange as a success.
+    if (body.ids && body.ids.length > 0) {
+        const present = new Set(all.map((c) => c.id));
+        if (body.ids.some((id) => !present.has(id))) {
+            return fail(404, "a card is not on this board");
+        }
+    }
 
     // Broad-scope arrange (all / ai / an id set that spans sections): sections are containers, so
     // arrange each section+members as ONE unit instead of scattering members across the board.

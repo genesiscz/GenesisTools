@@ -80,7 +80,8 @@ export async function handleComposeBoard(args: {
         if (err instanceof BoardsHttpError && err.status === 404) {
             throw new Error(
                 `${err.message} — compose never auto-creates a board; ` +
-                    `create "${args.board}" first with boards_create_board, then compose onto it.`
+                    `create "${args.board}" first with boards_create_board, then compose onto it.`,
+                { cause: err }
             );
         }
         throw err;

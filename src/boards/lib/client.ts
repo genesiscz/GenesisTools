@@ -51,13 +51,19 @@ export interface HttpResult<T> {
 /** Low-level request — never throws on a non-2xx status, so callers that need to
  *  branch on the status code (409 conflicts, transport-error backoff) can inspect it. */
 export async function rawRequest<T>(base: string, path: string, init?: RequestInit): Promise<HttpResult<T>> {
+    const signal = init?.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
+
     let res: Response;
     try {
         res = await fetch(`${base}${path}`, {
             ...init,
-            signal: init?.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+            signal,
         });
     } catch (err) {
+        if (signal.aborted) {
+            throw new Error(`boards request aborted (${init?.method ?? "GET"} ${base}${path})`);
+        }
+
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(
             `boards: cannot reach dev-dashboard at ${base} (${init?.method ?? "GET"} ${path}: ${msg}). ` +

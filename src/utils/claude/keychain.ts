@@ -36,7 +36,7 @@ interface KeychainPayload {
 function keychainUser(): string {
     let user: string;
     try {
-        user = process.env.USER || userInfo().username;
+        user = env.device.getUser() || userInfo().username;
     } catch {
         user = "claude-code-user";
     }
@@ -146,7 +146,7 @@ export async function resolveKeychainAccountUuid(oauth: ClaudeAiOauthCredentials
     }
 
     try {
-        const claudeJson = await Bun.file(join(homedir(), ".claude.json")).json();
+        const claudeJson = SafeJSON.parse(await Bun.file(join(homedir(), ".claude.json")).text(), { strict: true });
         const uuid = claudeJson?.oauthAccount?.accountUuid;
 
         if (typeof uuid === "string" && uuid) {

@@ -32,7 +32,14 @@ done_marker=""
 # --- parse leading options ---
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --done-marker) done_marker="$2"; shift 2 ;;
+    --done-marker)
+      if [[ $# -lt 2 || "$2" == "--" ]]; then
+        emit "--done-marker requires a path"
+        exit 2
+      fi
+      done_marker="$2"
+      shift 2
+      ;;
     --) shift; break ;;   # no files, straight to command (unusual but allowed)
     -*) emit "unknown option: $1"; exit 2 ;;
     *) break ;;           # first non-option => start of file list
@@ -69,7 +76,12 @@ restore() {
   for (( i = 1; i <= ${#hidden_src[@]}; i++ )); do
     src="${hidden_src[$i]}"; dst="${hidden_dst[$i]}"
     if [[ -e "$dst" ]]; then
-      if ! mv "$dst" "$src" 2>/dev/null; then
+      if [[ -e "$src" || -L "$src" ]]; then
+        emit "FATAL refusing to overwrite recreated $src; recover from $dst"
+        restore_failed=1
+        continue
+      fi
+      if ! mv -- "$dst" "$src" 2>/dev/null; then
         emit "WARN failed to restore $src"
         restore_failed=1
       fi
@@ -77,8 +89,27 @@ restore() {
   done
 }
 
+# zsh signal traps run the handler then CONTINUE execution — unlike EXIT, a
+# bare 'restore' on INT/TERM/HUP would restore files and then fall through to
+# running (or resuming) the command with instructions visible. Each signal
+# handler must exit itself after restoring.
+on_signal() {
+  # NOTE: do not name this local 'status' — zsh reserves $status as a
+  # read-only alias for $?, and `local status=...` errors at runtime.
+  local sig_exit="$1"
+  restore
+  trap - EXIT INT TERM HUP
+  if (( restore_failed )); then
+    exit 3
+  fi
+  exit "$sig_exit"
+}
+
 # trap must be armed BEFORE any mv so a kill during hide still restores.
-trap 'restore' EXIT INT TERM HUP
+trap 'restore' EXIT
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
+trap 'on_signal 129' HUP
 
 # A hide failure is FATAL, not a warning: running the command with an instruction
 # file still in place would break the "physical exclusion" contamination proof the
@@ -89,7 +120,10 @@ hide_failed=0
 for f in "${files[@]}"; do
   if [[ -f "$f" ]]; then
     dst="${f}${suffix}"
-    if mv "$f" "$dst" 2>/dev/null; then
+    if [[ -e "$dst" || -L "$dst" ]]; then
+      emit "FATAL hidden destination already exists: $dst"
+      hide_failed=1
+    elif mv -- "$f" "$dst" 2>/dev/null; then
       hidden_src+=("$f"); hidden_dst+=("$dst")
       emit "hid $f"
     else
@@ -137,7 +171,10 @@ fi
 
 # --- done marker only after a clean restore ---
 if [[ -n "$done_marker" ]]; then
-  print -r -- "done status=$cmd_status" > "$done_marker"
+  if ! print -r -- "done status=$cmd_status" > "$done_marker"; then
+    emit "FATAL could not write done marker: $done_marker"
+    exit 3
+  fi
 fi
 
 exit $cmd_status

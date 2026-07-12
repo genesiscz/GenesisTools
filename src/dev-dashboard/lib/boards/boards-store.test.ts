@@ -226,6 +226,45 @@ describe("boards-store", () => {
         expect(byId.get(m1.id)?.y).toBe(80);
     });
 
+    it("patchCard moving an outer section carries its nested section subtree (frames + members)", async () => {
+        await createBoard(db, { slug: "b1" });
+        const outer = await createCard(db, "b1", {
+            kind: "section",
+            x: 0,
+            y: 0,
+            w: 800,
+            h: 800,
+            payload: { title: "Outer" },
+        });
+        // A nested section fully inside the outer frame.
+        const inner = await createCard(db, "b1", {
+            kind: "section",
+            x: 100,
+            y: 100,
+            w: 300,
+            h: 300,
+            payload: { title: "Inner" },
+        });
+        // A member of the nested inner section (center 175,175 → smallest containing = inner).
+        const innerMember = await createCard(db, "b1", { kind: "note", x: 150, y: 150, w: 50, h: 50 });
+        // A member of the outer section only (center 625,625 → outside inner, inside outer).
+        const outerMember = await createCard(db, "b1", { kind: "note", x: 600, y: 600, w: 50, h: 50 });
+        // A card outside every frame.
+        const far = await createCard(db, "b1", { kind: "note", x: 1200, y: 1200, w: 50, h: 50 });
+
+        await patchCard(db, outer.id, { x: 200 });
+
+        const byId = new Map((await getBoardDoc(db, "b1")).cards.map((c) => [c.id, c]));
+        // The whole subtree translated +200 in x exactly once; y untouched.
+        expect(byId.get(outer.id)?.x).toBe(200);
+        expect(byId.get(inner.id)?.x).toBe(300);
+        expect(byId.get(inner.id)?.y).toBe(100);
+        expect([byId.get(innerMember.id)?.x, byId.get(innerMember.id)?.y]).toEqual([350, 150]);
+        expect([byId.get(outerMember.id)?.x, byId.get(outerMember.id)?.y]).toEqual([800, 600]);
+        // The card outside every frame is not part of the subtree → untouched.
+        expect(byId.get(far.id)?.x).toBe(1200);
+    });
+
     it("bulkLayout applies a section+member batch verbatim (no double translation)", async () => {
         await createBoard(db, { slug: "b1" });
         const sec = await createCard(db, "b1", {
