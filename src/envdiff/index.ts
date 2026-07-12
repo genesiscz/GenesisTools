@@ -9,6 +9,7 @@ interface Options {
     showValues?: boolean;
     sync?: boolean;
     json?: boolean;
+    checkValues?: boolean;
 }
 
 const program = new Command();
@@ -21,6 +22,7 @@ program
     .option("--example <path>", "Path to the reference file (default: <dir>/.env.example)")
     .option("--show-values", "Reveal values instead of masking them")
     .option("--sync", "Append missing keys to the actual file (existing keys untouched)")
+    .option("--check-values", "Also fail (exit 1) on changed values, not just missing/extra keys")
     .option("--json", "Emit the diff as JSON")
     .action((argsList: string[], options: Options) => {
         const color = process.stdout.isTTY === true && options.json !== true;
@@ -32,6 +34,7 @@ program
             showValues: options.showValues === true,
             sync: options.sync === true,
             json: options.json === true,
+            checkValues: options.checkValues === true,
             color,
             cwd: process.cwd(),
             now: new Date(),

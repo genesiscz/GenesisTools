@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
-import { diffEnv, hasDrift } from "./diff";
+import { diffEnv, isFailing } from "./diff";
 import { parseEnv } from "./parse";
 import { renderDiff, toJsonShape } from "./render";
 import { resolveEnvPaths } from "./resolve";
@@ -14,6 +14,7 @@ export interface RunEnvdiffArgs {
     showValues: boolean;
     sync: boolean;
     json: boolean;
+    checkValues: boolean;
     color: boolean;
     cwd: string;
     now: Date;
@@ -69,9 +70,11 @@ export function runEnvdiff(args: RunEnvdiffArgs): RunEnvdiffResult {
         return { exitCode: 0, stdout: summary, status };
     }
 
+    const failing = isFailing(diff, { checkValues: args.checkValues });
+
     if (args.json) {
         return {
-            exitCode: hasDrift(diff) ? 1 : 0,
+            exitCode: failing ? 1 : 0,
             stdout: SafeJSON.stringify(toJsonShape(diff, { actual, example })),
             status,
         };
@@ -84,5 +87,5 @@ export function runEnvdiff(args: RunEnvdiffArgs): RunEnvdiffResult {
         showValues: args.showValues,
         color: args.color,
     });
-    return { exitCode: hasDrift(diff) ? 1 : 0, stdout: text, status };
+    return { exitCode: failing ? 1 : 0, stdout: text, status };
 }
