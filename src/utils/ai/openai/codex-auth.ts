@@ -286,3 +286,61 @@ export class CodexOAuthClient {
 }
 
 export const codexOAuth = new CodexOAuthClient();
+
+export interface ResolvedCodexToken {
+    token: string;
+    accountId?: string;
+}
+
+/**
+ * Canonical "give me a usable access token for a named `openai-sub` account"
+ * — mirrors resolveAccountToken() in utils/claude/subscription-auth.
+ *
+ * Codex rotates the refresh token on every refresh (single-use), so N
+ * concurrent expired callers must not each POST the same token — the losers
+ * get invalid_grant and the whole grant dies. The refresh is serialized with
+ * the cross-process AI-config lock, re-read inside the lock, and
+ * short-circuits if another caller/process already refreshed while waiting.
+ */
+export async function resolveCodexAccountToken(accountName: string): Promise<ResolvedCodexToken> {
+    const { AIConfig } = await import("../AIConfig");
+    const config = await AIConfig.load();
+    const entry = config.getAccount(accountName);
+
+    if (!entry) {
+        throw new Error(`openai-sub account "${accountName}" not found in AI config.`);
+    }
+
+    let accessToken = entry.tokens.accessToken;
+
+    if (!accessToken) {
+        throw new Error(`No access token for openai-sub account "${accountName}". Run \`tools ask config\`.`);
+    }
+
+    if (entry.tokens.expiresAt && codexOAuth.needsRefresh(entry.tokens.expiresAt)) {
+        accessToken = await config.withLock(async (data) => {
+            const acc = data.accounts.find((a) => a.name === accountName);
+
+            if (!acc) {
+                throw new Error(`openai-sub account "${accountName}" not found in AI config.`);
+            }
+
+            if (acc.tokens.expiresAt && !codexOAuth.needsRefresh(acc.tokens.expiresAt) && acc.tokens.accessToken) {
+                return acc.tokens.accessToken;
+            }
+
+            if (!acc.tokens.refreshToken) {
+                throw new Error(`Token for "${accountName}" is expired and no refresh token is available.`);
+            }
+
+            const refreshed = await codexOAuth.refresh(acc.tokens.refreshToken);
+            acc.tokens.accessToken = refreshed.accessToken;
+            acc.tokens.refreshToken = refreshed.refreshToken;
+            acc.tokens.expiresAt = refreshed.expiresAt;
+
+            return refreshed.accessToken;
+        });
+    }
+
+    return { token: accessToken, accountId: extractAccountId(accessToken) };
+}
