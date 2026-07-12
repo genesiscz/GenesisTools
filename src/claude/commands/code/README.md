@@ -13,10 +13,10 @@ Built to answer a real regression: scheduled/cron-fired slash commands stopped b
 List published versions with publish dates.
 
 ```bash
-tools claude-code versions
-tools claude-code versions --from 2.1.185 --to 2.1.197
-tools claude-code versions --json
-tools claude-code versions --force   # bypass 1h packument cache
+tools claude code versions
+tools claude code versions --from 2.1.185 --to 2.1.197
+tools claude code versions --json
+tools claude code versions --force   # bypass 1h packument cache
 ```
 
 | Flag | Description |
@@ -31,10 +31,10 @@ tools claude-code versions --force   # bypass 1h packument cache
 Fetch + extract one version's `cli.js` bundle.
 
 ```bash
-tools claude-code unpack 2.1.196
-tools claude-code unpack 2.1.185 --beautified
-tools claude-code unpack 2.1.185 --normalized
-tools claude-code unpack 2.1.185 --platform darwin-arm64 --force
+tools claude code unpack 2.1.196
+tools claude code unpack 2.1.185 --beautified
+tools claude code unpack 2.1.185 --normalized
+tools claude code unpack 2.1.185 --platform darwin-arm64 --force
 ```
 
 | Flag | Description |
@@ -49,10 +49,10 @@ tools claude-code unpack 2.1.185 --platform darwin-arm64 --force
 Chunk-based, identifier-normalized diff between two versions.
 
 ```bash
-tools claude-code diff 2.1.195 2.1.196
-tools claude-code diff 2.1.195 2.1.196 --pattern cron_fire
-tools claude-code diff 2.1.195 2.1.196 --pattern cron_fire -o /tmp/cron-diff.txt
-tools claude-code diff 2.1.195 2.1.196 --mode normalized
+tools claude code diff 2.1.195 2.1.196
+tools claude code diff 2.1.195 2.1.196 --pattern cron_fire
+tools claude code diff 2.1.195 2.1.196 --pattern cron_fire -o /tmp/cron-diff.txt
+tools claude code diff 2.1.195 2.1.196 --mode normalized
 ```
 
 | Flag | Description |
@@ -72,12 +72,12 @@ Walk published versions in a range; report where a code pattern transition happe
 
 ```bash
 # Probe mode (fast — runs on raw minified bundle, no beautify)
-tools claude-code bisect 2.1.185 2.1.197 \
+tools claude code bisect 2.1.185 2.1.197 \
   --pattern '"cron_fire"' \
   --pattern 'skipSlashCommands'
 
 # Chunks mode (slower — beautify + normalize each version)
-tools claude-code bisect 2.1.185 2.1.197 \
+tools claude code bisect 2.1.185 2.1.197 \
   --mode chunks \
   --pattern isMeta \
   --pattern cron_fire
@@ -116,7 +116,7 @@ Tarballs and native binaries are held in memory only — never written to cache.
 Find when `skipSlashCommands` appeared next to the cron `onFire` enqueue:
 
 ```bash
-tools claude-code bisect 2.1.185 2.1.197 \
+tools claude code bisect 2.1.185 2.1.197 \
   --pattern '"cron_fire"' \
   --pattern 'skipSlashCommands'
 ```
@@ -135,13 +135,13 @@ Expected output:
 2.1.197	2026-06-30	PRESENT
 
 Transition: 2.1.195 → 2.1.196 (published 2026-06-26 → 2026-06-29)
-Inspect: tools claude-code diff 2.1.195 2.1.196 --pattern 'cron_fire' 'skipSlashCommands'
+Inspect: tools claude code diff 2.1.195 2.1.196 --pattern 'cron_fire' 'skipSlashCommands'
 ```
 
 Inspect the culprit diff:
 
 ```bash
-tools claude-code diff 2.1.195 2.1.196 --pattern 'cron_fire' 'skipSlashCommands' -o /tmp/cron-diff.txt
+tools claude code diff 2.1.195 2.1.196 --pattern 'cron_fire' 'skipSlashCommands' -o /tmp/cron-diff.txt
 ```
 
 The `+` side shows `skipSlashCommands: true, modelScheduledOrigin: true` on the cron enqueue call; the `-` side lacks both.

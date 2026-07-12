@@ -9,6 +9,7 @@ import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 p.setBackend(inquirerBackend);
 
 import { Command } from "commander";
+import { registerCodeCommand } from "./commands/code";
 import { registerConfigCommand } from "./commands/config";
 import { registerDaemonCommand } from "./commands/daemon";
 import { registerDesktopCommand } from "./commands/desktop";
@@ -43,6 +44,7 @@ registerResumeCommand(program);
 registerTailCommand(program);
 registerDesktopCommand(program);
 registerUsageCommand(program);
+registerCodeCommand(program);
 registerConfigCommand(program);
 registerDaemonCommand(program);
 registerMigrateCommand(program);

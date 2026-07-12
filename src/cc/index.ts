@@ -7,6 +7,7 @@ const SUBCOMMANDS = new Set([
     "resume",
     "desktop",
     "usage",
+    "code",
     "config",
     "daemon",
     "migrate",
