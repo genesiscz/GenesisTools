@@ -1,10 +1,12 @@
 import type { ResolvedRoute } from "@app/ai-proxy/lib/types";
+import { recordClientUsage } from "@app/ai-proxy/lib/usage/client-ledger";
 import { bodyWantsStream, extractLatestUsageFromSse, extractUsageFromJsonBody } from "@app/ai-proxy/lib/usage/extract";
 import { recordUsageRequest } from "@app/ai-proxy/lib/usage/store";
 import { logger } from "@app/logger";
 
 export function trackCompletedRequest(input: {
     route: ResolvedRoute;
+    client: string;
     proxyModel: string;
     path: string;
     status: number;
@@ -21,6 +23,7 @@ export function trackCompletedRequest(input: {
     const record = {
         ts: new Date().toISOString(),
         account: input.route.accountName,
+        client: input.client,
         provider: input.route.account.provider,
         proxyModel: input.proxyModel,
         upstreamModel: input.route.upstreamId,
@@ -37,6 +40,13 @@ export function trackCompletedRequest(input: {
 
     recordUsageRequest(record);
 
+    recordClientUsage({
+        client: input.client,
+        ts: record.ts,
+        upstreamModel: record.upstreamModel,
+        usage: record.usage,
+    });
+
     logger.debug(
         {
             account: record.account,
@@ -50,6 +60,7 @@ export function trackCompletedRequest(input: {
 
 export function scheduleUsageTracking(input: {
     route: ResolvedRoute;
+    client: string;
     proxyModel: string;
     path: string;
     status: number;
