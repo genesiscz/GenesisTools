@@ -1,9 +1,11 @@
+import { spawn } from "node:child_process";
 import { setModalOpen } from "@app/claude/commands/usage/hooks/input-scope";
 import { useScroll } from "@app/claude/commands/usage/hooks/use-scroll";
 import { type SessionRow, useSessions } from "@app/claude/commands/usage/hooks/use-sessions";
 import type { NotificationManager } from "@app/claude/lib/usage/notification-manager";
 import { logger } from "@app/logger";
 import { findClaudeCommand } from "@app/utils/claude";
+import { env } from "@app/utils/env";
 import { formatRelativeTime, formatTokens } from "@app/utils/format";
 import { Box, Text, useInput, useStdout } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -46,6 +48,8 @@ function abbreviateModel(model: string | null): string {
 type ActionMenuState = { open: false } | { open: true; sessionId: string; title: string | null };
 type PingState = "idle" | "pinging" | "done" | "error";
 
+const PING_TIMEOUT_MS = 15_000;
+
 interface SessionsViewProps {
     notifications?: NotificationManager | null;
 }
@@ -58,12 +62,14 @@ export function SessionsView({ notifications }: SessionsViewProps) {
 
     const [actionMenu, setActionMenu] = useState<ActionMenuState>({ open: false });
     const [pingStatuses, setPingStatuses] = useState<Map<string, PingState>>(new Map());
-    const [claudeCmd, setClaudeCmd] = useState<string>("ccc");
     const [selectedIndex, setSelectedIndex] = useState(0);
     const pingRef = useRef<Map<string, PingState>>(new Map());
     const pingTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
-    // Discover claude command once on mount
+    // Same resolution logic as `tools cc run`: prefer the user's ccc/cc shell
+    // wrappers over the bare binary.
+    const [claudeCmd, setClaudeCmd] = useState<string>("claude");
+
     useEffect(() => {
         findClaudeCommand()
             .then(setClaudeCmd)
@@ -142,11 +148,38 @@ export function SessionsView({ notifications }: SessionsViewProps) {
             };
 
             try {
-                const proc = Bun.spawn({
-                    cmd: [claudeCmd, "--resume", sessionId, "-p", ".", "--output-format", "json"],
-                    stdio: ["ignore", "ignore", "ignore"],
+                // Mirror `tools cc run`: claudeCmd may be a shell function
+                // (ccc/cc), so it must go through an interactive shell.
+                // detached puts the child in its own session with NO
+                // controlling tty, so nothing it does can touch this TUI's
+                // terminal (foreground-group grabs, raw-mode flips, ...).
+                const shell = env.paths.getShell("/bin/sh");
+                const quoted = `'${sessionId.replace(/'/g, `'\\''`)}'`;
+                const proc = spawn(shell, ["-ic", `exec ${claudeCmd} --resume ${quoted} -p . --output-format json`], {
+                    detached: true,
+                    stdio: "ignore",
                 });
-                const exitCode = await proc.exited;
+
+                const exitCode = await new Promise<number>((resolve) => {
+                    // A hung shell/claude child must not pin the "⟳ pinging" indicator
+                    // forever — kill it and treat as failure once the deadline passes.
+                    const timer = setTimeout(() => {
+                        logger.debug({ sessionId }, "[claude-usage] ping timed out, killing subprocess");
+                        proc.kill();
+                        resolve(1);
+                    }, PING_TIMEOUT_MS);
+
+                    proc.on("exit", (code) => {
+                        clearTimeout(timer);
+                        resolve(code ?? 1);
+                    });
+
+                    proc.on("error", (err) => {
+                        clearTimeout(timer);
+                        logger.debug({ err, sessionId }, "[claude-usage] ping spawn failed");
+                        resolve(1);
+                    });
+                });
 
                 if (exitCode !== 0) {
                     update("error");

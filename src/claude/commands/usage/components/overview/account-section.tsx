@@ -6,7 +6,6 @@ import { normalizeLimits, normalizeSpend } from "@app/claude/lib/usage/limits";
 import { formatRelativeTime } from "@app/utils/format";
 import { useTerminalSize } from "@app/utils/ink/hooks/use-terminal-size";
 import { Box, Text } from "ink";
-import { useEffect, useState } from "react";
 import { UsageBar } from "./usage-bar";
 
 function shortStaleReason(reason: string): string {
@@ -34,7 +33,8 @@ function formatResetCountdown(resetsAt: string | null): string | null {
     const remainingMs = resetTime - Date.now();
 
     if (remainingMs <= 0) {
-        return "resetting...";
+        // Must fit the fixed countdown slot: " ⟳ " + text <= COUNTDOWN_WIDTH.
+        return "resets now";
     }
 
     const totalMinutes = Math.floor(remainingMs / 60000);
@@ -94,77 +94,114 @@ function severityColor(severity: Severity): string {
     return "green";
 }
 
+// Row layout: [name][bar] [pct] [(~proj%)] [⟳ countdown]
+// The countdown rides the bar row when the column is wide enough; on narrow
+// columns it drops to an indented second line.
 const NAME_WIDTH = 22;
-const PCT_WIDTH = 6;
-const PROJ_WIDTH = 8;
-const FIXED_OVERHEAD = NAME_WIDTH + PCT_WIDTH + PROJ_WIDTH + 2;
-const MIN_BAR_WIDTH = 10;
+const NARROW_NAME_WIDTH = 16;
+// " 100%" + " (~336%)" — projections are capped at "(≥999%)" so this is fixed.
+const PCT_PROJ_WIDTH = 13;
+// " ⟳ 6d 15h 57m"
+const COUNTDOWN_WIDTH = 13;
+const MIN_BAR_WIDTH = 8;
+// Below this rendered width, rows switch to the narrow name column.
+const NARROW_LAYOUT_WIDTH = 60;
+
+/**
+ * Narrowest column that still renders label + bar + percent + projection on
+ * one row. OverviewView uses this as the two-column gate — anything wider
+ * renders cleanly, anything narrower would wrap and corrupt the layout.
+ */
+export const MIN_ACCOUNT_COLUMN_WIDTH = 40;
+
+interface RowLayout {
+    nameWidth: number;
+    barWidth: number;
+    inlineCountdown: boolean;
+}
+
+function layoutFor(width: number): RowLayout {
+    const nameWidth = width < NARROW_LAYOUT_WIDTH ? NARROW_NAME_WIDTH : NAME_WIDTH;
+    const inlineCountdown = width >= nameWidth + MIN_BAR_WIDTH + PCT_PROJ_WIDTH + COUNTDOWN_WIDTH;
+    const barWidth = Math.max(
+        MIN_BAR_WIDTH,
+        width - nameWidth - PCT_PROJ_WIDTH - (inlineCountdown ? COUNTDOWN_WIDTH : 0)
+    );
+    return { nameWidth, barWidth, inlineCountdown };
+}
+
+function fitLabel(label: string, nameWidth: number): string {
+    if (label.length <= nameWidth) {
+        return label.padEnd(nameWidth);
+    }
+
+    return `${label.slice(0, nameWidth - 2)}… `;
+}
+
+function bucketLabel(limit: NormalizedLimit): string {
+    const known = BUCKET_LABELS[limit.bucket];
+    return known ?? (limit.scope_model ? `Weekly (${limit.scope_model})` : limit.bucket.replace(/_/g, " "));
+}
 
 interface BucketRowProps {
     limit: NormalizedLimit;
-    barWidth: number;
+    layout: RowLayout;
 }
 
-function BucketRow({ limit, barWidth }: BucketRowProps) {
-    const [, setTick] = useState(0);
-
-    useEffect(() => {
-        const timer = setInterval(() => setTick((t) => t + 1), 1000);
-        return () => clearInterval(timer);
-    }, []);
-
-    const known = BUCKET_LABELS[limit.bucket];
-    const label = known ?? (limit.scope_model ? `Weekly (${limit.scope_model})` : limit.bucket.replace(/_/g, " "));
+function BucketRow({ limit, layout }: BucketRowProps) {
     const countdown = formatResetCountdown(limit.resets_at);
     const notUsed = !limit.resets_at && limit.percent === 0;
     const projected = calcProjection(limit.percent, limit.resets_at, limit.bucket);
     const pct = Math.round(Math.max(0, Math.min(limit.percent, 100)));
+    const color = severityColor(limit.severity);
 
-    const projStr = projected !== null && projected >= 100 ? `~${Math.round(projected)}%` : "";
+    const projStr = projected !== null && projected >= 100 ? (projected > 999 ? "(≥999%)" : `(~${projected}%)`) : "";
     const projColor = projected !== null ? colorForPct(projected) : undefined;
+    const tail = notUsed ? "not used" : countdown ? `⟳ ${countdown}` : "";
 
     return (
         <Box flexDirection="column">
             <Box>
-                <Text>{label.padEnd(NAME_WIDTH)}</Text>
-                <UsageBar utilization={limit.percent} width={barWidth} color={severityColor(limit.severity)} />
-                <Text bold>{`${pct}%`.padStart(PCT_WIDTH)}</Text>
+                <Text dimColor={notUsed}>{fitLabel(bucketLabel(limit), layout.nameWidth)}</Text>
+                <UsageBar utilization={limit.percent} width={layout.barWidth} color={color} />
+                <Text bold color={notUsed ? undefined : color} dimColor={notUsed}>
+                    {`${pct}%`.padStart(5)}
+                </Text>
                 {projStr ? (
                     <Text dimColor color={projColor}>
-                        {projStr.padStart(PROJ_WIDTH)}
+                        {` ${projStr}`.padEnd(PCT_PROJ_WIDTH - 5)}
                     </Text>
                 ) : (
-                    <Text>{" ".repeat(PROJ_WIDTH)}</Text>
+                    <Text>{" ".repeat(PCT_PROJ_WIDTH - 5)}</Text>
                 )}
+                {layout.inlineCountdown && tail ? <Text dimColor>{` ${tail}`}</Text> : null}
             </Box>
-            {notUsed ? (
-                <Text dimColor>{`${" ".repeat(NAME_WIDTH)}Not used`}</Text>
-            ) : countdown ? (
-                <Text dimColor>{`${" ".repeat(NAME_WIDTH)}⟳ ${countdown}`}</Text>
-            ) : null}
+            {!layout.inlineCountdown && tail ? <Text dimColor>{`${" ".repeat(layout.nameWidth)}${tail}`}</Text> : null}
         </Box>
     );
 }
 
 interface SpendRowProps {
     spend: NormalizedSpend;
-    barWidth: number;
+    layout: RowLayout;
 }
 
-function SpendRow({ spend, barWidth }: SpendRowProps) {
+function SpendRow({ spend, layout }: SpendRowProps) {
     const label = BUCKET_LABELS.extra_usage ?? "extra credits";
     const balance = formatSpendBalance(spend);
     const pct = Math.round(Math.max(0, Math.min(spend.percent, 100)));
+    const color = severityColor(spend.severity);
 
     return (
         <Box flexDirection="column">
             <Box>
-                <Text>{label.padEnd(NAME_WIDTH)}</Text>
-                <UsageBar utilization={spend.percent} width={barWidth} color={severityColor(spend.severity)} />
-                <Text bold>{`${pct}%`.padStart(PCT_WIDTH)}</Text>
-                <Text>{" ".repeat(PROJ_WIDTH)}</Text>
+                <Text>{fitLabel(label, layout.nameWidth)}</Text>
+                <UsageBar utilization={spend.percent} width={layout.barWidth} color={color} />
+                <Text bold color={color}>
+                    {`${pct}%`.padStart(5)}
+                </Text>
             </Box>
-            <Text dimColor>{`${" ".repeat(NAME_WIDTH)}${balance}`}</Text>
+            <Text dimColor>{`${" ".repeat(layout.nameWidth)}${balance}`}</Text>
         </Box>
     );
 }
@@ -185,26 +222,37 @@ function visibleLimitsFor(account: AccountUsage, prominentBuckets: string[]): No
     return limits.filter((l) => prominentBuckets.includes(l.bucket) || l.percent > 0);
 }
 
+function bucketRowLines(limit: NormalizedLimit, layout: RowLayout): number {
+    if (layout.inlineCountdown) {
+        return 1;
+    }
+
+    const notUsed = !limit.resets_at && limit.percent === 0;
+    return notUsed || limit.resets_at ? 2 : 1;
+}
+
 /**
  * Rendered line count of an AccountSection, used by OverviewView to decide
  * when the account list overflows the viewport and must split into columns.
+ * MUST mirror the render path below — pass the same width the section will
+ * actually be rendered at.
  */
-export function estimateAccountHeight(account: AccountUsage, prominentBuckets: string[]): number {
+export function estimateAccountHeight(account: AccountUsage, prominentBuckets: string[], width: number): number {
     // Header + marginBottom are always present.
     if (!account.usage) {
         // Error line or "No usage data" line.
         return 3;
     }
 
+    const layout = layoutFor(width);
     let lines = 2;
 
-    if (account.stale) {
+    if (account.stale && !staleFitsHeader(account, width)) {
         lines += 1;
     }
 
     for (const limit of visibleLimitsFor(account, prominentBuckets)) {
-        const notUsed = !limit.resets_at && limit.percent === 0;
-        lines += notUsed || limit.resets_at ? 2 : 1;
+        lines += bucketRowLines(limit, layout);
     }
 
     const spend = normalizeSpend(account.usage);
@@ -215,24 +263,79 @@ export function estimateAccountHeight(account: AccountUsage, prominentBuckets: s
     return lines;
 }
 
+function staleHeaderText(account: AccountUsage): string | null {
+    if (!account.stale) {
+        return null;
+    }
+
+    const ago = formatRelativeTime(new Date(account.stale.lastSuccessAt), { compact: true });
+    return `⚠ stale ${ago} · ${shortStaleReason(account.stale.reason)}`;
+}
+
+/** Whether the stale marker fits on the header line next to name + label. */
+function staleFitsHeader(account: AccountUsage, width: number): boolean {
+    const stale = staleHeaderText(account);
+
+    if (!stale) {
+        return false;
+    }
+
+    const headerLen = 2 + account.accountName.length + (account.label ? 2 + account.label.length : 0);
+    return headerLen + 2 + stale.length <= width;
+}
+
+function worstSeverity(limits: NormalizedLimit[], spend: NormalizedSpend | null): Severity {
+    const all: Severity[] = [...limits.map((l) => l.severity), ...(spend?.enabled ? [spend.severity] : [])];
+
+    if (all.includes("critical")) {
+        return "critical";
+    }
+
+    if (all.includes("warning")) {
+        return "warning";
+    }
+
+    return "normal";
+}
+
+interface AccountHeaderProps {
+    account: AccountUsage;
+    dotColor: string | undefined;
+    staleText?: string | null;
+}
+
+function AccountHeader({ account, dotColor, staleText }: AccountHeaderProps) {
+    return (
+        <Box>
+            <Text color={dotColor} dimColor={dotColor === undefined}>
+                {dotColor === undefined ? "○ " : "● "}
+            </Text>
+            <Text bold color="cyan">
+                {account.accountName}
+            </Text>
+            {account.label ? <Text dimColor>{`  ${account.label}`}</Text> : null}
+            {staleText ? <Text color="yellow">{`  ${staleText}`}</Text> : null}
+        </Box>
+    );
+}
+
 interface AccountSectionProps {
     account: AccountUsage;
     prominentBuckets: string[];
-    /** Column width in cells; defaults to the full terminal width. */
+    /** Column width in cells; defaults to the full terminal width minus padding. */
     width?: number;
 }
 
 export function AccountSection({ account, prominentBuckets, width }: AccountSectionProps) {
     const { columns: termWidth } = useTerminalSize();
-    const barWidth = Math.max(MIN_BAR_WIDTH, (width ?? termWidth) - FIXED_OVERHEAD);
-
-    const header = account.label ? `${account.accountName} (${account.label})` : account.accountName;
+    const sectionWidth = width ?? termWidth - 2;
+    const layout = layoutFor(sectionWidth);
 
     if (account.error && !account.usage) {
         return (
             <Box flexDirection="column" marginBottom={1}>
-                <Text bold>{`── ${header} ${"─".repeat(Math.max(0, 40 - header.length))}`}</Text>
-                <Text color="red">{`  Error: ${account.error}`}</Text>
+                <AccountHeader account={account} dotColor="red" />
+                <Text color="red">{`  ${account.error}`}</Text>
             </Box>
         );
     }
@@ -240,28 +343,31 @@ export function AccountSection({ account, prominentBuckets, width }: AccountSect
     if (!account.usage) {
         return (
             <Box flexDirection="column" marginBottom={1}>
-                <Text bold>{`── ${header} ${"─".repeat(Math.max(0, 40 - header.length))}`}</Text>
+                <AccountHeader account={account} dotColor={undefined} />
                 <Text dimColor>{"  No usage data"}</Text>
             </Box>
         );
     }
 
-    const staleAgo = account.stale
-        ? formatRelativeTime(new Date(account.stale.lastSuccessAt), { compact: true })
-        : null;
-    const staleReason = account.stale ? shortStaleReason(account.stale.reason) : null;
+    const staleText = staleHeaderText(account);
+    const staleInline = staleText !== null && staleFitsHeader(account, sectionWidth);
 
     const spend = normalizeSpend(account.usage);
     const visibleLimits = visibleLimitsFor(account, prominentBuckets);
+    const dotColor = severityColor(worstSeverity(visibleLimits, spend));
 
     return (
         <Box flexDirection="column" marginBottom={1}>
-            <Text bold>{`── ${header} ${"─".repeat(Math.max(0, 40 - header.length))}`}</Text>
-            {staleAgo ? <Text color="yellow">{`  ⚠ stale · updated ${staleAgo} · ${staleReason}`}</Text> : null}
+            <AccountHeader
+                account={account}
+                dotColor={account.stale ? "yellow" : dotColor}
+                staleText={staleInline ? staleText : null}
+            />
+            {staleText && !staleInline ? <Text color="yellow">{`  ${staleText}`}</Text> : null}
             {visibleLimits.map((limit) => (
-                <BucketRow key={`${limit.bucket}:${limit.scope_model ?? ""}`} limit={limit} barWidth={barWidth} />
+                <BucketRow key={`${limit.bucket}:${limit.scope_model ?? ""}`} limit={limit} layout={layout} />
             ))}
-            {spend?.enabled ? <SpendRow spend={spend} barWidth={barWidth} /> : null}
+            {spend?.enabled ? <SpendRow spend={spend} layout={layout} /> : null}
         </Box>
     );
 }

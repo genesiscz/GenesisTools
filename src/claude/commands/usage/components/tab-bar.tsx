@@ -13,10 +13,14 @@ export function TabBar({ tabs, activeIndex }: TabBarProps) {
             <Text dimColor>{"← "}</Text>
             {tabs.map((tab, i) => (
                 <Fragment key={tab.id}>
-                    {i > 0 && <Text dimColor>{" │ "}</Text>}
-                    <Text bold={i === activeIndex} inverse={i === activeIndex}>
-                        {` ${tab.label} `}
-                    </Text>
+                    {i > 0 && <Text dimColor>{"  "}</Text>}
+                    {i === activeIndex ? (
+                        <Text bold color="cyan" inverse>
+                            {` ${tab.label} `}
+                        </Text>
+                    ) : (
+                        <Text dimColor>{` ${tab.label} `}</Text>
+                    )}
                 </Fragment>
             ))}
             <Text dimColor>{" →"}</Text>

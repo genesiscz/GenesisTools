@@ -1,4 +1,5 @@
 import { useScroll } from "@app/claude/commands/usage/hooks/use-scroll";
+import { BUCKET_INK_COLORS, colorForPct } from "@app/claude/lib/usage/constants";
 import type { UsageHistoryDb, UsageSnapshot } from "@app/claude/lib/usage/history-db";
 import { Box, Text, useInput, useStdout } from "ink";
 import { useEffect, useMemo, useState } from "react";
@@ -18,6 +19,25 @@ const BUCKET_SHORT_LABELS: Record<string, string> = {
     seven_day_sonnet: "sonnet",
     seven_day_oauth_apps: "oauth",
 };
+
+/** Short label for any bucket, including scoped ones like seven_day_fable. */
+function shortBucketLabel(bucket: string): string {
+    const known = BUCKET_SHORT_LABELS[bucket];
+
+    if (known) {
+        return known;
+    }
+
+    if (bucket.startsWith("seven_day_")) {
+        return bucket.slice("seven_day_".length);
+    }
+
+    return bucket;
+}
+
+function bucketColor(bucket: string): string {
+    return BUCKET_INK_COLORS[bucket] ?? "magenta";
+}
 
 function formatTimestamp(ts: string): string {
     const d = new Date(ts);
@@ -51,6 +71,48 @@ function formatTimePerPercent(deltaMs: number, deltaPct: number): string {
     const hr = Math.floor(min / 60);
     const remMin = min % 60;
     return remMin > 0 ? `${hr}h${remMin}m` : `${hr}h`;
+}
+
+type HistoryRow = { key: string; data: UsageSnapshot };
+
+/** Rendered line cost of one row — shared by the forward fill and the backward max-offset scan below. */
+function rowCost(isGroupStart: boolean, isPageTop: boolean): number {
+    return 1 + (isGroupStart ? (isPageTop ? 1 : 2) : 0);
+}
+
+/**
+ * Largest scroll offset whose greedy fill (see `visibleRows` below) still
+ * reaches the last row — i.e. the "full last page" `G`/Ctrl+D should land
+ * on. A flat `totalItems - pageSize` formula (what useScroll defaults to)
+ * undercounts here because group headers cost 2-3 lines, not 1, so it stops
+ * short of the true end. The row at a candidate offset is ALWAYS treated as
+ * a forced page-top header (rows.length === 0 in the forward fill also
+ * forces a header for whatever row is scrolled to), so its cost is
+ * constant; only the row's group-boundary-ness is offset-independent.
+ */
+function computeMaxOffset(rows: HistoryRow[], availableLines: number): number {
+    const n = rows.length;
+
+    if (n === 0) {
+        return 0;
+    }
+
+    const normalCost = rows.map((row, i) => rowCost(i === 0 || row.key !== rows[i - 1].key, false));
+    const suffixFromNext = new Array<number>(n + 1).fill(0);
+
+    for (let j = n - 1; j >= 0; j--) {
+        suffixFromNext[j] = suffixFromNext[j + 1] + normalCost[j];
+    }
+
+    const pageTopCost = rowCost(true, true);
+
+    for (let s = 0; s < n; s++) {
+        if (pageTopCost + suffixFromNext[s + 1] <= availableLines) {
+            return s;
+        }
+    }
+
+    return n - 1;
 }
 
 interface SnapshotWithDelta extends UsageSnapshot {
@@ -125,17 +187,60 @@ export function HistoryView({ db, dbVersion }: HistoryViewProps) {
     }, [allData]);
 
     // Chrome: TabBar(1) + StatusBar(3) + paddingY(2) + hint(1) + colHeader(1) = 8
-    // Account separator headers: first = 1 line, subsequent = 2 lines (marginTop=1)
-    const uniqueAccounts = new Set(Array.from(allData.keys()).map((k) => k.split(":")[0])).size;
-    const separatorLines = uniqueAccounts > 0 ? 1 + (uniqueAccounts - 1) * 2 : 0;
-    const pageSize = Math.max(3, termHeight - 8 - separatorLines);
+    const availableLines = Math.max(3, termHeight - 8);
+
+    // Indices where a new account group starts — j/k jump targets.
+    const accountStarts = useMemo(() => {
+        const starts: number[] = [];
+
+        for (let i = 0; i < allRows.length; i++) {
+            if (i === 0 || allRows[i].key !== allRows[i - 1].key) {
+                starts.push(i);
+            }
+        }
+
+        return starts;
+    }, [allRows]);
+
+    // Max offset that still shows a full last page, derived from the SAME
+    // greedy row-cost model as visibleRows below — depends only on the row
+    // list and viewport height, never on the current offset/visibleRows
+    // themselves. That non-reactivity matters: an earlier version derived
+    // the clamp from visibleRows.length, which could hit 0 when offset ran
+    // past the (then-stale) total, permanently pinning the view blank.
+    const maxOffset = useMemo(() => computeMaxOffset(allRows, availableLines), [allRows, availableLines]);
 
     const { offset, setOffset } = useScroll({
         totalItems: allRows.length,
-        pageSize,
+        pageSize: availableLines,
         enabled: true,
         initialOffset: _savedHistoryOffset,
+        vimKeys: false,
+        maxOffsetOverride: maxOffset,
     });
+
+    // Greedily fill the viewport from the offset: each row costs 1 line, plus
+    // the account header (1 line at the top of the page, 2 with its margin
+    // further down). This is what makes the list use the WHOLE height instead
+    // of reserving header lines for accounts that aren't even on screen.
+    const visibleRows = useMemo(() => {
+        const rows: typeof allRows = [];
+        let lines = 0;
+
+        for (let i = offset; i < allRows.length; i++) {
+            const isGroupStart = i === offset || allRows[i].key !== allRows[i - 1].key;
+            const cost = rowCost(isGroupStart, rows.length === 0);
+
+            if (lines + cost > availableLines) {
+                break;
+            }
+
+            lines += cost;
+            rows.push(allRows[i]);
+        }
+
+        return rows;
+    }, [allRows, offset, availableLines]);
 
     // Persist offset so it survives tab switches (component unmount/remount)
     useEffect(() => {
@@ -144,16 +249,27 @@ export function HistoryView({ db, dbVersion }: HistoryViewProps) {
 
     // When new data arrives and current offset is beyond new total, clamp it
     useEffect(() => {
-        const max = Math.max(0, allRows.length - pageSize);
-
-        if (offset > max) {
-            setOffset(max);
+        if (offset > maxOffset) {
+            setOffset(maxOffset);
         }
-    }, [allRows.length, pageSize, offset, setOffset]);
+    }, [maxOffset, offset, setOffset]);
 
     useInput((input) => {
         if (input === "l") {
             setLayout((l) => (l === "stacked" ? "side-by-side" : "stacked"));
+        }
+
+        if (input === "j") {
+            const next = accountStarts.find((s) => s > offset);
+
+            if (next !== undefined) {
+                setOffset(Math.min(next, Math.max(0, allRows.length - 1)));
+            }
+        }
+
+        if (input === "k") {
+            const prev = [...accountStarts].reverse().find((s) => s < offset);
+            setOffset(prev ?? 0);
         }
 
         if (input === "f") {
@@ -187,40 +303,55 @@ export function HistoryView({ db, dbVersion }: HistoryViewProps) {
     const maxHeight = Math.max(8, termHeight - 4);
 
     if (layout === "stacked") {
-        const visibleRows = allRows.slice(offset, offset + pageSize);
+        const from = allRows.length > 0 ? offset + 1 : 0;
+        const to = Math.min(offset + visibleRows.length, allRows.length);
 
         return (
             <Box flexDirection="column" paddingX={1} paddingY={1} height={maxHeight} overflow="hidden">
-                <Text
-                    dimColor
-                >{`Showing last ${rangeLabel}  [f] cycle range  [l] layout  [j/k] scroll  (${allRows.length > 0 ? offset + 1 : 0}-${Math.min(offset + pageSize, allRows.length)} of ${allRows.length})`}</Text>
+                <Box justifyContent="space-between">
+                    <Text>
+                        <Text dimColor>{"last "}</Text>
+                        <Text color="cyan" bold>
+                            {rangeLabel}
+                        </Text>
+                        <Text dimColor>{"   f range · l layout · j/k account · ↑↓ scroll"}</Text>
+                    </Text>
+                    <Text dimColor>{`${from}–${to} of ${allRows.length}`}</Text>
+                </Box>
                 <Box>
-                    <Text bold>
-                        {`${"Time".padEnd(10)}${"Bucket".padEnd(10)}${"Util %".padEnd(10)}${"Δ%".padEnd(8)}Speed / 1%`}
+                    <Text bold dimColor>
+                        {`${"Time".padEnd(10)}${"Bucket".padEnd(10)}${"Util %".padEnd(9)}${"Δ%".padEnd(8)}Speed / 1%`}
                     </Text>
                 </Box>
                 {visibleRows.map((row, i) => {
                     const showHeader = i === 0 || row.key !== visibleRows[i - 1].key;
                     const accountName = row.data.accountName;
-                    const bucketLabel = BUCKET_SHORT_LABELS[row.data.bucket] ?? row.data.bucket;
                     const s = row.data;
+                    const utilColor = colorForPct(s.utilization);
 
                     return (
                         <Box key={`${row.key}-${s.timestamp}-${i}`} flexDirection="column">
                             {showHeader && (
                                 <Box marginTop={i > 0 ? 1 : 0}>
-                                    <Text bold>{`── ${accountName} ${"─".repeat(40)}`}</Text>
+                                    <Text dimColor>{"● "}</Text>
+                                    <Text bold color="cyan">
+                                        {accountName}
+                                    </Text>
                                 </Box>
                             )}
                             <Box>
                                 <Text dimColor>{formatTimestamp(s.timestamp).padEnd(10)}</Text>
-                                <Text>{bucketLabel.padEnd(10)}</Text>
-                                <Text>{`${s.utilization.toFixed(1)}%`.padEnd(10)}</Text>
-                                <Text color={s.delta !== null && s.delta > 0 ? "yellow" : "green"}>
-                                    {s.delta !== null
-                                        ? `${s.delta >= 0 ? "+" : ""}${s.delta.toFixed(1)}`.padEnd(8)
-                                        : "—".padEnd(8)}
+                                <Text color={bucketColor(s.bucket)}>{shortBucketLabel(s.bucket).padEnd(10)}</Text>
+                                <Text bold color={utilColor}>
+                                    {`${s.utilization.toFixed(1)}%`.padEnd(9)}
                                 </Text>
+                                {s.delta === null ? (
+                                    <Text dimColor>{"—".padEnd(8)}</Text>
+                                ) : (
+                                    <Text color={s.delta > 0 ? "yellow" : s.delta < 0 ? "green" : undefined}>
+                                        {`${s.delta >= 0 ? "+" : ""}${s.delta.toFixed(1)}`.padEnd(8)}
+                                    </Text>
+                                )}
                                 <Text dimColor>{s.timePerPct ?? "—"}</Text>
                             </Box>
                         </Box>

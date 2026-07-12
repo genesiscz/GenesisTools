@@ -6,10 +6,28 @@ interface ScrollOptions {
     pageSize: number;
     enabled: boolean;
     initialOffset?: number;
+    /** Bind j/k as line scroll (default). Views that repurpose j/k set false. */
+    vimKeys?: boolean;
+    /**
+     * Override the `totalItems - pageSize` max-offset formula. Views whose
+     * rows cost a variable number of lines (group headers, margins) can't
+     * express that as a flat `pageSize` — pass the max offset computed by
+     * their own greedy-fill logic instead. Falls back to the flat formula
+     * when omitted, so existing flat-row consumers are unaffected.
+     */
+    maxOffsetOverride?: number;
 }
 
-export function useScroll({ totalItems, pageSize, enabled, initialOffset }: ScrollOptions) {
+export function useScroll({
+    totalItems,
+    pageSize,
+    enabled,
+    initialOffset,
+    vimKeys = true,
+    maxOffsetOverride,
+}: ScrollOptions) {
     const [offset, setOffset] = useState(initialOffset ?? 0);
+    const maxOffset = maxOffsetOverride ?? Math.max(0, totalItems - pageSize);
 
     useInput(
         (input, key) => {
@@ -17,11 +35,11 @@ export function useScroll({ totalItems, pageSize, enabled, initialOffset }: Scro
                 return;
             }
 
-            if (input === "j" || key.downArrow) {
-                setOffset((o) => Math.min(o + 1, Math.max(0, totalItems - pageSize)));
+            if ((vimKeys && input === "j") || key.downArrow) {
+                setOffset((o) => Math.min(o + 1, maxOffset));
             }
 
-            if (input === "k" || key.upArrow) {
+            if ((vimKeys && input === "k") || key.upArrow) {
                 setOffset((o) => Math.max(0, o - 1));
             }
 
@@ -30,11 +48,11 @@ export function useScroll({ totalItems, pageSize, enabled, initialOffset }: Scro
             }
 
             if (input === "G") {
-                setOffset(Math.max(0, totalItems - pageSize));
+                setOffset(maxOffset);
             }
 
             if (key.ctrl && input === "d") {
-                setOffset((o) => Math.min(o + pageSize, Math.max(0, totalItems - pageSize)));
+                setOffset((o) => Math.min(o + pageSize, maxOffset));
             }
 
             if (key.ctrl && input === "u") {
