@@ -8,6 +8,7 @@ const SUBCOMMANDS = new Set([
     "desktop",
     "usage",
     "code",
+    "info",
     "config",
     "daemon",
     "migrate",
