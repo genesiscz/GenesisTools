@@ -1,0 +1,23 @@
+[Unit]
+Description=GenesisTools ai-proxy (OpenAI-compatible subscription proxy)
+Documentation=file:/opt/genesis-tools/deploy/vps/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=genesis
+Group=genesis
+NoNewPrivileges=true
+PrivateTmp=true
+# Repo checkout (git clone + bun install done here as the genesis user).
+WorkingDirectory=/opt/genesis-tools
+EnvironmentFile=/etc/genesis-tools/genesis.env
+# Bind loopback only — nginx is the sole public entry point (see nginx.conf).
+# Adjust the bun path to `which bun` on the box (often /root/.bun/bin/bun).
+ExecStart=/usr/local/bin/bun run ./tools ai-proxy serve --host 127.0.0.1 --port 8317
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
