@@ -26,10 +26,6 @@ mock.module("@genesiscz/utils/ask/types/provider", () => ({
     getLanguageModel: () => "MOCK_MODEL",
 }));
 
-mock.module("@genesiscz/utils/claude/subscription-billing", () => ({
-    applySystemPromptPrefix: (_prefix: string | undefined, system: string) => system,
-}));
-
 mock.module("@genesiscz/utils/ai/prompt-caching", () => ({
     buildProviderOptions: () => ({}),
 }));
