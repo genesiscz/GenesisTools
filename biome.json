@@ -75,7 +75,8 @@
             "!src/claude-history-dashboard",
             "!**/routeTree.gen.ts",
             "!scripts/codemod/__fixtures__",
-            "!scripts/benchmarks/clones/microbenches"
+            "!scripts/benchmarks/clones/microbenches",
+            "!apps/eve"
         ]
     },
     "overrides": [
