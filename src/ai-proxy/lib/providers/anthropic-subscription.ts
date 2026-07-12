@@ -191,6 +191,7 @@ export class AnthropicSubscriptionProvider implements ProxyProvider {
                     // "TypeError: terminated" / UND_ERR_SOCKET) — verified live via the
                     // eve tool-loop. curl tolerates it; undici does not. Close per stream.
                     Connection: "close",
+                    "X-Accel-Buffering": "no",
                 },
             });
         }
