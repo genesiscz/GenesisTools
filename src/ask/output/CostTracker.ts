@@ -2,7 +2,7 @@ import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { CostBreakdown } from "@ask/types";
-import { usageCacheReadTokens, usageInputNoCacheTokens } from "@ask/utils/helpers";
+import { usageCacheReadTokens, usageCacheWriteTokens, usageInputNoCacheTokens } from "@ask/utils/helpers";
 import type { LanguageModelUsage } from "ai";
 import { usageDatabase } from "./UsageDatabase";
 
@@ -76,7 +76,8 @@ export class CostTracker {
         const inputTokens = usageInputNoCacheTokens(usage);
         const outputTokens = usage.outputTokens ?? 0;
         const cachedInputTokens = usageCacheReadTokens(usage);
-        const totalTokens = usage.totalTokens ?? inputTokens + cachedInputTokens + outputTokens;
+        const cacheWriteTokens = usageCacheWriteTokens(usage);
+        const totalTokens = usage.totalTokens ?? inputTokens + cachedInputTokens + cacheWriteTokens + outputTokens;
 
         existing.inputTokens += inputTokens;
         existing.outputTokens += outputTokens;

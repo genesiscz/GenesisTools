@@ -3,7 +3,7 @@ import type { AskDB } from "@app/ask/lib/db-types";
 import { logger } from "@app/logger";
 import type { DatabaseClient } from "@app/utils/database";
 import { SafeJSON } from "@app/utils/json";
-import { usageCacheReadTokens, usageInputNoCacheTokens } from "@ask/utils/helpers";
+import { usageCacheReadTokens, usageCacheWriteTokens, usageInputNoCacheTokens } from "@ask/utils/helpers";
 import type { LanguageModelUsage } from "ai";
 import { sql } from "kysely";
 
@@ -69,7 +69,8 @@ export class UsageDatabase {
         const inputTokens = usageInputNoCacheTokens(usage);
         const outputTokens = usage.outputTokens ?? 0;
         const cachedInputTokens = usageCacheReadTokens(usage);
-        const totalTokens = usage.totalTokens ?? inputTokens + cachedInputTokens + outputTokens;
+        const cacheWriteTokens = usageCacheWriteTokens(usage);
+        const totalTokens = usage.totalTokens ?? inputTokens + cachedInputTokens + cacheWriteTokens + outputTokens;
 
         logger.debug(
             { inputTokens, outputTokens, cachedInputTokens, totalTokens, cost },
