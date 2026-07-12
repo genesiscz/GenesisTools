@@ -192,7 +192,7 @@ export function boardsRoutes(): RouteDef[] {
                         createdBy: body.createdBy ?? (await actorFrom(ctx)),
                     });
                     logger.info(
-                        { slug: ctx.params.slug, id: card.id, kind: body.kind, createdBy: card.createdBy },
+                        { slug: ctx.params.slug, id: card.id, kind: body.kind },
                         "boards: card created"
                     );
                     publishBoardEvent(ctx.params.slug, { type: "card", payload: card });
