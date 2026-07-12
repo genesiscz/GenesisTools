@@ -8,6 +8,8 @@ import type { PulseSeries, PulseSnapshot } from "./types";
 const PUBLIC_IP_MAX_AGE_MS = 5 * 60 * 1000;
 const DEFAULT_RETENTION_HOURS = 24;
 const IDLE_THRESHOLD_MS = 60_000;
+// keep a once-a-minute baseline even while idle, so history isn't empty on cold open
+const IDLE_RECORD_INTERVAL_MS = 60_000;
 
 interface IpifyResponse {
     ip?: string;
@@ -19,6 +21,7 @@ let db: PulseHistoryDb | null = null;
 let lastSnapshot: PulseSnapshot | null = null;
 let retentionHours = DEFAULT_RETENTION_HOURS;
 let lastClientSeenAt = 0;
+let lastIdleRecordAt = 0;
 
 export interface PulsePollingOptions {
     collectOverride?: () => Promise<PulseSnapshot>;
@@ -115,8 +118,15 @@ export function startPulsePolling(intervalMs: number, opts: PulsePollingOptions 
     }
 
     handle = startWakefulInterval(intervalMs, async () => {
-        if (Date.now() - lastClientSeenAt > IDLE_THRESHOLD_MS) {
-            return;
+        const now = Date.now();
+        const clientActive = now - lastClientSeenAt <= IDLE_THRESHOLD_MS;
+
+        if (!clientActive) {
+            if (now - lastIdleRecordAt < IDLE_RECORD_INTERVAL_MS) {
+                return;
+            }
+
+            lastIdleRecordAt = now;
         }
 
         if (opts.collectOverride) {

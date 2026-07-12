@@ -24,7 +24,7 @@ describe("system pulse poller client-gating", () => {
         stopPulsePolling();
     });
 
-    test("pauses collection when no client has fetched /api/system/pulse recently", async () => {
+    test("throttles to one cold-start baseline sample when no client has fetched /api/system/pulse recently", async () => {
         const { startPulsePolling } = await import("./poller");
         let collectCount = 0;
 
@@ -36,6 +36,8 @@ describe("system pulse poller client-gating", () => {
         });
         await new Promise((r) => setTimeout(r, 200));
 
-        expect(collectCount).toBeLessThanOrEqual(1);
+        // one immediate baseline sample fires so history isn't empty on cold open, then
+        // idle ticks are skipped until IDLE_RECORD_INTERVAL_MS elapses (far beyond this window)
+        expect(collectCount).toBe(1);
     });
 });
