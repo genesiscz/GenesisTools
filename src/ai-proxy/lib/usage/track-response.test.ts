@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { readClientLedger, setClientLedgerDirForTests } from "@app/ai-proxy/lib/usage/client-ledger";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import type { UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
 import { SafeJSON } from "@app/utils/json";
@@ -25,6 +29,18 @@ const route = {
     account,
 };
 
+let ledgerTempDir: string;
+
+beforeEach(() => {
+    ledgerTempDir = mkdtempSync(join(tmpdir(), "track-response-ledger-"));
+    setClientLedgerDirForTests(ledgerTempDir);
+});
+
+afterEach(() => {
+    setClientLedgerDirForTests(null);
+    rmSync(ledgerTempDir, { recursive: true, force: true });
+});
+
 describe("trackCompletedRequest", () => {
     beforeEach(() => {
         recordUsageRequest.mockClear();
@@ -37,6 +53,7 @@ describe("trackCompletedRequest", () => {
 
         trackCompletedRequest({
             route,
+            client: "alice",
             proxyModel: "genesiscz/grok/grok-composer-2.5-fast",
             path: "/v1/chat/completions",
             status: 200,
@@ -68,6 +85,10 @@ describe("trackCompletedRequest", () => {
         expect(record.rateLimited).toBe(false);
         expect(record.error).toBe(false);
         expect(record.ts).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+        expect(record.client).toBe("alice");
+
+        const monthKey = record.ts.slice(0, 7);
+        expect(readClientLedger().months[monthKey]?.alice?.requests).toBe(1);
     });
 
     it("records usage from translated SSE buffers", () => {
@@ -82,6 +103,7 @@ describe("trackCompletedRequest", () => {
 
         trackCompletedRequest({
             route,
+            client: "alice",
             proxyModel: "genesiscz/grok/grok-composer-2.5-fast",
             path: "/v1/chat/completions",
             status: 200,
@@ -106,6 +128,7 @@ describe("trackCompletedRequest", () => {
     it("flags rate limits and errors from status codes", () => {
         trackCompletedRequest({
             route,
+            client: "alice",
             proxyModel: "genesiscz/grok/grok-composer-2.5-fast",
             path: "/v1/responses",
             status: 429,
@@ -123,6 +146,7 @@ describe("trackCompletedRequest", () => {
 
         trackCompletedRequest({
             route,
+            client: "alice",
             proxyModel: "genesiscz/grok/grok-composer-2.5-fast",
             path: "/v1/chat/completions",
             status: 500,
