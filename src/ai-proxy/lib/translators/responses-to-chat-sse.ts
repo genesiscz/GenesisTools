@@ -229,7 +229,10 @@ export async function responsesToChatSse({
             headers: {
                 "Content-Type": "text/event-stream",
                 "Cache-Control": "no-cache",
-                Connection: "keep-alive",
+                // Same undici keep-alive-reuse hazard as the provider SSE paths —
+                // close per stream (see providers/anthropic-subscription.ts).
+                Connection: "close",
+                "X-Accel-Buffering": "no",
             },
         }),
         responseBody
