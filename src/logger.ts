@@ -77,9 +77,11 @@ export interface LoggerConfig {
     level?: LogLevel;
 }
 
-// Global config
+// Global config. includeTimestamp only gates the CONSOLE time prefix —
+// file records always carry an ISO `time` field (day-stamped files without
+// intra-day times made log forensics impossible).
 let globalConfig: LoggerConfig = {
-    includeTimestamp: false, // Default: no timestamps
+    includeTimestamp: false,
     timestampFormat: "HH:MM:ss",
 };
 let fileLogWarningShown = false;
@@ -198,7 +200,14 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
             // without ignoring them every console line echoes `tool: "x"` as
             // an indented field line. component stays visible inline instead.
             messageFormat: "{if component}[{component}] {end}{msg}",
-            ignore: showPid ? "hostname,tool,component" : "pid,hostname,tool,component",
+            // `time` is always in the record for the file sink; hide it on the
+            // console unless the caller opted into timestamps.
+            ignore: [
+                showPid ? "hostname,tool,component" : "pid,hostname,tool,component",
+                includeTimestamp ? null : "time",
+            ]
+                .filter(Boolean)
+                .join(","),
         };
 
         // minimalLevels: hide level for info/debug/trace, colored WARN:/ERROR:.
@@ -242,7 +251,9 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
 
     const baseConfig: pino.LoggerOptions = {
         level: "trace",
-        timestamp: includeTimestamp ? pino.stdTimeFunctions.isoTime : false,
+        // Always stamp records — the file sink needs `time` for forensics;
+        // console visibility is controlled via pino-pretty's ignore list above.
+        timestamp: pino.stdTimeFunctions.isoTime,
         ...(showPid && { base: { pid: process.pid } }),
     };
 
