@@ -6,6 +6,7 @@ import { buildInboundImportCounts } from "./imports";
 import { evaluateLifecycle } from "./lifecycle";
 import { ApoptosisStateStore } from "./state";
 import { scoreSurvival } from "./survival";
+import { loadAliasConfig } from "./tsconfig";
 import type { FileReport, ScanReport } from "./types";
 import { listSourceFiles } from "./walk";
 
@@ -41,7 +42,8 @@ export async function runScan(opts: ScanOptions): Promise<ScanReport> {
 
     const repoRoot = (await findRepoRoot(dir)) ?? dir;
     const churnCounts = await getChurnCounts(opts.churnDays, repoRoot);
-    const inbound = buildInboundImportCounts(files);
+    const aliasConfig = loadAliasConfig(dir) ?? undefined;
+    const inbound = buildInboundImportCounts(files, aliasConfig);
     const coverage = loadCoverageSet(opts.coveragePath);
 
     const store = new ApoptosisStateStore();

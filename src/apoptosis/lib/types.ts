@@ -34,3 +34,12 @@ export interface ApoptosisState {
         [filePath: string]: { firstMarked: string };
     };
 }
+
+/** tsconfig path-alias map, used to resolve non-relative imports (`@app/*`, …)
+ *  when building the inbound-import graph. */
+export interface AliasConfig {
+    /** Absolute directory that path templates resolve against (tsconfig baseUrl). */
+    baseDir: string;
+    /** compilerOptions.paths, e.g. `{ "@app/*": ["./src/*"] }`. */
+    paths: Record<string, string[]>;
+}

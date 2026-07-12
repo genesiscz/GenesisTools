@@ -128,6 +128,27 @@ program
         out.log.success("apoptosis state cleared.");
     });
 
+program.addHelpText(
+    "after",
+    `
+How "dead" is decided:
+  A file becomes a candidate only when ALL survival signals are zero — no commits
+  in the churn window (git), no other scanned file imports it, and (with --coverage)
+  no covered lines. Candidates must stay dead across the whole grace window before
+  \`kill\` suggests them. apoptosis never deletes anything itself.
+
+Inbound-import detection (accuracy caveats):
+  Imports are matched textually. Relative specifiers (./foo) and tsconfig \`paths\`
+  aliases (@app/*, @ui, …, read from the nearest tsconfig.json) are resolved, as are
+  static \`from\` imports, side-effect imports (import "./foo"), and dynamic
+  import()/require() calls. NOT resolved: imports built from computed strings, paths
+  declared only in an \`extends\`-ed base tsconfig, and cross-package specifiers — a
+  file reached only those ways may be flagged wrongly.
+  Framework entry points (test files, CLI mains, *.config.ts) are imported by nobody
+  and will surface as candidates by design — \`rescue\` the real entry points or
+  \`--ignore\` them. The grace window plus manual review are the backstop.`
+);
+
 enhanceHelp(program);
 
 async function main(): Promise<void> {

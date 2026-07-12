@@ -12,7 +12,8 @@ import { renderJson, renderKillScript, renderPrBody } from "./lib/render";
 import { runScan } from "./lib/scan";
 import { ApoptosisStateStore } from "./lib/state";
 import { scoreSurvival } from "./lib/survival";
-import type { ScanReport } from "./lib/types";
+import { loadAliasConfig } from "./lib/tsconfig";
+import type { AliasConfig, ScanReport } from "./lib/types";
 import { listSourceFiles } from "./lib/walk";
 
 function makeTmpDir(prefix: string): string {
@@ -148,6 +149,112 @@ describe("buildInboundImportCounts", () => {
         expect(counts.get(join(dir, "used.ts"))).toBe(1);
         expect(counts.get(join(dir, "orphan.ts"))).toBe(0);
         expect(counts.get(join(dir, "main.ts"))).toBe(0);
+    });
+
+    it("resolves tsconfig alias imports (@app/*, exact @ui, dynamic import, .js→.ts)", () => {
+        dir = makeTmpDir("apop-alias-");
+        mkdirSync(join(dir, "src", "utils", "ui"), { recursive: true });
+        writeFileSync(join(dir, "src", "target.ts"), "export const t = 1;");
+        writeFileSync(join(dir, "src", "utils", "ui", "index.ts"), "export const ui = 1;");
+        writeFileSync(join(dir, "src", "dyn.ts"), "export const d = 1;");
+        writeFileSync(join(dir, "src", "barrel.ts"), "export const b = 1;");
+        writeFileSync(
+            join(dir, "src", "main.ts"),
+            [
+                `import { t } from "@app/target";`,
+                `import { ui } from "@ui";`,
+                `const d = await import("@app/dyn");`,
+                `import { b } from "@app/barrel.js";`,
+            ].join("\n")
+        );
+
+        const files = [
+            join(dir, "src", "target.ts"),
+            join(dir, "src", "utils", "ui", "index.ts"),
+            join(dir, "src", "dyn.ts"),
+            join(dir, "src", "barrel.ts"),
+            join(dir, "src", "main.ts"),
+        ];
+        const alias: AliasConfig = {
+            baseDir: dir,
+            paths: { "@app/*": ["./src/*"], "@ui": ["./src/utils/ui/index.ts"] },
+        };
+        const counts = buildInboundImportCounts(files, alias);
+
+        expect(counts.get(join(dir, "src", "target.ts"))).toBe(1);
+        expect(counts.get(join(dir, "src", "utils", "ui", "index.ts"))).toBe(1);
+        expect(counts.get(join(dir, "src", "dyn.ts"))).toBe(1);
+        expect(counts.get(join(dir, "src", "barrel.ts"))).toBe(1);
+
+        // Without the alias config those same imports resolve to nothing.
+        const noAlias = buildInboundImportCounts(files);
+        expect(noAlias.get(join(dir, "src", "target.ts"))).toBe(0);
+        expect(noAlias.get(join(dir, "src", "dyn.ts"))).toBe(0);
+    });
+
+    it('counts bare side-effect imports (import "./foo")', () => {
+        dir = makeTmpDir("apop-sideeffect-");
+        writeFileSync(join(dir, "handler.ts"), "export const register = () => {};");
+        writeFileSync(join(dir, "barrel.ts"), `import "./handler";\nimport "./handler.ts";\n`);
+
+        const files = [join(dir, "handler.ts"), join(dir, "barrel.ts")];
+        const counts = buildInboundImportCounts(files);
+
+        // Two side-effect imports from the same file -> one distinct inbound edge.
+        expect(counts.get(join(dir, "handler.ts"))).toBe(1);
+        expect(counts.get(join(dir, "barrel.ts"))).toBe(0);
+    });
+
+    it("prefers the most specific alias (longest prefix wins)", () => {
+        dir = makeTmpDir("apop-alias2-");
+        mkdirSync(join(dir, "src", "youtube", "ui"), { recursive: true });
+        mkdirSync(join(dir, "src", "yt"), { recursive: true });
+        writeFileSync(join(dir, "src", "youtube", "ui", "panel.ts"), "export const p = 1;");
+        writeFileSync(join(dir, "src", "yt", "panel.ts"), "export const p = 2;");
+        writeFileSync(join(dir, "src", "main.ts"), `import { p } from "@app/yt/panel";`);
+
+        const files = [
+            join(dir, "src", "youtube", "ui", "panel.ts"),
+            join(dir, "src", "yt", "panel.ts"),
+            join(dir, "src", "main.ts"),
+        ];
+        const alias: AliasConfig = {
+            baseDir: dir,
+            paths: { "@app/*": ["./src/*"], "@app/yt/*": ["./src/youtube/ui/*"] },
+        };
+        const counts = buildInboundImportCounts(files, alias);
+
+        expect(counts.get(join(dir, "src", "youtube", "ui", "panel.ts"))).toBe(1);
+        expect(counts.get(join(dir, "src", "yt", "panel.ts"))).toBe(0);
+    });
+});
+
+describe("loadAliasConfig", () => {
+    let dir: string;
+    afterEach(() => {
+        if (dir) {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("reads paths and walks up to the nearest tsconfig", () => {
+        dir = makeTmpDir("apop-tsc-");
+        writeFileSync(
+            join(dir, "tsconfig.json"),
+            SafeJSON.stringify({ compilerOptions: { paths: { "@app/*": ["./src/*"] } } })
+        );
+        mkdirSync(join(dir, "src", "deep"), { recursive: true });
+
+        const cfg = loadAliasConfig(join(dir, "src", "deep"));
+        expect(cfg).not.toBeNull();
+        expect(cfg?.baseDir).toBe(dir);
+        expect(cfg?.paths["@app/*"]).toEqual(["./src/*"]);
+    });
+
+    it("returns null when the nearest tsconfig declares no paths", () => {
+        dir = makeTmpDir("apop-tsc-none-");
+        writeFileSync(join(dir, "tsconfig.json"), SafeJSON.stringify({ compilerOptions: {} }));
+        expect(loadAliasConfig(dir)).toBeNull();
     });
 });
 
@@ -298,6 +405,38 @@ describe("runScan (e2e)", () => {
         expect(byPath.get(join(dir, "used.ts"))?.status).toBe("alive");
         expect(byPath.get(join(dir, "main.ts"))?.status).toBe("alive");
         expect(report.counts.candidates).toBe(1);
+    });
+
+    it("keeps a file alive when it is only imported via a tsconfig path alias", async () => {
+        dir = initRepo();
+        writeFileSync(
+            join(dir, "tsconfig.json"),
+            SafeJSON.stringify({ compilerOptions: { paths: { "@app/*": ["./*"] } } })
+        );
+        writeFileSync(join(dir, "helper.ts"), "export const h = 1;");
+        git(dir, "add", "tsconfig.json", "helper.ts");
+        commitAt(dir, "2000-01-01T12:00:00");
+
+        writeFileSync(join(dir, "main.ts"), `import { h } from "@app/helper";\nexport const y = h;\n`);
+        git(dir, "add", "main.ts");
+        commitAt(dir, "2026-05-30T12:00:00");
+
+        const report = await runScan({
+            dir,
+            churnDays: 90,
+            graceDays: 14,
+            exts: ["ts"],
+            ignore: ["node_modules", ".git"],
+            coveragePath: undefined,
+            useState: true,
+            now: Date.parse("2026-06-02T00:00:00.000Z"),
+        });
+
+        const byPath = new Map(report.files.map((f) => [f.path, f]));
+        // helper.ts has no recent churn and no *relative* importer; only the alias
+        // import in main.ts keeps it alive. Without alias resolution it would be dying.
+        expect(byPath.get(join(dir, "helper.ts"))?.status).toBe("alive");
+        expect(byPath.get(join(dir, "helper.ts"))?.survival.inboundImports).toBe(1);
     });
 
     it("graduates a long-marked orphan to dead, then rescues it when imported", async () => {
