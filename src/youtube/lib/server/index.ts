@@ -1,6 +1,7 @@
 import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
+import { parseServiceKeys, requireServiceKey } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { clearPid, registerSignalHandlers, writePid } from "@app/youtube/lib/server/daemon";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
@@ -40,9 +41,17 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
 
     const configuredPort = await youtube.config.get("apiPort");
     const port = opts.port ?? configuredPort;
+    const hostname = env.youtube.getHost();
+    const serviceKeys = parseServiceKeys(env.youtube.getServiceKey());
+
+    if (serviceKeys.length > 0) {
+        logger.info({ keyCount: serviceKeys.length }, "youtube API server: service-key auth enabled");
+    }
+
     const websocket = setupWebsocket(youtube);
     const server = Bun.serve<WebsocketState>({
         port,
+        hostname,
         websocket: websocket.handler,
         async fetch(req: Request, server): Promise<Response | undefined> {
             try {
@@ -50,6 +59,21 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
 
                 if (req.method === "OPTIONS") {
                     return new Response(null, { status: 204, headers: CORS_HEADERS });
+                }
+
+                // Meta routes (liveness + public discovery) stay open so health
+                // checks and readiness probes work without a key.
+                const isOpenRoute =
+                    url.pathname === "/api/v1/healthz" ||
+                    url.pathname === "/api/v1/version" ||
+                    url.pathname === "/api/v1/openapi.json";
+
+                if (!isOpenRoute) {
+                    const authError = requireServiceKey(req, serviceKeys);
+
+                    if (authError) {
+                        return authError;
+                    }
                 }
 
                 if (url.pathname === "/api/v1/events") {
@@ -118,7 +142,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
         });
     }
 
-    logger.info({ port: serverPort }, "youtube API server listening");
+    logger.info({ port: serverPort, hostname }, "youtube API server listening");
 
     return {
         port: serverPort,

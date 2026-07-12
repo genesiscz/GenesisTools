@@ -10,14 +10,47 @@ import "./popup.css";
 
 const queryClient = new QueryClient();
 
+function isLocalhost(hostname: string): boolean {
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
+/**
+ * A non-localhost origin isn't in the manifest's static host_permissions, so
+ * request it at runtime (from the Save click gesture). Returns true when the
+ * extension may talk to the origin.
+ */
+async function ensureHostPermission(rawUrl: string): Promise<boolean> {
+    let origin: string;
+    try {
+        const parsed = new URL(rawUrl);
+        if (isLocalhost(parsed.hostname)) {
+            return true;
+        }
+        origin = `${parsed.protocol}//${parsed.host}/*`;
+    } catch {
+        return false;
+    }
+
+    if (await chrome.permissions.contains({ origins: [origin] })) {
+        return true;
+    }
+
+    return chrome.permissions.request({ origins: [origin] });
+}
+
 function Popup() {
     const [apiUrl, setApiUrl] = useState("http://localhost:9876");
+    const [serviceKey, setServiceKey] = useState("");
     const [status, setStatus] = useState<"unknown" | "ok" | "down">("unknown");
+    const [note, setNote] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
     useEffect(() => {
-        send<{ apiBaseUrl: string }>({ type: "config:get" })
-            .then((config) => setApiUrl(config.apiBaseUrl))
+        send<{ apiBaseUrl: string; serviceKey?: string }>({ type: "config:get" })
+            .then((config) => {
+                setApiUrl(config.apiBaseUrl);
+                setServiceKey(config.serviceKey ?? "");
+            })
             .catch(() => setStatus("down"));
     }, []);
 
@@ -32,8 +65,16 @@ function Popup() {
 
     async function save(): Promise<void> {
         setBusy(true);
+        setNote(null);
         try {
-            await send({ type: "config:set", apiBaseUrl: apiUrl });
+            const granted = await ensureHostPermission(apiUrl);
+            if (!granted) {
+                setNote("Permission for that origin was denied — the extension can't reach it.");
+                setStatus("down");
+                return;
+            }
+
+            await send({ type: "config:set", apiBaseUrl: apiUrl, serviceKey: serviceKey.trim() || undefined });
             await checkHealth();
         } finally {
             setBusy(false);
@@ -73,6 +114,19 @@ function Popup() {
                     placeholder="http://localhost:9876"
                 />
             </section>
+            <section className="space-y-2">
+                <label className="text-xs text-muted-foreground" htmlFor="serviceKey">
+                    Service key (for a hosted server)
+                </label>
+                <Input
+                    id="serviceKey"
+                    type="password"
+                    value={serviceKey}
+                    onChange={(event) => setServiceKey(event.target.value)}
+                    placeholder="leave blank for localhost"
+                />
+            </section>
+            {note ? <p className="text-xs text-destructive">{note}</p> : null}
             <div className="grid grid-cols-2 gap-2">
                 <Button onClick={save} disabled={busy}>
                     Save

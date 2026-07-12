@@ -31,6 +31,9 @@ describe("env.client", () => {
         expect(env.dashboard).toBe(clientEnv.dashboard);
         expect(env.db).toBe(clientEnv.db);
         expect(env.node).toBe(clientEnv.node);
-        expect(env.youtube).toBe(clientEnv.youtube);
+        // youtube gains server-only accessors (service key, bind host) on top of
+        // the client domain, so identity holds per shared getter, not per object.
+        expect(env.youtube.getGitSha).toBe(clientEnv.youtube.getGitSha);
+        expect(env.youtube.getUiPort).toBe(clientEnv.youtube.getUiPort);
     });
 });
