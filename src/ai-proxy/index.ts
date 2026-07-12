@@ -2,6 +2,7 @@
 
 import { runAccountsList, runAccountsRemove, runAccountsTest } from "@app/ai-proxy/commands/accounts";
 import { runAccountsLogin } from "@app/ai-proxy/commands/accounts-login";
+import { clientsAdd, clientsList, clientsUsage } from "@app/ai-proxy/commands/clients";
 import { runConfigDetect, runConfigInit, runConfigSet, runConfigShow } from "@app/ai-proxy/commands/config";
 import { runConfigMenu, runSetupCloudflaredTunnel } from "@app/ai-proxy/commands/config-wizard";
 import { runDownCommand } from "@app/ai-proxy/commands/down";
@@ -13,7 +14,7 @@ import { runStatusCommand } from "@app/ai-proxy/commands/status";
 import { runUpCommand } from "@app/ai-proxy/commands/up";
 import { runUsageCommand } from "@app/ai-proxy/commands/usage";
 import { isValidThinkingMode } from "@app/ai-proxy/lib/thinking-config";
-import type { CursorTranslationMode, ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
+import type { AiProxyProviderType, CursorTranslationMode, ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
 import { runTool } from "@app/utils/cli";
 import { Command } from "commander";
 
@@ -76,6 +77,39 @@ program
     .option("--cursor-ids", "Print only proxy ids")
     .action(async (options) => {
         await runModelsCommand(options);
+    });
+
+const clientsCmd = program.command("clients").description("Manage per-user client keys + usage ledger");
+
+clientsCmd
+    .command("list")
+    .description("List configured clients (keys masked)")
+    .action(async () => {
+        await clientsList();
+    });
+
+clientsCmd
+    .command("add <name>")
+    .description("Add a client; prints its generated key ONCE")
+    .option("--token-cap <n>", "Monthly total-token cap", (v) => Number.parseInt(v, 10))
+    .option("--cost-cap <usd>", "Monthly cost cap in USD", (v) => Number.parseFloat(v))
+    .option("--provider <type...>", "Restrict to provider types (never subscription types)")
+    .action(async (name: string, opts: { tokenCap?: number; costCap?: number; provider?: string[] }) => {
+        await clientsAdd({
+            name,
+            tokenCap: opts.tokenCap,
+            costCap: opts.costCap,
+            providers: opts.provider as AiProxyProviderType[] | undefined,
+        });
+    });
+
+clientsCmd
+    .command("usage")
+    .description("Per-client monthly usage (JSON, or CSV for invoicing)")
+    .option("--month <YYYY-MM>", "Month to report (default: current UTC month)")
+    .option("--csv", "CSV output")
+    .action(async (opts: { month?: string; csv?: boolean }) => {
+        await clientsUsage(opts);
     });
 
 program
