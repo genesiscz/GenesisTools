@@ -389,11 +389,14 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         // Keychain auth: the env token must NOT be set (it takes precedence
         // over the keychain), and the full-scope login needs none of the
         // setup-token workarounds — the bootstrap catalog loads natively.
-        launchEnv = { ...process.env };
+        // TOOLS_CLAUDE_ACCOUNT lets the statusline (a child of claude) show
+        // which account this session was launched as.
+        launchEnv = { ...process.env, TOOLS_CLAUDE_ACCOUNT: account.name };
         delete launchEnv.CLAUDE_CODE_OAUTH_TOKEN;
     } else {
         launchEnv = {
             ...process.env,
+            TOOLS_CLAUDE_ACCOUNT: account.name,
             CLAUDE_CODE_OAUTH_TOKEN: account.tokens.longLivedToken!,
             // Interactive CC can't resolve the tier from an inference-only setup token,
             // which blocks opus/sonnet [1m] model switches (see claude-code#70124).
