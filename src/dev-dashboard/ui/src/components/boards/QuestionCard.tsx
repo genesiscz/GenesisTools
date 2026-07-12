@@ -1,7 +1,7 @@
 import type { CardDto, QuestionDto } from "@app/dev-dashboard/contract/dto";
 import { SafeJSON } from "@app/utils/json";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { boardsApi } from "./boards-api";
 
 const OTHER_LABEL = "Other / Něco jiného";
@@ -11,6 +11,16 @@ function QuestionCard({ slug, question }: { slug: string; question: QuestionDto 
     const queryClient = useQueryClient();
     const [picked, setPicked] = useState<Set<string>>(new Set(question.answer ?? []));
     const [otherText, setOtherText] = useState("");
+
+    // Boards are multi-operator: every SSE event refetches the board query, which can hand this
+    // still-mounted card (keyed by q.id) a new answer picked in another session — resync it.
+    // Keyed on content, not array reference: refetches mint a new array every time, and a
+    // reference-keyed reset would stomp an in-progress re-pick on every unrelated board event.
+    const answerKey = SafeJSON.stringify(question.answer ?? []);
+
+    useEffect(() => {
+        setPicked(new Set(question.answer ?? []));
+    }, [answerKey]);
 
     const answerMutation = useMutation({
         mutationFn: (answer: string) => boardsApi.answerQuestion(question.id, answer),
