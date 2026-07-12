@@ -16,13 +16,39 @@ import type {
 } from "@app/youtube/lib/types";
 import { send } from "@ext/api.bridge";
 import type { ExtensionApiMap } from "@ext/shared/messages";
+import type { ExtensionConfig } from "@ext/shared/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
+export function useConfig() {
+    return useQuery({
+        queryKey: ["config"],
+        queryFn: () => send<ExtensionConfig>({ type: "config:get" }),
+    });
+}
 
 export function useChannels() {
     return useQuery({
         queryKey: ["channels"],
         queryFn: () => send<ExtensionApiMap["api:listChannels"]>({ type: "api:listChannels" }),
         select: (response) => response.channels,
+    });
+}
+
+export function useChannelVideos(
+    channel: ChannelHandle | null,
+    opts: { limit?: number; includeShorts?: boolean } = {}
+) {
+    return useQuery({
+        queryKey: ["videos", channel, opts.limit, opts.includeShorts],
+        queryFn: () =>
+            send<ExtensionApiMap["api:listVideos"]>({
+                type: "api:listVideos",
+                channel: channel as ChannelHandle,
+                limit: opts.limit,
+                includeShorts: opts.includeShorts,
+            }),
+        select: (response) => response.videos,
+        enabled: channel !== null,
     });
 }
 
@@ -70,24 +96,22 @@ export function useSummary(id: VideoId | null, mode: "short" | "timestamped" | "
     return useQuery({
         queryKey: ["summary", id, mode],
         queryFn: async () => {
-            if (mode === "long") {
-                return { long: null as VideoLongSummary | null, cached: false };
-            }
-
             const response = await send<ExtensionApiMap["api:getSummary"]>({
                 type: "api:getSummary",
                 id: id as VideoId,
                 mode,
             });
+            const cached = response.cached ?? false;
 
-            if (mode === "timestamped") {
-                return {
-                    timestamped: (response.summary ?? []) as TimestampedSummaryEntry[],
-                    cached: response.cached ?? false,
-                };
+            if (mode === "long") {
+                return { long: (response.summary ?? null) as VideoLongSummary | null, cached };
             }
 
-            return { short: (response.summary ?? "") as string, cached: response.cached ?? false };
+            if (mode === "timestamped") {
+                return { timestamped: (response.summary ?? []) as TimestampedSummaryEntry[], cached };
+            }
+
+            return { short: (response.summary ?? "") as string, cached };
         },
         enabled: id !== null,
     });
@@ -107,26 +131,26 @@ export function useGenerateSummary(id: VideoId) {
             format?: SummaryFormat;
             length?: SummaryLength;
         }) => {
-            if (opts.mode === "long") {
-                return { long: null as VideoLongSummary | null, cached: false };
-            }
-
-            const { tone: _tone, format: _format, length: _length, ...bridgeOpts } = opts;
             const response = await send<ExtensionApiMap["api:generateSummary"]>({
                 type: "api:generateSummary",
                 id,
-                ...bridgeOpts,
-                mode: bridgeOpts.mode as "short" | "timestamped",
+                ...opts,
             });
+            const cached = response.cached ?? false;
+
+            if (opts.mode === "long") {
+                return { long: (response.summary ?? null) as VideoLongSummary | null, cached, jobId: response.jobId };
+            }
 
             if (opts.mode === "timestamped") {
                 return {
                     timestamped: (response.summary ?? []) as TimestampedSummaryEntry[],
-                    cached: response.cached ?? false,
+                    cached,
+                    jobId: response.jobId,
                 };
             }
 
-            return { short: (response.summary ?? "") as string, cached: response.cached ?? false };
+            return { short: (response.summary ?? "") as string, cached, jobId: response.jobId };
         },
         onSuccess: (_data, opts) => {
             queryClient.invalidateQueries({ queryKey: ["summary", id, opts.mode] });
