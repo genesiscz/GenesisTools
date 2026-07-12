@@ -24,6 +24,8 @@ export function accountConfigFingerprint(account: AiProxyAccountConfig): string 
         baseUrl: account.baseUrl,
         grok: account.grok,
         githubCopilot: account.githubCopilot,
+        anthropicSub: account.anthropicSub,
+        openaiSub: account.openaiSub,
         apiKeyEnv: account.apiKeyEnv,
         managementKeyEnv: account.managementKeyEnv,
         teamId: account.teamId,
