@@ -18,6 +18,14 @@ function formatTime(date: Date): string {
     });
 }
 
+const SHORTCUTS: Array<[string, string]> = [
+    ["q", "quit"],
+    ["r", "refresh"],
+    ["p", "pause"],
+    ["i", "interval"],
+    ["?", "help"],
+];
+
 export function StatusBar({ lastRefresh, nextRefresh, paused, pollingLabel, pollInterval }: StatusBarProps) {
     const [, setTick] = useState(0);
 
@@ -40,18 +48,27 @@ export function StatusBar({ lastRefresh, nextRefresh, paused, pollingLabel, poll
             paddingX={1}
         >
             <Box>
-                {lastRefresh && <Text dimColor>Last: {formatTime(lastRefresh)}</Text>}
-                {nextRefresh && !paused && (
+                {lastRefresh && (
                     <Text dimColor>
-                        {" • Next: "}
-                        {countdown !== null ? `${countdown}s` : "—"}
+                        {"last "}
+                        <Text color="white">{formatTime(lastRefresh)}</Text>
                     </Text>
                 )}
-                <Text dimColor>{` • ${pollInterval}s interval`}</Text>
-                {pollingLabel && <Text color="yellow">{` ● Polling ${pollingLabel}`}</Text>}
-                {paused && <Text color="red">{" ⏸ Paused"}</Text>}
+                {nextRefresh && !paused && (
+                    <Text dimColor>{` · next ${countdown !== null ? `${countdown}s` : "—"}`}</Text>
+                )}
+                <Text dimColor>{` · every ${pollInterval}s`}</Text>
+                {pollingLabel && <Text color="yellow">{`  ● polling ${pollingLabel}`}</Text>}
+                {paused && <Text color="red">{"  ⏸ paused"}</Text>}
             </Box>
-            <Text dimColor>{"[q]uit [r]efresh [p]ause [i]nterval [?]help"}</Text>
+            <Box>
+                {SHORTCUTS.map(([key, label]) => (
+                    <Text key={key}>
+                        <Text color="cyan">{key}</Text>
+                        <Text dimColor>{` ${label}   `}</Text>
+                    </Text>
+                ))}
+            </Box>
         </Box>
     );
 }
