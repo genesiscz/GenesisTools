@@ -159,7 +159,7 @@ function toolUseBlocksFromToolCalls(toolCalls: unknown): AnthropicToolUseBlock[]
 
         if (rawArgs.length > 0) {
             try {
-                input = SafeJSON.parse(rawArgs);
+                input = SafeJSON.parse(rawArgs, { strict: true });
             } catch {
                 input = { _raw: rawArgs };
             }

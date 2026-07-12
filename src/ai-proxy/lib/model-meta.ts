@@ -1,6 +1,10 @@
 import { loadCatalogFile } from "@app/ai-proxy/lib/catalog-file";
 import { resolveCopilotModelRecords } from "@app/ai-proxy/lib/copilot-models-cache";
-import { ANTHROPIC_SUB_ALIASES, resolveAnthropicSubModel } from "@app/ai-proxy/lib/providers/anthropic-sub-models";
+import {
+    ANTHROPIC_SUB_ALIASES,
+    type AnthropicSubAlias,
+    resolveAnthropicSubModel,
+} from "@app/ai-proxy/lib/providers/anthropic-sub-models";
 import { OPENAI_SUB_MODELS } from "@app/ai-proxy/lib/providers/openai-sub-models";
 import { providerKey } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
@@ -105,6 +109,13 @@ export function listGrokProxyModels(account: AiProxyAccountConfig, baseUrl: stri
 
 export const ANTHROPIC_MESSAGES_BASE_URL = "https://api.anthropic.com/v1";
 
+const ANTHROPIC_SUB_CONTEXT_WINDOW: Record<AnthropicSubAlias, number> = {
+    sonnet: 1_000_000,
+    opus: 1_000_000,
+    fable: 1_000_000,
+    haiku: 200_000,
+};
+
 export function listAnthropicSubProxyModels(account: AiProxyAccountConfig): ProxyModelMeta[] {
     return ANTHROPIC_SUB_ALIASES.map((alias) => ({
         proxyId: toProxyId(account.name, account.providerSlug, alias),
@@ -116,7 +127,7 @@ export function listAnthropicSubProxyModels(account: AiProxyAccountConfig): Prox
         visibility: "high",
         speed: "medium",
         thinking: alias === "opus" || alias === "fable" ? "reasoning" : "none",
-        contextWindow: 200_000,
+        contextWindow: ANTHROPIC_SUB_CONTEXT_WINDOW[alias],
         supportsTools: true,
         billingPlane: "subscription",
         source: "static",

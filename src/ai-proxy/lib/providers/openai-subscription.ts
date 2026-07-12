@@ -140,9 +140,17 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         // Non-streaming caller: WHAM only streams, so accumulate the SSE into a
         // Responses JSON. The final `response.completed` event carries empty
         // output on WHAM, so text is reassembled from output_text deltas.
-        const responsesJson = await accumulateResponsesJson(upstream.body);
+        const accumulated = await accumulateResponsesJson(upstream.body);
 
-        return new Response(responsesJson, {
+        if (accumulated.failed) {
+            logger.warn(
+                { account: this.account.name, model: concreteModel, error: accumulated.error },
+                "ai-proxy: WHAM stream reported response.failed"
+            );
+            return jsonError(502, accumulated.error);
+        }
+
+        return new Response(accumulated.body, {
             status: 200,
             headers: { "Content-Type": "application/json" },
         });
@@ -264,11 +272,14 @@ export function buildWhamResponsesBody(parsed: Record<string, unknown>, model: s
     return body;
 }
 
-async function accumulateResponsesJson(stream: ReadableStream<Uint8Array>): Promise<string> {
+async function accumulateResponsesJson(
+    stream: ReadableStream<Uint8Array>
+): Promise<{ failed: false; body: string } | { failed: true; error: string }> {
     const raw = await new Response(stream).text();
     let text = "";
     const functionCalls: unknown[] = [];
     let completed: Record<string, unknown> = {};
+    let failure: string | undefined;
 
     for (const line of raw.split("\n")) {
         const trimmed = line.trimStart();
@@ -307,7 +318,18 @@ async function accumulateResponsesJson(stream: ReadableStream<Uint8Array>): Prom
 
         if (event.type === "response.completed" && isObject(event.response)) {
             completed = event.response;
+            continue;
         }
+
+        if (event.type === "response.failed") {
+            const response = isObject(event.response) ? event.response : undefined;
+            const error = response && isObject(response.error) ? response.error : undefined;
+            failure = error && typeof error.message === "string" ? error.message : "WHAM response.failed";
+        }
+    }
+
+    if (failure) {
+        return { failed: true, error: failure };
     }
 
     const output: unknown[] = [];
@@ -323,7 +345,7 @@ async function accumulateResponsesJson(stream: ReadableStream<Uint8Array>): Prom
 
     output.push(...functionCalls);
 
-    return SafeJSON.stringify({ ...completed, object: "response", output });
+    return { failed: false, body: SafeJSON.stringify({ ...completed, object: "response", output }) };
 }
 
 function jsonError(status: number, message: string): Response {

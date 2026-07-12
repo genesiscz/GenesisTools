@@ -168,4 +168,35 @@ describe("OpenAiSubscriptionProvider", () => {
 
         expect(res.status).toBe(400);
     });
+
+    it("returns 502 (not 200 with empty output) when WHAM emits response.failed", async () => {
+        const FAILED_SSE =
+            'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5.5","status":"in_progress"}}\n\n' +
+            'event: response.failed\ndata: {"type":"response.failed","response":{"id":"resp_1","status":"failed","error":{"message":"upstream boom"}}}\n\n';
+
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) => {
+            const encoder = new TextEncoder();
+            const stream = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(encoder.encode(FAILED_SSE));
+                    controller.close();
+                },
+            });
+            return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
+        }) as typeof fetch;
+
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+
+        const bodyText = SafeJSON.stringify({
+            model: "codex/codex/gpt-5.5",
+            messages: [{ role: "user", content: "hi" }],
+        });
+        const req = new Request("http://localhost/v1/responses", { method: "POST", body: bodyText });
+        const res = await provider.responses(req, "gpt-5.5", bodyText);
+
+        expect(res.status).toBe(502);
+        const errorBody = (await res.json()) as { error: { message: string } };
+        expect(errorBody.error.message).toBe("upstream boom");
+    });
 });

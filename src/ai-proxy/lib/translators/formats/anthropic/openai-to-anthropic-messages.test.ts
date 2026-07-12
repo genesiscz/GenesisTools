@@ -165,6 +165,33 @@ describe("openAiChatToAnthropicMessages", () => {
         ).toEqual(["A", "B"]);
     });
 
+    it("falls back to _raw for tool_call arguments that only lenient JSON would accept (trailing comma)", () => {
+        const body = openAiChatToAnthropicMessages(
+            {
+                messages: [
+                    { role: "user", content: "weather?" },
+                    {
+                        role: "assistant",
+                        content: null,
+                        tool_calls: [
+                            {
+                                id: "call_1",
+                                type: "function",
+                                function: { name: "get_weather", arguments: '{"city":"Prague",}' },
+                            },
+                        ],
+                    },
+                ],
+            },
+            { model: MODEL }
+        );
+
+        expect(body.messages[1]).toEqual({
+            role: "assistant",
+            content: [{ type: "tool_use", id: "call_1", name: "get_weather", input: { _raw: '{"city":"Prague",}' } }],
+        });
+    });
+
     it("maps multi-part text + image_url content", () => {
         const body = openAiChatToAnthropicMessages(
             {
