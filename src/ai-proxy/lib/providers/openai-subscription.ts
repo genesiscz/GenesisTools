@@ -81,20 +81,26 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         }
 
         const started = performance.now();
-        const upstream = await fetch(WHAM_RESPONSES_URL, {
-            method: "POST",
-            headers: {
-                Authorization: `Bearer ${token}`,
-                "chatgpt-account-id": accountId ?? "",
-                "Content-Type": "application/json",
-                "OpenAI-Beta": "responses=experimental",
-                originator: "codex_cli_rs",
-                session_id: crypto.randomUUID(),
-                Accept: "text/event-stream",
-            },
-            body: SafeJSON.stringify(whamBody),
-            signal: req.signal,
-        });
+        let upstream: Response;
+        try {
+            upstream = await fetch(WHAM_RESPONSES_URL, {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "chatgpt-account-id": accountId ?? "",
+                    "Content-Type": "application/json",
+                    "OpenAI-Beta": "responses=experimental",
+                    originator: "codex_cli_rs",
+                    session_id: crypto.randomUUID(),
+                    Accept: "text/event-stream",
+                },
+                body: SafeJSON.stringify(whamBody),
+                signal: req.signal,
+            });
+        } catch (err) {
+            logger.warn({ err, account: this.account.name }, "ai-proxy: WHAM upstream fetch failed");
+            return jsonError(502, `Failed to reach ChatGPT upstream: ${err instanceof Error ? err.message : String(err)}`);
+        }
 
         const elapsedMs = Math.round(performance.now() - started);
 
@@ -140,7 +146,13 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         // Non-streaming caller: WHAM only streams, so accumulate the SSE into a
         // Responses JSON. The final `response.completed` event carries empty
         // output on WHAM, so text is reassembled from output_text deltas.
-        const accumulated = await accumulateResponsesJson(upstream.body);
+        let accumulated: Awaited<ReturnType<typeof accumulateResponsesJson>>;
+        try {
+            accumulated = await accumulateResponsesJson(upstream.body);
+        } catch (err) {
+            logger.warn({ err, account: this.account.name }, "ai-proxy: failed to accumulate WHAM response");
+            return jsonError(502, `Failed to read ChatGPT upstream response: ${err instanceof Error ? err.message : String(err)}`);
+        }
 
         if (accumulated.failed) {
             logger.warn(

@@ -94,18 +94,27 @@ export class AnthropicSubscriptionProvider implements ProxyProvider {
         }
 
         const started = performance.now();
-        const upstream = await this.upstreamFetch(ANTHROPIC_MESSAGES_URL, {
-            method: "POST",
-            headers: {
-                "content-type": "application/json",
-                "anthropic-version": ANTHROPIC_VERSION,
-                "anthropic-beta": SUBSCRIPTION_BETAS,
-                Authorization: `Bearer ${token}`,
-                Accept: streaming ? "text/event-stream" : "application/json",
-            },
-            body: SafeJSON.stringify(anthropicBody),
-            signal: req.signal,
-        });
+        let upstream: Response;
+        try {
+            upstream = await this.upstreamFetch(ANTHROPIC_MESSAGES_URL, {
+                method: "POST",
+                headers: {
+                    "content-type": "application/json",
+                    "anthropic-version": ANTHROPIC_VERSION,
+                    "anthropic-beta": SUBSCRIPTION_BETAS,
+                    Authorization: `Bearer ${token}`,
+                    Accept: streaming ? "text/event-stream" : "application/json",
+                },
+                body: SafeJSON.stringify(anthropicBody),
+                signal: req.signal,
+            });
+        } catch (err) {
+            logger.warn(
+                { err, account: this.account.name, model: concreteModel },
+                "ai-proxy: anthropic upstream fetch failed"
+            );
+            return jsonError(502, `Failed to reach Anthropic upstream: ${err instanceof Error ? err.message : String(err)}`);
+        }
 
         const elapsedMs = Math.round(performance.now() - started);
 
