@@ -72,8 +72,6 @@ export function registerBoardFromSetCommand(program: Command): void {
                 actor,
             });
 
-            await printLn(
-                `board → ${pageUrl} (imported ${result.cards.length} cards, skipped ${result.skipped})`
-            );
+            await printLn(`board → ${pageUrl} (imported ${result.cards.length} cards, skipped ${result.skipped})`);
         });
 }

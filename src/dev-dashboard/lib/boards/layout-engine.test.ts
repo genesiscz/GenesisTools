@@ -210,7 +210,14 @@ describe("runArrange — section-aware broad scope (composite units)", () => {
 
     it("scope:all grid moves each section as one unit, keeping members inside their frame", async () => {
         await createBoard(db, { slug: "b1" });
-        const sec = await createCard(db, "b1", { kind: "section", x: 0, y: 0, w: 400, h: 400, payload: { title: "S" } });
+        const sec = await createCard(db, "b1", {
+            kind: "section",
+            x: 0,
+            y: 0,
+            w: 400,
+            h: 400,
+            payload: { title: "S" },
+        });
         // Two members whose centers sit inside the frame.
         const m1 = await createCard(db, "b1", { kind: "note", x: 40, y: 80, w: 100, h: 100 });
         const m2 = await createCard(db, "b1", { kind: "note", x: 200, y: 250, w: 100, h: 100 });

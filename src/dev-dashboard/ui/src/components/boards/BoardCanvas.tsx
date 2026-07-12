@@ -152,7 +152,8 @@ export function BoardCanvas({
                 const matches = (field: "x" | "y" | "w" | "h", source: Partial<Geom>) =>
                     source[field] === undefined || card[field] === source[field];
                 const docHasOverride = matches("x", ov) && matches("y", ov) && matches("w", ov) && matches("h", ov);
-                const docStillAtBase = matches("x", base) && matches("y", base) && matches("w", base) && matches("h", base);
+                const docStillAtBase =
+                    matches("x", base) && matches("y", base) && matches("w", base) && matches("h", base);
 
                 if (docHasOverride || !docStillAtBase) {
                     overrideBase.current.delete(cardId);
@@ -223,8 +224,11 @@ export function BoardCanvas({
             e.preventDefault();
 
             for (const [i, file] of images.entries()) {
+                // MIME-derived extension + per-item index: same-millisecond multi-image paste
+                // must not collide, and a JPEG paste must not masquerade as .png.
+                const ext = file.type.startsWith("image/") ? file.type.split("/")[1] : "png";
                 void boardsApi
-                    .uploadImage(slug, file, `pasted-${Date.now()}.png`)
+                    .uploadImage(slug, file, `pasted-${Date.now()}-${i}.${ext}`)
                     .then((card) =>
                         boardsApi.patchCard(card.id, {
                             x: Math.round(center.x - card.w / 2 + i * 24),
@@ -1060,9 +1064,7 @@ export function BoardCanvas({
             .then((res) => {
                 // Server emits a layout SSE event; the doc invalidation applies the moves.
                 forceRender((n) => n + 1);
-                const after = Array.isArray(res.cards)
-                    ? res.cards.map((c) => ({ id: c.id, x: c.x, y: c.y }))
-                    : [];
+                const after = Array.isArray(res.cards) ? res.cards.map((c) => ({ id: c.id, x: c.x, y: c.y })) : [];
 
                 if (after.length === 0) {
                     return;
