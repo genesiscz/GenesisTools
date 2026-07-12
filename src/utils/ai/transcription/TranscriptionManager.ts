@@ -2,7 +2,7 @@ import { statSync } from "node:fs";
 import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
 import type { TranscriptionModel } from "ai";
-import { experimental_transcribe as transcribe } from "ai";
+import { transcribe } from "ai";
 import pc from "picocolors";
 import type { TranscriptionCapableProvider, TranscriptionSegment } from "../types";
 import { cleanRepetitions } from "./repetition-cleanup";

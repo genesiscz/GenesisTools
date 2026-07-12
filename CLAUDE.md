@@ -114,10 +114,12 @@ Hard-won; do not relearn these by trial:
   hallucination-loops on Czech/non-English. Provider-option keys are
   **camelCase** (`language`, `temperature`, `timestampGranularities`,
   `smartFormat`, `detectLanguage`).
-- **`ai@5`'s `transcribe()` only accepts spec-v2 transcription models.**
-  `@ai-sdk/deepgram@2.x` and latest `@ai-sdk/groq` are spec-v3 →
-  `AI_UnsupportedModelVersionError`. Pin **`@ai-sdk/deepgram@^1.0.28`**
-  (latest v2). Don't "fix" by upgrading `ai`.
+- **`transcribe()` model spec must match the installed `ai` major.** On
+  `ai@7` (current), providers are spec-v3/v4 and `@ai-sdk/deepgram@3.x`
+  works unpinned; `transcribe` is a stable export (the `experimental_`
+  alias remains but is unnecessary). Mismatched majors throw
+  `AI_UnsupportedModelVersionError` — bump the provider with `ai`, never
+  mix lines. (Historical: `ai@5` required `@ai-sdk/deepgram@^1.0.28`.)
 - **Deepgram via AI SDK exposes only raw lowercase per-word segments**;
   the smart-formatted transcript is solely in `result.text`. SRT/VTT need
   word→sentence realignment (see `mapResultSegments` in

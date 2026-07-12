@@ -46,7 +46,7 @@ import {
     showVersion,
     validateOptions,
 } from "@ask/utils/cli";
-import { generateSessionId } from "@ask/utils/helpers";
+import { generateSessionId, toLanguageModelUsage, usageCacheReadTokens } from "@ask/utils/helpers";
 
 // Initialize conversation manager
 const convManager = conversationManager;
@@ -438,12 +438,7 @@ class ASKTool {
                         await costTracker.trackUsage(
                             config.provider,
                             config.model,
-                            {
-                                inputTokens: response.usage.inputTokens,
-                                outputTokens: response.usage.outputTokens,
-                                totalTokens: response.usage.totalTokens,
-                                cachedInputTokens: response.usage.cachedInputTokens,
-                            },
+                            toLanguageModelUsage(response.usage),
                             sessionId,
                             0
                         );
@@ -632,7 +627,7 @@ class ASKTool {
                             model: modelChoice.model.id,
                             inputTokens: response.usage?.inputTokens || 0,
                             outputTokens: response.usage?.outputTokens || 0,
-                            cachedInputTokens: response.usage?.cachedInputTokens || 0,
+                            cachedInputTokens: usageCacheReadTokens(response.usage),
                             totalTokens: response.usage?.totalTokens || 0,
                             cost: response.cost,
                             currency: "USD",
@@ -752,10 +747,11 @@ class ASKTool {
             }
         > = {};
 
-        // Add file tools (ai SDK Tool has inputSchema; AIChatTool expects parameters)
+        // Add file tools (ai SDK Tool has inputSchema; AIChatTool expects parameters).
+        // v7 allows a function-form description; our tools only use strings.
         for (const [name, t] of Object.entries(base.fileTools)) {
             result[name] = {
-                description: t.description ?? "",
+                description: typeof t.description === "string" ? t.description : "",
                 parameters: t.inputSchema,
                 execute: t.execute as (params: Record<string, unknown>) => Promise<unknown>,
             };

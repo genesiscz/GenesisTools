@@ -3,6 +3,21 @@ preload = ["./src/utils/bun/preload-solid-scoped.ts", "./src/utils/search/stores
 [install]
 # Supply-chain delay: refuse package versions younger than 7 days (604800s)
 minimumReleaseAge = 604800
+# Vercel AI SDK line is exempt: we track its latest majors closely (v7 upgrade,
+# eve compatibility) and it releases multiple times per day. Exact-match only.
+minimumReleaseAgeExcludes = [
+    "ai",
+    "@ai-sdk/anthropic",
+    "@ai-sdk/deepgram",
+    "@ai-sdk/google",
+    "@ai-sdk/groq",
+    "@ai-sdk/openai",
+    "@ai-sdk/openai-compatible",
+    "@ai-sdk/provider",
+    "@ai-sdk/provider-utils",
+    "@ai-sdk/gateway",
+    "@openrouter/ai-sdk-provider",
+]
 
 [test]
 preload = [

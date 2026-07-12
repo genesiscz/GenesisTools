@@ -1,4 +1,3 @@
-import type { ProviderV2 } from "@ai-sdk/provider";
 import { logger } from "@app/logger";
 import {
     createSubscriptionFetch,
@@ -11,6 +10,7 @@ import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
 import { getProviderConfigs, KNOWN_MODELS } from "@ask/providers/providers";
 import type {
+    AiSdkProvider,
     DetectedProvider,
     ModelInfo,
     OpenAIModelsResponse,
@@ -272,7 +272,7 @@ export class ProviderManager {
         }
     }
 
-    private async createProvider(config: ProviderConfig): Promise<ProviderV2> {
+    private async createProvider(config: ProviderConfig): Promise<AiSdkProvider> {
         try {
             switch (config.type) {
                 case "openai": {
@@ -312,7 +312,7 @@ export class ProviderManager {
         }
     }
 
-    private async getAvailableModels(config: ProviderConfig, _provider: ProviderV2): Promise<ModelInfo[]> {
+    private async getAvailableModels(config: ProviderConfig, _provider: AiSdkProvider): Promise<ModelInfo[]> {
         try {
             // For OpenRouter, we can query the API for available models
             if (config.name === "openrouter") {
