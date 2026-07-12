@@ -26,10 +26,10 @@ import { publishBoardEvent, subscribeBoard } from "@app/dev-dashboard/lib/boards
 import { readImageDims } from "@app/dev-dashboard/lib/boards/image-size";
 import { notifyLayoutChanged } from "@app/dev-dashboard/lib/boards/layout-engine";
 import { sectionsToJSON } from "@app/dev-dashboard/lib/boards/sections";
-import { publicBaseUrl } from "@app/dev-dashboard/lib/public-base";
 import { getSet } from "@app/dev-dashboard/lib/boards/sets-store";
 import type { MessageAttachmentDto } from "@app/dev-dashboard/lib/boards/types";
 import { dispatchBoard } from "@app/dev-dashboard/lib/boards/work-store";
+import { publicBaseUrl } from "@app/dev-dashboard/lib/public-base";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
 import { boardsError } from "./boards-errors";
 import { actorFrom } from "./boards-sets";
