@@ -1,6 +1,7 @@
 import { DndContext, DragOverlay } from "@dnd-kit/core";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { toast } from "sonner";
 import { DashboardLayout } from "@/components/dashboard";
 import { RouteError } from "@/components/RouteError";
 import { RouteSkeleton } from "@/components/RouteSkeleton";
@@ -9,6 +10,7 @@ import { TaskForm } from "@/lib/assistant/components";
 import type { TaskInput } from "@/lib/assistant/types";
 import { useTimeFormat } from "@/lib/hooks/useTimeFormat";
 import { ASSISTANT_SYNC_CHANNEL, useBroadcastInvalidation } from "@/lib/sync/useBroadcastInvalidation";
+import { EditTitleDialog } from "./-planner/EditTitleDialog";
 import type { PlannerView } from "./-planner/PlannerHeader";
 import { PlannerHeader } from "./-planner/PlannerHeader";
 import { PlannerInbox } from "./-planner/PlannerInbox";
@@ -35,6 +37,7 @@ function PlannerRoot() {
 
     const [view, setView] = useState<PlannerView>("day");
     const [createOpen, setCreateOpen] = useState(false);
+    const [editingTask, setEditingTask] = useState<AssistantTask | null>(null);
     const [pendingSchedule, setPendingSchedule] = useState<{
         scheduledStart: string;
         scheduledEnd: string;
@@ -46,6 +49,11 @@ function PlannerRoot() {
         unscheduledTasks,
         allActiveTasks,
         scheduleTask,
+        unscheduleTask,
+        updateTaskTitle,
+        setTaskCompleted,
+        deferTaskToTomorrow,
+        deleteTask,
         createTask,
         isLoading,
         error,
@@ -71,8 +79,40 @@ function PlannerRoot() {
         setPendingSchedule(null);
     }
 
+    async function handleEditTitleSave(title: string) {
+        if (!editingTask) {
+            return;
+        }
+
+        try {
+            await updateTaskTitle(editingTask.id, title);
+            toast.success("Title updated");
+        } catch {
+            toast.error("Couldn't update the title");
+        }
+    }
+
+    function handleDeleteTask(task: AssistantTask) {
+        deleteTask(task.id)
+            .then(() => toast.success("Task deleted"))
+            .catch(() => toast.error("Couldn't delete the task"));
+    }
+
+    function handleDeferTask(task: AssistantTask) {
+        deferTaskToTomorrow(task)
+            .then(() => toast.success("Deferred to tomorrow"))
+            .catch(() => toast.error("Couldn't defer the task"));
+    }
+
+    function handleToggleComplete(task: AssistantTask, completed: boolean) {
+        setTaskCompleted(task.id, completed)
+            .then(() => toast.success(completed ? "Marked complete" : "Marked incomplete"))
+            .catch(() => toast.error("Couldn't update the task"));
+    }
+
     const { activeDragId, sensors, handleDragStart, handleDragEnd } = usePlannerDnd({
         onSchedule: scheduleTask,
+        onUnschedule: unscheduleTask,
         getTaskSchedule: (id) => {
             const t = scheduledTasks.find((s) => s.id === id) ?? unscheduledTasks.find((u) => u.id === id);
             return t ? { scheduledStart: t.scheduledStart ?? null, scheduledEnd: t.scheduledEnd ?? null } : undefined;
@@ -112,6 +152,10 @@ function PlannerRoot() {
                             activeDragId={activeDragId}
                             focusSessions={focusSessions}
                             onCreateAt={handleTimelineCreate}
+                            onEditTitle={setEditingTask}
+                            onDelete={handleDeleteTask}
+                            onDefer={handleDeferTask}
+                            onToggleComplete={handleToggleComplete}
                         />
                         <PlannerInbox
                             tasks={unscheduledTasks}
@@ -137,6 +181,17 @@ function PlannerRoot() {
             )}
 
             <TaskForm open={createOpen} onOpenChange={handleCreateOpenChange} onSubmit={handleCreateSubmit} />
+
+            <EditTitleDialog
+                open={editingTask !== null}
+                initialTitle={editingTask?.title ?? ""}
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setEditingTask(null);
+                    }
+                }}
+                onSave={handleEditTitleSave}
+            />
         </div>
     );
 }

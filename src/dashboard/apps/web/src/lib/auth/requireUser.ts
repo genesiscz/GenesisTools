@@ -20,6 +20,10 @@ import { getAuth, getAuthkit } from "@workos/authkit-tanstack-react-start";
 const E2E_BYPASS_USER_ID = "dev-user";
 
 function e2eAuthBypass(): boolean {
+    if (import.meta.env.PROD || (typeof process !== "undefined" && process.env.NODE_ENV === "production")) {
+        return false;
+    }
+
     return (
         import.meta.env.VITE_E2E_AUTH_BYPASS === "1" ||
         (typeof process !== "undefined" && process.env.E2E_AUTH_BYPASS === "1")

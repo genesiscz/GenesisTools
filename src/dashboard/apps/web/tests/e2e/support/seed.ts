@@ -1,3 +1,4 @@
+import { SafeJSON } from "@app/utils/json";
 import { E2E_USER_ID, genId, nowIso, withTestDb } from "./db";
 
 /**
@@ -26,7 +27,7 @@ export function seedNote(opts: { title: string; body?: string; tags?: string[]; 
         user_id: E2E_USER_ID,
         title: opts.title,
         body: opts.body ?? "",
-        tags: JSON.stringify(opts.tags ?? []),
+        tags: SafeJSON.stringify(opts.tags ?? []),
         pinned: opts.pinned ? 1 : 0,
         created_at: now,
         updated_at: now,
