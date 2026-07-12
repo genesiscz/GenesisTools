@@ -41,3 +41,13 @@ tools youtube server down     # stop
 ```
 
 The full endpoint list is served as a machine-readable OpenAPI 3.1 document at `GET /api/v1/openapi.json`.
+
+## Comments
+
+The `pipeline` command can fetch a video's comments (via `yt-dlp`, capped at 100 by default) and persist them to the local SQLite DB as an opt-in stage:
+
+```bash
+tools youtube pipeline dQw4w9WgXcQ --stages metadata,comments
+```
+
+Stored comments are served from `GET /api/v1/videos/:id/comments` on the local server and rendered in the video detail UI's Comments tab, which supports search and caps rendering at 50 threads (with a "Show all" expander for larger result sets).
