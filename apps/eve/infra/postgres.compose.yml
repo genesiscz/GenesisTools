@@ -1,0 +1,20 @@
+services:
+  eve-postgres:
+    image: postgres:17
+    container_name: genesis-eve-postgres
+    environment:
+      POSTGRES_USER: eve
+      POSTGRES_PASSWORD: eve
+      POSTGRES_DB: eve
+    ports:
+      - "5433:5432"
+    volumes:
+      - genesis_eve_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eve -d eve"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  genesis_eve_pgdata:
