@@ -39,7 +39,7 @@ describe("getSharedAccountsUsage", () => {
         expect(r[0].usage?.five_hour.utilization).toBe(11);
     });
 
-    test("fetches + writes cache when stale (recording is daemon-owned)", async () => {
+    test("fetches + writes cache when stale", async () => {
         let fetches = 0;
         const store: CacheStore = new Map();
         store.set("usage-shared", { fetchedAt: Date.now() - 60_000, accounts: [acct("a", 11)] });
@@ -95,6 +95,47 @@ describe("getSharedAccountsUsage", () => {
         store.set("usage-shared", { fetchedAt: Date.now() - 60_000, accounts: [acct("a", 11)] });
         await get({});
         expect(notifyCalls).toBe(1);
+    });
+
+    test("history write-through fires only on a live fetch, with the fetched payload", async () => {
+        const recorded: Array<Array<{ accountName: string; utilization: number | undefined }>> = [];
+        const store: CacheStore = new Map();
+        store.set("usage-shared", { fetchedAt: Date.now() - 5_000, accounts: [acct("a", 11)] });
+        const get = __makeSharedUsage({
+            fetchAll: async () => [acct("a", 42)],
+            getCache: (k) => store.get(k) ?? null,
+            putCache: (k, v) => void store.set(k, v),
+            withLock: async (_k, fn) => fn(),
+            recordHistory: (accounts) => {
+                recorded.push(
+                    accounts.map((x) => ({ accountName: x.accountName, utilization: x.usage?.five_hour.utilization }))
+                );
+            },
+        });
+
+        await get({});
+        expect(recorded).toEqual([]);
+
+        store.set("usage-shared", { fetchedAt: Date.now() - 60_000, accounts: [acct("a", 11)] });
+        await get({});
+        expect(recorded).toEqual([[{ accountName: "a", utilization: 42 }]]);
+    });
+
+    test("history write-through failure does not fail the fetch", async () => {
+        const store: CacheStore = new Map();
+        store.set("usage-shared", { fetchedAt: Date.now() - 60_000, accounts: [acct("a", 11)] });
+        const get = __makeSharedUsage({
+            fetchAll: async () => [acct("a", 42)],
+            getCache: (k) => store.get(k) ?? null,
+            putCache: (k, v) => void store.set(k, v),
+            withLock: async (_k, fn) => fn(),
+            recordHistory: () => {
+                throw new Error("db locked");
+            },
+        });
+
+        const r = await get({});
+        expect(r[0].usage?.five_hour.utilization).toBe(42);
     });
 
     test("accountFilter narrows the returned set", async () => {

@@ -13,7 +13,7 @@ export const API_MIN_INTERVAL_MS = 30_000;
 const CACHE_KEY = "usage-shared";
 const storage = getClaudeUsageStorage();
 
-interface Cached {
+export interface Cached {
     fetchedAt: number;
     accounts: AccountUsage[];
 }
@@ -24,6 +24,7 @@ interface Deps {
     putCache: (key: string, value: Cached) => void | Promise<void>;
     withLock: <T>(key: string, fn: () => Promise<T>) => Promise<T>;
     notifyExtraUsage?: (accounts: AccountUsage[]) => void | Promise<void>;
+    recordHistory?: (accounts: AccountUsage[]) => void | Promise<void>;
 }
 
 export interface SharedUsageOpts {
@@ -43,18 +44,21 @@ function filterAccounts(accounts: AccountUsage[], filter?: string | string[]): A
 }
 
 /**
- * Write fetched usage to the history DB. Owned by the daemon — see poll-daemon.ts.
- * Other consumers (TUI dashboard, dev-dashboard) read from this DB but do not
- * write to it; the daemon is the single source of truth for history rows.
- * Prior to 2026-06-30, this ran on every fresh fetch from any consumer, which
- * combined with the TUI's legacy V1 writer to insert twin rows per poll.
+ * Write fetched usage to the history DB. Runs as a write-through inside the
+ * shared accessor on every live fetch — whichever consumer (daemon, TUI,
+ * dev-dashboard, watch) wins the fetch, the rows land. Serialized by the
+ * accessor's file lock; recordIfChangedV2 dedups unchanged values, and the
+ * TUI's legacy V1 writer (the old twin-row source) is gone. Prior to
+ * 2026-07-12 only the daemon recorded, so successes fetched by other
+ * consumers refreshed the Overview but left multi-minute holes in History
+ * whenever the daemon's own polls were failing (e.g. 429/invalid_grant).
  */
 export function recordAll(accounts: AccountUsage[]): void {
     // No dbPath -> UsageHistoryDb resolves the process-wide ClaudeDatabase
-    // singleton (see ClaudeDatabase.getInstance), the same connection
-    // poll-daemon.ts already holds open in its own `db` and closes once in
-    // its top-level `finally` after recordAll() and pruneOlderThan() both
-    // run. Closing it here would sever that shared connection mid-flight.
+    // singleton (see ClaudeDatabase.getInstance) — in the daemon that is the
+    // same connection poll-daemon.ts holds open in its own `db` and closes
+    // once in its top-level `finally`. Closing it here would sever that
+    // shared connection mid-flight.
     const db = new UsageHistoryDb();
 
     for (const account of accounts) {
@@ -158,6 +162,15 @@ export function __makeSharedUsage(deps: Deps) {
                 const fresh = backfillFromLastGood(await deps.fetchAll(), c2 ?? cached);
                 await deps.putCache(CACHE_KEY, { fetchedAt: Date.now(), accounts: fresh });
 
+                if (deps.recordHistory) {
+                    try {
+                        // recordAll skips stale-backfilled accounts itself.
+                        await deps.recordHistory(fresh);
+                    } catch (err) {
+                        logger.warn({ err }, "history write-through failed; returning fetched usage anyway");
+                    }
+                }
+
                 if (deps.notifyExtraUsage) {
                     try {
                         // Stale entries replay old spend values — notifying on
@@ -203,8 +216,14 @@ const realGetShared = __makeSharedUsage({
             timeout: 10_000,
         }),
     notifyExtraUsage: processExtraUsageNotifications,
+    recordHistory: recordAll,
 });
 
 export function getSharedAccountsUsage(opts: SharedUsageOpts = {}): Promise<AccountUsage[]> {
     return realGetShared(opts);
+}
+
+/** Read the last cached usage payload WITHOUT ever triggering a fetch. */
+export async function peekSharedUsage(): Promise<Cached | null> {
+    return (await storage.getCacheFile<Cached>(CACHE_KEY, CACHE_TTL)) ?? null;
 }
