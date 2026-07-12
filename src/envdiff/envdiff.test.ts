@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 import { tmpdir } from "@app/utils/paths";
-import { diffEnv } from "./lib/diff";
+import { diffEnv, isFailing } from "./lib/diff";
 import { runEnvdiff } from "./lib/driver";
 import { maskValue } from "./lib/mask";
 import { parseEnv } from "./lib/parse";
@@ -94,6 +94,36 @@ describe("diffEnv", () => {
 
         expect(diff.missing.map((m) => m.key)).toEqual(["M_MISS", "B_MISS"]);
         expect(diff.extra.map((e) => e.key)).toEqual(["Z_EXTRA", "A_EXTRA"]);
+    });
+});
+
+describe("isFailing", () => {
+    it("fails on missing keys regardless of checkValues", () => {
+        const diff = diffEnv(parseEnv("A=1\n"), parseEnv("A=1\nB=2\n"));
+        expect(isFailing(diff, { checkValues: false })).toBe(true);
+        expect(isFailing(diff, { checkValues: true })).toBe(true);
+    });
+
+    it("fails on extra keys regardless of checkValues", () => {
+        const diff = diffEnv(parseEnv("A=1\nEXTRA=x\n"), parseEnv("A=1\n"));
+        expect(isFailing(diff, { checkValues: false })).toBe(true);
+    });
+
+    it("does not fail on changed values by default (local secrets differ from placeholders)", () => {
+        const diff = diffEnv(parseEnv("A=local-secret\n"), parseEnv("A=placeholder\n"));
+        expect(diff.changed).toHaveLength(1);
+        expect(isFailing(diff, { checkValues: false })).toBe(false);
+    });
+
+    it("fails on changed values when checkValues is set", () => {
+        const diff = diffEnv(parseEnv("A=local-secret\n"), parseEnv("A=placeholder\n"));
+        expect(isFailing(diff, { checkValues: true })).toBe(true);
+    });
+
+    it("passes when fully in sync", () => {
+        const diff = diffEnv(parseEnv("A=1\n"), parseEnv("A=1\n"));
+        expect(isFailing(diff, { checkValues: false })).toBe(false);
+        expect(isFailing(diff, { checkValues: true })).toBe(false);
     });
 });
 
@@ -283,6 +313,7 @@ describe("runEnvdiff (integration, tmp dir)", () => {
             showValues: false,
             sync: false,
             json: false,
+            checkValues: false,
             color: false,
             cwd: dir,
             now: fixedNow,
@@ -290,6 +321,44 @@ describe("runEnvdiff (integration, tmp dir)", () => {
 
         expect(res.exitCode).toBe(1);
         expect(res.stdout).toContain("B");
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("exits 0 when only values differ (changed keys are not drift by default)", () => {
+        const dir = setup("SHARED=local-secret\n", "SHARED=placeholder\n");
+        const res = runEnvdiff({
+            positionals: [dir],
+            actual: undefined,
+            example: undefined,
+            showValues: false,
+            sync: false,
+            json: false,
+            checkValues: false,
+            color: false,
+            cwd: dir,
+            now: fixedNow,
+        });
+
+        expect(res.exitCode).toBe(0);
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("exits 1 on changed values when --check-values is set", () => {
+        const dir = setup("SHARED=local-secret\n", "SHARED=placeholder\n");
+        const res = runEnvdiff({
+            positionals: [dir],
+            actual: undefined,
+            example: undefined,
+            showValues: false,
+            sync: false,
+            json: false,
+            checkValues: true,
+            color: false,
+            cwd: dir,
+            now: fixedNow,
+        });
+
+        expect(res.exitCode).toBe(1);
         rmSync(dir, { recursive: true, force: true });
     });
 
@@ -302,6 +371,7 @@ describe("runEnvdiff (integration, tmp dir)", () => {
             showValues: false,
             sync: false,
             json: false,
+            checkValues: false,
             color: false,
             cwd: dir,
             now: fixedNow,
@@ -320,6 +390,7 @@ describe("runEnvdiff (integration, tmp dir)", () => {
             showValues: false,
             sync: true,
             json: false,
+            checkValues: false,
             color: false,
             cwd: dir,
             now: fixedNow,
@@ -342,6 +413,7 @@ describe("runEnvdiff (integration, tmp dir)", () => {
             showValues: false,
             sync: false,
             json: true,
+            checkValues: false,
             color: false,
             cwd: dir,
             now: fixedNow,
@@ -362,6 +434,7 @@ describe("runEnvdiff (integration, tmp dir)", () => {
             showValues: false,
             sync: false,
             json: false,
+            checkValues: false,
             color: false,
             cwd: dir,
             now: fixedNow,
