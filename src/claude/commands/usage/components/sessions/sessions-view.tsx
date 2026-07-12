@@ -203,8 +203,10 @@ export function SessionsView({ notifications }: SessionsViewProps) {
             const session = flatRows[selectedIndex];
 
             if (session) {
-                // Control chars / newlines in titles break Ink's row layout.
-                const cleanTitle = session.title?.replace(/\p{Cc}+/gu, " ").trim() ?? null;
+                // Control chars / newlines in titles break Ink's row layout. `|| null` (not `??`)
+                // so an all-control-char title collapses to null and the render site falls back to
+                // the session id instead of showing an empty "Session: ".
+                const cleanTitle = session.title?.replace(/\p{Cc}+/gu, " ").trim() || null;
                 setActionMenu({
                     open: true,
                     sessionId: session.sessionId,

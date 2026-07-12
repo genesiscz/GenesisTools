@@ -8,7 +8,7 @@ allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Agent
 
 Incrementally mine local Claude Code transcripts of `claude-fable-5` sessions and distill them into the **Fable Pack**, so weaker models (Sonnet/Opus/Haiku) inherit Fable's *procedure*: how it plans, sequences commands, verifies before claiming done, reports outcomes, and recovers from errors.
 
-Research & rationale behind this design: `/Users/Martin/Tresors/Projects/GenesisBrain/Claude/Fable/2026-07-08-PreserveFable5Style.md`
+Research & rationale behind this design (author's local vault note, not committed to this repo): `/Users/Martin/Tresors/Projects/GenesisBrain/Claude/Fable/2026-07-08-PreserveFable5Style.md`
 
 **Arguments** (`$ARGUMENTS`): first numeric token = max sessions to mine this run (call it **MAX**; default **3**). `--archive-only` = run Stages 0–1 only. `--repack` = skip mining, regenerate the skill from the existing spec (Stages 0 + 5 + 6 only).
 

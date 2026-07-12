@@ -111,7 +111,7 @@ Write one question per testable claim. Rules for good questions:
 
 **FALLBACK (older versions / canary failure / non-Claude harnesses):** hide the **entire detected set** from Phase 0 — not just the user-global file — with a trap-guaranteed restore. The bundled wrapper owns that dangerous part:
 
-```
+```bash
 <skill-dir>/scripts/with-hidden-instructions.sh <file1> <file2> ... -- <command...>
 ```
 

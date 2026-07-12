@@ -2,7 +2,7 @@ import type { AnnotationDto, MessageDto, QuestionDto, RevisionDto } from "@app/d
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
 import type { ClipboardEvent as ReactClipboardEvent } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { STATUS_COLOR } from "./AnnotationLayer";
 import { boardsApi } from "./boards-api";
 import { CompareDeck } from "./CompareDeck";
@@ -272,8 +272,11 @@ export function WirePanel({
         }
     };
 
-    const feed = annotation ? buildFeed(annotation) : [];
-    const sessionFeed = annotation ? [] : buildSessionFeed(boardMessages, annotations, questions);
+    const feed = useMemo(() => (annotation ? buildFeed(annotation) : []), [annotation]);
+    const sessionFeed = useMemo(
+        () => (annotation ? [] : buildSessionFeed(boardMessages, annotations, questions)),
+        [annotation, boardMessages, annotations, questions]
+    );
 
     return (
         <div
