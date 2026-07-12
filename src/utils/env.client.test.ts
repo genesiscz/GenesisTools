@@ -31,6 +31,9 @@ describe("env.client", () => {
         expect(env.dashboard).toBe(clientEnv.dashboard);
         expect(env.db).toBe(clientEnv.db);
         expect(env.node).toBe(clientEnv.node);
-        expect(env.youtube).toBe(clientEnv.youtube);
+        // env.youtube extends the client domain with server-only getters, so
+        // assert the client getters are re-exposed rather than object identity.
+        expect(env.youtube.getGitSha).toBe(clientEnv.youtube.getGitSha);
+        expect(env.youtube.getUiPort).toBe(clientEnv.youtube.getUiPort);
     });
 });
