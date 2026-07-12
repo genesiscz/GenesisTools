@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
     OWNER_CLIENT_NAME,
+    clientProviderDenial,
     resolveClient,
     SUBSCRIPTION_PROVIDER_TYPES,
     validateClients,
@@ -63,5 +64,35 @@ describe("resolveClient", () => {
         expect(resolveClient(reqWithBearer("nope-nope-nope-nope"), cfg([disabled]))).toBeNull();
         expect(resolveClient(reqWithBearer(null), cfg())).toBeNull();
         expect(resolveClient(reqWithBearer("mallory-key-0123456"), cfg([disabled]))).toBeNull();
+    });
+});
+
+describe("clientProviderDenial", () => {
+    const owner = { name: "owner", isOwner: true } as const;
+    const alice = { name: "alice", isOwner: false, config: { name: "alice", key: "k".repeat(24) } };
+    const bob = {
+        name: "bob",
+        isOwner: false,
+        config: { name: "bob", key: "b".repeat(24), allowedProviders: ["xai-api-key" as const] },
+    };
+
+    it("owner may route anywhere", () => {
+        expect(clientProviderDenial(owner, "anthropic-subscription")).toBeNull();
+        expect(clientProviderDenial(owner, "xai-api-key")).toBeNull();
+    });
+
+    it("clients are always denied subscription providers", () => {
+        expect(clientProviderDenial(alice, "anthropic-subscription")).toContain("subscription");
+        expect(clientProviderDenial(bob, "openai-subscription")).toContain("subscription");
+    });
+
+    it("clients without allowedProviders get any non-subscription provider", () => {
+        expect(clientProviderDenial(alice, "xai-api-key")).toBeNull();
+        expect(clientProviderDenial(alice, "openai")).toBeNull();
+    });
+
+    it("allowedProviders restricts to the listed set", () => {
+        expect(clientProviderDenial(bob, "xai-api-key")).toBeNull();
+        expect(clientProviderDenial(bob, "openai")).toContain("not allowed");
     });
 });

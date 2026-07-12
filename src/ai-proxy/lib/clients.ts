@@ -109,3 +109,27 @@ export function resolveClient(req: Request, config: AiProxyConfig): ResolvedClie
 
     return resolved;
 }
+
+/**
+ * Returns null when the client may route to the provider type, else a
+ * human-readable denial. Subscription providers are denied to every non-owner
+ * client unconditionally — this is the no-resale invariant; allowedProviders
+ * cannot override it (and validation already rejects the attempt).
+ */
+export function clientProviderDenial(client: ResolvedClient, providerType: AiProxyProviderType): string | null {
+    if (client.isOwner) {
+        return null;
+    }
+
+    if (SUBSCRIPTION_PROVIDER_TYPES.has(providerType)) {
+        return `provider "${providerType}" bills a personal subscription and is owner-only`;
+    }
+
+    const allowed = client.config?.allowedProviders;
+
+    if (allowed && !allowed.includes(providerType)) {
+        return `provider "${providerType}" is not allowed for client "${client.name}"`;
+    }
+
+    return null;
+}
