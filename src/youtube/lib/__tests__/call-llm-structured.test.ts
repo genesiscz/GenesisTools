@@ -24,10 +24,6 @@ mock.module("@ask/types/provider", () => ({
     getLanguageModel: () => "MOCK_MODEL",
 }));
 
-mock.module("@app/utils/claude/subscription-billing", () => ({
-    applySystemPromptPrefix: (_prefix: string | undefined, system: string) => system,
-}));
-
 mock.module("@app/utils/ai/prompt-caching", () => ({
     buildProviderOptions: () => ({}),
 }));

@@ -32,7 +32,8 @@ function mockProcess(stdout: string, stderr = "", exitCode = 0): ReturnType<type
         stderr: textStream(stderr),
         exited: Promise.resolve(exitCode),
         exitCode,
-    } as ReturnType<typeof Bun.spawn>;
+        kill: () => {},
+    } as unknown as ReturnType<typeof Bun.spawn>;
 }
 
 afterEach(() => {
