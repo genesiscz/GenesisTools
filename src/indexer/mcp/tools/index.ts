@@ -2,10 +2,11 @@ import { basename, resolve } from "node:path";
 import type { IndexConfig } from "@app/indexer/lib/types";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { formatError, getManager } from "../shared";
+import { formatError, getManager, registerTool } from "../shared";
 
 export function registerIndexTools(server: McpServer): void {
-    server.tool(
+    registerTool(
+        server,
         "indexer_index",
         "Create a new index for a codebase directory. Scans files, chunks content using AST-aware parsing, and optionally generates embeddings for semantic search. Returns when indexing completes.",
         {
@@ -23,7 +24,8 @@ export function registerIndexTools(server: McpServer): void {
         })
     );
 
-    server.tool(
+    registerTool(
+        server,
         "indexer_sync",
         "Incrementally sync an existing index. Re-scans for changed/added/deleted files and updates the index. Much faster than a full re-index.",
         {

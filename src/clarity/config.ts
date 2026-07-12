@@ -16,7 +16,7 @@ const MappingSchema = z.object({
 });
 
 const ClarityConfigSchema = z.object({
-    baseUrl: z.string().url(),
+    baseUrl: z.url(),
     authToken: z.string(),
     sessionId: z.string(),
     cookies: z.string().optional(),

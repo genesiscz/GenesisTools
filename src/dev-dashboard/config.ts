@@ -60,10 +60,10 @@ const DevDashboardConfigSchema = z.object({
     obsidianVault: z.string().optional(),
     publishedNotes: z.array(PublishedNoteSchema).default([]),
     cmuxPollIntervalMs: z.number().int().min(250).default(2000),
-    auth: DashboardAuthSchema.default({}),
+    auth: DashboardAuthSchema.prefault({}),
     ttydSessions: z.array(TtydSessionSchema).default([]),
-    weatherCoords: WeatherCoordsSchema.default({}),
-    pulse: PulseConfigSchema.default({}),
+    weatherCoords: WeatherCoordsSchema.prefault({}),
+    pulse: PulseConfigSchema.prefault({}),
     todoListName: z.string().default("GenesisTools"),
 });
 

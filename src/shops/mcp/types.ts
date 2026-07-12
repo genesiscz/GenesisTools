@@ -17,7 +17,7 @@ export interface JsonSchemaProperty {
 
 export const ShopsGetProductInput = z
     .object({
-        url: z.string().url().optional(),
+        url: z.url().optional(),
         shop: z.string().min(1).optional(),
         slug: z.string().min(1).optional(),
     })
@@ -35,7 +35,7 @@ export const ShopsGetProductInputJsonSchema: JsonSchema = {
 };
 
 export const ShopsMatchProductInput = z.object({
-    url: z.string().url(),
+    url: z.url(),
 });
 export type ShopsMatchProductInputT = z.infer<typeof ShopsMatchProductInput>;
 export const ShopsMatchProductInputJsonSchema: JsonSchema = {
@@ -126,7 +126,7 @@ export const ShopsRecentNotificationsInputJsonSchema: JsonSchema = {
 };
 
 export const ShopsIngestInput = z.object({
-    url: z.string().url(),
+    url: z.url(),
 });
 export type ShopsIngestInputT = z.infer<typeof ShopsIngestInput>;
 export const ShopsIngestInputJsonSchema: JsonSchema = {
@@ -150,7 +150,7 @@ export const ShopsAcceptMatchInputJsonSchema: JsonSchema = {
 };
 
 export const ShopsWatchAddInput = z.object({
-    url: z.string().url(),
+    url: z.url(),
     target_price: z.number().nonnegative().optional(),
     drop_percent: z.number().min(0).max(1).optional(),
     drop_absolute: z.number().nonnegative().optional(),
