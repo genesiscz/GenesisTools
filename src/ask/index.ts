@@ -458,7 +458,7 @@ class ASKTool {
                                 model: config.model,
                                 inputTokens: response.usage?.inputTokens || 0,
                                 outputTokens: response.usage?.outputTokens || 0,
-                                cachedInputTokens: response.usage?.cachedInputTokens || 0,
+                                cachedInputTokens: usageCacheReadTokens(response.usage),
                                 totalTokens: response.usage?.totalTokens || 0,
                                 cost: response.cost,
                                 currency: "USD",
