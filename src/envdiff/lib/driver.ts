@@ -29,6 +29,15 @@ export interface RunEnvdiffResult {
 }
 
 export function runEnvdiff(args: RunEnvdiffArgs): RunEnvdiffResult {
+    if (args.positionals.length > 2) {
+        logger.error({ positionals: args.positionals }, "envdiff: too many positional arguments");
+        return {
+            exitCode: 2,
+            stdout: "",
+            status: [`Expected at most 2 positional arguments (actual, example), got ${args.positionals.length}.`],
+        };
+    }
+
     const { actual, example } = resolveEnvPaths({
         positionals: args.positionals,
         cwd: args.cwd,
@@ -43,13 +52,27 @@ export function runEnvdiff(args: RunEnvdiffArgs): RunEnvdiffResult {
         return { exitCode: 2, stdout: "", status: [`Example file not found: ${example}`] };
     }
 
+    let exampleContent: string;
+    try {
+        exampleContent = readFileSync(example, "utf-8");
+    } catch (err) {
+        logger.error({ error: err, example }, "envdiff: failed to read example file");
+        return { exitCode: 2, stdout: "", status: [`Failed to read example file: ${example}`] };
+    }
+
     const actualExists = existsSync(actual);
-    const actualContent = actualExists ? readFileSync(actual, "utf-8") : "";
-    if (!actualExists) {
+    let actualContent = "";
+    if (actualExists) {
+        try {
+            actualContent = readFileSync(actual, "utf-8");
+        } catch (err) {
+            logger.error({ error: err, actual }, "envdiff: failed to read actual file");
+            return { exitCode: 2, stdout: "", status: [`Failed to read actual file: ${actual}`] };
+        }
+    } else {
         status.push(`Actual file not found (${actual}); treating as empty.`);
     }
 
-    const exampleContent = readFileSync(example, "utf-8");
     const parsedActual = parseEnv(actualContent);
     const parsedExample = parseEnv(exampleContent);
     const diff = diffEnv(parsedActual, parsedExample);
@@ -61,7 +84,15 @@ export function runEnvdiff(args: RunEnvdiffArgs): RunEnvdiffResult {
 
     if (args.sync) {
         const synced = buildSyncedContent({ actualContent, diff, now: args.now });
-        writeFileSync(actual, synced);
+        if (synced !== actualContent) {
+            try {
+                writeFileSync(actual, synced);
+            } catch (err) {
+                logger.error({ error: err, actual }, "envdiff: failed to write synced file");
+                return { exitCode: 2, stdout: "", status: [`Failed to write ${actual}`] };
+            }
+        }
+
         const added = diff.missing.map((m) => `    + ${m.key}`).join("\n");
         const summary =
             diff.missing.length > 0

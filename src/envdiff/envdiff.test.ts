@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 import { tmpdir } from "@app/utils/paths";
@@ -443,4 +443,100 @@ describe("runEnvdiff (integration, tmp dir)", () => {
         expect(res.exitCode).toBe(2);
         rmSync(dir, { recursive: true, force: true });
     });
+
+    it("exits 2 with a usage error when given more than 2 positional arguments", () => {
+        const dir = setup("A=1\n", "A=1\n");
+        const res = runEnvdiff({
+            positionals: [dir, "extra1", "extra2"],
+            actual: undefined,
+            example: undefined,
+            showValues: false,
+            sync: false,
+            json: false,
+            checkValues: false,
+            color: false,
+            cwd: dir,
+            now: fixedNow,
+        });
+
+        expect(res.exitCode).toBe(2);
+        expect(res.status.join(" ")).toContain("positional");
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("--sync does not rewrite the file when there is nothing to sync", () => {
+        const dir = setup("A=1\n", "A=1\n");
+        const envPath = join(dir, ".env");
+        const before = statSync(envPath).mtimeMs;
+
+        const res = runEnvdiff({
+            positionals: [dir],
+            actual: undefined,
+            example: undefined,
+            showValues: false,
+            sync: true,
+            json: false,
+            checkValues: false,
+            color: false,
+            cwd: dir,
+            now: fixedNow,
+        });
+
+        expect(res.exitCode).toBe(0);
+        expect(statSync(envPath).mtimeMs).toBe(before);
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+        "--sync on a read-only file still succeeds when there is nothing to sync (write is skipped)",
+        () => {
+            const dir = setup("A=1\n", "A=1\n");
+            const envPath = join(dir, ".env");
+            chmodSync(envPath, 0o444);
+
+            const res = runEnvdiff({
+                positionals: [dir],
+                actual: undefined,
+                example: undefined,
+                showValues: false,
+                sync: true,
+                json: false,
+                checkValues: false,
+                color: false,
+                cwd: dir,
+                now: fixedNow,
+            });
+
+            expect(res.exitCode).toBe(0);
+            chmodSync(envPath, 0o644);
+            rmSync(dir, { recursive: true, force: true });
+        }
+    );
+
+    it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+        "--sync exits 2 with status when the write fails (e.g. read-only file)",
+        () => {
+            const dir = setup("A=1\n", "A=1\nB=2\n");
+            const envPath = join(dir, ".env");
+            chmodSync(envPath, 0o444);
+
+            const res = runEnvdiff({
+                positionals: [dir],
+                actual: undefined,
+                example: undefined,
+                showValues: false,
+                sync: true,
+                json: false,
+                checkValues: false,
+                color: false,
+                cwd: dir,
+                now: fixedNow,
+            });
+
+            expect(res.exitCode).toBe(2);
+            expect(res.status.join(" ")).toContain("Failed to write");
+            chmodSync(envPath, 0o644);
+            rmSync(dir, { recursive: true, force: true });
+        }
+    );
 });
