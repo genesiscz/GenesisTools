@@ -127,6 +127,7 @@ async function runMessageImpl(opts: MessageOpts): Promise<void> {
                 kind: opts.reply ? (hasBody ? "reply" : "ack") : isBroadcast ? "broadcast" : "direct",
                 in_reply_to: opts.reply ?? null,
                 recipients: isBroadcast ? "(all peers except sender)" : event.to_agent_ids,
+                body_length: event.body.length,
             },
             { strict: true }
         )
@@ -176,7 +177,10 @@ export function registerMessageCommand(program: Command): void {
         .option("--from <token>", "Sender agent — name or id")
         .option("--to <csv>", "Recipient agents — comma-separated names or ids; empty = broadcast")
         .option("--body <text>", "Message body (omit + --reply for pure ack)")
-        .option("--body-file <path>", "Read message body from a file instead of --body (avoids shell-quoting issues with long/multi-line bodies)")
+        .option(
+            "--body-file <path>",
+            "Read message body from a file instead of --body (avoids shell-quoting issues with long/multi-line bodies)"
+        )
         .option("--reply <msg-id>", "Mark this as a reply to a previous message_id (auto-routes to original sender)")
         .option("--meta <json>", "Optional JSON object")
         .option("--private", "Mark as private (v1: stored, not enforced)")
