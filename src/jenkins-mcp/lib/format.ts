@@ -43,26 +43,44 @@ export function statusBody(status: StageStatus | "QUEUED"): string {
     }
 }
 
+function nodeDisplayName(node: Stage | FlowNode): string {
+    if ("label" in node && typeof node.label === "string" && node.label) {
+        return node.label;
+    }
+
+    return node.name;
+}
+
 /** Format a stage or flow node as a one-liner with duration / running-for-X. */
 export function formatStageLine(node: Stage | FlowNode, now: number = Date.now()): string {
     const icon = statusIcon(node.status);
+    const name = nodeDisplayName(node);
 
     if (node.status === "IN_PROGRESS" && node.startTimeMillis) {
-        return `${icon} ${node.name}  running for ${formatDuration(now - node.startTimeMillis)}`;
+        return `${icon} ${name}  running for ${formatDuration(now - node.startTimeMillis)}`;
     }
 
     if (node.durationMillis !== undefined) {
-        return `${icon} ${node.name}  ${node.status}  ${formatDuration(node.durationMillis)}`;
+        return `${icon} ${name}  ${node.status}  ${formatDuration(node.durationMillis)}`;
     }
 
-    return `${icon} ${node.name}  ${node.status}`;
+    return `${icon} ${name}  ${node.status}`;
 }
 
-/** Short notification body: status icon + duration if known. */
-export function stageNotifyBody(node: Stage | FlowNode): string {
+/** Status icon + optional duration (no stage name). */
+export function stageNotifyStatus(node: Stage | FlowNode): string {
     if (node.durationMillis !== undefined) {
         return `${statusBody(node.status)}  ${formatDuration(node.durationMillis)}`;
     }
 
     return statusBody(node.status);
+}
+
+/**
+ * Notification body: always lead with the display label (e.g. "fee-web · SonarQube")
+ * so parallel-branch context is visible even when the OS truncates/hides subtitle.
+ */
+export function stageNotifyBody(node: Stage | FlowNode): string {
+    const label = nodeDisplayName(node);
+    return `${label}  ${stageNotifyStatus(node)}`;
 }

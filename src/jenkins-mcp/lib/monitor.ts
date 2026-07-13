@@ -2,7 +2,7 @@ import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { AxiosInstance } from "axios";
 import { type ErrorBlock, extractErrors } from "./errors";
-import { formatDuration, stageNotifyBody, statusBody } from "./format";
+import { formatDuration, stageNotifyBody, stageNotifyStatus, statusBody } from "./format";
 import { fetchLog, getBuildState } from "./log";
 import type { MonitorNotifier } from "./notify";
 import { getStages, type PipelineSnapshot, type RunStatus, type Stage, type StageStatus } from "./pipeline";
@@ -13,7 +13,15 @@ export type MonitorEvent =
     | {
           event: "snapshot";
           ts: string;
-          stages: Array<{ id: string; name: string; status: StageStatus; durationMillis?: number }>;
+          stages: Array<{
+              id: string;
+              name: string;
+              status: StageStatus;
+              durationMillis?: number;
+              path?: string[];
+              context?: string;
+              label?: string;
+          }>;
       }
     | {
           event: "stage";
@@ -22,6 +30,9 @@ export type MonitorEvent =
           name: string;
           status: StageStatus;
           durationMillis?: number;
+          path?: string[];
+          context?: string;
+          label?: string;
           url: string;
       }
     | {
@@ -29,10 +40,13 @@ export type MonitorEvent =
           ts: string;
           stage: string;
           stageId: string;
+          stageLabel?: string;
           id: string;
           name: string;
           status: StageStatus;
           durationMillis?: number;
+          path?: string[];
+          context?: string;
           url: string;
       }
     | {
@@ -46,6 +60,11 @@ export type MonitorEvent =
       }
     | { event: "run"; ts: string; status: RunStatus }
     | { event: "end"; ts: string; result: RunStatus; durationMillis: number; via?: "wfapi" | "api-json" };
+
+/** Prefer enriched label ("fee-web · Tests") over bare stage name. */
+function stageLabel(stage: Stage): string {
+    return stage.label ?? stage.name;
+}
 
 export interface MonitorOpts {
     client: AxiosInstance;
@@ -64,7 +83,8 @@ export interface MonitorResult {
     timedOut: boolean;
 }
 
-const TERMINAL_STAGE: StageStatus[] = ["SUCCESS", "FAILED", "UNSTABLE", "ABORTED", "NOT_EXECUTED"];
+/** Stages that belong in the historical first-poll snapshot (actually finished work). */
+const SNAPSHOT_COMPLETED: StageStatus[] = ["SUCCESS", "FAILED", "UNSTABLE", "ABORTED"];
 
 // wfapi's run-level status can stay IN_PROGRESS for minutes after every visible
 // flow node finished (common with multibranch dispatcher pipelines that hold the
@@ -72,6 +92,11 @@ const TERMINAL_STAGE: StageStatus[] = ["SUCCESS", "FAILED", "UNSTABLE", "ABORTED
 // consecutive polls with no stage/branch delta we cross-check `/api/json?tree=building,result`
 // which sees the build's authoritative state.
 const STALE_POLLS_BEFORE_API_FALLBACK = 3;
+
+/** Statuses that should be tracked for dedup but never emitted as stage/branch events. */
+function isSilentStatus(status: StageStatus): boolean {
+    return status === "NOT_EXECUTED";
+}
 
 function isTerminalRun(status: RunStatus): boolean {
     return status !== "IN_PROGRESS" && status !== "PAUSED_PENDING_INPUT" && status !== "QUEUED";
@@ -135,32 +160,49 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
             const lastStage = seenStages.get(stage.id);
             const stageUrl = buildUrl(baseUrl, { ...baseRef, nodeId: stage.id });
 
+            // Emit only on (id, status) transitions. Duration-only changes (e.g.
+            // growing elapsed on IN_PROGRESS) are ignored — that was a spam vector
+            // when negative durations jittered every poll.
             if (lastStage !== stage.status) {
-                stageDelta = true;
-                seenStages.set(stage.id, stage.status);
-                emit(out, {
-                    event: "stage",
-                    ts: new Date().toISOString(),
-                    id: stage.id,
-                    name: stage.name,
-                    status: stage.status,
-                    durationMillis: stage.durationMillis,
-                    url: stageUrl,
-                });
-
-                if (!isFirstPoll && stage.status !== "IN_PROGRESS") {
-                    const isDispatch = isMultibranchDispatch(stage);
-                    notifyTransition(ctx, {
-                        subtitle: isDispatch ? `${stage.name} · orchestration` : stage.name,
-                        body: stageNotifyBody(stage),
-                        sound: stage.status === "FAILED" ? "Basso" : undefined,
-                        openUrl: stageUrl,
-                    });
+                // Count real status moves toward "not stale"; silent bookkeeping
+                // for NOT_EXECUTED still updates the map so we don't re-process.
+                if (!isSilentStatus(stage.status) || (lastStage !== undefined && !isSilentStatus(lastStage))) {
+                    stageDelta = true;
                 }
 
-                if (stage.status === "FAILED" && !reportedErrors.has(stage.id)) {
-                    reportedErrors.add(stage.id);
-                    await emitErrorsForStage(opts, stage);
+                seenStages.set(stage.id, stage.status);
+
+                if (!isSilentStatus(stage.status)) {
+                    emit(out, {
+                        event: "stage",
+                        ts: new Date().toISOString(),
+                        id: stage.id,
+                        name: stage.name,
+                        status: stage.status,
+                        durationMillis: stage.durationMillis,
+                        path: stage.path,
+                        context: stage.context,
+                        label: stageLabel(stage),
+                        url: stageUrl,
+                    });
+
+                    if (!isFirstPoll && stage.status !== "IN_PROGRESS") {
+                        const isDispatch = isMultibranchDispatch(stage);
+                        const fields = stageNotifyFields(stage);
+                        const subtitle = isDispatch ? `${fields.subtitle} · orchestration` : fields.subtitle;
+                        notifyTransition(ctx, {
+                            title: fields.titleSuffix ? `${ctx.titleBase} · ${fields.titleSuffix}` : ctx.titleBase,
+                            subtitle,
+                            body: fields.body,
+                            sound: stage.status === "FAILED" ? "Basso" : undefined,
+                            openUrl: stageUrl,
+                        });
+                    }
+
+                    if (stage.status === "FAILED" && !reportedErrors.has(stage.id)) {
+                        reportedErrors.add(stage.id);
+                        await emitErrorsForStage(opts, stage);
+                    }
                 }
             }
 
@@ -172,25 +214,39 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
                     continue;
                 }
 
-                stageDelta = true;
+                if (!isSilentStatus(branch.status) || (lastBranch !== undefined && !isSilentStatus(lastBranch))) {
+                    stageDelta = true;
+                }
+
                 seenBranches.set(key, branch.status);
+
+                if (isSilentStatus(branch.status)) {
+                    continue;
+                }
+
                 const branchUrl = buildUrl(baseUrl, { ...baseRef, nodeId: branch.id });
+                const parentLabel = stageLabel(stage);
                 emit(out, {
                     event: "branch",
                     ts: new Date().toISOString(),
                     stage: stage.name,
                     stageId: stage.id,
+                    stageLabel: parentLabel,
                     id: branch.id,
                     name: branch.name,
                     status: branch.status,
                     durationMillis: branch.durationMillis,
+                    path: stage.path,
+                    context: stage.context,
                     url: branchUrl,
                 });
 
                 if (!isFirstPoll && branch.name.startsWith("Building ") && branch.status !== "IN_PROGRESS") {
+                    const branchLabel = `${parentLabel} · ${shortBranchName(branch.name)}`;
                     notifyTransition(ctx, {
-                        subtitle: `${stage.name} · ${shortBranchName(branch.name)} · build`,
-                        body: stageNotifyBody(branch),
+                        title: stage.context ? `${ctx.titleBase} · ${stage.context}` : ctx.titleBase,
+                        subtitle: `${branchLabel} · build`,
+                        body: `${branchLabel}  ${stageNotifyStatus(branch)}`,
                         sound: branch.status === "FAILED" ? "Basso" : undefined,
                         openUrl: branchUrl,
                     });
@@ -278,7 +334,7 @@ interface NotifyContext {
 
 function notifyTransition(
     ctx: NotifyContext,
-    fields: { subtitle: string; body: string; sound?: string; openUrl: string }
+    fields: { title?: string; subtitle: string; body: string; sound?: string; openUrl: string }
 ): void {
     if (!ctx.notifier) {
         return;
@@ -286,8 +342,19 @@ function notifyTransition(
 
     // Fire-and-forget — do not block the poll loop on notification I/O.
     void ctx.notifier
-        .send({ title: ctx.titleBase, group: ctx.group, ...fields })
+        .send({ title: fields.title ?? ctx.titleBase, group: ctx.group, ...fields })
         .catch((error) => logger.debug(`Notification send failed: ${error instanceof Error ? error.message : error}`));
+}
+
+/** Title / subtitle / body all carry parallel-branch context when present. */
+function stageNotifyFields(stage: Stage): { titleSuffix?: string; subtitle: string; body: string } {
+    const label = stageLabel(stage);
+    return {
+        // title: "develop #7180 · fee-web" — app scope in the most visible line
+        titleSuffix: stage.context,
+        subtitle: label,
+        body: stageNotifyBody(stage),
+    };
 }
 
 function seedSnapshotState(
@@ -296,7 +363,21 @@ function seedSnapshotState(
     seenBranches: Map<string, StageStatus>,
     out: (line: string) => void
 ): void {
-    const completed = snap.stages.filter((s) => TERMINAL_STAGE.includes(s.status));
+    // Pre-seed NOT_EXECUTED so first-poll doesn't treat declared-but-idle
+    // parallel shells as transitions (and we never emit them anyway).
+    for (const stage of snap.stages) {
+        if (isSilentStatus(stage.status)) {
+            seenStages.set(stage.id, stage.status);
+        }
+
+        for (const branch of stage.stageFlowNodes ?? []) {
+            if (isSilentStatus(branch.status)) {
+                seenBranches.set(`${stage.id}.${branch.id}`, branch.status);
+            }
+        }
+    }
+
+    const completed = snap.stages.filter((s) => SNAPSHOT_COMPLETED.includes(s.status));
 
     if (completed.length === 0) {
         return;
@@ -310,6 +391,9 @@ function seedSnapshotState(
             name: s.name,
             status: s.status,
             durationMillis: s.durationMillis,
+            path: s.path,
+            context: s.context,
+            label: s.label ?? s.name,
         })),
     });
 
@@ -384,7 +468,7 @@ async function emitErrorsForStage(opts: MonitorOpts, stage: Stage): Promise<void
                 {
                     event: "error",
                     ts: new Date().toISOString(),
-                    stage: stage.name,
+                    stage: stageLabel(stage),
                     stageId: stage.id,
                     line: block.line,
                     matched: block.matched,

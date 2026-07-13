@@ -81,10 +81,24 @@ describe("stageNotifyBody", () => {
             durationMillis: 22_000,
         });
         expect(body).toContain("SUCCESS");
+        expect(body).toContain("Clone");
     });
 
     it("omits duration when unknown", () => {
         const body = stageNotifyBody({ id: "1", name: "X", status: "IN_PROGRESS" });
         expect(body).toContain("running");
+    });
+
+    it("leads with enriched label so fee-web context is in the body", () => {
+        const body = stageNotifyBody({
+            id: "499",
+            name: "SonarQube",
+            label: "fee-web · SonarQube",
+            context: "fee-web",
+            status: "FAILED",
+            durationMillis: 5_700,
+        });
+        expect(body.startsWith("fee-web · SonarQube")).toBe(true);
+        expect(body).toContain("FAILED");
     });
 });
