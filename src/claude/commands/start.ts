@@ -233,6 +233,59 @@ async function pickAccount(
     return picked as string;
 }
 
+/**
+ * Resolve [name] against token accounts: exact match first, then case-insensitive
+ * substring. One match → use it; multiple + TTY → same picker as no-name launch
+ * (scoped to the matches); zero → typed error.
+ */
+async function resolveAccountName(
+    nameArg: string,
+    withToken: AIAccountEntry[],
+    opts: StartOptions,
+    modelId: string | undefined,
+    aiConfig: AIConfig
+): Promise<string> {
+    const needle = nameArg.toLowerCase();
+    const exact = withToken.find((a) => a.name === nameArg || a.name.toLowerCase() === needle);
+
+    if (exact) {
+        return exact.name;
+    }
+
+    const matches = withToken.filter((a) => a.name.toLowerCase().includes(needle));
+
+    if (matches.length === 1) {
+        return matches[0].name;
+    }
+
+    if (matches.length > 1) {
+        if (!isInteractive() && !opts.autopick) {
+            out.error(pc.red(`Account "${nameArg}" is ambiguous in non-interactive mode.`));
+            out.printlnErr(pc.dim(`Matches: ${matches.map((a) => a.name).join(", ")}`));
+            out.printlnErr(suggestCommand("tools claude start", { add: ["--autopick", nameArg] }));
+            await out.flush();
+            process.exit(1);
+        }
+
+        return pickAccount(matches, opts, modelId, aiConfig);
+    }
+
+    const hasEntry = aiConfig.getAccount(nameArg);
+    if (hasEntry && opts.keychain) {
+        out.error(pc.red(`Account "${nameArg}" has no secondary login.`));
+        out.printlnErr(pc.dim(`Save one with: ${pc.cyan(`tools claude login-secondary ${nameArg}`)}`));
+    } else if (hasEntry) {
+        out.error(pc.red(`Account "${nameArg}" has no long-lived token.`));
+        out.printlnErr(pc.dim(`Save one with: ${pc.cyan(`tools claude login-long ${nameArg}`)}`));
+    } else {
+        out.error(pc.red(`Account "${nameArg}" not found.`));
+        out.printlnErr(pc.dim(`With token: ${withToken.map((a) => a.name).join(", ")}`));
+    }
+
+    await out.flush();
+    process.exit(1);
+}
+
 async function resolveResumeArgs(opts: StartOptions): Promise<string[]> {
     if (opts.continue) {
         if (opts.resume) {
@@ -283,23 +336,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     let accountName: string;
 
     if (nameArg) {
-        const match = withToken.find((a) => a.name === nameArg);
-        if (!match) {
-            const hasEntry = aiConfig.getAccount(nameArg);
-            if (hasEntry && opts.keychain) {
-                out.error(pc.red(`Account "${nameArg}" has no secondary login.`));
-                out.printlnErr(pc.dim(`Save one with: ${pc.cyan(`tools claude login-secondary ${nameArg}`)}`));
-            } else if (hasEntry) {
-                out.error(pc.red(`Account "${nameArg}" has no long-lived token.`));
-                out.printlnErr(pc.dim(`Save one with: ${pc.cyan(`tools claude login-long ${nameArg}`)}`));
-            } else {
-                out.error(pc.red(`Account "${nameArg}" not found.`));
-                out.printlnErr(pc.dim(`With token: ${withToken.map((a) => a.name).join(", ")}`));
-            }
-            await out.flush();
-            process.exit(1);
-        }
-        accountName = match.name;
+        accountName = await resolveAccountName(nameArg, withToken, opts, modelId, aiConfig);
     } else {
         accountName = await pickAccount(withToken, opts, modelId, aiConfig);
     }
@@ -453,6 +490,7 @@ export function registerStartCommand(program: Command): void {
         .command("start [name]")
         .description(
             "Launch Claude Code using a saved long-lived token (CLAUDE_CODE_OAUTH_TOKEN). " +
+                "[name] matches account names by exact or substring (TTY prompts when ambiguous). " +
                 "Args after -- are passed through to claude."
         )
         .allowExcessArguments(true)
