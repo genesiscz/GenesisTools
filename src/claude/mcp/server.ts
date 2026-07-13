@@ -1,4 +1,5 @@
 import { logger } from "@app/logger";
+import { env } from "@app/utils/env/envVariables";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -351,8 +352,37 @@ function buildToolRegistry(): Record<string, ToolEntry> {
     };
 }
 
+/** Known capability names, keyed to the tool-name prefix that identifies membership. */
+const CAPABILITY_PREFIXES: Record<string, string> = {
+    question_answer: "question_answer",
+    boards: "boards_",
+};
+
+/**
+ * Filters the tool registry by GENESIS_TOOLS_MCP_CAPABILITIES (comma-delimited, e.g.
+ * "question_answer,boards"). Unset or empty -> every capability enabled (unchanged default).
+ */
+function filterRegistryByCapabilities(registry: Record<string, ToolEntry>): Record<string, ToolEntry> {
+    const capabilities = env.tools.getMcpCapabilities();
+    if (capabilities === undefined) {
+        return registry;
+    }
+
+    const enabledPrefixes = capabilities
+        .map((capability) => CAPABILITY_PREFIXES[capability])
+        .filter((prefix): prefix is string => prefix !== undefined);
+
+    return Object.fromEntries(
+        Object.entries(registry).filter(([name]) => enabledPrefixes.some((prefix) => name.startsWith(prefix)))
+    );
+}
+
 export async function startMcpServer(): Promise<void> {
-    const registry = buildToolRegistry();
+    const registry = filterRegistryByCapabilities(buildToolRegistry());
+    log.info(
+        { capabilities: env.tools.getMcpCapabilities() ?? "all", tools: Object.keys(registry) },
+        "genesis-tools MCP tool registry resolved"
+    );
     const server = new Server(
         { name: "genesis-tools", version: "1.0.0" },
         { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS }

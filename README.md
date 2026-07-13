@@ -160,6 +160,16 @@ Answer a question, then preserve the Q→A to the local question store so it can
 
 Captured via the `question_answer` MCP tool, falling back to the `tools question record` CLI.
 
+#### genesis-tools MCP server (`tools claude mcp`)
+
+The plugin's own MCP server (stdio) exposes two capabilities: `question_answer` (the Q&A capture tool above) and `boards` (dev-dashboard annotation boards — `boards_list_boards`, `boards_wait_for_work`, `boards_compose_board`, etc.). Both are enabled by default. To restrict which capabilities are registered, set `GENESIS_TOOLS_MCP_CAPABILITIES` to a comma-delimited list of capability names in the server's environment (e.g. in `~/.claude.json`'s `mcpServers.genesis-tools.env`):
+
+```bash
+GENESIS_TOOLS_MCP_CAPABILITIES=question_answer,boards   # both (default when unset)
+GENESIS_TOOLS_MCP_CAPABILITIES=question_answer          # only the Q&A tool
+GENESIS_TOOLS_MCP_CAPABILITIES=boards                   # only boards tools
+```
+
 ---
 
 ### Skill Details

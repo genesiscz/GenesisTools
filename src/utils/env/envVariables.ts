@@ -116,6 +116,20 @@ export const env = {
         getMailEnvelopePath: () => getTrimmed("MAIL_ENVELOPE_PATH"),
         getQdrantPort: () => parseIntEnv("GENESIS_QDRANT_PORT", 16_335),
         getQdrantGrpcPort: () => parseIntEnv("GENESIS_QDRANT_GRPC_PORT", 16_336),
+        /** Comma-delimited capability filter for `tools claude mcp` (e.g. "question_answer,boards"). */
+        getMcpCapabilities: (): string[] | undefined => {
+            const raw = getTrimmed("GENESIS_TOOLS_MCP_CAPABILITIES");
+            if (raw === undefined) {
+                return undefined;
+            }
+
+            const capabilities = raw
+                .split(",")
+                .map((c) => c.trim().toLowerCase())
+                .filter((c) => c.length > 0);
+
+            return capabilities.length > 0 ? capabilities : undefined;
+        },
     },
 
     paths: {

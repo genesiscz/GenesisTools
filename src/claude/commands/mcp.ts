@@ -8,7 +8,10 @@ const log = logger.child({ component: "claude:mcp-cmd" });
 export function registerMcpCommand(program: Command): void {
     const mcp = program
         .command("mcp")
-        .description("Run the genesis-tools MCP server (stdio) — exposes question_answer")
+        .description(
+            "Run the genesis-tools MCP server (stdio) — exposes question_answer + boards. " +
+                "Set GENESIS_TOOLS_MCP_CAPABILITIES (comma-delimited, e.g. question_answer,boards) to restrict."
+        )
         .action(async () => {
             log.info("starting MCP server");
             await startMcpServer();
