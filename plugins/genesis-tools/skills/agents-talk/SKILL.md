@@ -90,7 +90,7 @@ done
 
 Empirically verified 2026-07-13 (two live probe tests + teammate-transcript forensics):
 
-- A teammate whose turn has ENDED (idle) is **not re-invoked** by Monitor events on its login stream. Worse: the Monitor notification is **dropped entirely for teammates, not queued** — transcript inspection showed no monitor-event entry while idle NOR after wake. The login background process stays alive and keeps writing events to its output file; the harness just never turns that into a wake or a context injection for a subagent.
+- A teammate whose turn has ENDED (idle) is **not re-invoked** by Monitor events on its login stream, and the pending Monitor notification is **not injected at wake either** — transcript inspection showed no monitor-event entry while idle nor in the wake bundle. At best it trickles in mid-turn once the teammate is already active again (observed arriving AFTER the teammate had manually read the output file). The login background process stays alive and keeps writing events to its output file; the harness just never turns that into a wake for a subagent.
 - Background-task completion (`login --once` exiting when a message arrives) does **not** wake an idle teammate either.
 - The **only** channel that wakes an idle teammate is the harness-native `SendMessage` tool.
 - The MAIN session is different: its Monitor events DO re-invoke it between turns. The asymmetry affects teammates only.
