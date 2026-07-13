@@ -88,12 +88,13 @@ done
 
 ## ⚠️ Idle teammates do NOT wake on agents-channel traffic (Claude Code)
 
-Empirically verified 2026-07-13 (live probe test, main + spawned teammate):
+Empirically verified 2026-07-13 (two live probe tests + teammate-transcript forensics):
 
-- A teammate whose turn has ENDED (idle) is **not re-invoked** by Monitor events on its login stream — the events queue silently until something else wakes it.
-- Background-task completion (`login --once` exiting when a message arrives) does **not** reliably wake an idle teammate either.
+- A teammate whose turn has ENDED (idle) is **not re-invoked** by Monitor events on its login stream. Worse: the Monitor notification is **dropped entirely for teammates, not queued** — transcript inspection showed no monitor-event entry while idle NOR after wake. The login background process stays alive and keeps writing events to its output file; the harness just never turns that into a wake or a context injection for a subagent.
+- Background-task completion (`login --once` exiting when a message arrives) does **not** wake an idle teammate either.
 - The **only** channel that wakes an idle teammate is the harness-native `SendMessage` tool.
 - The MAIN session is different: its Monitor events DO re-invoke it between turns. The asymmetry affects teammates only.
+- Consequence for the woken teammate: it must actively drain — Read the login task's output file, or run `tools agents login --agent-name <me> --once` — because the missed events will never be replayed into its context by the harness.
 
 **Dual-channel protocol (required whenever the recipient may be idle):**
 
@@ -101,7 +102,7 @@ Empirically verified 2026-07-13 (live probe test, main + spawned teammate):
    `tools agents message --from lead --to researcher --body '...'`
 2. Immediately follow with a harness wake nudge:
    `SendMessage(to: "researcher", "agents-mail waiting — drain your stream")`
-3. The woken teammate reads its queued Monitor output (or drains with `tools agents login --agent-name researcher --once`) and replies on the agents channel.
+3. The woken teammate drains explicitly — Reads the login task's output file or runs `tools agents login --agent-name researcher --once` — then replies on the agents channel. (Do not wait for the Monitor notification: it was dropped, not queued.)
 
 Never put the payload only in `SendMessage` (not durable, not cursor-tracked) and never rely on the agents channel alone to wake an idle teammate. A teammate that is mid-turn WILL receive Monitor events normally between tool calls — the nudge is only load-bearing for idle recipients, but since the sender can't know, always send it.
 
