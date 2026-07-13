@@ -86,6 +86,25 @@ done
 
 > ⚠️ **Monitor only stdout, never stderr.** `login`'s stdout is the JSONL event stream. Stderr is for diagnostics (auto-registration notices, the resume-hint on exit, warnings). If you pipe with `2>&1` you'll see log lines in your event stream and the agent will treat them as malformed events. Correct form: `tools agents login --agent-name X | <pipeline>` — no `2>&1`. If using a Monitor harness directly, point it at stdout only.
 
+## ⚠️ Idle teammates do NOT wake on agents-channel traffic (Claude Code)
+
+Empirically verified 2026-07-13 (live probe test, main + spawned teammate):
+
+- A teammate whose turn has ENDED (idle) is **not re-invoked** by Monitor events on its login stream — the events queue silently until something else wakes it.
+- Background-task completion (`login --once` exiting when a message arrives) does **not** reliably wake an idle teammate either.
+- The **only** channel that wakes an idle teammate is the harness-native `SendMessage` tool.
+- The MAIN session is different: its Monitor events DO re-invoke it between turns. The asymmetry affects teammates only.
+
+**Dual-channel protocol (required whenever the recipient may be idle):**
+
+1. Payload goes on the agents channel (durable, cursor-tracked, no loss):
+   `tools agents message --from lead --to researcher --body '...'`
+2. Immediately follow with a harness wake nudge:
+   `SendMessage(to: "researcher", "agents-mail waiting — drain your stream")`
+3. The woken teammate reads its queued Monitor output (or drains with `tools agents login --agent-name researcher --once`) and replies on the agents channel.
+
+Never put the payload only in `SendMessage` (not durable, not cursor-tracked) and never rely on the agents channel alone to wake an idle teammate. A teammate that is mid-turn WILL receive Monitor events normally between tool calls — the nudge is only load-bearing for idle recipients, but since the sender can't know, always send it.
+
 `login` writes received events to stdout as JSONL lines. Each line is one event you should react to.
 
 ```bash
@@ -147,6 +166,7 @@ You normally don't pass `--session` — it's automatic.
 - **There's no separate register step.** `login --agent-name X` auto-registers X the first time it's called — just spawn the subagent and have it call `login` directly.
 - **Don't message agents that aren't registered.** You'll get an error. Call `discover` if unsure.
 - **Don't expect mid-tool-call interrupts.** Stream-mode `login` delivers between tool calls (via Monitor), `login --once` returns when next called. Neither preempts a running tool.
+- **Don't expect an idle teammate to wake on an agents-channel message.** See the idle-teammates section above — pair every send to a possibly-idle teammate with a harness `SendMessage` nudge.
 - **One main per session.** A second `login --agent-main` errors. Use a different `--agent-name` for additional coordinators.
 
 ## Quick reference
