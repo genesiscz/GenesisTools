@@ -122,7 +122,7 @@ Each event is a JSON line. The most important `type` values:
 
 | | `--stream` (default, CC) | `--once` (any host) |
 |---|---|---|
-| Lifetime | Long-running, ~1h sanity cap | Returns when a message arrives or harness kills it |
+| Lifetime | Long-running, ~8h sanity cap | Returns when a message arrives or harness kills it |
 | Harness tool | `Monitor` follows stdout | Caller re-invokes in a loop |
 | Resume after exit | Continues where it left off | Continues where it left off |
 | Cost | One held process per agent | One short-lived call per receive |

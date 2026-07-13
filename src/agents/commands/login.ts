@@ -17,7 +17,7 @@ import { resolveSession } from "../lib/session-resolve";
 import { readSlotPayload, releaseSlot, runStaleSweep, slotLockPath, tryAcquireSlot } from "../lib/slot-lock";
 import type { AgentRecord, FeedEvent, SessionPaths, SlotLockPayload } from "../lib/types";
 
-const ONE_HOUR_MS = 60 * 60 * 1000;
+const LISTEN_CAP_MS = 8 * 60 * 60 * 1000;
 
 const log = logger.child({ component: "agents:login" });
 
@@ -456,11 +456,11 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
             const initialEmitted = await drainPending(active);
 
             if (initialEmitted === 0) {
-                const deadline = Date.now() + ONE_HOUR_MS;
+                const deadline = Date.now() + LISTEN_CAP_MS;
                 await watchUntilDeadline(active, deadline, true);
             }
         } else {
-            const deadline = Date.now() + ONE_HOUR_MS;
+            const deadline = Date.now() + LISTEN_CAP_MS;
             await watchUntilDeadline(active, deadline, false);
             exitReason = "cap";
         }
