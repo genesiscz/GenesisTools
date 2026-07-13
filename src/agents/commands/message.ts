@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
@@ -16,10 +17,23 @@ interface MessageOpts {
     from?: string;
     to?: string;
     body?: string;
+    bodyFile?: string;
     reply?: string;
     meta?: string;
     private?: boolean;
     session?: string;
+}
+
+function resolveBody(opts: MessageOpts): string | undefined {
+    if (opts.bodyFile) {
+        if (opts.body) {
+            throw new FriendlyError("--body and --body-file are mutually exclusive", "Pass only one.");
+        }
+
+        return readFileSync(opts.bodyFile, "utf8");
+    }
+
+    return opts.body;
 }
 
 function parseMeta(raw: string | undefined): Record<string, unknown> {
@@ -37,7 +51,8 @@ function parseMeta(raw: string | undefined): Record<string, unknown> {
 }
 
 async function runMessageImpl(opts: MessageOpts): Promise<void> {
-    const hasBody = typeof opts.body === "string" && opts.body.length > 0;
+    const body = resolveBody(opts);
+    const hasBody = typeof body === "string" && body.length > 0;
     const isAck = !hasBody && Boolean(opts.reply);
 
     if (!hasBody && !isAck) {
@@ -94,7 +109,7 @@ async function runMessageImpl(opts: MessageOpts): Promise<void> {
             from_agent_id: sender.agent_id,
             from_agent_name: sender.agent_name,
             to_agent_ids: toIds,
-            body: hasBody ? (opts.body as string) : "",
+            body: hasBody ? (body as string) : "",
             meta,
             private: Boolean(opts.private),
             ...(opts.reply ? { in_reply_to: opts.reply } : {}),
@@ -161,6 +176,7 @@ export function registerMessageCommand(program: Command): void {
         .option("--from <token>", "Sender agent — name or id")
         .option("--to <csv>", "Recipient agents — comma-separated names or ids; empty = broadcast")
         .option("--body <text>", "Message body (omit + --reply for pure ack)")
+        .option("--body-file <path>", "Read message body from a file instead of --body (avoids shell-quoting issues with long/multi-line bodies)")
         .option("--reply <msg-id>", "Mark this as a reply to a previous message_id (auto-routes to original sender)")
         .option("--meta <json>", "Optional JSON object")
         .option("--private", "Mark as private (v1: stored, not enforced)")

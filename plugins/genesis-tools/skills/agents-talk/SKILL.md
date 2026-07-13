@@ -161,6 +161,7 @@ You normally don't pass `--session` — it's automatic.
 | `tools agents message --from X --body '...'` | Broadcast (every peer except the sender) |
 | `tools agents message --from X --reply 0001 --body '...'` | Reply (auto-routes to the original sender) |
 | `tools agents message --from X --reply 0001` | Pure ack (no body) |
+| `tools agents message --from X --to Y --body-file <path>` | Long/multi-section body — write it to a file first (avoids shell-quoting breaks from embedded `'`/`` ` ``/`$(...)` truncating `--body`) |
 | `tools agents discover` | List all agents in session |
 | `tools agents listen` | Human-facing color-formatted feed follower (sees everything) |
 
