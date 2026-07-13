@@ -8,23 +8,29 @@ export type ShutdownHandler = (reason: ShutdownReason) => Promise<void> | void;
 
 const handlers: ShutdownHandler[] = [];
 let signalsInstalled = false;
-let shuttingDown = false;
+let shutdownRun: Promise<void> | null = null;
 
-async function runHandlers(reason: ShutdownReason): Promise<void> {
-    if (shuttingDown) {
-        return;
+// A single shared promise (not a boolean guard) so a second signal delivered
+// mid-shutdown awaits the in-flight handlers instead of returning immediately
+// and calling process.exit() while they're still running — that killed the
+// process before releaseSlot(), orphaning the PID lock until an unrelated
+// agent's stale-lock sweep reaped it.
+function runHandlers(reason: ShutdownReason): Promise<void> {
+    if (!shutdownRun) {
+        shutdownRun = (async () => {
+            const ordered = [...handlers].reverse();
+
+            for (const handler of ordered) {
+                try {
+                    await handler(reason);
+                } catch (err) {
+                    log.warn({ err }, "shutdown handler threw");
+                }
+            }
+        })();
     }
 
-    shuttingDown = true;
-    const ordered = [...handlers].reverse();
-
-    for (const handler of ordered) {
-        try {
-            await handler(reason);
-        } catch (err) {
-            log.warn({ err }, "shutdown handler threw");
-        }
-    }
+    return shutdownRun;
 }
 
 function installSignals(): void {

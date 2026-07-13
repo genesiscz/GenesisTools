@@ -426,6 +426,12 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
     onShutdown(async (reason) => {
         exitReason = reason;
 
+        // Release the PID lock BEFORE any feed I/O: if the process dies
+        // mid-drain (force-kill, lock timeout), the slot must not stay
+        // orphaned. Worst case of the reversed order is a same-agent relogin
+        // racing the final cursor write — duplicate delivery, never loss.
+        releaseSlot(lockPath);
+
         try {
             await drainPending(active);
         } catch (err) {
@@ -438,7 +444,6 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
             log.warn({ err }, "logged_out emit failed during shutdown");
         }
 
-        releaseSlot(lockPath);
         emitResumeHint(active.record, mode);
     });
 
@@ -460,14 +465,20 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
             exitReason = "cap";
         }
     } finally {
+        releaseSlot(lockPath);
+
         try {
             await drainPending(active);
         } catch (err) {
             log.warn({ err }, "final drain failed");
         }
 
-        await emitLoggedOut({ paths, record: active.record, reason: exitReason, mode });
-        releaseSlot(lockPath);
+        try {
+            await emitLoggedOut({ paths, record: active.record, reason: exitReason, mode });
+        } catch (err) {
+            log.warn({ err }, "logged_out emit failed on exit");
+        }
+
         emitResumeHint(active.record, mode);
     }
 }
