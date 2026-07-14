@@ -10,6 +10,38 @@ const SRC_DIR_NAME = "src";
 const INDEX_FILE_NAMES = ["index.ts", "index.tsx"];
 const SCRIPT_EXTENSIONS = [".ts", ".tsx"];
 
+/**
+ * Match ~/.config/shell/pm-no-proxy.zsh.
+ *
+ * Grok's CLI wrapper sets HTTPS_PROXY=socks5h://… (Nord US) so xAI works for
+ * grok-4.5. That env is inherited by the whole Grok tool tree. Bun rejects
+ * socks proxies (UnsupportedProxyProtocol; oven-sh/bun#16812) and — critically —
+ * reads the proxy env at process start, so mid-process unset does NOT help.
+ *
+ * The zsh `bun` function runs `env -u HTTPS_PROXY … command bun`, but this
+ * script's shebang (`#!/usr/bin/env bun`) bypasses that function. Strip the
+ * same keys when spawning tool children so `tools ai-proxy models` etc. get a
+ * clean network env. Grok's own process keeps its proxy.
+ */
+const PROXY_ENV_KEYS = [
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "ALL_PROXY",
+    "https_proxy",
+    "http_proxy",
+    "all_proxy",
+] as const;
+
+function envWithoutProxy(extra?: Record<string, string | undefined>): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = { ...process.env, ...extra };
+
+    for (const key of PROXY_ENV_KEYS) {
+        delete env[key];
+    }
+
+    return env;
+}
+
 // Stderr patterns that almost always mean node_modules is out of sync —
 // duplicate React copies, missing native binaries, ESM resolution drift.
 // When any of these are seen on a non-zero exit, the wrapper offers to run
@@ -176,6 +208,7 @@ async function runWithReinstallGuard(args: string[], workspaceRoot: string): Pro
     const installResult = spawnSync("bun", ["install"], {
         stdio: "inherit",
         cwd: workspaceRoot,
+        env: envWithoutProxy(),
     });
 
     if (installResult.status !== 0) {
@@ -200,7 +233,7 @@ async function spawnAndCaptureStderr(args: string[], workspaceRoot: string): Pro
             // via process.cwd() keep working. Bunfig's preload is forwarded
             // via the explicit --preload flag in executeTool().
             cwd: process.cwd(),
-            env: { ...process.env, INIT_CWD: process.cwd() },
+            env: envWithoutProxy({ INIT_CWD: process.cwd() }),
             shell: process.platform === "win32",
         });
 
@@ -294,6 +327,7 @@ async function main() {
         const result = spawnSync("bun", ["run", join(srcDir, "tools", "index.ts")], {
             stdio: "inherit",
             cwd: process.cwd(),
+            env: envWithoutProxy(),
         });
         process.exit(result.status ?? 0);
     } else {
