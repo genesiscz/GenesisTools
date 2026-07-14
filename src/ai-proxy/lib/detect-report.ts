@@ -57,6 +57,8 @@ export function suggestedModelFor(account: AiProxyAccountConfig): string | undef
             return `${account.name}/grok/grok-composer-2.5-fast`;
         case "github-copilot-subscription":
             return `${account.name}/github-copilot/claude-sonnet-4`;
+        case "xai-api-key":
+            return `${account.name}/${account.providerSlug}/grok-4.5`;
         default:
             return undefined;
     }

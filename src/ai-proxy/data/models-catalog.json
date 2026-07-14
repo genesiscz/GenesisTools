@@ -1,5 +1,299 @@
 {
-  "updatedAt": "2026-06-23T00:00:00.000Z",
-  "grokVersion": "0.2.60",
-  "accounts": []
+  "updatedAt": "2026-07-14T01:34:01.758Z",
+  "grokVersion": "0.2.99",
+  "accounts": [
+    {
+      "accountName": "martin",
+      "provider": "grok-subscription",
+      "baseUrl": "https://cli-chat-proxy.grok.com/v1",
+      "pickerModels": [
+        {
+          "id": "grok-build",
+          "source": "picker",
+          "visibility": "high",
+          "speed": "slow",
+          "thinking": "reasoning",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-composer-2.5-fast",
+          "source": "picker",
+          "visibility": "high",
+          "speed": "fast",
+          "thinking": "reasoning",
+          "probeStatus": "ok",
+          "httpCode": 200
+        }
+      ],
+      "probedModels": [
+        {
+          "id": "grok-3",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "medium",
+          "thinking": "optional",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-3-fast",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "fast",
+          "thinking": "none",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-3-fast-latest",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "fast",
+          "thinking": "none",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-3-mini",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "fast",
+          "thinking": "none",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-3-mini-fast",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "fast",
+          "thinking": "none",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-3-mini-fast-latest",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "fast",
+          "thinking": "none",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-4",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "medium",
+          "thinking": "optional",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-4-0709",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "medium",
+          "thinking": "optional",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-4-1-fast",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "fast",
+          "thinking": "none",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-4-1-fast-non-reasoning",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "fast",
+          "thinking": "none",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-4-1-fast-reasoning",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "medium",
+          "thinking": "reasoning",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-4-fast",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "fast",
+          "thinking": "none",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-4-fast-non-reasoning",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "fast",
+          "thinking": "none",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-4-fast-reasoning",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "medium",
+          "thinking": "reasoning",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-4.20",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "medium",
+          "thinking": "optional",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-4.20-0309",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "medium",
+          "thinking": "optional",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-4.20-0309-non-reasoning",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "fast",
+          "thinking": "none",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-4.20-0309-reasoning",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "medium",
+          "thinking": "reasoning",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-4.20-multi-agent",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "slow",
+          "thinking": "multi-agent",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-4.20-multi-agent-0309",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "slow",
+          "thinking": "multi-agent",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-4.3",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "medium",
+          "thinking": "optional",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-build-0.1",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "slow",
+          "thinking": "reasoning",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-code-fast",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "fast",
+          "thinking": "none",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-code-fast-1",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "fast",
+          "thinking": "none",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-code-fast-1-0825",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "fast",
+          "thinking": "none",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-latest",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "medium",
+          "thinking": "optional",
+          "probeStatus": "ok",
+          "httpCode": 200
+        }
+      ],
+      "upstreamEndpoints": [
+        {
+          "method": "GET",
+          "path": "/v1/models",
+          "description": "Picker-visible model catalog"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/settings",
+          "description": "Subscription tier and internal model defaults"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/billing",
+          "description": "Subscription usage (cents)"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/user",
+          "description": "Authenticated user profile"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/responses",
+          "description": "Primary agent/chat API (Responses shape)"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/chat/completions",
+          "description": "Chat Completions passthrough"
+        }
+      ]
+    }
+  ]
 }

@@ -72,8 +72,15 @@ export async function runUpdateModelsCommand(options: {
                 }
 
                 const catalog = await buildGrokModelCatalog(client, { probe: !options.noProbe });
-                const pickerModels = catalog.filter((model) => model.source === "picker");
-                const probedModels = catalog.filter((model) => model.source !== "picker");
+                // Never persist dead ids — proxy list and Cursor pickers only see working models.
+                const available = catalog.filter((model) => model.probeStatus !== "fail");
+                const dropped = catalog.length - available.length;
+                const pickerModels = available.filter((model) => model.source === "picker");
+                const probedModels = available.filter((model) => model.source !== "picker");
+
+                if (dropped > 0) {
+                    out.log.info(`${account.name}: dropped ${dropped} probe-fail model(s) from catalog`);
+                }
 
                 payload.accounts.push({
                     accountName: account.name,

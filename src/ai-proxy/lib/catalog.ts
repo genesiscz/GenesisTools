@@ -3,6 +3,7 @@ import {
     listCopilotProxyModels,
     listGrokProxyModels,
     listOpenAiSubProxyModels,
+    listXaiProxyModels,
 } from "@app/ai-proxy/lib/model-meta";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
 import { GROK_CLI_CHAT_PROXY_BASE_URL } from "@app/utils/ai/grok";
@@ -27,11 +28,15 @@ export async function buildProxyModelCatalog(accounts: AiProxyAccountConfig[]): 
         }
 
         if (account.provider === "anthropic-subscription") {
-            models.push(...listAnthropicSubProxyModels(account));
+            models.push(...(await listAnthropicSubProxyModels(account)));
         }
 
         if (account.provider === "openai-subscription") {
-            models.push(...listOpenAiSubProxyModels(account));
+            models.push(...(await listOpenAiSubProxyModels(account)));
+        }
+
+        if (account.provider === "xai-api-key") {
+            models.push(...(await listXaiProxyModels(account)));
         }
     }
 

@@ -48,15 +48,26 @@ describe("resolve-model", () => {
         expect(route.upstreamId).toBe("grok-build-0.1");
     });
 
-    it("resolves bare upstream ids when another enabled account uses an unimplemented provider", () => {
+    it("rejects bare upstream ids as ambiguous when grok + xai accounts are both implemented", () => {
         const accounts: AiProxyAccountConfig[] = [
             grokAccount("martin"),
             { name: "work", provider: "xai-api-key", providerSlug: "xai", enabled: true },
         ];
 
-        const route = resolveModel("grok-build-0.1", accounts);
+        expect(() => resolveModel("grok-build-0.1", accounts)).toThrow("Ambiguous model");
+    });
 
-        expect(route.accountName).toBe("martin");
+    it("resolves provider/upstream to the xai account when slug is unique", () => {
+        const accounts: AiProxyAccountConfig[] = [
+            grokAccount("martin"),
+            { name: "work", provider: "xai-api-key", providerSlug: "xai", enabled: true },
+        ];
+
+        const route = resolveModel("xai/grok-4.5", accounts);
+
+        expect(route.accountName).toBe("work");
+        expect(route.providerSlug).toBe("xai");
+        expect(route.upstreamId).toBe("grok-4.5");
     });
 
     it("rejects ambiguous bare upstream ids across multiple implemented grok accounts", () => {

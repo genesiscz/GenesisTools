@@ -50,18 +50,26 @@ export const GROK_STATIC_CATALOG: GrokModelRecord[] = [
     seed("grok-4.20-0309-reasoning", "medium", "medium", "reasoning", "ok"),
     seed("grok-4.20-0309-non-reasoning", "medium", "fast", "none", "ok"),
     seed("grok-4.20-multi-agent-0309", "medium", "slow", "multi-agent", "ok"),
-    seed("composer-2.5-fast", "low", "fast", "none", "fail"),
-    seed("grok-composer-2.5", "low", "fast", "reasoning", "fail"),
-    seed("grok-4.1-fast", "low", "fast", "none", "fail"),
-    seed("grok-2", "low", "medium", "optional", "fail"),
-    seed("grok-2-vision", "low", "medium", "optional", "fail"),
-    seed("grok-beta", "low", "medium", "optional", "fail"),
-    seed("grok-4-auto", "low", "medium", "optional", "fail"),
-    seed("grok-build-latest", "low", "slow", "reasoning", "fail"),
 ];
+
+/**
+ * Ids that previously failed live probe — still worth re-checking on
+ * `update-models`, but never advertised in the proxy model list.
+ */
+export const GROK_LEGACY_PROBE_IDS = [
+    "composer-2.5-fast",
+    "grok-composer-2.5",
+    "grok-4.1-fast",
+    "grok-2",
+    "grok-2-vision",
+    "grok-beta",
+    "grok-4-auto",
+    "grok-build-latest",
+] as const;
 
 export const GROK_PROBE_CANDIDATES = [
     ...GROK_STATIC_CATALOG.map((model) => model.id),
+    ...GROK_LEGACY_PROBE_IDS,
     "auto",
     "fast",
     "expert",

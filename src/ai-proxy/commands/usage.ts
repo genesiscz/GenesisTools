@@ -11,10 +11,7 @@ import {
 } from "@app/ai-proxy/lib/usage/store";
 import type { AccountBillingSnapshot, UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
 import { out } from "@app/logger";
-import { GrokManagementClient } from "@app/utils/ai/grok";
-import { env } from "@app/utils/env";
 import { formatTokens } from "@app/utils/format";
-import { SafeJSON } from "@app/utils/json";
 
 export interface UsageCommandOptions {
     account?: string;
@@ -34,24 +31,6 @@ interface UsageCommandResult {
     last?: UsageRequestRecord;
     recent?: UsageRequestRecord[];
     storePaths?: ReturnType<typeof usageStorePaths>;
-}
-
-function formatXaiManagementSummary(teamUsage: unknown, prepaidBalance: unknown): string {
-    const parts: string[] = [];
-
-    if (teamUsage && typeof teamUsage === "object") {
-        parts.push(`team usage: ${SafeJSON.stringify(teamUsage)}`);
-    }
-
-    if (prepaidBalance && typeof prepaidBalance === "object") {
-        parts.push(`prepaid balance: ${SafeJSON.stringify(prepaidBalance)}`);
-    }
-
-    if (parts.length > 0) {
-        return parts.join("; ");
-    }
-
-    return "Management API usage fetched";
 }
 
 function formatElapsedSeconds(elapsedMs: number): string {
@@ -92,41 +71,13 @@ function billingSnapshot(snapshot?: AccountBillingSnapshot): UsageCommandResult[
 }
 
 async function fetchLiveUsage(account: AiProxyAccountConfig): Promise<UsageSummary | undefined> {
-    if (account.provider === "grok-subscription" || account.provider === "github-copilot-subscription") {
+    if (
+        account.provider === "grok-subscription" ||
+        account.provider === "github-copilot-subscription" ||
+        account.provider === "xai-api-key"
+    ) {
         const provider = await createProvider(account);
         return provider.getUsage();
-    }
-
-    if (account.provider === "xai-api-key") {
-        const managementEnv = account.managementKeyEnv ?? "XAI_MANAGEMENT_KEY";
-        const managementKey = env.get(managementEnv);
-        const teamId = account.teamId ?? env.x.getTeamId();
-
-        if (!managementKey || !teamId) {
-            return {
-                accountName: account.name,
-                provider: account.provider,
-                summary: "Inference API has no usage endpoint. Configure management key + teamId.",
-            };
-        }
-
-        const client = new GrokManagementClient(managementKey);
-        const [teamUsage, prepaidBalance] = await Promise.all([
-            client.getTeamUsage({ teamId }),
-            client.getPrepaidBalance(teamId),
-        ]);
-
-        return {
-            accountName: account.name,
-            provider: account.provider,
-            summary: formatXaiManagementSummary(teamUsage, prepaidBalance),
-            details: {
-                xai: {
-                    teamUsage,
-                    prepaidBalance,
-                },
-            },
-        };
     }
 
     return undefined;

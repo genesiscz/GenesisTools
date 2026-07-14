@@ -2,9 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { GROK_PROBE_CANDIDATES, GROK_STATIC_CATALOG, inferModelThinking, mergeModelCatalog, toProxyId } from "./models";
 
 describe("grok probe helpers", () => {
-    it("includes researched static catalog ids", () => {
+    it("includes researched static catalog ids (working only — no fail seeds)", () => {
         expect(GROK_STATIC_CATALOG.some((model) => model.id === "grok-composer-2.5-fast")).toBe(true);
-        expect(GROK_STATIC_CATALOG.length).toBeGreaterThanOrEqual(29);
+        expect(GROK_STATIC_CATALOG.every((model) => model.probeStatus !== "fail")).toBe(true);
+        expect(GROK_STATIC_CATALOG.length).toBeGreaterThanOrEqual(20);
     });
 
     it("treats grok-composer models as required reasoning, not optional", () => {

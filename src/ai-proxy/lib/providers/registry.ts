@@ -3,6 +3,7 @@ import { GithubCopilotSubscriptionProvider } from "@app/ai-proxy/lib/providers/g
 import { GrokSubscriptionProvider } from "@app/ai-proxy/lib/providers/grok-subscription";
 import { OpenAiSubscriptionProvider } from "@app/ai-proxy/lib/providers/openai-subscription";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
+import { XaiApiKeyProvider } from "@app/ai-proxy/lib/providers/xai-api-key";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { logger } from "@app/logger";
 
@@ -19,7 +20,8 @@ export function isProviderImplemented(provider: AiProxyAccountConfig["provider"]
         provider === "grok-subscription" ||
         provider === "github-copilot-subscription" ||
         provider === "anthropic-subscription" ||
-        provider === "openai-subscription"
+        provider === "openai-subscription" ||
+        provider === "xai-api-key"
     );
 }
 
@@ -63,6 +65,10 @@ export async function createProvider(account: AiProxyAccountConfig): Promise<Pro
 
     if (account.provider === "openai-subscription") {
         return OpenAiSubscriptionProvider.create(account);
+    }
+
+    if (account.provider === "xai-api-key") {
+        return XaiApiKeyProvider.create(account);
     }
 
     throw new Error(`Provider not implemented yet: ${account.provider}`);

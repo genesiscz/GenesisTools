@@ -111,6 +111,25 @@ Two token sources, tried in order:
 - `openaiSub.accountName` set → the named `openai-sub` account in `~/.genesis-tools/ai/config.json` (refreshed via Codex OAuth and persisted).
 - `openaiSub.accountName` omitted → the Codex CLI's own cache (`~/.codex/auth.json`, read-only; run `codex login` to refresh it). Override the path with `openaiSub.codexAuthPath`.
 
+### xAI API key
+
+OpenAI-compatible passthrough to `https://api.x.ai/v1` (chat completions + responses). Detected when `XAI_API_KEY` / `X_AI_API_KEY` is set (`tools ai-proxy config detect` / `config init`). Catalog comes from live `GET /v1/models` (chat models only; image/video filtered), with a small static fallback if the request fails.
+
+```json
+{
+  "name": "work",
+  "provider": "xai-api-key",
+  "providerSlug": "xai",
+  "enabled": true,
+  "apiKeyEnv": "XAI_API_KEY",
+  "managementKeyEnv": "XAI_MANAGEMENT_KEY",
+  "teamId": "optional-team-id"
+}
+```
+
+Model ids: `work/xai/grok-4.5`, `work/xai/grok-4.3`, …  
+Usage for this provider needs Management API credentials (`managementKeyEnv` + `teamId` / `XAI_TEAM_ID`); the inference key alone has no usage endpoint.
+
 ## Usage analytics
 
 - **Subscription:** `tools ai-proxy usage --account genesiscz`

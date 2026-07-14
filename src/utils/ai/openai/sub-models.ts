@@ -1,4 +1,5 @@
 import { logger } from "@app/logger";
+import { fetchDirect } from "@app/utils/net/fetch-direct";
 import { WHAM_BASE_URL } from "./codex-auth";
 
 export interface WhamModelRecord {
@@ -45,11 +46,10 @@ interface WhamModelsResponse {
 }
 
 /**
- * Live model list from the WHAM `/models` endpoint (non-standard schema).
- * Falls back to the static catalog on any failure so callers always get a
- * usable list.
+ * Live WHAM `/models` list (no fallback). Returns null on failure so callers
+ * can mark availability honestly (live ok vs static skip).
  */
-export async function fetchWhamModels(accessToken: string, accountId?: string): Promise<WhamModelRecord[]> {
+export async function tryFetchWhamModels(accessToken: string, accountId?: string): Promise<WhamModelRecord[] | null> {
     try {
         const headers: Record<string, string> = {
             Authorization: `Bearer ${accessToken}`,
@@ -59,7 +59,7 @@ export async function fetchWhamModels(accessToken: string, accountId?: string): 
             headers["ChatGPT-Account-Id"] = accountId;
         }
 
-        const res = await fetch(`${WHAM_BASE_URL}/models?client_version=${WHAM_CLIENT_VERSION}`, {
+        const res = await fetchDirect(`${WHAM_BASE_URL}/models?client_version=${WHAM_CLIENT_VERSION}`, {
             headers,
             signal: AbortSignal.timeout(5_000),
         });
@@ -79,7 +79,23 @@ export async function fetchWhamModels(accessToken: string, accountId?: string): 
             supportsParallelToolCalls: m.supports_parallel_tool_calls,
         }));
     } catch (err) {
-        logger.debug({ err }, "codex: live WHAM model fetch failed, using static catalog");
-        return OPENAI_SUB_STATIC_CATALOG;
+        logger.debug({ err }, "codex: live WHAM model fetch failed");
+        return null;
     }
+}
+
+/**
+ * Live model list from the WHAM `/models` endpoint (non-standard schema).
+ * Falls back to the static catalog on any failure so callers always get a
+ * usable list.
+ */
+export async function fetchWhamModels(accessToken: string, accountId?: string): Promise<WhamModelRecord[]> {
+    const live = await tryFetchWhamModels(accessToken, accountId);
+
+    if (live && live.length > 0) {
+        return live;
+    }
+
+    logger.debug("codex: using static catalog fallback");
+    return OPENAI_SUB_STATIC_CATALOG;
 }

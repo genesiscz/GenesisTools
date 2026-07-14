@@ -1,4 +1,5 @@
 import { logger } from "@app/logger";
+import { fetchDirect } from "@app/utils/net/fetch-direct";
 
 export interface AnthropicSubModelRecord {
     id: string;
@@ -64,12 +65,12 @@ interface AnthropicModelsResponse {
 }
 
 /**
- * Live model list for a subscription OAuth token. Falls back to the static
- * catalog on any failure so callers always get a usable list.
+ * Live model list for a subscription OAuth token (no fallback).
+ * Returns null when the request fails so callers can distinguish live vs static.
  */
-export async function fetchAnthropicSubModels(token: string): Promise<AnthropicSubModelRecord[]> {
+export async function tryFetchAnthropicSubModels(token: string): Promise<AnthropicSubModelRecord[] | null> {
     try {
-        const res = await fetch("https://api.anthropic.com/v1/models?limit=100", {
+        const res = await fetchDirect("https://api.anthropic.com/v1/models?limit=100", {
             headers: {
                 Authorization: `Bearer ${token}`,
                 "anthropic-version": "2023-06-01",
@@ -91,7 +92,22 @@ export async function fetchAnthropicSubModels(token: string): Promise<AnthropicS
             thinking: m.id.includes("haiku") ? "none" : "reasoning",
         }));
     } catch (err) {
-        logger.debug({ err }, "anthropic: live model fetch failed, using static catalog");
-        return ANTHROPIC_SUB_STATIC_CATALOG;
+        logger.debug({ err }, "anthropic: live model fetch failed");
+        return null;
     }
+}
+
+/**
+ * Live model list for a subscription OAuth token. Falls back to the static
+ * catalog on any failure so callers always get a usable list.
+ */
+export async function fetchAnthropicSubModels(token: string): Promise<AnthropicSubModelRecord[]> {
+    const live = await tryFetchAnthropicSubModels(token);
+
+    if (live && live.length > 0) {
+        return live;
+    }
+
+    logger.debug("anthropic: using static catalog fallback");
+    return ANTHROPIC_SUB_STATIC_CATALOG;
 }
