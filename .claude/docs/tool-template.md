@@ -297,6 +297,7 @@ spinner.succeed("Done!");
 8. **Add verbose/debug modes** for troubleshooting
 9. **Use meaningful exit codes** (0 for success, 1+ for errors)
 10. **Test with various input scenarios** including edge cases
+11. **Multi-column inventory output** (lists of models, accounts, ports, …): use `@app/utils/table` port-style helpers (`createBoxTable`, `renderCliHeader`, `formatDotStatus`) + `out.println` — not clack `out.log.info` lines. See CLAUDE.md → *CLI inventory tables*. Keep `--json` via `out.result`.
 
 ### 5. Testing Your Tool
 

@@ -1,19 +1,9 @@
 import { out } from "@app/logger";
 import { formatBytes, formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
-import Table from "cli-table3";
+import { createBoxTable, renderCliHeader, truncateDisplay } from "@app/utils/table";
 import pc from "picocolors";
 import type { ScanResult } from "./types";
-
-const HEADER_TEXT_MAX_WIDTH = 31;
-
-function truncate(value: string, max: number): string {
-    if (value.length <= max) {
-        return value;
-    }
-
-    return `${value.slice(0, max - 1)}…`;
-}
 
 function shortName(fullPath: string): string {
     const last = fullPath.split("/").pop() ?? fullPath;
@@ -40,18 +30,6 @@ function colorSwap(bytes: number): string {
     return pc.green(formatted);
 }
 
-function renderHeader(): void {
-    const border = pc.cyan(pc.bold(" │"));
-    const title = "Swap Usage";
-    const subtitle = "what's hogging your swap";
-    out.println();
-    out.println(pc.cyan(pc.bold(" ┌─────────────────────────────────────┐")));
-    out.println(`${border}${pc.white(pc.bold(`  ${title.padEnd(HEADER_TEXT_MAX_WIDTH)}`))}${pc.cyan(pc.bold("│"))}`);
-    out.println(`${border}${pc.dim(`  ${subtitle.padEnd(HEADER_TEXT_MAX_WIDTH)}`)}${pc.cyan(pc.bold("│"))}`);
-    out.println(pc.cyan(pc.bold(" └─────────────────────────────────────┘")));
-    out.println();
-}
-
 function renderSummary(result: ScanResult): void {
     const { system, scannedCount, totalProcesses, processes } = result;
     const pctNum = system.totalBytes > 0 ? (system.usedBytes / system.totalBytes) * 100 : 0;
@@ -76,32 +54,8 @@ function renderSummary(result: ScanResult): void {
     out.println();
 }
 
-function createTable(): Table.Table {
-    return new Table({
-        chars: {
-            top: "─",
-            "top-mid": "┬",
-            "top-left": "┌",
-            "top-right": "┐",
-            bottom: "─",
-            "bottom-mid": "┴",
-            "bottom-left": "└",
-            "bottom-right": "┘",
-            left: "│",
-            "left-mid": "├",
-            mid: "─",
-            "mid-mid": "┼",
-            right: "│",
-            "right-mid": "┤",
-            middle: "│",
-        },
-        head: ["PID", "PROCESS", "RSS", "SWAP", "UPTIME"].map((h) => pc.cyan(pc.bold(h))),
-        style: { head: [], border: ["gray"], "padding-left": 1, "padding-right": 1 },
-    });
-}
-
 export function renderResult(result: ScanResult, top: number): void {
-    renderHeader();
+    renderCliHeader("Swap Usage", "what's hogging your swap");
     renderSummary(result);
 
     const showAllHint = !result.wasAllMode;
@@ -117,12 +71,12 @@ export function renderResult(result: ScanResult, top: number): void {
     }
 
     const sorted = [...result.processes].sort((a, b) => b.swapBytes - a.swapBytes).slice(0, top);
-    const table = createTable();
+    const table = createBoxTable(["PID", "PROCESS", "RSS", "SWAP", "UPTIME"]);
 
     for (const proc of sorted) {
         table.push([
             pc.dim(String(proc.pid)),
-            pc.white(truncate(shortName(proc.name), 50)),
+            pc.white(truncateDisplay(shortName(proc.name), 50)),
             pc.cyan(formatBytes(proc.rssBytes)),
             colorSwap(proc.swapBytes),
             pc.yellow(formatDuration(proc.uptimeMs, "ms", "hm-smart")),

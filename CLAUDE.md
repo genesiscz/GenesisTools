@@ -88,7 +88,7 @@ When creating a new tool and writing helper functions, check if the utility is *
 
 - `src/utils/format.ts` - Formatting: `formatDuration()`, `formatBytes()`, `formatTokens()`, `formatNumber()`, `formatList()`, `formatTimestamp()`, `createStopwatch()`
 - `src/utils/Stopwatch.ts` - High-res stopwatch class: `elapsed()`, `lap()`, `stamp()` (wall-clock + elapsed), `now()` (HH:MM:SS.mmm)
-- `src/utils/table.ts` - Text table formatting
+- `src/utils/table.ts` - CLI tables: `formatTable()` (plain padded), **`createBoxTable()` / `renderCliHeader()` / `formatDotStatus()`** (port-style boxed inventories via `cli-table3`)
 - `src/utils/string.ts` - String utilities (glob matching, ANSI stripping)
 - `src/utils/cli/executor.ts` - CLI helpers: `suggestCommand()`, `isInteractive()`, `buildCommand()`, `Executor`, `enhanceHelp()`
 - `src/utils/storage/storage.ts` - Config & cache management
@@ -169,8 +169,9 @@ Most tools follow these common patterns:
 
 -   Support multiple output destinations: file, clipboard, stdout
 -   Use `clipboardy` for clipboard operations
--   Use `chalk` for colored terminal output (but strip ANSI codes for non-TTY)
+-   Use `picocolors` (or `chalk`) for colored terminal output (but strip ANSI codes for non-TTY)
 -   Respect `--silent` and `--verbose` flags
+-   **Human inventory lists (models, accounts, ports, processes, …):** do **not** dump multi-column data via clack `out.log.info`. Use the port-style table helpers from `@app/utils/table` + `out.println` — see **CLI inventory tables** below.
 
 **Process Execution**:
 
@@ -246,6 +247,35 @@ Two cleanly separated layers (the 2026-05 logger+out overhaul):
 - **Every commander entrypoint** ends with `await runTool(program, { tool })` (from `@app/utils/cli`) — it owns `-v`/`--readme`/help registration, console-level resolution, and the `{tool}` log binding, then `parseAsync`. The subprocess **spawner** is `execTool` (renamed from the old `runTool`).
 - **`scripts/ci/logging-guard.sh`** enforces this convention repo-wide in CI: no default/extension/relative-path/any-name import of the logger module (root `./tools` and `scripts/` included — not just `src/`), no bare `logger.*(SafeJSON.stringify(…))` result dumps, no reintroduced transitional shims, and that the browser-client isolation test exists. Browser-client trees never value-importing `@app/logger` is authoritatively enforced by `src/logger/client-isolation.test.ts`.
 - **`@app/utils/cli/ui` — high-density CLI status.** For tools that emit many short status lines per command (e.g. `tools stash`), clack's `│ ◆ ●` box-drawing is the wrong texture. Import `{ ui }` from `@app/utils/cli/ui` to get plain stderr writes with chalk decoration (`ui.ok/info/warn/err/dim/header/kv/section/raw`). Use this INSTEAD of `out.log.*` for high-density status; keep `out.log.*` for clack-shaped task lifecycles. `out.print()` / `out.result()` are still the only writers to stdout for machine-readable output.
+- **CLI inventory tables (port-style) — prefer this for multi-column human output.** Canonical helpers live in `@app/utils/table` (not reimplemented per tool). Reference UIs: `tools port`, `tools ai-proxy models`, `tools macos swap`.
+
+  | Need | API | Notes |
+  |---|---|---|
+  | Boxed inventory table | `createBoxTable(headers)` | `cli-table3` + shared box chars; `table.push(row)` then `out.println(table.toString())` |
+  | Title box | `renderCliHeader(title, subtitle)` | Cyan frame via `out.println` |
+  | Section + key rows | `renderCliSection` / `renderCliKeyRow` | Column legends, detail blocks |
+  | Status cell | `formatDotStatus("ok"\|"warn"\|"err"\|"dim", label)` | `● ok` / `● fail` coloring |
+  | Cell truncate | `truncateDisplay(value, max)` | Em dash for empty; `…` ellipsis |
+  | Plain padded table | `formatTable(rows, headers)` | Dense / non-TTY dumps without box borders |
+  | Machine-readable | `out.result(...)` + `--json` | Never put JSON through the table path |
+
+  Pattern:
+
+  ```typescript
+  import { out } from "@app/logger";
+  import { suggestCommand } from "@app/utils/cli";
+  import { createBoxTable, formatDotStatus, renderCliHeader, renderCliSection } from "@app/utils/table";
+  import pc from "picocolors";
+
+  renderCliHeader("Proxy Models", "ids clients can call");
+  const table = createBoxTable(["PROXY ID", "PROBE"]);
+  table.push([pc.white(id), formatDotStatus("ok", "ok")]);
+  out.println(table.toString());
+  renderCliSection("Columns");
+  // footer: counts · Next/Debug via suggestCommand("tools <tool>", { replaceCommand: [...] })
+  ```
+
+  **Do not** hand-roll `new Table({ chars: … })` or copy/paste box-drawing from `src/port/` — import from `@app/utils/table`. Keep domain coloring (framework names, etc.) in the tool's `display.ts`; keep the table chrome shared.
 
 ## Claude Agent SDK Types Reference
 

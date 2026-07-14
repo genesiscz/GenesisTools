@@ -1,50 +1,17 @@
 import { out } from "@app/logger";
-import Table from "cli-table3";
+import {
+    createBoxTable,
+    formatDotStatus,
+    renderCliHeader,
+    renderCliKeyRow,
+    renderCliSection,
+    truncateDisplay,
+} from "@app/utils/table";
 import pc from "picocolors";
 import type { KillResult, PortSnapshot, ProcessSnapshot } from "./types";
 
-const HEADER_TEXT_MAX_WIDTH = 31;
-
-function createTable(headers: string[]): Table.Table {
-    return new Table({
-        chars: {
-            top: "─",
-            "top-mid": "┬",
-            "top-left": "┌",
-            "top-right": "┐",
-            bottom: "─",
-            "bottom-mid": "┴",
-            "bottom-left": "└",
-            "bottom-right": "┘",
-            left: "│",
-            "left-mid": "├",
-            mid: "─",
-            "mid-mid": "┼",
-            right: "│",
-            "right-mid": "┤",
-            middle: "│",
-        },
-        head: headers.map((header) => pc.cyan(pc.bold(header))),
-        style: {
-            head: [],
-            border: ["gray"],
-            "padding-left": 1,
-            "padding-right": 1,
-        },
-    });
-}
-
-function truncate(value: string | null | undefined, max: number): string {
-    if (!value) {
-        return "—";
-    }
-
-    if (value.length <= max) {
-        return value;
-    }
-
-    return `${value.slice(0, max - 1)}…`;
-}
+/** @deprecated Prefer `renderCliHeader` from `@app/utils/table` — kept for callers. */
+export const renderHeader = renderCliHeader;
 
 function formatFramework(framework: string | null): string {
     if (!framework) {
@@ -79,13 +46,13 @@ function formatFramework(framework: string | null): string {
 function formatStatus(status: PortSnapshot["status"] | ProcessSnapshot["status"]): string {
     switch (status) {
         case "healthy":
-            return `${pc.green("●")} ${pc.green("healthy")}`;
+            return formatDotStatus("ok", "healthy");
         case "orphaned":
-            return `${pc.yellow("●")} ${pc.yellow("orphaned")}`;
+            return formatDotStatus("warn", "orphaned");
         case "zombie":
-            return `${pc.red("●")} ${pc.red("zombie")}`;
+            return formatDotStatus("err", "zombie");
         default:
-            return `${pc.dim("●")} ${pc.dim("unknown")}`;
+            return formatDotStatus("dim", "unknown");
     }
 }
 
@@ -103,21 +70,6 @@ function formatCpu(cpu: number): string {
     return pc.green(value);
 }
 
-export function renderHeader(title: string, subtitle: string): void {
-    const border = pc.cyan(pc.bold(" │"));
-
-    out.println();
-    out.println(pc.cyan(pc.bold(" ┌─────────────────────────────────────┐")));
-    out.println(
-        `${border}${pc.white(pc.bold(`  ${truncate(title, HEADER_TEXT_MAX_WIDTH).padEnd(HEADER_TEXT_MAX_WIDTH)}`))}${pc.cyan(pc.bold("│"))}`
-    );
-    out.println(
-        `${border}${pc.dim(`  ${truncate(subtitle, HEADER_TEXT_MAX_WIDTH).padEnd(HEADER_TEXT_MAX_WIDTH)}`)}${pc.cyan(pc.bold("│"))}`
-    );
-    out.println(pc.cyan(pc.bold(" └─────────────────────────────────────┘")));
-    out.println();
-}
-
 export function displayPortTable(ports: PortSnapshot[], filtered: boolean): void {
     renderHeader("Port Overview", "listen to your ports");
 
@@ -127,14 +79,14 @@ export function displayPortTable(ports: PortSnapshot[], filtered: boolean): void
         return;
     }
 
-    const table = createTable(["PORT", "PROCESS", "PID", "PROJECT", "FRAMEWORK", "UPTIME", "STATUS"]);
+    const table = createBoxTable(["PORT", "PROCESS", "PID", "PROJECT", "FRAMEWORK", "UPTIME", "STATUS"]);
 
     for (const portInfo of ports) {
         table.push([
             pc.white(pc.bold(`:${portInfo.port}`)),
             pc.white(portInfo.processName),
             pc.dim(String(portInfo.pid)),
-            portInfo.projectName ? pc.blue(truncate(portInfo.projectName, 20)) : pc.dim("—"),
+            portInfo.projectName ? pc.blue(truncateDisplay(portInfo.projectName, 20)) : pc.dim("—"),
             formatFramework(portInfo.framework),
             portInfo.uptime ? pc.yellow(portInfo.uptime) : pc.dim("—"),
             formatStatus(portInfo.status),
@@ -160,7 +112,7 @@ export function displayPortDetail(port: number, snapshots: PortSnapshot[], gitBr
         return;
     }
 
-    const table = createTable(["PID", "PROCESS", "USER", "STATE", "PROJECT", "FRAMEWORK", "UPTIME", "STATUS"]);
+    const table = createBoxTable(["PID", "PROCESS", "USER", "STATE", "PROJECT", "FRAMEWORK", "UPTIME", "STATUS"]);
 
     for (const snapshot of snapshots) {
         table.push([
@@ -168,7 +120,7 @@ export function displayPortDetail(port: number, snapshots: PortSnapshot[], gitBr
             pc.white(snapshot.processName),
             pc.dim(snapshot.user),
             snapshot.state === "LISTEN" ? pc.green(snapshot.state) : pc.yellow(snapshot.state),
-            snapshot.projectName ? pc.blue(truncate(snapshot.projectName, 18)) : pc.dim("—"),
+            snapshot.projectName ? pc.blue(truncateDisplay(snapshot.projectName, 18)) : pc.dim("—"),
             formatFramework(snapshot.framework),
             snapshot.uptime ? pc.yellow(snapshot.uptime) : pc.dim("—"),
             formatStatus(snapshot.status),
@@ -179,15 +131,12 @@ export function displayPortDetail(port: number, snapshots: PortSnapshot[], gitBr
     out.println();
 
     const primary = snapshots[0];
-    out.println(pc.cyan(pc.bold("  Location")));
-    out.println(pc.dim("  ──────────────────────"));
-    out.println(`  ${pc.dim("Directory".padEnd(14))} ${primary.cwd ? pc.blue(primary.cwd) : pc.dim("—")}`);
-    out.println(`  ${pc.dim("Command".padEnd(14))} ${pc.white(truncate(primary.command, 80))}`);
-    out.println(
-        `  ${pc.dim("Started".padEnd(14))} ${primary.startTime ? pc.dim(primary.startTime.toLocaleString()) : pc.dim("—")}`
-    );
-    out.println(`  ${pc.dim("Memory".padEnd(14))} ${primary.memory ? pc.green(primary.memory) : pc.dim("—")}`);
-    out.println(`  ${pc.dim("Git Branch".padEnd(14))} ${gitBranch ? pc.magenta(gitBranch) : pc.dim("—")}`);
+    renderCliSection("Location");
+    renderCliKeyRow("Directory", primary.cwd ? pc.blue(primary.cwd) : pc.dim("—"), 14);
+    renderCliKeyRow("Command", pc.white(truncateDisplay(primary.command, 80)), 14);
+    renderCliKeyRow("Started", primary.startTime ? pc.dim(primary.startTime.toLocaleString()) : pc.dim("—"), 14);
+    renderCliKeyRow("Memory", primary.memory ? pc.green(primary.memory) : pc.dim("—"), 14);
+    renderCliKeyRow("Git Branch", gitBranch ? pc.magenta(gitBranch) : pc.dim("—"), 14);
     out.println();
     out.println(
         `${pc.dim("  Tip: use ")}${pc.cyan("tools port --kill <number>")}${pc.dim(" to skip the prompt and terminate every matching PID.")}`
@@ -204,7 +153,7 @@ export function displayProcessTable(processes: ProcessSnapshot[], filtered: bool
         return;
     }
 
-    const table = createTable(["PID", "PROCESS", "CPU%", "MEM", "PROJECT", "FRAMEWORK", "UPTIME", "WHAT"]);
+    const table = createBoxTable(["PID", "PROCESS", "CPU%", "MEM", "PROJECT", "FRAMEWORK", "UPTIME", "WHAT"]);
 
     for (const processInfo of processes) {
         const what =
@@ -214,13 +163,13 @@ export function displayProcessTable(processes: ProcessSnapshot[], filtered: bool
 
         table.push([
             pc.dim(String(processInfo.pid)),
-            pc.white(pc.bold(truncate(processInfo.processName, 15))),
+            pc.white(pc.bold(truncateDisplay(processInfo.processName, 15))),
             formatCpu(processInfo.cpu),
             processInfo.memory ? pc.green(processInfo.memory) : pc.dim("—"),
-            processInfo.projectName ? pc.blue(truncate(processInfo.projectName, 18)) : pc.dim("—"),
+            processInfo.projectName ? pc.blue(truncateDisplay(processInfo.projectName, 18)) : pc.dim("—"),
             formatFramework(processInfo.framework),
             processInfo.uptime ? pc.yellow(processInfo.uptime) : pc.dim("—"),
-            pc.dim(truncate(what, 34)),
+            pc.dim(truncateDisplay(what, 34)),
         ]);
     }
 
@@ -239,14 +188,14 @@ export function displayCleanPreview(orphaned: PortSnapshot[]): void {
         return;
     }
 
-    const table = createTable(["PORT", "PID", "PROCESS", "PROJECT", "STATUS"]);
+    const table = createBoxTable(["PORT", "PID", "PROCESS", "PROJECT", "STATUS"]);
 
     for (const portInfo of orphaned) {
         table.push([
             pc.white(pc.bold(`:${portInfo.port}`)),
             pc.dim(String(portInfo.pid)),
             pc.white(portInfo.processName),
-            portInfo.projectName ? pc.blue(truncate(portInfo.projectName, 18)) : pc.dim("—"),
+            portInfo.projectName ? pc.blue(truncateDisplay(portInfo.projectName, 18)) : pc.dim("—"),
             formatStatus(portInfo.status),
         ]);
     }
