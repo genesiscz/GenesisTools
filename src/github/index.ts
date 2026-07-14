@@ -5,6 +5,7 @@ import { createCodeSearchCommand } from "@app/github/commands/code-search";
 import { commentsCommand, createCommentsCommand } from "@app/github/commands/comments";
 import { createGetCommand, getCommand } from "@app/github/commands/get";
 import { createIssueCommand, issueCommand } from "@app/github/commands/issue";
+import { createMergeCommand } from "@app/github/commands/merge";
 import { createNotificationsCommand, notificationsCommand } from "@app/github/commands/notifications";
 import { createPRCommand, prCommand } from "@app/github/commands/pr";
 import { createReviewCommand, reviewCommand } from "@app/github/commands/review";
@@ -34,6 +35,7 @@ program
 // Add subcommands
 program.addCommand(createIssueCommand());
 program.addCommand(createPRCommand());
+program.addCommand(createMergeCommand());
 program.addCommand(createCommentsCommand());
 program.addCommand(createSearchCommand());
 program.addCommand(createCodeSearchCommand());

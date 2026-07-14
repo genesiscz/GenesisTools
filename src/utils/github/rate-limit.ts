@@ -16,14 +16,52 @@ interface RateLimitError {
 }
 
 /**
- * Check if error is a rate limit error
+ * Check if error is a rate limit / secondary-rate-limit error.
+ *
+ * GitHub uses 403 for BOTH rate limits and permission denials
+ * ("Resource not accessible by personal access token"). Only treat 403 as
+ * rate-limit when headers/message say so — otherwise callers retry forever
+ * on permanent auth failures.
  */
 export function isRateLimitError(error: unknown): error is RateLimitError {
     if (!error || typeof error !== "object") {
         return false;
     }
     const err = error as Record<string, unknown>;
-    return err.status === 403 || err.status === 429;
+    const status = err.status;
+
+    if (status === 429) {
+        return true;
+    }
+
+    if (status !== 403) {
+        return false;
+    }
+
+    const headers = (err.headers ?? (err as { response?: { headers?: Record<string, string> } }).response?.headers) as
+        | Record<string, string>
+        | undefined;
+    const remaining = headers?.["x-ratelimit-remaining"] ?? headers?.["X-RateLimit-Remaining"];
+    if (remaining === "0") {
+        return true;
+    }
+
+    const message = String(
+        (err as { message?: string }).message ??
+            (err as { response?: { data?: { message?: string } } }).response?.data?.message ??
+            ""
+    ).toLowerCase();
+
+    if (message.includes("rate limit") || message.includes("secondary rate") || message.includes("abuse detection")) {
+        return true;
+    }
+
+    // retry-after with 403 often means secondary rate limit
+    if (headers?.["retry-after"] || headers?.["Retry-After"]) {
+        return true;
+    }
+
+    return false;
 }
 
 /**

@@ -9,15 +9,17 @@ import { Octokit } from "octokit";
 
 let _octokit: Octokit | null = null;
 
+export type OctokitAuthMode = "default" | "prefer-gh-cli";
+
 /**
- * Get or create authenticated Octokit instance
+ * Get or create authenticated Octokit instance (env token preferred — good for read).
  */
 export function getOctokit(): Octokit {
     if (_octokit) {
         return _octokit;
     }
 
-    const token = getGitHubToken();
+    const token = getGitHubToken("default");
 
     _octokit = new Octokit({
         auth: token,
@@ -26,45 +28,88 @@ export function getOctokit(): Octokit {
     return _octokit;
 }
 
+let _octokitWrite: Octokit | null = null;
+
 /**
- * Get GitHub token from environment or gh CLI
+ * Octokit for write operations (merge, retarget, delete ref).
+ *
+ * Prefers `gh auth token` classic OAuth (`repo` scope) over fine-grained
+ * GITHUB_TOKEN env PATs that often lack contents/PRs write on private repos.
+ * Separate cache from getOctokit() so reads keep using env token when set.
  */
-function getGitHubToken(): string | undefined {
-    // 1. Check environment variables
-    const token = env.github.getToken();
-    if (token) {
-        const tokenEnvKey = env.github.getTokenEnvKey();
-        logger.debug(`Using ${tokenEnvKey ?? "GITHUB_TOKEN"} from environment`);
-        return token;
+export function getOctokitForWrite(): Octokit {
+    if (_octokitWrite) {
+        return _octokitWrite;
     }
 
-    // 2. Try `gh auth token` command (works with modern gh CLI)
-    const ghToken = getGhCliToken();
-    if (ghToken) {
-        logger.debug("Using token from gh auth token");
-        return ghToken;
-    }
+    const token = getGitHubToken("prefer-gh-cli");
 
-    // 3. Fallback: Try to read from gh CLI config (older versions)
-    const ghConfigPath =
-        process.platform === "win32"
-            ? join(env.paths.getAppData() || join(homedir(), "AppData", "Roaming"), "gh", "hosts.yml")
-            : join(homedir(), ".config", "gh", "hosts.yml");
-    if (existsSync(ghConfigPath)) {
-        try {
-            const configContent = readFileSync(ghConfigPath, "utf-8");
-            // Simple YAML parsing for oauth_token
-            const match = configContent.match(/oauth_token:\s*(.+)/);
-            if (match) {
-                logger.debug("Using token from gh CLI config");
-                return match[1].trim();
+    _octokitWrite = new Octokit({
+        auth: token,
+    });
+
+    return _octokitWrite;
+}
+
+/**
+ * Get GitHub token from environment or gh CLI.
+ *
+ * @param mode default — env first (read-friendly). prefer-gh-cli — gh OAuth first (write-friendly).
+ */
+function getGitHubToken(mode: OctokitAuthMode = "default"): string | undefined {
+    const tryEnv = (): string | undefined => {
+        const token = env.github.getToken();
+        if (token) {
+            const tokenEnvKey = env.github.getTokenEnvKey();
+            logger.debug(`Using ${tokenEnvKey ?? "GITHUB_TOKEN"} from environment`);
+            return token;
+        }
+        return undefined;
+    };
+
+    const tryGhCli = (): string | undefined => {
+        const ghToken = getGhCliToken();
+        if (ghToken) {
+            logger.debug("Using token from gh auth token");
+            return ghToken;
+        }
+        return undefined;
+    };
+
+    const tryGhConfig = (): string | undefined => {
+        const ghConfigPath =
+            process.platform === "win32"
+                ? join(env.paths.getAppData() || join(homedir(), "AppData", "Roaming"), "gh", "hosts.yml")
+                : join(homedir(), ".config", "gh", "hosts.yml");
+        if (existsSync(ghConfigPath)) {
+            try {
+                const configContent = readFileSync(ghConfigPath, "utf-8");
+                // Simple YAML parsing for oauth_token
+                const match = configContent.match(/oauth_token:\s*(.+)/);
+                if (match) {
+                    logger.debug("Using token from gh CLI config");
+                    return match[1].trim();
+                }
+            } catch (err) {
+                logger.debug({ err }, "Failed to read gh CLI config");
             }
-        } catch (err) {
-            logger.debug({ err }, "Failed to read gh CLI config");
+        }
+        return undefined;
+    };
+
+    if (mode === "prefer-gh-cli") {
+        const token = tryGhCli() ?? tryGhConfig() ?? tryEnv();
+        if (token) {
+            return token;
+        }
+    } else {
+        const token = tryEnv() ?? tryGhCli() ?? tryGhConfig();
+        if (token) {
+            return token;
         }
     }
 
-    // 4. Return undefined (will work for public repos only)
+    // Return undefined (will work for public repos only)
     logger.warn("No GitHub token found. Will have limited API access.");
     return undefined;
 }

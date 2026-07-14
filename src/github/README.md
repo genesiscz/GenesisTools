@@ -50,6 +50,11 @@ tools github activity --since 1d --type pr
 # Fetch a raw file
 tools github get https://github.com/owner/repo/blob/main/src/index.ts --clipboard
 
+# Safe stack-aware merge (retargets dependents before optional branch delete)
+tools github merge 123 --rebase
+tools github merge 123 --squash --delete-branch --subject "feat: ship (#123)"
+tools github merge https://github.com/owner/repo/pull/123 --merge --delete-remote
+
 # Cache + rate limit status
 tools github status
 ```
@@ -62,6 +67,7 @@ tools github status
 |---------|-------------|
 | `issue <url-or-num>` | Fetch an issue with optional comments |
 | `pr <url-or-num>` | Fetch a PR with optional comments and review comments |
+| `merge <url-or-num>` | Merge a PR; retarget stack dependents before optional branch delete |
 | `comments <url-or-num>` | Fetch only the comment thread |
 | `review <url-or-num>` | Review threads (unresolved-only, group-by-file, JSON/MD) |
 | `search <query>` | Search issues and PRs |
@@ -70,6 +76,19 @@ tools github status
 | `notifications` | List inbox notifications with filters |
 | `activity` | Personal activity / events feed |
 | `status` | Auth, rate limit, and cache stats |
+
+### `merge` — stack-safe merge
+
+GitHub only auto-retargets dependent PRs when a branch is deleted via the **web UI** "Delete branch" button. Deleting via `gh pr merge --delete-branch`, the REST API, or `git push --delete` closes child PRs instead ([cli/cli#1168](https://github.com/cli/cli/issues/1168)).
+
+`tools github merge` always:
+
+1. Merges via Octokit (`merge` / `rebase` / `squash`) **without** deleting the head branch
+2. Finds open PRs whose `base` is the merged head branch
+3. Retargets each onto the merged PR's base
+4. Only then, if `--delete-branch` / `--delete-remote`, deletes the remote head ref
+
+Exactly one of `--merge`, `--rebase`, or `--squash` is required. All progress logs go to stdout.
 
 Run any subcommand with `--help` for its full option list. The most common flags (`--format ai|json`, `--limit`, `--last`, `--no-bots`, `--min-reactions`, `--stats`, `--clipboard`) work across multiple subcommands.
 
