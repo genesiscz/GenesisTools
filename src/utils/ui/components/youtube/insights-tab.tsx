@@ -9,7 +9,7 @@ import {
 } from "@app/utils/ui/components/youtube/summary-controls";
 import type { PipelineProgress } from "@app/utils/ui/components/youtube/tabs";
 import { TimestampedSummaryView } from "@app/utils/ui/components/youtube/timestamped-summary-view";
-import type { LlmEstimate, TimestampedSummaryEntry, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
+import type { LlmEstimate, LockedArtifact, TimestampedSummaryEntry, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
 import { useState } from "react";
 
 const NO_ESTIMATE = { data: undefined, isPending: false } as const;
@@ -21,7 +21,15 @@ export interface InsightsTabProps {
         id: VideoId | null,
         mode: "short" | "timestamped" | "long"
     ) => {
-        data: { timestamped?: TimestampedSummaryEntry[]; long?: VideoLongSummary | null; cached?: boolean } | undefined;
+        data:
+            | {
+                  timestamped?: TimestampedSummaryEntry[];
+                  long?: VideoLongSummary | null;
+                  cached?: boolean;
+                  locked?: undefined;
+              }
+            | LockedArtifact
+            | undefined;
         isPending: boolean;
     };
     useGenerateSummary: (id: VideoId) => {
@@ -60,8 +68,8 @@ export function InsightsTab({
     const [controls, setControls] = useState<SummaryControlsState>(DEFAULT_SUMMARY_CONTROLS);
     const [modelSel, setModelSel] = useState<{ provider?: string; model?: string }>({});
     const estimate = useEstimate?.(videoId, { mode: "timestamped", ...modelSel, enabled: confirmOpen }) ?? NO_ESTIMATE;
-    const entries = timestamped.data?.timestamped ?? [];
-    const tldr = long.data?.long?.tldr ?? null;
+    const entries = (timestamped.data && !timestamped.data.locked && timestamped.data.timestamped) || [];
+    const tldr = (long.data && !long.data.locked && long.data.long?.tldr) || null;
 
     if (timestamped.isPending) {
         return <Loading label="Loading insights" />;

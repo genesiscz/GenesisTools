@@ -101,6 +101,11 @@ export function useSummary(id: VideoId | null, mode: "short" | "timestamped" | "
                 id: id as VideoId,
                 mode,
             });
+
+            if (response.locked) {
+                return { locked: true as const, price: response.price, preview: response.preview };
+            }
+
             const cached = response.cached ?? false;
 
             if (mode === "long") {

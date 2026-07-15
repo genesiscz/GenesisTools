@@ -11,7 +11,7 @@ import {
     type SummaryControlsState,
 } from "@app/utils/ui/components/youtube/summary-controls";
 import type { PipelineProgress, VideoDetailDataSource } from "@app/utils/ui/components/youtube/tabs";
-import type { LlmEstimate, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
+import type { LlmEstimate, LockedArtifact, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
 import { useState } from "react";
 
 const NO_ESTIMATE = { data: undefined, isPending: false } as const;
@@ -21,7 +21,10 @@ export interface SummaryTabProps {
     useSummary: (
         id: VideoId | null,
         mode: "short" | "timestamped" | "long"
-    ) => { data: { long?: VideoLongSummary | null; cached?: boolean } | undefined; isPending: boolean };
+    ) => {
+        data: { long?: VideoLongSummary | null; cached?: boolean; locked?: undefined } | LockedArtifact | undefined;
+        isPending: boolean;
+    };
     useGenerateSummary: (id: VideoId) => {
         mutateAsync: (opts: {
             mode: "short" | "timestamped" | "long";
@@ -67,7 +70,7 @@ export function SummaryTab({
     const [linkCopied, setLinkCopied] = useState(false);
     const [presetId, setPresetId] = useState<number | null>(null);
     const estimate = useEstimate?.(videoId, { mode: "long", ...modelSel, enabled: confirmOpen }) ?? NO_ESTIMATE;
-    const long = summary.data?.long ?? null;
+    const long = (summary.data && !summary.data.locked && summary.data.long) || null;
 
     if (summary.isPending) {
         return <Loading label="Loading summary" />;

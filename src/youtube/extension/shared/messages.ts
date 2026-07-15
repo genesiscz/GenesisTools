@@ -5,6 +5,7 @@ import type {
     JobStage,
     LedgerPage,
     LlmEstimate,
+    LockedArtifact,
     PipelineJob,
     PromptPreset,
     QaHistoryItem,
@@ -101,16 +102,23 @@ export interface ExtensionApiMap {
     "api:getVideo": { video: Video; transcripts: Transcript[] };
     "api:getTranscript": { transcript: Transcript };
     "api:getComments": { comments: VideoComment[] };
-    "api:getSummary": {
-        summary?: string | TimestampedSummaryEntry[] | VideoLongSummary | null;
-        mode?: "short" | "timestamped" | "long";
-        cached?: boolean;
-    };
+    "api:getSummary":
+        | (LockedArtifact & { mode?: "short" | "timestamped" | "long" })
+        | {
+              summary?: string | TimestampedSummaryEntry[] | VideoLongSummary | null;
+              mode?: "short" | "timestamped" | "long";
+              cached?: boolean;
+              locked?: undefined;
+          };
     "api:generateSummary": {
         summary?: string | TimestampedSummaryEntry[] | VideoLongSummary | null;
         mode?: "short" | "timestamped" | "long";
         cached?: boolean;
         jobId?: number;
+        /** True when the call unlocked an existing shared artifact instead of generating. */
+        reused?: boolean;
+        creditsSpent?: number;
+        credits?: number;
     };
     "api:askVideo": {
         answer: string;
