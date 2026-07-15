@@ -59,7 +59,10 @@ export function toPartialLongSummary(partial: unknown): PartialLongSummary | nul
  * numeric `startSec` or non-empty `text` yet are dropped, so the view renders
  * only stable cards while the stream grows.
  */
-export function toPartialTimestampedEntries(partial: unknown): { entries: TimestampedSummaryEntry[]; tldr: string | null } {
+export function toPartialTimestampedEntries(partial: unknown): {
+    entries: TimestampedSummaryEntry[];
+    tldr: string | null;
+} {
     if (partial === null || typeof partial !== "object") {
         return { entries: [], tldr: null };
     }
