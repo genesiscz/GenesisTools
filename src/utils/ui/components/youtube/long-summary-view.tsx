@@ -103,7 +103,11 @@ export function LongSummaryView({ summary, streaming, onSeek, playerTime }: Long
                     <div className="mt-2 space-y-2">
                         {chapters.map((chapter, index) => (
                             <ChapterCard
-                                key={index}
+                                key={
+                                    typeof chapter.startSec === "number"
+                                        ? `t-${chapter.startSec}`
+                                        : `${index}-${chapter.title}`
+                                }
                                 title={chapter.title}
                                 summary={chapter.summary}
                                 streaming={streaming}
@@ -131,7 +135,7 @@ function SkeletonLines({ count }: { count: number }) {
     return (
         <div className="mt-2 space-y-2">
             {Array.from({ length: count }).map((_, index) => (
-                <div key={index} className="h-4 rounded-md bg-white/5 animate-pulse" />
+                <div key={index} className="h-4 rounded-md bg-muted animate-pulse" />
             ))}
         </div>
     );
@@ -179,7 +183,7 @@ function ChapterCard({ title, summary, streaming, startSec, active, onSeek }: Ch
                     {timecodePill}
                     <h5 className="text-sm font-semibold text-foreground/95">{title}</h5>
                 </div>
-                {streaming ? <div className="mt-2 h-4 rounded-md bg-white/5 animate-pulse" /> : null}
+                {streaming ? <div className="mt-2 h-4 rounded-md bg-muted animate-pulse" /> : null}
             </div>
         );
     }

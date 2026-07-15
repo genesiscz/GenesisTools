@@ -8,7 +8,7 @@ export interface PartialLongSummary {
     tldr?: string;
     keyPoints?: Array<string | undefined>;
     learnings?: Array<string | undefined>;
-    chapters?: Array<{ title?: string; summary?: string } | undefined>;
+    chapters?: Array<{ title?: string; summary?: string; startSec?: number; endSec?: number | null } | undefined>;
     conclusion?: string | null;
 }
 
@@ -42,6 +42,8 @@ export function toPartialLongSummary(partial: unknown): PartialLongSummary | nul
             return {
                 title: typeof raw.title === "string" ? raw.title : undefined,
                 summary: typeof raw.summary === "string" ? raw.summary : undefined,
+                startSec: typeof raw.startSec === "number" ? raw.startSec : undefined,
+                endSec: typeof raw.endSec === "number" || raw.endSec === null ? raw.endSec : undefined,
             };
         });
     }
