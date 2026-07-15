@@ -107,7 +107,14 @@ describe("createCheckoutSession", () => {
             { STRIPE_SECRET_KEY: "sk_test_123", STRIPE_PRICE_PACK_MEDIUM: "price_medium_123" },
             async () => {
                 const result = await createCheckoutSession({
-                    user: { id: 7, email: "buyer@example.com", credits: 0, createdAt: "2026-01-01T00:00:00.000Z" },
+                    user: {
+                        id: 7,
+                        email: "buyer@example.com",
+                        credits: 0,
+                        createdAt: "2026-01-01T00:00:00.000Z",
+                        outputLang: null,
+                        ttsVoice: null,
+                    },
                     packId: "pack-medium",
                     origin: "https://example.com",
                 });
@@ -126,7 +133,14 @@ describe("createCheckoutSession", () => {
         await env.testing.withOverrides({ STRIPE_SECRET_KEY: undefined }, async () => {
             await expect(
                 createCheckoutSession({
-                    user: { id: 1, email: "a@example.com", credits: 0, createdAt: "2026-01-01T00:00:00.000Z" },
+                    user: {
+                        id: 1,
+                        email: "a@example.com",
+                        credits: 0,
+                        createdAt: "2026-01-01T00:00:00.000Z",
+                        outputLang: null,
+                        ttsVoice: null,
+                    },
                     packId: "pack-small",
                     origin: "https://example.com",
                 })

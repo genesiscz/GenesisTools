@@ -6,6 +6,7 @@ import type { VideoComment } from "@app/youtube/lib/comments.types";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { TranscriptSearchHit } from "@app/youtube/lib/db.types";
+import { englishLanguageName } from "@app/youtube/lib/languages";
 import { buildPresetBlock } from "@app/youtube/lib/presets";
 import type {
     AskOpts,
@@ -38,6 +39,12 @@ export const MAX_LAZY_INDEX_PER_ASK = 5;
 const CANDIDATE_LIMIT_DEFAULT = 20;
 const COMMENT_ATTRIBUTION_PROMPT =
     "Claims sourced from comments must be attributed ('commenters point out…', 'one viewer disagrees…') — never present viewer opinions as statements made in the video.";
+
+function languageInstruction(lang: string): string {
+    const name = englishLanguageName(lang);
+
+    return `Respond in ${name}. Keep technical terms, product names, and quoted phrases in their original language. Use natural ${name} phrasing, not literal translation.`;
+}
 
 const DEFAULT_QA_DEPS: QaServiceDeps = {
     createEmbedder: (opts) => Embedder.create(opts),
@@ -213,6 +220,7 @@ export class QaService {
                           `End the answer with a one-line coverage note: ${opts.crossVideo.skippedUnindexed} candidate video(s) were not searched because they are not indexed yet.`,
                       ]
                     : []),
+                ...(opts.lang && opts.lang !== "en" ? [languageInstruction(opts.lang)] : []),
             ].join(" ");
             // Preset instructions append LAST, after all system instructions —
             // security-relevant per 2026-07-15-RoadmapFeature11-PromptPersonas.

@@ -22,6 +22,7 @@ import type {
     SetVideoSummaryInput,
     TranscriptSearchHit,
     UpdateJobPartial,
+    UpdateUserPrefsInput,
     UpsertChannelInput,
     UpsertQaChunkInput,
     UpsertVideoInput,
@@ -427,6 +428,42 @@ export class YoutubeDatabase extends BaseDatabase {
             `);
         });
 
+        // Feature 08 (localization): user output-lang + tts-voice prefs, the
+        // lang each stored summary/ask was generated in. Summaries live as
+        // columns on `videos` (not their own table), so each mode gets its
+        // own sibling lang column instead of one shared `lang` column.
+        this.runMigration("add-users-output-lang", () => {
+            const userCols = this.db.query<{ name: string }, []>("PRAGMA table_info(users)").all() as Array<{
+                name: string;
+            }>;
+
+            if (!userCols.some((column) => column.name === "output_lang")) {
+                this.db.exec("ALTER TABLE users ADD COLUMN output_lang TEXT");
+            }
+
+            if (!userCols.some((column) => column.name === "tts_voice")) {
+                this.db.exec("ALTER TABLE users ADD COLUMN tts_voice TEXT");
+            }
+
+            const videoCols = this.db.query<{ name: string }, []>("PRAGMA table_info(videos)").all() as Array<{
+                name: string;
+            }>;
+
+            for (const column of ["summary_short_lang", "summary_timestamped_lang", "summary_long_lang"]) {
+                if (!videoCols.some((existingColumn) => existingColumn.name === column)) {
+                    this.db.exec(`ALTER TABLE videos ADD COLUMN ${column} TEXT NOT NULL DEFAULT 'en'`);
+                }
+            }
+
+            const qaHistoryCols = this.db.query<{ name: string }, []>("PRAGMA table_info(qa_history)").all() as Array<{
+                name: string;
+            }>;
+
+            if (!qaHistoryCols.some((column) => column.name === "lang")) {
+                this.db.exec("ALTER TABLE qa_history ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'");
+            }
+        });
+
         const existing = this.db
             .query<{ version: number }, [number]>("SELECT version FROM schema_version WHERE version = ?")
             .get(SCHEMA_VERSION);
@@ -659,24 +696,34 @@ export class YoutubeDatabase extends BaseDatabase {
     setVideoSummary(
         id: VideoId,
         kind: "short" | "timestamped" | "long",
-        value: string | TimestampedSummaryEntry[] | VideoLongSummary
+        value: string | TimestampedSummaryEntry[] | VideoLongSummary,
+        lang?: string
     ): void;
     setVideoSummary(
         inputOrId: SetVideoSummaryInput | VideoId,
         kind?: "short" | "timestamped" | "long",
-        value?: string | TimestampedSummaryEntry[] | VideoLongSummary
+        value?: string | TimestampedSummaryEntry[] | VideoLongSummary,
+        lang?: string
     ): void {
-        const input = typeof inputOrId === "string" ? normalizeVideoSummaryInput(inputOrId, kind, value) : inputOrId;
+        const input =
+            typeof inputOrId === "string" ? normalizeVideoSummaryInput(inputOrId, kind, value, lang) : inputOrId;
         const column =
             input.kind === "short"
                 ? "summary_short"
                 : input.kind === "timestamped"
                   ? "summary_timestamped_json"
                   : "summary_long_json";
+        const langColumn =
+            input.kind === "short"
+                ? "summary_short_lang"
+                : input.kind === "timestamped"
+                  ? "summary_timestamped_lang"
+                  : "summary_long_lang";
         const serialized = typeof input.value === "string" ? input.value : SafeJSON.stringify(input.value);
 
-        this.db.run(`UPDATE videos SET ${column} = ?, updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [
+        this.db.run(`UPDATE videos SET ${column} = ?, ${langColumn} = ?, updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [
             serialized,
+            input.lang ?? "en",
             input.id,
         ]);
     }
@@ -1278,6 +1325,44 @@ export class YoutubeDatabase extends BaseDatabase {
         this.db.run(`UPDATE users SET last_login_at = ${SQL_NOW_UTC} WHERE id = ?`, [id]);
     }
 
+    /** Partial update of user preferences (Feature 08 output lang, Feature 12 TTS voice). Undefined fields are left untouched. */
+    updateUserPrefs(userId: number, patch: UpdateUserPrefsInput): YtUser {
+        const sets: string[] = [];
+        const params: Array<string | null> = [];
+
+        if (patch.outputLang !== undefined) {
+            sets.push("output_lang = ?");
+            params.push(patch.outputLang);
+        }
+
+        if (patch.ttsVoice !== undefined) {
+            sets.push("tts_voice = ?");
+            params.push(patch.ttsVoice);
+        }
+
+        if (sets.length === 0) {
+            const current = this.db.query<UserRow, [number]>("SELECT * FROM users WHERE id = ?").get(userId);
+
+            if (!current) {
+                throw new Error(`updateUserPrefs: user ${userId} not found`);
+            }
+
+            return rowToUser(current);
+        }
+
+        const row = this.db
+            .query<UserRow, Array<string | number | null>>(
+                `UPDATE users SET ${sets.join(", ")} WHERE id = ? RETURNING *`
+            )
+            .get(...params, userId);
+
+        if (!row) {
+            throw new Error(`updateUserPrefs: user ${userId} not found`);
+        }
+
+        return rowToUser(row);
+    }
+
     /**
      * Atomic conditional debit: only succeeds while the balance covers the
      * amount; throws `InsufficientCreditsError` otherwise. Ledger row is
@@ -1354,14 +1439,18 @@ export class YoutubeDatabase extends BaseDatabase {
         sources?: QaSource[];
         scope?: "video" | "channel";
         candidateVideoIds?: string[];
+        lang?: string;
     }): QaHistoryItem {
         const scopeJson = input.scope
             ? SafeJSON.stringify({ scope: input.scope, candidateVideoIds: input.candidateVideoIds })
             : null;
         const row = this.db
-            .query<QaHistoryRow, [number, string, string, string, string, number, string | null, string | null]>(
-                `INSERT INTO qa_history (user_id, video_id, question, answer, citations_json, credits_spent, sources_json, scope_json, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${SQL_NOW_UTC}) RETURNING *`
+            .query<
+                QaHistoryRow,
+                [number, string, string, string, string, number, string | null, string | null, string]
+            >(
+                `INSERT INTO qa_history (user_id, video_id, question, answer, citations_json, credits_spent, sources_json, scope_json, lang, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ${SQL_NOW_UTC}) RETURNING *`
             )
             .get(
                 input.userId,
@@ -1371,7 +1460,8 @@ export class YoutubeDatabase extends BaseDatabase {
                 SafeJSON.stringify(input.citations),
                 input.creditsSpent,
                 input.sources ? SafeJSON.stringify(input.sources) : null,
-                scopeJson
+                scopeJson,
+                input.lang ?? "en"
             );
 
         if (!row) {
@@ -1697,6 +1787,8 @@ interface UserRow {
     credits: number;
     created_at: string;
     last_login_at: string | null;
+    output_lang: string | null;
+    tts_voice: string | null;
 }
 
 function rowToUser(row: UserRow): YtUser {
@@ -1705,6 +1797,8 @@ function rowToUser(row: UserRow): YtUser {
         email: row.email,
         credits: row.credits,
         createdAt: row.created_at,
+        outputLang: row.output_lang,
+        ttsVoice: row.tts_voice,
     };
 }
 
@@ -1719,6 +1813,7 @@ interface QaHistoryRow {
     created_at: string;
     sources_json: string | null;
     scope_json: string | null;
+    lang: string;
 }
 
 function rowToQaHistoryItem(row: QaHistoryRow): QaHistoryItem {
@@ -1735,6 +1830,7 @@ function rowToQaHistoryItem(row: QaHistoryRow): QaHistoryItem {
         sources: parseNullableJsonArray<QaSource>(row.sources_json) ?? undefined,
         scope: scope?.scope,
         candidateVideoIds: scope?.candidateVideoIds,
+        lang: row.lang,
     };
 }
 
@@ -1775,6 +1871,9 @@ interface VideoRow {
     summary_short: string | null;
     summary_timestamped_json: string | null;
     summary_long_json: string | null;
+    summary_short_lang: string;
+    summary_timestamped_lang: string;
+    summary_long_lang: string;
     audio_path: string | null;
     audio_size_bytes: number | null;
     audio_cached_at: string | null;
@@ -1812,6 +1911,9 @@ function rowToVideo(row: VideoRow): Video {
         summaryShort: row.summary_short,
         summaryTimestamped: parseNullableJsonArray<TimestampedSummaryEntry>(row.summary_timestamped_json),
         summaryLong: parseNullableJson<VideoLongSummary>(row.summary_long_json),
+        summaryShortLang: row.summary_short_lang,
+        summaryTimestampedLang: row.summary_timestamped_lang,
+        summaryLongLang: row.summary_long_lang,
         audioPath: row.audio_path,
         audioSizeBytes: row.audio_size_bytes,
         audioCachedAt: row.audio_cached_at,
@@ -1858,7 +1960,8 @@ function normalizeVideoBinaryPathInput(
 function normalizeVideoSummaryInput(
     id: VideoId,
     kind: "short" | "timestamped" | "long" | undefined,
-    value: string | TimestampedSummaryEntry[] | VideoLongSummary | undefined
+    value: string | TimestampedSummaryEntry[] | VideoLongSummary | undefined,
+    lang?: string
 ): SetVideoSummaryInput {
     if (!kind) {
         throw new Error("setVideoSummary requires a summary kind");
@@ -1872,6 +1975,7 @@ function normalizeVideoSummaryInput(
         id,
         kind,
         value,
+        lang,
     };
 }
 

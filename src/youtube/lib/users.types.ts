@@ -5,6 +5,10 @@ export interface YtUser {
     email: string;
     credits: number;
     createdAt: string;
+    /** Preferred output language for generated content (2-letter ISO). Null = unset, falls back to `"en"`. */
+    outputLang: string | null;
+    /** Preferred TTS voice id (Feature 12). Null = provider default. */
+    ttsVoice: string | null;
 }
 
 export interface QaHistoryItem {
@@ -21,6 +25,8 @@ export interface QaHistoryItem {
     scope?: "video" | "channel";
     /** Channel-scope only: the candidate videos the retrieval ran over. */
     candidateVideoIds?: string[];
+    /** 2-letter ISO language the answer was generated in. Absent on pre-lang rows. */
+    lang?: string;
 }
 
 export type CreditReason =
@@ -30,6 +36,7 @@ export type CreditReason =
     | "summary:long"
     | "summary:timestamped"
     | "summary:short"
+    | "transcript:translate"
     | "dev-topup"
     | `stripe:${string}`
     | `stripe-refund:${string}`
@@ -42,6 +49,7 @@ export const CREDIT_COSTS = {
     "summary:long": 10,
     "summary:timestamped": 10,
     "summary:short": 5,
+    "transcript:translate": 5,
 } as const;
 
 /** Flat synthesis fee for a multi-video report (on top of per-member summary costs). */

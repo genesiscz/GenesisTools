@@ -262,6 +262,81 @@ describe("SummaryService", () => {
         }
     });
 
+    it("threads the lang suffix into the system prompt and stores the generated lang", async () => {
+        const { db, config, dir } = await makeFixture();
+
+        try {
+            llmResponses = ["Krátké shrnutí."];
+            const fakeChoice = { provider: "fake", model: "fake" } as unknown as Parameters<
+                typeof SummaryService.prototype.summarize
+            >[0]["providerChoice"];
+            const service = new SummaryService(db, config, makeDeps());
+
+            const result = await service.summarize({
+                videoId: "abc123def45",
+                mode: "short",
+                providerChoice: fakeChoice,
+                lang: "cs",
+            });
+
+            expect(result.short).toBe("Krátké shrnutí.");
+            const call = callLlmCalls[0] as { systemPrompt: string };
+            expect(call.systemPrompt).toContain("Respond in Czech.");
+            expect(db.getVideo("abc123def45")?.summaryShortLang).toBe("cs");
+        } finally {
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("omits the lang suffix and defaults stored lang to 'en' when lang is unset", async () => {
+        const { db, config, dir } = await makeFixture();
+
+        try {
+            llmResponses = ["Short summary."];
+            const fakeChoice = { provider: "fake", model: "fake" } as unknown as Parameters<
+                typeof SummaryService.prototype.summarize
+            >[0]["providerChoice"];
+            const service = new SummaryService(db, config, makeDeps());
+
+            await service.summarize({ videoId: "abc123def45", mode: "short", providerChoice: fakeChoice });
+
+            const call = callLlmCalls[0] as { systemPrompt: string };
+            expect(call.systemPrompt).not.toContain("Respond in");
+            expect(db.getVideo("abc123def45")?.summaryShortLang).toBe("en");
+        } finally {
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("regenerates instead of serving a cached summary when the requested lang differs", async () => {
+        const { db, config, dir } = await makeFixture();
+
+        try {
+            db.setVideoSummary("abc123def45", "short", "Cached English summary", "en");
+            llmResponses = ["Krátké shrnutí."];
+            const fakeChoice = { provider: "fake", model: "fake" } as unknown as Parameters<
+                typeof SummaryService.prototype.summarize
+            >[0]["providerChoice"];
+            const service = new SummaryService(db, config, makeDeps());
+
+            const result = await service.summarize({
+                videoId: "abc123def45",
+                mode: "short",
+                providerChoice: fakeChoice,
+                lang: "cs",
+            });
+
+            expect(result.short).toBe("Krátké shrnutí.");
+            expect(callLlmCalls).toHaveLength(1);
+            expect(db.getVideo("abc123def45")?.summaryShortLang).toBe("cs");
+        } finally {
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
     it("threads format=qa into the prompt and accepts question-shaped sections", async () => {
         const { db, config, dir } = await makeFixture();
 

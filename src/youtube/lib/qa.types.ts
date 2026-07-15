@@ -31,6 +31,8 @@ export interface AskOpts {
     /** Resolved, ownership-checked preset instructions (Feature 11) — wrapped
      *  via `buildPresetBlock` and appended AFTER the system prompt is built. */
     presetInstructions?: string;
+    /** 2-letter ISO output language. Default "en" (no prompt suffix). */
+    lang?: string;
     /** Which corpora to retrieve from. Default `["transcript"]`. */
     sources?: QaSource[];
     /** Channel-scope asks: per-video metadata for prompt tags + attribution,

@@ -3,6 +3,7 @@ import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { createCheckoutSession } from "@app/youtube/lib/billing";
 import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
+import { isOutputLang } from "@app/youtube/lib/languages";
 import { getLedgerPage, getUsageSummary } from "@app/youtube/lib/ledger-views";
 import { createPreset, deletePreset, listPresets, updatePreset } from "@app/youtube/lib/presets";
 import type { PresetKind } from "@app/youtube/lib/presets.types";
@@ -55,6 +56,27 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
             }
 
             return Response.json({ user }, { headers: CORS_HEADERS });
+        }
+
+        if (matchRoute(req, "PATCH", "/api/v1/users/me", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const body = (await safeJsonBody(req)) ?? {};
+
+            if (typeof body.outputLang === "string" && !isOutputLang(body.outputLang)) {
+                return jsonError("unknown outputLang", 400);
+            }
+
+            const patched = yt.db.updateUserPrefs(user.id, {
+                outputLang: typeof body.outputLang === "string" ? body.outputLang : undefined,
+                ttsVoice: typeof body.ttsVoice === "string" ? body.ttsVoice : undefined,
+            });
+
+            return Response.json({ user: patched }, { headers: CORS_HEADERS });
         }
 
         if (matchRoute(req, "POST", "/api/v1/users/topup", url.pathname)) {

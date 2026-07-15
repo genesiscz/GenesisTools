@@ -75,6 +75,10 @@ export interface Video extends VideoMetadata {
     summaryShort: string | null;
     summaryTimestamped: TimestampedSummaryEntry[] | null;
     summaryLong: VideoLongSummary | null;
+    /** 2-letter ISO language each stored summary was generated in. Default `"en"`. */
+    summaryShortLang: string;
+    summaryTimestampedLang: string;
+    summaryLongLang: string;
     audioPath: string | null;
     audioSizeBytes: number | null;
     audioCachedAt: string | null;
