@@ -26,6 +26,7 @@ export type YoutubeUsageAction =
     | "qa:ask"
     | "qa:embed"
     | "transcribe:ai"
+    | "transcript:translate"
     | "report:synthesize";
 
 export interface RecordYoutubeUsageInput {

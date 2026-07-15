@@ -1,6 +1,9 @@
+import type { CallLLMOptions, CallLLMResult } from "@app/utils/ai/call-llm";
+import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { Language, TranscriptSegment } from "@app/youtube/lib/transcript.types";
 import type { VideoId } from "@app/youtube/lib/video.types";
 import type { DownloadAudioOpts, DownloadAudioResult, YtDlpProgressInfo } from "@app/youtube/lib/yt-dlp.types";
+import type { ProviderChoice } from "@ask/types";
 
 export interface TranscribeProgressInfo {
     phase: "audio" | "transcribe";
@@ -56,3 +59,18 @@ export interface TranscriptServiceDeps {
 }
 
 export type AudioDownloadProgress = (info: YtDlpProgressInfo) => void;
+
+export interface TranslateProgressInfo {
+    percent?: number;
+    message: string;
+}
+
+export interface TranslateTranscriptOpts {
+    db: YoutubeDatabase;
+    videoId: VideoId;
+    lang: Language;
+    providerChoice: ProviderChoice;
+    onProgress?: (info: TranslateProgressInfo) => void;
+    /** Test seam — defaults to the real `callLLM`. */
+    callLLM?: (opts: CallLLMOptions) => Promise<CallLLMResult>;
+}
