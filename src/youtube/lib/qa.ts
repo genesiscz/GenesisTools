@@ -3,6 +3,7 @@ import { Embedder } from "@app/utils/ai/tasks/Embedder";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { TranscriptSearchHit } from "@app/youtube/lib/db.types";
+import { buildPresetBlock } from "@app/youtube/lib/presets";
 import type {
     AskOpts,
     AskResult,
@@ -110,8 +111,13 @@ export class QaService {
                         `[#${i + 1} ${rankedChunk.chunk.videoId} @${formatTime(rankedChunk.chunk.startSec)}] ${rankedChunk.chunk.text}`
                 )
                 .join("\n\n");
-            const systemPrompt =
+            const baseSystemPrompt =
                 "You answer questions about YouTube video transcripts. Cite the [#N] markers from the context to back every claim. If the context doesn't contain the answer, say so plainly.";
+            // Preset instructions append LAST, after all system instructions —
+            // security-relevant per 2026-07-15-RoadmapFeature11-PromptPersonas.
+            const systemPrompt = opts.presetInstructions
+                ? `${baseSystemPrompt}\n\n${buildPresetBlock(opts.presetInstructions)}`
+                : baseSystemPrompt;
             const userPrompt = `Question: ${opts.question}\n\nContext from transcripts:\n${context}`;
             const startedAt = new Date();
             const result = await this.deps.callLLM({

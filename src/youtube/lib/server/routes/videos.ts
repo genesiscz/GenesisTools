@@ -2,6 +2,7 @@ import { estimateLlmCallCostUsd, estimateSpeechTokens } from "@app/utils/ai/llm-
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import { withJobActivity } from "@app/youtube/lib/job-activity";
+import { getPresetForUse } from "@app/youtube/lib/presets";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
 import { requireUser } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
@@ -156,6 +157,16 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             const format = parseFormat(body.format);
             const length = parseLength(body.length);
             const targetBins = typeof body.targetBins === "number" ? body.targetBins : undefined;
+            const presetId = typeof body.presetId === "number" ? body.presetId : undefined;
+            let presetInstructions: string | undefined;
+
+            if (presetId !== undefined) {
+                try {
+                    presetInstructions = getPresetForUse(yt.db, user.id, presetId, "summary").instructions;
+                } catch {
+                    return jsonError("preset not found", 404);
+                }
+            }
 
             const hasTranscript = yt.db.getTranscript(id) !== null;
             const needsProvider = mode !== "short" || !!provider || !!model;
@@ -228,6 +239,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         tone,
                         format,
                         length,
+                        presetInstructions,
                         onProgress: (info) => {
                             const progress = (info.percent ?? 50) / 100;
                             yt.db.updateJob(job.id, { progress, progressMessage: info.message });
@@ -365,6 +377,17 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 provider: typeof body.provider === "string" ? body.provider : undefined,
                 model: typeof body.model === "string" ? body.model : undefined,
             });
+            const presetId = typeof body.presetId === "number" ? body.presetId : undefined;
+            let presetInstructions: string | undefined;
+
+            if (presetId !== undefined) {
+                try {
+                    presetInstructions = getPresetForUse(yt.db, user.id, presetId, "ask").instructions;
+                } catch {
+                    return jsonError("preset not found", 404);
+                }
+            }
+
             const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: ["summarize"] });
             yt.pipeline.emitExternal({ type: "job:created", job });
             yt.db.updateJob(job.id, { status: "running", currentStage: "summarize" });
@@ -394,6 +417,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         question,
                         topK,
                         providerChoice,
+                        presetInstructions,
                     });
                 });
                 yt.db.updateJob(job.id, {

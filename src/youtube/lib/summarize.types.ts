@@ -48,6 +48,10 @@ export interface SummarizeOpts {
     compactOpts?: import("@app/youtube/lib/transcript-compact").CompactOptions;
     onProgress?: (info: SummaryProgressInfo) => void;
     signal?: AbortSignal;
+    /** Resolved, ownership-checked preset instructions (Feature 11) — wrapped
+     *  via `buildPresetBlock` and appended AFTER all other system prompt
+     *  construction (base + tone + length). */
+    presetInstructions?: string;
 }
 
 export interface SummarizeResult {

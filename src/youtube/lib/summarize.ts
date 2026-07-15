@@ -3,6 +3,7 @@ import { callLLM, callLLMStructured } from "@app/utils/ai/call-llm";
 import { Summarizer } from "@app/utils/ai/tasks/Summarizer";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
+import { buildPresetBlock } from "@app/youtube/lib/presets";
 import type { SummarizeOpts, SummarizeResult, SummaryBin, SummaryServiceDeps } from "@app/youtube/lib/summarize.types";
 import type { Transcript } from "@app/youtube/lib/transcript.types";
 import { compactTranscript } from "@app/youtube/lib/transcript-compact";
@@ -138,7 +139,7 @@ export class SummaryService {
 
     private async summarizeText(text: string, opts: SummarizeOpts): Promise<string> {
         opts.onProgress?.({ phase: "summarize", percent: 30, message: "Calling LLM for short summary" });
-        const systemPrompt = withTone(SHORT_SUMMARY_SYSTEM_BASE, opts.tone);
+        const systemPrompt = withPreset(withTone(SHORT_SUMMARY_SYSTEM_BASE, opts.tone), opts.presetInstructions);
 
         if (opts.providerChoice) {
             const startedAt = new Date();
@@ -199,7 +200,7 @@ export class SummaryService {
         const sectionCount = pickSectionCount(totalSec, { override: opts.targetBins, length: opts.length });
         const isQa = opts.format === "qa";
         const baseSystem = isQa ? TIMESTAMPED_QA_SYSTEM_BASE : TIMESTAMPED_SYSTEM_BASE;
-        const systemPrompt = withTone(baseSystem, opts.tone);
+        const systemPrompt = withPreset(withTone(baseSystem, opts.tone), opts.presetInstructions);
         const formattedTranscript = formatTranscriptWithTimestamps(transcript);
         const userPrompt = [
             `Build a timestamped section summary of this YouTube video.`,
@@ -262,7 +263,10 @@ export class SummaryService {
         }
 
         const totalSec = transcript.durationSec ?? transcript.segments.at(-1)?.end ?? 0;
-        const systemPrompt = withTone(withLength(LONG_SUMMARY_SYSTEM_BASE, opts.length), opts.tone);
+        const systemPrompt = withPreset(
+            withTone(withLength(LONG_SUMMARY_SYSTEM_BASE, opts.length), opts.tone),
+            opts.presetInstructions
+        );
         const userPrompt = [
             `Write a rich long-form summary of this YouTube video.`,
             `Total duration: ${formatTime(totalSec)}.`,
@@ -372,6 +376,21 @@ function withLength(base: string, length?: SummaryLength): string {
     }
 
     return `${base}\n\nLength budget: detailed. Be thorough — many key points, granular chapters, more learnings.`;
+}
+
+/**
+ * Appends the user's preset instructions AFTER all other system prompt
+ * construction (base + tone + length) — the injection point and framing are
+ * security-relevant per 2026-07-15-RoadmapFeature11-PromptPersonas. Callers
+ * pass already ownership-checked instructions; this must stay the LAST
+ * thing appended to the system prompt.
+ */
+function withPreset(base: string, presetInstructions?: string): string {
+    if (!presetInstructions) {
+        return base;
+    }
+
+    return `${base}\n\n${buildPresetBlock(presetInstructions)}`;
 }
 
 function formatPrompt(systemPrompt: string, userPrompt: string): string {

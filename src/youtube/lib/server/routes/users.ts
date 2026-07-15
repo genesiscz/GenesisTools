@@ -4,6 +4,8 @@ import { SafeJSON } from "@app/utils/json";
 import { createCheckoutSession } from "@app/youtube/lib/billing";
 import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
 import { getLedgerPage, getUsageSummary } from "@app/youtube/lib/ledger-views";
+import { createPreset, deletePreset, listPresets, updatePreset } from "@app/youtube/lib/presets";
+import type { PresetKind } from "@app/youtube/lib/presets.types";
 import { requireUser } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
@@ -132,6 +134,94 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
             return Response.json(summary, { headers: CORS_HEADERS });
         }
 
+        if (matchRoute(req, "GET", "/api/v1/users/presets", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const kind = parsePresetKind(url.searchParams.get("kind"));
+            const presets = listPresets(yt.db, user.id, kind);
+
+            return Response.json({ presets }, { headers: CORS_HEADERS });
+        }
+
+        if (matchRoute(req, "POST", "/api/v1/users/presets", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const body = (await safeJsonBody(req)) ?? {};
+            const kind = parsePresetKind(body.kind);
+
+            if (!kind || typeof body.name !== "string" || typeof body.instructions !== "string") {
+                return jsonError("body must include {name, kind, instructions}", 400);
+            }
+
+            try {
+                const preset = createPreset(yt.db, user.id, { name: body.name, kind, instructions: body.instructions });
+                return Response.json({ preset }, { headers: CORS_HEADERS });
+            } catch (error) {
+                const { message, status } = presetErrorResponse(error);
+                return jsonError(message, status);
+            }
+        }
+
+        const presetUpdate = matchRoute(req, "PUT", "/api/v1/users/presets/:id", url.pathname);
+
+        if (presetUpdate) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const id = Number.parseInt(presetUpdate.id, 10);
+
+            if (Number.isNaN(id)) {
+                return jsonError("invalid preset id", 400);
+            }
+
+            const body = (await safeJsonBody(req)) ?? {};
+            const name = typeof body.name === "string" ? body.name : undefined;
+            const instructions = typeof body.instructions === "string" ? body.instructions : undefined;
+
+            try {
+                const preset = updatePreset(yt.db, user.id, id, { name, instructions });
+                return Response.json({ preset }, { headers: CORS_HEADERS });
+            } catch (error) {
+                const { message, status } = presetErrorResponse(error);
+                return jsonError(message, status);
+            }
+        }
+
+        const presetDelete = matchRoute(req, "DELETE", "/api/v1/users/presets/:id", url.pathname);
+
+        if (presetDelete) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const id = Number.parseInt(presetDelete.id, 10);
+
+            if (Number.isNaN(id)) {
+                return jsonError("invalid preset id", 400);
+            }
+
+            try {
+                deletePreset(yt.db, user.id, id);
+                return Response.json({ deleted: true }, { headers: CORS_HEADERS });
+            } catch (error) {
+                const { message, status } = presetErrorResponse(error);
+                return jsonError(message, status);
+            }
+        }
+
         if (matchRoute(req, "GET", "/api/v1/users/qa-history", url.pathname)) {
             const user = requireUser(req, url, yt.db);
 
@@ -161,6 +251,28 @@ async function parseCredentials(req: Request): Promise<{ email: string; password
     }
 
     return { email: body.email, password: body.password };
+}
+
+function parsePresetKind(value: unknown): PresetKind | undefined {
+    return value === "summary" || value === "insights" || value === "ask" ? value : undefined;
+}
+
+function presetErrorResponse(error: unknown): { message: string; status: number } {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (message.includes("not found")) {
+        return { message, status: 404 };
+    }
+
+    if (message.includes("already have a")) {
+        return { message, status: 409 };
+    }
+
+    if (message.includes("1000 characters") || message.includes("presets — delete")) {
+        return { message, status: 422 };
+    }
+
+    return { message, status: 400 };
 }
 
 function jsonError(error: string, status: number): Response {
