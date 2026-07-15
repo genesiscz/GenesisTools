@@ -1,5 +1,6 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { relative, resolve } from "node:path";
+import { logger } from "@app/logger";
 import { createWatcher } from "@app/utils/fs/watcher";
 import { toPosixPath } from "@app/utils/paths";
 import * as p from "@clack/prompts";
@@ -100,7 +101,11 @@ async function devExtension(): Promise<void> {
         for (const ws of clients) {
             try {
                 ws.send(target);
-            } catch {}
+            } catch (error) {
+                // A dead socket stays dead — drop it so the client count stays honest.
+                clients.delete(ws);
+                logger.warn({ error, target }, "extension dev-reload: ws send failed, dropping client");
+            }
         }
     }
 
@@ -176,7 +181,9 @@ async function devExtension(): Promise<void> {
     ];
 
     function classify(path: string): DevReloadTarget {
-        const rel = relative(srcDir, path);
+        // Watcher events carry OS-native separators — normalize before the
+        // slash-based prefix checks so Windows paths classify correctly.
+        const rel = toPosixPath(relative(srcDir, path));
         for (const prefix of RUNTIME_PREFIXES) {
             if (rel.startsWith(prefix)) {
                 return "runtime";
@@ -193,12 +200,27 @@ async function devExtension(): Promise<void> {
                 if (!/\.(ts|tsx|css|json|html)$/.test(e.path)) {
                     continue;
                 }
-                if (e.path.includes("/commands/extension.")) {
+                if (toPosixPath(e.path).includes("/commands/extension.")) {
                     continue;
                 }
                 pendingTargets.add(classify(e.path));
             }
             if (pendingTargets.size > 0) {
+                queueRebuild();
+            }
+        },
+        { debounceMs: 200 }
+    );
+
+    // The side-panel bundles shared UI from src/utils/ui — watch it too or
+    // those edits leave the dev bundle stale. Always a content-script rebuild.
+    const sharedUiDir = resolve(import.meta.dirname, "..", "..", "utils", "ui");
+    p.log.info(pc.dim(`watching ${toPosixPath(sharedUiDir)} via @parcel/watcher`));
+    await createWatcher(
+        sharedUiDir,
+        (events) => {
+            if (events.some((e) => /\.(ts|tsx|css|json|html)$/.test(e.path))) {
+                pendingTargets.add("tabs");
                 queueRebuild();
             }
         },
