@@ -10,6 +10,7 @@ import type {
     AskCitation,
     JobStage,
     LlmEstimate,
+    LockedArtifact,
     PresetKind,
     PromptPreset,
     QaHistoryItem,
@@ -58,7 +59,9 @@ export interface VideoDetailDataSource {
                   timestamped?: TimestampedSummaryEntry[];
                   long?: VideoLongSummary | null;
                   cached?: boolean;
+                  locked?: undefined;
               }
+            | LockedArtifact
             | undefined;
         isPending: boolean;
     };
