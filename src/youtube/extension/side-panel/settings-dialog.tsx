@@ -1,9 +1,21 @@
 import { Button } from "@app/utils/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
 import { Input } from "@app/utils/ui/components/input";
+import { formatRelativeTime } from "@app/utils/ui/components/youtube/time";
 import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
-import { useCheckout, useLogin, useLogout, useMe, useRegister, useTopup, useUsageSummary } from "@ext/api.hooks";
-import { CreditCard, Gem, Loader2, LogOut } from "lucide-react";
+import type { ShareSummary } from "@app/youtube/lib/types";
+import {
+    useCheckout,
+    useLogin,
+    useLogout,
+    useMe,
+    useRegister,
+    useRevokeShare,
+    useShares,
+    useTopup,
+    useUsageSummary,
+} from "@ext/api.hooks";
+import { CreditCard, Gem, Loader2, LogOut, Share2 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 
 type AuthMode = "login" | "register";
@@ -82,6 +94,8 @@ function SignedInView({
             <DiamondPacksSection devMode={devMode} />
 
             {onViewActivity ? <ActivitySparkline onViewAll={onViewActivity} /> : null}
+
+            <SharesSection />
 
             <Button
                 size="sm"
@@ -206,6 +220,74 @@ function DiamondPacksSection({ devMode }: { devMode?: boolean }) {
                     <Gem className="size-4" /> Fill diamonds +100 (dev)
                 </Button>
             ) : null}
+        </div>
+    );
+}
+
+function SharesSection() {
+    const shares = useShares();
+    const revoke = useRevokeShare();
+    const [confirmingSlug, setConfirmingSlug] = useState<string | null>(null);
+
+    function armConfirm(slug: string) {
+        setConfirmingSlug(slug);
+        setTimeout(() => setConfirmingSlug((current) => (current === slug ? null : current)), 3000);
+    }
+
+    // Revoked shares are functionally gone — this list manages the active set.
+    const rows = (shares.data ?? []).filter((share: ShareSummary) => share.revokedAt === null);
+
+    return (
+        <div className="space-y-2">
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Shares</p>
+            {shares.isPending ? (
+                <div className="flex items-center justify-center py-4 text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" />
+                </div>
+            ) : rows.length === 0 ? (
+                <div className="flex items-start gap-3 rounded-2xl border border-dashed border-primary/25 p-5">
+                    <Share2 className="mt-0.5 size-5 shrink-0 text-primary" />
+                    <p className="text-sm text-muted-foreground">
+                        Nothing shared yet — share a summary from any video.
+                    </p>
+                </div>
+            ) : (
+                <div className="space-y-2">
+                    {rows.map((share) => (
+                        <div key={share.slug} className="rounded-2xl border border-white/8 bg-black/20 p-3">
+                            <div className="flex items-center gap-2">
+                                <span className="inline-flex h-5 items-center rounded-full border border-white/8 px-2 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                                    {share.kind}
+                                </span>
+                                <p className="min-w-0 flex-1 truncate text-sm text-foreground/95">{share.videoTitle}</p>
+                                <span className="shrink-0 font-mono text-[12px] text-muted-foreground">
+                                    {formatRelativeTime(share.createdAt)}
+                                </span>
+                            </div>
+                            <div className="mt-2 flex items-center justify-end gap-1.5">
+                                {confirmingSlug === share.slug ? (
+                                    <Button
+                                        size="sm"
+                                        variant="destructive"
+                                        onClick={() => revoke.mutate({ slug: share.slug })}
+                                    >
+                                        Really revoke?
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="text-muted-foreground"
+                                        onClick={() => armConfirm(share.slug)}
+                                    >
+                                        Revoke
+                                    </Button>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }
