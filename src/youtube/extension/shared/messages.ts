@@ -61,6 +61,7 @@ export type ExtensionRequest =
           sources?: QaSource[];
           scope?: "video" | "channel";
       }
+    | { type: "api:setSpeakers"; id: VideoId; speakers: Array<{ idx: number; label: string }> }
     | { type: "api:startPipeline"; target: string; targetKind?: "video" | "channel" | "url"; stages: JobStage[] }
     | { type: "api:getJob"; id: number }
     | { type: "api:listModels" }
@@ -122,7 +123,8 @@ export interface ExtensionApiMap {
     "api:addChannel": { added: ChannelHandle[] };
     "api:listVideos": { videos: Video[] };
     "api:getVideo": { video: Video; transcripts: Transcript[] };
-    "api:getTranscript": { transcript: Transcript };
+    "api:getTranscript": { transcript: Transcript; speakerLabels?: Record<number, string> };
+    "api:setSpeakers": { speakerLabels: Record<number, string> };
     "api:getComments": { comments: VideoComment[] };
     "api:getSummary":
         | (LockedArtifact & { mode?: "short" | "timestamped" | "long" })

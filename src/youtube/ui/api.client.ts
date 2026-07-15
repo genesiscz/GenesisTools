@@ -120,12 +120,17 @@ export const apiClient = {
         ),
     getVideo: (id: VideoId) => api<{ video: Video; transcripts: Transcript[] }>(`/videos/${encodeURIComponent(id)}`),
     getTranscript: (id: VideoId, opts: { lang?: string; source?: "captions" | "ai" } = {}) =>
-        api<{ transcript: Transcript }>(
+        api<{ transcript: Transcript; speakerLabels?: Record<number, string> }>(
             withQuery(`/videos/${encodeURIComponent(id)}/transcript`, [
                 ["lang", opts.lang],
                 ["source", opts.source],
             ])
         ),
+    setSpeakers: (id: VideoId, speakers: Array<{ idx: number; label: string }>) =>
+        api<{ speakerLabels: Record<number, string> }>(`/videos/${encodeURIComponent(id)}/speakers`, {
+            method: "PUT",
+            body: SafeJSON.stringify({ speakers }),
+        }),
     getComments: (id: VideoId) => api<{ comments: VideoComment[] }>(`/videos/${encodeURIComponent(id)}/comments`),
     getSummary: async (id: VideoId, mode: "short" | "timestamped" | "long") => {
         const response = await api<{

@@ -104,6 +104,11 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
                     presetId: req.presetId,
                 }),
             });
+        case "api:setSpeakers":
+            return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/speakers`, {
+                method: "PUT",
+                body: JSON.stringify({ speakers: req.speakers }),
+            });
         case "api:askVideo":
             return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/qa`, {
                 method: "POST",

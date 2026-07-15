@@ -46,7 +46,10 @@ export interface VideoDetailDataSource {
     useTranscript: (
         id: VideoId | null,
         opts?: { lang?: string; source?: "captions" | "ai" }
-    ) => { data: { transcript: Transcript } | undefined; isPending: boolean };
+    ) => {
+        data: { transcript: Transcript; speakerLabels?: Record<number, string> } | undefined;
+        isPending: boolean;
+    };
     useComments: (id: VideoId | null) => {
         data: { comments: VideoComment[] } | undefined;
         isPending: boolean;
@@ -134,6 +137,13 @@ export interface VideoDetailDataSource {
         mutateAsync: (vars: { name: string; kind: PresetKind; instructions: string }) => Promise<{
             preset: PromptPreset;
         }>;
+        isPending: boolean;
+    };
+    /** Upserts per-video speaker labels (`PUT /videos/:id/speakers`). */
+    useSetSpeakers: (id: VideoId) => {
+        mutateAsync: (vars: {
+            speakers: Array<{ idx: number; label: string }>;
+        }) => Promise<{ speakerLabels?: Record<number, string> }>;
         isPending: boolean;
     };
 }
@@ -294,6 +304,7 @@ export function VideoDetailTabs({
                     videoId={videoId}
                     onSeek={onSeek}
                     useTranscript={ds.useTranscript}
+                    useSetSpeakers={ds.useSetSpeakers}
                     runPipeline={runPipeline}
                     pipelineProgress={pipelineProgress}
                     playerTime={playerTime}

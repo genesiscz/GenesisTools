@@ -12,6 +12,7 @@ import {
     useAskVideo,
     useComments,
     useGenerateSummary,
+    useSetSpeakers,
     useStartPipeline,
     useSummary,
     useTranscript,
@@ -34,6 +35,7 @@ const videoDetailDataSource: VideoDetailDataSource = {
     useSummary,
     useGenerateSummary,
     useAskVideo,
+    useSetSpeakers,
 };
 
 export const Route = createFileRoute("/videos/$id")({
