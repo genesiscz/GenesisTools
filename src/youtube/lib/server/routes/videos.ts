@@ -132,19 +132,22 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             }
 
             const creditCost = CREDIT_COSTS["transcript:translate"];
-
-            if (user.credits < creditCost) {
-                return insufficientDiamonds(user.credits, creditCost);
-            }
-
-            const providerChoice = await resolveProviderChoice({
-                provider: typeof body.provider === "string" ? body.provider : undefined,
-                model: typeof body.model === "string" ? body.model : undefined,
-            });
-            const transcript = await translateTranscript({ db: yt.db, videoId: id, lang, providerChoice });
+            // Debit BEFORE the LLM call so concurrent requests cannot pass a
+            // stale balance check and burn provider cost; refunded on failure.
             const credits = yt.db.spendCredits(user.id, creditCost, "transcript:translate");
 
-            return Response.json({ transcript, creditsSpent: creditCost, credits }, { headers: CORS_HEADERS });
+            try {
+                const providerChoice = await resolveProviderChoice({
+                    provider: typeof body.provider === "string" ? body.provider : undefined,
+                    model: typeof body.model === "string" ? body.model : undefined,
+                });
+                const transcript = await translateTranscript({ db: yt.db, videoId: id, lang, providerChoice });
+
+                return Response.json({ transcript, creditsSpent: creditCost, credits }, { headers: CORS_HEADERS });
+            } catch (error) {
+                yt.db.grantCredits(user.id, creditCost, `refund:transcript:translate:${id}`);
+                throw error;
+            }
         }
 
         const audioPost = matchRoute(req, "POST", "/api/v1/videos/:id/summary/audio", url.pathname);
@@ -185,33 +188,46 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
             // Cache is checked BEFORE the credit charge — a hit never spends.
             const cached = await summaryAudioCacheHit(target);
+            const creditCost = CREDIT_COSTS["tts:summary"];
+            let credits = user.credits;
+            let charged = 0;
 
             if (!cached) {
-                const creditCost = CREDIT_COSTS["tts:summary"];
-
-                if (user.credits < creditCost) {
-                    return insufficientDiamonds(user.credits, creditCost);
-                }
+                // Debit BEFORE synthesis so concurrent requests cannot pass a
+                // stale balance check and burn provider cost; refunded on failure.
+                credits = yt.db.spendCredits(user.id, creditCost, `tts:${id}`);
+                charged = creditCost;
             }
 
-            const result = await getOrSynthesizeSummaryAudio({
-                db: yt.db,
-                videoId: id,
-                mode: "long",
-                voice,
-                userId: user.id,
-            });
-            let credits = user.credits;
+            let result: Awaited<ReturnType<typeof getOrSynthesizeSummaryAudio>>;
 
-            if (!result.cached) {
-                credits = yt.db.spendCredits(user.id, CREDIT_COSTS["tts:summary"], `tts:${id}`);
+            try {
+                result = await getOrSynthesizeSummaryAudio({
+                    db: yt.db,
+                    videoId: id,
+                    mode: "long",
+                    voice,
+                    userId: user.id,
+                });
+            } catch (error) {
+                if (charged > 0) {
+                    yt.db.grantCredits(user.id, charged, `refund:tts:${id}`);
+                }
+
+                throw error;
+            }
+
+            if (charged > 0 && result.cached) {
+                // Lost a synthesis race — another request already produced the file.
+                credits = yt.db.grantCredits(user.id, charged, `refund:tts:${id}`);
+                charged = 0;
             }
 
             return Response.json(
                 {
                     url: `/api/v1/videos/${id}/summary/audio`,
                     cached: result.cached,
-                    creditsSpent: result.cached ? 0 : CREDIT_COSTS["tts:summary"],
+                    creditsSpent: charged,
                     credits,
                 },
                 { headers: CORS_HEADERS }
@@ -423,9 +439,9 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 );
             }
 
-            // Balance pre-check → 402 BEFORE spending LLM tokens. The debit
-            // itself happens after the summarize succeeds; a race between two
-            // tabs can briefly overspend and is accepted for now.
+            // Courtesy pre-check → early 402 before body/provider work. The
+            // authoritative debit is the atomic spendCredits below, taken
+            // BEFORE the LLM call and refunded on failure.
             if (user.credits < creditCost) {
                 return insufficientDiamonds(user.credits, creditCost);
             }
@@ -450,6 +466,9 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             const hasTranscript = yt.db.getTranscript(id) !== null;
             const needsProvider = mode !== "short" || !!provider || !!model;
             const providerChoice = needsProvider ? await resolveProviderChoice({ provider, model }) : undefined;
+            // Debit BEFORE the pipeline work so concurrent requests cannot pass
+            // a stale balance check and burn provider cost; refunded on failure.
+            const creditsAfterDebit = yt.db.spendCredits(user.id, creditCost, `summary:${mode}`);
             const stages = hasTranscript ? (["summarize"] as const) : (["captions", "summarize"] as const);
             const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: [...stages] });
             yt.pipeline.emitExternal({ type: "job:created", job });
@@ -557,7 +576,6 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 const completedJob = yt.db.getJob(job.id) ?? job;
                 yt.pipeline.emitExternal({ type: "stage:completed", jobId: job.id, stage: "summarize" });
                 yt.pipeline.emitExternal({ type: "job:completed", job: completedJob });
-                const credits = yt.db.spendCredits(user.id, creditCost, `summary:${mode}`);
                 // Full-price generation also records access — the generator
                 // never pays again, and later users can unlock this artifact.
                 grantArtifactAccess(yt.db, {
@@ -581,11 +599,12 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         jobId: job.id,
                         startedAt,
                         creditsSpent: creditCost,
-                        credits,
+                        credits: creditsAfterDebit,
                     },
                     { headers: CORS_HEADERS }
                 );
             } catch (error) {
+                yt.db.grantCredits(user.id, creditCost, `refund:summary:${mode}:${id}`);
                 const message = error instanceof Error ? error.message : String(error);
                 yt.db.updateJob(job.id, { status: "failed", error: message, completedAt: new Date().toISOString() });
                 const failedJob = yt.db.getJob(job.id) ?? job;
@@ -740,6 +759,9 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 }
             }
 
+            // Debit BEFORE the retrieval/LLM work so concurrent requests cannot
+            // pass a stale balance check and burn provider cost; refunded on failure.
+            const creditsAfterDebit = yt.db.spendCredits(user.id, askCost, scope === "channel" ? "qa:channel" : "ask");
             const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: ["summarize"] });
             yt.pipeline.emitExternal({ type: "job:created", job });
             yt.db.updateJob(job.id, { status: "running", currentStage: "summarize" });
@@ -787,7 +809,6 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 const completedJob = yt.db.getJob(job.id) ?? job;
                 yt.pipeline.emitExternal({ type: "stage:completed", jobId: job.id, stage: "summarize" });
                 yt.pipeline.emitExternal({ type: "job:completed", job: completedJob });
-                const credits = yt.db.spendCredits(user.id, askCost, scope === "channel" ? "qa:channel" : "ask");
                 const historyItem = yt.db.insertQaHistory({
                     userId: user.id,
                     videoId: id,
@@ -824,13 +845,14 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         jobId: job.id,
                         lang,
                         creditsSpent: askCost,
-                        credits,
+                        credits: creditsAfterDebit,
                         historyId: historyItem.id,
                         citedVideos,
                     },
                     { headers: CORS_HEADERS }
                 );
             } catch (error) {
+                yt.db.grantCredits(user.id, askCost, `refund:${scope === "channel" ? "qa:channel" : "ask"}:${id}`);
                 const message = error instanceof Error ? error.message : String(error);
                 yt.db.updateJob(job.id, { status: "failed", error: message, completedAt: new Date().toISOString() });
                 const failedJob = yt.db.getJob(job.id) ?? job;
@@ -842,8 +864,8 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
         return jsonError("not found", 404);
     } catch (err) {
         if (err instanceof InsufficientCreditsError) {
-            // Lost the two-tab race: the pre-check passed but the debit after
-            // the LLM call found the balance already drained.
+            // Lost the two-tab race: the courtesy pre-check passed but the
+            // atomic upfront debit found the balance already drained.
             return insufficientDiamonds(err.balance, err.required);
         }
 
