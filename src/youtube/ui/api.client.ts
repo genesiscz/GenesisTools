@@ -190,7 +190,14 @@ export const apiClient = {
     },
     askVideo: (
         id: VideoId,
-        opts: { question: string; topK?: number; provider?: string; model?: string; sources?: QaSource[]; scope?: "video" | "channel" }
+        opts: {
+            question: string;
+            topK?: number;
+            provider?: string;
+            model?: string;
+            sources?: QaSource[];
+            scope?: "video" | "channel";
+        }
     ) =>
         api<AskVideoResponse>(`/videos/${encodeURIComponent(id)}/qa`, {
             method: "POST",

@@ -43,7 +43,10 @@ export function PlaylistPanel({ listId, onClose: _onClose }: { listId: string; o
     const report = useReport(reportId);
 
     async function runCreate() {
-        const created = await create.mutateAsync({ videoIds: memberIds, title: document.title.replace(/ - YouTube$/, "") });
+        const created = await create.mutateAsync({
+            videoIds: memberIds,
+            title: document.title.replace(/ - YouTube$/, ""),
+        });
         setConfirmOpen(false);
         setReportId(created.report.id);
     }
@@ -114,9 +117,8 @@ export function PlaylistPanel({ listId, onClose: _onClose }: { listId: string; o
                 billingNote={
                     estimate.data ? (
                         <>
-                            will cost ~
-                            <span className="font-semibold tabular-nums">{estimate.data.creditCost} 💎</span> (
-                            <span className="font-semibold tabular-nums">{estimate.data.membersNeedingSummary}</span>{" "}
+                            will cost ~<span className="font-semibold tabular-nums">{estimate.data.creditCost} 💎</span>{" "}
+                            (<span className="font-semibold tabular-nums">{estimate.data.membersNeedingSummary}</span>{" "}
                             video{estimate.data.membersNeedingSummary === 1 ? "" : "s"} need summaries)
                         </>
                     ) : (

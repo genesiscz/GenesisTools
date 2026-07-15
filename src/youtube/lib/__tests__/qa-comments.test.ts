@@ -239,7 +239,13 @@ describe("QaService ask with comment sources", () => {
         try {
             db.upsertChannel({ handle: "@chan" });
             db.upsertVideo({ id: VIDEO, channelHandle: "@chan", title: "t" });
-            db.upsertQaChunk({ videoId: VIDEO, chunkIdx: 0, text: "spoken", embedding: new Float32Array([1, 0]), embedderModel: "default" });
+            db.upsertQaChunk({
+                videoId: VIDEO,
+                chunkIdx: 0,
+                text: "spoken",
+                embedding: new Float32Array([1, 0]),
+                embedderModel: "default",
+            });
             db.upsertQaChunk({
                 videoId: VIDEO,
                 chunkIdx: 100_000,

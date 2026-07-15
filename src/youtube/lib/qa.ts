@@ -193,9 +193,7 @@ export class QaService {
                     const meta = opts.crossVideo?.videos[rankedChunk.chunk.videoId];
                     const tag = meta
                         ? `${meta.title} · ${meta.uploadDate ?? "unknown date"}${
-                              rankedChunk.chunk.startSec !== null
-                                  ? ` t=${Math.round(rankedChunk.chunk.startSec)}s`
-                                  : ""
+                              rankedChunk.chunk.startSec !== null ? ` t=${Math.round(rankedChunk.chunk.startSec)}s` : ""
                           }`
                         : chunkTag(rankedChunk.chunk);
 

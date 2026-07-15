@@ -13,10 +13,7 @@ export interface ReportEstimate {
     perMemberCost: Record<string, number>;
 }
 
-export function estimateReportCost(
-    db: YoutubeDatabase,
-    opts: { userId: number; videoIds: string[] }
-): ReportEstimate {
+export function estimateReportCost(db: YoutubeDatabase, opts: { userId: number; videoIds: string[] }): ReportEstimate {
     const perMemberCost: Record<string, number> = {};
     let membersNeedingSummary = 0;
     let creditCost = REPORT_SYNTHESIS_COST;
