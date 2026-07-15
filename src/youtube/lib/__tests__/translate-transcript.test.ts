@@ -77,7 +77,7 @@ describe("translateTranscript", () => {
         const { db, dir } = await makeFixture();
 
         try {
-            responses = ["[0] První řádek.\n[5] Druhý řádek."];
+            responses = ["[#0] První řádek.\n[#1] Druhý řádek."];
 
             const result = await translateTranscript({
                 db,
@@ -105,11 +105,36 @@ describe("translateTranscript", () => {
         }
     });
 
+    it("maps reordered output lines back by their [#id] tag instead of array position", async () => {
+        const { db, dir } = await makeFixture();
+
+        try {
+            responses = ["[#1] Druhý řádek.\n[#0] První řádek."];
+
+            const result = await translateTranscript({
+                db,
+                videoId: "abc123def45",
+                lang: "cs",
+                providerChoice: fakeChoice,
+                callLLM: stubCallLLM,
+            });
+
+            expect(result.segments).toEqual([
+                { text: "První řádek.", start: 0, end: 5 },
+                { text: "Druhý řádek.", start: 5, end: 10 },
+            ]);
+            expect(callLlmCalls).toHaveLength(1);
+        } finally {
+            db.close();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     it("retries once with an exact-line-count instruction on a line-count mismatch, then succeeds", async () => {
         const { db, dir } = await makeFixture();
 
         try {
-            responses = ["[0] Only one line.", "[0] První řádek.\n[5] Druhý řádek."];
+            responses = ["[#0] Only one line.", "[#0] První řádek.\n[#1] Druhý řádek."];
 
             const result = await translateTranscript({
                 db,
@@ -122,7 +147,7 @@ describe("translateTranscript", () => {
             expect(result.segments.map((s) => s.text)).toEqual(["První řádek.", "Druhý řádek."]);
             expect(callLlmCalls).toHaveLength(2);
             expect((callLlmCalls[1] as { systemPrompt: string }).systemPrompt).toContain(
-                "You must return exactly 2 lines."
+                "You must return exactly 2 lines"
             );
         } finally {
             db.close();
@@ -134,7 +159,7 @@ describe("translateTranscript", () => {
         const { db, dir } = await makeFixture();
 
         try {
-            responses = ["[0] Only one line.", "[0] Still only one."];
+            responses = ["[#0] Only one line.", "[#0] Still only one."];
 
             await expect(
                 translateTranscript({

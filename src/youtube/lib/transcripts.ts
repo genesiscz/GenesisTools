@@ -215,7 +215,7 @@ export async function translateTranscript(opts: TranslateTranscriptOpts): Promis
     return saved;
 }
 
-/** Groups segments into chunks whose cumulative `[<sec>] <text>` line tokens stay under `targetTokens`. A segment is never split. */
+/** Groups segments into chunks whose cumulative `[#<id>] <text>` line tokens stay under `targetTokens`. A segment is never split. */
 export function chunkSegmentsForTranslation(
     segments: TranscriptSegment[],
     targetTokens: number = TRANSLATE_CHUNK_TARGET_TOKENS
@@ -224,8 +224,8 @@ export function chunkSegmentsForTranslation(
     let current: TranscriptSegment[] = [];
     let currentTokens = 0;
 
-    for (const segment of segments) {
-        const lineTokens = estimateTokens(formatTranslateLine(segment));
+    for (const [index, segment] of segments.entries()) {
+        const lineTokens = estimateTokens(formatTranslateLine(segment, index));
 
         if (current.length > 0 && currentTokens + lineTokens > targetTokens) {
             chunks.push(current);
@@ -252,10 +252,10 @@ async function translateChunk(opts: {
     call: (opts: CallLLMOptions) => Promise<CallLLMResult>;
 }): Promise<TranscriptSegment[]> {
     const name = englishLanguageName(opts.lang);
-    const baseSystemPrompt = `Translate to ${name}. Return the same line structure "[<sec>] <text>", exactly one output line per input line.`;
+    const baseSystemPrompt = `Translate to ${name}. Return the same line structure "[#<id>] <text>", exactly one output line per input line, keeping each line's [#<id>] tag unchanged.`;
     const userPrompt = opts.segments.map(formatTranslateLine).join("\n");
 
-    const attempt = async (extraInstruction?: string): Promise<string[]> => {
+    const attempt = async (extraInstruction?: string): Promise<Map<number, string> | null> => {
         const systemPrompt = extraInstruction ? `${baseSystemPrompt}\n\n${extraInstruction}` : baseSystemPrompt;
         const result = await opts.call({ systemPrompt, userPrompt, providerChoice: opts.providerChoice });
         const ids = identifyProviderChoice(opts.providerChoice);
@@ -269,35 +269,61 @@ async function translateChunk(opts: {
             response: result.content,
         });
 
-        return splitTranslatedLines(result.content);
+        return parseTranslatedLines(result.content, opts.segments.length);
     };
 
-    let lines = await attempt();
+    let translated = await attempt();
 
-    if (lines.length !== opts.segments.length) {
-        lines = await attempt(`You must return exactly ${opts.segments.length} lines.`);
-    }
-
-    if (lines.length !== opts.segments.length) {
-        throw new Error(
-            `translateTranscript: chunk translation returned ${lines.length} lines, expected ${opts.segments.length}`
+    if (!translated) {
+        translated = await attempt(
+            `You must return exactly ${opts.segments.length} lines, each starting with its original [#<id>] tag (ids 0-${opts.segments.length - 1}, each exactly once).`
         );
     }
 
-    return opts.segments.map((segment, i) => ({ ...segment, text: stripTranslateLinePrefix(lines[i]) }));
+    const byId = translated;
+    if (!byId) {
+        throw new Error(
+            `translateTranscript: chunk translation did not preserve the [#id] line tags, expected ${opts.segments.length} lines`
+        );
+    }
+
+    return opts.segments.map((segment, i) => ({ ...segment, text: byId.get(i) ?? segment.text }));
 }
 
-function formatTranslateLine(segment: TranscriptSegment): string {
-    return `[${Math.round(segment.start)}] ${segment.text}`;
+/** Monotonic index tag — rounded seconds are not unique for dense captions, ids are. */
+function formatTranslateLine(segment: TranscriptSegment, index: number): string {
+    return `[#${index}] ${segment.text}`;
 }
 
-function splitTranslatedLines(content: string): string[] {
-    return content
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0);
-}
+/**
+ * Maps "[#id] text" output lines back by id; `null` unless every id
+ * `0..count-1` appears exactly once — a reordered/duplicated/dropped line
+ * must trigger the retry, not silently attach text to the wrong timestamp.
+ */
+function parseTranslatedLines(content: string, count: number): Map<number, string> | null {
+    const byId = new Map<number, string>();
 
-function stripTranslateLinePrefix(line: string): string {
-    return line.replace(/^\[[^\]]*\]\s*/, "");
+    for (const raw of content.split("\n")) {
+        const line = raw.trim();
+
+        if (line.length === 0) {
+            continue;
+        }
+
+        const match = /^\[#(\d+)\]\s*(.*)$/.exec(line);
+
+        if (!match) {
+            return null;
+        }
+
+        const id = Number(match[1]);
+
+        if (id >= count || byId.has(id)) {
+            return null;
+        }
+
+        byId.set(id, match[2]);
+    }
+
+    return byId.size === count ? byId : null;
 }
