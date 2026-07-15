@@ -25,7 +25,8 @@ export type CreditReason =
     | "summary:short"
     | "dev-topup"
     | `stripe:${string}`
-    | `stripe-refund:${string}`;
+    | `stripe-refund:${string}`
+    | `reuse:${string}`;
 
 export const CREDIT_COSTS = {
     ask: 5,
@@ -35,6 +36,19 @@ export const CREDIT_COSTS = {
 } as const;
 
 export const STARTING_CREDITS = 100;
+
+/** Flat unlock price for an artifact somebody else already generated. */
+export const REUSE_COST = 3;
+
+/** Artifact kinds tracked in `artifact_access` (LLM-produced content only). */
+export type ArtifactKind = "summary:long" | "summary:short" | "summary:timestamped" | "transcript:ai";
+
+/** GET envelope returned instead of content when the artifact exists but the user has no access. */
+export interface LockedArtifact {
+    locked: true;
+    price: number;
+    preview: { tldr: string };
+}
 
 export class InsufficientCreditsError extends Error {
     constructor(
