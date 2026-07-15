@@ -3,6 +3,7 @@ import { Button } from "@app/utils/ui/components/button";
 import { LlmConfirmDialog, type ModelPreset } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
 import { Loading } from "@app/utils/ui/components/youtube/loading";
 import { LongSummaryView } from "@app/utils/ui/components/youtube/long-summary-view";
+import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
 import { ShareButton } from "@app/utils/ui/components/youtube/share-button";
 import { StyleSelect } from "@app/utils/ui/components/youtube/style-select";
 import {
@@ -25,7 +26,10 @@ export interface SummaryTabProps {
         id: VideoId | null,
         mode: "short" | "timestamped" | "long"
     ) => {
-        data: { long?: VideoLongSummary | null; cached?: boolean; locked?: undefined } | LockedArtifact | undefined;
+        data:
+            | { long?: VideoLongSummary | null; lang?: string; cached?: boolean; locked?: undefined }
+            | LockedArtifact
+            | undefined;
         isPending: boolean;
     };
     useGenerateSummary: (id: VideoId) => {
@@ -37,7 +41,8 @@ export interface SummaryTabProps {
             tone?: SummaryControlsState["tone"];
             length?: SummaryControlsState["length"];
             presetId?: number;
-        }) => Promise<{ long?: VideoLongSummary | null; cached: boolean; jobId?: number }>;
+            lang?: string;
+        }) => Promise<{ long?: VideoLongSummary | null; lang?: string; cached: boolean; jobId?: number }>;
         isPending: boolean;
         error?: Error | null;
     };
@@ -56,6 +61,8 @@ export interface SummaryTabProps {
     onSeek?: (seconds: number) => void;
     /** Current playback second (1 Hz bridge) — drives the "playing" chapter state. */
     playerTime?: number | null;
+    /** Signed-in user's output-language preference (2-letter ISO). Default "en". */
+    outputLang?: string;
 }
 
 export function SummaryTab({
@@ -73,6 +80,7 @@ export function SummaryTab({
     streaming,
     onSeek,
     playerTime,
+    outputLang,
 }: SummaryTabProps & { devMode?: boolean; modelPresets?: ModelPreset[]; pipelineProgress?: PipelineProgress | null }) {
     const summary = useSummary(videoId, "long");
     const generate = useGenerateSummary(videoId);
@@ -84,6 +92,7 @@ export function SummaryTab({
     const [modelSel, setModelSel] = useState<{ provider?: string; model?: string }>({});
     const [linkCopied, setLinkCopied] = useState(false);
     const [presetId, setPresetId] = useState<number | null>(null);
+    const [lang, setLang] = useState(outputLang ?? "en");
     const estimate = useEstimate?.(videoId, { mode: "long", ...modelSel, enabled: confirmOpen }) ?? NO_ESTIMATE;
     // The dialog only ever fronts a fresh (re)generation — unlocking happens
     // on the teaser card — so quote the full generation price, not the
@@ -93,7 +102,13 @@ export function SummaryTab({
         : null;
     const lockedInfo = summary.data?.locked ? summary.data : null;
     const long = (summary.data && !summary.data.locked && summary.data.long) || null;
+    const currentLang = summary.data && !summary.data.locked && long !== null ? (summary.data.lang ?? "en") : null;
     const hasPartial = partialLong !== undefined;
+
+    function openConfirm() {
+        setLang(outputLang ?? "en");
+        setConfirmOpen(true);
+    }
 
     useEffect(() => {
         // First streamed partial closes the confirm dialog — content takes over
@@ -124,6 +139,7 @@ export function SummaryTab({
             tone: controls.tone,
             length: controls.length,
             presetId: presetId ?? undefined,
+            lang,
         });
         setConfirmOpen(false);
     }
@@ -152,11 +168,7 @@ export function SummaryTab({
                         />
                     ) : null}
                     {lockedInfo === null ? (
-                        <Button
-                            data-testid="summary-generate"
-                            onClick={() => setConfirmOpen(true)}
-                            disabled={generate.isPending}
-                        >
+                        <Button data-testid="summary-generate" onClick={openConfirm} disabled={generate.isPending}>
                             {long === null ? "Generate summary…" : "Re-generate…"}
                         </Button>
                     ) : null}
@@ -217,7 +229,7 @@ export function SummaryTab({
                             variant="ghost"
                             size="sm"
                             className="text-muted-foreground"
-                            onClick={() => setConfirmOpen(true)}
+                            onClick={openConfirm}
                             disabled={generate.isPending}
                         >
                             Regenerate fresh…
@@ -253,6 +265,10 @@ export function SummaryTab({
                 estimatePending={estimate.isPending && confirmOpen}
                 onSelectionChange={setModelSel}
                 progress={pipelineProgress}
+                langs={OUTPUT_LANGS}
+                lang={lang}
+                onLangChange={setLang}
+                currentLang={currentLang}
                 onCancel={() => setConfirmOpen(false)}
                 onConfirm={runGenerate}
             />

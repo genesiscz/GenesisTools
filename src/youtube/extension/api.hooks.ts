@@ -85,6 +85,30 @@ export function useTranscript(id: VideoId | null, opts: { lang?: string; source?
     });
 }
 
+export function useTranslateTranscript(id: VideoId) {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (vars: { lang: string }) =>
+            send<ExtensionApiMap["api:translateTranscript"]>({ type: "api:translateTranscript", id, ...vars }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["transcript", id] });
+            queryClient.invalidateQueries({ queryKey: ["video", id] });
+            queryClient.invalidateQueries({ queryKey: ["me"] });
+        },
+    });
+}
+
+export function usePatchMe() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (vars: { outputLang?: string; ttsVoice?: string }) =>
+            send<ExtensionApiMap["api:patchMe"]>({ type: "api:patchMe", ...vars }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["me"] }),
+    });
+}
+
 export function useSetSpeakers(id: VideoId) {
     const queryClient = useQueryClient();
 
@@ -118,16 +142,17 @@ export function useSummary(id: VideoId | null, mode: "short" | "timestamped" | "
             }
 
             const cached = response.cached ?? false;
+            const lang = response.lang;
 
             if (mode === "long") {
-                return { long: (response.summary ?? null) as VideoLongSummary | null, cached };
+                return { long: (response.summary ?? null) as VideoLongSummary | null, cached, lang };
             }
 
             if (mode === "timestamped") {
-                return { timestamped: (response.summary ?? []) as TimestampedSummaryEntry[], cached };
+                return { timestamped: (response.summary ?? []) as TimestampedSummaryEntry[], cached, lang };
             }
 
-            return { short: (response.summary ?? "") as string, cached };
+            return { short: (response.summary ?? "") as string, cached, lang };
         },
         enabled: id !== null,
     });
@@ -147,6 +172,7 @@ export function useGenerateSummary(id: VideoId) {
             format?: SummaryFormat;
             length?: SummaryLength;
             presetId?: number;
+            lang?: string;
         }) => {
             const response = await send<ExtensionApiMap["api:generateSummary"]>({
                 type: "api:generateSummary",
@@ -154,20 +180,27 @@ export function useGenerateSummary(id: VideoId) {
                 ...opts,
             });
             const cached = response.cached ?? false;
+            const lang = response.lang;
 
             if (opts.mode === "long") {
-                return { long: (response.summary ?? null) as VideoLongSummary | null, cached, jobId: response.jobId };
+                return {
+                    long: (response.summary ?? null) as VideoLongSummary | null,
+                    cached,
+                    lang,
+                    jobId: response.jobId,
+                };
             }
 
             if (opts.mode === "timestamped") {
                 return {
                     timestamped: (response.summary ?? []) as TimestampedSummaryEntry[],
                     cached,
+                    lang,
                     jobId: response.jobId,
                 };
             }
 
-            return { short: (response.summary ?? "") as string, cached, jobId: response.jobId };
+            return { short: (response.summary ?? "") as string, cached, lang, jobId: response.jobId };
         },
         onSuccess: (_data, opts) => {
             queryClient.invalidateQueries({ queryKey: ["summary", id, opts.mode] });
@@ -446,6 +479,7 @@ export const dataSource: VideoDetailDataSource = {
     useListPresets,
     useCreatePreset,
     useSetSpeakers,
+    useTranslateTranscript,
 };
 
 export type { Channel };

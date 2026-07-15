@@ -1,6 +1,7 @@
 import { Button } from "@app/utils/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
+import type { OutputLang } from "@app/utils/ui/components/youtube/output-langs";
 import type { LlmEstimate } from "@app/youtube/lib/types";
 import { AlertTriangle, Sparkles } from "lucide-react";
 import { type ReactNode, useState } from "react";
@@ -11,6 +12,8 @@ export interface ModelPreset {
     model: string;
     subscription?: boolean;
 }
+
+export type OutputLangOption = OutputLang;
 
 const DEV_MODEL_DEFAULT = "__server_default__";
 
@@ -62,6 +65,12 @@ export interface LlmConfirmDialogProps {
     onSelectionChange?: (sel: { provider?: string; model?: string }) => void;
     /** Live job progress while `busy` — shown under the payload box. */
     progress?: { progress: number; message: string | null } | null;
+    /** Feature 08: output-language options for the controls row. Omit to hide the language Select entirely. */
+    langs?: OutputLangOption[];
+    lang?: string;
+    onLangChange?: (lang: string) => void;
+    /** The stored artifact's lang (when one exists) — drives the "Replaces the current X summary" note. */
+    currentLang?: string | null;
     onCancel: () => void;
     onConfirm: (overrides: { provider?: string; model?: string }) => void;
 }
@@ -85,6 +94,10 @@ export function LlmConfirmDialog({
     estimatePending,
     onSelectionChange,
     progress,
+    langs,
+    lang,
+    onLangChange,
+    currentLang,
     onCancel,
     onConfirm,
 }: LlmConfirmDialogProps) {
@@ -153,6 +166,35 @@ export function LlmConfirmDialog({
                     <p className="mb-1 font-mono text-xs uppercase tracking-wider text-muted-foreground">Will send</p>
                     <p className="text-foreground/90">{payloadSummary}</p>
                 </div>
+
+                {langs && langs.length > 0 && lang && onLangChange ? (
+                    <div className="space-y-1">
+                        <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                            Language
+                        </label>
+                        <Select value={lang} onValueChange={onLangChange}>
+                            <SelectTrigger className="h-8 w-full text-sm">
+                                <SelectValue>
+                                    <span className="font-mono text-[12px] uppercase">{lang}</span>{" "}
+                                    {langs.find((l) => l.code === lang)?.label}
+                                </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent>
+                                {langs.map((l) => (
+                                    <SelectItem key={l.code} value={l.code}>
+                                        <span className="font-mono text-[12px] uppercase">{l.code}</span> {l.label}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        {currentLang && currentLang !== lang ? (
+                            <p className="text-sm text-muted-foreground">
+                                Replaces the current {langs.find((l) => l.code === currentLang)?.label ?? currentLang}{" "}
+                                summary.
+                            </p>
+                        ) : null}
+                    </div>
+                ) : null}
 
                 {showAdvanced ? (
                     <div className="space-y-1">

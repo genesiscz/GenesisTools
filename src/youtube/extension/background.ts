@@ -102,7 +102,18 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
                     format: req.format,
                     length: req.length,
                     presetId: req.presetId,
+                    lang: req.lang,
                 }),
+            });
+        case "api:translateTranscript":
+            return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/transcript/translate`, {
+                method: "POST",
+                body: JSON.stringify({ lang: req.lang }),
+            });
+        case "api:patchMe":
+            return apiCall(`${base}/api/v1/users/me`, {
+                method: "PATCH",
+                body: JSON.stringify({ outputLang: req.outputLang, ttsVoice: req.ttsVoice }),
             });
         case "api:setSpeakers":
             return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/speakers`, {

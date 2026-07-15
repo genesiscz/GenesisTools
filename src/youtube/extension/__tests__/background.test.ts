@@ -136,4 +136,41 @@ describe("extension background request routing", () => {
 
         expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/videos/vid123/summary?mode=long");
     });
+
+    it("forwards lang on generateSummary (Feature 08)", async () => {
+        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const handleRequest = await loadHandleRequest();
+
+        await handleRequest({ type: "api:generateSummary", id: "vid123", mode: "short", lang: "cs" });
+
+        const body = SafeJSON.parse(String(calls.at(-1)?.init.body)) as Record<string, unknown>;
+        expect(body.lang).toBe("cs");
+    });
+
+    it("posts translateTranscript to the transcript/translate route", async () => {
+        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const handleRequest = await loadHandleRequest();
+
+        await handleRequest({ type: "api:translateTranscript", id: "vid123", lang: "cs" });
+
+        const call = calls.at(-1);
+        expect(call?.url).toBe("http://localhost:9876/api/v1/videos/vid123/transcript/translate");
+        expect(call?.init.method).toBe("POST");
+        const body = SafeJSON.parse(String(call?.init.body)) as Record<string, unknown>;
+        expect(body.lang).toBe("cs");
+    });
+
+    it("PATCHes patchMe to users/me with outputLang/ttsVoice", async () => {
+        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const handleRequest = await loadHandleRequest();
+
+        await handleRequest({ type: "api:patchMe", outputLang: "cs", ttsVoice: "alloy" });
+
+        const call = calls.at(-1);
+        expect(call?.url).toBe("http://localhost:9876/api/v1/users/me");
+        expect(call?.init.method).toBe("PATCH");
+        const body = SafeJSON.parse(String(call?.init.body)) as Record<string, unknown>;
+        expect(body.outputLang).toBe("cs");
+        expect(body.ttsVoice).toBe("alloy");
+    });
 });
