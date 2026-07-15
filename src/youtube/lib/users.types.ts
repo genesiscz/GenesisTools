@@ -41,7 +41,8 @@ export type CreditReason =
     | `stripe:${string}`
     | `stripe-refund:${string}`
     | `reuse:${string}`
-    | `report:${string}`;
+    | `report:${string}`
+    | `tts:${string}`;
 
 export const CREDIT_COSTS = {
     ask: 5,
@@ -50,6 +51,7 @@ export const CREDIT_COSTS = {
     "summary:timestamped": 10,
     "summary:short": 5,
     "transcript:translate": 5,
+    "tts:summary": 5,
 } as const;
 
 /** Flat synthesis fee for a multi-video report (on top of per-member summary costs). */
