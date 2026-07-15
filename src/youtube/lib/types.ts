@@ -39,6 +39,8 @@ export type {
     SummaryProgressInfo,
 } from "@app/youtube/lib/summarize.types";
 export type { Language, Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
+export { CREDIT_COSTS, InsufficientCreditsError, STARTING_CREDITS } from "@app/youtube/lib/users.types";
+export type { CreditReason, QaHistoryItem, YtUser } from "@app/youtube/lib/users.types";
 export type {
     AudioDownloadProgress,
     TranscribeOpts,

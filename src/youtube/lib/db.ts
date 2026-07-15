@@ -36,8 +36,10 @@ import type {
     JobTargetKind,
     PipelineJob,
 } from "@app/youtube/lib/jobs.types";
-import type { QaChunk } from "@app/youtube/lib/qa.types";
+import type { AskCitation, QaChunk } from "@app/youtube/lib/qa.types";
 import type { Language, Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
+import type { CreditReason, QaHistoryItem, YtUser } from "@app/youtube/lib/users.types";
+import { InsufficientCreditsError } from "@app/youtube/lib/users.types";
 import type { TimestampedSummaryEntry, Video, VideoId, VideoLongSummary } from "@app/youtube/lib/video.types";
 
 export const DEFAULT_DB_PATH = join(homedir(), ".genesis-tools", "youtube", "youtube.db");
@@ -249,6 +251,39 @@ export class YoutubeDatabase extends BaseDatabase {
                     UNIQUE (video_id, comment_id)
                 );
                 CREATE INDEX IF NOT EXISTS idx_comments_video ON comments(video_id);
+            `);
+        });
+
+        this.runMigration("add-users-credits-qa-history", () => {
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    password_hash TEXT NOT NULL,
+                    api_token TEXT NOT NULL UNIQUE,
+                    credits INTEGER NOT NULL DEFAULT 100,
+                    created_at TEXT NOT NULL,
+                    last_login_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS credit_ledger (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    delta INTEGER NOT NULL,
+                    reason TEXT NOT NULL,
+                    balance_after INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS qa_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    video_id TEXT NOT NULL,
+                    question TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    citations_json TEXT NOT NULL DEFAULT '[]',
+                    credits_spent INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_qa_history_user_video ON qa_history(user_id, video_id, id DESC);
             `);
         });
 
@@ -1026,9 +1061,190 @@ export class YoutubeDatabase extends BaseDatabase {
         }
     }
 
+    createUser(input: { email: string; passwordHash: string; apiToken: string }): YtUser {
+        // Credits start at 0 (not the column DEFAULT) so the register grant goes
+        // through the ledger and SUM(delta) always reconciles to the balance.
+        const row = this.db
+            .query<UserRow, [string, string, string]>(
+                `INSERT INTO users (email, password_hash, api_token, credits, created_at)
+                 VALUES (?, ?, ?, 0, ${SQL_NOW_UTC}) RETURNING *`
+            )
+            .get(input.email, input.passwordHash, input.apiToken);
+
+        if (!row) {
+            throw new Error("createUser failed: insert returned no row");
+        }
+
+        return rowToUser(row);
+    }
+
+    getUserByEmail(email: string): (YtUser & { passwordHash: string; apiToken: string }) | null {
+        const row = this.db.query<UserRow, [string]>("SELECT * FROM users WHERE email = ?").get(email);
+
+        if (!row) {
+            return null;
+        }
+
+        return { ...rowToUser(row), passwordHash: row.password_hash, apiToken: row.api_token };
+    }
+
+    getUserByToken(apiToken: string): YtUser | null {
+        const row = this.db.query<UserRow, [string]>("SELECT * FROM users WHERE api_token = ?").get(apiToken);
+
+        return row ? rowToUser(row) : null;
+    }
+
+    touchUserLogin(id: number): void {
+        this.db.run(`UPDATE users SET last_login_at = ${SQL_NOW_UTC} WHERE id = ?`, [id]);
+    }
+
+    /**
+     * Atomic conditional debit: only succeeds while the balance covers the
+     * amount; throws `InsufficientCreditsError` otherwise. Ledger row is
+     * written in the same transaction.
+     */
+    spendCredits(userId: number, amount: number, reason: CreditReason): number {
+        const spend = this.db.transaction(() => {
+            const row = this.db
+                .query<{ credits: number }, [number, number, number]>(
+                    "UPDATE users SET credits = credits - ? WHERE id = ? AND credits >= ? RETURNING credits"
+                )
+                .get(amount, userId, amount);
+
+            if (!row) {
+                const current = this.db
+                    .query<{ credits: number }, [number]>("SELECT credits FROM users WHERE id = ?")
+                    .get(userId);
+                throw new InsufficientCreditsError(current?.credits ?? 0, amount);
+            }
+
+            this.writeCreditLedger(userId, -amount, reason, row.credits);
+            return row.credits;
+        });
+
+        return spend();
+    }
+
+    /** Unconditional credit; writes the ledger row; returns the new balance. */
+    grantCredits(userId: number, amount: number, reason: CreditReason): number {
+        const grant = this.db.transaction(() => {
+            const row = this.db
+                .query<{ credits: number }, [number, number]>(
+                    "UPDATE users SET credits = credits + ? WHERE id = ? RETURNING credits"
+                )
+                .get(amount, userId);
+
+            if (!row) {
+                throw new Error(`grantCredits: user ${userId} not found`);
+            }
+
+            this.writeCreditLedger(userId, amount, reason, row.credits);
+            return row.credits;
+        });
+
+        return grant();
+    }
+
+    private writeCreditLedger(userId: number, delta: number, reason: CreditReason, balanceAfter: number): void {
+        this.db.run(
+            `INSERT INTO credit_ledger (user_id, delta, reason, balance_after, created_at)
+             VALUES (?, ?, ?, ?, ${SQL_NOW_UTC})`,
+            [userId, delta, reason, balanceAfter]
+        );
+    }
+
+    insertQaHistory(input: {
+        userId: number;
+        videoId: string;
+        question: string;
+        answer: string;
+        citations: AskCitation[];
+        creditsSpent: number;
+    }): QaHistoryItem {
+        const row = this.db
+            .query<QaHistoryRow, [number, string, string, string, string, number]>(
+                `INSERT INTO qa_history (user_id, video_id, question, answer, citations_json, credits_spent, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ${SQL_NOW_UTC}) RETURNING *`
+            )
+            .get(
+                input.userId,
+                input.videoId,
+                input.question,
+                input.answer,
+                SafeJSON.stringify(input.citations),
+                input.creditsSpent
+            );
+
+        if (!row) {
+            throw new Error("insertQaHistory failed: insert returned no row");
+        }
+
+        return rowToQaHistoryItem(row);
+    }
+
+    /** Newest first. `videoId` narrows to one video; `limit` defaults to 100. */
+    listQaHistory(userId: number, videoId?: string, limit?: number): QaHistoryItem[] {
+        const max = limit ?? 100;
+        const rows = videoId
+            ? this.db
+                  .query<QaHistoryRow, [number, string, number]>(
+                      "SELECT * FROM qa_history WHERE user_id = ? AND video_id = ? ORDER BY id DESC LIMIT ?"
+                  )
+                  .all(userId, videoId, max)
+            : this.db
+                  .query<QaHistoryRow, [number, number]>(
+                      "SELECT * FROM qa_history WHERE user_id = ? ORDER BY id DESC LIMIT ?"
+                  )
+                  .all(userId, max);
+
+        return rows.map(rowToQaHistoryItem);
+    }
+
     initSchemaForTest(): void {
         this.initSchema();
     }
+}
+
+interface UserRow {
+    id: number;
+    email: string;
+    password_hash: string;
+    api_token: string;
+    credits: number;
+    created_at: string;
+    last_login_at: string | null;
+}
+
+function rowToUser(row: UserRow): YtUser {
+    return {
+        id: row.id,
+        email: row.email,
+        credits: row.credits,
+        createdAt: row.created_at,
+    };
+}
+
+interface QaHistoryRow {
+    id: number;
+    user_id: number;
+    video_id: string;
+    question: string;
+    answer: string;
+    citations_json: string;
+    credits_spent: number;
+    created_at: string;
+}
+
+function rowToQaHistoryItem(row: QaHistoryRow): QaHistoryItem {
+    return {
+        id: row.id,
+        videoId: row.video_id,
+        question: row.question,
+        answer: row.answer,
+        citations: parseNullableJsonArray<AskCitation>(row.citations_json) ?? [],
+        creditsSpent: row.credits_spent,
+        createdAt: row.created_at,
+    };
 }
 
 interface VideoRow {
