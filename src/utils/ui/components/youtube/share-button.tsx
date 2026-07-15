@@ -1,3 +1,4 @@
+import { logger } from "@app/logger/client";
 import { Check, Loader2, Share2 } from "lucide-react";
 import { useState } from "react";
 
@@ -26,7 +27,8 @@ export function ShareButton({
             setState("done");
             onCopied?.();
             setTimeout(() => setState("idle"), 2000);
-        } catch {
+        } catch (error) {
+            logger.warn({ error }, "share-button: share failed");
             setState("error");
             setTimeout(() => setState("idle"), 2500);
         }
@@ -37,7 +39,7 @@ export function ShareButton({
             type="button"
             onClick={() => void click()}
             title="Share (copies link)"
-            className={`inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground ${className ?? ""}`}
+            className={`inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground ${className ?? ""}`}
         >
             {state === "busy" ? (
                 <Loader2 className="size-4 animate-spin" />

@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { getUiLang, loadUiLang, persistUiLang, setUiLang, t } from "@ext/shared/i18n";
+
+const originalChrome = globalThis.chrome;
 
 function installStorage(initial: Record<string, unknown> = {}): Record<string, unknown> {
     const store = { ...initial };
@@ -31,6 +33,10 @@ function installStorage(initial: Record<string, unknown> = {}): Record<string, u
 
 beforeEach(() => {
     setUiLang("en");
+});
+
+afterEach(() => {
+    globalThis.chrome = originalChrome;
 });
 
 describe("i18n", () => {

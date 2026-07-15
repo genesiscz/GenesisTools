@@ -1,3 +1,4 @@
+import { logger } from "@app/logger/client";
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import type { PresetKind, PromptPreset } from "@app/youtube/lib/types";
@@ -34,8 +35,9 @@ export function PresetEditor({
         try {
             const { preset } = await onCreate({ name: name.trim(), kind, instructions });
             onCreated(preset.id);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : String(err));
+        } catch (error) {
+            logger.warn({ error }, "preset-editor: save failed");
+            setError(error instanceof Error ? error.message : String(error));
         }
     }
 
@@ -49,26 +51,44 @@ export function PresetEditor({
                 <ArrowLeft className="size-4" /> Back
             </button>
             <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">New style preset</p>
-            <Input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Skeptic mode"
-                className="h-9 text-sm"
-            />
-            <div className="relative">
-                <textarea
-                    value={instructions}
-                    onChange={(e) => setInstructions(e.target.value)}
-                    placeholder="List every claim the speaker makes and rate the evidence given for it…"
-                    className="min-h-24 w-full resize-y rounded-lg border border-white/8 bg-black/20 p-2.5 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground focus:border-primary/40 focus:outline-none"
-                />
-                <span
-                    className={`pointer-events-none absolute bottom-2 right-2.5 font-mono text-[12px] tabular-nums ${
-                        over ? "text-destructive/90" : "text-muted-foreground"
-                    }`}
+            <div className="space-y-1">
+                <label
+                    htmlFor="preset-editor-name"
+                    className="text-xs font-medium uppercase tracking-wider text-muted-foreground"
                 >
-                    {instructions.length}/1000
-                </span>
+                    Name
+                </label>
+                <Input
+                    id="preset-editor-name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Skeptic mode"
+                    className="h-9 text-sm"
+                />
+            </div>
+            <div className="space-y-1">
+                <label
+                    htmlFor="preset-editor-instructions"
+                    className="text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                >
+                    Instructions
+                </label>
+                <div className="relative">
+                    <textarea
+                        id="preset-editor-instructions"
+                        value={instructions}
+                        onChange={(e) => setInstructions(e.target.value)}
+                        placeholder="List every claim the speaker makes and rate the evidence given for it…"
+                        className="min-h-24 w-full resize-y rounded-lg border border-border bg-muted/30 p-2.5 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground focus:border-primary/40 focus:outline-none"
+                    />
+                    <span
+                        className={`pointer-events-none absolute bottom-2 right-2.5 font-mono text-[12px] tabular-nums ${
+                            over ? "text-destructive/90" : "text-muted-foreground"
+                        }`}
+                    >
+                        {instructions.length}/1000
+                    </span>
+                </div>
             </div>
             {error ? (
                 <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-sm">
