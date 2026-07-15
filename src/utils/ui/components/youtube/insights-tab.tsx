@@ -7,6 +7,7 @@ import {
     SummaryControlsBar,
     type SummaryControlsState,
 } from "@app/utils/ui/components/youtube/summary-controls";
+import { toPartialTimestampedEntries } from "@app/utils/ui/components/youtube/summary-partials";
 import type { PipelineProgress } from "@app/utils/ui/components/youtube/tabs";
 import { TimestampedSummaryView } from "@app/utils/ui/components/youtube/timestamped-summary-view";
 import type {
@@ -17,7 +18,7 @@ import type {
     VideoLongSummary,
 } from "@app/youtube/lib/types";
 import { CREDIT_COSTS } from "@app/youtube/lib/types";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const NO_ESTIMATE = { data: undefined, isPending: false } as const;
 
@@ -56,6 +57,10 @@ export interface InsightsTabProps {
         id: VideoId | null,
         opts: { mode: "short" | "timestamped" | "long"; provider?: string; model?: string; enabled?: boolean }
     ) => { data: LlmEstimate | undefined; isPending: boolean };
+    /** Streaming `summary:partial` payload for the timestamped mode, if a generation is running. */
+    partialTimestamped?: unknown;
+    /** True while timestamped partials are streaming in. */
+    streaming?: boolean;
 }
 
 export function InsightsTab({
@@ -67,6 +72,8 @@ export function InsightsTab({
     devMode,
     modelPresets,
     pipelineProgress,
+    partialTimestamped,
+    streaming,
 }: InsightsTabProps & { devMode?: boolean; modelPresets?: ModelPreset[]; pipelineProgress?: PipelineProgress | null }) {
     const timestamped = useSummary(videoId, "timestamped");
     const long = useSummary(videoId, "long");
@@ -75,8 +82,31 @@ export function InsightsTab({
     const [controls, setControls] = useState<SummaryControlsState>(DEFAULT_SUMMARY_CONTROLS);
     const [modelSel, setModelSel] = useState<{ provider?: string; model?: string }>({});
     const estimate = useEstimate?.(videoId, { mode: "timestamped", ...modelSel, enabled: confirmOpen }) ?? NO_ESTIMATE;
-    const entries = (timestamped.data && !timestamped.data.locked && timestamped.data.timestamped) || [];
-    const tldr = (long.data && !long.data.locked && long.data.long?.tldr) || null;
+    const hasPartial = partialTimestamped !== undefined;
+
+    useEffect(() => {
+        // First streamed partial closes the confirm dialog — content takes over
+        // from the dialog's progress view. Reuse unlocks never stream, so this
+        // only fires on fresh generations.
+        if (streaming && hasPartial) {
+            setConfirmOpen(false);
+        }
+    }, [streaming, hasPartial]);
+
+    // The partial outlives the stream (kept until the refetched query has data)
+    // so completion swaps content without a flash of emptiness.
+    const partial = hasPartial ? toPartialTimestampedEntries(partialTimestamped) : null;
+    const finalEntries = (timestamped.data && !timestamped.data.locked && timestamped.data.timestamped) || [];
+    const partialEntries = partial?.entries ?? [];
+    const entries = streaming
+        ? partialEntries.length > 0
+            ? partialEntries
+            : finalEntries
+        : finalEntries.length > 0
+          ? finalEntries
+          : partialEntries;
+    const finalTldr = (long.data && !long.data.locked && long.data.long?.tldr) || null;
+    const tldr = (streaming ? partial?.tldr : null) ?? finalTldr ?? partial?.tldr ?? null;
     // With entries visible the generate button forces a fresh run at full
     // price — quote that, not the reuse/owned price the estimate reports.
     const dialogEstimate: LlmEstimate | null = estimate.data
@@ -85,14 +115,14 @@ export function InsightsTab({
             : estimate.data
         : null;
 
-    if (timestamped.isPending) {
+    if (timestamped.isPending && !partial) {
         return <Loading label="Loading insights" />;
     }
 
     async function runGenerate({ provider, model }: { provider?: string; model?: string }) {
         await generate.mutateAsync({
             mode: "timestamped",
-            force: entries.length > 0,
+            force: finalEntries.length > 0,
             provider,
             model,
             tone: controls.tone,

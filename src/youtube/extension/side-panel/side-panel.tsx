@@ -1,5 +1,5 @@
 import { type PipelineProgress, type VideoDetailTab, VideoDetailTabs } from "@app/utils/ui/components/youtube/tabs";
-import type { JobStage } from "@app/youtube/lib/types";
+import type { JobStage, SummaryMode } from "@app/youtube/lib/types";
 import { send } from "@ext/api.bridge";
 import { dataSource, useModels, useStartPipeline } from "@ext/api.hooks";
 import type { ExtensionEvent } from "@ext/shared/messages";
@@ -58,6 +58,17 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
     // finishes (so "Fetch comments" etc. actually surface their data).
     const [pipelineProgress, setPipelineProgress] = useState<PipelineProgress | null>(null);
     const activeJobIdsRef = useRef<Set<number>>(new Set());
+    // Streaming summary:partial payloads (kept past job:completed so the
+    // refetched query swaps content in without a flash of emptiness).
+    const [partialSummaries, setPartialSummaries] = useState<Partial<Record<SummaryMode, unknown>>>({});
+    const [streamingMode, setStreamingMode] = useState<SummaryMode | null>(null);
+    const streamingJobRef = useRef<{ jobId: number; modes: Set<SummaryMode> } | null>(null);
+
+    useEffect(() => {
+        setPartialSummaries({});
+        setStreamingMode(null);
+        streamingJobRef.current = null;
+    }, [videoId]);
 
     useEffect(() => {
         function onExtensionEvent(event: Event): void {
@@ -67,6 +78,29 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
             }
 
             const jobEvent = detail.event;
+
+            if (jobEvent.type === "summary:partial") {
+                if (jobEvent.videoId !== videoId) {
+                    return;
+                }
+
+                if (streamingJobRef.current?.jobId !== jobEvent.jobId) {
+                    streamingJobRef.current = { jobId: jobEvent.jobId, modes: new Set() };
+                }
+
+                if (!streamingJobRef.current.modes.has(jobEvent.mode)) {
+                    streamingJobRef.current.modes.add(jobEvent.mode);
+                    if (jobEvent.mode === "long") {
+                        setActive("summary");
+                    } else if (jobEvent.mode === "timestamped") {
+                        setActive("insights");
+                    }
+                }
+
+                setPartialSummaries((prev) => ({ ...prev, [jobEvent.mode]: jobEvent.partial }));
+                setStreamingMode(jobEvent.mode);
+                return;
+            }
 
             if (
                 (jobEvent.type === "job:created" || jobEvent.type === "job:started") &&
@@ -84,6 +118,15 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
 
             if (jobEvent.type !== "job:completed" && jobEvent.type !== "job:failed") {
                 return;
+            }
+
+            if (streamingJobRef.current?.jobId === jobEvent.job.id) {
+                streamingJobRef.current = null;
+                setStreamingMode(null);
+
+                if (jobEvent.type === "job:failed") {
+                    setPartialSummaries({});
+                }
             }
 
             if (activeJobIdsRef.current.has(jobEvent.job.id)) {
@@ -173,6 +216,8 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                             pipelineProgress={pipelineProgress}
                             onRequireLogin={() => setSettingsOpen(true)}
                             onOpenWatch={(id, t) => void send({ type: "nav:openWatch", id, t })}
+                            partialSummaries={partialSummaries}
+                            streamingMode={streamingMode}
                         />
                     )}
                 </div>

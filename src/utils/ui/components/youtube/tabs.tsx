@@ -15,6 +15,7 @@ import type {
     PromptPreset,
     QaHistoryItem,
     QaSource,
+    SummaryMode,
     TimestampedSummaryEntry,
     Transcript,
     Video,
@@ -156,6 +157,10 @@ export interface VideoDetailTabsProps {
     onRequireLogin?: () => void;
     /** Open another video's watch page at a timestamp (cross-video citations). */
     onOpenWatch?: (videoId: string, t: number) => void;
+    /** Streaming `summary:partial` payloads keyed by mode (long / timestamped). */
+    partialSummaries?: Partial<Record<SummaryMode, unknown>>;
+    /** Mode currently receiving streamed partials, or null when idle. */
+    streamingMode?: SummaryMode | null;
 }
 
 export function VideoDetailTabs({
@@ -171,6 +176,8 @@ export function VideoDetailTabs({
     pipelineProgress,
     onRequireLogin,
     onOpenWatch,
+    partialSummaries,
+    streamingMode,
 }: VideoDetailTabsProps) {
     const rootRef = useRef<HTMLDivElement | null>(null);
     const pendingCommentRef = useRef<string | null>(null);
@@ -232,6 +239,8 @@ export function VideoDetailTabs({
                     devMode={devMode}
                     modelPresets={modelPresets}
                     pipelineProgress={pipelineProgress}
+                    partialTimestamped={partialSummaries?.timestamped}
+                    streaming={streamingMode === "timestamped"}
                 />
             </TabsContent>
             <TabsContent value="summary" className="yt-tab-pane">
@@ -246,6 +255,8 @@ export function VideoDetailTabs({
                     devMode={devMode}
                     modelPresets={modelPresets}
                     pipelineProgress={pipelineProgress}
+                    partialLong={partialSummaries?.long}
+                    streaming={streamingMode === "long"}
                 />
             </TabsContent>
             <TabsContent value="ask" className="yt-tab-pane">
