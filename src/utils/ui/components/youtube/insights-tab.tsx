@@ -18,6 +18,7 @@ import type {
     VideoLongSummary,
 } from "@app/youtube/lib/types";
 import { CREDIT_COSTS } from "@app/youtube/lib/types";
+import { Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 const NO_ESTIMATE = { data: undefined, isPending: false } as const;
@@ -148,7 +149,19 @@ export function InsightsTab({
                 </Button>
             </div>
             <SummaryControlsBar value={controls} onChange={setControls} disabled={generate.isPending} />
-            {entries.length === 0 ? (
+            {streaming ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin text-primary" />
+                    Writing…
+                </div>
+            ) : null}
+            {entries.length === 0 && streaming ? (
+                <div className="space-y-2">
+                    <div className="h-4 rounded-md bg-white/5 animate-pulse" />
+                    <div className="h-4 rounded-md bg-white/5 animate-pulse" />
+                    <div className="h-4 rounded-md bg-white/5 animate-pulse" />
+                </div>
+            ) : entries.length === 0 ? (
                 <p
                     data-testid="insights-empty"
                     className="rounded-2xl border border-dashed border-primary/25 p-5 text-muted-foreground"
