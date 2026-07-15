@@ -14,6 +14,7 @@ import type {
     PresetKind,
     PromptPreset,
     QaHistoryItem,
+    QaSource,
     TimestampedSummaryEntry,
     Transcript,
     Video,
@@ -93,6 +94,7 @@ export interface VideoDetailDataSource {
             provider?: string;
             model?: string;
             presetId?: number;
+            sources?: QaSource[];
         }) => Promise<{ answer: string; citations?: AskCitation[] }>;
         isPending: boolean;
     };
@@ -162,7 +164,44 @@ export function VideoDetailTabs({
     pipelineProgress,
     onRequireLogin,
 }: VideoDetailTabsProps) {
+    const rootRef = useRef<HTMLDivElement | null>(null);
+    const pendingCommentRef = useRef<string | null>(null);
+
+    // Cited-comment jump: switch to the Comments tab, then (once its cards
+    // exist in the DOM) scroll the thread into view and flash it once.
+    function showComment(commentId: string) {
+        pendingCommentRef.current = commentId;
+        onActiveChange("comments");
+    }
+
+    useEffect(() => {
+        if (active !== "comments" || pendingCommentRef.current === null) {
+            return;
+        }
+
+        const commentId = pendingCommentRef.current;
+        let tries = 0;
+        const timer = setInterval(() => {
+            const card = rootRef.current?.querySelector(`[data-comment-id="${CSS.escape(commentId)}"]`);
+            tries += 1;
+
+            if (card) {
+                clearInterval(timer);
+                pendingCommentRef.current = null;
+                card.scrollIntoView({ block: "center" });
+                card.classList.add("yt-flash");
+                setTimeout(() => card.classList.remove("yt-flash"), 2100);
+            } else if (tries > 20) {
+                clearInterval(timer);
+                pendingCommentRef.current = null;
+            }
+        }, 100);
+
+        return () => clearInterval(timer);
+    }, [active]);
+
     return (
+        <div ref={rootRef} className="contents">
         <Tabs
             value={active}
             onValueChange={(value) => onActiveChange(value as VideoDetailTab)}
@@ -211,6 +250,10 @@ export function VideoDetailTabs({
                     useListPresets={ds.useListPresets}
                     useCreatePreset={ds.useCreatePreset}
                     onRequireLogin={onRequireLogin}
+                    useComments={ds.useComments}
+                    runPipeline={runPipeline}
+                    pipelineProgress={pipelineProgress}
+                    onShowComment={showComment}
                 />
             </TabsContent>
             <TabsContent value="comments" className="yt-tab-pane">
@@ -231,6 +274,7 @@ export function VideoDetailTabs({
                 />
             </TabsContent>
         </Tabs>
+        </div>
     );
 }
 

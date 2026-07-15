@@ -307,3 +307,19 @@
     border: 1px solid rgb(255 255 255 / 12%);
     text-align: left;
 }
+
+/* One-shot highlight for a comment thread cited from the Ask tab —
+   2 s background pulse fading out, no loop. */
+@keyframes yt-flash-pulse {
+    from {
+        background-color: hsl(var(--primary) / 0.1);
+    }
+
+    to {
+        background-color: transparent;
+    }
+}
+
+.yt-flash {
+    animation: yt-flash-pulse 2s ease-out 1;
+}

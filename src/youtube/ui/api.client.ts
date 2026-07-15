@@ -8,6 +8,7 @@ import type {
     JobStage,
     JobStatus,
     PipelineJob,
+    QaSource,
     TimestampedSummaryEntry,
     Transcript,
     Video,
@@ -187,7 +188,7 @@ export const apiClient = {
 
         return { short: (response.summary ?? "") as string, cached: response.cached, jobId: response.jobId };
     },
-    askVideo: (id: VideoId, opts: { question: string; topK?: number; provider?: string; model?: string }) =>
+    askVideo: (id: VideoId, opts: { question: string; topK?: number; provider?: string; model?: string; sources?: QaSource[] }) =>
         api<AskVideoResponse>(`/videos/${encodeURIComponent(id)}/qa`, {
             method: "POST",
             body: SafeJSON.stringify(opts),
