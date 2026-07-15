@@ -117,10 +117,26 @@ const LongSchema = z.object({
     keyPoints: z.array(z.string().min(1)).min(3).max(10).describe("3-10 bullet points."),
     learnings: z.array(z.string().min(1)).min(2).max(8).describe("2-8 takeaways."),
     chapters: z
-        .array(z.object({ title: z.string().min(1).max(80), summary: z.string().min(1) }))
+        .array(
+            z.object({
+                title: z.string().min(1).max(80),
+                summary: z.string().min(1),
+                startSec: z
+                    .number()
+                    .int()
+                    .nonnegative()
+                    .describe("Second in the transcript where this chapter's topic begins."),
+                endSec: z
+                    .number()
+                    .int()
+                    .positive()
+                    .nullable()
+                    .describe("Second where the topic ends, or null when open-ended."),
+            })
+        )
         .min(1)
         .max(12)
-        .describe("Topical breakdown — not necessarily aligned with timestamps."),
+        .describe("Topical breakdown, each chapter anchored to the transcript's timestamps."),
     conclusion: z.string().nullable().describe("Closing verdict, or null."),
 });
 
@@ -316,9 +332,10 @@ export class SummaryService {
             `Write a rich long-form summary of this YouTube video.`,
             `Total duration: ${formatTime(totalSec)}.`,
             `Use only what is in the transcript. Be specific (numbers, products, names).`,
+            `Anchor every chapter to the transcript's timestamps: startSec is the second where the chapter's topic begins (endSec where it ends, or null). Times must be within [0, ${Math.max(0, Math.round(totalSec))}] seconds and ascending.`,
             ``,
-            `Transcript:`,
-            transcript.text,
+            `Transcript (each line prefixed with [MM:SS]):`,
+            formatTranscriptWithTimestamps(transcript),
         ].join("\n");
 
         opts.onProgress?.({

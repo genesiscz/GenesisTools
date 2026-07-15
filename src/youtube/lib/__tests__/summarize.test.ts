@@ -6,6 +6,7 @@ import { SafeJSON } from "@app/utils/json";
 import { YoutubeConfig } from "@app/youtube/lib/config";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
 import { bucketSegments, pickSectionCount, SummaryService } from "@app/youtube/lib/summarize";
+import type { z } from "zod";
 
 const summarizerCreateCalls: unknown[] = [];
 const summarizeCalls: unknown[] = [];
@@ -145,6 +146,48 @@ describe("SummaryService", () => {
             expect(result.long?.keyPoints).toHaveLength(3);
             expect(callLlmStructuredCalls).toHaveLength(1);
             expect(db.getVideo("abc123def45")?.summaryLong?.tldr).toBe("It's all about ARR.");
+        } finally {
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("requires chapter startSec in the long-summary schema and anchors the prompt to timestamps", async () => {
+        const { db, config, dir } = await makeFixture();
+
+        try {
+            structuredResponses = [
+                {
+                    tldr: "x",
+                    keyPoints: ["one", "two", "three"],
+                    learnings: ["a", "b"],
+                    chapters: [{ title: "Intro", summary: "Opens.", startSec: 0, endSec: 10 }],
+                    conclusion: null,
+                },
+            ];
+            const fakeChoice = { provider: "fake", model: "fake" } as unknown as Parameters<
+                typeof SummaryService.prototype.summarize
+            >[0]["providerChoice"];
+            const service = new SummaryService(db, config, makeDeps());
+
+            await service.summarize({ videoId: "abc123def45", mode: "long", providerChoice: fakeChoice });
+
+            const call = callLlmStructuredCalls[0] as { userPrompt: string; schema: z.ZodType<unknown> };
+            expect(call.userPrompt).toContain("Anchor every chapter to the transcript's timestamps");
+            expect(call.userPrompt).toContain("[00:0");
+
+            const base = { tldr: "x", keyPoints: ["1", "2", "3"], learnings: ["a", "b"], conclusion: null };
+            const withStart = call.schema.safeParse({
+                ...base,
+                chapters: [{ title: "T", summary: "S", startSec: 3, endSec: null }],
+            });
+            expect(withStart.success).toBe(true);
+
+            const withoutStart = call.schema.safeParse({
+                ...base,
+                chapters: [{ title: "T", summary: "S" }],
+            });
+            expect(withoutStart.success).toBe(false);
         } finally {
             db.close();
             await rm(dir, { recursive: true, force: true });

@@ -21,6 +21,10 @@ export interface TimestampedSummaryEntry {
 export interface VideoLongSummaryChapter {
     title: string;
     summary: string;
+    /** Second where the chapter's topic begins. Optional for back-compat with old rows (no ticks rendered). */
+    startSec?: number;
+    /** Second where the chapter's topic ends, or null when open-ended. Optional for back-compat with old rows. */
+    endSec?: number | null;
 }
 
 export interface VideoLongSummary {
