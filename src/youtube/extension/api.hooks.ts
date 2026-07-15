@@ -348,6 +348,35 @@ export function useQaHistory(id: VideoId | null) {
     });
 }
 
+export function useReportEstimate(videoIds: string[], enabled: boolean) {
+    return useQuery({
+        queryKey: ["report-estimate", videoIds],
+        queryFn: () => send<ExtensionApiMap["api:reportEstimate"]>({ type: "api:reportEstimate", videoIds }),
+        staleTime: 30_000,
+        enabled: enabled && videoIds.length >= 2,
+    });
+}
+
+export function useCreateReport() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (vars: { videoIds: string[]; title?: string }) =>
+            send<ExtensionApiMap["api:createReport"]>({ type: "api:createReport", ...vars }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["me"] }),
+    });
+}
+
+export function useReport(id: number | null) {
+    return useQuery({
+        queryKey: ["report", id],
+        queryFn: () => send<ExtensionApiMap["api:getReport"]>({ type: "api:getReport", id: id as number }),
+        enabled: id !== null,
+        // Poll while the synthesis job is still running.
+        refetchInterval: (query) => (query.state.data?.report.result ? false : 3000),
+    });
+}
+
 export function useStartPipeline() {
     const queryClient = useQueryClient();
 

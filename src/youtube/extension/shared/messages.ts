@@ -22,6 +22,7 @@ import type {
     VideoComment,
     VideoId,
     VideoLongSummary,
+    VideoReport,
     YtUser,
 } from "@app/youtube/lib/types";
 import type { ExtensionConfig } from "@ext/shared/types";
@@ -92,7 +93,10 @@ export type ExtensionRequest =
     | { type: "api:createPreset"; name: string; kind: "summary" | "insights" | "ask"; instructions: string }
     | { type: "api:updatePreset"; id: number; name?: string; instructions?: string }
     | { type: "api:deletePreset"; id: number }
-    | { type: "nav:openWatch"; id: string; t: number }; // open watch page in a new tab (cross-video citation)
+    | { type: "nav:openWatch"; id: string; t: number } // open watch page in a new tab (cross-video citation)
+    | { type: "api:reportEstimate"; videoIds: string[] }
+    | { type: "api:createReport"; videoIds: string[]; title?: string }
+    | { type: "api:getReport"; id: number };
 
 export type ExtensionResponse = { ok: true; data: unknown } | { ok: false; error: string };
 
@@ -158,4 +162,22 @@ export interface ExtensionApiMap {
     "api:updatePreset": { preset: PromptPreset };
     "api:deletePreset": { deleted: boolean };
     "nav:openWatch": { opened: true };
+    "api:reportEstimate": { creditCost: number; membersNeedingSummary: number; perMemberCost: Record<string, number> };
+    "api:createReport": { report: ReportRecordShape; jobId: number; creditsSpent: number; credits: number };
+    "api:getReport": { report: ReportRecordShape; members: Record<string, ReportMemberMeta> };
+}
+
+/** Wire shape of a stored report (subset of the server's report record). */
+export interface ReportRecordShape {
+    id: number;
+    title: string;
+    memberIds: string[];
+    result: VideoReport | null;
+    createdAt: string;
+}
+
+export interface ReportMemberMeta {
+    title: string;
+    uploadDate: string | null;
+    thumbUrl: string | null;
 }

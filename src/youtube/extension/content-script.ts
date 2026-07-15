@@ -51,6 +51,11 @@ function getPanelTarget(): PanelTarget | null {
         return { kind: "video", videoId: decodeURIComponent(shorts[1]) };
     }
 
+    if (url.pathname === "/playlist") {
+        const listId = url.searchParams.get("list");
+        return listId ? { kind: "playlist", listId } : null;
+    }
+
     if (isChannelPath(url.pathname)) {
         return { kind: "channel", handle: getChannelHandle(url.pathname) };
     }

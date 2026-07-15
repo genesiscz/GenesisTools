@@ -5,4 +5,7 @@
  * yields a channel target whose handle may be null when it can't be resolved
  * from the URL alone.
  */
-export type PanelTarget = { kind: "video"; videoId: string } | { kind: "channel"; handle: string | null };
+export type PanelTarget =
+    | { kind: "video"; videoId: string }
+    | { kind: "channel"; handle: string | null }
+    | { kind: "playlist"; listId: string };

@@ -36,7 +36,9 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
 
     if (req.type === "nav:openWatch") {
         const seconds = Math.max(0, Math.floor(req.t));
-        await chrome.tabs.create({ url: `https://www.youtube.com/watch?v=${encodeURIComponent(req.id)}&t=${seconds}s` });
+        await chrome.tabs.create({
+            url: `https://www.youtube.com/watch?v=${encodeURIComponent(req.id)}&t=${seconds}s`,
+        });
         return { ok: true, data: { opened: true } };
     }
 
@@ -159,6 +161,18 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
                 method: "POST",
                 body: JSON.stringify(typeof req.amount === "number" ? { amount: req.amount } : {}),
             });
+        case "api:reportEstimate":
+            return apiCall(`${base}/api/v1/reports/estimate`, {
+                method: "POST",
+                body: JSON.stringify({ videoIds: req.videoIds }),
+            });
+        case "api:createReport":
+            return apiCall(`${base}/api/v1/reports`, {
+                method: "POST",
+                body: JSON.stringify({ videoIds: req.videoIds, title: req.title }),
+            });
+        case "api:getReport":
+            return apiCall(`${base}/api/v1/reports/${req.id}`);
         case "api:qaHistory": {
             const query = new URLSearchParams();
             if (req.id) {
