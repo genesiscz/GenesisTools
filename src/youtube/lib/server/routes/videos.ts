@@ -157,6 +157,13 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             }
 
             const id = audioPost.id as VideoId;
+
+            // TTS narrates the long summary — it must not bypass the artifact
+            // lock. A missing summary still falls through to the 409 below.
+            if (yt.db.hasArtifact("summary:long", id) && !yt.db.hasArtifactAccess(user.id, "summary:long", id)) {
+                return jsonError("unlock the long summary first", 403);
+            }
+
             const body = (await safeJsonBody(req)) ?? {};
             const voice = typeof body.voice === "string" ? body.voice : (user.ttsVoice ?? undefined);
 
@@ -231,6 +238,11 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             }
 
             const id = audioGet.id as VideoId;
+
+            if (yt.db.hasArtifact("summary:long", id) && !yt.db.hasArtifactAccess(user.id, "summary:long", id)) {
+                return jsonError("unlock the long summary first", 403);
+            }
+
             const voice = url.searchParams.get("voice") ?? user.ttsVoice ?? undefined;
 
             let target: Awaited<ReturnType<typeof resolveSummaryAudioTarget>>;
