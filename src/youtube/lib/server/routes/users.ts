@@ -1,4 +1,8 @@
+import { logger } from "@app/logger";
+import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
+import { createCheckoutSession } from "@app/youtube/lib/billing";
+import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
 import { requireUser } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
@@ -65,6 +69,35 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
             const credits = yt.db.grantCredits(user.id, amount, "dev-topup");
 
             return Response.json({ user: { ...user, credits } }, { headers: CORS_HEADERS });
+        }
+
+        if (matchRoute(req, "POST", "/api/v1/users/checkout", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            if (!env.stripe.getSecretKey()) {
+                return jsonError("billing not configured", 503);
+            }
+
+            const body = (await safeJsonBody(req)) ?? {};
+            const packId = typeof body.packId === "string" ? body.packId : null;
+
+            if (!packId || !DIAMOND_PACKS.some((pack) => pack.id === packId)) {
+                return jsonError("body must include a known {packId}", 400);
+            }
+
+            try {
+                const origin = req.headers.get("Origin") ?? "https://www.youtube.com";
+                const result = await createCheckoutSession({ user, packId, origin });
+                return Response.json(result, { headers: CORS_HEADERS });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                logger.warn({ error, userId: user.id, packId }, "youtube billing: checkout session failed");
+                return jsonError(message, message.includes("not configured") ? 503 : 400);
+            }
         }
 
         if (matchRoute(req, "GET", "/api/v1/users/qa-history", url.pathname)) {
