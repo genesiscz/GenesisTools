@@ -88,7 +88,7 @@ describe("synthesizeReport", () => {
                 callLLM: async () => {
                     throw new Error("not used");
                 },
-                callLLMStructured: async <T,>(opts: { userPrompt: string }) => {
+                callLLMStructured: async <T>(opts: { userPrompt: string }) => {
                     expect(opts.userPrompt).toContain("gist of one");
                     expect(opts.userPrompt).not.toContain("vidb");
                     const object = {
@@ -199,6 +199,12 @@ describe("reports routes", () => {
             const list = await call(yt, "GET", "/api/v1/reports", { token: user.token });
 
             expect((list.json.reports as unknown[]).length).toBe(1);
+
+            const shown = await call(yt, "GET", `/api/v1/reports/${reportId}`, { token: user.token });
+            const members = shown.json.members as Record<string, { title: string }>;
+
+            expect(members[v1]?.title).toBe(`t ${v1}`);
+            expect(members[v2]?.title).toBe(`t ${v2}`);
         } finally {
             await rm(dir, { recursive: true, force: true });
         }

@@ -5,6 +5,7 @@ import { dataSource, useModels, useStartPipeline } from "@ext/api.hooks";
 import type { ExtensionEvent } from "@ext/shared/messages";
 import { ActivityView } from "@ext/side-panel/activity-view";
 import { ChannelPanel } from "@ext/side-panel/channel-panel";
+import { PlaylistPanel } from "@ext/side-panel/playlist-panel";
 import { Header } from "@ext/side-panel/header";
 import { connectEventPort } from "@ext/side-panel/port";
 import { SettingsDialog } from "@ext/side-panel/settings-dialog";
@@ -28,6 +29,10 @@ export function SidePanel({
 }) {
     if (target.kind === "channel") {
         return <ChannelPanel handle={target.handle} onClose={onClose} />;
+    }
+
+    if (target.kind === "playlist") {
+        return <PlaylistPanel listId={target.listId} onClose={onClose} />;
     }
 
     return <VideoPanel videoId={target.videoId} placement={placement} />;

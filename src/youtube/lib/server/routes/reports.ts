@@ -105,7 +105,23 @@ export async function handleReportsRoute(req: Request, url: URL, yt: Youtube): P
                 return jsonError("report not found", 404);
             }
 
-            return Response.json({ report }, { headers: CORS_HEADERS });
+            // Member metadata for the report view's per-video capsule headers.
+            const members = Object.fromEntries(
+                report.memberIds.map((videoId) => {
+                    const video = yt.db.getVideo(videoId);
+
+                    return [
+                        videoId,
+                        {
+                            title: video?.title ?? videoId,
+                            uploadDate: video?.uploadDate ?? null,
+                            thumbUrl: video?.thumbUrl ?? null,
+                        },
+                    ];
+                })
+            );
+
+            return Response.json({ report, members }, { headers: CORS_HEADERS });
         }
 
         return jsonError("not found", 404);
