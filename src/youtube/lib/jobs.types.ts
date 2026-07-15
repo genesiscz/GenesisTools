@@ -6,11 +6,12 @@ export type JobStage =
     | "audio"
     | "video"
     | "transcribe"
-    | "summarize";
+    | "summarize"
+    | "reportSynthesize";
 
 export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
 
-export type JobTargetKind = "video" | "channel" | "url";
+export type JobTargetKind = "video" | "channel" | "url" | "report";
 
 export interface PipelineJob {
     id: number;

@@ -13,7 +13,9 @@ import type {
     SummaryTone,
     TimestampedSummaryEntry,
     VideoLongSummary,
+    VideoReport,
 } from "@app/youtube/lib/video.types";
+import type { ProviderChoice } from "@ask/types";
 import { z } from "zod";
 
 const DEFAULT_SUMMARY_DEPS: SummaryServiceDeps = {
@@ -70,6 +72,44 @@ const TimestampedQaSchema = z.object({
     tldr: z.string().min(1).describe("2-3 sentence top-line summary of the whole video."),
     sections: z.array(TimestampedQaSectionSchema).min(1).describe("Ordered Q&A sections, 3-15 min each."),
 });
+
+const REPORT_SYSTEM_BASE =
+    "You synthesize a structured report across MULTIPLE YouTube videos from their long-form summaries. Find shared themes, real disagreements between videos, per-video capsules, and a watch/skip recommendation. Reference videos by their ids exactly as given. Do not invent content beyond the summaries.";
+
+const ReportSchema = z.object({
+    overview: z.string().min(1).describe("3-6 sentence synthesis across all covered videos."),
+    themes: z
+        .array(
+            z.object({
+                title: z.string().min(1).max(80),
+                detail: z.string().min(1),
+                videoIds: z.array(z.string()).describe("Ids of the videos this theme draws on."),
+            })
+        )
+        .min(1)
+        .max(8),
+    perVideo: z.array(
+        z.object({
+            videoId: z.string(),
+            capsule: z.string().min(1).describe("2-3 sentence capsule of this video's contribution."),
+            standout: z.string().min(1).describe("The single most memorable point of this video."),
+        })
+    ),
+    disagreements: z
+        .array(z.object({ topic: z.string().min(1), positions: z.string().min(1) }))
+        .describe("Real contradictions between videos; empty when none."),
+    recommendation: z.string().min(1).describe("Closing watch/skip verdict across the set."),
+});
+
+/** One video's input into a multi-video report synthesis. */
+export interface ReportMember {
+    videoId: string;
+    title: string;
+    uploadDate: string | null;
+    summary: VideoLongSummary | null;
+    /** Reason the member has no summary (no captions, region lock, …); null when covered. */
+    skipped: string | null;
+}
 
 const LongSchema = z.object({
     tldr: z.string().min(1).describe("2-3 sentences capturing the essence of the video."),
@@ -305,6 +345,92 @@ export class SummaryService {
         });
 
         return result.object as VideoLongSummary;
+    }
+
+    /**
+     * `reportSynthesize` stage core: one structured synthesis over member LONG
+     * summaries only (never raw transcripts). Members without a summary are
+     * NEVER sent to the LLM and land in the result as `skipped: "<reason>"`.
+     */
+    async synthesizeReport(opts: {
+        members: ReportMember[];
+        providerChoice?: ProviderChoice;
+        onProgress?: (info: { percent?: number; message: string }) => void;
+    }): Promise<VideoReport> {
+        if (!opts.providerChoice) {
+            throw new Error("report synthesis requires an LLM provider — pass providerChoice");
+        }
+
+        const covered = opts.members.filter(
+            (member): member is ReportMember & { summary: VideoLongSummary } => member.summary !== null
+        );
+        const skipped = opts.members.filter((member) => member.summary === null);
+
+        if (covered.length === 0) {
+            throw new Error("report synthesis: no member has a long summary — nothing to synthesize");
+        }
+
+        const userPrompt = [
+            `Synthesize a report over ${covered.length} video summaries.`,
+            ...(skipped.length > 0
+                ? [`${skipped.length} member video(s) could not be summarized and are NOT included below.`]
+                : []),
+            "",
+            ...covered.map((member) =>
+                [
+                    `### Video ${member.videoId} — "${member.title}" (${member.uploadDate ?? "unknown date"})`,
+                    `TL;DR: ${member.summary.tldr}`,
+                    `Key points: ${member.summary.keyPoints.join("; ")}`,
+                    `Learnings: ${member.summary.learnings.join("; ")}`,
+                    ...(member.summary.conclusion ? [`Verdict: ${member.summary.conclusion}`] : []),
+                ].join("\n")
+            ),
+        ].join("\n\n");
+
+        opts.onProgress?.({ percent: 60, message: "Calling LLM for report synthesis (structured output)" });
+        const startedAt = new Date();
+        const result = await this.deps.callLLMStructured({
+            systemPrompt: REPORT_SYSTEM_BASE,
+            userPrompt,
+            providerChoice: opts.providerChoice,
+            schema: ReportSchema,
+        });
+        const completedAt = new Date();
+        const ids = identifyProviderChoice(opts.providerChoice);
+        await recordYoutubeUsage({
+            action: "report:synthesize",
+            provider: ids.provider,
+            model: ids.model,
+            usage: result.usage,
+            scope: opts.members.map((member) => member.videoId).join(","),
+            prompt: formatPrompt(REPORT_SYSTEM_BASE, userPrompt),
+            response: result.content,
+            durationMs: completedAt.getTime() - startedAt.getTime(),
+            startedAt: startedAt.toISOString(),
+            completedAt: completedAt.toISOString(),
+        });
+        const synthesized = result.object as Omit<VideoReport, "perVideo"> & {
+            perVideo: Array<{ videoId: string; capsule: string; standout: string }>;
+        };
+
+        // Merge: LLM-covered members keep their capsules; skipped members are
+        // appended with their reason so a failed member never fails the report.
+        const perVideo: VideoReport["perVideo"] = opts.members.map((member) => {
+            if (member.summary === null) {
+                return { videoId: member.videoId, capsule: "", standout: "", skipped: member.skipped ?? "skipped" };
+            }
+
+            const fromLlm = synthesized.perVideo.find((entry) => entry.videoId === member.videoId);
+
+            return {
+                videoId: member.videoId,
+                capsule: fromLlm?.capsule ?? "",
+                standout: fromLlm?.standout ?? "",
+                skipped: null,
+            };
+        });
+
+        return { ...synthesized, perVideo };
     }
 }
 
