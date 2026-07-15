@@ -1,7 +1,7 @@
+import { logger } from "@app/logger/client";
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
-import { activeChapterIndex } from "@app/utils/ui/components/youtube/chapters";
 import { LlmConfirmDialog } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
 import { Loading } from "@app/utils/ui/components/youtube/loading";
 import { OUTPUT_LANGS, outputLangLabel } from "@app/utils/ui/components/youtube/output-langs";
@@ -162,6 +162,10 @@ export function TranscriptTab({
 
     useEffect(() => {
         setLabelOverrides({});
+        // Language selection is per-video — carrying it over would request the
+        // previous video's translation and render an empty transcript.
+        setSelectedLang(undefined);
+        setTranslateTarget(null);
     }, [videoId]);
 
     const blocks = useMemo(() => bucketSegments(segments, bucketSec), [segments, bucketSec]);
@@ -234,10 +238,12 @@ export function TranscriptTab({
             return null;
         }
 
-        return activeChapterIndex(
-            trimmed.map((block) => block.start),
-            playerTime
-        );
+        // Blocks may be non-contiguous (search filter, render trim) — chapter
+        // semantics ("last start ≤ t") would highlight the wrong block between
+        // matches, so match against each block's real interval instead.
+        const index = trimmed.findIndex((block) => playerTime >= block.start && playerTime < block.end);
+
+        return index === -1 ? null : index;
     }, [follow, playerTime, trimmed]);
 
     useEffect(() => {
@@ -262,8 +268,14 @@ export function TranscriptTab({
         const previous = labelOverrides[idx];
         // One map in state: every chip of this speaker updates instantly.
         setLabelOverrides((prev) => ({ ...prev, [idx]: label }));
-        setSpeakers.mutateAsync({ speakers: [{ idx, label }] }).catch(() => {
+        setSpeakers.mutateAsync({ speakers: [{ idx, label }] }).catch((error) => {
+            logger.warn({ error, idx, label }, "transcript-tab: speaker rename failed");
             setLabelOverrides((prev) => {
+                // A newer rename already replaced this one — don't wipe it.
+                if (prev[idx] !== label) {
+                    return prev;
+                }
+
                 const next = { ...prev };
 
                 if (previous === undefined) {
@@ -320,7 +332,7 @@ export function TranscriptTab({
                     ) : null}
                     <span className="font-mono text-xs text-muted-foreground/70">
                         Or run{" "}
-                        <code className="rounded bg-black/30 px-1.5 py-0.5">tools youtube transcribe {videoId}</code>
+                        <code className="rounded bg-muted/40 px-1.5 py-0.5">tools youtube transcribe {videoId}</code>
                     </span>
                 </div>
             </div>
@@ -389,7 +401,7 @@ export function TranscriptTab({
                 >
                     <ChevronDown className="size-4" />
                 </Button>
-                <div className="h-4 w-px bg-white/8" />
+                <div className="h-4 w-px bg-border" />
                 <Button
                     variant="ghost"
                     size="icon-sm"
@@ -402,7 +414,7 @@ export function TranscriptTab({
                 </Button>
                 {useVideo ? (
                     <>
-                        <div className="h-4 w-px bg-white/8" />
+                        <div className="h-4 w-px bg-border" />
                         <Select
                             value={selectedLang ?? ORIGINAL_LANG}
                             onValueChange={(value) => {
@@ -479,7 +491,7 @@ export function TranscriptTab({
                 ))}
             </div>
             {hidden > 0 ? (
-                <div className="flex items-center justify-center gap-2 rounded-lg border border-white/8 p-2 text-xs">
+                <div className="flex items-center justify-center gap-2 rounded-lg border border-border p-2 text-xs">
                     <span className="text-muted-foreground">
                         First {DEFAULT_RENDER_LIMIT.toLocaleString()} of {filtered.length.toLocaleString()}
                     </span>
@@ -527,7 +539,7 @@ function SpeakerChip({ label, onRename }: { label: string; onRename: (label: str
                         setDraft(label);
                         setEditing(true);
                     }}
-                    className="inline-flex h-6 items-center rounded-full border border-white/8 bg-black/20 px-2 font-mono text-[12px]"
+                    className="inline-flex h-6 items-center rounded-full border border-border bg-muted/30 px-2 font-mono text-[12px]"
                 >
                     {label}
                 </button>
