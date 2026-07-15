@@ -317,9 +317,7 @@ export function listPortRegistry(): readonly RegistryEntry[] {
     return [...listDashboards(), ...listWebServices()];
 }
 
-const REGISTRY_BY_PORT: ReadonlyMap<number, RegistryEntry> = new Map(
-    listPortRegistry().map((e) => [e.port, e])
-);
+const REGISTRY_BY_PORT: ReadonlyMap<number, RegistryEntry> = new Map(listPortRegistry().map((e) => [e.port, e]));
 
 export function registryEntryForPort(port: number): RegistryEntry | null {
     return REGISTRY_BY_PORT.get(port) ?? null;

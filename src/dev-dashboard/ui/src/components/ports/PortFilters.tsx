@@ -26,14 +26,7 @@ interface PortFiltersProps {
  * Multiselect filters. Selecting All clears other chips; selecting a kind removes All.
  * Sort: click sets key (defaults to asc); click same key again OR double-click toggles dir.
  */
-export function PortFilters({
-    selected,
-    onChange,
-    sortKey,
-    sortDir,
-    onSortKey,
-    onSortDir,
-}: PortFiltersProps) {
+export function PortFilters({ selected, onChange, sortKey, sortDir, onSortKey, onSortDir }: PortFiltersProps) {
     const toggleFilter = (id: PortFilterId) => {
         if (id === "all") {
             onChange(["all"]);

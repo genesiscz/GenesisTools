@@ -21,9 +21,7 @@ interface PortsTableProps {
 }
 
 function portHaystack(p: PortInfo): string {
-    return [p.port, p.command, p.fullCommand, p.title, p.cwd, p.pid, p.address, p.kind]
-        .filter(Boolean)
-        .join(" ");
+    return [p.port, p.command, p.fullCommand, p.title, p.cwd, p.pid, p.address, p.kind].filter(Boolean).join(" ");
 }
 
 function protoLabel(proto: PortInfo["proto"]): string {
@@ -167,15 +165,7 @@ export function PortsTable({ result, onKill, killingPid }: PortsTableProps) {
     );
 }
 
-function PortKillerRow({
-    p,
-    onKill,
-    killing,
-}: {
-    p: PortInfo;
-    onKill: (port: PortInfo) => void;
-    killing: boolean;
-}) {
+function PortKillerRow({ p, onKill, killing }: { p: PortInfo; onKill: (port: PortInfo) => void; killing: boolean }) {
     return (
         <tr className="border-t border-[var(--dd-border)] text-[var(--dd-text-primary)] align-top">
             <td className="px-2 py-2 font-mono font-medium text-[var(--dd-accent)]">
@@ -189,7 +179,10 @@ function PortKillerRow({
                 <div className="font-medium">{p.title ?? p.command}</div>
                 <div className="font-mono text-xs text-[var(--dd-text-muted)]">{p.command}</div>
                 {p.fullCommand && p.fullCommand !== p.command ? (
-                    <div title={p.fullCommand} className="break-all font-mono text-[11px] text-[var(--dd-text-secondary)]">
+                    <div
+                        title={p.fullCommand}
+                        className="break-all font-mono text-[11px] text-[var(--dd-text-secondary)]"
+                    >
                         {p.fullCommand}
                     </div>
                 ) : null}

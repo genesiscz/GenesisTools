@@ -1,9 +1,9 @@
+import { paths } from "@app/dev-dashboard/contract/endpoints";
 import type { LiveChannel, LiveFrame } from "@app/dev-dashboard/lib/live/types";
 import type { PortInfo, PortsResult } from "@app/dev-dashboard/lib/ports/types";
 import { SafeJSON } from "@app/utils/json";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { paths } from "@app/dev-dashboard/contract/endpoints";
 
 function portKey(p: PortInfo): string {
     return `${p.pid}:${p.port}:${p.proto}`;
@@ -84,7 +84,11 @@ export function useLive(channels: LiveChannel[]): {
                     return;
                 }
 
-                if (typeof frame.channel === "string" && frame.channel.startsWith("boards:") && frame.type === "event") {
+                if (
+                    typeof frame.channel === "string" &&
+                    frame.channel.startsWith("boards:") &&
+                    frame.type === "event"
+                ) {
                     const slug = frame.channel.slice("boards:".length);
                     void qc.invalidateQueries({ queryKey: ["board", slug] });
                     void qc.invalidateQueries({ queryKey: ["board-sections", slug] });

@@ -72,11 +72,10 @@ export function WebappsPanel({ enableLive = true }: { enableLive?: boolean } = {
 
     const visible = fuzzySearchByHaystack(filtered, query, portHaystack).items;
 
-    const hiddenSorted = useMemo(() => sortPorts(splitVisibility(data?.ports ?? []).hidden, sortKey, sortDir), [
-        data?.ports,
-        sortKey,
-        sortDir,
-    ]);
+    const hiddenSorted = useMemo(
+        () => sortPorts(splitVisibility(data?.ports ?? []).hidden, sortKey, sortDir),
+        [data?.ports, sortKey, sortDir]
+    );
 
     const pendingCount = normal.filter((p) => p.probeStatus === "pending").length;
 
