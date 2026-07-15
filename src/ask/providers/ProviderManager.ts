@@ -472,13 +472,19 @@ export class ProviderManager {
                 const pricing = liteLLMPricingFetcher.convertToPricingInfo(pricingData);
                 const contextWindow = pricingData.max_input_tokens ?? pricingData.max_tokens ?? 200000;
 
+                // LiteLLM keys carry a routing prefix ("xai/grok-4-fast",
+                // "groq/llama-…") that the provider's own API rejects — the
+                // model id sent upstream must be the bare name. "claude-" is
+                // part of the real id, so only strip slash-style prefixes.
+                const id = prefix.endsWith("/") ? key.slice(prefix.length) : key;
+
                 // Use KNOWN_MODELS for display name if available
                 const knownModels = KNOWN_MODELS[providerName as keyof typeof KNOWN_MODELS];
-                const known = knownModels?.find((m) => m.id === key);
+                const known = knownModels?.find((m) => m.id === id);
 
                 models.push({
-                    id: key,
-                    name: known?.name ?? this.formatModelName(key.replace(/^[^/]+\//, "")),
+                    id,
+                    name: known?.name ?? this.formatModelName(id),
                     contextWindow,
                     capabilities: known?.capabilities ?? ["chat"],
                     provider: providerName,

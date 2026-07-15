@@ -181,3 +181,129 @@
     opacity: 0;
     pointer-events: none;
 }
+
+/* Themed prose for LLM markdown (Ask answers). Rendered by the shared
+   Markdown component (sanitized HTML), styled here with the panel tokens. */
+.yt-md {
+    font-size: var(--text-sm);
+    line-height: 1.6;
+    color: hsl(var(--foreground) / 0.9);
+}
+
+.yt-md p {
+    margin: 0 0 0.6em;
+}
+
+.yt-md p:last-child {
+    margin-bottom: 0;
+}
+
+.yt-md strong {
+    color: hsl(var(--foreground));
+    font-weight: 600;
+}
+
+.yt-md em {
+    color: hsl(var(--foreground) / 0.85);
+}
+
+.yt-md a {
+    color: hsl(var(--secondary));
+    text-decoration: none;
+    border-bottom: 1px solid hsl(var(--secondary) / 0.35);
+}
+
+.yt-md a:hover {
+    border-bottom-color: hsl(var(--secondary));
+}
+
+.yt-md a[href^="#cite-"] {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    padding: 1px 6px;
+    border: 1px solid rgb(255 255 255 / 12%);
+    border-radius: 999px;
+    background: rgb(255 255 255 / 5%);
+    color: hsl(var(--foreground));
+    white-space: nowrap;
+}
+
+.yt-md blockquote {
+    margin: 0.6em 0;
+    padding: 0.4em 0.9em;
+    border-left: 3px solid hsl(var(--primary) / 0.6);
+    background: hsl(var(--primary) / 0.06);
+    border-radius: 0 8px 8px 0;
+    color: hsl(var(--foreground) / 0.85);
+}
+
+.yt-md blockquote p {
+    margin: 0;
+}
+
+.yt-md ul,
+.yt-md ol {
+    margin: 0.5em 0;
+    padding-left: 1.4em;
+}
+
+.yt-md li {
+    margin: 0.25em 0;
+}
+
+.yt-md li::marker {
+    color: hsl(var(--secondary));
+}
+
+.yt-md code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.9em;
+    padding: 1px 5px;
+    border-radius: 5px;
+    background: rgb(0 0 0 / 35%);
+    border: 1px solid rgb(255 255 255 / 8%);
+}
+
+.yt-md pre {
+    margin: 0.6em 0;
+    padding: 0.75em;
+    border-radius: 10px;
+    background: rgb(0 0 0 / 35%);
+    border: 1px solid rgb(255 255 255 / 8%);
+    overflow-x: auto;
+}
+
+.yt-md pre code {
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+
+.yt-md h1,
+.yt-md h2,
+.yt-md h3,
+.yt-md h4 {
+    margin: 0.9em 0 0.4em;
+    font-size: var(--text-base);
+    font-weight: 600;
+    color: hsl(var(--foreground));
+}
+
+.yt-md hr {
+    margin: 0.8em 0;
+    border: none;
+    border-top: 1px solid rgb(255 255 255 / 10%);
+}
+
+.yt-md table {
+    margin: 0.6em 0;
+    border-collapse: collapse;
+    font-size: var(--text-xs);
+}
+
+.yt-md th,
+.yt-md td {
+    padding: 4px 8px;
+    border: 1px solid rgb(255 255 255 / 12%);
+    text-align: left;
+}
