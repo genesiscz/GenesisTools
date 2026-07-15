@@ -19,7 +19,7 @@ export interface QaHistoryItem {
     citations: AskCitation[];
     creditsSpent: number;
     createdAt: string;
-    /** Ask scope the answer was produced from. Absent on pre-scope rows. */
+    /** Source corpora the answer was produced from (transcript/comments). Absent on pre-sources rows. */
     sources?: QaSource[];
     /** Retrieval breadth: single video (default) or channel-wide. */
     scope?: "video" | "channel";
