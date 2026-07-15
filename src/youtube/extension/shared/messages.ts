@@ -102,6 +102,19 @@ export type ExtensionResponse = { ok: true; data: unknown } | { ok: false; error
 
 export type ExtensionEvent = { type: "job:event"; event: JobEvent } | { type: "ws:status"; connected: boolean };
 
+/** Window-bridge message: panel → content script. Empty `chapters` unmounts the ticks. */
+export interface PlayerChaptersMessage {
+    type: "player:chapters";
+    videoId: string;
+    chapters: Array<{ title: string; startSec: number }>;
+}
+
+/** Window-bridge message: content script → panel, 1 Hz playback position. */
+export interface PlayerTimeMessage {
+    type: "player:time";
+    t: number;
+}
+
 export interface ExtensionApiMap {
     "config:get": ExtensionConfig;
     "config:set": ExtensionConfig;

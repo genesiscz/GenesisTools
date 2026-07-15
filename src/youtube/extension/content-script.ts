@@ -1,4 +1,6 @@
 import { mountSidePanel, unmountSidePanel } from "@ext/content-script-mount";
+import { type ChapterTicksHandle, mountChapterTicks } from "@ext/player-chapters";
+import type { PlayerChaptersMessage, PlayerTimeMessage } from "@ext/shared/messages";
 import type { PanelTarget } from "@ext/side-panel/target";
 
 declare global {
@@ -184,6 +186,7 @@ function scheduleMount(): void {
     let attempts = 0;
     const tryMount = (): void => {
         ensureSidePanel();
+        ensureChapterTicks();
         attempts += 1;
         const target = getPanelTarget();
         const stillWaiting =
@@ -195,6 +198,135 @@ function scheduleMount(): void {
     tryMount();
 }
 
+// --- Chapter ticks on the player progress bar (page DOM, gt-chapter- styles) ---
+
+let chapterData: PlayerChaptersMessage | null = null;
+let ticks: ChapterTicksHandle | null = null;
+let ticksBar: HTMLElement | null = null;
+let observedPlayer: HTMLElement | null = null;
+let playerObserver: MutationObserver | null = null;
+let remountTimer: number | null = null;
+let lastPlayerTime = 0;
+
+function currentVideoId(): string | null {
+    const target = getPanelTarget();
+    return target?.kind === "video" ? target.videoId : null;
+}
+
+function findVideoEl(): HTMLVideoElement | null {
+    return (
+        document.querySelector<HTMLVideoElement>("#movie_player video") ??
+        document.querySelector<HTMLVideoElement>("video")
+    );
+}
+
+function seekPlayer(seconds: number): void {
+    // Same bridge the panel's timestamp pills use.
+    window.postMessage({ event: "command", func: "seekTo", args: [seconds, true] }, "https://www.youtube.com");
+}
+
+function unmountTicks(): void {
+    ticks?.unmount();
+    ticks = null;
+    ticksBar = null;
+}
+
+function ensureChapterTicks(): void {
+    const videoId = currentVideoId();
+
+    if (!chapterData || chapterData.chapters.length === 0 || !videoId || chapterData.videoId !== videoId) {
+        unmountTicks();
+        return;
+    }
+
+    const bar = document.querySelector<HTMLElement>(".ytp-progress-bar");
+    const duration = findVideoEl()?.duration;
+
+    if (!bar || duration === undefined || !Number.isFinite(duration) || duration <= 0) {
+        // Bar or duration not ready yet — the 1 Hz tick retries.
+        unmountTicks();
+        return;
+    }
+
+    if (ticks && ticksBar === bar && bar.isConnected) {
+        return;
+    }
+
+    unmountTicks();
+    ticks = mountChapterTicks({ chapters: chapterData.chapters, duration, container: bar, onSeek: seekPlayer });
+    ticksBar = bar;
+    ticks.setCurrentTime(lastPlayerTime);
+}
+
+function ensurePlayerObserver(): void {
+    const player = document.getElementById("movie_player");
+
+    if (!player || player === observedPlayer) {
+        return;
+    }
+
+    playerObserver?.disconnect();
+    observedPlayer = player;
+    playerObserver = new MutationObserver(() => {
+        // Fullscreen/theater swap the progress-bar nodes; debounce the re-find.
+        if (remountTimer !== null) {
+            return;
+        }
+
+        remountTimer = window.setTimeout(() => {
+            remountTimer = null;
+            ensureChapterTicks();
+        }, 100);
+    });
+    playerObserver.observe(player, { childList: true, subtree: true });
+}
+
+function onChaptersMessage(event: MessageEvent): void {
+    if (event.source !== window) {
+        return;
+    }
+
+    const data = event.data as { type?: unknown; videoId?: unknown; chapters?: unknown } | null;
+
+    if (data?.type !== "player:chapters" || typeof data.videoId !== "string" || !Array.isArray(data.chapters)) {
+        return;
+    }
+
+    const chapters: PlayerChaptersMessage["chapters"] = [];
+
+    for (const chapter of data.chapters) {
+        const raw = chapter as { title?: unknown; startSec?: unknown } | null;
+
+        if (raw && typeof raw.title === "string" && typeof raw.startSec === "number") {
+            chapters.push({ title: raw.title, startSec: raw.startSec });
+        }
+    }
+
+    chapterData = { type: "player:chapters", videoId: data.videoId, chapters };
+    ensureChapterTicks();
+}
+
+window.addEventListener("message", onChaptersMessage);
+
+const playerTimeInterval = window.setInterval(() => {
+    if (currentVideoId() === null) {
+        return;
+    }
+
+    ensurePlayerObserver();
+    ensureChapterTicks();
+    const video = findVideoEl();
+
+    if (!video) {
+        return;
+    }
+
+    lastPlayerTime = video.currentTime;
+    ticks?.setCurrentTime(lastPlayerTime);
+    const message: PlayerTimeMessage = { type: "player:time", t: lastPlayerTime };
+    window.postMessage(message, "https://www.youtube.com");
+}, 1000);
+
 scheduleMount();
 window.addEventListener("yt-navigate-finish", scheduleMount);
 window.addEventListener("popstate", scheduleMount);
@@ -203,4 +335,16 @@ window.__genesisYtCleanup = () => {
     removeSidePanel();
     window.removeEventListener("yt-navigate-finish", scheduleMount);
     window.removeEventListener("popstate", scheduleMount);
+    window.removeEventListener("message", onChaptersMessage);
+    window.clearInterval(playerTimeInterval);
+
+    if (remountTimer !== null) {
+        window.clearTimeout(remountTimer);
+        remountTimer = null;
+    }
+
+    playerObserver?.disconnect();
+    playerObserver = null;
+    observedPlayer = null;
+    unmountTicks();
 };

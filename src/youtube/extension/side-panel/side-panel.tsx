@@ -1,8 +1,8 @@
 import { type PipelineProgress, type VideoDetailTab, VideoDetailTabs } from "@app/utils/ui/components/youtube/tabs";
 import type { JobStage, SummaryMode } from "@app/youtube/lib/types";
 import { send } from "@ext/api.bridge";
-import { dataSource, useModels, useStartPipeline } from "@ext/api.hooks";
-import type { ExtensionEvent } from "@ext/shared/messages";
+import { dataSource, useModels, useStartPipeline, useSummary } from "@ext/api.hooks";
+import type { ExtensionEvent, PlayerChaptersMessage } from "@ext/shared/messages";
 import { ActivityView } from "@ext/side-panel/activity-view";
 import { ChannelPanel } from "@ext/side-panel/channel-panel";
 import { Header } from "@ext/side-panel/header";
@@ -69,6 +69,30 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
         setStreamingMode(null);
         streamingJobRef.current = null;
     }, [videoId]);
+
+    const longSummary = useSummary(videoId, "long");
+    const longChapters = longSummary.data?.long?.chapters;
+
+    useEffect(() => {
+        const chapters: PlayerChaptersMessage["chapters"] = [];
+
+        for (const chapter of longChapters ?? []) {
+            if (typeof chapter.startSec === "number") {
+                chapters.push({ title: chapter.title, startSec: chapter.startSec });
+            }
+        }
+
+        const message: PlayerChaptersMessage = { type: "player:chapters", videoId, chapters };
+        window.postMessage(message, "https://www.youtube.com");
+    }, [longChapters, videoId]);
+
+    useEffect(
+        () => () => {
+            const message: PlayerChaptersMessage = { type: "player:chapters", videoId, chapters: [] };
+            window.postMessage(message, "https://www.youtube.com");
+        },
+        [videoId]
+    );
 
     useEffect(() => {
         function onExtensionEvent(event: Event): void {
