@@ -6,8 +6,8 @@ import type { PipelineProgress, RunPipeline } from "@app/utils/ui/components/you
 import { formatTimecode } from "@app/utils/ui/components/youtube/time";
 import { segmentsToParagraphs, type TranscriptParagraph } from "@app/utils/ui/components/youtube/transcript-paragraphs";
 import type { Transcript, TranscriptSegment, VideoId } from "@app/youtube/lib/types";
-import { Captions, Loader2, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Captions, ChevronDown, ChevronUp, Loader2, Search } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const DEFAULT_RENDER_LIMIT = 200;
 const DEFAULT_BUCKET_SEC = 120;
@@ -86,27 +86,76 @@ export function TranscriptTab({ videoId, onSeek, useTranscript, runPipeline, pip
     const [query, setQuery] = useState("");
     const [showAll, setShowAll] = useState(false);
     const [bucketSec, setBucketSec] = useState<number>(DEFAULT_BUCKET_SEC);
+    const [currentMatch, setCurrentMatch] = useState(0);
+    const scrollRef = useRef<HTMLDivElement | null>(null);
     const transcript = useTranscript(videoId);
     const segments = transcript.data?.transcript.segments ?? [];
+    const needle = query.trim().toLowerCase();
 
     const blocks = useMemo(() => bucketSegments(segments, bucketSec), [segments, bucketSec]);
 
     const filtered = useMemo(() => {
-        if (!query.trim()) {
+        if (!needle) {
             return blocks;
         }
 
-        const needle = query.toLowerCase();
         return blocks.filter((block) => block.paragraphs.some((p) => p.text.toLowerCase().includes(needle)));
-    }, [blocks, query]);
+    }, [blocks, needle]);
 
     const trimmed = useMemo(() => {
-        if (showAll || query.trim() || filtered.length <= DEFAULT_RENDER_LIMIT) {
+        if (showAll || needle || filtered.length <= DEFAULT_RENDER_LIMIT) {
             return filtered;
         }
 
         return filtered.slice(0, DEFAULT_RENDER_LIMIT);
-    }, [filtered, showAll, query]);
+    }, [filtered, showAll, needle]);
+
+    // Global match numbering: each rendered paragraph knows the index of its
+    // first match, so marks can carry stable `data-match` ids for navigation.
+    const matches = useMemo(() => {
+        if (!needle) {
+            return { total: 0, starts: [] as number[][] };
+        }
+
+        let running = 0;
+        const starts = trimmed.map((block) =>
+            block.paragraphs.map((paragraph) => {
+                const start = running;
+                running += countOccurrences(paragraph.text.toLowerCase(), needle);
+                return start;
+            })
+        );
+
+        return { total: running, starts };
+    }, [trimmed, needle]);
+
+    useEffect(() => {
+        setCurrentMatch(0);
+    }, [needle]);
+
+    useEffect(() => {
+        if (matches.total > 0 && currentMatch >= matches.total) {
+            setCurrentMatch(0);
+        }
+    }, [matches.total, currentMatch]);
+
+    useEffect(() => {
+        if (matches.total === 0) {
+            return;
+        }
+
+        scrollRef.current
+            ?.querySelector(`[data-match="${currentMatch}"]`)
+            ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, [currentMatch, matches.total]);
+
+    function stepMatch(delta: 1 | -1): void {
+        if (matches.total === 0) {
+            return;
+        }
+
+        setCurrentMatch((prev) => (prev + delta + matches.total) % matches.total);
+    }
 
     if (transcript.isPending) {
         return <Loading label="Loading transcript" />;
@@ -181,21 +230,58 @@ export function TranscriptTab({ videoId, onSeek, useTranscript, runPipeline, pip
                     <Input
                         value={query}
                         onChange={(event) => setQuery(event.target.value)}
+                        onKeyDown={(event) => {
+                            if (event.key !== "Enter") {
+                                return;
+                            }
+
+                            event.preventDefault();
+                            stepMatch(event.shiftKey ? -1 : 1);
+                        }}
                         placeholder="Search"
-                        className="h-8 pl-8 text-xs"
+                        className={
+                            needle && matches.total === 0
+                                ? "h-8 flex-1 pl-8 text-sm ring-1 ring-muted-foreground/25"
+                                : "h-8 flex-1 pl-8 text-sm"
+                        }
                     />
                 </div>
+                {needle ? (
+                    <span className="font-mono text-[12px] tabular-nums text-muted-foreground">
+                        {matches.total === 0 ? "0/0" : `${currentMatch + 1}/${matches.total}`}
+                    </span>
+                ) : null}
+                <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Previous match"
+                    onClick={() => stepMatch(-1)}
+                    disabled={matches.total === 0}
+                >
+                    <ChevronUp className="size-4" />
+                </Button>
+                <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Next match"
+                    onClick={() => stepMatch(1)}
+                    disabled={matches.total === 0}
+                >
+                    <ChevronDown className="size-4" />
+                </Button>
                 <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground/70">
                     {segments.length.toLocaleString()} segments · {totalParagraphs.toLocaleString()} paragraphs
                 </span>
             </div>
-            <div className="yt-scroll min-w-0 space-y-4 overflow-y-auto">
+            <div ref={scrollRef} className="yt-scroll min-w-0 space-y-4 overflow-y-auto">
                 {trimmed.map((block, index) => (
                     <TranscriptRow
                         key={`${block.start}-${index}`}
                         block={block}
                         showRange={bucketSec > 0}
-                        query={query}
+                        query={needle}
+                        matchStarts={matches.starts[index] ?? []}
+                        currentMatch={currentMatch}
                         onSeek={onSeek}
                     />
                 ))}
@@ -218,11 +304,17 @@ function TranscriptRow({
     block,
     showRange,
     query,
+    matchStarts,
+    currentMatch,
     onSeek,
 }: {
     block: TranscriptBlock;
     showRange: boolean;
     query: string;
+    /** Global index of each paragraph's first search match. */
+    matchStarts: number[];
+    /** Global index of the currently focused match. */
+    currentMatch: number;
     onSeek: (seconds: number) => void;
 }) {
     const label = showRange
@@ -244,7 +336,13 @@ function TranscriptRow({
                         key={`${paragraph.start}-${i}`}
                         className="min-w-0 break-words text-sm leading-[1.65] text-foreground/85"
                     >
-                        {highlight(paragraph.text, query)}
+                        {highlight({
+                            text: paragraph.text,
+                            query,
+                            matchStart: matchStarts[i] ?? 0,
+                            currentMatch,
+                            onAltSeek: () => onSeek(paragraph.start),
+                        })}
                     </p>
                 ))}
             </div>
@@ -252,22 +350,72 @@ function TranscriptRow({
     );
 }
 
-function highlight(text: string, query: string) {
+function highlight({
+    text,
+    query,
+    matchStart,
+    currentMatch,
+    onAltSeek,
+}: {
+    text: string;
+    query: string;
+    matchStart: number;
+    currentMatch: number;
+    onAltSeek: () => void;
+}) {
     if (!query.trim()) {
         return text;
     }
 
     const parts = text.split(new RegExp(`(${escapeRegExp(query)})`, "ig"));
+    let occurrence = 0;
 
-    return parts.map((part, index) =>
-        part.toLowerCase() === query.toLowerCase() ? (
-            <mark key={index} className="rounded bg-primary/30 px-1 text-primary-foreground">
+    return parts.map((part, index) => {
+        if (part.toLowerCase() !== query.toLowerCase()) {
+            return part;
+        }
+
+        const globalIdx = matchStart + occurrence;
+        occurrence += 1;
+        const isCurrent = globalIdx === currentMatch;
+
+        return (
+            <mark
+                key={index}
+                data-match={globalIdx}
+                onClick={(event) => {
+                    // Alt-click seeks the video; plain navigation only scrolls.
+                    if (event.altKey) {
+                        event.preventDefault();
+                        onAltSeek();
+                    }
+                }}
+                className={
+                    isCurrent
+                        ? "rounded-sm bg-primary/30 px-1 text-foreground"
+                        : "rounded bg-primary/30 px-1 text-primary-foreground"
+                }
+            >
                 {part}
             </mark>
-        ) : (
-            part
-        )
-    );
+        );
+    });
+}
+
+function countOccurrences(haystack: string, needle: string): number {
+    if (!needle) {
+        return 0;
+    }
+
+    let count = 0;
+    let position = haystack.indexOf(needle);
+
+    while (position !== -1) {
+        count += 1;
+        position = haystack.indexOf(needle, position + needle.length);
+    }
+
+    return count;
 }
 
 function escapeRegExp(value: string): string {
