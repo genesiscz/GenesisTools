@@ -159,6 +159,10 @@ function buildSchemas(): Record<string, OpenApiSchema> {
                 text: { type: "string" },
                 start: { type: "number", description: "Segment start in seconds." },
                 end: { type: "number", description: "Segment end in seconds." },
+                speaker: {
+                    type: "integer",
+                    description: "Diarized speaker index (0-based). Only on AI transcripts with diarization.",
+                },
             },
             required: ["text", "start", "end"],
         },
@@ -193,6 +197,11 @@ function buildSchemas(): Record<string, OpenApiSchema> {
             properties: {
                 title: { type: "string" },
                 summary: { type: "string" },
+                startSec: {
+                    type: "number",
+                    description: "Second where the chapter's topic begins. Absent on old rows.",
+                },
+                endSec: nullableNumber("Second where the topic ends, or null. Absent on old rows."),
             },
             required: ["title", "summary"],
         },
@@ -644,7 +653,8 @@ function buildPaths(): Record<string, OpenApiPathItem> {
             put: {
                 operationId: "setVideoSpeakers",
                 summary: "Upsert custom labels for diarized speakers",
-                description: "Stores per-video display names for diarized speaker indices (chips in the transcript UI).",
+                description:
+                    "Stores per-video display names for diarized speaker indices (chips in the transcript UI).",
                 tags: ["videos"],
                 parameters: [videoIdParam],
                 requestBody: jsonBody({
