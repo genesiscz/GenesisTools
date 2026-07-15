@@ -159,6 +159,12 @@ function applyInlineStyles(host: HTMLElement): void {
         "width: 100%",
         "position: relative",
         "margin-bottom: 16px",
+        // When placed above the live chat, the parent is a flex column — without
+        // this the host inherits flex-shrink:1 and gets squeezed into the
+        // leftover space, clipping its own content. Pin natural height so it
+        // takes its content size and pushes the chat down. No effect in a
+        // non-flex rail parent.
+        "flex: 0 0 auto",
         "height: auto",
         "min-height: 120px",
         // Cap well below the viewport so recommendations stay visible; the
