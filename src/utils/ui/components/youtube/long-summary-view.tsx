@@ -1,26 +1,44 @@
-import type { VideoLongSummary } from "@app/youtube/lib/types";
+import type { PartialLongSummary } from "@app/utils/ui/components/youtube/summary-partials";
 import { CheckCircle2, ChevronDown } from "lucide-react";
 import { useState } from "react";
 
 export interface LongSummaryViewProps {
-    summary: VideoLongSummary;
+    /** Final `VideoLongSummary` or a streamed partial of it — every field may be missing. */
+    summary: PartialLongSummary;
+    /** True while the summary is still streaming in — pending sections render skeleton blocks. */
+    streaming?: boolean;
 }
 
-export function LongSummaryView({ summary }: LongSummaryViewProps) {
+export function LongSummaryView({ summary, streaming }: LongSummaryViewProps) {
+    const keyPoints = (summary.keyPoints ?? []).filter(
+        (point): point is string => typeof point === "string" && point.length > 0
+    );
+    const learnings = (summary.learnings ?? []).filter(
+        (point): point is string => typeof point === "string" && point.length > 0
+    );
+    const chapters = (summary.chapters ?? []).filter(
+        (chapter): chapter is { title: string; summary?: string } =>
+            chapter !== undefined && typeof chapter.title === "string" && chapter.title.length > 0
+    );
+
     return (
         <div className="space-y-5">
             <section>
                 <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-primary">TL;DR</p>
-                <p className="mt-2 bg-gradient-to-r from-amber-200 via-amber-300 to-cyan-300 bg-clip-text text-lg font-medium leading-relaxed text-transparent">
-                    {summary.tldr}
-                </p>
+                {summary.tldr ? (
+                    <p className="mt-2 bg-gradient-to-r from-amber-200 via-amber-300 to-cyan-300 bg-clip-text text-lg font-medium leading-relaxed text-transparent">
+                        {summary.tldr}
+                    </p>
+                ) : streaming ? (
+                    <SkeletonLines count={2} />
+                ) : null}
             </section>
 
-            {summary.keyPoints.length > 0 ? (
+            {keyPoints.length > 0 ? (
                 <section>
                     <h4 className="font-mono text-[11px] uppercase tracking-[0.18em] text-secondary">Key points</h4>
                     <ol className="mt-2 space-y-2">
-                        {summary.keyPoints.map((point, index) => (
+                        {keyPoints.map((point, index) => (
                             <li
                                 key={index}
                                 className="flex gap-3 rounded-2xl border border-secondary/20 bg-secondary/5 p-3"
@@ -33,13 +51,15 @@ export function LongSummaryView({ summary }: LongSummaryViewProps) {
                         ))}
                     </ol>
                 </section>
+            ) : streaming ? (
+                <PendingSection label="Key points" labelClass="text-secondary" />
             ) : null}
 
-            {summary.learnings.length > 0 ? (
+            {learnings.length > 0 ? (
                 <section>
                     <h4 className="font-mono text-[11px] uppercase tracking-[0.18em] text-emerald-300">Learnings</h4>
                     <ul className="mt-2 space-y-2">
-                        {summary.learnings.map((point, index) => (
+                        {learnings.map((point, index) => (
                             <li
                                 key={index}
                                 className="flex items-start gap-3 rounded-2xl border border-emerald-400/20 bg-emerald-400/[0.05] p-3"
@@ -50,17 +70,26 @@ export function LongSummaryView({ summary }: LongSummaryViewProps) {
                         ))}
                     </ul>
                 </section>
+            ) : streaming ? (
+                <PendingSection label="Learnings" labelClass="text-emerald-300" />
             ) : null}
 
-            {summary.chapters.length > 0 ? (
+            {chapters.length > 0 ? (
                 <section>
                     <h4 className="font-mono text-[11px] uppercase tracking-[0.18em] text-cyan-200">Chapters</h4>
                     <div className="mt-2 space-y-2">
-                        {summary.chapters.map((chapter, index) => (
-                            <ChapterCard key={index} title={chapter.title} summary={chapter.summary} />
+                        {chapters.map((chapter, index) => (
+                            <ChapterCard
+                                key={index}
+                                title={chapter.title}
+                                summary={chapter.summary}
+                                streaming={streaming}
+                            />
                         ))}
                     </div>
                 </section>
+            ) : streaming ? (
+                <PendingSection label="Chapters" labelClass="text-cyan-200" />
             ) : null}
 
             {summary.conclusion ? (
@@ -72,8 +101,37 @@ export function LongSummaryView({ summary }: LongSummaryViewProps) {
     );
 }
 
-function ChapterCard({ title, summary }: { title: string; summary: string }) {
+function SkeletonLines({ count }: { count: number }) {
+    return (
+        <div className="mt-2 space-y-2">
+            {Array.from({ length: count }).map((_, index) => (
+                <div key={index} className="h-4 rounded-md bg-white/5 animate-pulse" />
+            ))}
+        </div>
+    );
+}
+
+function PendingSection({ label, labelClass }: { label: string; labelClass: string }) {
+    return (
+        <section>
+            <h4 className={`font-mono text-[11px] uppercase tracking-[0.18em] ${labelClass}`}>{label}</h4>
+            <SkeletonLines count={3} />
+        </section>
+    );
+}
+
+function ChapterCard({ title, summary, streaming }: { title: string; summary?: string; streaming?: boolean }) {
     const [expanded, setExpanded] = useState(false);
+
+    if (!summary) {
+        // Truncated tail of a streamed chapter list: title landed, body still writing.
+        return (
+            <div className="overflow-hidden rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.04] p-3">
+                <h5 className="font-semibold text-foreground/95">{title}</h5>
+                {streaming ? <div className="mt-2 h-4 rounded-md bg-white/5 animate-pulse" /> : null}
+            </div>
+        );
+    }
 
     return (
         <div className="overflow-hidden rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.04]">
