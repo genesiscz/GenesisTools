@@ -38,7 +38,7 @@ import type {
 } from "@app/youtube/lib/jobs.types";
 import type { AskCitation, QaChunk } from "@app/youtube/lib/qa.types";
 import type { Language, Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
-import type { CreditReason, QaHistoryItem, YtUser } from "@app/youtube/lib/users.types";
+import type { ArtifactKind, CreditReason, QaHistoryItem, YtUser } from "@app/youtube/lib/users.types";
 import { InsufficientCreditsError } from "@app/youtube/lib/users.types";
 import type { TimestampedSummaryEntry, Video, VideoId, VideoLongSummary } from "@app/youtube/lib/video.types";
 
@@ -315,6 +315,46 @@ export class YoutubeDatabase extends BaseDatabase {
                     created_at TEXT NOT NULL,
                     UNIQUE (user_id, kind, name)
                 );
+            `);
+        });
+
+        this.runMigration("add-artifact-access", () => {
+            const tableExists = this.db
+                .query<{ name: string }, [string]>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+                .get("artifact_access");
+
+            if (tableExists) {
+                return;
+            }
+
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS artifact_access (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    kind TEXT NOT NULL,            -- 'summary:long' | 'summary:short' | 'summary:timestamped' | 'transcript:ai'
+                    video_id TEXT NOT NULL,
+                    credits_spent INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE (user_id, kind, video_id)
+                );
+            `);
+            // One-time backfill (guarded by the table-existence check above):
+            // artifacts generated before access tracking have no owner — grant
+            // every current user access so nobody is locked out of content
+            // they could already see.
+            this.db.exec(`
+                INSERT OR IGNORE INTO artifact_access (user_id, kind, video_id, credits_spent, created_at)
+                SELECT u.id, 'summary:short', v.id, 0, ${SQL_NOW_UTC}
+                FROM users u, videos v WHERE v.summary_short IS NOT NULL;
+                INSERT OR IGNORE INTO artifact_access (user_id, kind, video_id, credits_spent, created_at)
+                SELECT u.id, 'summary:timestamped', v.id, 0, ${SQL_NOW_UTC}
+                FROM users u, videos v WHERE v.summary_timestamped_json IS NOT NULL;
+                INSERT OR IGNORE INTO artifact_access (user_id, kind, video_id, credits_spent, created_at)
+                SELECT u.id, 'summary:long', v.id, 0, ${SQL_NOW_UTC}
+                FROM users u, videos v WHERE v.summary_long_json IS NOT NULL;
+                INSERT OR IGNORE INTO artifact_access (user_id, kind, video_id, credits_spent, created_at)
+                SELECT u.id, 'transcript:ai', t.video_id, 0, ${SQL_NOW_UTC}
+                FROM users u, transcripts t WHERE t.source = 'ai';
             `);
         });
 
@@ -1385,6 +1425,50 @@ export class YoutubeDatabase extends BaseDatabase {
             .get(userId);
 
         return row?.count ?? 0;
+    }
+
+    /** True when the LLM-produced artifact itself exists — regardless of who may access it. */
+    hasArtifact(kind: ArtifactKind, videoId: string): boolean {
+        if (kind === "transcript:ai") {
+            const row = this.db
+                .query<{ found: number }, [string]>(
+                    "SELECT 1 AS found FROM transcripts WHERE video_id = ? AND source = 'ai' LIMIT 1"
+                )
+                .get(videoId);
+
+            return row !== null;
+        }
+
+        const column =
+            kind === "summary:short"
+                ? "summary_short"
+                : kind === "summary:timestamped"
+                  ? "summary_timestamped_json"
+                  : "summary_long_json";
+        const row = this.db
+            .query<{ found: number }, [string]>(`SELECT 1 AS found FROM videos WHERE id = ? AND ${column} IS NOT NULL`)
+            .get(videoId);
+
+        return row !== null;
+    }
+
+    hasArtifactAccess(userId: number, kind: ArtifactKind, videoId: string): boolean {
+        const row = this.db
+            .query<{ found: number }, [number, string, string]>(
+                "SELECT 1 AS found FROM artifact_access WHERE user_id = ? AND kind = ? AND video_id = ?"
+            )
+            .get(userId, kind, videoId);
+
+        return row !== null;
+    }
+
+    /** Idempotent (INSERT OR IGNORE on the UNIQUE key) — a second grant keeps the first row. */
+    insertArtifactAccess(input: { userId: number; kind: ArtifactKind; videoId: string; creditsSpent: number }): void {
+        this.db.run(
+            `INSERT OR IGNORE INTO artifact_access (user_id, kind, video_id, credits_spent, created_at)
+             VALUES (?, ?, ?, ?, ${SQL_NOW_UTC})`,
+            [input.userId, input.kind, input.videoId, input.creditsSpent]
+        );
     }
 
     initSchemaForTest(): void {
