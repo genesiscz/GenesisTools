@@ -162,14 +162,11 @@ describe("youtube server foundation", () => {
             });
             const authHeaders = { "Content-Type": "application/json", Authorization: "Bearer ytu_speakers_test" };
 
-            const unauthedResponse = await fetch(
-                `http://localhost:${handle.port}/api/v1/videos/abc123def45/speakers`,
-                {
-                    method: "PUT",
-                    headers: { "Content-Type": "application/json" },
-                    body: SafeJSON.stringify({ speakers: [{ idx: 0, label: "Host" }] }),
-                }
-            );
+            const unauthedResponse = await fetch(`http://localhost:${handle.port}/api/v1/videos/abc123def45/speakers`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: SafeJSON.stringify({ speakers: [{ idx: 0, label: "Host" }] }),
+            });
 
             expect(unauthedResponse.status).toBe(401);
 
