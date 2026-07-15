@@ -178,8 +178,8 @@ export function useAskVideo(id: VideoId) {
             model?: string;
             presetId?: number;
             sources?: QaSource[];
-        }) =>
-            send<ExtensionApiMap["api:askVideo"]>({ type: "api:askVideo", id, ...vars }),
+            scope?: "video" | "channel";
+        }) => send<ExtensionApiMap["api:askVideo"]>({ type: "api:askVideo", id, ...vars }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["me"] });
             queryClient.invalidateQueries({ queryKey: ["qaHistory", id] });

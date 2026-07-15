@@ -6,22 +6,28 @@ import { StyleSelect } from "@app/utils/ui/components/youtube/style-select";
 import type { PipelineProgress, RunPipeline, VideoDetailDataSource } from "@app/utils/ui/components/youtube/tabs";
 import { formatTimecode } from "@app/utils/ui/components/youtube/time";
 import type { AskCitation, QaHistoryItem, QaSource, VideoComment, VideoId } from "@app/youtube/lib/types";
+import { CREDIT_COSTS } from "@app/youtube/lib/types";
 import { ChevronDown, ChevronRight, Loader2, LockKeyhole, MessageCircleQuestion, MessagesSquare } from "lucide-react";
 import { useState } from "react";
 
-type AskScope = "video" | "comments" | "both";
+type AskScope = "video" | "comments" | "both" | "channel";
 
 const SCOPE_SOURCES: Record<AskScope, QaSource[]> = {
     video: ["transcript"],
     comments: ["comments"],
     both: ["transcript", "comments"],
+    channel: ["transcript"],
 };
 
 const SCOPE_LABELS: Array<{ scope: AskScope; label: string }> = [
     { scope: "video", label: "Video" },
     { scope: "comments", label: "Comments" },
     { scope: "both", label: "Both" },
+    { scope: "channel", label: "Channel" },
 ];
+
+/** Metadata for cited videos, from the ask response — drives grouped headers. */
+export type CitedVideoMap = Record<string, { title: string; uploadDate: string | null; thumbUrl: string | null }>;
 
 /** Replace the model's inline `[#4]` citation markers with `#cite-N` anchor
  *  links labelled by the cited timestamp — the answer container intercepts
@@ -49,7 +55,8 @@ export interface AskTabProps {
             model?: string;
             presetId?: number;
             sources?: QaSource[];
-        }) => Promise<{ answer: string; citations?: AskCitation[] }>;
+            scope?: "video" | "channel";
+        }) => Promise<{ answer: string; citations?: AskCitation[]; citedVideos?: CitedVideoMap }>;
         isPending: boolean;
     };
     /** Server-side per-user history — persists across reloads. Optional for
@@ -73,6 +80,8 @@ export interface AskTabProps {
     pipelineProgress?: PipelineProgress | null;
     /** Jump to a cited comment thread (switch tab + scroll + flash). */
     onShowComment?: (commentId: string) => void;
+    /** Open another video's watch page at a timestamp (cross-video citations). */
+    onOpenWatch?: (videoId: string, t: number) => void;
 }
 
 /** One question+answer, rendered with citation links wired to the player. */
@@ -81,15 +90,59 @@ function ExchangeBody({
     citations,
     onSeek,
     onShowComment,
+    currentVideoId,
+    citedVideos,
+    onOpenWatch,
 }: {
     answer: string;
     citations: AskCitation[];
     onSeek: (seconds: number) => void;
     onShowComment?: (commentId: string) => void;
+    currentVideoId?: string;
+    citedVideos?: CitedVideoMap;
+    onOpenWatch?: (videoId: string, t: number) => void;
 }) {
     const commentCitations = citations.filter(
         (citation) => citation.source === "comments" && citation.commentId !== null
     );
+    const distinctVideos = [...new Set(citations.map((citation) => citation.videoId))];
+    const crossVideo =
+        distinctVideos.length > 1 ||
+        (currentVideoId !== undefined && distinctVideos.some((videoId) => videoId !== currentVideoId));
+
+    function pillFor(citation: AskCitation, key: number) {
+        if (citation.source === "comments" && citation.commentId !== null) {
+            return (
+                <button
+                    key={`comment-${key}`}
+                    type="button"
+                    onClick={() => citation.commentId && onShowComment?.(citation.commentId)}
+                    className="inline-flex h-6 items-center rounded-full border border-white/8 bg-black/20 px-2 text-[12px] font-mono"
+                >
+                    @{(citation.author ?? "unknown").replace(/^@/, "")}
+                </button>
+            );
+        }
+
+        if (citation.startSec === null) {
+            return null;
+        }
+
+        const isCurrent = currentVideoId === undefined || citation.videoId === currentVideoId;
+
+        return (
+            <button
+                key={key}
+                type="button"
+                onClick={() =>
+                    isCurrent ? onSeek(citation.startSec ?? 0) : onOpenWatch?.(citation.videoId, citation.startSec ?? 0)
+                }
+                className="yt-timecode inline-flex h-6 items-center px-2 font-mono text-[12px] tabular-nums"
+            >
+                {formatTimecode(citation.startSec)}
+            </button>
+        );
+    }
 
     return (
         <>
@@ -112,30 +165,45 @@ function ExchangeBody({
                     }
                 }}
             />
-            {citations.length > 0 ? (
+            {citations.length > 0 && crossVideo ? (
+                <div className="space-y-2">
+                    {distinctVideos.map((videoId) => {
+                        const meta = citedVideos?.[videoId];
+
+                        return (
+                            <div key={videoId}>
+                                <div className="mt-3 flex items-center gap-2">
+                                    {meta?.thumbUrl ? (
+                                        <img
+                                            src={meta.thumbUrl}
+                                            alt=""
+                                            className="h-6 w-10 rounded-md object-cover"
+                                        />
+                                    ) : null}
+                                    <span className="truncate text-sm font-medium">{meta?.title ?? videoId}</span>
+                                    {meta?.uploadDate ? (
+                                        <span className="text-[12px] font-mono text-muted-foreground">
+                                            {meta.uploadDate}
+                                        </span>
+                                    ) : null}
+                                </div>
+                                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                    {citations.map((citation, citationIndex) =>
+                                        citation.videoId === videoId ? pillFor(citation, citationIndex) : null
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            ) : citations.length > 0 ? (
                 <div className="mt-3 flex flex-wrap gap-1.5">
                     {citations.map((citation, citationIndex) =>
-                        citation.source !== "comments" && citation.startSec !== null ? (
-                            <button
-                                key={citationIndex}
-                                type="button"
-                                onClick={() => onSeek(citation.startSec ?? 0)}
-                                className="yt-timecode inline-flex h-6 items-center px-2 font-mono text-[12px] tabular-nums"
-                            >
-                                {formatTimecode(citation.startSec)}
-                            </button>
-                        ) : null
+                        citation.source !== "comments" && citation.startSec !== null
+                            ? pillFor(citation, citationIndex)
+                            : null
                     )}
-                    {commentCitations.map((citation, citationIndex) => (
-                        <button
-                            key={`comment-${citationIndex}`}
-                            type="button"
-                            onClick={() => citation.commentId && onShowComment?.(citation.commentId)}
-                            className="inline-flex h-6 items-center rounded-full border border-white/8 bg-black/20 px-2 text-[12px] font-mono"
-                        >
-                            @{(citation.author ?? "unknown").replace(/^@/, "")}
-                        </button>
-                    ))}
+                    {commentCitations.map((citation, citationIndex) => pillFor(citation, citationIndex))}
                 </div>
             ) : null}
         </>
@@ -151,6 +219,8 @@ function HistoryRow({
     createShare,
     videoId,
     onShowComment,
+    currentVideoId,
+    onOpenWatch,
 }: {
     item: QaHistoryItem;
     expanded: boolean;
@@ -159,6 +229,8 @@ function HistoryRow({
     createShare?: ReturnType<NonNullable<VideoDetailDataSource["useCreateShare"]>>;
     videoId: VideoId;
     onShowComment?: (commentId: string) => void;
+    currentVideoId?: string;
+    onOpenWatch?: (videoId: string, t: number) => void;
 }) {
     const Chevron = expanded ? ChevronDown : ChevronRight;
     const [linkCopied, setLinkCopied] = useState(false);
@@ -193,6 +265,8 @@ function HistoryRow({
                         citations={item.citations}
                         onSeek={onSeek}
                         onShowComment={onShowComment}
+                        currentVideoId={currentVideoId}
+                        onOpenWatch={onOpenWatch}
                     />
                 </div>
             ) : null}
@@ -213,6 +287,7 @@ export function AskTab({
     runPipeline,
     pipelineProgress,
     onShowComment,
+    onOpenWatch,
 }: AskTabProps) {
     const ask = useAskVideo(videoId);
     const createShare = useCreateShare?.();
@@ -231,7 +306,9 @@ export function AskTab({
         question: string;
         answer: string;
         citations: AskCitation[];
+        citedVideos?: CitedVideoMap;
     } | null>(null);
+    const [lastCitedVideos, setLastCitedVideos] = useState<CitedVideoMap | undefined>(undefined);
     const [showOlder, setShowOlder] = useState(false);
     const [expandedIds, setExpandedIds] = useState<ReadonlySet<number>>(new Set());
 
@@ -240,7 +317,7 @@ export function AskTab({
     const older = items.slice(1);
     const signInRequired = error === "login required";
     const commentsUnfetched = useComments !== undefined && (comments?.data?.comments.length ?? 0) === 0;
-    const needsCommentsFetch = scope !== "video" && commentsUnfetched;
+    const needsCommentsFetch = (scope === "comments" || scope === "both") && commentsUnfetched;
 
     async function submit() {
         const trimmed = question.trim();
@@ -255,10 +332,17 @@ export function AskTab({
                 question: trimmed,
                 presetId: presetId ?? undefined,
                 sources: SCOPE_SOURCES[scope],
+                scope: scope === "channel" ? "channel" : "video",
             });
+            setLastCitedVideos(result.citedVideos);
 
             if (!useQaHistory) {
-                setSessionExchange({ question: trimmed, answer: result.answer, citations: result.citations ?? [] });
+                setSessionExchange({
+                    question: trimmed,
+                    answer: result.answer,
+                    citations: result.citations ?? [],
+                    citedVideos: result.citedVideos,
+                });
             }
 
             setQuestion("");
@@ -286,7 +370,15 @@ export function AskTab({
             <div>
                 <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-secondary">Ask the video</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                    Answers come from the transcript (semantic search + your configured LLM), with timestamp citations.
+                    {scope === "channel" ? (
+                        <>
+                            Searches across this channel's indexed videos ·{" "}
+                            <span className="tabular-nums text-foreground/80">{CREDIT_COSTS["qa:channel"]} 💎</span>{" "}
+                            per ask
+                        </>
+                    ) : (
+                        "Answers come from the transcript (semantic search + your configured LLM), with timestamp citations."
+                    )}
                 </p>
             </div>
 
@@ -412,6 +504,9 @@ export function AskTab({
                         citations={sessionExchange.citations}
                         onSeek={onSeek}
                         onShowComment={onShowComment}
+                        currentVideoId={videoId}
+                        citedVideos={sessionExchange.citedVideos}
+                        onOpenWatch={onOpenWatch}
                     />
                 </article>
             ) : null}
@@ -437,6 +532,9 @@ export function AskTab({
                         citations={latest.citations}
                         onSeek={onSeek}
                         onShowComment={onShowComment}
+                        currentVideoId={videoId}
+                        citedVideos={lastCitedVideos}
+                        onOpenWatch={onOpenWatch}
                     />
                 </article>
             ) : null}
@@ -468,6 +566,8 @@ export function AskTab({
                                     createShare={createShare}
                                     videoId={videoId}
                                     onShowComment={onShowComment}
+                                    currentVideoId={videoId}
+                                    onOpenWatch={onOpenWatch}
                                 />
                             ))}
                         </div>

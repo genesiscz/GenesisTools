@@ -1,5 +1,6 @@
 import { type PipelineProgress, type VideoDetailTab, VideoDetailTabs } from "@app/utils/ui/components/youtube/tabs";
 import type { JobStage } from "@app/youtube/lib/types";
+import { send } from "@ext/api.bridge";
 import { dataSource, useModels, useStartPipeline } from "@ext/api.hooks";
 import type { ExtensionEvent } from "@ext/shared/messages";
 import { ActivityView } from "@ext/side-panel/activity-view";
@@ -166,6 +167,7 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                             modelPresets={models.data?.presets ?? []}
                             pipelineProgress={pipelineProgress}
                             onRequireLogin={() => setSettingsOpen(true)}
+                            onOpenWatch={(id, t) => void send({ type: "nav:openWatch", id, t })}
                         />
                     )}
                 </div>

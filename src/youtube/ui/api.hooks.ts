@@ -122,8 +122,14 @@ export function useGenerateSummary(id: VideoId) {
 
 export function useAskVideo(id: VideoId) {
     return useMutation({
-        mutationFn: (vars: { question: string; topK?: number; provider?: string; model?: string; sources?: QaSource[] }) =>
-            apiClient.askVideo(id, vars),
+        mutationFn: (vars: {
+            question: string;
+            topK?: number;
+            provider?: string;
+            model?: string;
+            sources?: QaSource[];
+            scope?: "video" | "channel";
+        }) => apiClient.askVideo(id, vars),
     });
 }
 
