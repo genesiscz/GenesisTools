@@ -179,6 +179,9 @@ export function useMe(enabled = true) {
         queryFn: () => send<ExtensionApiMap["api:me"]>({ type: "api:me" }),
         retry: false,
         enabled,
+        // Returning from the Stripe checkout tab refocuses the panel — refetch
+        // so the diamonds chip picks up the webhook-granted balance quickly.
+        refetchOnWindowFocus: true,
     });
 }
 
@@ -221,6 +224,13 @@ export function useTopup() {
         mutationFn: (vars: { amount?: number } = {}) =>
             send<ExtensionApiMap["api:topup"]>({ type: "api:topup", ...vars }),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["me"] }),
+    });
+}
+
+export function useCheckout() {
+    return useMutation({
+        mutationFn: (vars: { packId: string }) =>
+            send<ExtensionApiMap["api:checkout"]>({ type: "api:checkout", ...vars }),
     });
 }
 

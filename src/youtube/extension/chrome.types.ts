@@ -40,8 +40,13 @@ declare global {
                 active?: boolean;
                 currentWindow?: boolean;
             }
+            interface CreateProperties {
+                url?: string;
+                active?: boolean;
+            }
             function query(info: QueryInfo): Promise<Tab[]>;
             function reload(tabId: number): Promise<void>;
+            function create(properties: CreateProperties): Promise<Tab>;
         }
 
         namespace scripting {

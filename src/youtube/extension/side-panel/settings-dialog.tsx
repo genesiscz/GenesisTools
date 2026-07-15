@@ -1,8 +1,9 @@
 import { Button } from "@app/utils/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
 import { Input } from "@app/utils/ui/components/input";
-import { useLogin, useLogout, useMe, useRegister, useTopup } from "@ext/api.hooks";
-import { Gem, Loader2, LogOut } from "lucide-react";
+import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
+import { useCheckout, useLogin, useLogout, useMe, useRegister, useTopup } from "@ext/api.hooks";
+import { CreditCard, Gem, Loader2, LogOut } from "lucide-react";
 import { type FormEvent, useState } from "react";
 
 type AuthMode = "login" | "register";
@@ -46,7 +47,6 @@ export function SettingsDialog({
 
 function SignedInView({ email, credits, devMode }: { email: string; credits: number; devMode?: boolean }) {
     const logout = useLogout();
-    const topup = useTopup();
 
     return (
         <div className="space-y-3">
@@ -62,18 +62,7 @@ function SignedInView({ email, credits, devMode }: { email: string; credits: num
                 </div>
             </div>
 
-            {devMode ? (
-                <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full"
-                    disabled={topup.isPending}
-                    onClick={() => topup.mutate({ amount: 100 })}
-                >
-                    {topup.isPending ? <Loader2 className="size-4 animate-spin" /> : <Gem className="size-4" />}
-                    Fill diamonds +100
-                </Button>
-            ) : null}
+            <DiamondPacksSection devMode={devMode} />
 
             <Button
                 size="sm"
@@ -84,6 +73,86 @@ function SignedInView({ email, credits, devMode }: { email: string; credits: num
             >
                 <LogOut className="size-4" /> Log out
             </Button>
+        </div>
+    );
+}
+
+function DiamondPacksSection({ devMode }: { devMode?: boolean }) {
+    const checkout = useCheckout();
+    const topup = useTopup();
+    const [pendingPack, setPendingPack] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+
+    async function buy(packId: string) {
+        if (pendingPack) {
+            return;
+        }
+
+        setError(null);
+        setPendingPack(packId);
+        try {
+            await checkout.mutateAsync({ packId });
+        } catch (err) {
+            setError(err instanceof Error ? err.message : String(err));
+        } finally {
+            setPendingPack(null);
+        }
+    }
+
+    const unconfigured = error?.includes("not configured");
+
+    return (
+        <div className="space-y-2">
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Get diamonds</p>
+            {unconfigured ? (
+                <div className="flex items-start gap-3 rounded-2xl border border-dashed border-primary/25 p-5">
+                    <CreditCard className="mt-0.5 size-5 shrink-0 text-primary" />
+                    <p className="text-sm text-muted-foreground">Payments aren't configured on this server yet.</p>
+                </div>
+            ) : (
+                <div className="grid grid-cols-3 gap-2">
+                    {DIAMOND_PACKS.map((pack) => (
+                        <button
+                            key={pack.id}
+                            type="button"
+                            disabled={pendingPack !== null}
+                            onClick={() => void buy(pack.id)}
+                            className="rounded-2xl border border-white/8 bg-black/20 p-3 text-left transition-colors hover:border-primary/40 disabled:opacity-60"
+                        >
+                            <p className="text-base font-semibold tabular-nums text-foreground">
+                                {pack.diamonds.toLocaleString("en-US").replace(",", " ")} 💎
+                            </p>
+                            {pendingPack === pack.id ? (
+                                <p className="mt-0.5 flex items-center gap-1.5 text-sm text-muted-foreground">
+                                    <Loader2 className="size-3.5 animate-spin" /> Opening…
+                                </p>
+                            ) : (
+                                <p className="mt-0.5 text-sm text-muted-foreground">${pack.usd}</p>
+                            )}
+                            {pack.id === "pack-medium" ? (
+                                <span className="mt-1.5 inline-flex rounded-full border border-primary/25 px-2 py-0.5 font-mono text-[11px] uppercase tracking-[0.18em] text-primary">
+                                    popular
+                                </span>
+                            ) : null}
+                        </button>
+                    ))}
+                </div>
+            )}
+            {error && !unconfigured ? (
+                <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-sm">
+                    <p className="break-words text-destructive/90">{error}</p>
+                </div>
+            ) : null}
+            {devMode ? (
+                <Button
+                    size="sm"
+                    variant="ghost"
+                    className="w-full text-muted-foreground"
+                    onClick={() => topup.mutate({ amount: 100 })}
+                >
+                    <Gem className="size-4" /> Fill diamonds +100 (dev)
+                </Button>
+            ) : null}
         </div>
     );
 }
