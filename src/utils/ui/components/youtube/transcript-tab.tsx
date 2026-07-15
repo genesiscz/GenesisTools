@@ -2,13 +2,19 @@ import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import { activeChapterIndex } from "@app/utils/ui/components/youtube/chapters";
+import { LlmConfirmDialog } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
 import { Loading } from "@app/utils/ui/components/youtube/loading";
+import { OUTPUT_LANGS, outputLangLabel } from "@app/utils/ui/components/youtube/output-langs";
 import type { PipelineProgress, RunPipeline } from "@app/utils/ui/components/youtube/tabs";
 import { formatTimecode } from "@app/utils/ui/components/youtube/time";
 import { segmentsToParagraphs, type TranscriptParagraph } from "@app/utils/ui/components/youtube/transcript-paragraphs";
-import type { Transcript, TranscriptSegment, VideoId } from "@app/youtube/lib/types";
-import { Captions, ChevronDown, ChevronUp, Loader2, LocateFixed, Search } from "lucide-react";
+import type { Transcript, TranscriptSegment, Video, VideoId } from "@app/youtube/lib/types";
+import { Captions, ChevronDown, ChevronUp, Languages, Loader2, LocateFixed, Search } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+
+/** Sentinel Select value meaning "no lang filter — server picks the default (captions preferred)". */
+const ORIGINAL_LANG = "__original__";
+const TRANSLATE_COST = 5;
 
 const DEFAULT_RENDER_LIMIT = 200;
 const DEFAULT_BUCKET_SEC = 120;
@@ -94,6 +100,20 @@ export interface TranscriptTabProps {
     pipelineProgress?: PipelineProgress | null;
     /** Current playback second (1 Hz bridge) — drives follow mode. */
     playerTime?: number | null;
+    /** Lists every stored transcript row (for the language Select) — reuses
+     *  the video-detail hook's `transcripts` field. Optional; omit to hide
+     *  the language Select entirely. */
+    useVideo?: (id: VideoId | null) => {
+        data: { video: Video; transcripts?: Transcript[] } | undefined;
+        isPending: boolean;
+    };
+    /** Feature 08 Layer 2: AI-translates the transcript into another
+     *  language. Optional; omit to hide "Translate to…" entries. */
+    useTranslateTranscript?: (id: VideoId) => {
+        mutateAsync: (vars: { lang: string }) => Promise<{ transcript: Transcript; creditsSpent: number }>;
+        isPending: boolean;
+        error?: Error | null;
+    };
 }
 
 export function TranscriptTab({
@@ -101,6 +121,8 @@ export function TranscriptTab({
     onSeek,
     useTranscript,
     useSetSpeakers,
+    useVideo,
+    useTranslateTranscript,
     runPipeline,
     pipelineProgress,
     playerTime,
@@ -111,13 +133,32 @@ export function TranscriptTab({
     const [currentMatch, setCurrentMatch] = useState(0);
     const [follow, setFollow] = useState(false);
     const [labelOverrides, setLabelOverrides] = useState<Record<number, string>>({});
+    const [selectedLang, setSelectedLang] = useState<string | undefined>(undefined);
+    const [translateTarget, setTranslateTarget] = useState<string | null>(null);
     const scrollRef = useRef<HTMLDivElement | null>(null);
     const lastUserScrollAt = useRef(0);
-    const transcript = useTranscript(videoId);
+    const transcript = useTranscript(videoId, { lang: selectedLang });
     const setSpeakers = useSetSpeakers(videoId);
+    const video = useVideo?.(videoId);
+    const translate = useTranslateTranscript?.(videoId);
+    const existingLangs = useMemo(
+        () => [...new Set((video?.data?.transcripts ?? []).map((row) => row.lang))],
+        [video?.data?.transcripts]
+    );
+    const missingLangs = OUTPUT_LANGS.filter((entry) => !existingLangs.includes(entry.code));
     const segments = transcript.data?.transcript.segments ?? [];
     const serverLabels = transcript.data?.speakerLabels;
     const needle = query.trim().toLowerCase();
+
+    async function confirmTranslate() {
+        if (!translate || !translateTarget) {
+            return;
+        }
+
+        await translate.mutateAsync({ lang: translateTarget });
+        setSelectedLang(translateTarget);
+        setTranslateTarget(null);
+    }
 
     useEffect(() => {
         setLabelOverrides({});
@@ -359,6 +400,53 @@ export function TranscriptTab({
                 >
                     <LocateFixed className="size-4" />
                 </Button>
+                {useVideo ? (
+                    <>
+                        <div className="h-4 w-px bg-white/8" />
+                        <Select
+                            value={selectedLang ?? ORIGINAL_LANG}
+                            onValueChange={(value) => {
+                                const missing = missingLangs.find((entry) => entry.code === value);
+
+                                if (missing) {
+                                    setTranslateTarget(missing.code);
+                                    return;
+                                }
+
+                                setSelectedLang(value === ORIGINAL_LANG ? undefined : value);
+                            }}
+                            disabled={translate?.isPending}
+                        >
+                            <SelectTrigger className="h-8 w-[150px] text-sm">
+                                {translate?.isPending ? (
+                                    <span className="flex items-center gap-1.5">
+                                        <Loader2 className="size-3.5 animate-spin" /> Translating…
+                                    </span>
+                                ) : (
+                                    <SelectValue />
+                                )}
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value={ORIGINAL_LANG}>
+                                    <Languages className="size-3.5" /> Original
+                                </SelectItem>
+                                {existingLangs.map((code) => (
+                                    <SelectItem key={code} value={code}>
+                                        <span className="font-mono text-[12px] uppercase">{code}</span>{" "}
+                                        {outputLangLabel(code)}
+                                    </SelectItem>
+                                ))}
+                                {translate
+                                    ? missingLangs.map((entry) => (
+                                          <SelectItem key={entry.code} value={entry.code}>
+                                              Translate to {entry.label} · {TRANSLATE_COST} 💎
+                                          </SelectItem>
+                                      ))
+                                    : null}
+                            </SelectContent>
+                        </Select>
+                    </>
+                ) : null}
                 <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground/70">
                     {segments.length.toLocaleString()} segments · {totalParagraphs.toLocaleString()} paragraphs
                 </span>
@@ -399,6 +487,28 @@ export function TranscriptTab({
                         Show all
                     </Button>
                 </div>
+            ) : null}
+            {translate?.error ? (
+                <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-sm">
+                    <p className="font-medium text-destructive">Translation failed</p>
+                    <p className="mt-1 break-words text-destructive/80">{translate.error.message}</p>
+                </div>
+            ) : null}
+            {translate ? (
+                <LlmConfirmDialog
+                    open={translateTarget !== null}
+                    title="Translate transcript?"
+                    description="Sends the transcript to your LLM, chunked with timestamps preserved, and translates it line by line."
+                    payloadSummary={
+                        translateTarget ? `Full transcript · target language ${outputLangLabel(translateTarget)}.` : ""
+                    }
+                    busy={translate.isPending}
+                    confirmLabel={`Translate · ${TRANSLATE_COST} 💎`}
+                    billingNote={`Cost: ${TRANSLATE_COST} 💎, charged once — cached for every future request.`}
+                    error={translate.error ? translate.error.message : null}
+                    onCancel={() => setTranslateTarget(null)}
+                    onConfirm={confirmTranslate}
+                />
             ) : null}
         </div>
     );

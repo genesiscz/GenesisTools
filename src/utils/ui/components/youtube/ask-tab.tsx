@@ -82,6 +82,8 @@ export interface AskTabProps {
     onShowComment?: (commentId: string) => void;
     /** Open another video's watch page at a timestamp (cross-video citations). */
     onOpenWatch?: (videoId: string, t: number) => void;
+    /** Signed-in user's output-language preference (2-letter ISO). Default "en" — drives the "· CS" header suffix. */
+    outputLang?: string;
 }
 
 /** One question+answer, rendered with citation links wired to the player. */
@@ -284,6 +286,7 @@ export function AskTab({
     pipelineProgress,
     onShowComment,
     onOpenWatch,
+    outputLang,
 }: AskTabProps) {
     const ask = useAskVideo(videoId);
     const createShare = useCreateShare?.();
@@ -364,7 +367,10 @@ export function AskTab({
     return (
         <div className="space-y-4">
             <div>
-                <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-secondary">Ask the video</p>
+                <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-secondary">
+                    Ask the video
+                    {outputLang && outputLang !== "en" ? ` · ${outputLang.toUpperCase()}` : ""}
+                </p>
                 <p className="mt-1 text-sm text-muted-foreground">
                     {scope === "channel" ? (
                         <>

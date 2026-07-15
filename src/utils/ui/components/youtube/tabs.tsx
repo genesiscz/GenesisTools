@@ -63,6 +63,8 @@ export interface VideoDetailDataSource {
                   short?: string;
                   timestamped?: TimestampedSummaryEntry[];
                   long?: VideoLongSummary | null;
+                  /** 2-letter ISO language the stored summary was generated in. */
+                  lang?: string;
                   cached?: boolean;
                   locked?: undefined;
               }
@@ -81,10 +83,13 @@ export interface VideoDetailDataSource {
             format?: "list" | "qa";
             length?: "short" | "auto" | "detailed";
             presetId?: number;
+            /** 2-letter ISO output language; per-generation override of the user preference. */
+            lang?: string;
         }) => Promise<{
             short?: string;
             timestamped?: TimestampedSummaryEntry[];
             long?: VideoLongSummary | null;
+            lang?: string;
             cached: boolean;
             jobId?: number;
         }>;
@@ -146,6 +151,14 @@ export interface VideoDetailDataSource {
         }) => Promise<{ speakerLabels?: Record<number, string> }>;
         isPending: boolean;
     };
+    /** Feature 08 Layer 2: AI-translates the transcript into another language
+     *  (`POST /videos/:id/transcript/translate`). Optional — consumers
+     *  without user accounts don't get the transcript language Select. */
+    useTranslateTranscript?: (id: VideoId) => {
+        mutateAsync: (vars: { lang: string }) => Promise<{ transcript: Transcript; creditsSpent: number }>;
+        isPending: boolean;
+        error?: Error | null;
+    };
 }
 
 export interface VideoDetailTabsProps {
@@ -173,6 +186,10 @@ export interface VideoDetailTabsProps {
     streamingMode?: SummaryMode | null;
     /** Current playback second (1 Hz bridge), or null when unknown. */
     playerTime?: number | null;
+    /** Feature 08: the signed-in user's output-language preference (2-letter
+     *  ISO), or "en" when signed out / unset — seeds the generation dialogs'
+     *  language Select and the Ask tab's active-language suffix. */
+    outputLang?: string;
 }
 
 export function VideoDetailTabs({
@@ -191,6 +208,7 @@ export function VideoDetailTabs({
     partialSummaries,
     streamingMode,
     playerTime,
+    outputLang,
 }: VideoDetailTabsProps) {
     const rootRef = useRef<HTMLDivElement | null>(null);
     const pendingCommentRef = useRef<string | null>(null);
@@ -254,6 +272,7 @@ export function VideoDetailTabs({
                         pipelineProgress={pipelineProgress}
                         partialTimestamped={partialSummaries?.timestamped}
                         streaming={streamingMode === "timestamped"}
+                        outputLang={outputLang}
                     />
                 </TabsContent>
                 <TabsContent value="summary" className="yt-tab-pane">
@@ -272,6 +291,7 @@ export function VideoDetailTabs({
                         streaming={streamingMode === "long"}
                         onSeek={onSeek}
                         playerTime={playerTime}
+                        outputLang={outputLang}
                     />
                 </TabsContent>
                 <TabsContent value="ask" className="yt-tab-pane">
@@ -289,6 +309,7 @@ export function VideoDetailTabs({
                         pipelineProgress={pipelineProgress}
                         onShowComment={showComment}
                         onOpenWatch={onOpenWatch}
+                        outputLang={outputLang}
                     />
                 </TabsContent>
                 <TabsContent value="comments" className="yt-tab-pane">
@@ -305,6 +326,8 @@ export function VideoDetailTabs({
                         onSeek={onSeek}
                         useTranscript={ds.useTranscript}
                         useSetSpeakers={ds.useSetSpeakers}
+                        useVideo={ds.useVideo}
+                        useTranslateTranscript={ds.useTranslateTranscript}
                         runPipeline={runPipeline}
                         pipelineProgress={pipelineProgress}
                         playerTime={playerTime}

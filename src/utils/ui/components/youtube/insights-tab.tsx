@@ -2,6 +2,7 @@ import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { LlmConfirmDialog, type ModelPreset } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
 import { Loading } from "@app/utils/ui/components/youtube/loading";
+import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
 import {
     DEFAULT_SUMMARY_CONTROLS,
     SummaryControlsBar,
@@ -34,6 +35,7 @@ export interface InsightsTabProps {
             | {
                   timestamped?: TimestampedSummaryEntry[];
                   long?: VideoLongSummary | null;
+                  lang?: string;
                   cached?: boolean;
                   locked?: undefined;
               }
@@ -50,7 +52,8 @@ export interface InsightsTabProps {
             tone?: SummaryControlsState["tone"];
             format?: SummaryControlsState["format"];
             length?: SummaryControlsState["length"];
-        }) => Promise<{ timestamped?: TimestampedSummaryEntry[]; cached: boolean; jobId?: number }>;
+            lang?: string;
+        }) => Promise<{ timestamped?: TimestampedSummaryEntry[]; lang?: string; cached: boolean; jobId?: number }>;
         isPending: boolean;
         error?: Error | null;
     };
@@ -62,6 +65,8 @@ export interface InsightsTabProps {
     partialTimestamped?: unknown;
     /** True while timestamped partials are streaming in. */
     streaming?: boolean;
+    /** Signed-in user's output-language preference (2-letter ISO). Default "en". */
+    outputLang?: string;
 }
 
 export function InsightsTab({
@@ -75,6 +80,7 @@ export function InsightsTab({
     pipelineProgress,
     partialTimestamped,
     streaming,
+    outputLang,
 }: InsightsTabProps & { devMode?: boolean; modelPresets?: ModelPreset[]; pipelineProgress?: PipelineProgress | null }) {
     const timestamped = useSummary(videoId, "timestamped");
     const long = useSummary(videoId, "long");
@@ -82,8 +88,14 @@ export function InsightsTab({
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [controls, setControls] = useState<SummaryControlsState>(DEFAULT_SUMMARY_CONTROLS);
     const [modelSel, setModelSel] = useState<{ provider?: string; model?: string }>({});
+    const [lang, setLang] = useState(outputLang ?? "en");
     const estimate = useEstimate?.(videoId, { mode: "timestamped", ...modelSel, enabled: confirmOpen }) ?? NO_ESTIMATE;
     const hasPartial = partialTimestamped !== undefined;
+
+    function openConfirm() {
+        setLang(outputLang ?? "en");
+        setConfirmOpen(true);
+    }
 
     useEffect(() => {
         // First streamed partial closes the confirm dialog — content takes over
@@ -108,6 +120,10 @@ export function InsightsTab({
           : partialEntries;
     const finalTldr = (long.data && !long.data.locked && long.data.long?.tldr) || null;
     const tldr = (streaming ? partial?.tldr : null) ?? finalTldr ?? partial?.tldr ?? null;
+    const currentLang =
+        timestamped.data && !timestamped.data.locked && finalEntries.length > 0
+            ? (timestamped.data.lang ?? "en")
+            : null;
     // With entries visible the generate button forces a fresh run at full
     // price — quote that, not the reuse/owned price the estimate reports.
     const dialogEstimate: LlmEstimate | null = estimate.data
@@ -129,6 +145,7 @@ export function InsightsTab({
             tone: controls.tone,
             format: controls.format,
             length: controls.length,
+            lang,
         });
         setConfirmOpen(false);
     }
@@ -140,11 +157,7 @@ export function InsightsTab({
                     <Badge variant="cyber-secondary">AI signal · timestamped</Badge>
                     <h3 className="mt-3 text-2xl font-bold">Key insights</h3>
                 </div>
-                <Button
-                    data-testid="insights-generate"
-                    onClick={() => setConfirmOpen(true)}
-                    disabled={generate.isPending}
-                >
+                <Button data-testid="insights-generate" onClick={openConfirm} disabled={generate.isPending}>
                     {entries.length === 0 ? "Generate insights…" : "Re-generate…"}
                 </Button>
             </div>
@@ -187,6 +200,10 @@ export function InsightsTab({
                 estimatePending={estimate.isPending && confirmOpen}
                 onSelectionChange={setModelSel}
                 progress={pipelineProgress}
+                langs={OUTPUT_LANGS}
+                lang={lang}
+                onLangChange={setLang}
+                currentLang={currentLang}
                 onCancel={() => setConfirmOpen(false)}
                 onConfirm={runGenerate}
             />

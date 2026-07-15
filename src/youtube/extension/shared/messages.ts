@@ -49,7 +49,10 @@ export type ExtensionRequest =
           format?: SummaryFormat;
           length?: SummaryLength;
           presetId?: number;
+          lang?: string;
       }
+    | { type: "api:translateTranscript"; id: VideoId; lang: string }
+    | { type: "api:patchMe"; outputLang?: string; ttsVoice?: string }
     | {
           type: "api:askVideo";
           id: VideoId;
@@ -131,12 +134,16 @@ export interface ExtensionApiMap {
         | {
               summary?: string | TimestampedSummaryEntry[] | VideoLongSummary | null;
               mode?: "short" | "timestamped" | "long";
+              /** 2-letter ISO language the stored summary was generated in. */
+              lang?: string;
               cached?: boolean;
               locked?: undefined;
           };
     "api:generateSummary": {
         summary?: string | TimestampedSummaryEntry[] | VideoLongSummary | null;
         mode?: "short" | "timestamped" | "long";
+        /** 2-letter ISO language the summary was generated in. */
+        lang?: string;
         cached?: boolean;
         jobId?: number;
         /** True when the call unlocked an existing shared artifact instead of generating. */
@@ -144,6 +151,8 @@ export interface ExtensionApiMap {
         creditsSpent?: number;
         credits?: number;
     };
+    "api:translateTranscript": { transcript: Transcript; creditsSpent: number; credits: number };
+    "api:patchMe": { user: YtUser };
     "api:askVideo": {
         answer: string;
         citations: AskCitation[];
