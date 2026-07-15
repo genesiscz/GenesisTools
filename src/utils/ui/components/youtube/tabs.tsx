@@ -116,7 +116,13 @@ export interface VideoDetailDataSource {
      *  without it fall back to generic billing copy in the confirm dialog. */
     useEstimate?: (
         id: VideoId | null,
-        opts: { mode: "short" | "timestamped" | "long"; provider?: string; model?: string; enabled?: boolean }
+        opts: {
+            mode: "short" | "timestamped" | "long";
+            provider?: string;
+            model?: string;
+            lang?: string;
+            enabled?: boolean;
+        }
     ) => { data: LlmEstimate | undefined; isPending: boolean };
     /** Server-side per-user Q&A history (`/users/qa-history`). Optional —
      *  consumers without it show only the in-session ask flow. */

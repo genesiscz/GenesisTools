@@ -454,10 +454,17 @@ export function useStartPipeline() {
 
 export function useEstimate(
     id: VideoId | null,
-    opts: { mode: "short" | "timestamped" | "long"; provider?: string; model?: string; enabled?: boolean }
+    opts: {
+        mode: "short" | "timestamped" | "long";
+        provider?: string;
+        model?: string;
+        /** Feature 08: refetch the quote when the dialog's language selection changes. */
+        lang?: string;
+        enabled?: boolean;
+    }
 ) {
     return useQuery({
-        queryKey: ["estimate", id, opts.mode, opts.provider, opts.model],
+        queryKey: ["estimate", id, opts.mode, opts.provider, opts.model, opts.lang],
         queryFn: () =>
             send<ExtensionApiMap["api:estimate"]>({
                 type: "api:estimate",
@@ -465,6 +472,7 @@ export function useEstimate(
                 mode: opts.mode,
                 provider: opts.provider,
                 model: opts.model,
+                lang: opts.lang,
             }),
         staleTime: 60_000,
         enabled: id !== null && opts.enabled !== false,

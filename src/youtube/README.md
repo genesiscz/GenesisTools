@@ -59,5 +59,6 @@ Stored comments are served from `GET /api/v1/videos/:id/comments` on the local s
 
 - **`YOUTUBE_SERVICE_KEY`** — comma-separated list of keys, one per user. When set, every route except the open probes (`/api/v1/healthz`, `/api/v1/version`, `/api/v1/openapi.json`) requires `Authorization: Bearer <key>` (the events WebSocket accepts `?access_token=<key>`, since browsers can't set handshake headers). Unset/empty keeps the server open for localhost dev; a value that parses to zero keys (e.g. `,,,`) fails closed at startup rather than silently opening.
 - **`YOUTUBE_HOST`** — bind host, defaults to `127.0.0.1` (loopback). Set to `0.0.0.0` only for direct LAN access, and keep a firewall in front.
+- **`YOUTUBE_ALLOW_DEV_TOPUP`** — set to `1` to enable `POST /api/v1/users/topup` (the extension's dev-only "Fill diamonds" button). Unset/`0` in production keeps the endpoint 404, since a free diamond mint has no place on a real deployment. Set it locally or the dev top-up button just 404s.
 
 A complete VPS template — nginx TLS front plus systemd units for the youtube, ai-proxy, and eve services — lives in [`deploy/vps/`](../../deploy/vps/README.md); see its README for bring-up steps.

@@ -155,6 +155,9 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
             if (req.model) {
                 query.set("model", req.model);
             }
+            if (req.lang) {
+                query.set("lang", req.lang);
+            }
             return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/estimate?${query.toString()}`);
         }
         case "api:register":
