@@ -254,8 +254,7 @@ export class QaService {
             return {
                 answer: result.content,
                 citations: ranked.map((rankedChunk) => {
-                    const roots =
-                        rankedChunk.chunk.source === "comments" ? chunkRoots(rankedChunk.chunk) : undefined;
+                    const roots = rankedChunk.chunk.source === "comments" ? chunkRoots(rankedChunk.chunk) : undefined;
 
                     return {
                         videoId: rankedChunk.chunk.videoId,
@@ -449,7 +448,11 @@ export function chunkComments(comments: VideoComment[]): CommentChunk[] {
 
         for (const message of messages) {
             if (bufferChars + message.length + 1 > TARGET_CHARS && buffer.length) {
-                perThread.push({ text: buffer.join("\n"), rootCommentId: root.commentId, rootCommentIds: [root.commentId] });
+                perThread.push({
+                    text: buffer.join("\n"),
+                    rootCommentId: root.commentId,
+                    rootCommentIds: [root.commentId],
+                });
                 buffer = [];
                 bufferChars = 0;
             }
@@ -459,7 +462,11 @@ export function chunkComments(comments: VideoComment[]): CommentChunk[] {
         }
 
         if (buffer.length) {
-            perThread.push({ text: buffer.join("\n"), rootCommentId: root.commentId, rootCommentIds: [root.commentId] });
+            perThread.push({
+                text: buffer.join("\n"),
+                rootCommentId: root.commentId,
+                rootCommentIds: [root.commentId],
+            });
         }
     }
 
