@@ -161,7 +161,7 @@ export function CommentsTab({ videoId, useComments, runPipeline, pipelineProgres
 
 function CommentThreadView({ thread }: { thread: CommentThread }) {
     return (
-        <article className="rounded-2xl border border-primary/15 bg-black/20 p-4">
+        <article data-comment-id={thread.root.commentId} className="rounded-2xl border border-primary/15 bg-black/20 p-4">
             <CommentRow comment={thread.root} />
             {thread.replies.length > 0 ? (
                 <div className="mt-3 space-y-3 border-l border-primary/15 pl-4">

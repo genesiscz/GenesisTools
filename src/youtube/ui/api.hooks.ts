@@ -1,5 +1,5 @@
 import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
-import type { ChannelHandle, JobStage, JobStatus, VideoId } from "@app/youtube/lib/types";
+import type { ChannelHandle, JobStage, JobStatus, QaSource, VideoId } from "@app/youtube/lib/types";
 import { apiClient, clearApiBaseUrlCache } from "@app/yt/api.client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -122,7 +122,7 @@ export function useGenerateSummary(id: VideoId) {
 
 export function useAskVideo(id: VideoId) {
     return useMutation({
-        mutationFn: (vars: { question: string; topK?: number; provider?: string; model?: string }) =>
+        mutationFn: (vars: { question: string; topK?: number; provider?: string; model?: string; sources?: QaSource[] }) =>
             apiClient.askVideo(id, vars),
     });
 }

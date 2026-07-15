@@ -3,11 +3,25 @@ import { Input } from "@app/utils/ui/components/input";
 import { Markdown } from "@app/utils/ui/components/markdown";
 import { ShareButton } from "@app/utils/ui/components/youtube/share-button";
 import { StyleSelect } from "@app/utils/ui/components/youtube/style-select";
-import type { VideoDetailDataSource } from "@app/utils/ui/components/youtube/tabs";
+import type { PipelineProgress, RunPipeline, VideoDetailDataSource } from "@app/utils/ui/components/youtube/tabs";
 import { formatTimecode } from "@app/utils/ui/components/youtube/time";
-import type { AskCitation, QaHistoryItem, VideoId } from "@app/youtube/lib/types";
-import { ChevronDown, ChevronRight, Loader2, LockKeyhole, MessageCircleQuestion } from "lucide-react";
+import type { AskCitation, QaHistoryItem, QaSource, VideoComment, VideoId } from "@app/youtube/lib/types";
+import { ChevronDown, ChevronRight, Loader2, LockKeyhole, MessageCircleQuestion, MessagesSquare } from "lucide-react";
 import { useState } from "react";
+
+type AskScope = "video" | "comments" | "both";
+
+const SCOPE_SOURCES: Record<AskScope, QaSource[]> = {
+    video: ["transcript"],
+    comments: ["comments"],
+    both: ["transcript", "comments"],
+};
+
+const SCOPE_LABELS: Array<{ scope: AskScope; label: string }> = [
+    { scope: "video", label: "Video" },
+    { scope: "comments", label: "Comments" },
+    { scope: "both", label: "Both" },
+];
 
 /** Replace the model's inline `[#4]` citation markers with `#cite-N` anchor
  *  links labelled by the cited timestamp — the answer container intercepts
@@ -34,6 +48,7 @@ export interface AskTabProps {
             provider?: string;
             model?: string;
             presetId?: number;
+            sources?: QaSource[];
         }) => Promise<{ answer: string; citations?: AskCitation[] }>;
         isPending: boolean;
     };
@@ -48,6 +63,16 @@ export interface AskTabProps {
     useCreatePreset?: VideoDetailDataSource["useCreatePreset"];
     /** Invoked by the "Sign in" affordance when the ask endpoint returns 401. */
     onRequireLogin?: () => void;
+    /** Comments presence check for the Comments/Both scopes. */
+    useComments?: (id: VideoId | null) => {
+        data: { comments: VideoComment[] } | undefined;
+        isPending: boolean;
+    };
+    /** Existing pipeline trigger — powers the "Fetch comments" affordance. */
+    runPipeline?: RunPipeline;
+    pipelineProgress?: PipelineProgress | null;
+    /** Jump to a cited comment thread (switch tab + scroll + flash). */
+    onShowComment?: (commentId: string) => void;
 }
 
 /** One question+answer, rendered with citation links wired to the player. */
@@ -55,11 +80,17 @@ function ExchangeBody({
     answer,
     citations,
     onSeek,
+    onShowComment,
 }: {
     answer: string;
     citations: AskCitation[];
     onSeek: (seconds: number) => void;
+    onShowComment?: (commentId: string) => void;
 }) {
+    const commentCitations = citations.filter(
+        (citation) => citation.source === "comments" && citation.commentId !== null
+    );
+
     return (
         <>
             <Markdown
@@ -84,7 +115,7 @@ function ExchangeBody({
             {citations.length > 0 ? (
                 <div className="mt-3 flex flex-wrap gap-1.5">
                     {citations.map((citation, citationIndex) =>
-                        citation.startSec !== null ? (
+                        citation.source !== "comments" && citation.startSec !== null ? (
                             <button
                                 key={citationIndex}
                                 type="button"
@@ -95,6 +126,16 @@ function ExchangeBody({
                             </button>
                         ) : null
                     )}
+                    {commentCitations.map((citation, citationIndex) => (
+                        <button
+                            key={`comment-${citationIndex}`}
+                            type="button"
+                            onClick={() => citation.commentId && onShowComment?.(citation.commentId)}
+                            className="inline-flex h-6 items-center rounded-full border border-white/8 bg-black/20 px-2 text-[12px] font-mono"
+                        >
+                            @{(citation.author ?? "unknown").replace(/^@/, "")}
+                        </button>
+                    ))}
                 </div>
             ) : null}
         </>
@@ -109,6 +150,7 @@ function HistoryRow({
     onSeek,
     createShare,
     videoId,
+    onShowComment,
 }: {
     item: QaHistoryItem;
     expanded: boolean;
@@ -116,6 +158,7 @@ function HistoryRow({
     onSeek: (seconds: number) => void;
     createShare?: ReturnType<NonNullable<VideoDetailDataSource["useCreateShare"]>>;
     videoId: VideoId;
+    onShowComment?: (commentId: string) => void;
 }) {
     const Chevron = expanded ? ChevronDown : ChevronRight;
     const [linkCopied, setLinkCopied] = useState(false);
@@ -145,7 +188,12 @@ function HistoryRow({
                             />
                         </div>
                     ) : null}
-                    <ExchangeBody answer={item.answer} citations={item.citations} onSeek={onSeek} />
+                    <ExchangeBody
+                        answer={item.answer}
+                        citations={item.citations}
+                        onSeek={onSeek}
+                        onShowComment={onShowComment}
+                    />
                 </div>
             ) : null}
         </article>
@@ -161,6 +209,10 @@ export function AskTab({
     useListPresets,
     useCreatePreset,
     onRequireLogin,
+    useComments,
+    runPipeline,
+    pipelineProgress,
+    onShowComment,
 }: AskTabProps) {
     const ask = useAskVideo(videoId);
     const createShare = useCreateShare?.();
@@ -169,6 +221,8 @@ export function AskTab({
     const [presetId, setPresetId] = useState<number | null>(null);
     const [latestLinkCopied, setLatestLinkCopied] = useState(false);
     const history = useQaHistory?.(videoId);
+    const comments = useComments?.(videoId);
+    const [scope, setScope] = useState<AskScope>("video");
     const [question, setQuestion] = useState("");
     const [error, setError] = useState<string | null>(null);
     // Session fallback for consumers without server history — keeps the live
@@ -185,6 +239,8 @@ export function AskTab({
     const latest = items[0];
     const older = items.slice(1);
     const signInRequired = error === "login required";
+    const commentsUnfetched = useComments !== undefined && (comments?.data?.comments.length ?? 0) === 0;
+    const needsCommentsFetch = scope !== "video" && commentsUnfetched;
 
     async function submit() {
         const trimmed = question.trim();
@@ -195,7 +251,11 @@ export function AskTab({
 
         setError(null);
         try {
-            const result = await ask.mutateAsync({ question: trimmed, presetId: presetId ?? undefined });
+            const result = await ask.mutateAsync({
+                question: trimmed,
+                presetId: presetId ?? undefined,
+                sources: SCOPE_SOURCES[scope],
+            });
 
             if (!useQaHistory) {
                 setSessionExchange({ question: trimmed, answer: result.answer, citations: result.citations ?? [] });
@@ -228,6 +288,24 @@ export function AskTab({
                 <p className="mt-1 text-sm text-muted-foreground">
                     Answers come from the transcript (semantic search + your configured LLM), with timestamp citations.
                 </p>
+            </div>
+
+            <div className="inline-flex rounded-full border border-white/8 bg-black/20 p-0.5">
+                {SCOPE_LABELS.map(({ scope: value, label }) => (
+                    <button
+                        key={value}
+                        type="button"
+                        data-testid={`ask-scope-${value}`}
+                        onClick={() => setScope(value)}
+                        className={`h-7 rounded-full px-3 text-sm transition-colors ${
+                            scope === value
+                                ? "bg-primary/15 font-medium text-primary"
+                                : "text-muted-foreground hover:text-foreground"
+                        }`}
+                    >
+                        {label}
+                    </button>
+                ))}
             </div>
 
             <form
@@ -287,7 +365,37 @@ export function AskTab({
                 </div>
             ) : null}
 
-            {!latest && !sessionExchange && !ask.isPending && !error ? (
+            {needsCommentsFetch ? (
+                <div className="flex items-start gap-3 rounded-2xl border border-dashed border-primary/25 p-5">
+                    <MessagesSquare className="mt-0.5 size-5 shrink-0 text-primary" />
+                    <div className="min-w-0 flex-1 space-y-2.5">
+                        <p className="text-sm text-muted-foreground">Comments aren't fetched yet.</p>
+                        {runPipeline ? (
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                data-testid="ask-fetch-comments"
+                                onClick={() => runPipeline.run(["metadata", "comments"])}
+                                disabled={runPipeline.isPending || pipelineProgress != null}
+                            >
+                                {runPipeline.isPending || pipelineProgress != null ? (
+                                    <>
+                                        <Loader2 className="size-4 animate-spin" /> Fetching comments…
+                                    </>
+                                ) : (
+                                    "Fetch comments"
+                                )}
+                            </Button>
+                        ) : null}
+                        {pipelineProgress ? (
+                            <p className="text-xs tabular-nums text-muted-foreground">
+                                {Math.round(pipelineProgress.progress * 100)}%
+                                {pipelineProgress.message ? ` · ${pipelineProgress.message}` : ""}
+                            </p>
+                        ) : null}
+                    </div>
+                </div>
+            ) : !latest && !sessionExchange && !ask.isPending && !error ? (
                 <div className="flex items-start gap-3 rounded-2xl border border-dashed border-primary/25 p-5">
                     <MessageCircleQuestion className="mt-0.5 size-5 shrink-0 text-primary" />
                     <p className="text-sm text-muted-foreground">
@@ -303,6 +411,7 @@ export function AskTab({
                         answer={sessionExchange.answer}
                         citations={sessionExchange.citations}
                         onSeek={onSeek}
+                        onShowComment={onShowComment}
                     />
                 </article>
             ) : null}
@@ -323,7 +432,12 @@ export function AskTab({
                         ) : null}
                     </div>
                     {latestLinkCopied ? <p className="text-sm text-primary">Link copied</p> : null}
-                    <ExchangeBody answer={latest.answer} citations={latest.citations} onSeek={onSeek} />
+                    <ExchangeBody
+                        answer={latest.answer}
+                        citations={latest.citations}
+                        onSeek={onSeek}
+                        onShowComment={onShowComment}
+                    />
                 </article>
             ) : null}
 
@@ -353,6 +467,7 @@ export function AskTab({
                                     onSeek={onSeek}
                                     createShare={createShare}
                                     videoId={videoId}
+                                    onShowComment={onShowComment}
                                 />
                             ))}
                         </div>
