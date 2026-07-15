@@ -60,9 +60,13 @@ afterEach(() => {
     env.testing.unset("GENESIS_TOOLS_HOME");
 });
 
-function createUser(email: string, credits: number) {
+function createUser(email: string, credits: number, opts: { unlocked?: boolean } = {}) {
     const user = db.createUser({ email, passwordHash: "hash", apiToken: `ytu_${email}` });
     db.grantCredits(user.id, credits, "dev-topup");
+
+    if (opts.unlocked !== false) {
+        db.insertArtifactAccess({ userId: user.id, kind: "summary:long", videoId: VIDEO, creditsSpent: 0 });
+    }
 
     return { ...user, token: `ytu_${email}` };
 }
@@ -158,5 +162,23 @@ describe("summary audio routes", () => {
         const res = await call("GET", `/api/v1/videos/${VIDEO}/summary/audio`);
 
         expect(res.status).toBe(401);
+    });
+
+    it("403s users without long-summary access on both POST and GET", async () => {
+        const owner = createUser("owner@example.com", 100);
+        await call("POST", `/api/v1/videos/${VIDEO}/summary/audio`, { token: owner.token });
+
+        const outsider = createUser("outsider@example.com", 100, { unlocked: false });
+
+        const post = await call("POST", `/api/v1/videos/${VIDEO}/summary/audio`, { token: outsider.token });
+        expect(post.status).toBe(403);
+
+        const get = await call("GET", `/api/v1/videos/${VIDEO}/summary/audio?token=${outsider.token}`);
+        expect(get.status).toBe(403);
+
+        db.insertArtifactAccess({ userId: outsider.id, kind: "summary:long", videoId: VIDEO, creditsSpent: 0 });
+
+        const unlocked = await call("GET", `/api/v1/videos/${VIDEO}/summary/audio?token=${outsider.token}`);
+        expect(unlocked.status).toBe(200);
     });
 });
