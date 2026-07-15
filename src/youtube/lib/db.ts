@@ -1211,6 +1211,27 @@ export class YoutubeDatabase extends BaseDatabase {
         return rows.map(rowToQaHistoryItem);
     }
 
+    /**
+     * Best-effort context join for a ledger row: the nearest `qa_history` row
+     * for this user within a 2-second window of `createdAt`. `credit_ledger`
+     * carries no video/question reference of its own, so this proximity match
+     * is the only way to recover "what was this ask spend for" — nullable by
+     * design (Feature 09, ledger-views.ts).
+     */
+    findQaForLedgerRow(userId: number, createdAt: string): QaHistoryItem | null {
+        const row = this.db
+            .query<QaHistoryRow, [number, string, string]>(
+                `SELECT * FROM qa_history
+                 WHERE user_id = ?
+                   AND ABS(strftime('%s', created_at) - strftime('%s', ?)) <= 2
+                 ORDER BY ABS(strftime('%s', created_at) - strftime('%s', ?)) ASC
+                 LIMIT 1`
+            )
+            .get(userId, createdAt, createdAt);
+
+        return row ? rowToQaHistoryItem(row) : null;
+    }
+
     initSchemaForTest(): void {
         this.initSchema();
     }
