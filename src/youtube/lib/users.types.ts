@@ -40,6 +40,7 @@ export type CreditReason =
     | "dev-topup"
     | `stripe:${string}`
     | `stripe-refund:${string}`
+    | `refund:${string}`
     | `reuse:${string}`
     | `report:${string}`
     | `tts:${string}`;

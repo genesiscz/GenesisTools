@@ -6,6 +6,7 @@ import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 
 let xaiAvailable = true;
+let synthesizeFails = false;
 const synthesizeCalls: unknown[] = [];
 
 // Resolved BEFORE mock.module registers the override below, so this import
@@ -19,6 +20,11 @@ mock.module("@app/utils/ai/providers", () => ({
         isAvailable: async () => (type === "xai" ? xaiAvailable : false),
         synthesize: async (text: string, options?: { voice?: string }) => {
             synthesizeCalls.push({ type, text, options });
+
+            if (synthesizeFails) {
+                throw new Error("tts backend down");
+            }
+
             return { audio: Buffer.from("fake-mp3-bytes"), contentType: "audio/mpeg" };
         },
     }),
@@ -51,6 +57,7 @@ beforeEach(() => {
     });
     synthesizeCalls.length = 0;
     xaiAvailable = true;
+    synthesizeFails = false;
     env.testing.set("GENESIS_TOOLS_HOME", dir);
 });
 
@@ -162,6 +169,17 @@ describe("summary audio routes", () => {
         const res = await call("GET", `/api/v1/videos/${VIDEO}/summary/audio`);
 
         expect(res.status).toBe(401);
+    });
+
+    it("refunds the upfront debit when synthesis fails", async () => {
+        synthesizeFails = true;
+        const user = createUser("refund@example.com", 100);
+
+        const res = await call("POST", `/api/v1/videos/${VIDEO}/summary/audio`, { token: user.token });
+
+        expect(res.status).toBe(500);
+        expect(db.getUserByToken(user.token)?.credits).toBe(100);
+        expect(synthesizeCalls).toHaveLength(1);
     });
 
     it("403s users without long-summary access on both POST and GET", async () => {
