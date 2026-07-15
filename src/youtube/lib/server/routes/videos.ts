@@ -10,7 +10,7 @@ import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
 import { compactTranscript } from "@app/youtube/lib/transcript-compact";
-import type { ChannelHandle, Transcript, Video, VideoId } from "@app/youtube/lib/types";
+import type { ChannelHandle, QaSource, Transcript, Video, VideoId } from "@app/youtube/lib/types";
 import { CREDIT_COSTS, InsufficientCreditsError, REUSE_COST } from "@app/youtube/lib/types";
 import type { Youtube } from "@app/youtube/lib/youtube";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
@@ -435,10 +435,18 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 return jsonError("body must include {question: string}", 400);
             }
 
-            const transcript = yt.db.getTranscript(id);
+            const sources = parseSources(body.sources);
 
-            if (!transcript) {
-                return jsonError("no transcript yet for this video — run pipeline / transcribe first", 409);
+            if (sources.includes("transcript")) {
+                const transcript = yt.db.getTranscript(id);
+
+                if (!transcript) {
+                    return jsonError("no transcript yet for this video — run pipeline / transcribe first", 409);
+                }
+            }
+
+            if (sources.includes("comments") && yt.db.getComments(id).length === 0) {
+                return jsonError("comments not fetched yet", 409);
             }
 
             const question = body.question;
@@ -474,7 +482,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
             try {
                 const result = await withJobActivity({ jobId: job.id, stage: "summarize", db: yt.db }, async () => {
-                    await yt.qa.index({ videoId: id });
+                    await yt.qa.index({ videoId: id, sources });
                     yt.pipeline.emitExternal({
                         type: "stage:progress",
                         jobId: job.id,
@@ -488,6 +496,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         topK,
                         providerChoice,
                         presetInstructions,
+                        sources,
                     });
                 });
                 yt.db.updateJob(job.id, {
@@ -507,6 +516,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     answer: result.answer,
                     citations: result.citations,
                     creditsSpent: CREDIT_COSTS.ask,
+                    sources,
                 });
 
                 return Response.json(
@@ -633,6 +643,18 @@ function jsonError(error: string, status: number): Response {
         status,
         headers: { "Content-Type": "application/json", ...CORS_HEADERS },
     });
+}
+
+function parseSources(value: unknown): QaSource[] {
+    if (!Array.isArray(value)) {
+        return ["transcript"];
+    }
+
+    const valid = value.filter(
+        (entry): entry is QaSource => entry === "transcript" || entry === "comments"
+    );
+
+    return valid.length > 0 ? [...new Set(valid)] : ["transcript"];
 }
 
 function parseMode(value: unknown): "short" | "timestamped" | "long" {

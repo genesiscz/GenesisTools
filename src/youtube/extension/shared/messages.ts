@@ -10,6 +10,7 @@ import type {
     PipelineJob,
     PromptPreset,
     QaHistoryItem,
+    QaSource,
     ShareSummary,
     SummaryFormat,
     SummaryLength,
@@ -56,6 +57,7 @@ export type ExtensionRequest =
           provider?: string;
           model?: string;
           presetId?: number;
+          sources?: QaSource[];
       }
     | { type: "api:startPipeline"; target: string; targetKind?: "video" | "channel" | "url"; stages: JobStage[] }
     | { type: "api:getJob"; id: number }

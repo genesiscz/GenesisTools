@@ -36,9 +36,11 @@ export type {
     AskOpts,
     AskResult,
     ChunkedTranscript,
+    CommentChunk,
     IndexOpts,
     IndexResult,
     QaChunk,
+    QaSource,
 } from "@app/youtube/lib/qa.types";
 export type { ShareKind, ShareSummary } from "@app/youtube/lib/shares.types";
 export type {

@@ -105,6 +105,7 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
                     provider: req.provider,
                     model: req.model,
                     presetId: req.presetId,
+                    sources: req.sources,
                 }),
             });
         case "api:startPipeline":
