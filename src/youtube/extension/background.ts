@@ -34,6 +34,12 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
         return { ok: true, data: next };
     }
 
+    if (req.type === "nav:openWatch") {
+        const seconds = Math.max(0, Math.floor(req.t));
+        await chrome.tabs.create({ url: `https://www.youtube.com/watch?v=${encodeURIComponent(req.id)}&t=${seconds}s` });
+        return { ok: true, data: { opened: true } };
+    }
+
     const cfg = await getExtensionConfig();
     const base = cfg.apiBaseUrl.replace(/\/$/, "");
 
@@ -106,6 +112,7 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
                     model: req.model,
                     presetId: req.presetId,
                     sources: req.sources,
+                    scope: req.scope,
                 }),
             });
         case "api:startPipeline":

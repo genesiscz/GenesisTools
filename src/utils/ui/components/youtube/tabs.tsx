@@ -95,7 +95,12 @@ export interface VideoDetailDataSource {
             model?: string;
             presetId?: number;
             sources?: QaSource[];
-        }) => Promise<{ answer: string; citations?: AskCitation[] }>;
+            scope?: "video" | "channel";
+        }) => Promise<{
+            answer: string;
+            citations?: AskCitation[];
+            citedVideos?: Record<string, { title: string; uploadDate: string | null; thumbUrl: string | null }>;
+        }>;
         isPending: boolean;
     };
     /** Pre-flight cost estimate (`/videos/:id/estimate`). Optional — consumers
@@ -149,6 +154,8 @@ export interface VideoDetailTabsProps {
     pipelineProgress?: PipelineProgress | null;
     /** Opens the sign-in surface (settings dialog) when a spend endpoint returns 401. */
     onRequireLogin?: () => void;
+    /** Open another video's watch page at a timestamp (cross-video citations). */
+    onOpenWatch?: (videoId: string, t: number) => void;
 }
 
 export function VideoDetailTabs({
@@ -163,6 +170,7 @@ export function VideoDetailTabs({
     modelPresets,
     pipelineProgress,
     onRequireLogin,
+    onOpenWatch,
 }: VideoDetailTabsProps) {
     const rootRef = useRef<HTMLDivElement | null>(null);
     const pendingCommentRef = useRef<string | null>(null);
@@ -254,6 +262,7 @@ export function VideoDetailTabs({
                     runPipeline={runPipeline}
                     pipelineProgress={pipelineProgress}
                     onShowComment={showComment}
+                    onOpenWatch={onOpenWatch}
                 />
             </TabsContent>
             <TabsContent value="comments" className="yt-tab-pane">

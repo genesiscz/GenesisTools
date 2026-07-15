@@ -58,6 +58,7 @@ export type ExtensionRequest =
           model?: string;
           presetId?: number;
           sources?: QaSource[];
+          scope?: "video" | "channel";
       }
     | { type: "api:startPipeline"; target: string; targetKind?: "video" | "channel" | "url"; stages: JobStage[] }
     | { type: "api:getJob"; id: number }
@@ -90,7 +91,8 @@ export type ExtensionRequest =
     | { type: "api:listPresets"; kind?: "summary" | "insights" | "ask" }
     | { type: "api:createPreset"; name: string; kind: "summary" | "insights" | "ask"; instructions: string }
     | { type: "api:updatePreset"; id: number; name?: string; instructions?: string }
-    | { type: "api:deletePreset"; id: number };
+    | { type: "api:deletePreset"; id: number }
+    | { type: "nav:openWatch"; id: string; t: number }; // open watch page in a new tab (cross-video citation)
 
 export type ExtensionResponse = { ok: true; data: unknown } | { ok: false; error: string };
 
@@ -129,6 +131,8 @@ export interface ExtensionApiMap {
         creditsSpent: number;
         credits: number;
         historyId: number;
+        /** Metadata for every distinct cited video — drives grouped citation headers. */
+        citedVideos?: Record<string, { title: string; uploadDate: string | null; thumbUrl: string | null }>;
     };
     "api:startPipeline": { job: PipelineJob };
     "api:getJob": { job: PipelineJob };
@@ -153,4 +157,5 @@ export interface ExtensionApiMap {
     "api:createPreset": { preset: PromptPreset };
     "api:updatePreset": { preset: PromptPreset };
     "api:deletePreset": { deleted: boolean };
+    "nav:openWatch": { opened: true };
 }

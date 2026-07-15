@@ -2,10 +2,10 @@ import { estimateLlmCallCostUsd, estimateSpeechTokens } from "@app/utils/ai/llm-
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import { grantArtifactAccess, resolveArtifactPrice } from "@app/youtube/lib/artifact-access";
-import { selectCandidateVideos } from "@app/youtube/lib/qa";
 import { withJobActivity } from "@app/youtube/lib/job-activity";
 import { getPresetForUse } from "@app/youtube/lib/presets";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
+import { selectCandidateVideos } from "@app/youtube/lib/qa";
 import { requireUser, resolveUser } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
@@ -461,7 +461,10 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         videoIds.map((videoId) => {
                             const member = yt.db.getVideo(videoId);
 
-                            return [videoId, { title: member?.title ?? videoId, uploadDate: member?.uploadDate ?? null }];
+                            return [
+                                videoId,
+                                { title: member?.title ?? videoId, uploadDate: member?.uploadDate ?? null },
+                            ];
                         })
                     ),
                     skippedUnindexed: selection.skippedUnindexed,
@@ -551,8 +554,32 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     candidateVideoIds: scope === "channel" ? videoIds : undefined,
                 });
 
+                // Metadata for every distinct cited video — the UI renders
+                // grouped citation headers (title, date, thumbnail) from it.
+                const citedVideos = Object.fromEntries(
+                    [...new Set(result.citations.map((citation) => citation.videoId))].map((videoId) => {
+                        const member = yt.db.getVideo(videoId);
+
+                        return [
+                            videoId,
+                            {
+                                title: member?.title ?? videoId,
+                                uploadDate: member?.uploadDate ?? null,
+                                thumbUrl: member?.thumbUrl ?? null,
+                            },
+                        ];
+                    })
+                );
+
                 return Response.json(
-                    { ...result, jobId: job.id, creditsSpent: askCost, credits, historyId: historyItem.id },
+                    {
+                        ...result,
+                        jobId: job.id,
+                        creditsSpent: askCost,
+                        credits,
+                        historyId: historyItem.id,
+                        citedVideos,
+                    },
                     { headers: CORS_HEADERS }
                 );
             } catch (error) {
