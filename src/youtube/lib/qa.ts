@@ -1,5 +1,7 @@
+import { logger } from "@app/logger";
 import { callLLM } from "@app/utils/ai/call-llm";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
+import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import type { VideoComment } from "@app/youtube/lib/comments.types";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
@@ -31,6 +33,9 @@ const BOTH_SCOPE_TRANSCRIPT_BOOST = 1.15;
  * additively, so the offset keeps them from colliding with transcript rows.
  */
 const COMMENT_CHUNK_IDX_BASE = 100_000;
+/** Channel-scope asks lazily embed at most this many unindexed candidates. */
+export const MAX_LAZY_INDEX_PER_ASK = 5;
+const CANDIDATE_LIMIT_DEFAULT = 20;
 const COMMENT_ATTRIBUTION_PROMPT =
     "Claims sourced from comments must be attributed ('commenters point out…', 'one viewer disagrees…') — never present viewer opinions as statements made in the video.";
 
@@ -281,6 +286,98 @@ export function chunkTranscript(transcript: TranscriptChunkSource): ChunkedTrans
 }
 
 /**
+ * Cheap pre-filter for channel-scope asks: rank the channel's videos by
+ * question-term hits in titles (substring) + transcript text (FTS), recency
+ * as the tiebreak, and keep the top `limit`. Videos without qa_chunks are
+ * eligible for lazy indexing up to `MAX_LAZY_INDEX_PER_ASK`; the rest (and
+ * candidates without a transcript) count into `skippedUnindexed`.
+ */
+export function selectCandidateVideos(
+    db: YoutubeDatabase,
+    opts: { channel: ChannelHandle; question: string; limit?: number }
+): { videoIds: VideoId[]; skippedUnindexed: number } {
+    const limit = opts.limit ?? CANDIDATE_LIMIT_DEFAULT;
+    const videos = db.listVideos({ channel: opts.channel, includeShorts: true, limit: 1000 });
+
+    if (videos.length === 0) {
+        return { videoIds: [], skippedUnindexed: 0 };
+    }
+
+    const terms = questionTerms(opts.question);
+    const hits = new Map<VideoId, number>();
+
+    for (const term of terms) {
+        // Quote the term so FTS MATCH treats it as a literal token.
+        for (const hit of db.searchTranscripts(`"${term}"`, {
+            videoIds: videos.map((video) => video.id),
+            limit: 200,
+        })) {
+            hits.set(hit.videoId, (hits.get(hit.videoId) ?? 0) + 1);
+        }
+    }
+
+    for (const video of videos) {
+        const title = video.title.toLowerCase();
+        const titleHits = terms.filter((term) => title.includes(term)).length;
+
+        if (titleHits > 0) {
+            hits.set(video.id, (hits.get(video.id) ?? 0) + titleHits);
+        }
+    }
+
+    const ranked = [...videos]
+        .sort((a, b) => {
+            const hitDelta = (hits.get(b.id) ?? 0) - (hits.get(a.id) ?? 0);
+
+            if (hitDelta !== 0) {
+                return hitDelta;
+            }
+
+            return (b.uploadDate ?? "").localeCompare(a.uploadDate ?? "");
+        })
+        .slice(0, limit);
+
+    const videoIds: VideoId[] = [];
+    let lazyBudget = MAX_LAZY_INDEX_PER_ASK;
+    let skippedUnindexed = 0;
+
+    for (const video of ranked) {
+        if (db.hasQaChunks(video.id)) {
+            videoIds.push(video.id);
+            continue;
+        }
+
+        if (db.getTranscript(video.id) && lazyBudget > 0) {
+            lazyBudget -= 1;
+            videoIds.push(video.id);
+            continue;
+        }
+
+        skippedUnindexed += 1;
+    }
+
+    if (skippedUnindexed > 0) {
+        logger.info(
+            { channel: opts.channel, candidates: ranked.length, selected: videoIds.length, skippedUnindexed },
+            "youtube channel ask: skipping unindexed candidates beyond the lazy-index cap"
+        );
+    }
+
+    return { videoIds, skippedUnindexed };
+}
+
+function questionTerms(question: string): string[] {
+    return [
+        ...new Set(
+            question
+                .toLowerCase()
+                .split(/[^\p{L}\p{N}]+/u)
+                .filter((term) => term.length >= 3)
+        ),
+    ].slice(0, 8);
+}
+
+/**
  * Chunk comment threads for embedding. Threads keep root + replies together
  * (reply order = fetch order), every message is prefixed `@<author>: ` so
  * handles survive into the chunk text. Long threads split at reply boundaries;
@@ -381,4 +478,3 @@ function chunkAuthor(text: string): string | null {
 
     return match ? match[1] : null;
 }
-
