@@ -17,7 +17,7 @@ import type {
 import { send } from "@ext/api.bridge";
 import type { ExtensionApiMap } from "@ext/shared/messages";
 import type { ExtensionConfig } from "@ext/shared/types";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export function useConfig() {
     return useQuery({
@@ -231,6 +231,25 @@ export function useCheckout() {
     return useMutation({
         mutationFn: (vars: { packId: string }) =>
             send<ExtensionApiMap["api:checkout"]>({ type: "api:checkout", ...vars }),
+    });
+}
+
+export function useLedger(enabled = true) {
+    return useInfiniteQuery({
+        queryKey: ["ledger"],
+        queryFn: ({ pageParam }: { pageParam: number | undefined }) =>
+            send<ExtensionApiMap["api:ledger"]>({ type: "api:ledger", before: pageParam, limit: 50 }),
+        initialPageParam: undefined as number | undefined,
+        getNextPageParam: (lastPage) => lastPage.nextBefore ?? undefined,
+        enabled,
+    });
+}
+
+export function useUsageSummary(enabled = true) {
+    return useQuery({
+        queryKey: ["usageSummary"],
+        queryFn: () => send<ExtensionApiMap["api:usageSummary"]>({ type: "api:usageSummary" }),
+        enabled,
     });
 }
 

@@ -1,4 +1,5 @@
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
+import type { LedgerPage, LedgerRowData, UsageByReason, UsageSummary } from "@app/youtube/lib/ledger-views.types";
 
 // No real credit-ledger reason currently needs to stay whole despite having a
 // colon — every colon-bearing reason seen so far (`summary:long` etc,
@@ -16,24 +17,6 @@ export function ledgerReasonGroup(reason: string): string {
 
     const separatorIndex = reason.indexOf(":");
     return separatorIndex === -1 ? reason : reason.slice(0, separatorIndex);
-}
-
-export interface UsageDay {
-    date: string;
-    spent: number;
-    earned: number;
-}
-
-export interface UsageByReason {
-    reason: string;
-    spent: number;
-    count: number;
-}
-
-export interface UsageSummary {
-    days: UsageDay[];
-    byReason: UsageByReason[];
-    month: { spent: number; earned: number };
 }
 
 interface LedgerAggregateRow {
@@ -115,20 +98,6 @@ function last30DaysUtc(): string[] {
     return dates;
 }
 
-export interface LedgerRowData {
-    id: number;
-    delta: number;
-    reason: string;
-    balanceAfter: number;
-    createdAt: string;
-    context: string | null;
-}
-
-export interface LedgerPage {
-    rows: LedgerRowData[];
-    nextBefore: number | null;
-}
-
 interface LedgerDbRow {
     id: number;
     delta: number;
@@ -161,7 +130,7 @@ export function getLedgerPage(
                   )
                   .all(userId, limit);
 
-    const rows = rawRows.map((row) => ({
+    const rows: LedgerRowData[] = rawRows.map((row) => ({
         id: row.id,
         delta: row.delta,
         reason: row.reason,

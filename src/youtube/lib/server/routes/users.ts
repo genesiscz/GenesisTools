@@ -3,6 +3,7 @@ import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { createCheckoutSession } from "@app/youtube/lib/billing";
 import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
+import { getLedgerPage, getUsageSummary } from "@app/youtube/lib/ledger-views";
 import { requireUser } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
@@ -98,6 +99,37 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
                 logger.warn({ error, userId: user.id, packId }, "youtube billing: checkout session failed");
                 return jsonError(message, message.includes("not configured") ? 503 : 400);
             }
+        }
+
+        if (matchRoute(req, "GET", "/api/v1/users/ledger", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const rawLimit = url.searchParams.get("limit");
+            const rawBefore = url.searchParams.get("before");
+            const limit = rawLimit ? parseInt(rawLimit, 10) : undefined;
+            const before = rawBefore ? parseInt(rawBefore, 10) : undefined;
+            const page = getLedgerPage(yt.db, user.id, {
+                limit: limit !== undefined && !Number.isNaN(limit) ? limit : undefined,
+                before: before !== undefined && !Number.isNaN(before) ? before : undefined,
+            });
+
+            return Response.json(page, { headers: CORS_HEADERS });
+        }
+
+        if (matchRoute(req, "GET", "/api/v1/users/usage-summary", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const summary = getUsageSummary(yt.db, user.id);
+
+            return Response.json(summary, { headers: CORS_HEADERS });
         }
 
         if (matchRoute(req, "GET", "/api/v1/users/qa-history", url.pathname)) {
