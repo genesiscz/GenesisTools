@@ -189,11 +189,32 @@ export class QaService {
                 .slice(0, topK);
 
             const context = ranked
-                .map((rankedChunk, i) => `[#${i + 1} ${chunkTag(rankedChunk.chunk)}] ${rankedChunk.chunk.text}`)
+                .map((rankedChunk, i) => {
+                    const meta = opts.crossVideo?.videos[rankedChunk.chunk.videoId];
+                    const tag = meta
+                        ? `${meta.title} · ${meta.uploadDate ?? "unknown date"}${
+                              rankedChunk.chunk.startSec !== null
+                                  ? ` t=${Math.round(rankedChunk.chunk.startSec)}s`
+                                  : ""
+                          }`
+                        : chunkTag(rankedChunk.chunk);
+
+                    return `[#${i + 1} ${tag}] ${rankedChunk.chunk.text}`;
+                })
                 .join("\n\n");
             const baseSystemPrompt = [
                 "You answer questions about YouTube video transcripts. Cite the [#N] markers from the context to back every claim. If the context doesn't contain the answer, say so plainly.",
                 ...(sources.includes("comments") ? [COMMENT_ATTRIBUTION_PROMPT] : []),
+                ...(opts.crossVideo
+                    ? [
+                          'Context spans multiple videos from one channel — attribute claims per video ("In <title> (May 2026), he argues…").',
+                      ]
+                    : []),
+                ...(opts.crossVideo && opts.crossVideo.skippedUnindexed > 0
+                    ? [
+                          `End the answer with a one-line coverage note: ${opts.crossVideo.skippedUnindexed} candidate video(s) were not searched because they are not indexed yet.`,
+                      ]
+                    : []),
             ].join(" ");
             // Preset instructions append LAST, after all system instructions —
             // security-relevant per 2026-07-15-RoadmapFeature11-PromptPersonas.

@@ -17,25 +17,35 @@ export interface QaHistoryItem {
     createdAt: string;
     /** Ask scope the answer was produced from. Absent on pre-scope rows. */
     sources?: QaSource[];
+    /** Retrieval breadth: single video (default) or channel-wide. */
+    scope?: "video" | "channel";
+    /** Channel-scope only: the candidate videos the retrieval ran over. */
+    candidateVideoIds?: string[];
 }
 
 export type CreditReason =
     | "register-grant"
     | "ask"
+    | "qa:channel"
     | "summary:long"
     | "summary:timestamped"
     | "summary:short"
     | "dev-topup"
     | `stripe:${string}`
     | `stripe-refund:${string}`
-    | `reuse:${string}`;
+    | `reuse:${string}`
+    | `report:${string}`;
 
 export const CREDIT_COSTS = {
     ask: 5,
+    "qa:channel": 10,
     "summary:long": 10,
     "summary:timestamped": 10,
     "summary:short": 5,
 } as const;
+
+/** Flat synthesis fee for a multi-video report (on top of per-member summary costs). */
+export const REPORT_SYNTHESIS_COST = 20;
 
 export const STARTING_CREDITS = 100;
 
