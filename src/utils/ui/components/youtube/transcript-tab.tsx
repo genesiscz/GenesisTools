@@ -1,14 +1,14 @@
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
-import { Loading } from "@app/utils/ui/components/youtube/loading";
 import { activeChapterIndex } from "@app/utils/ui/components/youtube/chapters";
+import { Loading } from "@app/utils/ui/components/youtube/loading";
 import type { PipelineProgress, RunPipeline } from "@app/utils/ui/components/youtube/tabs";
 import { formatTimecode } from "@app/utils/ui/components/youtube/time";
 import { segmentsToParagraphs, type TranscriptParagraph } from "@app/utils/ui/components/youtube/transcript-paragraphs";
 import type { Transcript, TranscriptSegment, VideoId } from "@app/youtube/lib/types";
 import { Captions, ChevronDown, ChevronUp, Loader2, LocateFixed, Search } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 const DEFAULT_RENDER_LIMIT = 200;
 const DEFAULT_BUCKET_SEC = 120;
@@ -80,7 +80,16 @@ export interface TranscriptTabProps {
     useTranscript: (
         id: VideoId | null,
         opts?: { lang?: string; source?: "captions" | "ai" }
-    ) => { data: { transcript: Transcript } | undefined; isPending: boolean };
+    ) => {
+        data: { transcript: Transcript; speakerLabels?: Record<number, string> } | undefined;
+        isPending: boolean;
+    };
+    useSetSpeakers: (id: VideoId) => {
+        mutateAsync: (vars: {
+            speakers: Array<{ idx: number; label: string }>;
+        }) => Promise<{ speakerLabels?: Record<number, string> }>;
+        isPending: boolean;
+    };
     runPipeline?: RunPipeline;
     pipelineProgress?: PipelineProgress | null;
     /** Current playback second (1 Hz bridge) — drives follow mode. */
@@ -91,6 +100,7 @@ export function TranscriptTab({
     videoId,
     onSeek,
     useTranscript,
+    useSetSpeakers,
     runPipeline,
     pipelineProgress,
     playerTime,
@@ -100,11 +110,18 @@ export function TranscriptTab({
     const [bucketSec, setBucketSec] = useState<number>(DEFAULT_BUCKET_SEC);
     const [currentMatch, setCurrentMatch] = useState(0);
     const [follow, setFollow] = useState(false);
+    const [labelOverrides, setLabelOverrides] = useState<Record<number, string>>({});
     const scrollRef = useRef<HTMLDivElement | null>(null);
     const lastUserScrollAt = useRef(0);
     const transcript = useTranscript(videoId);
+    const setSpeakers = useSetSpeakers(videoId);
     const segments = transcript.data?.transcript.segments ?? [];
+    const serverLabels = transcript.data?.speakerLabels;
     const needle = query.trim().toLowerCase();
+
+    useEffect(() => {
+        setLabelOverrides({});
+    }, [videoId]);
 
     const blocks = useMemo(() => bucketSegments(segments, bucketSec), [segments, bucketSec]);
 
@@ -195,6 +212,29 @@ export function TranscriptTab({
             ?.querySelector(`[data-block="${activeBlockIndex}"]`)
             ?.scrollIntoView({ block: "center", behavior: "smooth" });
     }, [activeBlockIndex]);
+
+    function labelForSpeaker(idx: number): string {
+        return labelOverrides[idx] ?? serverLabels?.[idx] ?? `Speaker ${idx + 1}`;
+    }
+
+    function renameSpeaker(idx: number, label: string): void {
+        const previous = labelOverrides[idx];
+        // One map in state: every chip of this speaker updates instantly.
+        setLabelOverrides((prev) => ({ ...prev, [idx]: label }));
+        setSpeakers.mutateAsync({ speakers: [{ idx, label }] }).catch(() => {
+            setLabelOverrides((prev) => {
+                const next = { ...prev };
+
+                if (previous === undefined) {
+                    delete next[idx];
+                } else {
+                    next[idx] = previous;
+                }
+
+                return next;
+            });
+        });
+    }
 
     if (transcript.isPending) {
         return <Loading label="Loading transcript" />;
@@ -344,6 +384,9 @@ export function TranscriptTab({
                         matchStarts={matches.starts[index] ?? []}
                         currentMatch={currentMatch}
                         onSeek={onSeek}
+                        previousSpeaker={index > 0 ? trimmed[index - 1].paragraphs.at(-1)?.speaker : undefined}
+                        labelForSpeaker={labelForSpeaker}
+                        onRenameSpeaker={renameSpeaker}
                     />
                 ))}
             </div>
@@ -361,6 +404,58 @@ export function TranscriptTab({
     );
 }
 
+function SpeakerChip({ label, onRename }: { label: string; onRename: (label: string) => void }) {
+    const [editing, setEditing] = useState(false);
+    const [draft, setDraft] = useState(label);
+
+    if (!editing) {
+        return (
+            <div>
+                <button
+                    type="button"
+                    onClick={() => {
+                        setDraft(label);
+                        setEditing(true);
+                    }}
+                    className="inline-flex h-6 items-center rounded-full border border-white/8 bg-black/20 px-2 font-mono text-[12px]"
+                >
+                    {label}
+                </button>
+            </div>
+        );
+    }
+
+    return (
+        <div>
+            <Input
+                autoFocus
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                        event.preventDefault();
+                        const next = draft.trim();
+
+                        if (next.length > 0 && next !== label) {
+                            onRename(next);
+                        }
+
+                        setEditing(false);
+                        return;
+                    }
+
+                    if (event.key === "Escape") {
+                        event.preventDefault();
+                        setEditing(false);
+                    }
+                }}
+                onBlur={() => setEditing(false)}
+                className="h-6 w-32 border-0 bg-transparent font-mono text-[12px]"
+            />
+        </div>
+    );
+}
+
 function TranscriptRow({
     block,
     blockIndex,
@@ -370,6 +465,9 @@ function TranscriptRow({
     matchStarts,
     currentMatch,
     onSeek,
+    previousSpeaker,
+    labelForSpeaker,
+    onRenameSpeaker,
 }: {
     block: TranscriptBlock;
     blockIndex: number;
@@ -382,6 +480,10 @@ function TranscriptRow({
     /** Global index of the currently focused match. */
     currentMatch: number;
     onSeek: (seconds: number) => void;
+    /** Speaker of the last paragraph in the previous block, for chip boundaries. */
+    previousSpeaker: number | undefined;
+    labelForSpeaker: (idx: number) => string;
+    onRenameSpeaker: (idx: number, label: string) => void;
 }) {
     const label = showRange
         ? `${formatTimecode(block.start)}–${formatTimecode(block.end)}`
@@ -403,20 +505,33 @@ function TranscriptRow({
                 {label}
             </button>
             <div className="min-w-0 space-y-3">
-                {block.paragraphs.map((paragraph, i) => (
-                    <p
-                        key={`${paragraph.start}-${i}`}
-                        className="min-w-0 break-words text-sm leading-[1.65] text-foreground/85"
-                    >
-                        {highlight({
-                            text: paragraph.text,
-                            query,
-                            matchStart: matchStarts[i] ?? 0,
-                            currentMatch,
-                            onAltSeek: () => onSeek(paragraph.start),
-                        })}
-                    </p>
-                ))}
+                {block.paragraphs.map((paragraph, i) => {
+                    const prevSpeaker = i > 0 ? block.paragraphs[i - 1].speaker : previousSpeaker;
+                    const chipSpeaker =
+                        paragraph.speaker !== undefined && paragraph.speaker !== prevSpeaker
+                            ? paragraph.speaker
+                            : null;
+
+                    return (
+                        <Fragment key={`${paragraph.start}-${i}`}>
+                            {chipSpeaker !== null ? (
+                                <SpeakerChip
+                                    label={labelForSpeaker(chipSpeaker)}
+                                    onRename={(nextLabel) => onRenameSpeaker(chipSpeaker, nextLabel)}
+                                />
+                            ) : null}
+                            <p className="min-w-0 break-words text-sm leading-[1.65] text-foreground/85">
+                                {highlight({
+                                    text: paragraph.text,
+                                    query,
+                                    matchStart: matchStarts[i] ?? 0,
+                                    currentMatch,
+                                    onAltSeek: () => onSeek(paragraph.start),
+                                })}
+                            </p>
+                        </Fragment>
+                    );
+                })}
             </div>
         </article>
     );

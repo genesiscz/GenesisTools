@@ -75,13 +75,23 @@ export function useTranscript(id: VideoId | null, opts: { lang?: string; source?
     return useQuery({
         queryKey: ["transcript", id, opts.lang, opts.source],
         queryFn: () =>
-            send<{ transcript: Transcript }>({
+            send<ExtensionApiMap["api:getTranscript"]>({
                 type: "api:getTranscript",
                 id: id as VideoId,
                 lang: opts.lang,
                 source: opts.source,
             }),
         enabled: id !== null,
+    });
+}
+
+export function useSetSpeakers(id: VideoId) {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (vars: { speakers: Array<{ idx: number; label: string }> }) =>
+            send<ExtensionApiMap["api:setSpeakers"]>({ type: "api:setSpeakers", id, ...vars }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["transcript", id] }),
     });
 }
 
@@ -435,6 +445,7 @@ export const dataSource: VideoDetailDataSource = {
     useCreateShare,
     useListPresets,
     useCreatePreset,
+    useSetSpeakers,
 };
 
 export type { Channel };

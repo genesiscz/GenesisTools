@@ -133,6 +133,21 @@ export function useAskVideo(id: VideoId) {
     });
 }
 
+export function useSetSpeakers(id: VideoId) {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (vars: { speakers: Array<{ idx: number; label: string }> }) =>
+            apiClient.setSpeakers(id, vars.speakers),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["transcript", id] });
+        },
+        onError: (error) => {
+            toast.error("Renaming speaker failed", { description: errorMessage(error) });
+        },
+    });
+}
+
 export function useJobs(params: { status?: JobStatus; limit?: number } = {}) {
     return useQuery({
         queryKey: ["jobs", params],
