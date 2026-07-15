@@ -10,11 +10,12 @@ import {
     SummaryControlsBar,
     type SummaryControlsState,
 } from "@app/utils/ui/components/youtube/summary-controls";
+import { toPartialLongSummary } from "@app/utils/ui/components/youtube/summary-partials";
 import type { PipelineProgress, VideoDetailDataSource } from "@app/utils/ui/components/youtube/tabs";
 import type { LlmEstimate, LockedArtifact, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
 import { CREDIT_COSTS } from "@app/youtube/lib/types";
 import { Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const NO_ESTIMATE = { data: undefined, isPending: false } as const;
 
@@ -47,6 +48,10 @@ export interface SummaryTabProps {
     useCreateShare?: VideoDetailDataSource["useCreateShare"];
     useListPresets?: VideoDetailDataSource["useListPresets"];
     useCreatePreset?: VideoDetailDataSource["useCreatePreset"];
+    /** Streaming `summary:partial` payload for the long mode, if a generation is running. */
+    partialLong?: unknown;
+    /** True while long-summary partials are streaming in. */
+    streaming?: boolean;
 }
 
 export function SummaryTab({
@@ -60,6 +65,8 @@ export function SummaryTab({
     devMode,
     modelPresets,
     pipelineProgress,
+    partialLong,
+    streaming,
 }: SummaryTabProps & { devMode?: boolean; modelPresets?: ModelPreset[]; pipelineProgress?: PipelineProgress | null }) {
     const summary = useSummary(videoId, "long");
     const generate = useGenerateSummary(videoId);
@@ -80,8 +87,23 @@ export function SummaryTab({
         : null;
     const lockedInfo = summary.data?.locked ? summary.data : null;
     const long = (summary.data && !summary.data.locked && summary.data.long) || null;
+    const hasPartial = partialLong !== undefined;
 
-    if (summary.isPending) {
+    useEffect(() => {
+        // First streamed partial closes the confirm dialog — content takes over
+        // from the dialog's progress view. Reuse unlocks never stream, so this
+        // only fires on fresh generations.
+        if (streaming && hasPartial) {
+            setConfirmOpen(false);
+        }
+    }, [streaming, hasPartial]);
+
+    // The partial outlives the stream (kept until the refetched query has data)
+    // so completion swaps content without a flash of emptiness.
+    const partial = hasPartial ? toPartialLongSummary(partialLong) : null;
+    const idleSummary = long ?? partial;
+
+    if (summary.isPending && !partial) {
         return <Loading label="Loading summary" />;
     }
 
@@ -146,7 +168,17 @@ export function SummaryTab({
                     creating={createPreset.isPending}
                 />
             ) : null}
-            {lockedInfo !== null ? (
+            {streaming ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin text-primary" />
+                    Writing…
+                </div>
+            ) : null}
+            {streaming && partial !== null ? (
+                // Generating state: streamed partials render through the normal
+                // view (skeletons for pending sections) — never on the teaser.
+                <LongSummaryView summary={partial} streaming />
+            ) : lockedInfo !== null ? (
                 <div
                     data-testid="summary-locked"
                     className="space-y-3 rounded-2xl border border-white/8 bg-black/20 p-3"
@@ -186,7 +218,7 @@ export function SummaryTab({
                         </Button>
                     </div>
                 </div>
-            ) : long === null ? (
+            ) : idleSummary === null ? (
                 <p
                     data-testid="summary-empty"
                     className="rounded-2xl border border-dashed border-primary/25 p-5 text-muted-foreground"
@@ -197,7 +229,9 @@ export function SummaryTab({
                     verdict.
                 </p>
             ) : (
-                <LongSummaryView summary={long} />
+                // `long ?? partial`: a just-completed stream keeps rendering the
+                // retained partial until the refetched query lands (no flash).
+                <LongSummaryView summary={idleSummary} />
             )}
             <LlmConfirmDialog
                 open={confirmOpen}
