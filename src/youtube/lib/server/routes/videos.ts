@@ -1,16 +1,17 @@
 import { estimateLlmCallCostUsd, estimateSpeechTokens } from "@app/utils/ai/llm-cost";
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
+import { grantArtifactAccess, resolveArtifactPrice } from "@app/youtube/lib/artifact-access";
 import { withJobActivity } from "@app/youtube/lib/job-activity";
 import { getPresetForUse } from "@app/youtube/lib/presets";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
-import { requireUser } from "@app/youtube/lib/server/auth";
+import { requireUser, resolveUser } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
 import { compactTranscript } from "@app/youtube/lib/transcript-compact";
-import type { ChannelHandle, Transcript, VideoId } from "@app/youtube/lib/types";
-import { CREDIT_COSTS, InsufficientCreditsError } from "@app/youtube/lib/types";
+import type { ChannelHandle, Transcript, Video, VideoId } from "@app/youtube/lib/types";
+import { CREDIT_COSTS, InsufficientCreditsError, REUSE_COST } from "@app/youtube/lib/types";
 import type { Youtube } from "@app/youtube/lib/youtube";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 
@@ -110,6 +111,22 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             }
 
             const mode = parseMode(url.searchParams.get("mode"));
+
+            // Existing artifact + authenticated user without an access row →
+            // locked teaser envelope (never a 402 on GET — the UI needs the
+            // price to render the unlock). Anonymous requests keep the open
+            // behavior: the local web UI has no login surface.
+            if (yt.db.hasArtifact(`summary:${mode}`, id)) {
+                const viewer = resolveUser(req, url, yt.db);
+
+                if (viewer && !yt.db.hasArtifactAccess(viewer.id, `summary:${mode}`, id)) {
+                    return Response.json(
+                        { locked: true, price: REUSE_COST, preview: { tldr: summaryPreview(video, mode) }, mode },
+                        { headers: CORS_HEADERS }
+                    );
+                }
+            }
+
             const cached =
                 mode === "timestamped"
                     ? video.summaryTimestamped
@@ -142,6 +159,43 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             const body = (await safeJsonBody(req)) ?? {};
             const mode = parseMode(body.mode);
             const creditCost = CREDIT_COSTS[`summary:${mode}`];
+            const force = body.force === true;
+
+            // Reuse/owned short-circuit: the artifact already exists — charge
+            // the flat unlock price (or nothing when already unlocked) and
+            // return the stored content immediately. No LLM call, no job.
+            // `force` opts into a fresh regeneration at full price instead.
+            if (!force && yt.db.hasArtifact(`summary:${mode}`, id)) {
+                const pricing = resolveArtifactPrice(yt.db, { userId: user.id, kind: `summary:${mode}`, videoId: id });
+
+                if (user.credits < pricing.price) {
+                    return insufficientDiamonds(user.credits, pricing.price);
+                }
+
+                let credits = user.credits;
+
+                if (pricing.reused) {
+                    credits = yt.db.spendCredits(user.id, pricing.price, `reuse:summary:${mode}:${id}`);
+                    grantArtifactAccess(yt.db, {
+                        userId: user.id,
+                        kind: `summary:${mode}`,
+                        videoId: id,
+                        creditsSpent: pricing.price,
+                    });
+                }
+
+                return Response.json(
+                    {
+                        summary: storedSummary(yt.videos.show(id), mode),
+                        mode,
+                        cached: true,
+                        reused: pricing.reused,
+                        creditsSpent: pricing.reused ? pricing.price : 0,
+                        credits,
+                    },
+                    { headers: CORS_HEADERS }
+                );
+            }
 
             // Balance pre-check → 402 BEFORE spending LLM tokens. The debit
             // itself happens after the summarize succeeds; a race between two
@@ -150,7 +204,6 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 return insufficientDiamonds(user.credits, creditCost);
             }
 
-            const force = body.force === true;
             const provider = typeof body.provider === "string" ? body.provider : undefined;
             const model = typeof body.model === "string" ? body.model : undefined;
             const tone = parseTone(body.tone);
@@ -264,6 +317,14 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 yt.pipeline.emitExternal({ type: "stage:completed", jobId: job.id, stage: "summarize" });
                 yt.pipeline.emitExternal({ type: "job:completed", job: completedJob });
                 const credits = yt.db.spendCredits(user.id, creditCost, `summary:${mode}`);
+                // Full-price generation also records access — the generator
+                // never pays again, and later users can unlock this artifact.
+                grantArtifactAccess(yt.db, {
+                    userId: user.id,
+                    kind: `summary:${mode}`,
+                    videoId: id,
+                    creditsSpent: creditCost,
+                });
 
                 return Response.json(
                     {
@@ -327,6 +388,14 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 estUsd = estimateLlmCallCostUsd({ pricing, inputTokens, outputTokens });
             }
 
+            // Reuse pricing: an existing artifact the viewer has no access to
+            // costs the flat unlock price; already-unlocked costs nothing.
+            const viewer = resolveUser(req, url, yt.db);
+            const artifactExists = yt.db.hasArtifact(`summary:${mode}`, id);
+            const hasAccess =
+                viewer !== null && artifactExists && yt.db.hasArtifactAccess(viewer.id, `summary:${mode}`, id);
+            const reused = artifactExists && !hasAccess;
+
             return Response.json(
                 {
                     provider: choice.provider.name,
@@ -337,7 +406,8 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     outputTokens,
                     estUsd,
                     basis,
-                    creditCost: CREDIT_COSTS[`summary:${mode}`],
+                    creditCost: artifactExists ? (hasAccess ? 0 : REUSE_COST) : CREDIT_COSTS[`summary:${mode}`],
+                    reused,
                 },
                 { headers: CORS_HEADERS }
             );
@@ -462,6 +532,30 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
         return toErrorResponse(err);
     }
+}
+
+function storedSummary(video: Video | null, mode: "short" | "timestamped" | "long") {
+    if (!video) {
+        return mode === "timestamped" ? [] : mode === "long" ? null : "";
+    }
+
+    return mode === "timestamped"
+        ? (video.summaryTimestamped ?? [])
+        : mode === "long"
+          ? (video.summaryLong ?? null)
+          : (video.summaryShort ?? "");
+}
+
+/** First 140 chars of the artifact's text — the locked envelope's teaser. */
+function summaryPreview(video: Video, mode: "short" | "timestamped" | "long"): string {
+    const source =
+        mode === "long"
+            ? video.summaryLong?.tldr
+            : mode === "timestamped"
+              ? video.summaryTimestamped?.map((entry) => entry.text).join(" ")
+              : video.summaryShort;
+
+    return (source ?? "").slice(0, 140);
 }
 
 function insufficientDiamonds(balance: number, required: number): Response {
