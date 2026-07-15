@@ -134,6 +134,18 @@ const USER_TOKEN_PREFIX = "ytu_";
  * `?access_token=` query param (WS-style fallback). Tokens without the `ytu_`
  * prefix are ignored here — they may be service keys handled elsewhere.
  */
+/**
+ * Best-effort user resolution for routes that stay open without a login
+ * (locked-artifact GETs, estimates). Same token sources as `requireUser`,
+ * but a missing/invalid token yields `null` instead of a 401.
+ */
+export function resolveUser(req: Request, url: URL, db: YoutubeDatabase): YtUser | null {
+    const presented = extractBearerToken(req) ?? url.searchParams.get("access_token");
+    const token = presented?.startsWith(USER_TOKEN_PREFIX) ? presented : null;
+
+    return token ? db.getUserByToken(token) : null;
+}
+
 export function requireUser(req: Request, url: URL, db: YoutubeDatabase): YtUser | Response {
     const presented = extractBearerToken(req) ?? url.searchParams.get("access_token");
     const token = presented?.startsWith(USER_TOKEN_PREFIX) ? presented : null;

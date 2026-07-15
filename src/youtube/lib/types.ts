@@ -57,8 +57,8 @@ export type {
     TranscriberResult,
     TranscriberSegment,
 } from "@app/youtube/lib/transcripts.types";
-export type { CreditReason, QaHistoryItem, YtUser } from "@app/youtube/lib/users.types";
-export { CREDIT_COSTS, InsufficientCreditsError, STARTING_CREDITS } from "@app/youtube/lib/users.types";
+export type { ArtifactKind, CreditReason, LockedArtifact, QaHistoryItem, YtUser } from "@app/youtube/lib/users.types";
+export { CREDIT_COSTS, InsufficientCreditsError, REUSE_COST, STARTING_CREDITS } from "@app/youtube/lib/users.types";
 export type {
     SummaryFormat,
     SummaryLength,

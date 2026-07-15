@@ -91,4 +91,6 @@ export interface LlmEstimate {
     basis: "transcript" | "duration" | null;
     /** Diamond price of the run (`CREDIT_COSTS`), shown next to the $ estimate. */
     creditCost: number;
+    /** True when the artifact already exists and the user would pay the flat reuse price instead of generating. */
+    reused?: boolean;
 }
