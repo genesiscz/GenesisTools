@@ -160,6 +160,21 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
             const suffix = query.toString() ? `?${query.toString()}` : "";
             return apiCall(`${base}/api/v1/users/qa-history${suffix}`);
         }
+        case "api:checkout": {
+            const res = await apiCall(`${base}/api/v1/users/checkout`, {
+                method: "POST",
+                body: JSON.stringify({ packId: req.packId }),
+            });
+            // Checkout opens in a new browser tab — the panel must never iframe
+            // Stripe's hosted page.
+            if (res.ok) {
+                const data = res.data as { url?: string };
+                if (typeof data.url === "string") {
+                    await chrome.tabs.create({ url: data.url });
+                }
+            }
+            return res;
+        }
     }
 }
 

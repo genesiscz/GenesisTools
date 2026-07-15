@@ -57,7 +57,8 @@ export type ExtensionRequest =
     | { type: "api:logout" } // local-only: clears the stored token
     | { type: "api:me" }
     | { type: "api:topup"; amount?: number }
-    | { type: "api:qaHistory"; id?: VideoId; limit?: number };
+    | { type: "api:qaHistory"; id?: VideoId; limit?: number }
+    | { type: "api:checkout"; packId: string };
 
 export type ExtensionResponse = { ok: true; data: unknown } | { ok: false; error: string };
 
@@ -103,4 +104,5 @@ export interface ExtensionApiMap {
     "api:me": { user: YtUser };
     "api:topup": { user: YtUser };
     "api:qaHistory": { items: QaHistoryItem[] };
+    "api:checkout": { url: string };
 }
