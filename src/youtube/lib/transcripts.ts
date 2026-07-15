@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
 import { Transcriber } from "@app/utils/ai/tasks/Transcriber";
+import { speakerIndexFromLabel } from "@app/utils/ai/transcription/speaker-label";
 import { withFileLock } from "@app/utils/storage";
 import { audioPath, ensureBinaryDir } from "@app/youtube/lib/cache";
 import { fetchCaptions } from "@app/youtube/lib/captions";
@@ -83,8 +84,12 @@ export class TranscriptService {
         }
 
         const provider = await this.config.get("provider");
+        const providerName = opts.provider ?? provider.transcribe;
+        // Diarization is Deepgram-native only; other providers would trigger the
+        // heavy local-pyannote fallback, so keep them exactly as before.
+        const diarize = providerName?.includes("deepgram") ?? false;
         const transcriber = await this.deps.createTranscriber({
-            provider: opts.provider ?? provider.transcribe,
+            provider: providerName,
             persist: opts.persistProvider,
         });
 
@@ -92,12 +97,13 @@ export class TranscriptService {
             opts.onProgress?.({ phase: "transcribe", message: "running ASR" });
             const result = (await transcriber.transcribe(audio, {
                 language: opts.lang,
+                diarize,
                 onProgress: (info: TranscriberProgressInfo) =>
                     opts.onProgress?.({ phase: "transcribe", percent: info.percent, message: info.message }),
             })) as TranscriberResult;
             await recordYoutubeUsage({
                 action: "transcribe:ai",
-                provider: opts.provider ?? provider.transcribe ?? "default",
+                provider: providerName ?? "default",
                 model: "(transcriber-default)",
                 scope: opts.videoId,
             });
@@ -108,11 +114,16 @@ export class TranscriptService {
                 source: "ai",
                 text: result.text,
                 segments:
-                    result.segments?.map((segment) => ({
-                        text: segment.text,
-                        start: segment.start,
-                        end: segment.end,
-                    })) ?? [],
+                    result.segments?.map((segment) => {
+                        const speaker = speakerIndexFromLabel(segment.speaker);
+
+                        return {
+                            text: segment.text,
+                            start: segment.start,
+                            end: segment.end,
+                            ...(speaker === undefined ? {} : { speaker }),
+                        };
+                    }) ?? [],
                 durationSec: result.duration ?? null,
             });
             const saved = this.db.getTranscript(opts.videoId, { lang, source: "ai" });

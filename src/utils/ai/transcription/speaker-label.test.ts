@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { normalizeSpeakerLabel } from "./speaker-label";
+import { normalizeSpeakerLabel, speakerIndexFromLabel } from "./speaker-label";
 
 describe("normalizeSpeakerLabel", () => {
     it("uppercases sherpa lowercase labels", () => {
@@ -27,5 +27,20 @@ describe("normalizeSpeakerLabel", () => {
         expect(normalizeSpeakerLabel(1.5)).toBeUndefined();
         expect(normalizeSpeakerLabel(Number.NaN)).toBeUndefined();
         expect(normalizeSpeakerLabel(Number.POSITIVE_INFINITY)).toBeUndefined();
+    });
+});
+
+describe("speakerIndexFromLabel", () => {
+    it("extracts the numeric index from SPEAKER_NN labels", () => {
+        expect(speakerIndexFromLabel("SPEAKER_00")).toBe(0);
+        expect(speakerIndexFromLabel("SPEAKER_07")).toBe(7);
+        expect(speakerIndexFromLabel("speaker_12")).toBe(12);
+    });
+
+    it("returns undefined without trailing digits or for empty input", () => {
+        expect(speakerIndexFromLabel("HOST")).toBeUndefined();
+        expect(speakerIndexFromLabel("")).toBeUndefined();
+        expect(speakerIndexFromLabel(undefined)).toBeUndefined();
+        expect(speakerIndexFromLabel(null)).toBeUndefined();
     });
 });

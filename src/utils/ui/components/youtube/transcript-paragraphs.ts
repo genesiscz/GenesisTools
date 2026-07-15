@@ -14,6 +14,8 @@ export interface TranscriptParagraph {
     text: string;
     start: number;
     end: number;
+    /** Diarized speaker index of the paragraph's segments, when present. */
+    speaker?: number;
 }
 
 const SENTENCE_END_RE = /[.!?…。！？](["'’)\]]*)\s*$/;
@@ -47,6 +49,7 @@ export function segmentsToParagraphs(segments: TranscriptSegment[]): TranscriptP
     let bufStart = segments[0].start;
     let bufEnd = segments[0].start;
     let bufSentences = 0;
+    let bufSpeaker: number | undefined;
 
     function flush(): void {
         const trimmed = buf.trim();
@@ -54,12 +57,19 @@ export function segmentsToParagraphs(segments: TranscriptSegment[]): TranscriptP
             return;
         }
 
-        if (trimmed.length < MIN_CHARS && out.length > 0) {
+        // Short orphans get absorbed into the previous paragraph, but never
+        // across a diarized speaker boundary — chips must stay truthful.
+        if (trimmed.length < MIN_CHARS && out.length > 0 && out[out.length - 1].speaker === bufSpeaker) {
             const prev = out[out.length - 1];
             prev.text = `${prev.text} ${trimmed}`;
             prev.end = bufEnd;
         } else {
-            out.push({ text: trimmed, start: bufStart, end: bufEnd });
+            out.push({
+                text: trimmed,
+                start: bufStart,
+                end: bufEnd,
+                ...(bufSpeaker === undefined ? {} : { speaker: bufSpeaker }),
+            });
         }
 
         buf = "";
@@ -73,10 +83,18 @@ export function segmentsToParagraphs(segments: TranscriptSegment[]): TranscriptP
             continue;
         }
 
+        // A diarized speaker CHANGE is a hard paragraph boundary (in addition
+        // to the timing/punctuation rules). Segments without speaker data
+        // never trigger it, so caption transcripts group exactly as before.
+        if (buf && seg.speaker !== undefined && seg.speaker !== bufSpeaker) {
+            flush();
+        }
+
         if (!buf) {
             buf = chunk;
             bufStart = seg.start;
             bufEnd = seg.end;
+            bufSpeaker = seg.speaker;
         } else {
             buf = `${buf} ${chunk}`;
             bufEnd = seg.end;

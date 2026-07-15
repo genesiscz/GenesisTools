@@ -1,4 +1,4 @@
-import type { Language } from "@app/youtube/lib/transcript.types";
+import type { Language, TranscriptSegment } from "@app/youtube/lib/transcript.types";
 import type { VideoId } from "@app/youtube/lib/video.types";
 import type { DownloadAudioOpts, DownloadAudioResult, YtDlpProgressInfo } from "@app/youtube/lib/yt-dlp.types";
 
@@ -27,6 +27,8 @@ export interface TranscriberSegment {
     text: string;
     start: number;
     end: number;
+    /** Normalized `SPEAKER_NN` label from diarization, when requested. */
+    speaker?: string;
 }
 
 export interface TranscriberResult {
@@ -39,7 +41,7 @@ export interface TranscriberResult {
 export interface TranscriptServiceTranscriber {
     transcribe(
         audioPath: string,
-        opts: { language?: Language; onProgress?: (info: TranscriberProgressInfo) => void }
+        opts: { language?: Language; diarize?: boolean; onProgress?: (info: TranscriberProgressInfo) => void }
     ): Promise<TranscriberResult>;
     dispose(): void;
 }
@@ -48,7 +50,7 @@ export interface TranscriptServiceDeps {
     fetchCaptions: (opts: {
         videoId: VideoId;
         preferredLangs?: Language[];
-    }) => Promise<{ text: string; segments: TranscriberSegment[]; lang: Language } | null>;
+    }) => Promise<{ text: string; segments: TranscriptSegment[]; lang: Language } | null>;
     downloadAudio: (opts: DownloadAudioOpts) => Promise<DownloadAudioResult>;
     createTranscriber: (opts: { provider?: string; persist?: boolean }) => Promise<TranscriptServiceTranscriber>;
 }
