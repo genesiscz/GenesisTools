@@ -104,6 +104,10 @@ export const paths = {
     // ports
     ports: () => "/api/ports",
     portsKill: () => "/api/ports/kill",
+    // unified live SSE bus
+    live: (channels: string[] = []) =>
+        `/api/live${qs({ channels: channels.length > 0 ? channels.join(",") : undefined })}`,
+    liveSubscribe: () => "/api/live/subscribe",
     // qa
     qaLog: (q: { project?: string; tag?: string; unread?: boolean; limit?: number } = {}) =>
         `/api/qa/log${qs({

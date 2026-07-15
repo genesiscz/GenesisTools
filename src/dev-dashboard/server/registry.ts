@@ -1,5 +1,7 @@
 import { getConfig } from "@app/dev-dashboard/config";
 import { startPolling } from "@app/dev-dashboard/lib/cmux/poller";
+import { startLiveProducers } from "@app/dev-dashboard/lib/live/producers";
+import { getLiveHub } from "@app/dev-dashboard/lib/live/singleton";
 import { configureRetention, startPulsePolling } from "@app/dev-dashboard/lib/system/poller";
 import { Router } from "@app/dev-dashboard/server/router";
 import { attentionRoutes } from "@app/dev-dashboard/server/routes/attention";
@@ -16,6 +18,7 @@ import { containersRoutes } from "@app/dev-dashboard/server/routes/containers";
 import { daemonRoutes } from "@app/dev-dashboard/server/routes/daemon";
 import { diskRoutes } from "@app/dev-dashboard/server/routes/disk";
 import { e2eRoutes } from "@app/dev-dashboard/server/routes/e2e";
+import { liveRoutes } from "@app/dev-dashboard/server/routes/live";
 import { netRoutes } from "@app/dev-dashboard/server/routes/net";
 import { obsidianRoutes } from "@app/dev-dashboard/server/routes/obsidian";
 import { portsRoutes } from "@app/dev-dashboard/server/routes/ports";
@@ -56,6 +59,7 @@ export function createDashboardRouter(): Router {
         ...containersRoutes(),
         ...diskRoutes(),
         ...portsRoutes(),
+        ...liveRoutes(getLiveHub()),
         ...processesRoutes(),
         ...qaRoutes(),
         ...attentionRoutes(),
@@ -76,6 +80,8 @@ export async function startBackgroundServices(): Promise<void> {
     }
 
     started = true;
+    // Keep producers alive for the process lifetime (hub is process-singleton).
+    startLiveProducers(getLiveHub());
 
     try {
         const { cmuxPollIntervalMs, pulse } = await getConfig();

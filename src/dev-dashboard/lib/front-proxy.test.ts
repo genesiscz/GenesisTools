@@ -130,5 +130,8 @@ describe("isLongLivedProxiedStream", () => {
         expect(isLongLivedProxiedStream("/api/boards/work/wait")).toBe(true);
         expect(isLongLivedProxiedStream("/api/boards/my-board/events")).toBe(true);
         expect(isLongLivedProxiedStream("/api/boards/my-board")).toBe(false);
+        expect(isLongLivedProxiedStream("/api/ports/classify")).toBe(true);
+        expect(isLongLivedProxiedStream("/api/live")).toBe(true);
+        expect(isLongLivedProxiedStream("/api/ports")).toBe(false);
     });
 });
