@@ -2,11 +2,11 @@ import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import { Loading } from "@app/utils/ui/components/youtube/loading";
-import type { RunPipeline } from "@app/utils/ui/components/youtube/tabs";
+import type { PipelineProgress, RunPipeline } from "@app/utils/ui/components/youtube/tabs";
 import { formatTimecode } from "@app/utils/ui/components/youtube/time";
 import { segmentsToParagraphs, type TranscriptParagraph } from "@app/utils/ui/components/youtube/transcript-paragraphs";
 import type { Transcript, TranscriptSegment, VideoId } from "@app/youtube/lib/types";
-import { Captions, Search } from "lucide-react";
+import { Captions, Loader2, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
 const DEFAULT_RENDER_LIMIT = 200;
@@ -79,9 +79,10 @@ export interface TranscriptTabProps {
         opts?: { lang?: string; source?: "captions" | "ai" }
     ) => { data: { transcript: Transcript } | undefined; isPending: boolean };
     runPipeline?: RunPipeline;
+    pipelineProgress?: PipelineProgress | null;
 }
 
-export function TranscriptTab({ videoId, onSeek, useTranscript, runPipeline }: TranscriptTabProps) {
+export function TranscriptTab({ videoId, onSeek, useTranscript, runPipeline, pipelineProgress }: TranscriptTabProps) {
     const [query, setQuery] = useState("");
     const [showAll, setShowAll] = useState(false);
     const [bucketSec, setBucketSec] = useState<number>(DEFAULT_BUCKET_SEC);
@@ -112,7 +113,7 @@ export function TranscriptTab({ videoId, onSeek, useTranscript, runPipeline }: T
     }
 
     if (segments.length === 0) {
-        const isRunning = runPipeline?.isPending ?? false;
+        const isRunning = (runPipeline?.isPending ?? false) || pipelineProgress != null;
 
         return (
             <div className="space-y-4 rounded-2xl border border-dashed border-primary/25 p-5">
@@ -133,8 +134,20 @@ export function TranscriptTab({ videoId, onSeek, useTranscript, runPipeline }: T
                             onClick={() => runPipeline.run(["captions"])}
                             disabled={isRunning}
                         >
-                            {isRunning ? "Fetching transcript…" : "Fetch transcript"}
+                            {isRunning ? (
+                                <>
+                                    <Loader2 className="size-4 animate-spin" /> Fetching transcript…
+                                </>
+                            ) : (
+                                "Fetch transcript"
+                            )}
                         </Button>
+                    ) : null}
+                    {pipelineProgress ? (
+                        <span className="text-xs tabular-nums text-muted-foreground">
+                            {Math.round(pipelineProgress.progress * 100)}%
+                            {pipelineProgress.message ? ` · ${pipelineProgress.message}` : ""}
+                        </span>
                     ) : null}
                     <span className="font-mono text-xs text-muted-foreground/70">
                         Or run{" "}

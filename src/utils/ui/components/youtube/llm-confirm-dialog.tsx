@@ -60,6 +60,8 @@ export interface LlmConfirmDialogProps {
     /** Fired when the dev model select changes, so the owner can re-fetch
      *  the estimate for the chosen provider/model. `{}` = server default. */
     onSelectionChange?: (sel: { provider?: string; model?: string }) => void;
+    /** Live job progress while `busy` — shown under the payload box. */
+    progress?: { progress: number; message: string | null } | null;
     onCancel: () => void;
     onConfirm: (overrides: { provider?: string; model?: string }) => void;
 }
@@ -82,6 +84,7 @@ export function LlmConfirmDialog({
     estimate,
     estimatePending,
     onSelectionChange,
+    progress,
     onCancel,
     onConfirm,
 }: LlmConfirmDialogProps) {
@@ -178,6 +181,20 @@ export function LlmConfirmDialog({
                         ) : null}
                     </div>
                 </div>
+
+                {busy && progress ? (
+                    <div className="space-y-1.5">
+                        <div className="h-1 overflow-hidden rounded-full bg-white/8">
+                            <div
+                                className="h-full rounded-full bg-primary transition-[width] duration-300"
+                                style={{ width: `${Math.round(Math.min(1, Math.max(0, progress.progress)) * 100)}%` }}
+                            />
+                        </div>
+                        <p className="text-xs tabular-nums text-muted-foreground">
+                            {Math.round(progress.progress * 100)}%{progress.message ? ` · ${progress.message}` : ""}
+                        </p>
+                    </div>
+                ) : null}
 
                 {error ? (
                     <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-sm">

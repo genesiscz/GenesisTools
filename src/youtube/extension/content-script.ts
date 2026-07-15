@@ -70,6 +70,21 @@ const HEIGHT_ANIMATION = [
     "transition: height 400ms cubic-bezier(0.4, 0, 0.2, 1)",
 ].join("; ");
 
+function shieldKeyboardEvents(host: HTMLElement): void {
+    // YouTube's document-level hotkeys (space = pause, m = mute, …) fire even
+    // while the user types in the panel's inputs — key events bubble out of
+    // the shadow root, retargeted to the host. Stop them at the host so YT
+    // never sees them; React handlers inside the shadow already ran. Escape
+    // is let through only for Radix's document-level dismiss listeners.
+    for (const type of ["keydown", "keyup", "keypress"] as const) {
+        host.addEventListener(type, (event) => {
+            if ((event as KeyboardEvent).key !== "Escape") {
+                event.stopPropagation();
+            }
+        });
+    }
+}
+
 function applyInlineStyles(host: HTMLElement): void {
     // Auto-height: panel matches its content, growing smoothly when tab data
     // loads. Capped by max-height (viewport-relative) with overflow-y inside
@@ -82,8 +97,16 @@ function applyInlineStyles(host: HTMLElement): void {
         "margin-bottom: 16px",
         "height: auto",
         "min-height: 120px",
-        "max-height: min(calc(100vh - 96px), 900px)",
-        "z-index: 1",
+        // Cap well below the viewport so recommendations stay visible; the
+        // panel body scrolls inside. `overflow: hidden` so content can never
+        // paint past the cap over the rail below.
+        "max-height: min(60vh, 640px)",
+        "overflow: hidden",
+        // Above the covered rail content — YouTube's chip-scroller arrows and
+        // video-item ⋮ menu buttons create positioned boxes that otherwise
+        // paint through the panel (they live in later siblings). YT's real
+        // popups mount in a body-level container far above this, unaffected.
+        "z-index: 2000",
         HEIGHT_ANIMATION,
     ].join("; ");
 }
@@ -111,6 +134,7 @@ function attachHost(target: PanelTarget): { host: HTMLElement; placement: Placem
 
     const host = document.createElement("div");
     host.id = hostId;
+    shieldKeyboardEvents(host);
 
     if (target.kind === "video" && location.pathname === "/watch") {
         const secondary = findWatchSecondaryColumn();

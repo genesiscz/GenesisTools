@@ -8,6 +8,7 @@ import {
     SummaryControlsBar,
     type SummaryControlsState,
 } from "@app/utils/ui/components/youtube/summary-controls";
+import type { PipelineProgress } from "@app/utils/ui/components/youtube/tabs";
 import type { LlmEstimate, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
 import { useState } from "react";
 
@@ -44,7 +45,8 @@ export function SummaryTab({
     useEstimate,
     devMode,
     modelPresets,
-}: SummaryTabProps & { devMode?: boolean; modelPresets?: ModelPreset[] }) {
+    pipelineProgress,
+}: SummaryTabProps & { devMode?: boolean; modelPresets?: ModelPreset[]; pipelineProgress?: PipelineProgress | null }) {
     const summary = useSummary(videoId, "long");
     const generate = useGenerateSummary(videoId);
     const [confirmOpen, setConfirmOpen] = useState(false);
@@ -111,6 +113,7 @@ export function SummaryTab({
                 estimate={estimate.data ?? null}
                 estimatePending={estimate.isPending && confirmOpen}
                 onSelectionChange={setModelSel}
+                progress={pipelineProgress}
                 onCancel={() => setConfirmOpen(false)}
                 onConfirm={runGenerate}
             />
