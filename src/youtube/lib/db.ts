@@ -287,6 +287,22 @@ export class YoutubeDatabase extends BaseDatabase {
             `);
         });
 
+        this.runMigration("add-shares", () => {
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS shares (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    slug TEXT NOT NULL UNIQUE,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    kind TEXT NOT NULL CHECK (kind IN ('summary','qa')),
+                    video_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    revoked_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_shares_user ON shares(user_id, id DESC);
+            `);
+        });
+
         const existing = this.db
             .query<{ version: number }, [number]>("SELECT version FROM schema_version WHERE version = ?")
             .get(SCHEMA_VERSION);
@@ -1232,9 +1248,81 @@ export class YoutubeDatabase extends BaseDatabase {
         return row ? rowToQaHistoryItem(row) : null;
     }
 
+    /** Ownership-scoped lookup — returns null for another user's row (Feature 10 share creation). */
+    getQaHistoryById(userId: number, id: number): QaHistoryItem | null {
+        const row = this.db
+            .query<QaHistoryRow, [number, number]>("SELECT * FROM qa_history WHERE id = ? AND user_id = ?")
+            .get(id, userId);
+
+        return row ? rowToQaHistoryItem(row) : null;
+    }
+
+    createShareRow(input: {
+        slug: string;
+        userId: number;
+        kind: "summary" | "qa";
+        videoId: string;
+        payloadJson: string;
+    }): ShareRow {
+        const row = this.db
+            .query<ShareRow, [string, number, string, string, string]>(
+                `INSERT INTO shares (slug, user_id, kind, video_id, payload_json, created_at)
+                 VALUES (?, ?, ?, ?, ?, ${SQL_NOW_UTC}) RETURNING *`
+            )
+            .get(input.slug, input.userId, input.kind, input.videoId, input.payloadJson);
+
+        if (!row) {
+            throw new Error("createShareRow failed: insert returned no row");
+        }
+
+        return row;
+    }
+
+    getShareBySlug(slug: string): ShareRow | null {
+        return this.db.query<ShareRow, [string]>("SELECT * FROM shares WHERE slug = ?").get(slug);
+    }
+
+    /** Newest first. */
+    listSharesForUser(userId: number): ShareRow[] {
+        return this.db.query<ShareRow, [number]>("SELECT * FROM shares WHERE user_id = ? ORDER BY id DESC").all(userId);
+    }
+
+    /** Sets `revoked_at` if the slug belongs to `userId` and isn't already revoked. Returns whether it revoked. */
+    revokeShareRow(userId: number, slug: string): boolean {
+        const result = this.db.run(
+            `UPDATE shares SET revoked_at = ${SQL_NOW_UTC}
+             WHERE slug = ? AND user_id = ? AND revoked_at IS NULL`,
+            [slug, userId]
+        );
+
+        return result.changes > 0;
+    }
+
+    /** Count of shares created by `userId` since `sinceIso` — backs the 10/hour rate limit. */
+    countSharesSince(userId: number, sinceIso: string): number {
+        const row = this.db
+            .query<{ count: number }, [number, string]>(
+                "SELECT COUNT(*) AS count FROM shares WHERE user_id = ? AND created_at >= ?"
+            )
+            .get(userId, sinceIso);
+
+        return row?.count ?? 0;
+    }
+
     initSchemaForTest(): void {
         this.initSchema();
     }
+}
+
+export interface ShareRow {
+    id: number;
+    slug: string;
+    user_id: number;
+    kind: "summary" | "qa";
+    video_id: string;
+    payload_json: string;
+    created_at: string;
+    revoked_at: string | null;
 }
 
 interface UserRow {
