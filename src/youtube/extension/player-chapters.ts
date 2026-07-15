@@ -38,9 +38,12 @@ const CHAPTER_STYLES = `
     bottom: 0;
     width: 8px;
     margin-left: -4px;
+    border: 0;
     border-left: 3px solid transparent;
     border-right: 3px solid transparent;
     border-radius: 1px;
+    padding: 0;
+    font: inherit;
     background: rgba(255, 255, 255, 0.85);
     background-clip: padding-box;
     pointer-events: auto;
@@ -51,6 +54,10 @@ const CHAPTER_STYLES = `
     top: -6px;
     background: ${ACCENT_HEX};
     background-clip: padding-box;
+}
+.gt-chapter-tick:focus-visible {
+    outline: 2px solid ${ACCENT_HEX};
+    outline-offset: 2px;
 }
 .gt-chapter-tooltip {
     position: absolute;
@@ -126,9 +133,14 @@ export function mountChapterTicks(opts: MountChapterTicksOpts): ChapterTicksHand
             continue;
         }
 
-        const tick = document.createElement("div");
+        const tick = document.createElement(onSeek ? "button" : "div");
         tick.className = "gt-chapter-tick";
         tick.style.left = `${pct}%`;
+
+        if (onSeek) {
+            (tick as HTMLButtonElement).type = "button";
+            tick.setAttribute("aria-label", `${formatMmSs(chapter.startSec)} · ${chapter.title}`);
+        }
 
         const tooltip = document.createElement("div");
         tooltip.className = "gt-chapter-tooltip";

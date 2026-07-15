@@ -52,6 +52,14 @@ marked.use({
             const targetAttrs = external ? ` target="_blank" rel="noreferrer noopener"` : "";
             return `<a href="${escapeAttr(token.href)}"${targetAttrs}>${label}</a>`;
         },
+        image(token: Tokens.Image) {
+            if (!isSafeHref(token.href)) {
+                return escapeHtml(token.text);
+            }
+
+            const titleAttr = token.title ? ` title="${escapeAttr(token.title)}"` : "";
+            return `<img src="${escapeAttr(token.href)}" alt="${escapeAttr(token.text)}"${titleAttr}>`;
+        },
     },
 });
 

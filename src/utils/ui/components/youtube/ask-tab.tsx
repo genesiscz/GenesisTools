@@ -1,3 +1,4 @@
+import { logger } from "@app/logger/client";
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import { Markdown } from "@app/utils/ui/components/markdown";
@@ -119,7 +120,7 @@ function ExchangeBody({
                     key={`comment-${key}`}
                     type="button"
                     onClick={() => citation.commentId && onShowComment?.(citation.commentId)}
-                    className="inline-flex h-6 items-center rounded-full border border-white/8 bg-black/20 px-2 text-[12px] font-mono"
+                    className="inline-flex h-6 items-center rounded-full border border-border bg-muted/30 px-2 text-[12px] font-mono"
                 >
                     @{(citation.author ?? "unknown").replace(/^@/, "")}
                 </button>
@@ -234,12 +235,12 @@ function HistoryRow({
     const [linkCopied, setLinkCopied] = useState(false);
 
     return (
-        <article className="rounded-xl border border-white/8 bg-black/20">
+        <article className="rounded-xl border border-border bg-muted/30">
             <button
                 type="button"
                 onClick={onToggle}
                 aria-expanded={expanded}
-                className="flex w-full items-center gap-2 p-3 text-left transition-colors hover:bg-white/4"
+                className="flex w-full items-center gap-2 p-3 text-left transition-colors hover:bg-muted"
             >
                 <Chevron className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={2} />
                 <span className="min-w-0 flex-1 truncate text-sm text-foreground/90">{item.question}</span>
@@ -345,8 +346,9 @@ export function AskTab({
             }
 
             setQuestion("");
-        } catch (err) {
-            setError(err instanceof Error ? err.message : String(err));
+        } catch (error) {
+            logger.warn({ error }, "ask-tab: submit failed");
+            setError(error instanceof Error ? error.message : String(error));
         }
     }
 
@@ -384,12 +386,17 @@ export function AskTab({
                 </p>
             </div>
 
-            <div className="inline-flex rounded-full border border-white/8 bg-black/20 p-0.5">
+            <div
+                role="group"
+                aria-label="Ask scope"
+                className="inline-flex rounded-full border border-border bg-muted/30 p-0.5"
+            >
                 {SCOPE_LABELS.map(({ scope: value, label }) => (
                     <button
                         key={value}
                         type="button"
                         data-testid={`ask-scope-${value}`}
+                        aria-pressed={scope === value}
                         onClick={() => setScope(value)}
                         className={`h-7 rounded-full px-3 text-sm transition-colors ${
                             scope === value
@@ -439,7 +446,7 @@ export function AskTab({
             ) : null}
 
             {signInRequired ? (
-                <div className="flex items-start gap-3 rounded-2xl border border-white/8 bg-black/20 p-4">
+                <div className="flex items-start gap-3 rounded-2xl border border-border bg-muted/30 p-4">
                     <LockKeyhole className="mt-0.5 size-4 shrink-0 text-secondary" strokeWidth={2} />
                     <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-foreground/95">Sign in required</p>
@@ -499,7 +506,7 @@ export function AskTab({
             ) : null}
 
             {sessionExchange && !useQaHistory ? (
-                <article className="rounded-2xl border border-white/8 bg-black/20 p-3">
+                <article className="rounded-2xl border border-border bg-muted/30 p-3">
                     <p className="text-sm font-semibold text-foreground/95">{sessionExchange.question}</p>
                     <ExchangeBody
                         answer={sessionExchange.answer}
@@ -514,7 +521,7 @@ export function AskTab({
             ) : null}
 
             {latest ? (
-                <article className="rounded-2xl border border-white/8 bg-black/20 p-3">
+                <article className="rounded-2xl border border-border bg-muted/30 p-3">
                     <div className="flex items-start justify-between gap-3">
                         <p className="min-w-0 flex-1 text-sm font-semibold text-foreground/95">{latest.question}</p>
                         {createShare ? (

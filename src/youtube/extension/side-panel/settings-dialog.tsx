@@ -1,3 +1,4 @@
+import { logger } from "@app/logger/client";
 import { Button } from "@app/utils/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
 import { Input } from "@app/utils/ui/components/input";
@@ -140,9 +141,11 @@ function LanguageSection({ outputLang }: { outputLang: string | null }) {
                 {t("settings.language")}
             </p>
             <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">{t("settings.outputLanguage")}</label>
+                <label htmlFor="settings-output-lang" className="text-xs font-medium text-muted-foreground">
+                    {t("settings.outputLanguage")}
+                </label>
                 <Select value={outputLang ?? "en"} onValueChange={(value) => patchMe.mutate({ outputLang: value })}>
-                    <SelectTrigger className="h-8 w-full text-sm">
+                    <SelectTrigger id="settings-output-lang" className="h-8 w-full text-sm">
                         <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -155,9 +158,11 @@ function LanguageSection({ outputLang }: { outputLang: string | null }) {
                 </Select>
             </div>
             <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">{t("settings.panelLanguage")}</label>
+                <label htmlFor="settings-panel-lang" className="text-xs font-medium text-muted-foreground">
+                    {t("settings.panelLanguage")}
+                </label>
                 <Select value={uiLang} onValueChange={(value) => void persistUiLang(value)}>
-                    <SelectTrigger className="h-8 w-full text-sm">
+                    <SelectTrigger id="settings-panel-lang" className="h-8 w-full text-sm">
                         <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -220,8 +225,9 @@ function DiamondPacksSection({ devMode }: { devMode?: boolean }) {
         setPendingPack(packId);
         try {
             await checkout.mutateAsync({ packId });
-        } catch (err) {
-            setError(err instanceof Error ? err.message : String(err));
+        } catch (error) {
+            logger.warn({ error }, "settings-dialog: checkout failed");
+            setError(error instanceof Error ? error.message : String(error));
         } finally {
             setPendingPack(null);
         }
@@ -386,6 +392,7 @@ function PresetsSection() {
     const [editingId, setEditingId] = useState<number | null>(null);
     const [editName, setEditName] = useState("");
     const [editInstructions, setEditInstructions] = useState("");
+    const [editError, setEditError] = useState<string | null>(null);
     const [importResult, setImportResult] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -400,6 +407,7 @@ function PresetsSection() {
         setEditingId(preset.id);
         setEditName(preset.name);
         setEditInstructions(preset.instructions);
+        setEditError(null);
     }
 
     async function saveEdit() {
@@ -407,8 +415,18 @@ function PresetsSection() {
             return;
         }
 
-        await updatePreset.mutateAsync({ id: editingId, name: editName.trim(), instructions: editInstructions.trim() });
-        setEditingId(null);
+        setEditError(null);
+        try {
+            await updatePreset.mutateAsync({
+                id: editingId,
+                name: editName.trim(),
+                instructions: editInstructions.trim(),
+            });
+            setEditingId(null);
+        } catch (error) {
+            logger.warn({ error }, "settings-dialog: preset edit save failed");
+            setEditError(error instanceof Error ? error.message : String(error));
+        }
     }
 
     function exportJson() {
@@ -450,13 +468,15 @@ function PresetsSection() {
                     await createPreset.mutateAsync(item);
                     existingKeys.add(`${item.kind}:${item.name}`);
                     imported += 1;
-                } catch {
+                } catch (error) {
+                    logger.warn({ error }, "settings-dialog: preset import item failed");
                     skipped += 1;
                 }
             }
 
             setImportResult(`${imported} imported, ${skipped} skipped`);
-        } catch {
+        } catch (error) {
+            logger.warn({ error }, "settings-dialog: preset import failed");
             setImportResult("Import failed — invalid file");
         }
     }
@@ -483,22 +503,46 @@ function PresetsSection() {
                                 key={preset.id}
                                 className="space-y-2 rounded-2xl border border-white/8 bg-black/20 p-3"
                             >
-                                <Input
-                                    value={editName}
-                                    onChange={(e) => setEditName(e.target.value)}
-                                    className="h-9 text-sm"
-                                />
-                                <textarea
-                                    value={editInstructions}
-                                    onChange={(e) => setEditInstructions(e.target.value)}
-                                    className="min-h-20 w-full resize-y rounded-lg border border-white/8 bg-black/20 p-2.5 text-sm leading-relaxed text-foreground focus:border-primary/40 focus:outline-none"
-                                />
+                                <div className="space-y-1">
+                                    <label
+                                        htmlFor={`preset-edit-name-${preset.id}`}
+                                        className="text-xs font-medium text-muted-foreground"
+                                    >
+                                        Name
+                                    </label>
+                                    <Input
+                                        id={`preset-edit-name-${preset.id}`}
+                                        value={editName}
+                                        onChange={(e) => setEditName(e.target.value)}
+                                        className="h-9 text-sm"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label
+                                        htmlFor={`preset-edit-instructions-${preset.id}`}
+                                        className="text-xs font-medium text-muted-foreground"
+                                    >
+                                        Instructions
+                                    </label>
+                                    <textarea
+                                        id={`preset-edit-instructions-${preset.id}`}
+                                        value={editInstructions}
+                                        onChange={(e) => setEditInstructions(e.target.value)}
+                                        className="min-h-20 w-full resize-y rounded-lg border border-white/8 bg-black/20 p-2.5 text-sm leading-relaxed text-foreground focus:border-primary/40 focus:outline-none"
+                                    />
+                                </div>
+                                {editError ? (
+                                    <p className="break-words text-sm text-destructive/90">{editError}</p>
+                                ) : null}
                                 <div className="flex justify-end gap-1.5">
                                     <Button
                                         size="sm"
                                         variant="ghost"
                                         className="text-muted-foreground"
-                                        onClick={() => setEditingId(null)}
+                                        onClick={() => {
+                                            setEditingId(null);
+                                            setEditError(null);
+                                        }}
                                     >
                                         {t("action.cancel")}
                                     </Button>
@@ -520,6 +564,7 @@ function PresetsSection() {
                                     <button
                                         type="button"
                                         onClick={() => startEdit(preset)}
+                                        aria-label={`Edit ${preset.name}`}
                                         className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
                                     >
                                         <Pencil className="size-4" />
@@ -536,6 +581,7 @@ function PresetsSection() {
                                         <button
                                             type="button"
                                             onClick={() => armConfirm(preset.id)}
+                                            aria-label={`Delete ${preset.name}`}
                                             className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
                                         >
                                             <Trash2 className="size-4" />
