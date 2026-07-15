@@ -2,7 +2,7 @@ import { Button } from "@app/utils/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
 import { Input } from "@app/utils/ui/components/input";
 import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
-import { useCheckout, useLogin, useLogout, useMe, useRegister, useTopup } from "@ext/api.hooks";
+import { useCheckout, useLogin, useLogout, useMe, useRegister, useTopup, useUsageSummary } from "@ext/api.hooks";
 import { CreditCard, Gem, Loader2, LogOut } from "lucide-react";
 import { type FormEvent, useState } from "react";
 
@@ -12,10 +12,12 @@ export function SettingsDialog({
     open,
     onOpenChange,
     devMode,
+    onViewActivity,
 }: {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     devMode?: boolean;
+    onViewActivity?: () => void;
 }) {
     const me = useMe(open);
     const user = me.data?.user;
@@ -36,7 +38,12 @@ export function SettingsDialog({
                         <Loader2 className="size-4 animate-spin" />
                     </div>
                 ) : user ? (
-                    <SignedInView email={user.email} credits={user.credits} devMode={devMode} />
+                    <SignedInView
+                        email={user.email}
+                        credits={user.credits}
+                        devMode={devMode}
+                        onViewActivity={onViewActivity}
+                    />
                 ) : (
                     <AuthForm />
                 )}
@@ -45,7 +52,17 @@ export function SettingsDialog({
     );
 }
 
-function SignedInView({ email, credits, devMode }: { email: string; credits: number; devMode?: boolean }) {
+function SignedInView({
+    email,
+    credits,
+    devMode,
+    onViewActivity,
+}: {
+    email: string;
+    credits: number;
+    devMode?: boolean;
+    onViewActivity?: () => void;
+}) {
     const logout = useLogout();
 
     return (
@@ -64,6 +81,8 @@ function SignedInView({ email, credits, devMode }: { email: string; credits: num
 
             <DiamondPacksSection devMode={devMode} />
 
+            {onViewActivity ? <ActivitySparkline onViewAll={onViewActivity} /> : null}
+
             <Button
                 size="sm"
                 variant="ghost"
@@ -72,6 +91,40 @@ function SignedInView({ email, credits, devMode }: { email: string; credits: num
                 onClick={() => logout.mutate()}
             >
                 <LogOut className="size-4" /> Log out
+            </Button>
+        </div>
+    );
+}
+
+function ActivitySparkline({ onViewAll }: { onViewAll: () => void }) {
+    const summary = useUsageSummary();
+    const days = summary.data?.days ?? [];
+    const maxSpent = Math.max(1, ...days.map((d) => d.spent));
+
+    return (
+        <div className="space-y-2">
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                activity · last 30 days
+            </p>
+            <div className="flex h-12 items-end gap-[2px]">
+                {days.map((day, i) => (
+                    <div
+                        key={day.date}
+                        title={`${day.date} · ${day.spent} 💎`}
+                        className={`flex-1 rounded-sm ${
+                            day.spent === 0 ? "bg-white/5" : i === days.length - 1 ? "bg-primary/70" : "bg-primary/30"
+                        }`}
+                        style={{ height: `${Math.max(8, (day.spent / maxSpent) * 100)}%` }}
+                    />
+                ))}
+            </div>
+            <p className="text-sm text-muted-foreground">
+                This month:{" "}
+                <span className="font-semibold tabular-nums text-foreground">{summary.data?.month.spent ?? 0} 💎</span>{" "}
+                spent · +{summary.data?.month.earned ?? 0} topped up
+            </p>
+            <Button size="sm" variant="ghost" className="w-full text-muted-foreground" onClick={onViewAll}>
+                View all activity →
             </Button>
         </div>
     );
