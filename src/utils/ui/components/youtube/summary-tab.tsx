@@ -3,12 +3,13 @@ import { Button } from "@app/utils/ui/components/button";
 import { LlmConfirmDialog, type ModelPreset } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
 import { Loading } from "@app/utils/ui/components/youtube/loading";
 import { LongSummaryView } from "@app/utils/ui/components/youtube/long-summary-view";
+import { ShareButton } from "@app/utils/ui/components/youtube/share-button";
 import {
     DEFAULT_SUMMARY_CONTROLS,
     SummaryControlsBar,
     type SummaryControlsState,
 } from "@app/utils/ui/components/youtube/summary-controls";
-import type { PipelineProgress } from "@app/utils/ui/components/youtube/tabs";
+import type { PipelineProgress, VideoDetailDataSource } from "@app/utils/ui/components/youtube/tabs";
 import type { LlmEstimate, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
 import { useState } from "react";
 
@@ -36,6 +37,7 @@ export interface SummaryTabProps {
         id: VideoId | null,
         opts: { mode: "short" | "timestamped" | "long"; provider?: string; model?: string; enabled?: boolean }
     ) => { data: LlmEstimate | undefined; isPending: boolean };
+    useCreateShare?: VideoDetailDataSource["useCreateShare"];
 }
 
 export function SummaryTab({
@@ -43,15 +45,18 @@ export function SummaryTab({
     useSummary,
     useGenerateSummary,
     useEstimate,
+    useCreateShare,
     devMode,
     modelPresets,
     pipelineProgress,
 }: SummaryTabProps & { devMode?: boolean; modelPresets?: ModelPreset[]; pipelineProgress?: PipelineProgress | null }) {
     const summary = useSummary(videoId, "long");
     const generate = useGenerateSummary(videoId);
+    const createShare = useCreateShare?.();
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [controls, setControls] = useState<SummaryControlsState>(DEFAULT_SUMMARY_CONTROLS);
     const [modelSel, setModelSel] = useState<{ provider?: string; model?: string }>({});
+    const [linkCopied, setLinkCopied] = useState(false);
     const estimate = useEstimate?.(videoId, { mode: "long", ...modelSel, enabled: confirmOpen }) ?? NO_ESTIMATE;
     const long = summary.data?.long ?? null;
 
@@ -78,14 +83,26 @@ export function SummaryTab({
                     <Badge variant="cyber-secondary">AI signal · long-form</Badge>
                     <h3 className="mt-3 text-2xl font-bold">Whole-video summary</h3>
                 </div>
-                <Button
-                    data-testid="summary-generate"
-                    onClick={() => setConfirmOpen(true)}
-                    disabled={generate.isPending}
-                >
-                    {long === null ? "Generate summary…" : "Re-generate…"}
-                </Button>
+                <div className="flex items-center gap-1">
+                    {createShare && long !== null ? (
+                        <ShareButton
+                            onShare={() => createShare.mutateAsync({ kind: "summary", videoId, mode: "long" })}
+                            onCopied={() => {
+                                setLinkCopied(true);
+                                setTimeout(() => setLinkCopied(false), 2000);
+                            }}
+                        />
+                    ) : null}
+                    <Button
+                        data-testid="summary-generate"
+                        onClick={() => setConfirmOpen(true)}
+                        disabled={generate.isPending}
+                    >
+                        {long === null ? "Generate summary…" : "Re-generate…"}
+                    </Button>
+                </div>
             </div>
+            {linkCopied ? <p className="text-sm text-primary">Link copied</p> : null}
             <SummaryControlsBar value={controls} onChange={setControls} disabled={generate.isPending} hideFormat />
             {long === null ? (
                 <p

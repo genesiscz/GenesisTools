@@ -7,6 +7,7 @@ import type {
     LlmEstimate,
     PipelineJob,
     QaHistoryItem,
+    ShareSummary,
     SummaryFormat,
     SummaryLength,
     SummaryTone,
@@ -62,7 +63,16 @@ export type ExtensionRequest =
     | { type: "api:qaHistory"; id?: VideoId; limit?: number }
     | { type: "api:checkout"; packId: string }
     | { type: "api:ledger"; before?: number; limit?: number }
-    | { type: "api:usageSummary" };
+    | { type: "api:usageSummary" }
+    | {
+          type: "api:createShare";
+          kind: "summary" | "qa";
+          videoId: VideoId;
+          mode?: "short" | "timestamped" | "long";
+          qaHistoryId?: number;
+      }
+    | { type: "api:listShares" }
+    | { type: "api:revokeShare"; slug: string };
 
 export type ExtensionResponse = { ok: true; data: unknown } | { ok: false; error: string };
 
@@ -111,4 +121,7 @@ export interface ExtensionApiMap {
     "api:checkout": { url: string };
     "api:ledger": LedgerPage;
     "api:usageSummary": UsageSummary;
+    "api:createShare": { slug: string; url: string };
+    "api:listShares": { shares: ShareSummary[] };
+    "api:revokeShare": { revoked: boolean };
 }

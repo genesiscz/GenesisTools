@@ -188,6 +188,20 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
             }
             return res;
         }
+        case "api:createShare":
+            return apiCall(`${base}/api/v1/shares`, {
+                method: "POST",
+                body: JSON.stringify({
+                    kind: req.kind,
+                    videoId: req.videoId,
+                    mode: req.mode,
+                    qaHistoryId: req.qaHistoryId,
+                }),
+            });
+        case "api:listShares":
+            return apiCall(`${base}/api/v1/shares`);
+        case "api:revokeShare":
+            return apiCall(`${base}/api/v1/shares/${encodeURIComponent(req.slug)}`, { method: "DELETE" });
     }
 }
 

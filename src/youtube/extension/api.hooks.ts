@@ -253,6 +253,39 @@ export function useUsageSummary(enabled = true) {
     });
 }
 
+export function useCreateShare() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (vars: {
+            kind: "summary" | "qa";
+            videoId: VideoId;
+            mode?: "short" | "timestamped" | "long";
+            qaHistoryId?: number;
+        }) => send<ExtensionApiMap["api:createShare"]>({ type: "api:createShare", ...vars }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["shares"] }),
+    });
+}
+
+export function useShares(enabled = true) {
+    return useQuery({
+        queryKey: ["shares"],
+        queryFn: () => send<ExtensionApiMap["api:listShares"]>({ type: "api:listShares" }),
+        select: (response) => response.shares,
+        enabled,
+    });
+}
+
+export function useRevokeShare() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (vars: { slug: string }) =>
+            send<ExtensionApiMap["api:revokeShare"]>({ type: "api:revokeShare", ...vars }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["shares"] }),
+    });
+}
+
 export function useQaHistory(id: VideoId | null) {
     return useQuery({
         queryKey: ["qaHistory", id],
@@ -317,6 +350,7 @@ export const dataSource: VideoDetailDataSource = {
     useAskVideo,
     useEstimate,
     useQaHistory,
+    useCreateShare,
 };
 
 export type { Channel };

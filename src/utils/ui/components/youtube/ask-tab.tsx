@@ -1,6 +1,8 @@
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import { Markdown } from "@app/utils/ui/components/markdown";
+import { ShareButton } from "@app/utils/ui/components/youtube/share-button";
+import type { VideoDetailDataSource } from "@app/utils/ui/components/youtube/tabs";
 import { formatTimecode } from "@app/utils/ui/components/youtube/time";
 import type { AskCitation, QaHistoryItem, VideoId } from "@app/youtube/lib/types";
 import { ChevronDown, ChevronRight, Loader2, LockKeyhole, MessageCircleQuestion } from "lucide-react";
@@ -39,6 +41,7 @@ export interface AskTabProps {
         data: { items: QaHistoryItem[] } | undefined;
         isPending: boolean;
     };
+    useCreateShare?: VideoDetailDataSource["useCreateShare"];
     /** Invoked by the "Sign in" affordance when the ask endpoint returns 401. */
     onRequireLogin?: () => void;
 }
@@ -100,13 +103,18 @@ function HistoryRow({
     expanded,
     onToggle,
     onSeek,
+    createShare,
+    videoId,
 }: {
     item: QaHistoryItem;
     expanded: boolean;
     onToggle: () => void;
     onSeek: (seconds: number) => void;
+    createShare?: ReturnType<NonNullable<VideoDetailDataSource["useCreateShare"]>>;
+    videoId: VideoId;
 }) {
     const Chevron = expanded ? ChevronDown : ChevronRight;
+    const [linkCopied, setLinkCopied] = useState(false);
 
     return (
         <article className="rounded-xl border border-white/8 bg-black/20">
@@ -121,6 +129,18 @@ function HistoryRow({
             </button>
             {expanded ? (
                 <div className="px-3 pb-3">
+                    {createShare ? (
+                        <div className="mb-2 flex items-center justify-end gap-2">
+                            {linkCopied ? <p className="text-sm text-primary">Link copied</p> : null}
+                            <ShareButton
+                                onShare={() => createShare.mutateAsync({ kind: "qa", videoId, qaHistoryId: item.id })}
+                                onCopied={() => {
+                                    setLinkCopied(true);
+                                    setTimeout(() => setLinkCopied(false), 2000);
+                                }}
+                            />
+                        </div>
+                    ) : null}
                     <ExchangeBody answer={item.answer} citations={item.citations} onSeek={onSeek} />
                 </div>
             ) : null}
@@ -128,8 +148,10 @@ function HistoryRow({
     );
 }
 
-export function AskTab({ videoId, onSeek, useAskVideo, useQaHistory, onRequireLogin }: AskTabProps) {
+export function AskTab({ videoId, onSeek, useAskVideo, useQaHistory, useCreateShare, onRequireLogin }: AskTabProps) {
     const ask = useAskVideo(videoId);
+    const createShare = useCreateShare?.();
+    const [latestLinkCopied, setLatestLinkCopied] = useState(false);
     const history = useQaHistory?.(videoId);
     const [question, setQuestion] = useState("");
     const [error, setError] = useState<string | null>(null);
@@ -260,7 +282,20 @@ export function AskTab({ videoId, onSeek, useAskVideo, useQaHistory, onRequireLo
 
             {latest ? (
                 <article className="rounded-2xl border border-white/8 bg-black/20 p-3">
-                    <p className="text-sm font-semibold text-foreground/95">{latest.question}</p>
+                    <div className="flex items-start justify-between gap-3">
+                        <p className="min-w-0 flex-1 text-sm font-semibold text-foreground/95">{latest.question}</p>
+                        {createShare ? (
+                            <ShareButton
+                                className="shrink-0"
+                                onShare={() => createShare.mutateAsync({ kind: "qa", videoId, qaHistoryId: latest.id })}
+                                onCopied={() => {
+                                    setLatestLinkCopied(true);
+                                    setTimeout(() => setLatestLinkCopied(false), 2000);
+                                }}
+                            />
+                        ) : null}
+                    </div>
+                    {latestLinkCopied ? <p className="text-sm text-primary">Link copied</p> : null}
                     <ExchangeBody answer={latest.answer} citations={latest.citations} onSeek={onSeek} />
                 </article>
             ) : null}
@@ -289,6 +324,8 @@ export function AskTab({ videoId, onSeek, useAskVideo, useQaHistory, onRequireLo
                                     expanded={expandedIds.has(item.id)}
                                     onToggle={() => toggleRow(item.id)}
                                     onSeek={onSeek}
+                                    createShare={createShare}
+                                    videoId={videoId}
                                 />
                             ))}
                         </div>

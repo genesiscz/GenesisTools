@@ -101,6 +101,17 @@ export interface VideoDetailDataSource {
         data: { items: QaHistoryItem[] } | undefined;
         isPending: boolean;
     };
+    /** Creates a public share link (`POST /shares`). Optional — consumers
+     *  without user accounts don't get share buttons. */
+    useCreateShare?: () => {
+        mutateAsync: (vars: {
+            kind: "summary" | "qa";
+            videoId: VideoId;
+            mode?: "short" | "timestamped" | "long";
+            qaHistoryId?: number;
+        }) => Promise<{ url: string }>;
+        isPending: boolean;
+    };
 }
 
 export interface VideoDetailTabsProps {
@@ -166,6 +177,7 @@ export function VideoDetailTabs({
                     useSummary={ds.useSummary}
                     useGenerateSummary={ds.useGenerateSummary}
                     useEstimate={ds.useEstimate}
+                    useCreateShare={ds.useCreateShare}
                     devMode={devMode}
                     modelPresets={modelPresets}
                     pipelineProgress={pipelineProgress}
@@ -177,6 +189,7 @@ export function VideoDetailTabs({
                     onSeek={onSeek}
                     useAskVideo={ds.useAskVideo}
                     useQaHistory={ds.useQaHistory}
+                    useCreateShare={ds.useCreateShare}
                     onRequireLogin={onRequireLogin}
                 />
             </TabsContent>
