@@ -2,6 +2,7 @@ import { type PipelineProgress, type VideoDetailTab, VideoDetailTabs } from "@ap
 import type { JobStage } from "@app/youtube/lib/types";
 import { dataSource, useModels, useStartPipeline } from "@ext/api.hooks";
 import type { ExtensionEvent } from "@ext/shared/messages";
+import { ActivityView } from "@ext/side-panel/activity-view";
 import { ChannelPanel } from "@ext/side-panel/channel-panel";
 import { Header } from "@ext/side-panel/header";
 import { connectEventPort } from "@ext/side-panel/port";
@@ -35,6 +36,7 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
     const [active, setActive] = useState<VideoDetailTab>("summary");
     const [collapsed, setCollapsed] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
+    const [view, setView] = useState<"tabs" | "activity">("tabs");
     const startPipeline = useStartPipeline();
     const queryClient = useQueryClient();
     // Dev-only model picker data; regular builds never fetch it.
@@ -149,22 +151,34 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
             />
             <div className="yt-body-collapsible min-h-0 flex-1" data-collapsed={collapsed}>
                 <div className="yt-scroll min-h-0 h-full overflow-auto">
-                    <VideoDetailTabs
-                        videoId={videoId}
-                        ds={dataSource}
-                        onSeek={seek}
-                        active={active}
-                        onActiveChange={setActive}
-                        runPipeline={runPipeline}
-                        chromeless
-                        devMode={IS_DEV_BUILD}
-                        modelPresets={models.data?.presets ?? []}
-                        pipelineProgress={pipelineProgress}
-                        onRequireLogin={() => setSettingsOpen(true)}
-                    />
+                    {view === "activity" ? (
+                        <ActivityView onBack={() => setView("tabs")} />
+                    ) : (
+                        <VideoDetailTabs
+                            videoId={videoId}
+                            ds={dataSource}
+                            onSeek={seek}
+                            active={active}
+                            onActiveChange={setActive}
+                            runPipeline={runPipeline}
+                            chromeless
+                            devMode={IS_DEV_BUILD}
+                            modelPresets={models.data?.presets ?? []}
+                            pipelineProgress={pipelineProgress}
+                            onRequireLogin={() => setSettingsOpen(true)}
+                        />
+                    )}
                 </div>
             </div>
-            <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} devMode={IS_DEV_BUILD} />
+            <SettingsDialog
+                open={settingsOpen}
+                onOpenChange={setSettingsOpen}
+                devMode={IS_DEV_BUILD}
+                onViewActivity={() => {
+                    setSettingsOpen(false);
+                    setView("activity");
+                }}
+            />
         </div>
     );
 }

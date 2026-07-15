@@ -20,6 +20,7 @@ export type {
     UsageDay,
     UsageSummary,
 } from "@app/youtube/lib/ledger-views.types";
+export { ledgerReasonGroup } from "@app/youtube/lib/ledger-views.types";
 export type {
     EnqueuePipelineJobInput,
     JobEventHandler,
