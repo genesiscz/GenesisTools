@@ -12,6 +12,7 @@ import { handleConfigRoute } from "@app/youtube/lib/server/routes/config";
 import { handleModelsRoute } from "@app/youtube/lib/server/routes/models";
 import { handlePipelineRoute } from "@app/youtube/lib/server/routes/pipeline";
 import { handleMetaRoute } from "@app/youtube/lib/server/routes/server-meta";
+import { handleUsersRoute } from "@app/youtube/lib/server/routes/users";
 import { handleVideosRoute } from "@app/youtube/lib/server/routes/videos";
 import type { WebsocketState } from "@app/youtube/lib/server/websocket";
 import { setupWebsocket } from "@app/youtube/lib/server/websocket";
@@ -94,6 +95,10 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
 
                 if (url.pathname.startsWith("/api/v1/videos")) {
                     return await handleVideosRoute(req, url, youtube);
+                }
+
+                if (url.pathname.startsWith("/api/v1/users")) {
+                    return await handleUsersRoute(req, url, youtube);
                 }
 
                 if (url.pathname.startsWith("/api/v1/pipeline") || url.pathname.startsWith("/api/v1/jobs")) {

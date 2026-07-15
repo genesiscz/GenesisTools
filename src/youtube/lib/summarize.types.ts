@@ -85,4 +85,6 @@ export interface LlmEstimate {
     /** null = subscription model or unknown pricing */
     estUsd: number | null;
     basis: "transcript" | "duration" | null;
+    /** Diamond price of the run (`CREDIT_COSTS`), shown next to the $ estimate. */
+    creditCost: number;
 }
