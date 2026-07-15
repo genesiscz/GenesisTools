@@ -1,9 +1,25 @@
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
+import { Markdown } from "@app/utils/ui/components/markdown";
 import { formatTimecode } from "@app/utils/ui/components/youtube/time";
 import type { AskCitation, VideoId } from "@app/youtube/lib/types";
 import { Loader2, MessageCircleQuestion } from "lucide-react";
 import { useState } from "react";
+
+/** Replace the model's inline `[#4]` citation markers with `#cite-N` anchor
+ *  links labelled by the cited timestamp — the answer container intercepts
+ *  clicks and seeks the player. */
+function linkifyCitations(answer: string, citations: AskCitation[]): string {
+    return answer.replace(/\[#(\d+)\]/g, (match, index: string) => {
+        const citation = citations[Number(index) - 1];
+
+        if (!citation || citation.startSec === null) {
+            return match;
+        }
+
+        return `[${formatTimecode(citation.startSec)}](#cite-${index})`;
+    });
+}
 
 export interface AskTabProps {
     videoId: VideoId;
@@ -107,9 +123,25 @@ export function AskTab({ videoId, onSeek, useAskVideo }: AskTabProps) {
                         className="rounded-2xl border border-white/8 bg-black/20 p-3"
                     >
                         <p className="text-sm font-semibold text-foreground/95">{exchange.question}</p>
-                        <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
-                            {exchange.answer}
-                        </p>
+                        <Markdown
+                            md={linkifyCitations(exchange.answer, exchange.citations)}
+                            className="yt-md mt-2"
+                            onClick={(event) => {
+                                const anchor = (event.target as HTMLElement).closest?.('a[href^="#cite-"]');
+
+                                if (!anchor) {
+                                    return;
+                                }
+
+                                event.preventDefault();
+                                const index = Number(anchor.getAttribute("href")?.slice("#cite-".length));
+                                const citation = exchange.citations[index - 1];
+
+                                if (citation?.startSec != null) {
+                                    onSeek(citation.startSec);
+                                }
+                            }}
+                        />
                         {exchange.citations.length > 0 ? (
                             <div className="mt-3 flex flex-wrap gap-1.5">
                                 {exchange.citations.map((citation, citationIndex) =>
