@@ -2,15 +2,18 @@ import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import { Loading } from "@app/utils/ui/components/youtube/loading";
+import { activeChapterIndex } from "@app/utils/ui/components/youtube/chapters";
 import type { PipelineProgress, RunPipeline } from "@app/utils/ui/components/youtube/tabs";
 import { formatTimecode } from "@app/utils/ui/components/youtube/time";
 import { segmentsToParagraphs, type TranscriptParagraph } from "@app/utils/ui/components/youtube/transcript-paragraphs";
 import type { Transcript, TranscriptSegment, VideoId } from "@app/youtube/lib/types";
-import { Captions, ChevronDown, ChevronUp, Loader2, Search } from "lucide-react";
+import { Captions, ChevronDown, ChevronUp, Loader2, LocateFixed, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 const DEFAULT_RENDER_LIMIT = 200;
 const DEFAULT_BUCKET_SEC = 120;
+/** Manual wheel/touch scrolling pauses follow-mode auto-scroll for this long. */
+const FOLLOW_GRACE_MS = 5000;
 const BUCKET_OPTIONS: { value: string; label: string }[] = [
     { value: "0", label: "No grouping" },
     { value: "30", label: "30 sec" },
@@ -80,14 +83,25 @@ export interface TranscriptTabProps {
     ) => { data: { transcript: Transcript } | undefined; isPending: boolean };
     runPipeline?: RunPipeline;
     pipelineProgress?: PipelineProgress | null;
+    /** Current playback second (1 Hz bridge) — drives follow mode. */
+    playerTime?: number | null;
 }
 
-export function TranscriptTab({ videoId, onSeek, useTranscript, runPipeline, pipelineProgress }: TranscriptTabProps) {
+export function TranscriptTab({
+    videoId,
+    onSeek,
+    useTranscript,
+    runPipeline,
+    pipelineProgress,
+    playerTime,
+}: TranscriptTabProps) {
     const [query, setQuery] = useState("");
     const [showAll, setShowAll] = useState(false);
     const [bucketSec, setBucketSec] = useState<number>(DEFAULT_BUCKET_SEC);
     const [currentMatch, setCurrentMatch] = useState(0);
+    const [follow, setFollow] = useState(false);
     const scrollRef = useRef<HTMLDivElement | null>(null);
+    const lastUserScrollAt = useRef(0);
     const transcript = useTranscript(videoId);
     const segments = transcript.data?.transcript.segments ?? [];
     const needle = query.trim().toLowerCase();
@@ -156,6 +170,31 @@ export function TranscriptTab({ videoId, onSeek, useTranscript, runPipeline, pip
 
         setCurrentMatch((prev) => (prev + delta + matches.total) % matches.total);
     }
+
+    const activeBlockIndex = useMemo(() => {
+        if (!follow || playerTime === null || playerTime === undefined || trimmed.length === 0) {
+            return null;
+        }
+
+        return activeChapterIndex(
+            trimmed.map((block) => block.start),
+            playerTime
+        );
+    }, [follow, playerTime, trimmed]);
+
+    useEffect(() => {
+        if (activeBlockIndex === null) {
+            return;
+        }
+
+        if (Date.now() - lastUserScrollAt.current < FOLLOW_GRACE_MS) {
+            return;
+        }
+
+        scrollRef.current
+            ?.querySelector(`[data-block="${activeBlockIndex}"]`)
+            ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, [activeBlockIndex]);
 
     if (transcript.isPending) {
         return <Loading label="Loading transcript" />;
@@ -269,15 +308,37 @@ export function TranscriptTab({ videoId, onSeek, useTranscript, runPipeline, pip
                 >
                     <ChevronDown className="size-4" />
                 </Button>
+                <div className="h-4 w-px bg-white/8" />
+                <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Follow playback"
+                    aria-pressed={follow}
+                    className={follow ? "rounded-md bg-primary/10 text-primary" : undefined}
+                    onClick={() => setFollow((value) => !value)}
+                >
+                    <LocateFixed className="size-4" />
+                </Button>
                 <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground/70">
                     {segments.length.toLocaleString()} segments · {totalParagraphs.toLocaleString()} paragraphs
                 </span>
             </div>
-            <div ref={scrollRef} className="yt-scroll min-w-0 space-y-4 overflow-y-auto">
+            <div
+                ref={scrollRef}
+                className="yt-scroll min-w-0 space-y-4 overflow-y-auto"
+                onWheel={() => {
+                    lastUserScrollAt.current = Date.now();
+                }}
+                onTouchMove={() => {
+                    lastUserScrollAt.current = Date.now();
+                }}
+            >
                 {trimmed.map((block, index) => (
                     <TranscriptRow
                         key={`${block.start}-${index}`}
                         block={block}
+                        blockIndex={index}
+                        active={index === activeBlockIndex}
                         showRange={bucketSec > 0}
                         query={needle}
                         matchStarts={matches.starts[index] ?? []}
@@ -302,6 +363,8 @@ export function TranscriptTab({ videoId, onSeek, useTranscript, runPipeline, pip
 
 function TranscriptRow({
     block,
+    blockIndex,
+    active,
     showRange,
     query,
     matchStarts,
@@ -309,6 +372,9 @@ function TranscriptRow({
     onSeek,
 }: {
     block: TranscriptBlock;
+    blockIndex: number;
+    /** True when follow mode marks this block as containing the playhead. */
+    active: boolean;
     showRange: boolean;
     query: string;
     /** Global index of each paragraph's first search match. */
@@ -322,7 +388,13 @@ function TranscriptRow({
         : formatTimecode(block.start);
 
     return (
-        <article className="min-w-0 space-y-2">
+        <article
+            data-block={blockIndex}
+            className={
+                // Follow-mode wash per the design capsule: subtle, no border.
+                active ? "-mx-2 min-w-0 space-y-2 rounded-lg bg-primary/8 px-2 transition-colors" : "min-w-0 space-y-2"
+            }
+        >
             <button
                 type="button"
                 onClick={() => onSeek(block.start)}
