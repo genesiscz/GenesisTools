@@ -2,6 +2,7 @@ import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import { Markdown } from "@app/utils/ui/components/markdown";
 import { ShareButton } from "@app/utils/ui/components/youtube/share-button";
+import { StyleSelect } from "@app/utils/ui/components/youtube/style-select";
 import type { VideoDetailDataSource } from "@app/utils/ui/components/youtube/tabs";
 import { formatTimecode } from "@app/utils/ui/components/youtube/time";
 import type { AskCitation, QaHistoryItem, VideoId } from "@app/youtube/lib/types";
@@ -32,6 +33,7 @@ export interface AskTabProps {
             topK?: number;
             provider?: string;
             model?: string;
+            presetId?: number;
         }) => Promise<{ answer: string; citations?: AskCitation[] }>;
         isPending: boolean;
     };
@@ -42,6 +44,8 @@ export interface AskTabProps {
         isPending: boolean;
     };
     useCreateShare?: VideoDetailDataSource["useCreateShare"];
+    useListPresets?: VideoDetailDataSource["useListPresets"];
+    useCreatePreset?: VideoDetailDataSource["useCreatePreset"];
     /** Invoked by the "Sign in" affordance when the ask endpoint returns 401. */
     onRequireLogin?: () => void;
 }
@@ -148,9 +152,21 @@ function HistoryRow({
     );
 }
 
-export function AskTab({ videoId, onSeek, useAskVideo, useQaHistory, useCreateShare, onRequireLogin }: AskTabProps) {
+export function AskTab({
+    videoId,
+    onSeek,
+    useAskVideo,
+    useQaHistory,
+    useCreateShare,
+    useListPresets,
+    useCreatePreset,
+    onRequireLogin,
+}: AskTabProps) {
     const ask = useAskVideo(videoId);
     const createShare = useCreateShare?.();
+    const userPresets = useListPresets?.("ask");
+    const createPreset = useCreatePreset?.();
+    const [presetId, setPresetId] = useState<number | null>(null);
     const [latestLinkCopied, setLatestLinkCopied] = useState(false);
     const history = useQaHistory?.(videoId);
     const [question, setQuestion] = useState("");
@@ -179,7 +195,7 @@ export function AskTab({ videoId, onSeek, useAskVideo, useQaHistory, useCreateSh
 
         setError(null);
         try {
-            const result = await ask.mutateAsync({ question: trimmed });
+            const result = await ask.mutateAsync({ question: trimmed, presetId: presetId ?? undefined });
 
             if (!useQaHistory) {
                 setSessionExchange({ question: trimmed, answer: result.answer, citations: result.citations ?? [] });
@@ -238,6 +254,17 @@ export function AskTab({ videoId, onSeek, useAskVideo, useQaHistory, useCreateSh
                     )}
                 </Button>
             </form>
+
+            {userPresets && createPreset ? (
+                <StyleSelect
+                    kind="ask"
+                    presets={userPresets.data ?? []}
+                    selectedId={presetId}
+                    onSelect={setPresetId}
+                    onCreate={createPreset.mutateAsync}
+                    creating={createPreset.isPending}
+                />
+            ) : null}
 
             {signInRequired ? (
                 <div className="flex items-start gap-3 rounded-2xl border border-white/8 bg-black/20 p-4">

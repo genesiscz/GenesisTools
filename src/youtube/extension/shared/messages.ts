@@ -6,6 +6,7 @@ import type {
     LedgerPage,
     LlmEstimate,
     PipelineJob,
+    PromptPreset,
     QaHistoryItem,
     ShareSummary,
     SummaryFormat,
@@ -43,8 +44,17 @@ export type ExtensionRequest =
           tone?: SummaryTone;
           format?: SummaryFormat;
           length?: SummaryLength;
+          presetId?: number;
       }
-    | { type: "api:askVideo"; id: VideoId; question: string; topK?: number; provider?: string; model?: string }
+    | {
+          type: "api:askVideo";
+          id: VideoId;
+          question: string;
+          topK?: number;
+          provider?: string;
+          model?: string;
+          presetId?: number;
+      }
     | { type: "api:startPipeline"; target: string; targetKind?: "video" | "channel" | "url"; stages: JobStage[] }
     | { type: "api:getJob"; id: number }
     | { type: "api:listModels" }
@@ -72,7 +82,11 @@ export type ExtensionRequest =
           qaHistoryId?: number;
       }
     | { type: "api:listShares" }
-    | { type: "api:revokeShare"; slug: string };
+    | { type: "api:revokeShare"; slug: string }
+    | { type: "api:listPresets"; kind?: "summary" | "insights" | "ask" }
+    | { type: "api:createPreset"; name: string; kind: "summary" | "insights" | "ask"; instructions: string }
+    | { type: "api:updatePreset"; id: number; name?: string; instructions?: string }
+    | { type: "api:deletePreset"; id: number };
 
 export type ExtensionResponse = { ok: true; data: unknown } | { ok: false; error: string };
 
@@ -124,4 +138,8 @@ export interface ExtensionApiMap {
     "api:createShare": { slug: string; url: string };
     "api:listShares": { shares: ShareSummary[] };
     "api:revokeShare": { revoked: boolean };
+    "api:listPresets": { presets: PromptPreset[] };
+    "api:createPreset": { preset: PromptPreset };
+    "api:updatePreset": { preset: PromptPreset };
+    "api:deletePreset": { deleted: boolean };
 }
