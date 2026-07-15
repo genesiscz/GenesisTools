@@ -1,20 +1,30 @@
 import { dirname, join } from "node:path";
+import type { CallLLMOptions, CallLLMResult } from "@app/utils/ai/call-llm";
+import { callLLM as defaultCallLLM } from "@app/utils/ai/call-llm";
 import { Transcriber } from "@app/utils/ai/tasks/Transcriber";
 import { speakerIndexFromLabel } from "@app/utils/ai/transcription/speaker-label";
 import { withFileLock } from "@app/utils/storage";
+import { estimateTokens } from "@app/utils/tokens";
 import { audioPath, ensureBinaryDir } from "@app/youtube/lib/cache";
 import { fetchCaptions } from "@app/youtube/lib/captions";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
-import type { Transcript } from "@app/youtube/lib/transcript.types";
+import { englishLanguageName } from "@app/youtube/lib/languages";
+import type { Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
 import type {
     TranscribeOpts,
     TranscriberProgressInfo,
     TranscriberResult,
     TranscriptServiceDeps,
+    TranslateTranscriptOpts,
 } from "@app/youtube/lib/transcripts.types";
-import { recordYoutubeUsage } from "@app/youtube/lib/usage";
+import { identifyProviderChoice, recordYoutubeUsage } from "@app/youtube/lib/usage";
+import type { VideoId } from "@app/youtube/lib/video.types";
 import { downloadAudio } from "@app/youtube/lib/yt-dlp";
+import type { ProviderChoice } from "@ask/types";
+
+/** Target input tokens per translation chunk — segments never split mid-line. */
+const TRANSLATE_CHUNK_TARGET_TOKENS = 3000;
 
 const DEFAULT_TRANSCRIPT_DEPS: TranscriptServiceDeps = {
     fetchCaptions,
@@ -151,4 +161,143 @@ export class TranscriptService {
     private cacheDir(): string {
         return join(dirname(this.config.where()), "cache");
     }
+}
+
+/**
+ * Line-anchored transcript translation (Feature 08 Layer 2): chunks the
+ * transcript on segment boundaries (~3k tokens/chunk), translates each chunk
+ * with the timestamp preserved as a `[<sec>] <text>` prefix so segment
+ * start/end times survive verbatim — the LLM never invents timing, it only
+ * translates the text after each bracket. Stored as a sibling `transcripts`
+ * row (same video, new lang, `source: "ai"`).
+ */
+export async function translateTranscript(opts: TranslateTranscriptOpts): Promise<Transcript> {
+    const original = opts.db.getTranscript(opts.videoId);
+
+    if (!original) {
+        throw new Error(`no transcript for video ${opts.videoId}; transcribe first`);
+    }
+
+    const call = opts.callLLM ?? defaultCallLLM;
+    const chunks = chunkSegmentsForTranslation(original.segments);
+    const translatedSegments: TranscriptSegment[] = [];
+
+    for (let i = 0; i < chunks.length; i++) {
+        opts.onProgress?.({
+            percent: Math.round((i / Math.max(1, chunks.length)) * 100),
+            message: `Translating chunk ${i + 1}/${chunks.length}`,
+        });
+        const translated = await translateChunk({
+            segments: chunks[i],
+            lang: opts.lang,
+            providerChoice: opts.providerChoice,
+            videoId: opts.videoId,
+            call,
+        });
+        translatedSegments.push(...translated);
+    }
+
+    opts.onProgress?.({ percent: 100, message: "Saving translated transcript" });
+    opts.db.saveTranscript({
+        videoId: opts.videoId,
+        lang: opts.lang,
+        source: "ai",
+        text: translatedSegments.map((segment) => segment.text).join(" "),
+        segments: translatedSegments,
+        durationSec: original.durationSec,
+    });
+    const saved = opts.db.getTranscript(opts.videoId, { lang: opts.lang, source: "ai" });
+
+    if (!saved) {
+        throw new Error(`failed to save translated transcript: ${opts.videoId}`);
+    }
+
+    return saved;
+}
+
+/** Groups segments into chunks whose cumulative `[<sec>] <text>` line tokens stay under `targetTokens`. A segment is never split. */
+export function chunkSegmentsForTranslation(
+    segments: TranscriptSegment[],
+    targetTokens: number = TRANSLATE_CHUNK_TARGET_TOKENS
+): TranscriptSegment[][] {
+    const chunks: TranscriptSegment[][] = [];
+    let current: TranscriptSegment[] = [];
+    let currentTokens = 0;
+
+    for (const segment of segments) {
+        const lineTokens = estimateTokens(formatTranslateLine(segment));
+
+        if (current.length > 0 && currentTokens + lineTokens > targetTokens) {
+            chunks.push(current);
+            current = [];
+            currentTokens = 0;
+        }
+
+        current.push(segment);
+        currentTokens += lineTokens;
+    }
+
+    if (current.length > 0) {
+        chunks.push(current);
+    }
+
+    return chunks;
+}
+
+async function translateChunk(opts: {
+    segments: TranscriptSegment[];
+    lang: string;
+    providerChoice: ProviderChoice;
+    videoId: VideoId;
+    call: (opts: CallLLMOptions) => Promise<CallLLMResult>;
+}): Promise<TranscriptSegment[]> {
+    const name = englishLanguageName(opts.lang);
+    const baseSystemPrompt = `Translate to ${name}. Return the same line structure "[<sec>] <text>", exactly one output line per input line.`;
+    const userPrompt = opts.segments.map(formatTranslateLine).join("\n");
+
+    const attempt = async (extraInstruction?: string): Promise<string[]> => {
+        const systemPrompt = extraInstruction ? `${baseSystemPrompt}\n\n${extraInstruction}` : baseSystemPrompt;
+        const result = await opts.call({ systemPrompt, userPrompt, providerChoice: opts.providerChoice });
+        const ids = identifyProviderChoice(opts.providerChoice);
+        await recordYoutubeUsage({
+            action: "transcript:translate",
+            provider: ids.provider,
+            model: ids.model,
+            usage: result.usage,
+            scope: opts.videoId,
+            prompt: `system:\n${systemPrompt}\n\nuser:\n${userPrompt}`,
+            response: result.content,
+        });
+
+        return splitTranslatedLines(result.content);
+    };
+
+    let lines = await attempt();
+
+    if (lines.length !== opts.segments.length) {
+        lines = await attempt(`You must return exactly ${opts.segments.length} lines.`);
+    }
+
+    if (lines.length !== opts.segments.length) {
+        throw new Error(
+            `translateTranscript: chunk translation returned ${lines.length} lines, expected ${opts.segments.length}`
+        );
+    }
+
+    return opts.segments.map((segment, i) => ({ ...segment, text: stripTranslateLinePrefix(lines[i]) }));
+}
+
+function formatTranslateLine(segment: TranscriptSegment): string {
+    return `[${Math.round(segment.start)}] ${segment.text}`;
+}
+
+function splitTranslatedLines(content: string): string[] {
+    return content
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+}
+
+function stripTranslateLinePrefix(line: string): string {
+    return line.replace(/^\[[^\]]*\]\s*/, "");
 }

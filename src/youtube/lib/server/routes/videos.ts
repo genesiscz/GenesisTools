@@ -13,6 +13,7 @@ import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
 import { compactTranscript } from "@app/youtube/lib/transcript-compact";
+import { translateTranscript } from "@app/youtube/lib/transcripts";
 import type { ChannelHandle, QaSource, Transcript, Video, VideoId } from "@app/youtube/lib/types";
 import { CREDIT_COSTS, InsufficientCreditsError, REUSE_COST } from "@app/youtube/lib/types";
 import type { Youtube } from "@app/youtube/lib/youtube";
@@ -88,6 +89,54 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
         if (transcriptRoute) {
             return handleTranscriptRoute(url, yt, transcriptRoute.id as VideoId);
+        }
+
+        const transcriptTranslate = matchRoute(req, "POST", "/api/v1/videos/:id/transcript/translate", url.pathname);
+
+        if (transcriptTranslate) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const id = transcriptTranslate.id as VideoId;
+            const body = (await safeJsonBody(req)) ?? {};
+            const lang = typeof body.lang === "string" ? body.lang : undefined;
+
+            if (!lang || !isOutputLang(lang)) {
+                return jsonError("body must include a known {lang}", 400);
+            }
+
+            if (!yt.db.getTranscript(id)) {
+                return jsonError("no transcript yet for this video — run pipeline / transcribe first", 409);
+            }
+
+            // Reuse-aware: an existing translated row is served for free —
+            // the cache is checked BEFORE any credit charge.
+            const existing = yt.db.getTranscript(id, { lang });
+
+            if (existing) {
+                return Response.json(
+                    { transcript: existing, creditsSpent: 0, credits: user.credits },
+                    { headers: CORS_HEADERS }
+                );
+            }
+
+            const creditCost = CREDIT_COSTS["transcript:translate"];
+
+            if (user.credits < creditCost) {
+                return insufficientDiamonds(user.credits, creditCost);
+            }
+
+            const providerChoice = await resolveProviderChoice({
+                provider: typeof body.provider === "string" ? body.provider : undefined,
+                model: typeof body.model === "string" ? body.model : undefined,
+            });
+            const transcript = await translateTranscript({ db: yt.db, videoId: id, lang, providerChoice });
+            const credits = yt.db.spendCredits(user.id, creditCost, "transcript:translate");
+
+            return Response.json({ transcript, creditsSpent: creditCost, credits }, { headers: CORS_HEADERS });
         }
 
         const speakersPut = matchRoute(req, "PUT", "/api/v1/videos/:id/speakers", url.pathname);
