@@ -1,4 +1,5 @@
 import type {
+    AskCitation,
     Channel,
     ChannelHandle,
     JobEvent,
@@ -122,7 +123,7 @@ export interface ExtensionApiMap {
     };
     "api:askVideo": {
         answer: string;
-        citations: Array<{ videoId: string; chunkIdx: number; startSec: number | null; endSec: number | null }>;
+        citations: AskCitation[];
         creditsSpent: number;
         credits: number;
         historyId: number;

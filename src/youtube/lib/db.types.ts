@@ -1,5 +1,6 @@
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import type { JobActivityKind, JobStage, JobStatus, JobTargetKind } from "@app/youtube/lib/jobs.types";
+import type { QaSource } from "@app/youtube/lib/qa.types";
 import type { Language, TranscriptSegment } from "@app/youtube/lib/transcript.types";
 import type { TimestampedSummaryEntry, VideoId, VideoLongSummary } from "@app/youtube/lib/video.types";
 
@@ -105,6 +106,10 @@ export interface UpsertQaChunkInput {
     endSec?: number | null;
     embedding?: Float32Array | null;
     embedderModel?: string | null;
+    /** Corpus the chunk came from. Default `"transcript"`. */
+    source?: QaSource;
+    /** Comment thread root id for comments chunks. */
+    sourceRef?: string | null;
 }
 
 export interface EnqueueJobInput {

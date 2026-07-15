@@ -4,12 +4,16 @@ import type { Transcript } from "@app/youtube/lib/transcript.types";
 import type { VideoId } from "@app/youtube/lib/video.types";
 import type { ProviderChoice } from "@ask/types";
 
+export type QaSource = "transcript" | "comments";
+
 export interface IndexOpts {
     videoId: VideoId;
     forceReindex?: boolean;
     provider?: string;
     model?: string;
     signal?: AbortSignal;
+    /** Which corpora to embed. Default `["transcript"]`. */
+    sources?: QaSource[];
 }
 
 export interface IndexResult {
@@ -27,6 +31,8 @@ export interface AskOpts {
     /** Resolved, ownership-checked preset instructions (Feature 11) — wrapped
      *  via `buildPresetBlock` and appended AFTER the system prompt is built. */
     presetInstructions?: string;
+    /** Which corpora to retrieve from. Default `["transcript"]`. */
+    sources?: QaSource[];
 }
 
 export interface AskCitation {
@@ -34,6 +40,9 @@ export interface AskCitation {
     chunkIdx: number;
     startSec: number | null;
     endSec: number | null;
+    source: QaSource;
+    author: string | null;
+    commentId: string | null;
 }
 
 export interface AskResult {
@@ -47,6 +56,12 @@ export interface ChunkedTranscript {
     endSec: number | null;
 }
 
+/** One embeddable slice of a comment thread. */
+export interface CommentChunk {
+    text: string;
+    rootCommentId: string;
+}
+
 export interface QaChunk {
     id: number;
     videoId: VideoId;
@@ -58,6 +73,9 @@ export interface QaChunk {
     embeddingDims: number | null;
     embedderModel: string | null;
     createdAt: string;
+    source: QaSource;
+    /** Comment thread root id for `source: "comments"`; null for transcript chunks. */
+    sourceRef: string | null;
 }
 
 export interface QaServiceEmbedder {

@@ -133,7 +133,9 @@ describe("YoutubeDatabase credits", () => {
 });
 
 describe("YoutubeDatabase qa history", () => {
-    const citations: AskCitation[] = [{ videoId: "vid1", chunkIdx: 0, startSec: 12.5, endSec: 30 }];
+    const citations: AskCitation[] = [
+        { videoId: "vid1", chunkIdx: 0, startSec: 12.5, endSec: 30, source: "transcript", author: null, commentId: null },
+    ];
 
     it("insertQaHistory round-trips citations and metadata", () => {
         const user = createTestUser();

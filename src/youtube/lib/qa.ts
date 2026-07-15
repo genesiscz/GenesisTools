@@ -1,5 +1,6 @@
 import { callLLM } from "@app/utils/ai/call-llm";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
+import type { VideoComment } from "@app/youtube/lib/comments.types";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { TranscriptSearchHit } from "@app/youtube/lib/db.types";
@@ -8,6 +9,7 @@ import type {
     AskOpts,
     AskResult,
     ChunkedTranscript,
+    CommentChunk,
     IndexOpts,
     IndexResult,
     QaServiceDeps,
@@ -149,6 +151,9 @@ export class QaService {
                     chunkIdx: rankedChunk.chunk.chunkIdx,
                     startSec: rankedChunk.chunk.startSec,
                     endSec: rankedChunk.chunk.endSec,
+                    source: rankedChunk.chunk.source,
+                    author: null,
+                    commentId: rankedChunk.chunk.sourceRef,
                 })),
             };
         } finally {
@@ -195,6 +200,76 @@ export function chunkTranscript(transcript: TranscriptChunkSource): ChunkedTrans
 
     if (buffer.length) {
         out.push({ text: buffer.join(" "), startSec: bufferStart, endSec: bufferEnd });
+    }
+
+    return out;
+}
+
+/**
+ * Chunk comment threads for embedding. Threads keep root + replies together
+ * (reply order = fetch order), every message is prefixed `@<author>: ` so
+ * handles survive into the chunk text. Long threads split at reply boundaries;
+ * tiny threads merge up to the target size (a merged chunk keeps the FIRST
+ * thread's root id as its `rootCommentId`).
+ */
+export function chunkComments(comments: VideoComment[]): CommentChunk[] {
+    const known = new Set(comments.map((comment) => comment.commentId));
+    const repliesByParent = new Map<string, VideoComment[]>();
+    const roots: VideoComment[] = [];
+
+    for (const comment of comments) {
+        if (comment.parentCommentId && known.has(comment.parentCommentId)) {
+            const siblings = repliesByParent.get(comment.parentCommentId) ?? [];
+            siblings.push(comment);
+            repliesByParent.set(comment.parentCommentId, siblings);
+            continue;
+        }
+
+        roots.push(comment);
+    }
+
+    // Per-thread pass: one chunk per thread, splitting oversize threads at
+    // reply (message) boundaries — never mid-message.
+    const perThread: CommentChunk[] = [];
+
+    for (const root of roots) {
+        const messages = [root, ...(repliesByParent.get(root.commentId) ?? [])].map(
+            // yt-dlp authors usually already carry the "@" — normalize so the
+            // prefix is always exactly one "@".
+            (comment) => `@${(comment.author ?? "unknown").replace(/^@/, "")}: ${comment.text}`
+        );
+        let buffer: string[] = [];
+        let bufferChars = 0;
+
+        for (const message of messages) {
+            if (bufferChars + message.length + 1 > TARGET_CHARS && buffer.length) {
+                perThread.push({ text: buffer.join("\n"), rootCommentId: root.commentId });
+                buffer = [];
+                bufferChars = 0;
+            }
+
+            buffer.push(message);
+            bufferChars += message.length + 1;
+        }
+
+        if (buffer.length) {
+            perThread.push({ text: buffer.join("\n"), rootCommentId: root.commentId });
+        }
+    }
+
+    // Merge pass: pack adjacent small thread-chunks up to the target so tiny
+    // threads don't each burn an embedding.
+    const out: CommentChunk[] = [];
+
+    for (const chunk of perThread) {
+        const last = out[out.length - 1];
+
+        if (last && last.text.length + chunk.text.length + 2 <= TARGET_CHARS) {
+            last.text = `${last.text}\n\n${chunk.text}`;
+            continue;
+        }
+
+        out.push({ ...chunk });
     }
 
     return out;

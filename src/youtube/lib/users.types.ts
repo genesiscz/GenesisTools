@@ -1,4 +1,4 @@
-import type { AskCitation } from "@app/youtube/lib/qa.types";
+import type { AskCitation, QaSource } from "@app/youtube/lib/qa.types";
 
 export interface YtUser {
     id: number;
@@ -15,6 +15,8 @@ export interface QaHistoryItem {
     citations: AskCitation[];
     creditsSpent: number;
     createdAt: string;
+    /** Ask scope the answer was produced from. Absent on pre-scope rows. */
+    sources?: QaSource[];
 }
 
 export type CreditReason =
