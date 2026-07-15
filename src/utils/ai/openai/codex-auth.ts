@@ -311,6 +311,26 @@ export async function resolveCodexAccountToken(accountName: string): Promise<Res
         throw new Error(`openai-sub account "${accountName}" not found in AI config.`);
     }
 
+    // Reference mode: `tokens.authFile` points at the Codex CLI cache
+    // (~/.codex/auth.json). Live-read, never copied — the CLI owns refresh.
+    // An explicit reference wins over any stored (possibly stale) tokens.
+    if (entry.tokens.authFile) {
+        const tokens = await readCodexAuthJson(entry.tokens.authFile);
+
+        if (!tokens?.accessToken) {
+            throw new Error(`No Codex CLI auth at ${entry.tokens.authFile}. Run \`codex login\`.`);
+        }
+
+        if (tokens.expiresAt && codexOAuth.needsRefresh(tokens.expiresAt)) {
+            logger.warn(
+                { path: entry.tokens.authFile, account: accountName },
+                "codex: CLI-cache token is expired — run `codex login` (this reference mode never writes the cache)"
+            );
+        }
+
+        return { token: tokens.accessToken, accountId: tokens.accountId ?? extractAccountId(tokens.accessToken) };
+    }
+
     let accessToken = entry.tokens.accessToken;
 
     if (!accessToken) {

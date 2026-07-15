@@ -44,7 +44,9 @@ export async function resolveGrokSubToken(accountName?: string): Promise<Resolve
 
     const authPath = account.tokens.authFile ?? grokAuthPath();
 
-    if (account.tokens.accessToken) {
+    // An explicit `authFile` reference wins over stored tokens (which can go
+    // stale on their own — the referenced file is CLI-refreshed).
+    if (account.tokens.accessToken && !account.tokens.authFile) {
         assertNotExpired(account.tokens.accessToken, authPath);
         return { token: account.tokens.accessToken, authPath, account: pick(account) };
     }

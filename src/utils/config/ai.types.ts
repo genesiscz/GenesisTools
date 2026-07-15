@@ -16,7 +16,7 @@ export interface AIAccountTokens {
     apiKey?: string; // Standard API key
     /** Env variable NAME holding the API key — a live reference, the key is never copied into the config. Used when `apiKey` is unset. */
     apiKeyEnv?: string;
-    /** grok-sub: Grok-CLI-format auth file to live-read the JWT from (default `~/.grok/auth.json`). Reference, never copied. */
+    /** Subscription CLI auth file to live-read tokens from — grok-sub: Grok CLI format (default `~/.grok/auth.json`); openai-sub: Codex CLI `auth.json`. Reference, never copied; wins over stored tokens. */
     authFile?: string;
     accessToken?: string; // OAuth access token
     refreshToken?: string; // OAuth refresh token
