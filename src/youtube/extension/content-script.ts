@@ -84,6 +84,52 @@ function isInFlowRail(el: HTMLElement): boolean {
     return position === "static" || position === "relative";
 }
 
+function findLiveChatFrame(): HTMLElement | null {
+    // Livestreams / premieres (incl. playlist + chat layouts) render a
+    // ytd-live-chat-frame. The user wants the panel stacked directly ABOVE the
+    // chat, in its column — inserting the host as the chat's previous sibling
+    // does exactly that regardless of which container YouTube parked the chat
+    // in.
+    return document.querySelector<HTMLElement>("ytd-live-chat-frame");
+}
+
+function coversPlayer(host: HTMLElement): boolean {
+    // Safety net for responsive edge cases: whatever container we picked, if
+    // the panel actually landed on top of the video we retreat to the fixed
+    // right-side host instead. getBoundingClientRect forces a sync reflow so
+    // the measurement is accurate right after insertion.
+    const player =
+        document.querySelector<HTMLElement>("#movie_player") ??
+        document.querySelector<HTMLElement>("ytd-player");
+
+    if (!player) {
+        return false;
+    }
+
+    const h = host.getBoundingClientRect();
+    const p = player.getBoundingClientRect();
+
+    if (h.width === 0 || p.width === 0) {
+        return false;
+    }
+
+    const horizontal = Math.min(h.right, p.right) - Math.max(h.left, p.left);
+    const vertical = Math.min(h.bottom, p.bottom) - Math.max(h.top, p.top);
+    return horizontal > 40 && vertical > 40;
+}
+
+function tryInlinePlacement(host: HTMLElement, insert: () => void): boolean {
+    applyInlineStyles(host);
+    insert();
+
+    if (coversPlayer(host)) {
+        host.remove();
+        return false;
+    }
+
+    return true;
+}
+
 const HEIGHT_ANIMATION = [
     "interpolate-size: allow-keywords",
     "transition: height 400ms cubic-bezier(0.4, 0, 0.2, 1)",
@@ -156,11 +202,22 @@ function attachHost(target: PanelTarget): { host: HTMLElement; placement: Placem
     shieldKeyboardEvents(host);
 
     if (target.kind === "video" && location.pathname === "/watch") {
+        // Prefer sitting directly above the live chat when one is present.
+        const chat = findLiveChatFrame();
+        if (chat?.parentElement) {
+            const parent = chat.parentElement;
+            if (tryInlinePlacement(host, () => parent.insertBefore(host, chat))) {
+                return { host, placement: "inline" };
+            }
+        }
+
+        // Otherwise flow at the top of the related-videos rail, but only when
+        // #secondary is a normal in-flow column (see isInFlowRail).
         const secondary = findWatchSecondaryColumn();
         if (secondary && isInFlowRail(secondary)) {
-            applyInlineStyles(host);
-            secondary.insertBefore(host, secondary.firstChild);
-            return { host, placement: "inline" };
+            if (tryInlinePlacement(host, () => secondary.insertBefore(host, secondary.firstChild))) {
+                return { host, placement: "inline" };
+            }
         }
     }
 
