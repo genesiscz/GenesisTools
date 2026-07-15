@@ -3,9 +3,12 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@app/utils/ui/components/input";
 import { formatRelativeTime } from "@app/utils/ui/components/youtube/time";
 import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
-import type { ShareSummary } from "@app/youtube/lib/types";
+import type { PresetKind, PromptPreset, ShareSummary } from "@app/youtube/lib/types";
 import {
     useCheckout,
+    useCreatePreset,
+    useDeletePreset,
+    useListPresets,
     useLogin,
     useLogout,
     useMe,
@@ -13,10 +16,11 @@ import {
     useRevokeShare,
     useShares,
     useTopup,
+    useUpdatePreset,
     useUsageSummary,
 } from "@ext/api.hooks";
-import { CreditCard, Gem, Loader2, LogOut, Share2 } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { CreditCard, Gem, Loader2, LogOut, Pencil, Share2, Trash2, Wand2 } from "lucide-react";
+import { type FormEvent, useRef, useState } from "react";
 
 type AuthMode = "login" | "register";
 
@@ -96,6 +100,8 @@ function SignedInView({
             {onViewActivity ? <ActivitySparkline onViewAll={onViewActivity} /> : null}
 
             <SharesSection />
+
+            <PresetsSection />
 
             <Button
                 size="sm"
@@ -288,6 +294,235 @@ function SharesSection() {
                     ))}
                 </div>
             )}
+        </div>
+    );
+}
+
+interface ImportedPreset {
+    name: string;
+    kind: PresetKind;
+    instructions: string;
+}
+
+function isImportedPreset(value: unknown): value is ImportedPreset {
+    if (!value || typeof value !== "object") {
+        return false;
+    }
+
+    const candidate = value as Record<string, unknown>;
+
+    return (
+        typeof candidate.name === "string" &&
+        typeof candidate.instructions === "string" &&
+        (candidate.kind === "summary" || candidate.kind === "insights" || candidate.kind === "ask")
+    );
+}
+
+function PresetsSection() {
+    const presets = useListPresets();
+    const createPreset = useCreatePreset();
+    const updatePreset = useUpdatePreset();
+    const deletePreset = useDeletePreset();
+    const [confirmingId, setConfirmingId] = useState<number | null>(null);
+    const [editingId, setEditingId] = useState<number | null>(null);
+    const [editName, setEditName] = useState("");
+    const [editInstructions, setEditInstructions] = useState("");
+    const [importResult, setImportResult] = useState<string | null>(null);
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+    const rows = presets.data ?? [];
+
+    function armConfirm(id: number) {
+        setConfirmingId(id);
+        setTimeout(() => setConfirmingId((current) => (current === id ? null : current)), 3000);
+    }
+
+    function startEdit(preset: PromptPreset) {
+        setEditingId(preset.id);
+        setEditName(preset.name);
+        setEditInstructions(preset.instructions);
+    }
+
+    async function saveEdit() {
+        if (editingId === null) {
+            return;
+        }
+
+        await updatePreset.mutateAsync({ id: editingId, name: editName.trim(), instructions: editInstructions.trim() });
+        setEditingId(null);
+    }
+
+    function exportJson() {
+        const payload: ImportedPreset[] = rows.map((preset) => ({
+            name: preset.name,
+            kind: preset.kind,
+            instructions: preset.instructions,
+        }));
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = "youtube-presets.json";
+        anchor.click();
+        URL.revokeObjectURL(url);
+    }
+
+    async function importJson(file: File) {
+        setImportResult(null);
+        try {
+            const text = await file.text();
+            const parsed: unknown = JSON.parse(text);
+
+            if (!Array.isArray(parsed)) {
+                throw new Error("invalid file");
+            }
+
+            const existingKeys = new Set(rows.map((preset) => `${preset.kind}:${preset.name}`));
+            let imported = 0;
+            let skipped = 0;
+
+            for (const item of parsed) {
+                if (!isImportedPreset(item) || existingKeys.has(`${item.kind}:${item.name}`)) {
+                    skipped += 1;
+                    continue;
+                }
+
+                try {
+                    await createPreset.mutateAsync(item);
+                    existingKeys.add(`${item.kind}:${item.name}`);
+                    imported += 1;
+                } catch {
+                    skipped += 1;
+                }
+            }
+
+            setImportResult(`${imported} imported, ${skipped} skipped`);
+        } catch {
+            setImportResult("Import failed — invalid file");
+        }
+    }
+
+    return (
+        <div className="space-y-2">
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Presets</p>
+            {presets.isPending ? (
+                <div className="flex items-center justify-center py-4 text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" />
+                </div>
+            ) : rows.length === 0 ? (
+                <div className="flex items-start gap-3 rounded-2xl border border-dashed border-primary/25 p-5">
+                    <Wand2 className="mt-0.5 size-5 shrink-0 text-primary" />
+                    <p className="text-sm text-muted-foreground">
+                        No presets yet — create one from any generate dialog.
+                    </p>
+                </div>
+            ) : (
+                <div className="space-y-2">
+                    {rows.map((preset) =>
+                        editingId === preset.id ? (
+                            <div
+                                key={preset.id}
+                                className="space-y-2 rounded-2xl border border-white/8 bg-black/20 p-3"
+                            >
+                                <Input
+                                    value={editName}
+                                    onChange={(e) => setEditName(e.target.value)}
+                                    className="h-9 text-sm"
+                                />
+                                <textarea
+                                    value={editInstructions}
+                                    onChange={(e) => setEditInstructions(e.target.value)}
+                                    className="min-h-20 w-full resize-y rounded-lg border border-white/8 bg-black/20 p-2.5 text-sm leading-relaxed text-foreground focus:border-primary/40 focus:outline-none"
+                                />
+                                <div className="flex justify-end gap-1.5">
+                                    <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="text-muted-foreground"
+                                        onClick={() => setEditingId(null)}
+                                    >
+                                        Cancel
+                                    </Button>
+                                    <Button size="sm" disabled={updatePreset.isPending} onClick={() => void saveEdit()}>
+                                        Save
+                                    </Button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div key={preset.id} className="rounded-2xl border border-white/8 bg-black/20 p-3">
+                                <div className="flex items-center gap-2">
+                                    <span className="inline-flex h-5 items-center rounded-full border border-white/8 px-2 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                                        {preset.kind}
+                                    </span>
+                                    <p className="text-sm font-semibold text-foreground/95">{preset.name}</p>
+                                </div>
+                                <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{preset.instructions}</p>
+                                <div className="mt-2 flex items-center justify-end gap-1.5">
+                                    <button
+                                        type="button"
+                                        onClick={() => startEdit(preset)}
+                                        className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
+                                    >
+                                        <Pencil className="size-4" />
+                                    </button>
+                                    {confirmingId === preset.id ? (
+                                        <Button
+                                            size="sm"
+                                            variant="destructive"
+                                            onClick={() => deletePreset.mutate({ id: preset.id })}
+                                        >
+                                            Really delete?
+                                        </Button>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={() => armConfirm(preset.id)}
+                                            className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
+                                        >
+                                            <Trash2 className="size-4" />
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        )
+                    )}
+                </div>
+            )}
+            <div className="flex items-center gap-2">
+                <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-muted-foreground"
+                    onClick={exportJson}
+                    disabled={rows.length === 0}
+                >
+                    Export JSON
+                </Button>
+                <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-muted-foreground"
+                    onClick={() => fileInputRef.current?.click()}
+                >
+                    Import JSON
+                </Button>
+                <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="application/json"
+                    className="hidden"
+                    onChange={(e) => {
+                        const file = e.target.files?.[0];
+
+                        if (file) {
+                            void importJson(file);
+                        }
+
+                        e.target.value = "";
+                    }}
+                />
+            </div>
+            {importResult ? <p className="text-sm text-muted-foreground">{importResult}</p> : null}
         </div>
     );
 }
