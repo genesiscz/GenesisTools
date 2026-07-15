@@ -115,16 +115,20 @@ function ExchangeBody({
 
     function pillFor(citation: AskCitation, key: number) {
         if (citation.source === "comments" && citation.commentId !== null) {
-            return (
+            // Merged chunks cover several threads — one pill per root so the
+            // jump never lands on the wrong comment.
+            const roots = citation.roots ?? [{ commentId: citation.commentId, author: citation.author }];
+
+            return roots.map((root) => (
                 <button
-                    key={`comment-${key}`}
+                    key={`comment-${key}-${root.commentId}`}
                     type="button"
-                    onClick={() => citation.commentId && onShowComment?.(citation.commentId)}
+                    onClick={() => onShowComment?.(root.commentId)}
                     className="inline-flex h-6 items-center rounded-full border border-border bg-muted/30 px-2 text-[12px] font-mono"
                 >
-                    @{(citation.author ?? "unknown").replace(/^@/, "")}
+                    @{(root.author ?? "unknown").replace(/^@/, "")}
                 </button>
-            );
+            ));
         }
 
         if (citation.startSec === null) {

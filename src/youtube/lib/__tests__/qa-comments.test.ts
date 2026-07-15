@@ -70,7 +70,7 @@ describe("chunkComments", () => {
         }
     });
 
-    it("merges tiny threads up to the target and keeps the FIRST thread's root id", () => {
+    it("merges tiny threads up to the target, keeping every root id in text order", () => {
         const chunks = chunkComments([
             makeComment({ commentId: "t1", author: "@a", text: "tiny one" }),
             makeComment({ commentId: "t2", author: "@b", text: "tiny two" }),
@@ -79,6 +79,7 @@ describe("chunkComments", () => {
 
         expect(chunks).toHaveLength(1);
         expect(chunks[0]?.rootCommentId).toBe("t1");
+        expect(chunks[0]?.rootCommentIds).toEqual(["t1", "t2", "t3"]);
         expect(chunks[0]?.text).toContain("@a: tiny one");
         expect(chunks[0]?.text).toContain("@c: tiny three");
     });
@@ -177,6 +178,15 @@ describe("QaService ask with comment sources", () => {
                     publishedAt: null,
                     parentCommentId: null,
                 },
+                {
+                    commentId: "rootB",
+                    author: "@bob",
+                    authorId: null,
+                    text: "another tiny thread that merges into the same chunk",
+                    likeCount: 1,
+                    publishedAt: null,
+                    parentCommentId: null,
+                },
             ]);
 
             const vectors = new Map<string, Float32Array>();
@@ -225,6 +235,12 @@ describe("QaService ask with comment sources", () => {
                 author: "alice",
                 commentId: "rootA",
             });
+            // Both tiny threads merged into one chunk — the citation carries
+            // every root so the UI can jump to the right thread.
+            expect(result.citations[1]?.roots).toEqual([
+                { commentId: "rootA", author: "alice" },
+                { commentId: "rootB", author: "bob" },
+            ]);
         } finally {
             db.close();
             await rm(dir, { recursive: true, force: true });
