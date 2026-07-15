@@ -49,7 +49,13 @@ export interface SummaryTabProps {
     };
     useEstimate?: (
         id: VideoId | null,
-        opts: { mode: "short" | "timestamped" | "long"; provider?: string; model?: string; enabled?: boolean }
+        opts: {
+            mode: "short" | "timestamped" | "long";
+            provider?: string;
+            model?: string;
+            lang?: string;
+            enabled?: boolean;
+        }
     ) => { data: LlmEstimate | undefined; isPending: boolean };
     useCreateShare?: VideoDetailDataSource["useCreateShare"];
     useListPresets?: VideoDetailDataSource["useListPresets"];
@@ -110,7 +116,7 @@ export function SummaryTab({
     const [linkCopied, setLinkCopied] = useState(false);
     const [presetId, setPresetId] = useState<number | null>(null);
     const [lang, setLang] = useState(outputLang ?? "en");
-    const estimate = useEstimate?.(videoId, { mode: "long", ...modelSel, enabled: confirmOpen }) ?? NO_ESTIMATE;
+    const estimate = useEstimate?.(videoId, { mode: "long", ...modelSel, lang, enabled: confirmOpen }) ?? NO_ESTIMATE;
     // The dialog only ever fronts a fresh (re)generation — unlocking happens
     // on the teaser card — so quote the full generation price, not the
     // reuse/owned price the estimate endpoint reports for existing artifacts.

@@ -75,6 +75,8 @@ export type ExtensionRequest =
           mode: "short" | "timestamped" | "long";
           provider?: string;
           model?: string;
+          /** Feature 08: quote the price for this output language (mirrors POST's lang-mismatch pricing). */
+          lang?: string;
       }
     | { type: "api:register"; email: string; password: string }
     | { type: "api:login"; email: string; password: string }

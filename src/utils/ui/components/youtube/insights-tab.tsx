@@ -59,7 +59,13 @@ export interface InsightsTabProps {
     };
     useEstimate?: (
         id: VideoId | null,
-        opts: { mode: "short" | "timestamped" | "long"; provider?: string; model?: string; enabled?: boolean }
+        opts: {
+            mode: "short" | "timestamped" | "long";
+            provider?: string;
+            model?: string;
+            lang?: string;
+            enabled?: boolean;
+        }
     ) => { data: LlmEstimate | undefined; isPending: boolean };
     /** Streaming `summary:partial` payload for the timestamped mode, if a generation is running. */
     partialTimestamped?: unknown;
@@ -89,7 +95,8 @@ export function InsightsTab({
     const [controls, setControls] = useState<SummaryControlsState>(DEFAULT_SUMMARY_CONTROLS);
     const [modelSel, setModelSel] = useState<{ provider?: string; model?: string }>({});
     const [lang, setLang] = useState(outputLang ?? "en");
-    const estimate = useEstimate?.(videoId, { mode: "timestamped", ...modelSel, enabled: confirmOpen }) ?? NO_ESTIMATE;
+    const estimate =
+        useEstimate?.(videoId, { mode: "timestamped", ...modelSel, lang, enabled: confirmOpen }) ?? NO_ESTIMATE;
     const hasPartial = partialTimestamped !== undefined;
 
     function openConfirm() {
