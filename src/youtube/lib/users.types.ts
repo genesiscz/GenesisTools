@@ -23,7 +23,9 @@ export type CreditReason =
     | "summary:long"
     | "summary:timestamped"
     | "summary:short"
-    | "dev-topup";
+    | "dev-topup"
+    | `stripe:${string}`
+    | `stripe-refund:${string}`;
 
 export const CREDIT_COSTS = {
     ask: 5,

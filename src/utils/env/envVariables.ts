@@ -253,19 +253,11 @@ export const env = {
 
     db: envClient.db,
 
+    // Generic Stripe accessors only — which env var maps to which product/price
+    // is domain-specific and lives with the caller (e.g. youtube's billing.ts).
     stripe: {
         getSecretKey: () => getTrimmed("STRIPE_SECRET_KEY"),
         getWebhookSecret: () => getTrimmed("STRIPE_WEBHOOK_SECRET"),
-        getPriceId: (packId: "pack-small" | "pack-medium" | "pack-large") => {
-            const envKey =
-                packId === "pack-small"
-                    ? "STRIPE_PRICE_PACK_SMALL"
-                    : packId === "pack-medium"
-                      ? "STRIPE_PRICE_PACK_MEDIUM"
-                      : "STRIPE_PRICE_PACK_LARGE";
-
-            return getTrimmed(envKey);
-        },
     },
 
     testing: {

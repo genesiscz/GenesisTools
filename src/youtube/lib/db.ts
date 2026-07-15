@@ -1145,6 +1145,17 @@ export class YoutubeDatabase extends BaseDatabase {
         return grant();
     }
 
+    /** Idempotency check for external-event-driven grants (e.g. Stripe webhooks). */
+    hasLedgerReason(userId: number, reason: string): boolean {
+        const row = this.db
+            .query<{ found: number }, [number, string]>(
+                "SELECT 1 AS found FROM credit_ledger WHERE user_id = ? AND reason = ? LIMIT 1"
+            )
+            .get(userId, reason);
+
+        return row !== null;
+    }
+
     private writeCreditLedger(userId: number, delta: number, reason: CreditReason, balanceAfter: number): void {
         this.db.run(
             `INSERT INTO credit_ledger (user_id, delta, reason, balance_after, created_at)
