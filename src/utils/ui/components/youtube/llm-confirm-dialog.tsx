@@ -110,18 +110,22 @@ export function LlmConfirmDialog({
     } else if (estimate && estimate.inputTokens !== null) {
         const tokens = `~${formatTokens(estimate.inputTokens)} in / ~${formatTokens(estimate.outputTokens)} out tokens`;
         const source = estimate.basis === "duration" ? " (estimated from video length — no transcript yet)" : "";
+        // For subscription-billed models the diamond price is the number the
+        // user actually pays — lead with it.
+        const diamonds = estimate.creditCost != null ? `${estimate.creditCost} 💎 · ` : "";
         billing = estimate.subscription ? (
             <>
-                Subscription quota · {tokens} · {estimate.provider}/{estimate.model}
+                {diamonds}Subscription quota · {tokens} · {estimate.provider}/{estimate.model}
                 {source}
             </>
         ) : estimate.estUsd !== null ? (
             <>
-                ≈ {formatUsd(estimate.estUsd)} · {tokens} · {estimate.provider}/{estimate.model}
+                {diamonds}≈ {formatUsd(estimate.estUsd)} · {tokens} · {estimate.provider}/{estimate.model}
                 {source}
             </>
         ) : (
             <>
+                {diamonds}
                 {tokens} · {estimate.provider}/{estimate.model} (no price data){source}
             </>
         );
