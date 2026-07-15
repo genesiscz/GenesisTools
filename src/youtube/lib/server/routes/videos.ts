@@ -9,6 +9,7 @@ import { getPresetForUse } from "@app/youtube/lib/presets";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
 import { selectCandidateVideos } from "@app/youtube/lib/qa";
 import { requireUser, resolveUser } from "@app/youtube/lib/server/auth";
+import { safeJsonBody } from "@app/youtube/lib/server/body";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
@@ -1049,22 +1050,4 @@ function parseLength(value: unknown): "short" | "auto" | "detailed" | undefined 
     }
 
     return undefined;
-}
-
-async function safeJsonBody(req: Request): Promise<Record<string, unknown> | null> {
-    if (!req.headers.get("content-type")?.includes("application/json")) {
-        return null;
-    }
-
-    try {
-        const parsed = await req.json();
-
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-            return parsed as Record<string, unknown>;
-        }
-    } catch {
-        // ignore — caller treats null as "no body"
-    }
-
-    return null;
 }

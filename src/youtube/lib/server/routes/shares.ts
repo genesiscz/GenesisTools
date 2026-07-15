@@ -1,5 +1,6 @@
 import { SafeJSON } from "@app/utils/json";
 import { requireUser } from "@app/youtube/lib/server/auth";
+import { safeJsonBody } from "@app/youtube/lib/server/body";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
@@ -85,22 +86,4 @@ function jsonError(error: string, status: number): Response {
         status,
         headers: { "Content-Type": "application/json", ...CORS_HEADERS },
     });
-}
-
-async function safeJsonBody(req: Request): Promise<Record<string, unknown> | null> {
-    if (!req.headers.get("content-type")?.includes("application/json")) {
-        return null;
-    }
-
-    try {
-        const parsed = await req.json();
-
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-            return parsed as Record<string, unknown>;
-        }
-    } catch {
-        // non-JSON body — caller treats null as "no body"
-    }
-
-    return null;
 }

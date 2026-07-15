@@ -8,6 +8,7 @@ import { getLedgerPage, getUsageSummary } from "@app/youtube/lib/ledger-views";
 import { createPreset, deletePreset, listPresets, updatePreset } from "@app/youtube/lib/presets";
 import type { PresetKind } from "@app/youtube/lib/presets.types";
 import { requireUser } from "@app/youtube/lib/server/auth";
+import { safeJsonBody } from "@app/youtube/lib/server/body";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
@@ -205,9 +206,9 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
                 return user;
             }
 
-            const id = Number.parseInt(presetUpdate.id, 10);
+            const id = parsePresetId(presetUpdate.id);
 
-            if (Number.isNaN(id)) {
+            if (id === null) {
                 return jsonError("invalid preset id", 400);
             }
 
@@ -233,9 +234,9 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
                 return user;
             }
 
-            const id = Number.parseInt(presetDelete.id, 10);
+            const id = parsePresetId(presetDelete.id);
 
-            if (Number.isNaN(id)) {
+            if (id === null) {
                 return jsonError("invalid preset id", 400);
             }
 
@@ -283,6 +284,17 @@ function parsePresetKind(value: unknown): PresetKind | undefined {
     return value === "summary" || value === "insights" || value === "ask" ? value : undefined;
 }
 
+/** Full-segment positive integer — `parseInt` would accept `"1junk"` as 1. */
+function parsePresetId(value: string): number | null {
+    if (!/^[1-9]\d*$/.test(value)) {
+        return null;
+    }
+
+    const id = Number(value);
+
+    return Number.isSafeInteger(id) ? id : null;
+}
+
 function presetErrorResponse(error: unknown): { message: string; status: number } {
     const message = error instanceof Error ? error.message : String(error);
 
@@ -306,22 +318,4 @@ function jsonError(error: string, status: number): Response {
         status,
         headers: { "Content-Type": "application/json", ...CORS_HEADERS },
     });
-}
-
-async function safeJsonBody(req: Request): Promise<Record<string, unknown> | null> {
-    if (!req.headers.get("content-type")?.includes("application/json")) {
-        return null;
-    }
-
-    try {
-        const parsed = await req.json();
-
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-            return parsed as Record<string, unknown>;
-        }
-    } catch {
-        // non-JSON body — caller treats null as "no body"
-    }
-
-    return null;
 }
