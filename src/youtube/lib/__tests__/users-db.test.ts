@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { AskCitation } from "@app/youtube/lib/qa.types";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
+import type { AskCitation } from "@app/youtube/lib/qa.types";
 import { InsufficientCreditsError } from "@app/youtube/lib/users.types";
 
 let db: YoutubeDatabase;
@@ -64,10 +64,9 @@ describe("YoutubeDatabase users", () => {
     it("touchUserLogin stamps last_login_at", () => {
         const user = createTestUser();
         db.touchUserLogin(user.id);
-        const row = db
-            .getDb()
-            .query("SELECT last_login_at FROM users WHERE id = ?")
-            .get(user.id) as { last_login_at: string | null };
+        const row = db.getDb().query("SELECT last_login_at FROM users WHERE id = ?").get(user.id) as {
+            last_login_at: string | null;
+        };
 
         expect(row.last_login_at).toMatch(/Z$/);
     });
@@ -97,10 +96,9 @@ describe("YoutubeDatabase credits", () => {
         db.spendCredits(user.id, 10, "summary:long");
         db.grantCredits(user.id, 100, "dev-topup");
 
-        const sum = db
-            .getDb()
-            .query("SELECT SUM(delta) AS sum FROM credit_ledger WHERE user_id = ?")
-            .get(user.id) as { sum: number };
+        const sum = db.getDb().query("SELECT SUM(delta) AS sum FROM credit_ledger WHERE user_id = ?").get(user.id) as {
+            sum: number;
+        };
 
         expect(sum.sum).toBe(190);
         expect(db.getUserByToken(`ytu_${user.email}`)?.credits).toBe(190);
@@ -158,10 +156,38 @@ describe("YoutubeDatabase qa history", () => {
     it("listQaHistory returns newest first, scoped by user and video", () => {
         const alice = createTestUser("alice@example.com");
         const bob = createTestUser("bob@example.com");
-        db.insertQaHistory({ userId: alice.id, videoId: "v1", question: "q1", answer: "a1", citations: [], creditsSpent: 5 });
-        db.insertQaHistory({ userId: alice.id, videoId: "v2", question: "q2", answer: "a2", citations: [], creditsSpent: 5 });
-        db.insertQaHistory({ userId: alice.id, videoId: "v1", question: "q3", answer: "a3", citations: [], creditsSpent: 5 });
-        db.insertQaHistory({ userId: bob.id, videoId: "v1", question: "bob-q", answer: "bob-a", citations: [], creditsSpent: 5 });
+        db.insertQaHistory({
+            userId: alice.id,
+            videoId: "v1",
+            question: "q1",
+            answer: "a1",
+            citations: [],
+            creditsSpent: 5,
+        });
+        db.insertQaHistory({
+            userId: alice.id,
+            videoId: "v2",
+            question: "q2",
+            answer: "a2",
+            citations: [],
+            creditsSpent: 5,
+        });
+        db.insertQaHistory({
+            userId: alice.id,
+            videoId: "v1",
+            question: "q3",
+            answer: "a3",
+            citations: [],
+            creditsSpent: 5,
+        });
+        db.insertQaHistory({
+            userId: bob.id,
+            videoId: "v1",
+            question: "bob-q",
+            answer: "bob-a",
+            citations: [],
+            creditsSpent: 5,
+        });
 
         const all = db.listQaHistory(alice.id);
         const v1Only = db.listQaHistory(alice.id, "v1");
@@ -174,7 +200,14 @@ describe("YoutubeDatabase qa history", () => {
         const user = createTestUser();
 
         for (let i = 0; i < 5; i++) {
-            db.insertQaHistory({ userId: user.id, videoId: "v1", question: `q${i}`, answer: "a", citations: [], creditsSpent: 5 });
+            db.insertQaHistory({
+                userId: user.id,
+                videoId: "v1",
+                question: `q${i}`,
+                answer: "a",
+                citations: [],
+                creditsSpent: 5,
+            });
         }
 
         expect(db.listQaHistory(user.id, undefined, 2).map((item) => item.question)).toEqual(["q4", "q3"]);
