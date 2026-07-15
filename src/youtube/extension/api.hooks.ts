@@ -4,6 +4,7 @@ import type {
     ChannelHandle,
     JobStage,
     PipelineJob,
+    QaSource,
     SummaryFormat,
     SummaryLength,
     SummaryTone,
@@ -170,7 +171,14 @@ export function useAskVideo(id: VideoId) {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: (vars: { question: string; topK?: number; provider?: string; model?: string; presetId?: number }) =>
+        mutationFn: (vars: {
+            question: string;
+            topK?: number;
+            provider?: string;
+            model?: string;
+            presetId?: number;
+            sources?: QaSource[];
+        }) =>
             send<ExtensionApiMap["api:askVideo"]>({ type: "api:askVideo", id, ...vars }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["me"] });

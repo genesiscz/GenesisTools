@@ -155,3 +155,29 @@ describe("summary reuse routes", () => {
         expect(res.json.required).toBe(CREDIT_COSTS["summary:long"]);
     });
 });
+
+describe("qa route source validation", () => {
+    it("409s with the exact body when comments are requested but not fetched", async () => {
+        const user = createUser("qa@example.com", 100);
+
+        const res = await call("POST", `/api/v1/videos/${VIDEO}/qa`, {
+            token: user.token,
+            body: { question: "what do viewers think?", sources: ["comments"] },
+        });
+
+        expect(res.status).toBe(409);
+        expect(res.json).toEqual({ error: "comments not fetched yet" });
+    });
+
+    it("still 409s on a missing transcript for the default scope", async () => {
+        const user = createUser("qa2@example.com", 100);
+
+        const res = await call("POST", `/api/v1/videos/${VIDEO}/qa`, {
+            token: user.token,
+            body: { question: "anything" },
+        });
+
+        expect(res.status).toBe(409);
+        expect(res.json.error).toContain("no transcript yet");
+    });
+});
