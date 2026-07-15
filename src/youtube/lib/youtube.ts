@@ -399,6 +399,11 @@ export class Youtube {
             summarize: async (ctx) => {
                 await this.summary.summarize({ videoId: ctx.job.target as VideoId, mode: "short", signal: ctx.signal });
             },
+            qa: async (ctx) => {
+                // QA runs inline in POST /videos/:id/qa; no worker claims this
+                // stage (worker count 0). Guard against a future regression.
+                throw new Error(`qa stage is inline-only (job ${ctx.job.id} should not be queue-claimed)`);
+            },
             reportSynthesize: async (ctx) => {
                 if (ctx.job.targetKind !== "report") {
                     logger.warn(

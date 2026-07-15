@@ -257,6 +257,9 @@ export class Pipeline {
                 return Math.max(1, concurrency.summarize);
             case "video":
                 return Math.max(1, concurrency.download);
+            case "qa":
+                // Inline-only stage (POST /videos/:id/qa) — never queue-claimed.
+                return 0;
         }
     }
 
