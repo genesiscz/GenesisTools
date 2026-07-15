@@ -66,8 +66,8 @@ declare global {
 
         namespace storage {
             const local: {
-                get(keys: string | string[]): Promise<Partial<ExtensionConfig>>;
-                set(items: Partial<ExtensionConfig>): Promise<void>;
+                get(keys: string | string[]): Promise<Partial<ExtensionConfig> & Record<string, unknown>>;
+                set(items: Partial<ExtensionConfig> & Record<string, unknown>): Promise<void>;
                 remove(keys: string | string[]): Promise<void>;
             };
         }

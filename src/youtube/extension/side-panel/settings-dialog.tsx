@@ -1,6 +1,8 @@
 import { Button } from "@app/utils/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
 import { Input } from "@app/utils/ui/components/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
+import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
 import { formatRelativeTime } from "@app/utils/ui/components/youtube/time";
 import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
 import type { PresetKind, PromptPreset, ShareSummary } from "@app/youtube/lib/types";
@@ -12,6 +14,7 @@ import {
     useLogin,
     useLogout,
     useMe,
+    usePatchMe,
     useRegister,
     useRevokeShare,
     useShares,
@@ -19,6 +22,7 @@ import {
     useUpdatePreset,
     useUsageSummary,
 } from "@ext/api.hooks";
+import { persistUiLang, useT, useUiLang } from "@ext/shared/i18n";
 import { CreditCard, Gem, Loader2, LogOut, Pencil, Share2, Trash2, Wand2 } from "lucide-react";
 import { type FormEvent, useRef, useState } from "react";
 
@@ -37,12 +41,13 @@ export function SettingsDialog({
 }) {
     const me = useMe(open);
     const user = me.data?.user;
+    const t = useT();
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="max-w-sm bg-card border-white/10" onOpenAutoFocus={(e) => e.preventDefault()}>
                 <DialogHeader>
-                    <DialogTitle className="text-lg">Account</DialogTitle>
+                    <DialogTitle className="text-lg">{t("settings.title")}</DialogTitle>
                     <DialogDescription className="text-sm leading-relaxed text-muted-foreground">
                         {user
                             ? "Diamonds pay for summaries and questions."
@@ -57,6 +62,7 @@ export function SettingsDialog({
                     <SignedInView
                         email={user.email}
                         credits={user.credits}
+                        outputLang={user.outputLang}
                         devMode={devMode}
                         onViewActivity={onViewActivity}
                     />
@@ -71,20 +77,25 @@ export function SettingsDialog({
 function SignedInView({
     email,
     credits,
+    outputLang,
     devMode,
     onViewActivity,
 }: {
     email: string;
     credits: number;
+    outputLang: string | null;
     devMode?: boolean;
     onViewActivity?: () => void;
 }) {
     const logout = useLogout();
+    const t = useT();
 
     return (
         <div className="space-y-3">
             <div className="rounded-lg border border-white/8 bg-black/20 p-3">
-                <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Signed in as</p>
+                <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                    {t("settings.signedInAs")}
+                </p>
                 <p className="mt-1 break-all text-sm text-foreground/95">{email}</p>
                 <div className="mt-3 flex items-baseline gap-1.5">
                     <span className="text-xl leading-none" aria-hidden>
@@ -99,6 +110,8 @@ function SignedInView({
 
             {onViewActivity ? <ActivitySparkline onViewAll={onViewActivity} /> : null}
 
+            <LanguageSection outputLang={outputLang} />
+
             <SharesSection />
 
             <PresetsSection />
@@ -110,8 +123,49 @@ function SignedInView({
                 disabled={logout.isPending}
                 onClick={() => logout.mutate()}
             >
-                <LogOut className="size-4" /> Log out
+                <LogOut className="size-4" /> {t("action.logOut")}
             </Button>
+        </div>
+    );
+}
+
+function LanguageSection({ outputLang }: { outputLang: string | null }) {
+    const t = useT();
+    const uiLang = useUiLang();
+    const patchMe = usePatchMe();
+
+    return (
+        <div className="space-y-3">
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                {t("settings.language")}
+            </p>
+            <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">{t("settings.outputLanguage")}</label>
+                <Select value={outputLang ?? "en"} onValueChange={(value) => patchMe.mutate({ outputLang: value })}>
+                    <SelectTrigger className="h-8 w-full text-sm">
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {OUTPUT_LANGS.map((lang) => (
+                            <SelectItem key={lang.code} value={lang.code}>
+                                <span className="font-mono text-[12px] uppercase">{lang.code}</span> {lang.label}
+                            </SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+            </div>
+            <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">{t("settings.panelLanguage")}</label>
+                <Select value={uiLang} onValueChange={(value) => void persistUiLang(value)}>
+                    <SelectTrigger className="h-8 w-full text-sm">
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="en">English</SelectItem>
+                        <SelectItem value="cs">Čeština</SelectItem>
+                    </SelectContent>
+                </Select>
+            </div>
         </div>
     );
 }
@@ -153,6 +207,7 @@ function ActivitySparkline({ onViewAll }: { onViewAll: () => void }) {
 function DiamondPacksSection({ devMode }: { devMode?: boolean }) {
     const checkout = useCheckout();
     const topup = useTopup();
+    const t = useT();
     const [pendingPack, setPendingPack] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
@@ -176,7 +231,9 @@ function DiamondPacksSection({ devMode }: { devMode?: boolean }) {
 
     return (
         <div className="space-y-2">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Get diamonds</p>
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                {t("settings.getDiamonds")}
+            </p>
             {unconfigured ? (
                 <div className="flex items-start gap-3 rounded-2xl border border-dashed border-primary/25 p-5">
                     <CreditCard className="mt-0.5 size-5 shrink-0 text-primary" />
@@ -233,6 +290,7 @@ function DiamondPacksSection({ devMode }: { devMode?: boolean }) {
 function SharesSection() {
     const shares = useShares();
     const revoke = useRevokeShare();
+    const t = useT();
     const [confirmingSlug, setConfirmingSlug] = useState<string | null>(null);
 
     function armConfirm(slug: string) {
@@ -245,7 +303,9 @@ function SharesSection() {
 
     return (
         <div className="space-y-2">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Shares</p>
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                {t("settings.shares")}
+            </p>
             {shares.isPending ? (
                 <div className="flex items-center justify-center py-4 text-muted-foreground">
                     <Loader2 className="size-4 animate-spin" />
@@ -253,9 +313,7 @@ function SharesSection() {
             ) : rows.length === 0 ? (
                 <div className="flex items-start gap-3 rounded-2xl border border-dashed border-primary/25 p-5">
                     <Share2 className="mt-0.5 size-5 shrink-0 text-primary" />
-                    <p className="text-sm text-muted-foreground">
-                        Nothing shared yet — share a summary from any video.
-                    </p>
+                    <p className="text-sm text-muted-foreground">{t("settings.noShares")}</p>
                 </div>
             ) : (
                 <div className="space-y-2">
@@ -277,7 +335,7 @@ function SharesSection() {
                                         variant="destructive"
                                         onClick={() => revoke.mutate({ slug: share.slug })}
                                     >
-                                        Really revoke?
+                                        {t("action.reallyRevoke")}
                                     </Button>
                                 ) : (
                                     <Button
@@ -286,7 +344,7 @@ function SharesSection() {
                                         className="text-muted-foreground"
                                         onClick={() => armConfirm(share.slug)}
                                     >
-                                        Revoke
+                                        {t("action.revoke")}
                                     </Button>
                                 )}
                             </div>
@@ -323,6 +381,7 @@ function PresetsSection() {
     const createPreset = useCreatePreset();
     const updatePreset = useUpdatePreset();
     const deletePreset = useDeletePreset();
+    const t = useT();
     const [confirmingId, setConfirmingId] = useState<number | null>(null);
     const [editingId, setEditingId] = useState<number | null>(null);
     const [editName, setEditName] = useState("");
@@ -404,7 +463,9 @@ function PresetsSection() {
 
     return (
         <div className="space-y-2">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Presets</p>
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                {t("settings.presets")}
+            </p>
             {presets.isPending ? (
                 <div className="flex items-center justify-center py-4 text-muted-foreground">
                     <Loader2 className="size-4 animate-spin" />
@@ -412,9 +473,7 @@ function PresetsSection() {
             ) : rows.length === 0 ? (
                 <div className="flex items-start gap-3 rounded-2xl border border-dashed border-primary/25 p-5">
                     <Wand2 className="mt-0.5 size-5 shrink-0 text-primary" />
-                    <p className="text-sm text-muted-foreground">
-                        No presets yet — create one from any generate dialog.
-                    </p>
+                    <p className="text-sm text-muted-foreground">{t("settings.noPresets")}</p>
                 </div>
             ) : (
                 <div className="space-y-2">
@@ -441,10 +500,10 @@ function PresetsSection() {
                                         className="text-muted-foreground"
                                         onClick={() => setEditingId(null)}
                                     >
-                                        Cancel
+                                        {t("action.cancel")}
                                     </Button>
                                     <Button size="sm" disabled={updatePreset.isPending} onClick={() => void saveEdit()}>
-                                        Save
+                                        {t("action.save")}
                                     </Button>
                                 </div>
                             </div>
@@ -471,7 +530,7 @@ function PresetsSection() {
                                             variant="destructive"
                                             onClick={() => deletePreset.mutate({ id: preset.id })}
                                         >
-                                            Really delete?
+                                            {t("action.reallyDelete")}
                                         </Button>
                                     ) : (
                                         <button
@@ -496,7 +555,7 @@ function PresetsSection() {
                     onClick={exportJson}
                     disabled={rows.length === 0}
                 >
-                    Export JSON
+                    {t("action.exportJson")}
                 </Button>
                 <Button
                     size="sm"
@@ -504,7 +563,7 @@ function PresetsSection() {
                     className="text-muted-foreground"
                     onClick={() => fileInputRef.current?.click()}
                 >
-                    Import JSON
+                    {t("action.importJson")}
                 </Button>
                 <input
                     ref={fileInputRef}
@@ -534,6 +593,7 @@ function AuthForm() {
     const [error, setError] = useState<string | null>(null);
     const login = useLogin();
     const register = useRegister();
+    const t = useT();
     const busy = login.isPending || register.isPending;
 
     function switchMode(next: AuthMode) {
@@ -572,7 +632,7 @@ function AuthForm() {
                     className={`${toggleBase} ${mode === "login" ? toggleActive : toggleIdle}`}
                     onClick={() => switchMode("login")}
                 >
-                    Log in
+                    {t("action.logIn")}
                 </button>
                 <button
                     type="button"
@@ -581,13 +641,13 @@ function AuthForm() {
                     className={`${toggleBase} ${mode === "register" ? toggleActive : toggleIdle}`}
                     onClick={() => switchMode("register")}
                 >
-                    Register
+                    {t("action.register")}
                 </button>
             </div>
 
             <div className="space-y-1">
                 <label htmlFor="yt-auth-email" className="text-xs font-medium text-muted-foreground">
-                    Email
+                    {t("auth.email")}
                 </label>
                 <Input
                     id="yt-auth-email"
@@ -604,7 +664,7 @@ function AuthForm() {
 
             <div className="space-y-1">
                 <label htmlFor="yt-auth-password" className="text-xs font-medium text-muted-foreground">
-                    Password
+                    {t("auth.password")}
                 </label>
                 <Input
                     id="yt-auth-password"
@@ -633,9 +693,9 @@ function AuthForm() {
                         {mode === "login" ? "Signing in…" : "Creating account…"}
                     </>
                 ) : mode === "login" ? (
-                    "Log in"
+                    t("action.logIn")
                 ) : (
-                    "Create account"
+                    t("action.createAccount")
                 )}
             </Button>
 

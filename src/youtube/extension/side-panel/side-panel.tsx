@@ -1,7 +1,8 @@
 import { type PipelineProgress, type VideoDetailTab, VideoDetailTabs } from "@app/utils/ui/components/youtube/tabs";
 import type { JobStage, SummaryMode } from "@app/youtube/lib/types";
 import { send } from "@ext/api.bridge";
-import { dataSource, useModels, useStartPipeline, useSummary } from "@ext/api.hooks";
+import { dataSource, useMe, useModels, useStartPipeline, useSummary } from "@ext/api.hooks";
+import { loadUiLang } from "@ext/shared/i18n";
 import type { ExtensionEvent, PlayerChaptersMessage } from "@ext/shared/messages";
 import { ActivityView } from "@ext/side-panel/activity-view";
 import { ChannelPanel } from "@ext/side-panel/channel-panel";
@@ -48,6 +49,11 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
     const queryClient = useQueryClient();
     // Dev-only model picker data; regular builds never fetch it.
     const models = useModels(IS_DEV_BUILD);
+    const me = useMe();
+
+    useEffect(() => {
+        void loadUiLang();
+    }, []);
 
     useEffect(() => {
         function onWindowMessage(event: MessageEvent): void {
@@ -263,6 +269,7 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                             partialSummaries={partialSummaries}
                             streamingMode={streamingMode}
                             playerTime={playerTime}
+                            outputLang={me.data?.user.outputLang ?? undefined}
                         />
                     )}
                 </div>
