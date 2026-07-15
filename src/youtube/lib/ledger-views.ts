@@ -1,23 +1,8 @@
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { LedgerPage, LedgerRowData, UsageByReason, UsageSummary } from "@app/youtube/lib/ledger-views.types";
+import { ledgerReasonGroup } from "@app/youtube/lib/ledger-views.types";
 
-// No real credit-ledger reason currently needs to stay whole despite having a
-// colon — every colon-bearing reason seen so far (`summary:long` etc,
-// `stripe:<id>`, `stripe-refund:<id>`) is meant to collapse to its prefix.
-// Kept as an extension point per the plan's contract; add entries here if a
-// future reason should NOT be split.
-const ACTION_REASON_ALLOWLIST: readonly string[] = [];
-
-/** Groups a ledger `reason` for display: allowlisted reasons pass through
- * whole, everything else is the segment before the first `:`. */
-export function ledgerReasonGroup(reason: string): string {
-    if (ACTION_REASON_ALLOWLIST.includes(reason)) {
-        return reason;
-    }
-
-    const separatorIndex = reason.indexOf(":");
-    return separatorIndex === -1 ? reason : reason.slice(0, separatorIndex);
-}
+export { ledgerReasonGroup } from "@app/youtube/lib/ledger-views.types";
 
 interface LedgerAggregateRow {
     day: string;
