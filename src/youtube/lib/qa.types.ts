@@ -24,6 +24,9 @@ export interface AskOpts {
     streaming?: boolean;
     providerChoice: ProviderChoice;
     streamTarget?: NodeJS.WritableStream;
+    /** Resolved, ownership-checked preset instructions (Feature 11) — wrapped
+     *  via `buildPresetBlock` and appended AFTER the system prompt is built. */
+    presetInstructions?: string;
 }
 
 export interface AskCitation {
