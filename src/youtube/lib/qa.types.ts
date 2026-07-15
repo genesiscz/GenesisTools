@@ -33,6 +33,12 @@ export interface AskOpts {
     presetInstructions?: string;
     /** Which corpora to retrieve from. Default `["transcript"]`. */
     sources?: QaSource[];
+    /** Channel-scope asks: per-video metadata for prompt tags + attribution,
+     *  and the count of candidates skipped by the lazy-index cap. */
+    crossVideo?: {
+        videos: Record<string, { title: string; uploadDate: string | null }>;
+        skippedUnindexed: number;
+    };
 }
 
 export interface AskCitation {

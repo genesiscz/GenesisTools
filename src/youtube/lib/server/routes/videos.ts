@@ -2,6 +2,7 @@ import { estimateLlmCallCostUsd, estimateSpeechTokens } from "@app/utils/ai/llm-
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import { grantArtifactAccess, resolveArtifactPrice } from "@app/youtube/lib/artifact-access";
+import { selectCandidateVideos } from "@app/youtube/lib/qa";
 import { withJobActivity } from "@app/youtube/lib/job-activity";
 import { getPresetForUse } from "@app/youtube/lib/presets";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
@@ -422,10 +423,6 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 return user;
             }
 
-            if (user.credits < CREDIT_COSTS.ask) {
-                return insufficientDiamonds(user.credits, CREDIT_COSTS.ask);
-            }
-
             const id = qa.id as VideoId;
             await yt.videos.ensureMetadata(id);
 
@@ -435,21 +432,50 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 return jsonError("body must include {question: string}", 400);
             }
 
-            const sources = parseSources(body.sources);
+            const scope = body.scope === "channel" ? ("channel" as const) : ("video" as const);
+            const askCost = scope === "channel" ? CREDIT_COSTS["qa:channel"] : CREDIT_COSTS.ask;
 
-            if (sources.includes("transcript")) {
-                const transcript = yt.db.getTranscript(id);
+            if (user.credits < askCost) {
+                return insufficientDiamonds(user.credits, askCost);
+            }
 
-                if (!transcript) {
+            // Channel scope searches transcripts only — the comment corpus is a
+            // single-video feature.
+            const sources = scope === "channel" ? (["transcript"] as QaSource[]) : parseSources(body.sources);
+            const question = body.question;
+
+            let videoIds: VideoId[] = [id];
+            let crossVideo: NonNullable<Parameters<typeof yt.qa.ask>[0]["crossVideo"]> | undefined;
+
+            if (scope === "channel") {
+                const video = yt.videos.show(id);
+
+                if (!video) {
+                    return jsonError("video not found", 404);
+                }
+
+                const selection = selectCandidateVideos(yt.db, { channel: video.channelHandle, question });
+                videoIds = selection.videoIds.length > 0 ? selection.videoIds : [id];
+                crossVideo = {
+                    videos: Object.fromEntries(
+                        videoIds.map((videoId) => {
+                            const member = yt.db.getVideo(videoId);
+
+                            return [videoId, { title: member?.title ?? videoId, uploadDate: member?.uploadDate ?? null }];
+                        })
+                    ),
+                    skippedUnindexed: selection.skippedUnindexed,
+                };
+            } else {
+                if (sources.includes("transcript") && !yt.db.getTranscript(id)) {
                     return jsonError("no transcript yet for this video — run pipeline / transcribe first", 409);
+                }
+
+                if (sources.includes("comments") && yt.db.getComments(id).length === 0) {
+                    return jsonError("comments not fetched yet", 409);
                 }
             }
 
-            if (sources.includes("comments") && yt.db.getComments(id).length === 0) {
-                return jsonError("comments not fetched yet", 409);
-            }
-
-            const question = body.question;
             const topK = typeof body.topK === "number" ? body.topK : undefined;
             const providerChoice = await resolveProviderChoice({
                 provider: typeof body.provider === "string" ? body.provider : undefined,
@@ -482,7 +508,10 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
             try {
                 const result = await withJobActivity({ jobId: job.id, stage: "summarize", db: yt.db }, async () => {
-                    await yt.qa.index({ videoId: id, sources });
+                    for (const videoId of videoIds) {
+                        await yt.qa.index({ videoId, sources });
+                    }
+
                     yt.pipeline.emitExternal({
                         type: "stage:progress",
                         jobId: job.id,
@@ -491,12 +520,13 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         message: "Answering question",
                     });
                     return yt.qa.ask({
-                        videoIds: [id],
+                        videoIds,
                         question,
                         topK,
                         providerChoice,
                         presetInstructions,
                         sources,
+                        crossVideo,
                     });
                 });
                 yt.db.updateJob(job.id, {
@@ -508,19 +538,21 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 const completedJob = yt.db.getJob(job.id) ?? job;
                 yt.pipeline.emitExternal({ type: "stage:completed", jobId: job.id, stage: "summarize" });
                 yt.pipeline.emitExternal({ type: "job:completed", job: completedJob });
-                const credits = yt.db.spendCredits(user.id, CREDIT_COSTS.ask, "ask");
+                const credits = yt.db.spendCredits(user.id, askCost, scope === "channel" ? "qa:channel" : "ask");
                 const historyItem = yt.db.insertQaHistory({
                     userId: user.id,
                     videoId: id,
                     question,
                     answer: result.answer,
                     citations: result.citations,
-                    creditsSpent: CREDIT_COSTS.ask,
+                    creditsSpent: askCost,
                     sources,
+                    scope,
+                    candidateVideoIds: scope === "channel" ? videoIds : undefined,
                 });
 
                 return Response.json(
-                    { ...result, jobId: job.id, creditsSpent: CREDIT_COSTS.ask, credits, historyId: historyItem.id },
+                    { ...result, jobId: job.id, creditsSpent: askCost, credits, historyId: historyItem.id },
                     { headers: CORS_HEADERS }
                 );
             } catch (error) {
@@ -650,9 +682,7 @@ function parseSources(value: unknown): QaSource[] {
         return ["transcript"];
     }
 
-    const valid = value.filter(
-        (entry): entry is QaSource => entry === "transcript" || entry === "comments"
-    );
+    const valid = value.filter((entry): entry is QaSource => entry === "transcript" || entry === "comments");
 
     return valid.length > 0 ? [...new Set(valid)] : ["transcript"];
 }

@@ -344,6 +344,16 @@ export class YoutubeDatabase extends BaseDatabase {
             }
         });
 
+        this.runMigration("add-qa-history-scope", () => {
+            const cols = this.db.query<{ name: string }, []>("PRAGMA table_info(qa_history)").all() as Array<{
+                name: string;
+            }>;
+
+            if (!cols.some((column) => column.name === "scope_json")) {
+                this.db.exec("ALTER TABLE qa_history ADD COLUMN scope_json TEXT");
+            }
+        });
+
         this.runMigration("add-artifact-access", () => {
             const tableExists = this.db
                 .query<{ name: string }, [string]>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
@@ -1280,11 +1290,16 @@ export class YoutubeDatabase extends BaseDatabase {
         citations: AskCitation[];
         creditsSpent: number;
         sources?: QaSource[];
+        scope?: "video" | "channel";
+        candidateVideoIds?: string[];
     }): QaHistoryItem {
+        const scopeJson = input.scope
+            ? SafeJSON.stringify({ scope: input.scope, candidateVideoIds: input.candidateVideoIds })
+            : null;
         const row = this.db
-            .query<QaHistoryRow, [number, string, string, string, string, number, string | null]>(
-                `INSERT INTO qa_history (user_id, video_id, question, answer, citations_json, credits_spent, sources_json, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ${SQL_NOW_UTC}) RETURNING *`
+            .query<QaHistoryRow, [number, string, string, string, string, number, string | null, string | null]>(
+                `INSERT INTO qa_history (user_id, video_id, question, answer, citations_json, credits_spent, sources_json, scope_json, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${SQL_NOW_UTC}) RETURNING *`
             )
             .get(
                 input.userId,
@@ -1293,7 +1308,8 @@ export class YoutubeDatabase extends BaseDatabase {
                 input.answer,
                 SafeJSON.stringify(input.citations),
                 input.creditsSpent,
-                input.sources ? SafeJSON.stringify(input.sources) : null
+                input.sources ? SafeJSON.stringify(input.sources) : null,
+                scopeJson
             );
 
         if (!row) {
@@ -1565,9 +1581,12 @@ interface QaHistoryRow {
     credits_spent: number;
     created_at: string;
     sources_json: string | null;
+    scope_json: string | null;
 }
 
 function rowToQaHistoryItem(row: QaHistoryRow): QaHistoryItem {
+    const scope = parseQaHistoryScope(row.scope_json);
+
     return {
         id: row.id,
         videoId: row.video_id,
@@ -1577,6 +1596,27 @@ function rowToQaHistoryItem(row: QaHistoryRow): QaHistoryItem {
         creditsSpent: row.credits_spent,
         createdAt: row.created_at,
         sources: parseNullableJsonArray<QaSource>(row.sources_json) ?? undefined,
+        scope: scope?.scope,
+        candidateVideoIds: scope?.candidateVideoIds,
+    };
+}
+
+function parseQaHistoryScope(raw: string | null): { scope: "video" | "channel"; candidateVideoIds?: string[] } | null {
+    if (!raw) {
+        return null;
+    }
+
+    const parsed = SafeJSON.parse(raw) as { scope?: unknown; candidateVideoIds?: unknown };
+
+    if (parsed?.scope !== "video" && parsed?.scope !== "channel") {
+        return null;
+    }
+
+    return {
+        scope: parsed.scope,
+        candidateVideoIds: Array.isArray(parsed.candidateVideoIds)
+            ? parsed.candidateVideoIds.filter((value): value is string => typeof value === "string")
+            : undefined,
     };
 }
 
