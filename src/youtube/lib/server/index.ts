@@ -12,6 +12,8 @@ import { handleConfigRoute } from "@app/youtube/lib/server/routes/config";
 import { handleModelsRoute } from "@app/youtube/lib/server/routes/models";
 import { handlePipelineRoute } from "@app/youtube/lib/server/routes/pipeline";
 import { handleMetaRoute } from "@app/youtube/lib/server/routes/server-meta";
+import { handleSharePageRoute } from "@app/youtube/lib/server/routes/share-page";
+import { handleSharesRoute } from "@app/youtube/lib/server/routes/shares";
 import { handleUsersRoute } from "@app/youtube/lib/server/routes/users";
 import { handleVideosRoute } from "@app/youtube/lib/server/routes/videos";
 import { handleWebhooksRoute } from "@app/youtube/lib/server/routes/webhooks";
@@ -64,6 +66,18 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
                     return new Response(null, { status: 204, headers: CORS_HEADERS });
                 }
 
+                // Public share pages: no /api prefix, no auth of any kind (not
+                // even the open-route service-key exemption below — this is a
+                // plain public webpage, not a JSON API route). Checked first so
+                // it never falls into the /api/v1/* dispatch or auth gate.
+                if (url.pathname.startsWith("/share/")) {
+                    const sharePage = handleSharePageRoute(req, url, youtube);
+
+                    if (sharePage) {
+                        return sharePage;
+                    }
+                }
+
                 // Meta routes (liveness + public discovery) stay open so health
                 // checks and readiness probes work without a key. Webhooks stay
                 // open too — Stripe can't present our service key; it
@@ -103,6 +117,10 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
 
                 if (url.pathname.startsWith("/api/v1/users")) {
                     return await handleUsersRoute(req, url, youtube);
+                }
+
+                if (url.pathname.startsWith("/api/v1/shares")) {
+                    return await handleSharesRoute(req, url, youtube);
                 }
 
                 if (url.pathname.startsWith("/api/v1/webhooks")) {
