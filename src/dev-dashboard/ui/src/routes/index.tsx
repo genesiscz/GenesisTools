@@ -7,6 +7,7 @@ import { ProcessTable } from "@/components/pulse/ProcessTable";
 import { PulseGraph } from "@/components/pulse/PulseGraph";
 import { WeatherCard } from "@/components/pulse/WeatherCard";
 import { WebappsPanel } from "@/components/webapps/WebappsPanel";
+import { useLive } from "@/hooks/useLive";
 import { fetchJson } from "@/lib/api";
 
 interface TopProcess {
@@ -87,10 +88,15 @@ function gb(bytes: number | null): string {
 }
 
 export function IndexRoute() {
+    // One EventSource for home: ports panel + pulse KPIs (not two streams).
+    useLive(["ports", "pulse"]);
+
     const snap = useQuery<PulseSnapshot>({
         queryKey: ["pulse", "snap"],
         queryFn: () => fetchJson<PulseSnapshot>("/api/system/pulse"),
-        refetchInterval: 5000,
+        // Live bus pushes ["pulse","snap"]; keep a slow fallback if stream dies.
+        refetchInterval: 60_000,
+        staleTime: 4_000,
     });
 
     const [rangeMinutes, setRangeMinutes] = useState<string>(String(HISTORY_RANGES[0].minutes));
@@ -183,7 +189,7 @@ export function IndexRoute() {
                         error={weather.data?.error}
                     />
                     <NetworkInfo wifiSsid={s?.wifiSsid ?? null} publicIp={s?.publicIp ?? null} />
-                    <WebappsPanel />
+                    <WebappsPanel enableLive={false} />
                     <ProcessTable processes={s?.topProcesses ?? []} />
                 </div>
             </div>
