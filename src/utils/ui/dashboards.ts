@@ -1,49 +1,131 @@
 /**
- * Central registry of every web dashboard / UI dev server in this repo.
+ * Central registry of GenesisTools-owned localhost binds.
  *
- * One source of truth for ports, launch commands and metadata. Ports were
- * previously scattered across each tool's `vite.config.ts` / command file with
- * no coordination — `youtube` and `reas` both defaulted to 3072 with
- * `--strictPort`, so launching the second hard-crashed. The conflicting pair
- * now derives its port from here (see `youtube/ui/vite.config.ts`,
- * `youtube/commands/ui.ts`, `Internal/commands/reas/ui/vite.config.ts`); the
- * remaining tools still hardcode their (non-conflicting) port and are tracked
- * here for documentation — wiring them to consume this registry is a safe
- * incremental follow-up.
+ * - `DASHBOARDS` — browser UIs (Vite etc.), consumed by DashboardApp launchers.
+ * - `WEB_SERVICES` — non-UI HTTP/API/extension listeners (youtube server, ai-proxy, …).
  *
- * Invariant: every `port` is unique. `findPortConflicts()` is exported so a
- * test (or a launcher) can assert this; keep it green when adding a dashboard.
+ * Every entry has a `matchProcess` callback so port scanners can verify the live
+ * process is really this app (not a stolen port). Invariant: every `port` is unique
+ * across BOTH registries — `findPortConflicts()` asserts this.
  */
 
 export type DashboardAuth = "none" | "workos" | "basic-auth";
 
 export type DashboardTech = "vite+tanstack-start" | "vite+tanstack-router" | "vite+tanstack-start+nitro" | "vite";
 
-export interface DashboardEntry {
+export type WebServiceKind = "http-api" | "extension" | "proxy" | "other";
+
+/** Live process fields available when matching a listening port. */
+export interface PortMatchContext {
+    readonly port: number;
+    /** Short process name (lsof COMMAND or basename of argv0). */
+    readonly command: string;
+    /** Full argv from `ps`, when resolved. */
+    readonly fullCommand?: string;
+    /** Process cwd, when resolved. */
+    readonly cwd?: string;
+}
+
+/**
+ * Return true if the live process is really this registered app.
+ * Port identity is checked by the caller; this only validates process shape.
+ */
+export type PortProcessMatcher = (ctx: PortMatchContext) => boolean;
+
+/** Shared fields for dashboards and web services. */
+export interface PortRegistryBase {
     /** Stable short id (also the registry key). */
     readonly key: string;
-    /** Human-facing title. */
+    /** Human-facing title (shown in port scanners). */
     readonly name: string;
     /** One-line description of what it does. */
     readonly description: string;
-    /** Default localhost port the dev server binds. Must be unique. */
+    /** Default localhost port. Must be unique across DASHBOARDS + WEB_SERVICES. */
     readonly port: number;
+    /** Exact CLI command that launches it, or `null` if none. */
+    readonly launch: string | null;
+    /** Where/how the port can be overridden (env var, CLI flag, or none). */
+    readonly portOverride: { readonly env?: string; readonly flag?: string } | null;
+    /** Anything noteworthy. */
+    readonly note?: string;
+    /**
+     * Verify the live process is this app. Called only when `ctx.port === entry.port`.
+     * Prefer path/argv needles over bare package names.
+     */
+    readonly matchProcess: PortProcessMatcher;
+}
+
+export interface DashboardEntry extends PortRegistryBase {
     /** Dev-server bind address. Default 127.0.0.1 when omitted. */
     readonly bindHost?: "127.0.0.1" | "0.0.0.0";
     /**
      * Whether the dev server passes `--strictPort` (a port clash is then a
-     * hard crash rather than an auto-increment). Relevant to conflict risk.
+     * hard crash rather than an auto-increment).
      */
     readonly strictPort: boolean;
-    /** Exact CLI command that launches it, or `null` if it has no entry point. */
-    readonly launch: string | null;
-    /** Where/how the port can be overridden (env var, CLI flag, or none). */
-    readonly portOverride: { readonly env?: string; readonly flag?: string } | null;
     readonly tech: DashboardTech;
     readonly auth: DashboardAuth;
-    /** Anything noteworthy (proxy pattern, orphaned, registry-wired, …). */
-    readonly note?: string;
 }
+
+export interface WebServiceEntry extends PortRegistryBase {
+    readonly serviceKind: WebServiceKind;
+}
+
+// ---------------------------------------------------------------------------
+// Match helpers (reusable needles for matchProcess)
+// ---------------------------------------------------------------------------
+
+function haystack(ctx: PortMatchContext): string {
+    return `${ctx.fullCommand ?? ""} ${ctx.cwd ?? ""} ${ctx.command}`.toLowerCase();
+}
+
+/** True if haystack contains every needle (AND). */
+export function matchAll(...needles: string[]): PortProcessMatcher {
+    const lower = needles.map((n) => n.toLowerCase());
+    return (ctx) => {
+        const h = haystack(ctx);
+        return lower.every((n) => h.includes(n));
+    };
+}
+
+/** True if haystack contains at least one needle (OR). */
+export function matchAny(...needles: string[]): PortProcessMatcher {
+    const lower = needles.map((n) => n.toLowerCase());
+    return (ctx) => {
+        const h = haystack(ctx);
+        return lower.some((n) => h.includes(n));
+    };
+}
+
+/**
+ * Process lives under the GenesisTools monorepo tree AND matches any of `toolNeedles`.
+ * Primary verifier for repo-owned tools.
+ */
+export function matchGenesisTool(...toolNeedles: string[]): PortProcessMatcher {
+    const tools = toolNeedles.map((n) => n.toLowerCase());
+    return (ctx) => {
+        const h = haystack(ctx);
+        const underRepo =
+            h.includes("/genesistools/") ||
+            h.includes("/genesistools ") ||
+            h.endsWith("/genesistools") ||
+            h.includes("\\genesistools\\") ||
+            h.includes("/genesis-tools/");
+        if (!underRepo) {
+            return false;
+        }
+
+        if (tools.length === 0) {
+            return true;
+        }
+
+        return tools.some((n) => h.includes(n));
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Dashboards (browser UIs)
+// ---------------------------------------------------------------------------
 
 export const DASHBOARDS = {
     "claude-history": {
@@ -56,6 +138,7 @@ export const DASHBOARDS = {
         portOverride: { flag: "-p, --port" },
         tech: "vite+tanstack-start",
         auth: "none",
+        matchProcess: matchGenesisTool("claude-history", "claude/history", "history dashboard"),
     },
     dashboard: {
         key: "dashboard",
@@ -68,6 +151,7 @@ export const DASHBOARDS = {
         tech: "vite+tanstack-start+nitro",
         auth: "workos",
         note: "Launcher wrapper (PM2 + deps); 3000 is the launcher port.",
+        matchProcess: matchGenesisTool("src/dashboard", "tools dashboard", "/dashboard/"),
     },
     "dev-dashboard": {
         key: "dev-dashboard",
@@ -81,6 +165,7 @@ export const DASHBOARDS = {
         tech: "vite+tanstack-start",
         auth: "basic-auth",
         note: "Front-proxy: Bun.serve on 3042 bridges to Vite on a random loopback port (WebSocket support).",
+        matchProcess: matchGenesisTool("dev-dashboard"),
     },
     clarity: {
         key: "clarity",
@@ -92,6 +177,7 @@ export const DASHBOARDS = {
         portOverride: null,
         tech: "vite+tanstack-start",
         auth: "none",
+        matchProcess: matchGenesisTool("clarity"),
     },
     reas: {
         key: "reas",
@@ -104,6 +190,7 @@ export const DASHBOARDS = {
         tech: "vite+tanstack-start",
         auth: "none",
         note: "Port sourced from this registry (vite.config.ts).",
+        matchProcess: matchGenesisTool("reas"),
     },
     shops: {
         key: "shops",
@@ -115,6 +202,7 @@ export const DASHBOARDS = {
         portOverride: null,
         tech: "vite+tanstack-start",
         auth: "none",
+        matchProcess: matchGenesisTool("shops"),
     },
     youtube: {
         key: "youtube",
@@ -127,6 +215,7 @@ export const DASHBOARDS = {
         tech: "vite+tanstack-router",
         auth: "none",
         note: "Moved 3072 → 3074 to resolve the reas conflict. Port sourced from this registry.",
+        matchProcess: matchGenesisTool("youtube/ui", "youtube ui", "src/youtube/ui"),
     },
     "debugging-master": {
         key: "debugging-master",
@@ -140,6 +229,7 @@ export const DASHBOARDS = {
         tech: "vite",
         auth: "none",
         note: "Shared by `tools task dashboard open` and `tools debugging-master dashboard serve open` (latter via the DashboardApp commander).",
+        matchProcess: matchGenesisTool("debugging-master", "log-dashboard", "task/dashboard"),
     },
     "dev-dashboard-cloud": {
         key: "dev-dashboard-cloud",
@@ -151,11 +241,60 @@ export const DASHBOARDS = {
         portOverride: { env: "DD_CLOUD_PORT", flag: "-p, --port" },
         tech: "vite+tanstack-start+nitro",
         auth: "none",
-        note: "Auth is Better-Auth + SQLite (pluggable; WorkOS is the documented alternate adapter — the registry enum has no `better-auth` value, so `none` here means 'not WorkOS/basic-auth'). App in DevDashboard/cloud/web.",
+        note: "Auth is Better-Auth + SQLite. App in DevDashboard/cloud/web.",
+        matchProcess: matchGenesisTool("dev-dashboard-cloud", "devdashboard/cloud", "dd_cloud"),
     },
 } as const satisfies Record<string, DashboardEntry>;
 
 export type DashboardKey = keyof typeof DASHBOARDS;
+
+// ---------------------------------------------------------------------------
+// Web services (non-UI HTTP / extension / proxy)
+// ---------------------------------------------------------------------------
+
+export const WEB_SERVICES = {
+    "youtube-server": {
+        key: "youtube-server",
+        name: "YouTube Server",
+        description: "YouTube tool backend API + pipeline (Bun).",
+        port: 9876,
+        launch: "tools youtube server",
+        portOverride: { flag: "--port" },
+        serviceKind: "http-api",
+        note: "Default in src/youtube/lib/server/app.ts.",
+        matchProcess: matchGenesisTool("youtube/lib/server", "youtube/server", "src/youtube/lib/server"),
+    },
+    "youtube-extension": {
+        key: "youtube-extension",
+        name: "YouTube Extension",
+        description: "Chrome extension dev reload / bridge port.",
+        port: 9877,
+        launch: "tools youtube extension dev",
+        portOverride: null,
+        serviceKind: "extension",
+        note: "DEV_RELOAD_PORT in src/youtube/commands/extension.ts.",
+        matchProcess: matchGenesisTool("youtube", "extension"),
+    },
+    "ai-proxy": {
+        key: "ai-proxy",
+        name: "AI Proxy",
+        description: "Local multi-provider AI proxy (billing, accounts, tunnel).",
+        port: 8317,
+        launch: "tools ai-proxy serve",
+        portOverride: { flag: "--port" },
+        serviceKind: "proxy",
+        note: "Default listen.port in ai-proxy config-store.",
+        matchProcess: matchGenesisTool("ai-proxy"),
+    },
+} as const satisfies Record<string, WebServiceEntry>;
+
+export type WebServiceKey = keyof typeof WEB_SERVICES;
+
+// ---------------------------------------------------------------------------
+// Lookups
+// ---------------------------------------------------------------------------
+
+export type RegistryEntry = DashboardEntry | WebServiceEntry;
 
 export function getDashboard(key: DashboardKey): DashboardEntry {
     return DASHBOARDS[key];
@@ -165,6 +304,54 @@ export function listDashboards(): readonly DashboardEntry[] {
     return Object.values(DASHBOARDS);
 }
 
+export function getWebService(key: WebServiceKey): WebServiceEntry {
+    return WEB_SERVICES[key];
+}
+
+export function listWebServices(): readonly WebServiceEntry[] {
+    return Object.values(WEB_SERVICES);
+}
+
+/** Every registered port entry (dashboards + web services). */
+export function listPortRegistry(): readonly RegistryEntry[] {
+    return [...listDashboards(), ...listWebServices()];
+}
+
+const REGISTRY_BY_PORT: ReadonlyMap<number, RegistryEntry> = new Map(
+    listPortRegistry().map((e) => [e.port, e])
+);
+
+export function registryEntryForPort(port: number): RegistryEntry | null {
+    return REGISTRY_BY_PORT.get(port) ?? null;
+}
+
+/**
+ * If `port` is registered AND `matchProcess` accepts the live process, return the entry.
+ * Port-only hits without process match return null (stolen port).
+ */
+export function matchRegistryProcess(ctx: PortMatchContext): RegistryEntry | null {
+    const entry = registryEntryForPort(ctx.port);
+    if (!entry) {
+        return null;
+    }
+
+    if (!entry.matchProcess(ctx)) {
+        return null;
+    }
+
+    return entry;
+}
+
+/** Human name when the live process matches a registry entry. */
+export function registryNameForProcess(ctx: PortMatchContext): string | null {
+    return matchRegistryProcess(ctx)?.name ?? null;
+}
+
+/** Human name for a registered port regardless of process match (hint only). */
+export function registryNameForPort(port: number): string | null {
+    return registryEntryForPort(port)?.name ?? null;
+}
+
 export function dashboardUrl(key: DashboardKey, host = "localhost"): string {
     const normalizedHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 
@@ -172,20 +359,19 @@ export function dashboardUrl(key: DashboardKey, host = "localhost"): string {
 }
 
 /**
- * Groups of dashboards sharing a port. Empty array = no conflicts.
- * Wire into a launcher/test so future additions can't silently re-introduce
- * the youtube/reas-style clash.
+ * Groups of registry entries sharing a port. Empty array = no conflicts.
+ * Covers DASHBOARDS + WEB_SERVICES.
  */
-export function findPortConflicts(): ReadonlyArray<{ port: number; keys: DashboardKey[] }> {
-    const byPort = new Map<number, DashboardKey[]>();
+export function findPortConflicts(): ReadonlyArray<{ port: number; keys: string[] }> {
+    const byPort = new Map<number, string[]>();
 
-    for (const entry of Object.values(DASHBOARDS)) {
+    for (const entry of listPortRegistry()) {
         const keys = byPort.get(entry.port) ?? [];
-        keys.push(entry.key as DashboardKey);
+        keys.push(entry.key);
         byPort.set(entry.port, keys);
     }
 
-    const conflicts: Array<{ port: number; keys: DashboardKey[] }> = [];
+    const conflicts: Array<{ port: number; keys: string[] }> = [];
     for (const [port, keys] of byPort) {
         if (keys.length > 1) {
             conflicts.push({ port, keys });
