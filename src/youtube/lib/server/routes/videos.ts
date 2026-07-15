@@ -4,6 +4,7 @@ import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import { grantArtifactAccess, resolveArtifactPrice } from "@app/youtube/lib/artifact-access";
 import { withJobActivity } from "@app/youtube/lib/job-activity";
+import { isOutputLang } from "@app/youtube/lib/languages";
 import { getPresetForUse } from "@app/youtube/lib/presets";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
 import { selectCandidateVideos } from "@app/youtube/lib/qa";
@@ -166,7 +167,12 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             const fallback = mode === "timestamped" ? [] : mode === "long" ? null : "";
 
             return Response.json(
-                { summary: cached ?? fallback, mode, cached: cached !== null && cached !== undefined },
+                {
+                    summary: cached ?? fallback,
+                    mode,
+                    lang: summaryLangFor(video, mode),
+                    cached: cached !== null && cached !== undefined,
+                },
                 { headers: CORS_HEADERS }
             );
         }
@@ -190,12 +196,23 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             const mode = parseMode(body.mode);
             const creditCost = CREDIT_COSTS[`summary:${mode}`];
             const force = body.force === true;
+            const requestedLang = typeof body.lang === "string" ? body.lang : undefined;
+            const lang = requestedLang && isOutputLang(requestedLang) ? requestedLang : (user.outputLang ?? "en");
+            // Switching to a language the stored artifact wasn't generated in
+            // always regenerates — v1 keeps one summary per mode, so a lang
+            // switch replaces it (never served from the reuse/cache path).
+            const existingVideo = yt.videos.show(id);
+            const langMismatch =
+                existingVideo !== null &&
+                yt.db.hasArtifact(`summary:${mode}`, id) &&
+                summaryLangFor(existingVideo, mode) !== lang;
 
             // Reuse/owned short-circuit: the artifact already exists — charge
             // the flat unlock price (or nothing when already unlocked) and
             // return the stored content immediately. No LLM call, no job.
-            // `force` opts into a fresh regeneration at full price instead.
-            if (!force && yt.db.hasArtifact(`summary:${mode}`, id)) {
+            // `force` (or a language switch) opts into a fresh regeneration
+            // at full price instead.
+            if (!force && !langMismatch && yt.db.hasArtifact(`summary:${mode}`, id)) {
                 const pricing = resolveArtifactPrice(yt.db, { userId: user.id, kind: `summary:${mode}`, videoId: id });
 
                 if (user.credits < pricing.price) {
@@ -218,6 +235,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     {
                         summary: storedSummary(yt.videos.show(id), mode),
                         mode,
+                        lang,
                         cached: true,
                         reused: pricing.reused,
                         creditsSpent: pricing.reused ? pricing.price : 0,
@@ -322,6 +340,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         tone,
                         format,
                         length,
+                        lang,
                         presetInstructions,
                         onProgress: (info) => {
                             const progress = (info.percent ?? 50) / 100;
@@ -379,6 +398,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                                   ? (result.long ?? null)
                                   : (result.short ?? ""),
                         mode,
+                        lang,
                         cached: false,
                         jobId: job.id,
                         startedAt,
@@ -477,6 +497,10 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
             const scope = body.scope === "channel" ? ("channel" as const) : ("video" as const);
             const askCost = scope === "channel" ? CREDIT_COSTS["qa:channel"] : CREDIT_COSTS.ask;
+            // No per-question language override (spec: "no per-question
+            // selector — noise") — ask always follows the user's saved
+            // output-language preference.
+            const lang = user.outputLang && isOutputLang(user.outputLang) ? user.outputLang : "en";
 
             if (user.credits < askCost) {
                 return insufficientDiamonds(user.credits, askCost);
@@ -573,6 +597,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         presetInstructions,
                         sources,
                         crossVideo,
+                        lang,
                     });
                 });
                 yt.db.updateJob(job.id, {
@@ -595,6 +620,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     sources,
                     scope,
                     candidateVideoIds: scope === "channel" ? videoIds : undefined,
+                    lang,
                 });
 
                 // Metadata for every distinct cited video — the UI renders
@@ -618,6 +644,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     {
                         ...result,
                         jobId: job.id,
+                        lang,
                         creditsSpent: askCost,
                         credits,
                         historyId: historyItem.id,
@@ -644,6 +671,14 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
         return toErrorResponse(err);
     }
+}
+
+function summaryLangFor(video: Video, mode: "short" | "timestamped" | "long"): string {
+    return mode === "timestamped"
+        ? video.summaryTimestampedLang
+        : mode === "long"
+          ? video.summaryLongLang
+          : video.summaryShortLang;
 }
 
 function storedSummary(video: Video | null, mode: "short" | "timestamped" | "long") {

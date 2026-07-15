@@ -37,6 +37,8 @@ export interface SummarizeOpts {
     providerChoice?: ProviderChoice;
     /** Free-form tone steering. Default "insightful". */
     tone?: SummaryTone;
+    /** 2-letter ISO output language. Default "en" (no prompt suffix). */
+    lang?: string;
     /** Output style. Default "list". Only respected by `mode = "timestamped"`. */
     format?: SummaryFormat;
     /** Length budget. Default "auto". Affects section count for timestamped, depth for long. */

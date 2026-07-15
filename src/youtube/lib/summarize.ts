@@ -3,6 +3,7 @@ import { callLLM, callLLMStructured } from "@app/utils/ai/call-llm";
 import { Summarizer } from "@app/utils/ai/tasks/Summarizer";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
+import { englishLanguageName } from "@app/youtube/lib/languages";
 import { createPartialThrottle, type PartialThrottle } from "@app/youtube/lib/partial-throttle";
 import { buildPresetBlock } from "@app/youtube/lib/presets";
 import type { SummarizeOpts, SummarizeResult, SummaryBin, SummaryServiceDeps } from "@app/youtube/lib/summarize.types";
@@ -163,40 +164,43 @@ export class SummaryService {
         const transcript = compactTranscript(transcriptRaw, { mergeSentences: true, ...(opts.compactOpts ?? {}) });
 
         if (opts.mode === "short") {
-            if (!opts.forceRecompute && video.summaryShort) {
+            if (!opts.forceRecompute && video.summaryShort && sameLang(video.summaryShortLang, opts.lang)) {
                 return { short: video.summaryShort };
             }
 
             const summary = await this.summarizeText(transcript.text, opts);
-            this.db.setVideoSummary(opts.videoId, "short", summary);
+            this.db.setVideoSummary(opts.videoId, "short", summary, opts.lang ?? "en");
 
             return { short: summary };
         }
 
         if (opts.mode === "long") {
-            if (!opts.forceRecompute && video.summaryLong) {
+            if (!opts.forceRecompute && video.summaryLong && sameLang(video.summaryLongLang, opts.lang)) {
                 return { long: video.summaryLong };
             }
 
             const long = await this.summarizeLong(transcript, opts);
-            this.db.setVideoSummary(opts.videoId, "long", long);
+            this.db.setVideoSummary(opts.videoId, "long", long, opts.lang ?? "en");
 
             return { long };
         }
 
-        if (!opts.forceRecompute && video.summaryTimestamped) {
+        if (!opts.forceRecompute && video.summaryTimestamped && sameLang(video.summaryTimestampedLang, opts.lang)) {
             return { timestamped: video.summaryTimestamped };
         }
 
         const timestamped = await this.summarizeTimestamped(transcript, opts);
-        this.db.setVideoSummary(opts.videoId, "timestamped", timestamped);
+        this.db.setVideoSummary(opts.videoId, "timestamped", timestamped, opts.lang ?? "en");
 
         return { timestamped };
     }
 
     private async summarizeText(text: string, opts: SummarizeOpts): Promise<string> {
         opts.onProgress?.({ phase: "summarize", percent: 30, message: "Calling LLM for short summary" });
-        const systemPrompt = withPreset(withTone(SHORT_SUMMARY_SYSTEM_BASE, opts.tone), opts.presetInstructions);
+        const systemPrompt = withPreset(
+            withLang(withTone(SHORT_SUMMARY_SYSTEM_BASE, opts.tone), opts.lang),
+            opts.presetInstructions
+        );
 
         if (opts.providerChoice) {
             const startedAt = new Date();
@@ -257,7 +261,7 @@ export class SummaryService {
         const sectionCount = pickSectionCount(totalSec, { override: opts.targetBins, length: opts.length });
         const isQa = opts.format === "qa";
         const baseSystem = isQa ? TIMESTAMPED_QA_SYSTEM_BASE : TIMESTAMPED_SYSTEM_BASE;
-        const systemPrompt = withPreset(withTone(baseSystem, opts.tone), opts.presetInstructions);
+        const systemPrompt = withPreset(withLang(withTone(baseSystem, opts.tone), opts.lang), opts.presetInstructions);
         const formattedTranscript = formatTranscriptWithTimestamps(transcript);
         const userPrompt = [
             `Build a timestamped section summary of this YouTube video.`,
@@ -325,7 +329,7 @@ export class SummaryService {
 
         const totalSec = transcript.durationSec ?? transcript.segments.at(-1)?.end ?? 0;
         const systemPrompt = withPreset(
-            withTone(withLength(LONG_SUMMARY_SYSTEM_BASE, opts.length), opts.tone),
+            withLang(withTone(withLength(LONG_SUMMARY_SYSTEM_BASE, opts.length), opts.tone), opts.lang),
             opts.presetInstructions
         );
         const userPrompt = [
@@ -525,6 +529,21 @@ function withTone(base: string, tone?: SummaryTone): string {
     }
 
     return `${base}\n\n${TONE_INSTRUCTIONS[tone]}`;
+}
+
+/** Whether a stored artifact's lang matches the requested lang (both default to `"en"`). */
+function sameLang(stored: string, requested?: string): boolean {
+    return (requested ?? "en") === (stored ?? "en");
+}
+
+function withLang(base: string, lang?: string): string {
+    if (!lang || lang === "en") {
+        return base;
+    }
+
+    const name = englishLanguageName(lang);
+
+    return `${base}\n\nRespond in ${name}. Keep technical terms, product names, and quoted phrases in their original language. Use natural ${name} phrasing, not literal translation.`;
 }
 
 function withLength(base: string, length?: SummaryLength): string {

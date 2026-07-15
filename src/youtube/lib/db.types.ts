@@ -50,6 +50,13 @@ export interface SetVideoSummaryInput {
     id: VideoId;
     kind: "short" | "timestamped" | "long";
     value: string | TimestampedSummaryEntry[] | VideoLongSummary;
+    /** 2-letter ISO language the summary was generated in. Default `"en"`. */
+    lang?: string;
+}
+
+export interface UpdateUserPrefsInput {
+    outputLang?: string | null;
+    ttsVoice?: string | null;
 }
 
 export interface SaveTranscriptInput {

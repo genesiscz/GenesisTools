@@ -142,6 +142,37 @@ describe("QaService", () => {
         }
     });
 
+    it("threads the lang suffix into the ask system prompt", async () => {
+        const { db, config, dir } = await makeFixture();
+
+        try {
+            db.upsertQaChunk({
+                videoId: "abc123def45",
+                chunkIdx: 0,
+                text: "relevant chunk",
+                startSec: 12,
+                endSec: 18,
+                embedding: new Float32Array([1, 0]),
+                embedderModel: "default",
+            });
+            queryVector = new Float32Array([1, 0]);
+            const service = new QaService(db, config, makeDeps());
+            const providerChoice = { provider: { type: "test" }, model: { id: "model" } } as never;
+
+            await service.ask({
+                videoIds: ["abc123def45"],
+                question: "What matters?",
+                providerChoice,
+                lang: "cs",
+            });
+
+            expect(llmCalls[0]).toMatchObject({ systemPrompt: expect.stringContaining("Respond in Czech.") });
+        } finally {
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
     it("requires at least one video id for ask and supports keyword fallback", async () => {
         const { db, config, dir } = await makeFixture();
         const service = new QaService(db, config, makeDeps());
