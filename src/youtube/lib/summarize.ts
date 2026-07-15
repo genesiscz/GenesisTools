@@ -3,6 +3,7 @@ import { callLLM, callLLMStructured } from "@app/utils/ai/call-llm";
 import { Summarizer } from "@app/utils/ai/tasks/Summarizer";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
+import { createPartialThrottle, type PartialThrottle } from "@app/youtube/lib/partial-throttle";
 import { buildPresetBlock } from "@app/youtube/lib/presets";
 import type { SummarizeOpts, SummarizeResult, SummaryBin, SummaryServiceDeps } from "@app/youtube/lib/summarize.types";
 import type { Transcript } from "@app/youtube/lib/transcript.types";
@@ -262,19 +263,23 @@ export class SummaryService {
             message: `Calling LLM for ${sectionCount} timestamped sections (${isQa ? "qa" : "list"} format)`,
         });
         const startedAt = new Date();
+        const throttle = createSummaryPartialThrottle(opts.onPartial);
         const result = isQa
             ? await this.deps.callLLMStructured({
                   systemPrompt,
                   userPrompt,
                   providerChoice: opts.providerChoice,
                   schema: TimestampedQaSchema,
+                  ...(throttle ? { onPartial: (partial: unknown) => throttle.push(partial) } : {}),
               })
             : await this.deps.callLLMStructured({
                   systemPrompt,
                   userPrompt,
                   providerChoice: opts.providerChoice,
                   schema: TimestampedListSchema,
+                  ...(throttle ? { onPartial: (partial: unknown) => throttle.push(partial) } : {}),
               });
+        throttle?.flush();
         opts.onProgress?.({ phase: "summarize", percent: 90, message: "Parsing timestamped sections" });
         const completedAt = new Date();
         const ids = identifyProviderChoice(opts.providerChoice);
@@ -322,12 +327,15 @@ export class SummaryService {
             message: "Calling LLM for long-form summary (structured output)",
         });
         const startedAt = new Date();
+        const throttle = createSummaryPartialThrottle(opts.onPartial);
         const result = await this.deps.callLLMStructured({
             systemPrompt,
             userPrompt,
             providerChoice: opts.providerChoice,
             schema: LongSchema,
+            ...(throttle ? { onPartial: (partial: unknown) => throttle.push(partial) } : {}),
         });
+        throttle?.flush();
         opts.onProgress?.({ phase: "summarize", percent: 90, message: "Parsing long-form structured response" });
         const completedAt = new Date();
         const ids = identifyProviderChoice(opts.providerChoice);
@@ -482,6 +490,16 @@ function clampSections(sections: TimestampedSummaryEntry[], totalSec: number): T
             text: section.text.trim(),
         }))
         .filter((section) => section.text.length > 0);
+}
+
+const PARTIAL_MIN_GAP_MS = 250;
+
+function createSummaryPartialThrottle(onPartial?: (partial: unknown) => void): PartialThrottle<unknown> | null {
+    if (!onPartial) {
+        return null;
+    }
+
+    return createPartialThrottle<unknown>({ minGapMs: PARTIAL_MIN_GAP_MS, emit: onPartial });
 }
 
 function withTone(base: string, tone?: SummaryTone): string {

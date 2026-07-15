@@ -1,3 +1,4 @@
+import { logger } from "@app/logger";
 import { estimateLlmCallCostUsd, estimateSpeechTokens } from "@app/utils/ai/llm-cost";
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
@@ -303,6 +304,20 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                                 stage: "summarize",
                                 progress,
                                 message: info.message,
+                            });
+                        },
+                        onPartial: (partial) => {
+                            if (partial === null || typeof partial !== "object") {
+                                logger.debug({ jobId: job.id, videoId: id }, "skipping malformed summary partial");
+                                return;
+                            }
+
+                            yt.pipeline.emitExternal({
+                                type: "summary:partial",
+                                jobId: job.id,
+                                videoId: id,
+                                mode,
+                                partial,
                             });
                         },
                     })

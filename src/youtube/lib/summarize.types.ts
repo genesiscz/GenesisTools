@@ -47,6 +47,11 @@ export interface SummarizeOpts {
      */
     compactOpts?: import("@app/youtube/lib/transcript-compact").CompactOptions;
     onProgress?: (info: SummaryProgressInfo) => void;
+    /**
+     * Streaming partial objects from the structured call (`timestamped` / `long` modes only),
+     * throttled to ≥250 ms between emissions with a guaranteed final flush before return.
+     */
+    onPartial?: (partial: unknown) => void;
     signal?: AbortSignal;
     /** Resolved, ownership-checked preset instructions (Feature 11) — wrapped
      *  via `buildPresetBlock` and appended AFTER all other system prompt
