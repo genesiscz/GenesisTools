@@ -161,6 +161,58 @@ describe("TranscriptService", () => {
         }
     });
 
+    it("requests diarization for deepgram and persists numeric speaker indices", async () => {
+        const { db, config, dir } = await makeFixture();
+
+        try {
+            const existingAudio = join(dir, "existing.wav");
+            writeFileSync(existingAudio, "wav");
+            db.setVideoBinaryPath("abc123def45", "audio", existingAudio, 5);
+            transcriberResult = {
+                text: "Dobrý den. Zdravím.",
+                language: "cs",
+                duration: 2,
+                segments: [
+                    { text: "Dobrý den.", start: 0.1, end: 1.2, speaker: "SPEAKER_00" },
+                    { text: "Zdravím.", start: 1.5, end: 2.0, speaker: "SPEAKER_01" },
+                ],
+            };
+            const service = new TranscriptService(db, config, makeDeps());
+
+            await service.transcribe({ videoId: "abc123def45", forceTranscribe: true, provider: "deepgram" });
+
+            expect(transcriberTranscribeCalls[0]).toMatchObject({ opts: { diarize: true } });
+            const saved = db.getTranscript("abc123def45", { source: "ai" });
+            expect(saved?.segments).toEqual([
+                { text: "Dobrý den.", start: 0.1, end: 1.2, speaker: 0 },
+                { text: "Zdravím.", start: 1.5, end: 2.0, speaker: 1 },
+            ]);
+        } finally {
+            db.close();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("does not request diarization for non-deepgram providers", async () => {
+        const { db, config, dir } = await makeFixture();
+
+        try {
+            const existingAudio = join(dir, "existing.wav");
+            writeFileSync(existingAudio, "wav");
+            db.setVideoBinaryPath("abc123def45", "audio", existingAudio, 5);
+            const service = new TranscriptService(db, config, makeDeps());
+
+            await service.transcribe({ videoId: "abc123def45", forceTranscribe: true, provider: "openai" });
+
+            expect(transcriberTranscribeCalls[0]).toMatchObject({ opts: { diarize: false } });
+            const saved = db.getTranscript("abc123def45", { source: "ai" });
+            expect(saved?.segments).toEqual([{ text: "AI transcript", start: 0, end: 10 }]);
+        } finally {
+            db.close();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     it("throws for unknown videos", async () => {
         const dir = await mkdtemp(join(tmpdir(), "youtube-transcripts-"));
         const db = new YoutubeDatabase(":memory:");

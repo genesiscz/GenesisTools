@@ -28,3 +28,23 @@ export function normalizeSpeakerLabel(raw: string | number | null | undefined): 
     // a safety fallthrough, not an expected path.
     return raw.toUpperCase();
 }
+
+/**
+ * Inverse of `normalizeSpeakerLabel`: extract the numeric speaker index from a
+ * `SPEAKER_NN`-style label (any casing / trailing-digit format). Returns
+ * undefined for labels without a trailing number.
+ */
+export function speakerIndexFromLabel(label: string | null | undefined): number | undefined {
+    if (!label) {
+        return undefined;
+    }
+
+    const m = label.match(/(\d+)\s*$/);
+
+    if (!m) {
+        return undefined;
+    }
+
+    const idx = Number.parseInt(m[1], 10);
+    return Number.isInteger(idx) && idx >= 0 ? idx : undefined;
+}
