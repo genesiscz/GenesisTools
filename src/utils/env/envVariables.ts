@@ -253,6 +253,21 @@ export const env = {
 
     db: envClient.db,
 
+    stripe: {
+        getSecretKey: () => getTrimmed("STRIPE_SECRET_KEY"),
+        getWebhookSecret: () => getTrimmed("STRIPE_WEBHOOK_SECRET"),
+        getPriceId: (packId: "pack-small" | "pack-medium" | "pack-large") => {
+            const envKey =
+                packId === "pack-small"
+                    ? "STRIPE_PRICE_PACK_SMALL"
+                    : packId === "pack-medium"
+                      ? "STRIPE_PRICE_PACK_MEDIUM"
+                      : "STRIPE_PRICE_PACK_LARGE";
+
+            return getTrimmed(envKey);
+        },
+    },
+
     testing: {
         snapshot: snapshotEnv,
         restore: restoreEnv,
