@@ -43,10 +43,30 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
     const [collapsed, setCollapsed] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [view, setView] = useState<"tabs" | "activity">("tabs");
+    const [playerTime, setPlayerTime] = useState<number | null>(null);
     const startPipeline = useStartPipeline();
     const queryClient = useQueryClient();
     // Dev-only model picker data; regular builds never fetch it.
     const models = useModels(IS_DEV_BUILD);
+
+    useEffect(() => {
+        function onWindowMessage(event: MessageEvent): void {
+            if (event.source !== window) {
+                return;
+            }
+
+            const data = event.data as { type?: unknown; t?: unknown } | null;
+
+            if (data?.type !== "player:time" || typeof data.t !== "number") {
+                return;
+            }
+
+            setPlayerTime(data.t);
+        }
+
+        window.addEventListener("message", onWindowMessage);
+        return () => window.removeEventListener("message", onWindowMessage);
+    }, []);
 
     useEffect(() => {
         const cleanup = connectEventPort();
@@ -242,6 +262,7 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                             onOpenWatch={(id, t) => void send({ type: "nav:openWatch", id, t })}
                             partialSummaries={partialSummaries}
                             streamingMode={streamingMode}
+                            playerTime={playerTime}
                         />
                     )}
                 </div>
