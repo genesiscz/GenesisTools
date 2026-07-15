@@ -99,8 +99,7 @@ function coversPlayer(host: HTMLElement): boolean {
     // right-side host instead. getBoundingClientRect forces a sync reflow so
     // the measurement is accurate right after insertion.
     const player =
-        document.querySelector<HTMLElement>("#movie_player") ??
-        document.querySelector<HTMLElement>("ytd-player");
+        document.querySelector<HTMLElement>("#movie_player") ?? document.querySelector<HTMLElement>("ytd-player");
 
     if (!player) {
         return false;
