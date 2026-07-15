@@ -50,7 +50,10 @@ export interface AskCitation {
     endSec: number | null;
     source: QaSource;
     author: string | null;
+    /** Primary (first) thread root for `source: "comments"` — see `roots` for the full set. */
     commentId: string | null;
+    /** Every merged thread root the cited chunk covers (comments only; absent on transcript citations and pre-merge history rows). */
+    roots?: { commentId: string; author: string | null }[];
 }
 
 export interface AskResult {
@@ -67,7 +70,10 @@ export interface ChunkedTranscript {
 /** One embeddable slice of a comment thread. */
 export interface CommentChunk {
     text: string;
+    /** Primary (first) thread root — kept for single-id consumers. */
     rootCommentId: string;
+    /** Root of every `\n\n`-joined sub-chunk, in text order (repeats when an oversize thread's fragments re-merge). */
+    rootCommentIds: string[];
 }
 
 export interface QaChunk {

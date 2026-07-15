@@ -144,7 +144,7 @@ export class QaService {
                             embedding: vector.vector,
                             embedderModel: modelId,
                             source: "comments",
-                            sourceRef: chunks[i].rootCommentId,
+                            sourceRef: chunks[i].rootCommentIds.join(","),
                         });
                     }
 
@@ -253,15 +253,21 @@ export class QaService {
 
             return {
                 answer: result.content,
-                citations: ranked.map((rankedChunk) => ({
-                    videoId: rankedChunk.chunk.videoId,
-                    chunkIdx: rankedChunk.chunk.chunkIdx,
-                    startSec: rankedChunk.chunk.startSec,
-                    endSec: rankedChunk.chunk.endSec,
-                    source: rankedChunk.chunk.source,
-                    author: rankedChunk.chunk.source === "comments" ? chunkAuthor(rankedChunk.chunk.text) : null,
-                    commentId: rankedChunk.chunk.sourceRef,
-                })),
+                citations: ranked.map((rankedChunk) => {
+                    const roots =
+                        rankedChunk.chunk.source === "comments" ? chunkRoots(rankedChunk.chunk) : undefined;
+
+                    return {
+                        videoId: rankedChunk.chunk.videoId,
+                        chunkIdx: rankedChunk.chunk.chunkIdx,
+                        startSec: rankedChunk.chunk.startSec,
+                        endSec: rankedChunk.chunk.endSec,
+                        source: rankedChunk.chunk.source,
+                        author: rankedChunk.chunk.source === "comments" ? chunkAuthor(rankedChunk.chunk.text) : null,
+                        commentId: roots?.[0]?.commentId ?? rankedChunk.chunk.sourceRef,
+                        roots,
+                    };
+                }),
             };
         } finally {
             embedder.dispose();
@@ -409,7 +415,8 @@ function questionTerms(question: string): string[] {
  * (reply order = fetch order), every message is prefixed `@<author>: ` so
  * handles survive into the chunk text. Long threads split at reply boundaries;
  * tiny threads merge up to the target size (a merged chunk keeps the FIRST
- * thread's root id as its `rootCommentId`).
+ * thread's root id as its primary `rootCommentId` and every merged root in
+ * `rootCommentIds`, aligned with its `\n\n`-joined sub-chunks).
  */
 export function chunkComments(comments: VideoComment[]): CommentChunk[] {
     const known = new Set(comments.map((comment) => comment.commentId));
@@ -442,7 +449,7 @@ export function chunkComments(comments: VideoComment[]): CommentChunk[] {
 
         for (const message of messages) {
             if (bufferChars + message.length + 1 > TARGET_CHARS && buffer.length) {
-                perThread.push({ text: buffer.join("\n"), rootCommentId: root.commentId });
+                perThread.push({ text: buffer.join("\n"), rootCommentId: root.commentId, rootCommentIds: [root.commentId] });
                 buffer = [];
                 bufferChars = 0;
             }
@@ -452,7 +459,7 @@ export function chunkComments(comments: VideoComment[]): CommentChunk[] {
         }
 
         if (buffer.length) {
-            perThread.push({ text: buffer.join("\n"), rootCommentId: root.commentId });
+            perThread.push({ text: buffer.join("\n"), rootCommentId: root.commentId, rootCommentIds: [root.commentId] });
         }
     }
 
@@ -465,10 +472,11 @@ export function chunkComments(comments: VideoComment[]): CommentChunk[] {
 
         if (last && last.text.length + chunk.text.length + 2 <= TARGET_CHARS) {
             last.text = `${last.text}\n\n${chunk.text}`;
+            last.rootCommentIds.push(...chunk.rootCommentIds);
             continue;
         }
 
-        out.push({ ...chunk });
+        out.push({ ...chunk, rootCommentIds: [...chunk.rootCommentIds] });
     }
 
     return out;
@@ -504,4 +512,32 @@ function chunkAuthor(text: string): string | null {
     const match = text.match(/^@([^:\n]+):/);
 
     return match ? match[1] : null;
+}
+
+/**
+ * Every thread root a comment chunk covers, with each sub-thread's author.
+ * `source_ref` stores the merged roots comma-joined, positionally aligned
+ * with the chunk text's `\n\n`-separated sub-chunks (single-id rows from
+ * before the merge fix parse as one root).
+ */
+function chunkRoots(chunk: QaChunk): { commentId: string; author: string | null }[] | undefined {
+    if (!chunk.sourceRef) {
+        return undefined;
+    }
+
+    const ids = chunk.sourceRef.split(",");
+    const subAuthors = chunk.text.split("\n\n").map((part) => chunkAuthor(part));
+    const seen = new Set<string>();
+    const roots: { commentId: string; author: string | null }[] = [];
+
+    for (let i = 0; i < ids.length; i++) {
+        if (seen.has(ids[i])) {
+            continue;
+        }
+
+        seen.add(ids[i]);
+        roots.push({ commentId: ids[i], author: subAuthors[i] ?? subAuthors[0] ?? null });
+    }
+
+    return roots;
 }
