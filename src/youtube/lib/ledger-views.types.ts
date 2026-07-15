@@ -3,7 +3,9 @@
 // `stripe:<id>`, `stripe-refund:<id>`) is meant to collapse to its prefix.
 // Kept as an extension point per the plan's contract; add entries here if a
 // future reason should NOT be split.
-const ACTION_REASON_ALLOWLIST: readonly string[] = [];
+// "qa:channel" is an ACTION reason (channel-scope ask), not an id-suffixed
+// one — splitting it would show a meaningless bare "qa" chip next to "ask".
+const ACTION_REASON_ALLOWLIST: readonly string[] = ["qa:channel"];
 
 /** Groups a ledger `reason` for display: allowlisted reasons pass through
  * whole, everything else is the segment before the first `:`. Pure — lives
