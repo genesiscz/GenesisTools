@@ -1,4 +1,4 @@
-import { type VideoDetailTab, VideoDetailTabs } from "@app/utils/ui/components/youtube/tabs";
+import { type PipelineProgress, type VideoDetailTab, VideoDetailTabs } from "@app/utils/ui/components/youtube/tabs";
 import type { JobStage } from "@app/youtube/lib/types";
 import { dataSource, useModels, useStartPipeline } from "@ext/api.hooks";
 import type { ExtensionEvent } from "@ext/shared/messages";
@@ -7,7 +7,7 @@ import { Header } from "@ext/side-panel/header";
 import { connectEventPort } from "@ext/side-panel/port";
 import type { PanelTarget } from "@ext/side-panel/target";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 declare const __EXT_DEV_RELOAD__: boolean;
 const IS_DEV_BUILD = typeof __EXT_DEV_RELOAD__ !== "undefined" && __EXT_DEV_RELOAD__;
@@ -43,9 +43,12 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
         return cleanup;
     }, []);
 
-    // When any pipeline job finishes, invalidate the query for the tab whose
-    // data it touched. Without this the "Fetch comments" button enqueues a
-    // job but the panel never notices when comments actually land.
+    // WS job events drive two things: live progress (spinners + progress bars
+    // while a job runs for THIS video) and query invalidation when a job
+    // finishes (so "Fetch comments" etc. actually surface their data).
+    const [pipelineProgress, setPipelineProgress] = useState<PipelineProgress | null>(null);
+    const activeJobIdsRef = useRef<Set<number>>(new Set());
+
     useEffect(() => {
         function onExtensionEvent(event: Event): void {
             const detail = (event as CustomEvent<ExtensionEvent>).detail;
@@ -54,6 +57,33 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
             }
 
             const jobEvent = detail.event;
+
+            if (
+                (jobEvent.type === "job:created" || jobEvent.type === "job:started") &&
+                jobEvent.job.target === videoId
+            ) {
+                activeJobIdsRef.current.add(jobEvent.job.id);
+                setPipelineProgress((prev) => prev ?? { progress: 0, message: null });
+                return;
+            }
+
+            if (jobEvent.type === "stage:progress" && activeJobIdsRef.current.has(jobEvent.jobId)) {
+                setPipelineProgress({ progress: jobEvent.progress, message: jobEvent.message ?? null });
+                return;
+            }
+
+            if (jobEvent.type !== "job:completed" && jobEvent.type !== "job:failed") {
+                return;
+            }
+
+            if (activeJobIdsRef.current.has(jobEvent.job.id)) {
+                activeJobIdsRef.current.delete(jobEvent.job.id);
+
+                if (activeJobIdsRef.current.size === 0) {
+                    setPipelineProgress(null);
+                }
+            }
+
             if (jobEvent.type !== "job:completed") {
                 return;
             }
@@ -94,10 +124,19 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
 
     // Single surface — border + bg live on this one wrapper. VideoDetailTabs
     // renders chromeless so we don't nest two containers.
+    // The height cap lives HERE with a definite value — percentage heights
+    // can't resolve against the auto-height shadow host, so `max-h-full`
+    // would never constrain the flex chain and the body's overflow-auto
+    // would never engage (content then paints past the host clip instead of
+    // scrolling).
+    // transition-[height] + inherited `interpolate-size: allow-keywords` (set
+    // on the extension root) animate auto→auto height changes on tab switch —
+    // the card is what the user sees resize, so the transition lives here.
+    const heightAnim = "transition-[height] duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]";
     const containerClass =
         placement === "inline"
-            ? "flex h-auto min-h-0 flex-col overflow-hidden rounded-xl border border-white/8 bg-card"
-            : "flex h-auto min-h-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-card shadow-2xl shadow-black/40";
+            ? `flex h-auto max-h-[min(60vh,640px)] min-h-0 flex-col overflow-hidden rounded-xl border border-white/8 bg-card ${heightAnim}`
+            : `flex h-auto max-h-[min(70vh,720px)] min-h-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-card shadow-2xl shadow-black/40 ${heightAnim}`;
 
     return (
         <div className={containerClass}>
@@ -114,6 +153,7 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                         chromeless
                         devMode={IS_DEV_BUILD}
                         modelPresets={models.data?.presets ?? []}
+                        pipelineProgress={pipelineProgress}
                     />
                 </div>
             </div>

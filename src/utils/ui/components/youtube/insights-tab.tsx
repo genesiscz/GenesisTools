@@ -7,6 +7,7 @@ import {
     SummaryControlsBar,
     type SummaryControlsState,
 } from "@app/utils/ui/components/youtube/summary-controls";
+import type { PipelineProgress } from "@app/utils/ui/components/youtube/tabs";
 import { TimestampedSummaryView } from "@app/utils/ui/components/youtube/timestamped-summary-view";
 import type { LlmEstimate, TimestampedSummaryEntry, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
 import { useState } from "react";
@@ -50,7 +51,8 @@ export function InsightsTab({
     useEstimate,
     devMode,
     modelPresets,
-}: InsightsTabProps & { devMode?: boolean; modelPresets?: ModelPreset[] }) {
+    pipelineProgress,
+}: InsightsTabProps & { devMode?: boolean; modelPresets?: ModelPreset[]; pipelineProgress?: PipelineProgress | null }) {
     const timestamped = useSummary(videoId, "timestamped");
     const long = useSummary(videoId, "long");
     const generate = useGenerateSummary(videoId);
@@ -119,6 +121,7 @@ export function InsightsTab({
                 estimate={estimate.data ?? null}
                 estimatePending={estimate.isPending && confirmOpen}
                 onSelectionChange={setModelSel}
+                progress={pipelineProgress}
                 onCancel={() => setConfirmOpen(false)}
                 onConfirm={runGenerate}
             />

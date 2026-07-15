@@ -1,10 +1,10 @@
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import { Loading } from "@app/utils/ui/components/youtube/loading";
-import type { RunPipeline } from "@app/utils/ui/components/youtube/tabs";
+import type { PipelineProgress, RunPipeline } from "@app/utils/ui/components/youtube/tabs";
 import { formatRelativeTime } from "@app/utils/ui/components/youtube/time";
 import type { VideoComment, VideoId } from "@app/youtube/lib/types";
-import { MessageCircle, Search, ThumbsUp } from "lucide-react";
+import { Loader2, MessageCircle, Search, ThumbsUp } from "lucide-react";
 import { useMemo, useState } from "react";
 
 const DEFAULT_RENDER_LIMIT = 50;
@@ -37,9 +37,10 @@ export interface CommentsTabProps {
     videoId: VideoId;
     useComments: (id: VideoId | null) => { data: { comments: VideoComment[] } | undefined; isPending: boolean };
     runPipeline?: RunPipeline;
+    pipelineProgress?: PipelineProgress | null;
 }
 
-export function CommentsTab({ videoId, useComments, runPipeline }: CommentsTabProps) {
+export function CommentsTab({ videoId, useComments, runPipeline, pipelineProgress }: CommentsTabProps) {
     const [query, setQuery] = useState("");
     const [showAll, setShowAll] = useState(false);
     const comments = useComments(videoId);
@@ -76,7 +77,7 @@ export function CommentsTab({ videoId, useComments, runPipeline }: CommentsTabPr
     }
 
     if (rows.length === 0) {
-        const isRunning = runPipeline?.isPending ?? false;
+        const isRunning = (runPipeline?.isPending ?? false) || pipelineProgress != null;
 
         return (
             <div className="space-y-4 rounded-2xl border border-dashed border-primary/25 p-5">
@@ -96,8 +97,20 @@ export function CommentsTab({ videoId, useComments, runPipeline }: CommentsTabPr
                         onClick={() => runPipeline.run(["metadata", "comments"])}
                         disabled={isRunning}
                     >
-                        {isRunning ? "Fetching comments…" : "Fetch comments"}
+                        {isRunning ? (
+                            <>
+                                <Loader2 className="size-4 animate-spin" /> Fetching comments…
+                            </>
+                        ) : (
+                            "Fetch comments"
+                        )}
                     </Button>
+                ) : null}
+                {pipelineProgress ? (
+                    <p className="text-xs tabular-nums text-muted-foreground">
+                        {Math.round(pipelineProgress.progress * 100)}%
+                        {pipelineProgress.message ? ` · ${pipelineProgress.message}` : ""}
+                    </p>
                 ) : null}
             </div>
         );

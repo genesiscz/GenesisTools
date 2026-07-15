@@ -1,5 +1,6 @@
 import { SafeJSON } from "@app/utils/json";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@app/utils/ui/components/tabs";
+import { AskTab } from "@app/utils/ui/components/youtube/ask-tab";
 import { CommentsTab } from "@app/utils/ui/components/youtube/comments-tab";
 import { InsightsTab } from "@app/utils/ui/components/youtube/insights-tab";
 import type { ModelPreset } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
@@ -18,11 +19,17 @@ import type {
 } from "@app/youtube/lib/types";
 import { useEffect, useRef } from "react";
 
-export type VideoDetailTab = "insights" | "summary" | "comments" | "transcript";
+export type VideoDetailTab = "insights" | "summary" | "ask" | "comments" | "transcript";
 
 export interface RunPipeline {
     run: (stages: JobStage[]) => Promise<void>;
     isPending: boolean;
+}
+
+/** Live progress of a running pipeline job for this video (from WS job events). */
+export interface PipelineProgress {
+    progress: number;
+    message: string | null;
 }
 
 export interface VideoDetailDataSource {
@@ -102,6 +109,8 @@ export interface VideoDetailTabsProps {
     devMode?: boolean;
     /** Server-detected provider/model matrix for the dev-mode picker. */
     modelPresets?: ModelPreset[];
+    /** Live progress of a running job for this video — drives button spinners + dialog progress. */
+    pipelineProgress?: PipelineProgress | null;
 }
 
 export function VideoDetailTabs({
@@ -114,6 +123,7 @@ export function VideoDetailTabs({
     chromeless,
     devMode,
     modelPresets,
+    pipelineProgress,
 }: VideoDetailTabsProps) {
     return (
         <Tabs
@@ -121,9 +131,10 @@ export function VideoDetailTabs({
             onValueChange={(value) => onActiveChange(value as VideoDetailTab)}
             className={chromeless ? "yt-tabs-root p-4" : "yt-tabs-root yt-panel rounded-3xl p-4"}
         >
-            <TabsList className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+            <TabsList className="grid grid-cols-3 gap-2 lg:grid-cols-5">
                 <TabsTrigger value="insights">Insights</TabsTrigger>
                 <TabsTrigger value="summary">Summary</TabsTrigger>
+                <TabsTrigger value="ask">Ask</TabsTrigger>
                 <TabsTrigger value="comments">Comments</TabsTrigger>
                 <TabsTrigger value="transcript">Transcript</TabsTrigger>
             </TabsList>
@@ -136,6 +147,7 @@ export function VideoDetailTabs({
                     useEstimate={ds.useEstimate}
                     devMode={devMode}
                     modelPresets={modelPresets}
+                    pipelineProgress={pipelineProgress}
                 />
             </TabsContent>
             <TabsContent value="summary" className="yt-tab-pane">
@@ -146,10 +158,19 @@ export function VideoDetailTabs({
                     useEstimate={ds.useEstimate}
                     devMode={devMode}
                     modelPresets={modelPresets}
+                    pipelineProgress={pipelineProgress}
                 />
             </TabsContent>
+            <TabsContent value="ask" className="yt-tab-pane">
+                <AskTab videoId={videoId} onSeek={onSeek} useAskVideo={ds.useAskVideo} />
+            </TabsContent>
             <TabsContent value="comments" className="yt-tab-pane">
-                <CommentsTab videoId={videoId} useComments={ds.useComments} runPipeline={runPipeline} />
+                <CommentsTab
+                    videoId={videoId}
+                    useComments={ds.useComments}
+                    runPipeline={runPipeline}
+                    pipelineProgress={pipelineProgress}
+                />
             </TabsContent>
             <TabsContent value="transcript" className="yt-tab-pane">
                 <TranscriptTab
@@ -157,6 +178,7 @@ export function VideoDetailTabs({
                     onSeek={onSeek}
                     useTranscript={ds.useTranscript}
                     runPipeline={runPipeline}
+                    pipelineProgress={pipelineProgress}
                 />
             </TabsContent>
         </Tabs>

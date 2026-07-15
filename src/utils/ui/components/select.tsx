@@ -19,8 +19,53 @@ export function PortalContainerProvider({
     return <PortalContainerContext.Provider value={container}>{children}</PortalContainerContext.Provider>;
 }
 
-function Select(props: React.ComponentProps<typeof SelectPrimitive.Root>) {
-    return <SelectPrimitive.Root data-slot="select" {...props} />;
+// Per-select identity so the shadow-DOM outside-dismiss below can tell "my
+// own trigger/content" apart from another select's in the composed path.
+const ShadowSelectIdContext = React.createContext<string | null>(null);
+
+function Select({ open: openProp, onOpenChange, ...props }: React.ComponentProps<typeof SelectPrimitive.Root>) {
+    const portalContainer = React.useContext(PortalContainerContext);
+    const shadowSelectId = React.useId();
+    const [uncontrolledOpen, setUncontrolledOpen] = React.useState(false);
+    const open = openProp ?? uncontrolledOpen;
+
+    const handleOpenChange = React.useCallback(
+        (next: boolean) => {
+            setUncontrolledOpen(next);
+            onOpenChange?.(next);
+        },
+        [onOpenChange]
+    );
+
+    // Radix's DismissableLayer reads `event.target`, which shadow DOM
+    // retargets to the shadow HOST for document-level listeners — so inside a
+    // shadow root, outside-pointerdown never dismisses an open select
+    // (radix-ui/primitives lacks composedPath handling). When portaled into a
+    // shadow root, run our own composedPath-based outside-dismiss.
+    React.useEffect(() => {
+        if (!portalContainer || !open) {
+            return;
+        }
+
+        function onPointerDown(event: PointerEvent): void {
+            const inside = event
+                .composedPath()
+                .some((node) => node instanceof HTMLElement && node.dataset.shadowSelect === shadowSelectId);
+
+            if (!inside) {
+                handleOpenChange(false);
+            }
+        }
+
+        document.addEventListener("pointerdown", onPointerDown, { capture: true });
+        return () => document.removeEventListener("pointerdown", onPointerDown, { capture: true });
+    }, [portalContainer, open, shadowSelectId, handleOpenChange]);
+
+    return (
+        <ShadowSelectIdContext.Provider value={shadowSelectId}>
+            <SelectPrimitive.Root data-slot="select" open={open} onOpenChange={handleOpenChange} {...props} />
+        </ShadowSelectIdContext.Provider>
+    );
 }
 
 function SelectGroup(props: React.ComponentProps<typeof SelectPrimitive.Group>) {
@@ -32,9 +77,12 @@ function SelectValue(props: React.ComponentProps<typeof SelectPrimitive.Value>) 
 }
 
 function SelectTrigger({ className, children, ...props }: React.ComponentProps<typeof SelectPrimitive.Trigger>) {
+    const shadowSelectId = React.useContext(ShadowSelectIdContext);
+
     return (
         <SelectPrimitive.Trigger
             data-slot="select-trigger"
+            data-shadow-select={shadowSelectId ?? undefined}
             className={cn(
                 "flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50 data-[placeholder]:text-muted-foreground",
                 className
@@ -83,10 +131,12 @@ function SelectContent({
     ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
     const portalContainer = React.useContext(PortalContainerContext);
+    const shadowSelectId = React.useContext(ShadowSelectIdContext);
     return (
         <SelectPrimitive.Portal container={portalContainer ?? undefined}>
             <SelectPrimitive.Content
                 data-slot="select-content"
+                data-shadow-select={shadowSelectId ?? undefined}
                 className={cn(
                     // Solid popover — explicit hsl fallback via arbitrary value so
                     // consumers embedded in shadow DOMs (e.g. YT extension) never
