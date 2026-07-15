@@ -124,18 +124,57 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
             }
             return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/estimate?${query.toString()}`);
         }
+        case "api:register":
+        case "api:login": {
+            const action = req.type === "api:register" ? "register" : "login";
+            const res = await apiCall(`${base}/api/v1/users/${action}`, {
+                method: "POST",
+                body: JSON.stringify({ email: req.email, password: req.password }),
+            });
+            if (res.ok) {
+                const data = res.data as { token?: string };
+                if (typeof data.token === "string") {
+                    await setExtensionConfig({ userToken: data.token });
+                }
+            }
+            return res;
+        }
+        case "api:logout":
+            await setExtensionConfig({ userToken: undefined });
+            return { ok: true, data: { ok: true } };
+        case "api:me":
+            return apiCall(`${base}/api/v1/users/me`);
+        case "api:topup":
+            return apiCall(`${base}/api/v1/users/topup`, {
+                method: "POST",
+                body: JSON.stringify(typeof req.amount === "number" ? { amount: req.amount } : {}),
+            });
+        case "api:qaHistory": {
+            const query = new URLSearchParams();
+            if (req.id) {
+                query.set("video", req.id);
+            }
+            if (typeof req.limit === "number") {
+                query.set("limit", String(req.limit));
+            }
+            const suffix = query.toString() ? `?${query.toString()}` : "";
+            return apiCall(`${base}/api/v1/users/qa-history${suffix}`);
+        }
     }
 }
 
 async function apiCall(url: string, init: RequestInit = {}): Promise<ExtensionResponse> {
-    const { serviceKey } = await getExtensionConfig();
+    const { serviceKey, userToken } = await getExtensionConfig();
     const headers = new Headers(init.headers);
     if (!headers.has("Content-Type")) {
         headers.set("Content-Type", "application/json");
     }
 
-    if (serviceKey) {
-        headers.set("Authorization", `Bearer ${serviceKey}`);
+    // The user token wins over a configured service key — user routes need
+    // the ytu_ identity, and the server ignores non-ytu_ tokens there.
+    const bearer = userToken ?? serviceKey;
+    if (bearer) {
+        headers.set("Authorization", `Bearer ${bearer}`);
     }
 
     try {

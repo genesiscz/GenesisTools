@@ -10,6 +10,7 @@ import type {
     AskCitation,
     JobStage,
     LlmEstimate,
+    QaHistoryItem,
     TimestampedSummaryEntry,
     Transcript,
     Video,
@@ -94,6 +95,12 @@ export interface VideoDetailDataSource {
         id: VideoId | null,
         opts: { mode: "short" | "timestamped" | "long"; provider?: string; model?: string; enabled?: boolean }
     ) => { data: LlmEstimate | undefined; isPending: boolean };
+    /** Server-side per-user Q&A history (`/users/qa-history`). Optional —
+     *  consumers without it show only the in-session ask flow. */
+    useQaHistory?: (id: VideoId | null) => {
+        data: { items: QaHistoryItem[] } | undefined;
+        isPending: boolean;
+    };
 }
 
 export interface VideoDetailTabsProps {
