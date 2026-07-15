@@ -80,14 +80,18 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
         }
 
         if (matchRoute(req, "POST", "/api/v1/users/topup", url.pathname)) {
+            // Dev stand-in for Stripe: server-gated by YOUTUBE_ALLOW_DEV_TOPUP
+            // so a deployed build cannot mint credits outside real billing.
+            if (!env.youtube.isDevTopupAllowed()) {
+                return jsonError("not found", 404);
+            }
+
             const user = requireUser(req, url, yt.db);
 
             if (user instanceof Response) {
                 return user;
             }
 
-            // Dev stand-in for Stripe: accepted unconditionally on this
-            // localhost tool; the extension gates the button to dev builds.
             const body = (await safeJsonBody(req)) ?? {};
             const requested = typeof body.amount === "number" ? Math.floor(body.amount) : 100;
             const amount = Math.min(10_000, Math.max(1, requested));
