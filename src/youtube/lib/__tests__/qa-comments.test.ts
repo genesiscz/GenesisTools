@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { VideoComment } from "@app/youtube/lib/comments.types";
+import { YoutubeConfig } from "@app/youtube/lib/config";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
-import { chunkComments } from "@app/youtube/lib/qa";
+import { chunkComments, QaService } from "@app/youtube/lib/qa";
+import type { QaServiceDeps } from "@app/youtube/lib/qa.types";
 import type { VideoId } from "@app/youtube/lib/video.types";
 
 const VIDEO = "abc123def45" as VideoId;
@@ -42,7 +47,8 @@ describe("chunkComments", () => {
     });
 
     it("splits an oversize thread at reply boundaries, never mid-message", () => {
-        const bigReply = (id: string) => makeComment({ commentId: id, parentCommentId: "root", text: "x".repeat(1900) });
+        const bigReply = (id: string) =>
+            makeComment({ commentId: id, parentCommentId: "root", text: "x".repeat(1900) });
         const comments = [
             makeComment({ commentId: "root", author: "@op", text: "y".repeat(1900) }),
             bigReply("a"),
@@ -141,5 +147,134 @@ describe("qa_chunks source columns", () => {
         });
 
         expect(legacy.sources).toBeUndefined();
+    });
+});
+
+describe("QaService ask with comment sources", () => {
+    it("Both scope indexes lazily, merges both sources, and tags citations", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "youtube-qa-comments-"));
+        const db = new YoutubeDatabase(":memory:");
+        const config = new YoutubeConfig({ baseDir: dir });
+
+        try {
+            db.upsertChannel({ handle: "@chan" });
+            db.upsertVideo({ id: VIDEO, channelHandle: "@chan", title: "t" });
+            db.saveTranscript({
+                videoId: VIDEO,
+                lang: "en",
+                source: "captions",
+                text: "spoken words",
+                segments: [{ text: "spoken words", start: 5, end: 9 }],
+                durationSec: 9,
+            });
+            db.upsertComments(VIDEO, [
+                {
+                    commentId: "rootA",
+                    author: "@alice",
+                    authorId: null,
+                    text: "viewers love this",
+                    likeCount: 3,
+                    publishedAt: null,
+                    parentCommentId: null,
+                },
+            ]);
+
+            const vectors = new Map<string, Float32Array>();
+            const deps: QaServiceDeps = {
+                createEmbedder: async () => ({
+                    embed: async () => ({ vector: new Float32Array([1, 0]), dimensions: 2 }),
+                    embedBatch: async (texts: string[]) =>
+                        texts.map((text) => {
+                            const vector = text.startsWith("@alice")
+                                ? new Float32Array([0.9, 0.1])
+                                : new Float32Array([1, 0]);
+                            vectors.set(text, vector);
+
+                            return { vector, dimensions: 2 };
+                        }),
+                    dispose: () => {},
+                }),
+                callLLM: async (opts) => {
+                    expect(opts.systemPrompt).toContain(
+                        "Claims sourced from comments must be attributed ('commenters point out…', 'one viewer disagrees…') — never present viewer opinions as statements made in the video."
+                    );
+                    expect(opts.userPrompt).toContain(`transcript t=5s] spoken words`);
+                    expect(opts.userPrompt).toContain(`comment @alice] @alice: viewers love this`);
+
+                    return { content: "Commenters point out [#2]." };
+                },
+            };
+            const service = new QaService(db, config, deps);
+
+            await service.index({ videoId: VIDEO, sources: ["transcript", "comments"] });
+
+            expect(db.hasQaChunks(VIDEO, "default", "transcript")).toBe(true);
+            expect(db.hasQaChunks(VIDEO, "default", "comments")).toBe(true);
+
+            const result = await service.ask({
+                videoIds: [VIDEO],
+                question: "What do viewers think?",
+                providerChoice: { provider: { name: "test" }, model: { id: "model" } } as never,
+                sources: ["transcript", "comments"],
+            });
+
+            expect(result.citations).toHaveLength(2);
+            expect(result.citations[0]).toMatchObject({ source: "transcript", author: null, commentId: null });
+            expect(result.citations[1]).toMatchObject({
+                source: "comments",
+                author: "alice",
+                commentId: "rootA",
+            });
+        } finally {
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("transcript-only ask ignores comment chunks and keeps the base prompt", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "youtube-qa-comments-"));
+        const db = new YoutubeDatabase(":memory:");
+        const config = new YoutubeConfig({ baseDir: dir });
+
+        try {
+            db.upsertChannel({ handle: "@chan" });
+            db.upsertVideo({ id: VIDEO, channelHandle: "@chan", title: "t" });
+            db.upsertQaChunk({ videoId: VIDEO, chunkIdx: 0, text: "spoken", embedding: new Float32Array([1, 0]), embedderModel: "default" });
+            db.upsertQaChunk({
+                videoId: VIDEO,
+                chunkIdx: 100_000,
+                text: "@a: comment",
+                embedding: new Float32Array([1, 0]),
+                embedderModel: "default",
+                source: "comments",
+                sourceRef: "rootA",
+            });
+
+            const deps: QaServiceDeps = {
+                createEmbedder: async () => ({
+                    embed: async () => ({ vector: new Float32Array([1, 0]), dimensions: 2 }),
+                    embedBatch: async () => [],
+                    dispose: () => {},
+                }),
+                callLLM: async (opts) => {
+                    expect(opts.systemPrompt).not.toContain("Claims sourced from comments");
+                    expect(opts.userPrompt).not.toContain("comment @a");
+
+                    return { content: "answer" };
+                },
+            };
+            const service = new QaService(db, config, deps);
+            const result = await service.ask({
+                videoIds: [VIDEO],
+                question: "q",
+                providerChoice: { provider: { name: "test" }, model: { id: "model" } } as never,
+            });
+
+            expect(result.citations).toHaveLength(1);
+            expect(result.citations[0]?.source).toBe("transcript");
+        } finally {
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
     });
 });

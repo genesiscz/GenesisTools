@@ -12,6 +12,7 @@ import type {
     CommentChunk,
     IndexOpts,
     IndexResult,
+    QaChunk,
     QaServiceDeps,
     TranscriptChunkSource,
 } from "@app/youtube/lib/qa.types";
@@ -22,6 +23,16 @@ const TARGET_TOKENS_PER_CHUNK = 1500;
 const TARGET_CHARS = TARGET_TOKENS_PER_CHUNK * 4;
 const TOP_K_DEFAULT = 8;
 const DEFAULT_MODEL_ID = "default";
+/** Both-scope retrieval favors the transcript — it is the authority; comments add sentiment. */
+const BOTH_SCOPE_TRANSCRIPT_BOOST = 1.15;
+/**
+ * Comment chunks live in a disjoint chunk_idx range: the shipped
+ * UNIQUE(video_id, chunk_idx, embedder_model) key cannot be altered
+ * additively, so the offset keeps them from colliding with transcript rows.
+ */
+const COMMENT_CHUNK_IDX_BASE = 100_000;
+const COMMENT_ATTRIBUTION_PROMPT =
+    "Claims sourced from comments must be attributed ('commenters point out…', 'one viewer disagrees…') — never present viewer opinions as statements made in the video.";
 
 const DEFAULT_QA_DEPS: QaServiceDeps = {
     createEmbedder: (opts) => Embedder.create(opts),
@@ -36,12 +47,7 @@ export class QaService {
     ) {}
 
     async index(opts: IndexOpts): Promise<IndexResult> {
-        const transcript = this.db.getTranscript(opts.videoId);
-
-        if (!transcript) {
-            throw new Error(`no transcript to index for ${opts.videoId}`);
-        }
-
+        const sources = opts.sources ?? ["transcript"];
         const provider = await this.config.get("provider");
         const modelId = opts.model ?? DEFAULT_MODEL_ID;
         const embedder = await this.deps.createEmbedder({
@@ -50,40 +56,91 @@ export class QaService {
         });
 
         try {
-            if (!opts.forceReindex && this.db.hasQaChunks(opts.videoId, modelId)) {
-                return { indexed: 0, modelId };
-            }
+            let indexed = 0;
 
-            opts.signal?.throwIfAborted();
-            const chunks = chunkTranscript(transcript);
-            const vectors = await embedder.embedBatch(chunks.map((chunk) => chunk.text));
-            await recordYoutubeUsage({
-                action: "qa:embed",
-                provider: opts.provider ?? provider.embed ?? "default",
-                model: modelId,
-                scope: opts.videoId,
-            });
+            if (sources.includes("transcript")) {
+                const transcript = this.db.getTranscript(opts.videoId);
 
-            for (let i = 0; i < chunks.length; i++) {
-                opts.signal?.throwIfAborted();
-                const vector = vectors[i];
-
-                if (!vector) {
-                    throw new Error(`embedding missing for chunk ${i} of ${opts.videoId}`);
+                if (!transcript) {
+                    throw new Error(`no transcript to index for ${opts.videoId}`);
                 }
 
-                this.db.upsertQaChunk({
-                    videoId: opts.videoId,
-                    chunkIdx: i,
-                    text: chunks[i].text,
-                    startSec: chunks[i].startSec,
-                    endSec: chunks[i].endSec,
-                    embedding: vector.vector,
-                    embedderModel: modelId,
-                });
+                if (opts.forceReindex || !this.db.hasQaChunks(opts.videoId, modelId, "transcript")) {
+                    opts.signal?.throwIfAborted();
+                    const chunks = chunkTranscript(transcript);
+                    const vectors = await embedder.embedBatch(chunks.map((chunk) => chunk.text));
+                    await recordYoutubeUsage({
+                        action: "qa:embed",
+                        provider: opts.provider ?? provider.embed ?? "default",
+                        model: modelId,
+                        scope: opts.videoId,
+                    });
+
+                    for (let i = 0; i < chunks.length; i++) {
+                        opts.signal?.throwIfAborted();
+                        const vector = vectors[i];
+
+                        if (!vector) {
+                            throw new Error(`embedding missing for chunk ${i} of ${opts.videoId}`);
+                        }
+
+                        this.db.upsertQaChunk({
+                            videoId: opts.videoId,
+                            chunkIdx: i,
+                            text: chunks[i].text,
+                            startSec: chunks[i].startSec,
+                            endSec: chunks[i].endSec,
+                            embedding: vector.vector,
+                            embedderModel: modelId,
+                            source: "transcript",
+                        });
+                    }
+
+                    indexed += chunks.length;
+                }
             }
 
-            return { indexed: chunks.length, modelId };
+            if (sources.includes("comments")) {
+                const comments = this.db.getComments(opts.videoId);
+
+                if (
+                    comments.length > 0 &&
+                    (opts.forceReindex || !this.db.hasQaChunks(opts.videoId, modelId, "comments"))
+                ) {
+                    opts.signal?.throwIfAborted();
+                    const chunks = chunkComments(comments);
+                    const vectors = await embedder.embedBatch(chunks.map((chunk) => chunk.text));
+                    await recordYoutubeUsage({
+                        action: "qa:embed",
+                        provider: opts.provider ?? provider.embed ?? "default",
+                        model: modelId,
+                        scope: opts.videoId,
+                    });
+
+                    for (let i = 0; i < chunks.length; i++) {
+                        opts.signal?.throwIfAborted();
+                        const vector = vectors[i];
+
+                        if (!vector) {
+                            throw new Error(`embedding missing for comment chunk ${i} of ${opts.videoId}`);
+                        }
+
+                        this.db.upsertQaChunk({
+                            videoId: opts.videoId,
+                            chunkIdx: COMMENT_CHUNK_IDX_BASE + i,
+                            text: chunks[i].text,
+                            embedding: vector.vector,
+                            embedderModel: modelId,
+                            source: "comments",
+                            sourceRef: chunks[i].rootCommentId,
+                        });
+                    }
+
+                    indexed += chunks.length;
+                }
+            }
+
+            return { indexed, modelId };
         } finally {
             embedder.dispose();
         }
@@ -98,23 +155,41 @@ export class QaService {
         const embedder = await this.deps.createEmbedder({ provider: provider.embed });
 
         try {
+            const sources = opts.sources ?? ["transcript"];
+            const bothScope = sources.includes("transcript") && sources.includes("comments");
+            const topK = opts.topK ?? TOP_K_DEFAULT;
             const questionEmbedding = await embedder.embed(opts.question);
             const qVec = questionEmbedding.vector;
-            const ranked = opts.videoIds
+            const scored = opts.videoIds
                 .flatMap((videoId) => this.db.listQaChunks(videoId))
+                .filter((chunk) => sources.includes(chunk.source))
                 .filter((chunk) => chunk.embedding && chunk.embedding.length === qVec.length)
-                .map((chunk) => ({ chunk, score: cosine(qVec, chunk.embedding!) }))
+                .map((chunk) => ({ chunk, score: cosine(qVec, chunk.embedding!) }));
+            // Top-K per selected source, merged; in Both scope transcript hits
+            // get a boost (the transcript is the authority, comments add
+            // sentiment), then the merged pool is cut back to topK.
+            const ranked = sources
+                .flatMap((source) =>
+                    scored
+                        .filter((entry) => entry.chunk.source === source)
+                        .sort((a, b) => b.score - a.score)
+                        .slice(0, topK)
+                )
+                .map((entry) =>
+                    bothScope && entry.chunk.source === "transcript"
+                        ? { ...entry, score: entry.score * BOTH_SCOPE_TRANSCRIPT_BOOST }
+                        : entry
+                )
                 .sort((a, b) => b.score - a.score)
-                .slice(0, opts.topK ?? TOP_K_DEFAULT);
+                .slice(0, topK);
 
             const context = ranked
-                .map(
-                    (rankedChunk, i) =>
-                        `[#${i + 1} ${rankedChunk.chunk.videoId} @${formatTime(rankedChunk.chunk.startSec)}] ${rankedChunk.chunk.text}`
-                )
+                .map((rankedChunk, i) => `[#${i + 1} ${chunkTag(rankedChunk.chunk)}] ${rankedChunk.chunk.text}`)
                 .join("\n\n");
-            const baseSystemPrompt =
-                "You answer questions about YouTube video transcripts. Cite the [#N] markers from the context to back every claim. If the context doesn't contain the answer, say so plainly.";
+            const baseSystemPrompt = [
+                "You answer questions about YouTube video transcripts. Cite the [#N] markers from the context to back every claim. If the context doesn't contain the answer, say so plainly.",
+                ...(sources.includes("comments") ? [COMMENT_ATTRIBUTION_PROMPT] : []),
+            ].join(" ");
             // Preset instructions append LAST, after all system instructions —
             // security-relevant per 2026-07-15-RoadmapFeature11-PromptPersonas.
             const systemPrompt = opts.presetInstructions
@@ -152,7 +227,7 @@ export class QaService {
                     startSec: rankedChunk.chunk.startSec,
                     endSec: rankedChunk.chunk.endSec,
                     source: rankedChunk.chunk.source,
-                    author: null,
+                    author: rankedChunk.chunk.source === "comments" ? chunkAuthor(rankedChunk.chunk.text) : null,
                     commentId: rankedChunk.chunk.sourceRef,
                 })),
             };
@@ -289,13 +364,21 @@ export function cosine(a: Float32Array, b: Float32Array): number {
     return normA > 0 && normB > 0 ? dot / Math.sqrt(normA * normB) : 0;
 }
 
-function formatTime(value: number | null): string {
-    if (value === null) {
-        return "?";
+/** Prompt tag per source: `[transcript t=123s]` vs `[comment @handle]` (plus the video id). */
+function chunkTag(chunk: QaChunk): string {
+    if (chunk.source === "comments") {
+        return `${chunk.videoId} comment @${chunkAuthor(chunk.text) ?? "unknown"}`;
     }
 
-    const minutes = Math.floor(value / 60);
-    const seconds = Math.floor(value % 60);
-
-    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+    return chunk.startSec !== null
+        ? `${chunk.videoId} transcript t=${Math.round(chunk.startSec)}s`
+        : `${chunk.videoId} transcript`;
 }
+
+/** Thread author from the chunk text's `@handle: ` prefix (see `chunkComments`). */
+function chunkAuthor(text: string): string | null {
+    const match = text.match(/^@([^:\n]+):/);
+
+    return match ? match[1] : null;
+}
+

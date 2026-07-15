@@ -134,7 +134,7 @@ describe("QaService", () => {
                 providerChoice,
                 streaming: undefined,
                 systemPrompt: expect.stringContaining("You answer questions about YouTube video transcripts"),
-                userPrompt: expect.stringContaining("[#1 abc123def45 @0:12] relevant chunk"),
+                userPrompt: expect.stringContaining("[#1 abc123def45 transcript t=12s] relevant chunk"),
             });
         } finally {
             db.close();
