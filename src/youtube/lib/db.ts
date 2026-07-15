@@ -303,6 +303,21 @@ export class YoutubeDatabase extends BaseDatabase {
             `);
         });
 
+        this.runMigration("add-prompt-presets", () => {
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS prompt_presets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    name TEXT NOT NULL,
+                    kind TEXT NOT NULL CHECK (kind IN ('summary','insights','ask')),
+                    instructions TEXT NOT NULL,
+                    is_default INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    UNIQUE (user_id, kind, name)
+                );
+            `);
+        });
+
         const existing = this.db
             .query<{ version: number }, [number]>("SELECT version FROM schema_version WHERE version = ?")
             .get(SCHEMA_VERSION);
@@ -1309,9 +1324,82 @@ export class YoutubeDatabase extends BaseDatabase {
         return row?.count ?? 0;
     }
 
+    createPresetRow(input: { userId: number; name: string; kind: PresetRow["kind"]; instructions: string }): PresetRow {
+        const row = this.db
+            .query<PresetRow, [number, string, string, string]>(
+                `INSERT INTO prompt_presets (user_id, name, kind, instructions, created_at)
+                 VALUES (?, ?, ?, ?, ${SQL_NOW_UTC}) RETURNING *`
+            )
+            .get(input.userId, input.name, input.kind, input.instructions);
+
+        if (!row) {
+            throw new Error("createPresetRow failed: insert returned no row");
+        }
+
+        return row;
+    }
+
+    /** Newest first. */
+    listPresetsForUser(userId: number, kind?: PresetRow["kind"]): PresetRow[] {
+        return kind
+            ? this.db
+                  .query<PresetRow, [number, string]>(
+                      "SELECT * FROM prompt_presets WHERE user_id = ? AND kind = ? ORDER BY id DESC"
+                  )
+                  .all(userId, kind)
+            : this.db
+                  .query<PresetRow, [number]>("SELECT * FROM prompt_presets WHERE user_id = ? ORDER BY id DESC")
+                  .all(userId);
+    }
+
+    /** Ownership-scoped lookup — returns null for another user's preset. */
+    getPresetById(userId: number, id: number): PresetRow | null {
+        return this.db
+            .query<PresetRow, [number, number]>("SELECT * FROM prompt_presets WHERE id = ? AND user_id = ?")
+            .get(id, userId);
+    }
+
+    /** Returns null if the preset doesn't exist or isn't owned by `userId`. */
+    updatePresetRow(userId: number, id: number, partial: { name?: string; instructions?: string }): PresetRow | null {
+        const existing = this.getPresetById(userId, id);
+
+        if (!existing) {
+            return null;
+        }
+
+        return this.db
+            .query<PresetRow, [string, string, number, number]>(
+                "UPDATE prompt_presets SET name = ?, instructions = ? WHERE id = ? AND user_id = ? RETURNING *"
+            )
+            .get(partial.name ?? existing.name, partial.instructions ?? existing.instructions, id, userId);
+    }
+
+    deletePresetRow(userId: number, id: number): boolean {
+        const result = this.db.run("DELETE FROM prompt_presets WHERE id = ? AND user_id = ?", [id, userId]);
+        return result.changes > 0;
+    }
+
+    countPresetsForUser(userId: number): number {
+        const row = this.db
+            .query<{ count: number }, [number]>("SELECT COUNT(*) AS count FROM prompt_presets WHERE user_id = ?")
+            .get(userId);
+
+        return row?.count ?? 0;
+    }
+
     initSchemaForTest(): void {
         this.initSchema();
     }
+}
+
+export interface PresetRow {
+    id: number;
+    user_id: number;
+    name: string;
+    kind: "summary" | "insights" | "ask";
+    instructions: string;
+    is_default: number;
+    created_at: string;
 }
 
 export interface ShareRow {
