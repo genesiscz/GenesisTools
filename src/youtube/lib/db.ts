@@ -39,7 +39,7 @@ import type {
 } from "@app/youtube/lib/jobs.types";
 import type { AskCitation, QaChunk, QaSource } from "@app/youtube/lib/qa.types";
 import type { Language, Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
-import type { ArtifactKind, CreditReason, QaHistoryItem, YtUser } from "@app/youtube/lib/users.types";
+import type { ArtifactKind, CreditHold, CreditReason, QaHistoryItem, YtUser } from "@app/youtube/lib/users.types";
 import { InsufficientCreditsError } from "@app/youtube/lib/users.types";
 import type {
     TimestampedSummaryEntry,
@@ -462,6 +462,23 @@ export class YoutubeDatabase extends BaseDatabase {
             if (!qaHistoryCols.some((column) => column.name === "lang")) {
                 this.db.exec("ALTER TABLE qa_history ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'");
             }
+        });
+
+        this.runMigration("add-credit-holds", () => {
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS credit_holds (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    amount INTEGER NOT NULL,
+                    reason TEXT NOT NULL,
+                    context TEXT,
+                    status TEXT NOT NULL DEFAULT 'held' CHECK (status IN ('held', 'committed', 'released')),
+                    ledger_id INTEGER NOT NULL REFERENCES credit_ledger(id),
+                    created_at TEXT NOT NULL,
+                    resolved_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_credit_holds_status ON credit_holds(status);
+            `);
         });
 
         const existing = this.db
@@ -1421,12 +1438,165 @@ export class YoutubeDatabase extends BaseDatabase {
         return row !== null;
     }
 
-    private writeCreditLedger(userId: number, delta: number, reason: CreditReason, balanceAfter: number): void {
-        this.db.run(
-            `INSERT INTO credit_ledger (user_id, delta, reason, balance_after, created_at)
-             VALUES (?, ?, ?, ?, ${SQL_NOW_UTC})`,
-            [userId, delta, reason, balanceAfter]
-        );
+    private writeCreditLedger(userId: number, delta: number, reason: CreditReason, balanceAfter: number): number {
+        const row = this.db
+            .query<{ id: number }, [number, number, string, number]>(
+                `INSERT INTO credit_ledger (user_id, delta, reason, balance_after, created_at)
+                 VALUES (?, ?, ?, ?, ${SQL_NOW_UTC}) RETURNING id`
+            )
+            .get(userId, delta, reason, balanceAfter);
+
+        if (!row) {
+            throw new Error("writeCreditLedger: insert returned no row");
+        }
+
+        return row.id;
+    }
+
+    /**
+     * Atomically reserves credits for in-flight external work (LLM/TTS). The
+     * balance is decremented immediately — same conditional UPDATE as
+     * `spendCredits`, throws `InsufficientCreditsError` — and the reservation
+     * is visible as a `hold:<reason>` ledger row plus a `credit_holds` row.
+     * Resolve with `commitHold` (success) or `releaseHold` (refund).
+     */
+    reserveCredits(input: {
+        userId: number;
+        amount: number;
+        reason: CreditReason;
+        context?: string;
+    }): { holdId: number; credits: number } {
+        const reserve = this.db.transaction(() => {
+            const row = this.db
+                .query<{ credits: number }, [number, number, number]>(
+                    "UPDATE users SET credits = credits - ? WHERE id = ? AND credits >= ? RETURNING credits"
+                )
+                .get(input.amount, input.userId, input.amount);
+
+            if (!row) {
+                const current = this.db
+                    .query<{ credits: number }, [number]>("SELECT credits FROM users WHERE id = ?")
+                    .get(input.userId);
+                throw new InsufficientCreditsError(current?.credits ?? 0, input.amount);
+            }
+
+            const holdReason: CreditReason = input.context
+                ? `hold:${input.reason}:${input.context}`
+                : `hold:${input.reason}`;
+            const ledgerId = this.writeCreditLedger(input.userId, -input.amount, holdReason, row.credits);
+            const hold = this.db
+                .query<{ id: number }, [number, number, string, string | null, number]>(
+                    `INSERT INTO credit_holds (user_id, amount, reason, context, ledger_id, created_at)
+                     VALUES (?, ?, ?, ?, ?, ${SQL_NOW_UTC}) RETURNING id`
+                )
+                .get(input.userId, input.amount, input.reason, input.context ?? null, ledgerId);
+
+            if (!hold) {
+                throw new Error("reserveCredits: hold insert returned no row");
+            }
+
+            return { holdId: hold.id, credits: row.credits };
+        });
+
+        return reserve();
+    }
+
+    /**
+     * Finalizes a hold after the work succeeded: the money stays spent and the
+     * hold's ledger row is rewritten from `hold:<reason>...` to the bare final
+     * reason, so a completed spend is indistinguishable from a direct
+     * `spendCredits` (usage summaries keep grouping by the real reason).
+     */
+    commitHold(holdId: number): void {
+        const commit = this.db.transaction(() => {
+            const hold = this.getCreditHoldRow(holdId);
+
+            if (!hold || hold.status !== "held") {
+                throw new Error(`commitHold: hold ${holdId} is ${hold?.status ?? "missing"}, expected "held"`);
+            }
+
+            this.db.run(`UPDATE credit_holds SET status = 'committed', resolved_at = ${SQL_NOW_UTC} WHERE id = ?`, [
+                holdId,
+            ]);
+            this.db.run("UPDATE credit_ledger SET reason = ? WHERE id = ?", [hold.reason, hold.ledger_id]);
+        });
+
+        commit();
+    }
+
+    /**
+     * Refunds a hold (work failed, lost a synthesis race, or orphaned by a
+     * crash): the amount is credited back with a `hold-release:` ledger row.
+     * Returns the new balance.
+     */
+    releaseHold(holdId: number): number {
+        const release = this.db.transaction(() => {
+            const hold = this.getCreditHoldRow(holdId);
+
+            if (!hold || hold.status !== "held") {
+                throw new Error(`releaseHold: hold ${holdId} is ${hold?.status ?? "missing"}, expected "held"`);
+            }
+
+            this.db.run(`UPDATE credit_holds SET status = 'released', resolved_at = ${SQL_NOW_UTC} WHERE id = ?`, [
+                holdId,
+            ]);
+            const row = this.db
+                .query<{ credits: number }, [number, number]>(
+                    "UPDATE users SET credits = credits + ? WHERE id = ? RETURNING credits"
+                )
+                .get(hold.amount, hold.user_id);
+
+            if (!row) {
+                throw new Error(`releaseHold: user ${hold.user_id} not found`);
+            }
+
+            const releaseReason: CreditReason = hold.context
+                ? `hold-release:${hold.reason}:${hold.context}`
+                : `hold-release:${hold.reason}`;
+            this.writeCreditLedger(hold.user_id, hold.amount, releaseReason, row.credits);
+            return row.credits;
+        });
+
+        return release();
+    }
+
+    /**
+     * Boot-time crash recovery: a hold still `held` when the server starts
+     * belonged to a request of a previous process and can never be resolved —
+     * release (refund) them all. Must only run while no requests are in
+     * flight (i.e. at server startup). Returns the number released.
+     */
+    releaseStaleHolds(): number {
+        const rows = this.db.query<{ id: number }, []>("SELECT id FROM credit_holds WHERE status = 'held'").all();
+
+        for (const row of rows) {
+            this.releaseHold(row.id);
+        }
+
+        return rows.length;
+    }
+
+    getCreditHold(holdId: number): CreditHold | null {
+        const row = this.getCreditHoldRow(holdId);
+
+        if (!row) {
+            return null;
+        }
+
+        return {
+            id: row.id,
+            userId: row.user_id,
+            amount: row.amount,
+            reason: row.reason,
+            context: row.context,
+            status: row.status,
+            createdAt: row.created_at,
+            resolvedAt: row.resolved_at,
+        };
+    }
+
+    private getCreditHoldRow(holdId: number): CreditHoldRow | null {
+        return this.db.query<CreditHoldRow, [number]>("SELECT * FROM credit_holds WHERE id = ?").get(holdId);
     }
 
     insertQaHistory(input: {
@@ -1777,6 +1947,18 @@ function rowToReport(row: ReportRow): VideoReportRecord {
         result: row.result_json ? (SafeJSON.parse(row.result_json) as VideoReport) : null,
         createdAt: row.created_at,
     };
+}
+
+interface CreditHoldRow {
+    id: number;
+    user_id: number;
+    amount: number;
+    reason: CreditReason;
+    context: string | null;
+    status: CreditHold["status"];
+    ledger_id: number;
+    created_at: string;
+    resolved_at: string | null;
 }
 
 interface UserRow {
