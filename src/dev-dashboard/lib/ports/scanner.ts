@@ -1,4 +1,4 @@
-import { enrichPorts } from "@app/dev-dashboard/lib/ports/enrich";
+import { classifyPortBatch, enrichPortsMeta } from "@app/dev-dashboard/lib/ports/enrich";
 import type { KillPortResult, PortInfo, PortsResult } from "@app/dev-dashboard/lib/ports/types";
 import { logger } from "@app/logger";
 
@@ -60,25 +60,33 @@ export function parseLsofListen(stdout: string): PortInfo[] {
     return out.sort((a, b) => a.port - b.port || a.proto.localeCompare(b.proto));
 }
 
+/**
+ * Fast list: lsof + batch process meta (argv/cwd/start/title/visibility). No HTTP probe.
+ * Pair with `classifyListeningPorts` / SSE for progressive kind labels.
+ */
 export async function listListeningPorts(): Promise<PortsResult> {
     try {
         const proc = Bun.spawn(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"], { stdout: "pipe", stderr: "pipe" });
         await proc.exited;
 
-        // lsof exits 1 when it has nothing to report on some hosts; treat exit>1 (or spawn fail) as
-        // unavailable, but a clean parse of an empty body just yields [].
         if (proc.exitCode !== 0 && proc.exitCode !== 1) {
             const stderr = await new Response(proc.stderr).text();
             logger.warn({ exitCode: proc.exitCode, stderr }, "lsof exited non-zero; treating as unavailable");
-            return { lsofAvailable: false, ports: [] };
+            return { lsofAvailable: false, ports: [], scannedAt: Date.now() };
         }
 
         const stdout = await new Response(proc.stdout).text();
-        return { lsofAvailable: true, ports: await enrichPorts(parseLsofListen(stdout)) };
+        const raw = parseLsofListen(stdout);
+        return { lsofAvailable: true, ports: await enrichPortsMeta(raw), scannedAt: Date.now() };
     } catch (err) {
         logger.debug({ err }, "lsof spawn failed; treating as unavailable");
-        return { lsofAvailable: false, ports: [] };
+        return { lsofAvailable: false, ports: [], scannedAt: Date.now() };
     }
+}
+
+/** HTTP-classify pending ports from a prior list. Returns only updated rows. */
+export async function classifyListeningPorts(ports: PortInfo[]): Promise<PortInfo[]> {
+    return classifyPortBatch(ports);
 }
 
 /**

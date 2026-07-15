@@ -1,239 +1,180 @@
 import { join } from "node:path";
+import {
+    deriveTitle,
+    deriveVisibility,
+    isVerifiedGenesisTools,
+    kindFromProbe,
+} from "@app/dev-dashboard/lib/ports/classify";
+import { applyClassifyCache, rememberClassify } from "@app/dev-dashboard/lib/ports/classify-cache";
+import { isLocalAddress, parsePackageName } from "@app/dev-dashboard/lib/ports/enrich-parse";
+import { probeHttp } from "@app/dev-dashboard/lib/ports/probe";
+import { batchCwds, batchProcessMeta } from "@app/dev-dashboard/lib/ports/resolve";
 import type { PortInfo } from "@app/dev-dashboard/lib/ports/types";
-import { selectWebapps } from "@app/dev-dashboard/lib/ports/webapps";
 import { logger } from "@app/logger";
-import { SafeJSON } from "@app/utils/json";
-import { listDashboards } from "@app/utils/ui/dashboards";
 
-export { selectWebapps };
+// Re-exports for existing tests / callers that import parse helpers from enrich.
+export { dashboardNameForPort } from "@app/dev-dashboard/lib/ports/classify";
+export {
+    isGenericRuntime,
+    isLocalAddress,
+    parseHtmlTitle,
+    parseLsofCwd,
+    parsePackageName,
+} from "@app/dev-dashboard/lib/ports/enrich-parse";
+export { selectWebapps } from "@app/dev-dashboard/lib/ports/webapps";
 
-/**
- * Most web apps running on this machine are this repo's own dashboards, whose ports are declared in the
- * canonical registry. Matching the listening port there gives the proper human name for free and, since
- * a registered dashboard IS a web app, lets us skip the HTTP probe entirely. PURE lookup under test.
- */
-const DASHBOARD_NAME_BY_PORT = new Map<number, string>(listDashboards().map((d) => [d.port, d.name]));
-
-export function dashboardNameForPort(port: number): string | null {
-    return DASHBOARD_NAME_BY_PORT.get(port) ?? null;
-}
-
-const HTTP_PROBE_TIMEOUT_MS = 300;
 const CACHE_TTL_MS = 5 * 60_000;
-
-/**
- * Runtimes whose lsof COMMAND ("bun", "node", "python3", "php-fpm"…) is uninformative on its own — for
- * these we resolve the full argv so a row reads as e.g. "bun run dev" instead of a bare "bun".
- */
-const GENERIC_RUNTIMES = new Set([
-    "bun",
-    "node",
-    "deno",
-    "python",
-    "python2",
-    "python3",
-    "ruby",
-    "php",
-    "php-fpm",
-    "java",
-    "dotnet",
-    "tsx",
-    "ts-node",
-    "nodemon",
-    "uvicorn",
-    "gunicorn",
-]);
-
-export function isGenericRuntime(command: string): boolean {
-    return GENERIC_RUNTIMES.has(command.toLowerCase());
-}
-
-/** A localhost-reachable bind address — the only ones worth an HTTP probe. */
-export function isLocalAddress(address: string): boolean {
-    return (
-        address === "127.0.0.1" ||
-        address === "[::1]" ||
-        address === "::1" ||
-        address === "*" ||
-        address === "0.0.0.0" ||
-        address === "localhost"
-    );
-}
-
-export function parsePackageName(json: string): string | null {
-    try {
-        const parsed = SafeJSON.parse(json) as { name?: unknown };
-        if (typeof parsed.name === "string" && parsed.name.trim().length > 0) {
-            return parsed.name.trim();
-        }
-
-        return null;
-    } catch (err) {
-        logger.debug({ err }, "ports/enrich: package.json parse failed");
-        return null;
-    }
-}
-
-export function parseHtmlTitle(html: string): string | null {
-    const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-    if (!match) {
-        return null;
-    }
-
-    const title = match[1].replace(/\s+/g, " ").trim();
-    return title.length > 0 ? title : null;
-}
-
-/** Parse `lsof -Fn` field output, returning the first `n<path>` (the cwd). */
-export function parseLsofCwd(stdout: string): string | null {
-    for (const line of stdout.split("\n")) {
-        if (line.startsWith("n")) {
-            const path = line.slice(1).trim();
-            if (path.length > 0) {
-                return path;
-            }
-        }
-    }
-
-    return null;
-}
-
-async function resolveArgv(pid: number): Promise<string | null> {
-    try {
-        const proc = Bun.spawn(["/bin/ps", "-p", String(pid), "-o", "command="], {
-            stdout: "pipe",
-            stderr: "ignore",
-        });
-        await proc.exited;
-        const out = (await new Response(proc.stdout).text()).trim();
-        return out.length > 0 ? out : null;
-    } catch (err) {
-        logger.debug({ err, pid }, "ports/enrich: ps argv resolution failed");
-        return null;
-    }
-}
-
-async function resolveCwd(pid: number): Promise<string | null> {
-    try {
-        const proc = Bun.spawn(["lsof", "-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
-            stdout: "pipe",
-            stderr: "ignore",
-        });
-        await proc.exited;
-        return parseLsofCwd(await new Response(proc.stdout).text());
-    } catch (err) {
-        logger.debug({ err, pid }, "ports/enrich: lsof cwd resolution failed");
-        return null;
-    }
-}
+const packageCache = new Map<string, { name: string | null; expiresAt: number }>();
 
 async function readPackageName(cwd: string): Promise<string | null> {
+    const cached = packageCache.get(cwd);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.name;
+    }
+
     try {
         const file = Bun.file(join(cwd, "package.json"));
         if (!(await file.exists())) {
+            packageCache.set(cwd, { name: null, expiresAt: Date.now() + CACHE_TTL_MS });
             return null;
         }
 
-        return parsePackageName(await file.text());
+        const name = parsePackageName(await file.text());
+        packageCache.set(cwd, { name, expiresAt: Date.now() + CACHE_TTL_MS });
+        return name;
     } catch (err) {
         logger.debug({ err, cwd }, "ports/enrich: package.json read failed");
         return null;
     }
 }
 
-async function probeHttp(port: number): Promise<{ http: boolean; title: string | null }> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), HTTP_PROBE_TIMEOUT_MS);
-    try {
-        const res = await fetch(`http://localhost:${port}/`, { signal: controller.signal, redirect: "manual" });
-        const contentType = res.headers.get("content-type") ?? "";
-        if (contentType.includes("text/html")) {
-            return { http: true, title: parseHtmlTitle(await res.text()) };
-        }
-
-        await res.body?.cancel();
-        return { http: true, title: null };
-    } catch (err) {
-        logger.debug({ err, port }, "ports/enrich: http probe failed (not a web server or timed out)");
-        return { http: false, title: null };
-    } finally {
-        clearTimeout(timeout);
-    }
-}
-
-interface Enrichment {
-    fullCommand?: string;
-    title?: string;
-    cwd?: string;
-    isWebapp?: boolean;
-}
-
-const cache = new Map<string, { value: Enrichment; expiresAt: number }>();
-
-function pruneExpired(now: number): void {
-    for (const [key, entry] of cache) {
-        if (entry.expiresAt <= now) {
-            cache.delete(key);
-        }
-    }
-}
-
-async function enrichOne(port: PortInfo): Promise<Enrichment> {
-    const key = `${port.pid}:${port.port}:${port.proto}:${port.address}`;
-    const cached = cache.get(key);
-    if (cached && cached.expiresAt > Date.now()) {
-        return cached.value;
+/**
+ * Fast enrichment: batch resolve argv/cwd/start, derive titles + visibility + genesis-tools flag.
+ * Does NOT HTTP-probe — that is progressive via `classifyPortBatch` / SSE so the UI can paint first.
+ */
+export async function enrichPortsMeta(ports: PortInfo[]): Promise<PortInfo[]> {
+    if (ports.length === 0) {
+        return ports;
     }
 
-    const enrichment: Enrichment = {};
+    const pids = ports.map((p) => p.pid);
+    const [metaMap, cwdMap] = await Promise.all([batchProcessMeta(pids), batchCwds(pids)]);
 
-    if (isGenericRuntime(port.command)) {
-        const argv = await resolveArgv(port.pid);
-        if (argv) {
-            enrichment.fullCommand = argv;
-        }
-    }
+    const uniqueCwds = [...new Set([...cwdMap.values()])];
+    const packageByCwd = new Map<string, string | null>();
+    await Promise.all(
+        uniqueCwds.map(async (cwd) => {
+            packageByCwd.set(cwd, await readPackageName(cwd));
+        })
+    );
 
-    const cwd = await resolveCwd(port.pid);
-    if (cwd) {
-        enrichment.cwd = cwd;
-    }
+    const mapped = ports.map((p) => {
+        const meta = metaMap.get(p.pid);
+        const cwd = cwdMap.get(p.pid);
+        const fullCommand = meta?.fullCommand;
+        const command = meta?.shortCommand ?? p.command;
+        const packageName = cwd ? (packageByCwd.get(cwd) ?? null) : null;
+        const isGenesisTools = isVerifiedGenesisTools(p.port, fullCommand, cwd, command);
+        const visibility = deriveVisibility({ port: p.port, command, fullCommand, cwd });
+        const title = deriveTitle({
+            port: p.port,
+            command,
+            fullCommand,
+            cwd,
+            packageName,
+        });
 
-    const registryName = dashboardNameForPort(port.port);
-    const packageName = cwd ? await readPackageName(cwd) : null;
+        const startedAt =
+            meta?.startedAtMs !== null && meta?.startedAtMs !== undefined
+                ? new Date(meta.startedAtMs).toISOString()
+                : undefined;
 
-    if (registryName) {
-        // A known repo dashboard: authoritative name always wins over any probed title, but the
-        // dashboard still has to actually be running (probe) before we call it a live web app.
-        enrichment.title = registryName;
+        const skipProbe = visibility !== "normal" || !isLocalAddress(p.address);
 
-        if (isLocalAddress(port.address)) {
-            const probe = await probeHttp(port.port);
-            enrichment.isWebapp = probe.http;
-        }
-    } else if (isLocalAddress(port.address)) {
-        const probe = await probeHttp(port.port);
-        if (probe.http) {
-            enrichment.isWebapp = true;
-        }
+        return {
+            ...p,
+            command,
+            fullCommand: fullCommand ?? p.fullCommand,
+            cwd: cwd ?? p.cwd,
+            title,
+            startedAt,
+            visibility,
+            isGenesisTools,
+            kind: isGenesisTools ? "genesis-tools" : undefined,
+            probeStatus: skipProbe ? "skipped" : "pending",
+            isWebapp: undefined,
+        } satisfies PortInfo;
+    });
 
-        const title = packageName ?? probe.title;
-        if (title) {
-            enrichment.title = title;
-        }
-    } else if (packageName) {
-        enrichment.title = packageName;
-    }
-
-    cache.set(key, { value: enrichment, expiresAt: Date.now() + CACHE_TTL_MS });
-    return enrichment;
+    return applyClassifyCache(mapped);
 }
 
 /**
- * Enrich a scan with argv / cwd / title / webapp classification. Best-effort and cached per (pid, port)
- * so periodic refreshes stay cheap; every spawn/fetch lives here (server-side), never in the UI.
+ * Run HTTP probes for ports still `probeStatus: "pending"`. Returns only the updated rows
+ * (for SSE batches). Does not mutate inputs.
+ */
+export async function classifyPortBatch(ports: PortInfo[]): Promise<PortInfo[]> {
+    const pending = ports.filter((p) => p.probeStatus === "pending");
+    if (pending.length === 0) {
+        return [];
+    }
+
+    const byPort = new Map<number, PortInfo[]>();
+    for (const p of pending) {
+        const list = byPort.get(p.port) ?? [];
+        list.push(p);
+        byPort.set(p.port, list);
+    }
+
+    const probeByPort = new Map<number, Awaited<ReturnType<typeof probeHttp>>>();
+    await Promise.all(
+        [...byPort.keys()].map(async (port) => {
+            probeByPort.set(port, await probeHttp(port));
+        })
+    );
+
+    const out: PortInfo[] = [];
+
+    for (const [port, rows] of byPort) {
+        const probe = probeByPort.get(port) ?? {
+            http: false,
+            contentClass: "none" as const,
+            title: null,
+        };
+        const isGenesisTools = rows[0].isGenesisTools === true;
+        const classified = kindFromProbe({
+            isGenesisTools,
+            http: probe.http,
+            contentClass: probe.contentClass,
+        });
+
+        for (const row of rows) {
+            const title = row.isGenesisTools && row.title ? row.title : (probe.title ?? row.title);
+
+            out.push({
+                ...row,
+                title,
+                kind: classified.kind,
+                isWebapp: classified.isWebapp,
+                probeStatus: "done",
+            });
+        }
+    }
+
+    rememberClassify(out);
+    return out;
+}
+
+/**
+ * Full enrich including HTTP (single-shot). Prefer meta + classify stream for the UI.
  */
 export async function enrichPorts(ports: PortInfo[]): Promise<PortInfo[]> {
-    pruneExpired(Date.now());
-    return Promise.all(ports.map(async (p) => ({ ...p, ...(await enrichOne(p)) })));
+    const withMeta = await enrichPortsMeta(ports);
+    const classified = await classifyPortBatch(withMeta);
+    if (classified.length === 0) {
+        return withMeta;
+    }
+
+    const byKey = new Map(classified.map((p) => [`${p.pid}:${p.port}:${p.proto}`, p]));
+    return withMeta.map((p) => byKey.get(`${p.pid}:${p.port}:${p.proto}`) ?? p);
 }
