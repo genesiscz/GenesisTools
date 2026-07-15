@@ -53,6 +53,7 @@ export type ExtensionRequest =
       }
     | { type: "api:translateTranscript"; id: VideoId; lang: string }
     | { type: "api:patchMe"; outputLang?: string; ttsVoice?: string }
+    | { type: "api:generateSummaryAudio"; id: VideoId; voice?: string }
     | {
           type: "api:askVideo";
           id: VideoId;
@@ -153,6 +154,7 @@ export interface ExtensionApiMap {
     };
     "api:translateTranscript": { transcript: Transcript; creditsSpent: number; credits: number };
     "api:patchMe": { user: YtUser };
+    "api:generateSummaryAudio": { url: string; cached: boolean; creditsSpent: number; credits: number };
     "api:askVideo": {
         answer: string;
         citations: AskCitation[];

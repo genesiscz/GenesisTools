@@ -320,6 +320,40 @@
     }
 }
 
+/* Feature 12 mini player scrubber — 4px track, 12px round thumb, no ticks. */
+.yt-audio-range {
+    appearance: none;
+    height: 4px;
+    border-radius: 999px;
+    background: rgb(255 255 255 / 10%);
+    outline: none;
+    cursor: pointer;
+}
+
+.yt-audio-range::-webkit-slider-thumb {
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    background: hsl(var(--primary));
+    cursor: pointer;
+}
+
+.yt-audio-range::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border: none;
+    border-radius: 999px;
+    background: hsl(var(--primary));
+    cursor: pointer;
+}
+
+.yt-audio-range::-moz-range-track {
+    height: 4px;
+    border-radius: 999px;
+    background: rgb(255 255 255 / 10%);
+}
+
 .yt-flash {
     animation: yt-flash-pulse 2s ease-out 1;
 }

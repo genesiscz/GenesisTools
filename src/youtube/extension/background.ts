@@ -115,6 +115,11 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
                 method: "PATCH",
                 body: JSON.stringify({ outputLang: req.outputLang, ttsVoice: req.ttsVoice }),
             });
+        case "api:generateSummaryAudio":
+            return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/summary/audio`, {
+                method: "POST",
+                body: JSON.stringify({ voice: req.voice }),
+            });
         case "api:setSpeakers":
             return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/speakers`, {
                 method: "PUT",

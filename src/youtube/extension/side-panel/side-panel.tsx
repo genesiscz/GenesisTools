@@ -1,7 +1,7 @@
 import { type PipelineProgress, type VideoDetailTab, VideoDetailTabs } from "@app/utils/ui/components/youtube/tabs";
 import type { JobStage, SummaryMode } from "@app/youtube/lib/types";
 import { send } from "@ext/api.bridge";
-import { dataSource, useMe, useModels, useStartPipeline, useSummary } from "@ext/api.hooks";
+import { buildAudioSrc, dataSource, useConfig, useMe, useModels, useStartPipeline, useSummary } from "@ext/api.hooks";
 import { loadUiLang } from "@ext/shared/i18n";
 import type { ExtensionEvent, PlayerChaptersMessage } from "@ext/shared/messages";
 import { ActivityView } from "@ext/side-panel/activity-view";
@@ -50,6 +50,7 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
     // Dev-only model picker data; regular builds never fetch it.
     const models = useModels(IS_DEV_BUILD);
     const me = useMe();
+    const config = useConfig();
 
     useEffect(() => {
         void loadUiLang();
@@ -213,6 +214,12 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
         window.postMessage({ event: "command", func: "seekTo", args: [seconds, true] }, "https://www.youtube.com");
     }
 
+    // Feature 12 exclusivity, direction 1: panel audio play → pause YouTube
+    // via the same postMessage bridge `seek` uses.
+    function pauseVideo(): void {
+        window.postMessage({ event: "command", func: "pauseVideo", args: [] }, "https://www.youtube.com");
+    }
+
     const runStages = useCallback(
         async (stages: JobStage[]): Promise<void> => {
             await startPipeline.mutateAsync({ target: videoId, targetKind: "video", stages });
@@ -270,6 +277,12 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                             streamingMode={streamingMode}
                             playerTime={playerTime}
                             outputLang={me.data?.user.outputLang ?? undefined}
+                            buildAudioSrc={
+                                config.data
+                                    ? (relativeUrl: string) => buildAudioSrc(relativeUrl, config.data)
+                                    : undefined
+                            }
+                            onPlayVideo={pauseVideo}
                         />
                     )}
                 </div>

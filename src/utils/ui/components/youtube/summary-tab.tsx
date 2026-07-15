@@ -6,6 +6,7 @@ import { LongSummaryView } from "@app/utils/ui/components/youtube/long-summary-v
 import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
 import { ShareButton } from "@app/utils/ui/components/youtube/share-button";
 import { StyleSelect } from "@app/utils/ui/components/youtube/style-select";
+import { SummaryAudioPlayer } from "@app/utils/ui/components/youtube/summary-audio-player";
 import {
     DEFAULT_SUMMARY_CONTROLS,
     SummaryControlsBar,
@@ -63,6 +64,18 @@ export interface SummaryTabProps {
     playerTime?: number | null;
     /** Signed-in user's output-language preference (2-letter ISO). Default "en". */
     outputLang?: string;
+    /** Feature 12: POSTs the summary-audio synthesis and returns an
+     *  authenticated, fetchable `<audio src>` URL. Optional — consumers
+     *  without user accounts don't get the "Listen" mini player. */
+    useGenerateSummaryAudio?: (id: VideoId) => {
+        mutateAsync: (vars?: { voice?: string }) => Promise<{ url: string; cached: boolean }>;
+        isPending: boolean;
+        error?: Error | null;
+    };
+    /** Turns the relative URL `useGenerateSummaryAudio` resolves into a fetchable, token-authenticated URL. */
+    buildAudioSrc?: (relativeUrl: string) => string;
+    /** Pauses the YouTube player via the existing postMessage bridge — called right before the mini player starts. */
+    onPlayVideo?: () => void;
 }
 
 export function SummaryTab({
@@ -81,12 +94,16 @@ export function SummaryTab({
     onSeek,
     playerTime,
     outputLang,
+    useGenerateSummaryAudio,
+    buildAudioSrc,
+    onPlayVideo,
 }: SummaryTabProps & { devMode?: boolean; modelPresets?: ModelPreset[]; pipelineProgress?: PipelineProgress | null }) {
     const summary = useSummary(videoId, "long");
     const generate = useGenerateSummary(videoId);
     const createShare = useCreateShare?.();
     const userPresets = useListPresets?.("summary");
     const createPreset = useCreatePreset?.();
+    const generateAudio = useGenerateSummaryAudio?.(videoId);
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [controls, setControls] = useState<SummaryControlsState>(DEFAULT_SUMMARY_CONTROLS);
     const [modelSel, setModelSel] = useState<{ provider?: string; model?: string }>({});
@@ -148,6 +165,15 @@ export function SummaryTab({
         // Teaser IS the confirm — straight to the flat-price charge; the
         // server returns the stored artifact instantly (no job, no LLM).
         await generate.mutateAsync({ mode: "long" });
+    }
+
+    async function prepareAudio(): Promise<string> {
+        if (!generateAudio || !buildAudioSrc) {
+            throw new Error("audio playback is not available");
+        }
+
+        const result = await generateAudio.mutateAsync();
+        return buildAudioSrc(result.url);
     }
 
     return (
@@ -247,9 +273,19 @@ export function SummaryTab({
                     verdict.
                 </p>
             ) : (
-                // `long ?? partial`: a just-completed stream keeps rendering the
-                // retained partial until the refetched query lands (no flash).
-                <LongSummaryView summary={idleSummary} onSeek={onSeek} playerTime={playerTime} />
+                <>
+                    {long !== null && generateAudio && buildAudioSrc ? (
+                        <SummaryAudioPlayer
+                            priceLabel={`${CREDIT_COSTS["tts:summary"]} 💎`}
+                            onPrepare={prepareAudio}
+                            onPlayVideo={onPlayVideo}
+                            playerTime={playerTime}
+                        />
+                    ) : null}
+                    {/* `long ?? partial`: a just-completed stream keeps rendering the
+                        retained partial until the refetched query lands (no flash). */}
+                    <LongSummaryView summary={idleSummary} onSeek={onSeek} playerTime={playerTime} />
+                </>
             )}
             <LlmConfirmDialog
                 open={confirmOpen}

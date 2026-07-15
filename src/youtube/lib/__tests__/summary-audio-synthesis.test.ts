@@ -16,7 +16,9 @@ mock.module("@app/utils/ai/providers", () => ({
                 isAvailable: async () => xaiAvailable,
                 synthesize: async (text: string, options?: { voice?: string }) => {
                     synthesizeCalls.push({ provider: "xai", text, options });
-                    return synthesizeResponses.shift() ?? { audio: Buffer.from("xai-audio"), contentType: "audio/mpeg" };
+                    return (
+                        synthesizeResponses.shift() ?? { audio: Buffer.from("xai-audio"), contentType: "audio/mpeg" }
+                    );
                 },
             };
         }
