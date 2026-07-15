@@ -118,6 +118,8 @@ export interface VideoDetailTabsProps {
     modelPresets?: ModelPreset[];
     /** Live progress of a running job for this video — drives button spinners + dialog progress. */
     pipelineProgress?: PipelineProgress | null;
+    /** Opens the sign-in surface (settings dialog) when a spend endpoint returns 401. */
+    onRequireLogin?: () => void;
 }
 
 export function VideoDetailTabs({
@@ -131,6 +133,7 @@ export function VideoDetailTabs({
     devMode,
     modelPresets,
     pipelineProgress,
+    onRequireLogin,
 }: VideoDetailTabsProps) {
     return (
         <Tabs
@@ -169,7 +172,13 @@ export function VideoDetailTabs({
                 />
             </TabsContent>
             <TabsContent value="ask" className="yt-tab-pane">
-                <AskTab videoId={videoId} onSeek={onSeek} useAskVideo={ds.useAskVideo} />
+                <AskTab
+                    videoId={videoId}
+                    onSeek={onSeek}
+                    useAskVideo={ds.useAskVideo}
+                    useQaHistory={ds.useQaHistory}
+                    onRequireLogin={onRequireLogin}
+                />
             </TabsContent>
             <TabsContent value="comments" className="yt-tab-pane">
                 <CommentsTab

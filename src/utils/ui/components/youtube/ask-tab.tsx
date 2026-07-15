@@ -2,8 +2,8 @@ import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import { Markdown } from "@app/utils/ui/components/markdown";
 import { formatTimecode } from "@app/utils/ui/components/youtube/time";
-import type { AskCitation, VideoId } from "@app/youtube/lib/types";
-import { Loader2, MessageCircleQuestion } from "lucide-react";
+import type { AskCitation, QaHistoryItem, VideoId } from "@app/youtube/lib/types";
+import { ChevronDown, ChevronRight, Loader2, LockKeyhole, MessageCircleQuestion } from "lucide-react";
 import { useState } from "react";
 
 /** Replace the model's inline `[#4]` citation markers with `#cite-N` anchor
@@ -33,19 +33,120 @@ export interface AskTabProps {
         }) => Promise<{ answer: string; citations?: AskCitation[] }>;
         isPending: boolean;
     };
+    /** Server-side per-user history — persists across reloads. Optional for
+     *  consumers without user accounts (they only see the live exchange). */
+    useQaHistory?: (id: VideoId | null) => {
+        data: { items: QaHistoryItem[] } | undefined;
+        isPending: boolean;
+    };
+    /** Invoked by the "Sign in" affordance when the ask endpoint returns 401. */
+    onRequireLogin?: () => void;
 }
 
-interface AskExchange {
-    question: string;
+/** One question+answer, rendered with citation links wired to the player. */
+function ExchangeBody({
+    answer,
+    citations,
+    onSeek,
+}: {
     answer: string;
     citations: AskCitation[];
+    onSeek: (seconds: number) => void;
+}) {
+    return (
+        <>
+            <Markdown
+                md={linkifyCitations(answer, citations)}
+                className="yt-md mt-2"
+                onClick={(event) => {
+                    const anchor = (event.target as HTMLElement).closest?.('a[href^="#cite-"]');
+
+                    if (!anchor) {
+                        return;
+                    }
+
+                    event.preventDefault();
+                    const index = Number(anchor.getAttribute("href")?.slice("#cite-".length));
+                    const citation = citations[index - 1];
+
+                    if (citation?.startSec != null) {
+                        onSeek(citation.startSec);
+                    }
+                }}
+            />
+            {citations.length > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                    {citations.map((citation, citationIndex) =>
+                        citation.startSec !== null ? (
+                            <button
+                                key={citationIndex}
+                                type="button"
+                                onClick={() => onSeek(citation.startSec ?? 0)}
+                                className="yt-timecode inline-flex h-6 items-center px-2 font-mono text-[12px] tabular-nums"
+                            >
+                                {formatTimecode(citation.startSec)}
+                            </button>
+                        ) : null
+                    )}
+                </div>
+            ) : null}
+        </>
+    );
 }
 
-export function AskTab({ videoId, onSeek, useAskVideo }: AskTabProps) {
+/** Older history entry: a question row that expands to the full answer. */
+function HistoryRow({
+    item,
+    expanded,
+    onToggle,
+    onSeek,
+}: {
+    item: QaHistoryItem;
+    expanded: boolean;
+    onToggle: () => void;
+    onSeek: (seconds: number) => void;
+}) {
+    const Chevron = expanded ? ChevronDown : ChevronRight;
+
+    return (
+        <article className="rounded-xl border border-white/8 bg-black/20">
+            <button
+                type="button"
+                onClick={onToggle}
+                aria-expanded={expanded}
+                className="flex w-full items-center gap-2 p-3 text-left transition-colors hover:bg-white/4"
+            >
+                <Chevron className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={2} />
+                <span className="min-w-0 flex-1 truncate text-sm text-foreground/90">{item.question}</span>
+            </button>
+            {expanded ? (
+                <div className="px-3 pb-3">
+                    <ExchangeBody answer={item.answer} citations={item.citations} onSeek={onSeek} />
+                </div>
+            ) : null}
+        </article>
+    );
+}
+
+export function AskTab({ videoId, onSeek, useAskVideo, useQaHistory, onRequireLogin }: AskTabProps) {
     const ask = useAskVideo(videoId);
+    const history = useQaHistory?.(videoId);
     const [question, setQuestion] = useState("");
-    const [history, setHistory] = useState<AskExchange[]>([]);
     const [error, setError] = useState<string | null>(null);
+    // Session fallback for consumers without server history — keeps the live
+    // answer visible when `useQaHistory` isn't wired.
+    const [sessionExchange, setSessionExchange] = useState<{
+        question: string;
+        answer: string;
+        citations: AskCitation[];
+    } | null>(null);
+    const [showOlder, setShowOlder] = useState(false);
+    const [expandedIds, setExpandedIds] = useState<ReadonlySet<number>>(new Set());
+
+    const items = history?.data?.items ?? [];
+    const latest = items[0];
+    const older = items.slice(1);
+    const signInRequired = error === "login required";
 
     async function submit() {
         const trimmed = question.trim();
@@ -57,14 +158,29 @@ export function AskTab({ videoId, onSeek, useAskVideo }: AskTabProps) {
         setError(null);
         try {
             const result = await ask.mutateAsync({ question: trimmed });
-            setHistory((prev) => [
-                { question: trimmed, answer: result.answer, citations: result.citations ?? [] },
-                ...prev,
-            ]);
+
+            if (!useQaHistory) {
+                setSessionExchange({ question: trimmed, answer: result.answer, citations: result.citations ?? [] });
+            }
+
             setQuestion("");
         } catch (err) {
             setError(err instanceof Error ? err.message : String(err));
         }
+    }
+
+    function toggleRow(id: number) {
+        setExpandedIds((prev) => {
+            const next = new Set(prev);
+
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
+
+            return next;
+        });
     }
 
     return (
@@ -101,13 +217,28 @@ export function AskTab({ videoId, onSeek, useAskVideo }: AskTabProps) {
                 </Button>
             </form>
 
-            {error ? (
+            {signInRequired ? (
+                <div className="flex items-start gap-3 rounded-2xl border border-white/8 bg-black/20 p-4">
+                    <LockKeyhole className="mt-0.5 size-4 shrink-0 text-secondary" strokeWidth={2} />
+                    <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-foreground/95">Sign in required</p>
+                        <p className="mt-0.5 text-sm text-muted-foreground">
+                            Questions cost diamonds, so they need an account.
+                        </p>
+                        {onRequireLogin ? (
+                            <Button size="sm" className="mt-2.5" onClick={onRequireLogin}>
+                                Sign in
+                            </Button>
+                        ) : null}
+                    </div>
+                </div>
+            ) : error ? (
                 <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-sm">
                     <p className="break-words text-destructive/90">{error}</p>
                 </div>
             ) : null}
 
-            {history.length === 0 && !ask.isPending && !error ? (
+            {!latest && !sessionExchange && !ask.isPending && !error ? (
                 <div className="flex items-start gap-3 rounded-2xl border border-dashed border-primary/25 p-5">
                     <MessageCircleQuestion className="mt-0.5 size-5 shrink-0 text-primary" />
                     <p className="text-sm text-muted-foreground">
@@ -116,51 +247,54 @@ export function AskTab({ videoId, onSeek, useAskVideo }: AskTabProps) {
                 </div>
             ) : null}
 
-            <div className="space-y-3">
-                {history.map((exchange, index) => (
-                    <article
-                        key={`${exchange.question}-${index}`}
-                        className="rounded-2xl border border-white/8 bg-black/20 p-3"
+            {sessionExchange && !useQaHistory ? (
+                <article className="rounded-2xl border border-white/8 bg-black/20 p-3">
+                    <p className="text-sm font-semibold text-foreground/95">{sessionExchange.question}</p>
+                    <ExchangeBody
+                        answer={sessionExchange.answer}
+                        citations={sessionExchange.citations}
+                        onSeek={onSeek}
+                    />
+                </article>
+            ) : null}
+
+            {latest ? (
+                <article className="rounded-2xl border border-white/8 bg-black/20 p-3">
+                    <p className="text-sm font-semibold text-foreground/95">{latest.question}</p>
+                    <ExchangeBody answer={latest.answer} citations={latest.citations} onSeek={onSeek} />
+                </article>
+            ) : null}
+
+            {older.length > 0 ? (
+                <div className="space-y-2">
+                    <button
+                        type="button"
+                        onClick={() => setShowOlder((value) => !value)}
+                        aria-expanded={showOlder}
+                        className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground transition-colors hover:text-foreground"
                     >
-                        <p className="text-sm font-semibold text-foreground/95">{exchange.question}</p>
-                        <Markdown
-                            md={linkifyCitations(exchange.answer, exchange.citations)}
-                            className="yt-md mt-2"
-                            onClick={(event) => {
-                                const anchor = (event.target as HTMLElement).closest?.('a[href^="#cite-"]');
-
-                                if (!anchor) {
-                                    return;
-                                }
-
-                                event.preventDefault();
-                                const index = Number(anchor.getAttribute("href")?.slice("#cite-".length));
-                                const citation = exchange.citations[index - 1];
-
-                                if (citation?.startSec != null) {
-                                    onSeek(citation.startSec);
-                                }
-                            }}
-                        />
-                        {exchange.citations.length > 0 ? (
-                            <div className="mt-3 flex flex-wrap gap-1.5">
-                                {exchange.citations.map((citation, citationIndex) =>
-                                    citation.startSec !== null ? (
-                                        <button
-                                            key={citationIndex}
-                                            type="button"
-                                            onClick={() => onSeek(citation.startSec ?? 0)}
-                                            className="yt-timecode inline-flex h-6 items-center px-2 font-mono text-[12px] tabular-nums"
-                                        >
-                                            {formatTimecode(citation.startSec)}
-                                        </button>
-                                    ) : null
-                                )}
-                            </div>
-                        ) : null}
-                    </article>
-                ))}
-            </div>
+                        {showOlder ? (
+                            <ChevronDown className="size-3" strokeWidth={2} />
+                        ) : (
+                            <ChevronRight className="size-3" strokeWidth={2} />
+                        )}
+                        History ({older.length})
+                    </button>
+                    {showOlder ? (
+                        <div className="space-y-2">
+                            {older.map((item) => (
+                                <HistoryRow
+                                    key={item.id}
+                                    item={item}
+                                    expanded={expandedIds.has(item.id)}
+                                    onToggle={() => toggleRow(item.id)}
+                                    onSeek={onSeek}
+                                />
+                            ))}
+                        </div>
+                    ) : null}
+                </div>
+            ) : null}
         </div>
     );
 }

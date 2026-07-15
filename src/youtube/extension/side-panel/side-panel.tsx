@@ -5,6 +5,7 @@ import type { ExtensionEvent } from "@ext/shared/messages";
 import { ChannelPanel } from "@ext/side-panel/channel-panel";
 import { Header } from "@ext/side-panel/header";
 import { connectEventPort } from "@ext/side-panel/port";
+import { SettingsDialog } from "@ext/side-panel/settings-dialog";
 import type { PanelTarget } from "@ext/side-panel/target";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -33,6 +34,7 @@ export function SidePanel({
 function VideoPanel({ videoId, placement }: { videoId: string; placement: Placement }) {
     const [active, setActive] = useState<VideoDetailTab>("summary");
     const [collapsed, setCollapsed] = useState(false);
+    const [settingsOpen, setSettingsOpen] = useState(false);
     const startPipeline = useStartPipeline();
     const queryClient = useQueryClient();
     // Dev-only model picker data; regular builds never fetch it.
@@ -140,7 +142,11 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
 
     return (
         <div className={containerClass}>
-            <Header collapsed={collapsed} onToggleCollapse={() => setCollapsed((v) => !v)} />
+            <Header
+                collapsed={collapsed}
+                onToggleCollapse={() => setCollapsed((v) => !v)}
+                onOpenSettings={() => setSettingsOpen(true)}
+            />
             <div className="yt-body-collapsible min-h-0 flex-1" data-collapsed={collapsed}>
                 <div className="yt-scroll min-h-0 h-full overflow-auto">
                     <VideoDetailTabs
@@ -154,9 +160,11 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                         devMode={IS_DEV_BUILD}
                         modelPresets={models.data?.presets ?? []}
                         pipelineProgress={pipelineProgress}
+                        onRequireLogin={() => setSettingsOpen(true)}
                     />
                 </div>
             </div>
+            <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} devMode={IS_DEV_BUILD} />
         </div>
     );
 }
