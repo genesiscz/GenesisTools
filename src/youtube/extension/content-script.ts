@@ -72,6 +72,18 @@ function findWatchSecondaryColumn(): HTMLElement | null {
     return document.querySelector<HTMLElement>("ytd-watch-flexy #secondary");
 }
 
+function isInFlowRail(el: HTMLElement): boolean {
+    // #secondary is normally an in-flow right column (computed position static
+    // or relative). On playlist + live-chat watch layouts YouTube switches it
+    // to position: fixed and pins it to the LEFT (measured x=0, near-full
+    // width), so inserting our panel as its child paints it over the video.
+    // Only flow inline when #secondary is a normal in-flow rail; otherwise the
+    // caller uses the fixed host fallback, which pins us to the right clear of
+    // the player.
+    const position = getComputedStyle(el).position;
+    return position === "static" || position === "relative";
+}
+
 const HEIGHT_ANIMATION = [
     "interpolate-size: allow-keywords",
     "transition: height 400ms cubic-bezier(0.4, 0, 0.2, 1)",
@@ -145,7 +157,7 @@ function attachHost(target: PanelTarget): { host: HTMLElement; placement: Placem
 
     if (target.kind === "video" && location.pathname === "/watch") {
         const secondary = findWatchSecondaryColumn();
-        if (secondary) {
+        if (secondary && isInFlowRail(secondary)) {
             applyInlineStyles(host);
             secondary.insertBefore(host, secondary.firstChild);
             return { host, placement: "inline" };
