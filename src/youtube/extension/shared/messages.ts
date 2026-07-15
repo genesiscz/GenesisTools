@@ -3,6 +3,7 @@ import type {
     ChannelHandle,
     JobEvent,
     JobStage,
+    LlmEstimate,
     PipelineJob,
     SummaryFormat,
     SummaryLength,
@@ -40,7 +41,15 @@ export type ExtensionRequest =
       }
     | { type: "api:askVideo"; id: VideoId; question: string; topK?: number; provider?: string; model?: string }
     | { type: "api:startPipeline"; target: string; targetKind?: "video" | "channel" | "url"; stages: JobStage[] }
-    | { type: "api:getJob"; id: number };
+    | { type: "api:getJob"; id: number }
+    | { type: "api:listModels" }
+    | {
+          type: "api:estimate";
+          id: VideoId;
+          mode: "short" | "timestamped" | "long";
+          provider?: string;
+          model?: string;
+      };
 
 export type ExtensionResponse = { ok: true; data: unknown } | { ok: false; error: string };
 
@@ -72,4 +81,9 @@ export interface ExtensionApiMap {
     };
     "api:startPipeline": { job: PipelineJob };
     "api:getJob": { job: PipelineJob };
+    "api:listModels": {
+        presets: Array<{ label: string; provider: string; model: string; subscription?: boolean }>;
+        defaults: { summarize?: string | null; qa?: string | null; transcribe?: string | null; embed?: string | null };
+    };
+    "api:estimate": LlmEstimate;
 }

@@ -27,6 +27,36 @@ declare global {
             };
             function sendMessage(request: ExtensionRequest): Promise<ExtensionResponse>;
             function connect(connectInfo?: { name?: string }): Port;
+            function reload(): void;
+        }
+
+        namespace tabs {
+            interface Tab {
+                id?: number;
+                url?: string;
+            }
+            interface QueryInfo {
+                url?: string | string[];
+                active?: boolean;
+                currentWindow?: boolean;
+            }
+            function query(info: QueryInfo): Promise<Tab[]>;
+            function reload(tabId: number): Promise<void>;
+        }
+
+        namespace scripting {
+            interface InjectionTarget {
+                tabId: number;
+                allFrames?: boolean;
+                frameIds?: number[];
+            }
+            interface ScriptInjection {
+                target: InjectionTarget;
+                files?: string[];
+                func?: () => unknown;
+                world?: "ISOLATED" | "MAIN";
+            }
+            function executeScript(injection: ScriptInjection): Promise<unknown>;
         }
 
         namespace storage {

@@ -90,23 +90,15 @@ export function CommentsTab({ videoId, useComments, runPipeline }: CommentsTabPr
                         </p>
                     </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-3">
-                    {runPipeline ? (
-                        <Button
-                            data-testid="comments-run-pipeline"
-                            onClick={() => runPipeline.run(["comments"])}
-                            disabled={isRunning}
-                        >
-                            {isRunning ? "Fetching comments…" : "Fetch comments"}
-                        </Button>
-                    ) : null}
-                    <span className="font-mono text-xs text-muted-foreground/70">
-                        Or run{" "}
-                        <code className="rounded bg-black/30 px-1.5 py-0.5">
-                            tools youtube pipeline {videoId} --stages metadata,comments
-                        </code>
-                    </span>
-                </div>
+                {runPipeline ? (
+                    <Button
+                        data-testid="comments-run-pipeline"
+                        onClick={() => runPipeline.run(["metadata", "comments"])}
+                        disabled={isRunning}
+                    >
+                        {isRunning ? "Fetching comments…" : "Fetch comments"}
+                    </Button>
+                ) : null}
             </div>
         );
     }

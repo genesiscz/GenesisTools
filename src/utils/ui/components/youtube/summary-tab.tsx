@@ -1,6 +1,6 @@
 import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
-import { LlmConfirmDialog } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
+import { LlmConfirmDialog, type ModelPreset } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
 import { Loading } from "@app/utils/ui/components/youtube/loading";
 import { LongSummaryView } from "@app/utils/ui/components/youtube/long-summary-view";
 import {
@@ -8,8 +8,10 @@ import {
     SummaryControlsBar,
     type SummaryControlsState,
 } from "@app/utils/ui/components/youtube/summary-controls";
-import type { VideoId, VideoLongSummary } from "@app/youtube/lib/types";
+import type { LlmEstimate, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
 import { useState } from "react";
+
+const NO_ESTIMATE = { data: undefined, isPending: false } as const;
 
 export interface SummaryTabProps {
     videoId: VideoId;
@@ -29,13 +31,26 @@ export interface SummaryTabProps {
         isPending: boolean;
         error?: Error | null;
     };
+    useEstimate?: (
+        id: VideoId | null,
+        opts: { mode: "short" | "timestamped" | "long"; provider?: string; model?: string; enabled?: boolean }
+    ) => { data: LlmEstimate | undefined; isPending: boolean };
 }
 
-export function SummaryTab({ videoId, useSummary, useGenerateSummary }: SummaryTabProps) {
+export function SummaryTab({
+    videoId,
+    useSummary,
+    useGenerateSummary,
+    useEstimate,
+    devMode,
+    modelPresets,
+}: SummaryTabProps & { devMode?: boolean; modelPresets?: ModelPreset[] }) {
     const summary = useSummary(videoId, "long");
     const generate = useGenerateSummary(videoId);
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [controls, setControls] = useState<SummaryControlsState>(DEFAULT_SUMMARY_CONTROLS);
+    const [modelSel, setModelSel] = useState<{ provider?: string; model?: string }>({});
+    const estimate = useEstimate?.(videoId, { mode: "long", ...modelSel, enabled: confirmOpen }) ?? NO_ESTIMATE;
     const long = summary.data?.long ?? null;
 
     if (summary.isPending) {
@@ -88,10 +103,14 @@ export function SummaryTab({ videoId, useSummary, useGenerateSummary }: SummaryT
                 title="Generate long-form summary?"
                 description={`Sends the compacted transcript to your LLM and asks for a TL;DR + 3-10 key points + 2-8 learnings + 1-12 chapters + an optional verdict. Tone: ${controls.tone}. Length: ${controls.length}.`}
                 payloadSummary="Compacted transcript text; structured-output JSON response."
-                billingNote="LLM cost depends on the provider you select."
                 busy={generate.isPending}
                 confirmLabel={long === null ? "Generate" : "Re-generate"}
                 error={generate.error ? (generate.error as Error).message : null}
+                showAdvanced={devMode}
+                modelPresets={modelPresets}
+                estimate={estimate.data ?? null}
+                estimatePending={estimate.isPending && confirmOpen}
+                onSelectionChange={setModelSel}
                 onCancel={() => setConfirmOpen(false)}
                 onConfirm={runGenerate}
             />

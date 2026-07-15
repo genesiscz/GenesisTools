@@ -1,6 +1,11 @@
-import { SafeJSON } from "@app/utils/json";
+// Native JSON only — SafeJSON pulls in esprima/comment-json (~150 kB) which
+// balloons the MV3 service-worker cold-start to multi-second latency on every
+// idle → wake cycle. Bodies here are our own plain objects, never comments.
+import { startDevReload } from "@ext/dev-reload";
 import type { ExtensionEvent, ExtensionRequest, ExtensionResponse } from "@ext/shared/messages";
 import { getExtensionConfig, setExtensionConfig } from "@ext/shared/storage";
+
+declare const __EXT_DEV_RELOAD__: boolean;
 
 const ports = new Set<chrome.runtime.Port>();
 let ws: WebSocket | null = null;
@@ -38,7 +43,7 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
         case "api:addChannel":
             return apiCall(`${base}/api/v1/channels`, {
                 method: "POST",
-                body: SafeJSON.stringify({ handles: [req.handle] }),
+                body: JSON.stringify({ handles: [req.handle] }),
             });
         case "api:listVideos": {
             const query = new URLSearchParams();
@@ -79,7 +84,7 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
         case "api:generateSummary":
             return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/summary`, {
                 method: "POST",
-                body: SafeJSON.stringify({
+                body: JSON.stringify({
                     mode: req.mode,
                     force: req.force,
                     provider: req.provider,
@@ -93,7 +98,7 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
         case "api:askVideo":
             return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/qa`, {
                 method: "POST",
-                body: SafeJSON.stringify({
+                body: JSON.stringify({
                     question: req.question,
                     topK: req.topK,
                     provider: req.provider,
@@ -103,10 +108,22 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
         case "api:startPipeline":
             return apiCall(`${base}/api/v1/pipeline`, {
                 method: "POST",
-                body: SafeJSON.stringify({ target: req.target, targetKind: req.targetKind, stages: req.stages }),
+                body: JSON.stringify({ target: req.target, targetKind: req.targetKind, stages: req.stages }),
             });
         case "api:getJob":
             return apiCall(`${base}/api/v1/jobs/${req.id}`);
+        case "api:listModels":
+            return apiCall(`${base}/api/v1/models`);
+        case "api:estimate": {
+            const query = new URLSearchParams({ mode: req.mode });
+            if (req.provider) {
+                query.set("provider", req.provider);
+            }
+            if (req.model) {
+                query.set("model", req.model);
+            }
+            return apiCall(`${base}/api/v1/videos/${encodeURIComponent(req.id)}/estimate?${query.toString()}`);
+        }
     }
 }
 
@@ -127,7 +144,16 @@ async function apiCall(url: string, init: RequestInit = {}): Promise<ExtensionRe
             headers,
         });
         if (!res.ok) {
-            return { ok: false, error: `${res.status} ${res.statusText}` };
+            let detail = "";
+            try {
+                const body = (await res.json()) as { error?: unknown };
+                if (typeof body.error === "string" && body.error !== "") {
+                    detail = body.error;
+                }
+            } catch {
+                // non-JSON error body — fall back to status line
+            }
+            return { ok: false, error: detail !== "" ? detail : `${res.status} ${res.statusText}` };
         }
         return { ok: true, data: await res.json() };
     } catch (error) {
@@ -161,7 +187,7 @@ async function reconnectWebsocket(): Promise<void> {
         ws.onopen = () => broadcast({ type: "ws:status", connected: true });
         ws.onmessage = (message) => {
             try {
-                const event = SafeJSON.parse(typeof message.data === "string" ? message.data : String(message.data));
+                const event = JSON.parse(typeof message.data === "string" ? message.data : String(message.data));
                 broadcast({ type: "job:event", event });
             } catch {}
         };
@@ -197,3 +223,9 @@ function broadcast(event: ExtensionEvent): void {
 }
 
 reconnectWebsocket();
+
+if (typeof __EXT_DEV_RELOAD__ !== "undefined" && __EXT_DEV_RELOAD__) {
+    startDevReload();
+}
+
+// touch: 1784066216583

@@ -70,10 +70,10 @@ function ControlSelect({
     disabled?: boolean;
 }) {
     return (
-        <label className="flex items-center gap-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">
+        <label className="flex items-center gap-2 mr-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">
             {label}
             <Select value={value} onValueChange={onChange} disabled={disabled}>
-                <SelectTrigger className="h-8 w-32 border-primary/20 bg-black/40 font-mono text-xs uppercase tracking-[0.18em] text-foreground/90">
+                <SelectTrigger className="h-8 min-w-[10rem] border-primary/20 bg-black/40 font-mono text-xs uppercase tracking-[0.14em] text-foreground/90">
                     <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
