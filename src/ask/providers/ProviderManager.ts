@@ -78,6 +78,7 @@ export class ProviderManager {
                         provider,
                         models,
                         config,
+                        subscription: false,
                     };
 
                     detected.push(detectedProvider);
@@ -294,6 +295,7 @@ export class ProviderManager {
                     provider,
                     models,
                     config: cfg,
+                    subscription: false,
                 };
                 detected.push(detectedProvider);
                 this.detectedProviders.set("anthropic", detectedProvider);
