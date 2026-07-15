@@ -263,6 +263,12 @@ export const env = {
          * `0.0.0.0` (or a LAN IP) to expose it directly.
          */
         getHost: () => getWithDefault("YOUTUBE_HOST", "127.0.0.1"),
+        /**
+         * Enables the dev-only Stripe stand-in top-up endpoint
+         * (POST /api/v1/users/topup). Off by default so a deployed server
+         * never mints credits outside real billing; set to `1` locally.
+         */
+        isDevTopupAllowed: () => isFlag("YOUTUBE_ALLOW_DEV_TOPUP"),
     },
 
     db: envClient.db,
