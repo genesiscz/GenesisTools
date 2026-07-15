@@ -508,9 +508,7 @@ function TranscriptRow({
                 {block.paragraphs.map((paragraph, i) => {
                     const prevSpeaker = i > 0 ? block.paragraphs[i - 1].speaker : previousSpeaker;
                     const chipSpeaker =
-                        paragraph.speaker !== undefined && paragraph.speaker !== prevSpeaker
-                            ? paragraph.speaker
-                            : null;
+                        paragraph.speaker !== undefined && paragraph.speaker !== prevSpeaker ? paragraph.speaker : null;
 
                     return (
                         <Fragment key={`${paragraph.start}-${i}`}>
