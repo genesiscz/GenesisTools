@@ -161,6 +161,8 @@ export interface VideoDetailTabsProps {
     partialSummaries?: Partial<Record<SummaryMode, unknown>>;
     /** Mode currently receiving streamed partials, or null when idle. */
     streamingMode?: SummaryMode | null;
+    /** Current playback second (1 Hz bridge), or null when unknown. */
+    playerTime?: number | null;
 }
 
 export function VideoDetailTabs({
@@ -178,6 +180,7 @@ export function VideoDetailTabs({
     onOpenWatch,
     partialSummaries,
     streamingMode,
+    playerTime,
 }: VideoDetailTabsProps) {
     const rootRef = useRef<HTMLDivElement | null>(null);
     const pendingCommentRef = useRef<string | null>(null);
@@ -257,6 +260,8 @@ export function VideoDetailTabs({
                     pipelineProgress={pipelineProgress}
                     partialLong={partialSummaries?.long}
                     streaming={streamingMode === "long"}
+                    onSeek={onSeek}
+                    playerTime={playerTime}
                 />
             </TabsContent>
             <TabsContent value="ask" className="yt-tab-pane">

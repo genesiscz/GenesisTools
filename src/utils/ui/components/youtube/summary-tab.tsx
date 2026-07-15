@@ -52,6 +52,10 @@ export interface SummaryTabProps {
     partialLong?: unknown;
     /** True while long-summary partials are streaming in. */
     streaming?: boolean;
+    /** Seeks the player; enables chapter timecode pills. */
+    onSeek?: (seconds: number) => void;
+    /** Current playback second (1 Hz bridge) — drives the "playing" chapter state. */
+    playerTime?: number | null;
 }
 
 export function SummaryTab({
@@ -67,6 +71,8 @@ export function SummaryTab({
     pipelineProgress,
     partialLong,
     streaming,
+    onSeek,
+    playerTime,
 }: SummaryTabProps & { devMode?: boolean; modelPresets?: ModelPreset[]; pipelineProgress?: PipelineProgress | null }) {
     const summary = useSummary(videoId, "long");
     const generate = useGenerateSummary(videoId);
@@ -177,7 +183,7 @@ export function SummaryTab({
             {streaming && partial !== null ? (
                 // Generating state: streamed partials render through the normal
                 // view (skeletons for pending sections) — never on the teaser.
-                <LongSummaryView summary={partial} streaming />
+                <LongSummaryView summary={partial} streaming onSeek={onSeek} playerTime={playerTime} />
             ) : lockedInfo !== null ? (
                 <div
                     data-testid="summary-locked"
@@ -231,7 +237,7 @@ export function SummaryTab({
             ) : (
                 // `long ?? partial`: a just-completed stream keeps rendering the
                 // retained partial until the refetched query lands (no flash).
-                <LongSummaryView summary={idleSummary} />
+                <LongSummaryView summary={idleSummary} onSeek={onSeek} playerTime={playerTime} />
             )}
             <LlmConfirmDialog
                 open={confirmOpen}
