@@ -1460,12 +1460,10 @@ export class YoutubeDatabase extends BaseDatabase {
      * is visible as a `hold:<reason>` ledger row plus a `credit_holds` row.
      * Resolve with `commitHold` (success) or `releaseHold` (refund).
      */
-    reserveCredits(input: {
-        userId: number;
-        amount: number;
-        reason: CreditReason;
-        context?: string;
-    }): { holdId: number; credits: number } {
+    reserveCredits(input: { userId: number; amount: number; reason: CreditReason; context?: string }): {
+        holdId: number;
+        credits: number;
+    } {
         const reserve = this.db.transaction(() => {
             const row = this.db
                 .query<{ credits: number }, [number, number, number]>(
@@ -1511,7 +1509,7 @@ export class YoutubeDatabase extends BaseDatabase {
         const commit = this.db.transaction(() => {
             const hold = this.getCreditHoldRow(holdId);
 
-            if (!hold || hold.status !== "held") {
+            if (hold?.status !== "held") {
                 throw new Error(`commitHold: hold ${holdId} is ${hold?.status ?? "missing"}, expected "held"`);
             }
 
@@ -1533,7 +1531,7 @@ export class YoutubeDatabase extends BaseDatabase {
         const release = this.db.transaction(() => {
             const hold = this.getCreditHoldRow(holdId);
 
-            if (!hold || hold.status !== "held") {
+            if (hold?.status !== "held") {
                 throw new Error(`releaseHold: hold ${holdId} is ${hold?.status ?? "missing"}, expected "held"`);
             }
 
