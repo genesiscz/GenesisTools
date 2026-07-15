@@ -3,6 +3,7 @@ import type {
     ChannelHandle,
     JobEvent,
     JobStage,
+    LedgerPage,
     LlmEstimate,
     PipelineJob,
     QaHistoryItem,
@@ -11,6 +12,7 @@ import type {
     SummaryTone,
     TimestampedSummaryEntry,
     Transcript,
+    UsageSummary,
     Video,
     VideoComment,
     VideoId,
@@ -58,7 +60,9 @@ export type ExtensionRequest =
     | { type: "api:me" }
     | { type: "api:topup"; amount?: number }
     | { type: "api:qaHistory"; id?: VideoId; limit?: number }
-    | { type: "api:checkout"; packId: string };
+    | { type: "api:checkout"; packId: string }
+    | { type: "api:ledger"; before?: number; limit?: number }
+    | { type: "api:usageSummary" };
 
 export type ExtensionResponse = { ok: true; data: unknown } | { ok: false; error: string };
 
@@ -105,4 +109,6 @@ export interface ExtensionApiMap {
     "api:topup": { user: YtUser };
     "api:qaHistory": { items: QaHistoryItem[] };
     "api:checkout": { url: string };
+    "api:ledger": LedgerPage;
+    "api:usageSummary": UsageSummary;
 }

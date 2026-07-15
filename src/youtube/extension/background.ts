@@ -160,6 +160,19 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
             const suffix = query.toString() ? `?${query.toString()}` : "";
             return apiCall(`${base}/api/v1/users/qa-history${suffix}`);
         }
+        case "api:ledger": {
+            const query = new URLSearchParams();
+            if (typeof req.before === "number") {
+                query.set("before", String(req.before));
+            }
+            if (typeof req.limit === "number") {
+                query.set("limit", String(req.limit));
+            }
+            const suffix = query.toString() ? `?${query.toString()}` : "";
+            return apiCall(`${base}/api/v1/users/ledger${suffix}`);
+        }
+        case "api:usageSummary":
+            return apiCall(`${base}/api/v1/users/usage-summary`);
         case "api:checkout": {
             const res = await apiCall(`${base}/api/v1/users/checkout`, {
                 method: "POST",
