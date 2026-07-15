@@ -116,7 +116,17 @@ describe("QaService", () => {
                 service.ask({ videoIds: ["abc123def45"], question: "What matters?", providerChoice, topK: 1 })
             ).resolves.toEqual({
                 answer: "The answer cites [#1].",
-                citations: [{ videoId: "abc123def45", chunkIdx: 0, startSec: 12, endSec: 18 }],
+                citations: [
+                    {
+                        videoId: "abc123def45",
+                        chunkIdx: 0,
+                        startSec: 12,
+                        endSec: 18,
+                        source: "transcript",
+                        author: null,
+                        commentId: null,
+                    },
+                ],
             });
             expect(embedCalls).toEqual(["What matters?"]);
             expect(llmCalls).toHaveLength(1);

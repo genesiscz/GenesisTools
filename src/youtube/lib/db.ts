@@ -36,7 +36,7 @@ import type {
     JobTargetKind,
     PipelineJob,
 } from "@app/youtube/lib/jobs.types";
-import type { AskCitation, QaChunk } from "@app/youtube/lib/qa.types";
+import type { AskCitation, QaChunk, QaSource } from "@app/youtube/lib/qa.types";
 import type { Language, Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
 import type { ArtifactKind, CreditReason, QaHistoryItem, YtUser } from "@app/youtube/lib/users.types";
 import { InsufficientCreditsError } from "@app/youtube/lib/users.types";
@@ -316,6 +316,32 @@ export class YoutubeDatabase extends BaseDatabase {
                     UNIQUE (user_id, kind, name)
                 );
             `);
+        });
+
+        this.runMigration("add-qa-chunk-source", () => {
+            const cols = this.db.query<{ name: string }, []>("PRAGMA table_info(qa_chunks)").all() as Array<{
+                name: string;
+            }>;
+
+            if (!cols.some((column) => column.name === "source")) {
+                this.db.exec("ALTER TABLE qa_chunks ADD COLUMN source TEXT NOT NULL DEFAULT 'transcript'");
+            }
+
+            if (!cols.some((column) => column.name === "source_ref")) {
+                this.db.exec("ALTER TABLE qa_chunks ADD COLUMN source_ref TEXT");
+            }
+
+            this.db.exec("CREATE INDEX IF NOT EXISTS idx_qa_chunks_video_source ON qa_chunks(video_id, source)");
+
+            // qa_history ask scope: citations_json is a plain array bag, so the
+            // scope needs its own column (Feature 02 plan Task 3 fallback branch).
+            const historyCols = this.db.query<{ name: string }, []>("PRAGMA table_info(qa_history)").all() as Array<{
+                name: string;
+            }>;
+
+            if (!historyCols.some((column) => column.name === "sources_json")) {
+                this.db.exec("ALTER TABLE qa_history ADD COLUMN sources_json TEXT");
+            }
         });
 
         this.runMigration("add-artifact-access", () => {
@@ -789,14 +815,16 @@ export class YoutubeDatabase extends BaseDatabase {
         const embeddingDims = input.embedding ? input.embedding.length : null;
 
         this.db.run(
-            `INSERT INTO qa_chunks (video_id, chunk_idx, text, start_sec, end_sec, embedding, embedding_dims, embedder_model)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `INSERT INTO qa_chunks (video_id, chunk_idx, text, start_sec, end_sec, embedding, embedding_dims, embedder_model, source, source_ref)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(video_id, chunk_idx, embedder_model) DO UPDATE SET
                 text = excluded.text,
                 start_sec = excluded.start_sec,
                 end_sec = excluded.end_sec,
                 embedding = excluded.embedding,
-                embedding_dims = excluded.embedding_dims`,
+                embedding_dims = excluded.embedding_dims,
+                source = excluded.source,
+                source_ref = excluded.source_ref`,
             [
                 input.videoId,
                 input.chunkIdx,
@@ -806,6 +834,8 @@ export class YoutubeDatabase extends BaseDatabase {
                 embedding,
                 embeddingDims,
                 input.embedderModel ?? null,
+                input.source ?? "transcript",
+                input.sourceRef ?? null,
             ]
         );
     }
@@ -824,16 +854,23 @@ export class YoutubeDatabase extends BaseDatabase {
         return rows.map(rowToQaChunk);
     }
 
-    hasQaChunks(videoId: VideoId, embedderModel?: string): boolean {
-        const row = embedderModel
-            ? this.db
-                  .query<{ count: number }, [string, string]>(
-                      "SELECT COUNT(*) AS count FROM qa_chunks WHERE video_id = ? AND embedder_model = ?"
-                  )
-                  .get(videoId, embedderModel)
-            : this.db
-                  .query<{ count: number }, [string]>("SELECT COUNT(*) AS count FROM qa_chunks WHERE video_id = ?")
-                  .get(videoId);
+    hasQaChunks(videoId: VideoId, embedderModel?: string, source?: QaSource): boolean {
+        const where: string[] = ["video_id = ?"];
+        const params: string[] = [videoId];
+
+        if (embedderModel) {
+            where.push("embedder_model = ?");
+            params.push(embedderModel);
+        }
+
+        if (source) {
+            where.push("source = ?");
+            params.push(source);
+        }
+
+        const row = this.db
+            .query<{ count: number }, string[]>(`SELECT COUNT(*) AS count FROM qa_chunks WHERE ${where.join(" AND ")}`)
+            .get(...params);
 
         return (row?.count ?? 0) > 0;
     }
@@ -1242,11 +1279,12 @@ export class YoutubeDatabase extends BaseDatabase {
         answer: string;
         citations: AskCitation[];
         creditsSpent: number;
+        sources?: QaSource[];
     }): QaHistoryItem {
         const row = this.db
-            .query<QaHistoryRow, [number, string, string, string, string, number]>(
-                `INSERT INTO qa_history (user_id, video_id, question, answer, citations_json, credits_spent, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ${SQL_NOW_UTC}) RETURNING *`
+            .query<QaHistoryRow, [number, string, string, string, string, number, string | null]>(
+                `INSERT INTO qa_history (user_id, video_id, question, answer, citations_json, credits_spent, sources_json, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ${SQL_NOW_UTC}) RETURNING *`
             )
             .get(
                 input.userId,
@@ -1254,7 +1292,8 @@ export class YoutubeDatabase extends BaseDatabase {
                 input.question,
                 input.answer,
                 SafeJSON.stringify(input.citations),
-                input.creditsSpent
+                input.creditsSpent,
+                input.sources ? SafeJSON.stringify(input.sources) : null
             );
 
         if (!row) {
@@ -1525,6 +1564,7 @@ interface QaHistoryRow {
     citations_json: string;
     credits_spent: number;
     created_at: string;
+    sources_json: string | null;
 }
 
 function rowToQaHistoryItem(row: QaHistoryRow): QaHistoryItem {
@@ -1536,6 +1576,7 @@ function rowToQaHistoryItem(row: QaHistoryRow): QaHistoryItem {
         citations: parseNullableJsonArray<AskCitation>(row.citations_json) ?? [],
         creditsSpent: row.credits_spent,
         createdAt: row.created_at,
+        sources: parseNullableJsonArray<QaSource>(row.sources_json) ?? undefined,
     };
 }
 
@@ -1744,6 +1785,8 @@ interface QaChunkRow {
     embedding_dims: number | null;
     embedder_model: string | null;
     created_at: string;
+    source: QaSource;
+    source_ref: string | null;
 }
 
 interface JobRow {
@@ -1848,6 +1891,8 @@ function rowToQaChunk(row: QaChunkRow): QaChunk {
         embeddingDims: row.embedding_dims,
         embedderModel: row.embedder_model,
         createdAt: row.created_at,
+        source: row.source ?? "transcript",
+        sourceRef: row.source_ref ?? null,
     };
 }
 

@@ -74,7 +74,17 @@ mock.module("@app/youtube/commands/_shared/ensure-pipeline", () => ({
                 calls.ask.push(opts);
                 return {
                     answer: "The answer",
-                    citations: [{ videoId: "abc123def45" as VideoId, chunkIdx: 0, startSec: 0, endSec: 90 }],
+                    citations: [
+                        {
+                            videoId: "abc123def45" as VideoId,
+                            chunkIdx: 0,
+                            startSec: 0,
+                            endSec: 90,
+                            source: "transcript" as const,
+                            author: null,
+                            commentId: null,
+                        },
+                    ],
                 };
             },
         },

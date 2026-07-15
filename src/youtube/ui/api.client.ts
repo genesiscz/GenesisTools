@@ -1,6 +1,7 @@
 import { SafeJSON } from "@app/utils/json";
 import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import type {
+    AskCitation,
     Channel,
     ChannelHandle,
     JobActivity,
@@ -20,7 +21,7 @@ import { reportBackendReachable, reportBackendUnreachable } from "./backend-stat
 
 export interface AskVideoResponse {
     answer: string;
-    citations: Array<{ videoId: string; chunkIdx: number; startSec: number | null; endSec: number | null }>;
+    citations: AskCitation[];
 }
 
 export interface CacheStatsResponse {
