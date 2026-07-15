@@ -415,6 +415,18 @@ export class YoutubeDatabase extends BaseDatabase {
             `);
         });
 
+        this.runMigration("add-video-speakers", () => {
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS video_speakers (
+                    video_id TEXT NOT NULL,
+                    speaker_idx INTEGER NOT NULL,
+                    label TEXT NOT NULL,
+                    PRIMARY KEY (video_id, speaker_idx),
+                    FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
+                );
+            `);
+        });
+
         const existing = this.db
             .query<{ version: number }, [number]>("SELECT version FROM schema_version WHERE version = ?")
             .get(SCHEMA_VERSION);
@@ -735,6 +747,35 @@ export class YoutubeDatabase extends BaseDatabase {
             .all(videoId);
 
         return rows.map(rowToTranscript);
+    }
+
+    upsertVideoSpeakers(videoId: VideoId, speakers: Array<{ idx: number; label: string }>): void {
+        const insert = this.db.prepare(
+            `INSERT INTO video_speakers (video_id, speaker_idx, label)
+             VALUES (?, ?, ?)
+             ON CONFLICT(video_id, speaker_idx) DO UPDATE SET label = excluded.label`
+        );
+        const insertAll = this.db.transaction((rows: Array<{ idx: number; label: string }>) => {
+            for (const row of rows) {
+                insert.run(videoId, row.idx, row.label);
+            }
+        });
+        insertAll(speakers);
+    }
+
+    getVideoSpeakers(videoId: VideoId): Record<number, string> {
+        const rows = this.db
+            .query<{ speaker_idx: number; label: string }, [string]>(
+                "SELECT speaker_idx, label FROM video_speakers WHERE video_id = ? ORDER BY speaker_idx"
+            )
+            .all(videoId);
+        const labels: Record<number, string> = {};
+
+        for (const row of rows) {
+            labels[row.speaker_idx] = row.label;
+        }
+
+        return labels;
     }
 
     upsertComments(videoId: VideoId, comments: FetchedComment[]): void {

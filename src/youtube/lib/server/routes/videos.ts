@@ -89,6 +89,34 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             return handleTranscriptRoute(url, yt, transcriptRoute.id as VideoId);
         }
 
+        const speakersPut = matchRoute(req, "PUT", "/api/v1/videos/:id/speakers", url.pathname);
+
+        if (speakersPut) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const id = speakersPut.id as VideoId;
+            const video = yt.videos.show(id);
+
+            if (!video) {
+                return jsonError("video not found", 404);
+            }
+
+            const body = await safeJsonBody(req);
+            const speakers = parseSpeakers(body?.speakers);
+
+            if (!speakers) {
+                return jsonError("body must include {speakers: {idx: number; label: string}[]}", 400);
+            }
+
+            yt.db.upsertVideoSpeakers(id, speakers);
+
+            return Response.json({ speakerLabels: yt.db.getVideoSpeakers(id) }, { headers: CORS_HEADERS });
+        }
+
         const commentsRoute = matchRoute(req, "GET", "/api/v1/videos/:id/comments", url.pathname);
 
         if (commentsRoute) {
@@ -680,7 +708,34 @@ function handleTranscriptRoute(url: URL, yt: Youtube, id: VideoId): Response {
         });
     }
 
-    return Response.json({ transcript }, { headers: CORS_HEADERS });
+    return Response.json({ transcript, speakerLabels: yt.db.getVideoSpeakers(id) }, { headers: CORS_HEADERS });
+}
+
+function parseSpeakers(value: unknown): Array<{ idx: number; label: string }> | null {
+    if (!Array.isArray(value)) {
+        return null;
+    }
+
+    const speakers: Array<{ idx: number; label: string }> = [];
+
+    for (const entry of value) {
+        const raw = entry as { idx?: unknown; label?: unknown } | null;
+
+        if (
+            !raw ||
+            typeof raw.idx !== "number" ||
+            !Number.isInteger(raw.idx) ||
+            raw.idx < 0 ||
+            typeof raw.label !== "string" ||
+            raw.label.trim().length === 0
+        ) {
+            return null;
+        }
+
+        speakers.push({ idx: raw.idx, label: raw.label.trim() });
+    }
+
+    return speakers;
 }
 
 function toSrt(transcript: Transcript): string {
