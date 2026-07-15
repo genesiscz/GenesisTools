@@ -226,7 +226,9 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
             return Response.json(
                 {
-                    url: `/api/v1/videos/${id}/summary/audio`,
+                    // Voice is part of the cache key — the URL must carry it or
+                    // a GET falls back to the user's default voice and 404s.
+                    url: `/api/v1/videos/${id}/summary/audio${voice ? `?voice=${encodeURIComponent(voice)}` : ""}`,
                     cached: result.cached,
                     creditsSpent: charged,
                     credits,
@@ -457,11 +459,13 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             let presetInstructions: string | undefined;
 
             if (presetId !== undefined) {
-                try {
-                    presetInstructions = getPresetForUse(yt.db, user.id, presetId, "summary").instructions;
-                } catch {
+                const preset = getPresetForUse(yt.db, user.id, presetId, "summary");
+
+                if (!preset) {
                     return jsonError("preset not found", 404);
                 }
+
+                presetInstructions = preset.instructions;
             }
 
             const hasTranscript = yt.db.getTranscript(id) !== null;
@@ -652,11 +656,16 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
             // Reuse pricing: an existing artifact the viewer has no access to
             // costs the flat unlock price; already-unlocked costs nothing.
+            // Mirrors the POST route: a stored artifact in another language is
+            // regenerated at full price — never quoted as a reuse/unlock.
             const viewer = resolveUser(req, url, yt.db);
             const artifactExists = yt.db.hasArtifact(`summary:${mode}`, id);
-            const hasAccess =
-                viewer !== null && artifactExists && yt.db.hasArtifactAccess(viewer.id, `summary:${mode}`, id);
-            const reused = artifactExists && !hasAccess;
+            const requestedLang = url.searchParams.get("lang") ?? undefined;
+            const lang = requestedLang && isOutputLang(requestedLang) ? requestedLang : (viewer?.outputLang ?? "en");
+            const langMismatch = artifactExists && video !== null && summaryLangFor(video, mode) !== lang;
+            const reusable = artifactExists && !langMismatch;
+            const hasAccess = viewer !== null && reusable && yt.db.hasArtifactAccess(viewer.id, `summary:${mode}`, id);
+            const reused = reusable && !hasAccess;
 
             return Response.json(
                 {
@@ -668,7 +677,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     outputTokens,
                     estUsd,
                     basis,
-                    creditCost: artifactExists ? (hasAccess ? 0 : REUSE_COST) : CREDIT_COSTS[`summary:${mode}`],
+                    creditCost: reusable ? (hasAccess ? 0 : REUSE_COST) : CREDIT_COSTS[`summary:${mode}`],
                     reused,
                 },
                 { headers: CORS_HEADERS }
@@ -753,11 +762,13 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             let presetInstructions: string | undefined;
 
             if (presetId !== undefined) {
-                try {
-                    presetInstructions = getPresetForUse(yt.db, user.id, presetId, "ask").instructions;
-                } catch {
+                const preset = getPresetForUse(yt.db, user.id, presetId, "ask");
+
+                if (!preset) {
                     return jsonError("preset not found", 404);
                 }
+
+                presetInstructions = preset.instructions;
             }
 
             // Debit BEFORE the retrieval/LLM work so concurrent requests cannot

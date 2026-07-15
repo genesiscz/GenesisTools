@@ -116,8 +116,9 @@ export function buildAudioSrc(
 ): string {
     const base = config.apiBaseUrl.replace(/\/$/, "");
     const token = config.userToken ?? config.serviceKey ?? "";
+    const separator = relativeUrl.includes("?") ? "&" : "?";
 
-    return `${base}${relativeUrl}?token=${encodeURIComponent(token)}`;
+    return `${base}${relativeUrl}${separator}token=${encodeURIComponent(token)}`;
 }
 
 export function usePatchMe() {

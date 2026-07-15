@@ -171,6 +171,21 @@ describe("summary audio routes", () => {
         expect(res.status).toBe(401);
     });
 
+    it("returns a URL carrying the custom voice so GET hits the same cache entry", async () => {
+        const user = createUser("voice@example.com", 100);
+
+        const post = await call("POST", `/api/v1/videos/${VIDEO}/summary/audio`, {
+            token: user.token,
+            body: { voice: "nova" },
+        });
+        const postJson = (await post.json()) as { url: string };
+
+        expect(postJson.url).toContain("?voice=nova");
+
+        const get = await call("GET", `${postJson.url}&token=${user.token}`);
+        expect(get.status).toBe(200);
+    });
+
     it("refunds the upfront debit when synthesis fails", async () => {
         synthesizeFails = true;
         const user = createUser("refund@example.com", 100);

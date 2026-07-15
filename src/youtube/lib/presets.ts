@@ -105,12 +105,21 @@ export function deletePreset(db: YoutubeDatabase, userId: number, id: number): v
     }
 }
 
-/** Ownership + kind-checked lookup for prompt injection (summary/qa routes). */
-export function getPresetForUse(db: YoutubeDatabase, userId: number, id: number, kind: PresetKind): PromptPreset {
+/**
+ * Ownership + kind-checked lookup for prompt injection (summary/qa routes).
+ * Returns `null` when missing — callers 404 on null without a catch that
+ * would also swallow real DB failures.
+ */
+export function getPresetForUse(
+    db: YoutubeDatabase,
+    userId: number,
+    id: number,
+    kind: PresetKind
+): PromptPreset | null {
     const row = db.getPresetById(userId, id);
 
     if (!row || row.kind !== kind) {
-        throw new Error("preset not found");
+        return null;
     }
 
     return rowToPreset(row);

@@ -100,9 +100,9 @@ Rate every claim's evidence.`
         const userB = createTestUser("b@example.com");
         const preset = createPreset(db, userA.id, { name: "A's preset", kind: "summary", instructions: "Be terse." });
 
-        expect(getPresetForUse(db, userA.id, preset.id, "summary").id).toBe(preset.id);
-        expect(() => getPresetForUse(db, userB.id, preset.id, "summary")).toThrow(/not found/);
-        expect(() => getPresetForUse(db, userA.id, preset.id, "ask")).toThrow(/not found/);
+        expect(getPresetForUse(db, userA.id, preset.id, "summary")?.id).toBe(preset.id);
+        expect(getPresetForUse(db, userB.id, preset.id, "summary")).toBeNull();
+        expect(getPresetForUse(db, userA.id, preset.id, "ask")).toBeNull();
     });
 
     it("updatePreset updates instructions in place", () => {
