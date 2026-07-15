@@ -296,6 +296,7 @@ export function VideoDetailTabs({
                     useTranscript={ds.useTranscript}
                     runPipeline={runPipeline}
                     pipelineProgress={pipelineProgress}
+                    playerTime={playerTime}
                 />
             </TabsContent>
         </Tabs>
