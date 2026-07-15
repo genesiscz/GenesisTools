@@ -12,6 +12,8 @@ import {
 } from "@app/utils/ui/components/youtube/summary-controls";
 import type { PipelineProgress, VideoDetailDataSource } from "@app/utils/ui/components/youtube/tabs";
 import type { LlmEstimate, LockedArtifact, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
+import { CREDIT_COSTS } from "@app/youtube/lib/types";
+import { Loader2 } from "lucide-react";
 import { useState } from "react";
 
 const NO_ESTIMATE = { data: undefined, isPending: false } as const;
@@ -70,6 +72,13 @@ export function SummaryTab({
     const [linkCopied, setLinkCopied] = useState(false);
     const [presetId, setPresetId] = useState<number | null>(null);
     const estimate = useEstimate?.(videoId, { mode: "long", ...modelSel, enabled: confirmOpen }) ?? NO_ESTIMATE;
+    // The dialog only ever fronts a fresh (re)generation — unlocking happens
+    // on the teaser card — so quote the full generation price, not the
+    // reuse/owned price the estimate endpoint reports for existing artifacts.
+    const dialogEstimate: LlmEstimate | null = estimate.data
+        ? { ...estimate.data, reused: false, creditCost: CREDIT_COSTS["summary:long"] }
+        : null;
+    const lockedInfo = summary.data?.locked ? summary.data : null;
     const long = (summary.data && !summary.data.locked && summary.data.long) || null;
 
     if (summary.isPending) {
@@ -79,7 +88,9 @@ export function SummaryTab({
     async function runGenerate({ provider, model }: { provider?: string; model?: string }) {
         await generate.mutateAsync({
             mode: "long",
-            force: long !== null,
+            // The dialog path is always a REAL generation: force past a locked
+            // shared artifact so the server regenerates instead of unlocking.
+            force: long !== null || lockedInfo !== null,
             provider,
             model,
             tone: controls.tone,
@@ -87,6 +98,12 @@ export function SummaryTab({
             presetId: presetId ?? undefined,
         });
         setConfirmOpen(false);
+    }
+
+    async function unlockSummary() {
+        // Teaser IS the confirm — straight to the flat-price charge; the
+        // server returns the stored artifact instantly (no job, no LLM).
+        await generate.mutateAsync({ mode: "long" });
     }
 
     return (
@@ -106,13 +123,15 @@ export function SummaryTab({
                             }}
                         />
                     ) : null}
-                    <Button
-                        data-testid="summary-generate"
-                        onClick={() => setConfirmOpen(true)}
-                        disabled={generate.isPending}
-                    >
-                        {long === null ? "Generate summary…" : "Re-generate…"}
-                    </Button>
+                    {lockedInfo === null ? (
+                        <Button
+                            data-testid="summary-generate"
+                            onClick={() => setConfirmOpen(true)}
+                            disabled={generate.isPending}
+                        >
+                            {long === null ? "Generate summary…" : "Re-generate…"}
+                        </Button>
+                    ) : null}
                 </div>
             </div>
             {linkCopied ? <p className="text-sm text-primary">Link copied</p> : null}
@@ -127,7 +146,44 @@ export function SummaryTab({
                     creating={createPreset.isPending}
                 />
             ) : null}
-            {long === null ? (
+            {lockedInfo !== null ? (
+                <div data-testid="summary-locked" className="space-y-3 rounded-2xl border border-white/8 bg-black/20 p-3">
+                    <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-secondary">summary</p>
+                    <p className="line-clamp-3 text-sm text-muted-foreground [mask-image:linear-gradient(to_bottom,black_40%,transparent)]">
+                        {lockedInfo.preview.tldr}
+                    </p>
+                    {generate.error ? (
+                        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-sm">
+                            <p className="break-words text-destructive/90">{generate.error.message}</p>
+                        </div>
+                    ) : null}
+                    <div className="flex flex-col items-start gap-1.5">
+                        <Button
+                            size="sm"
+                            data-testid="summary-unlock"
+                            onClick={unlockSummary}
+                            disabled={generate.isPending}
+                        >
+                            {generate.isPending ? (
+                                <>
+                                    <Loader2 className="size-4 animate-spin" /> Unlocking…
+                                </>
+                            ) : (
+                                `Unlock · ${lockedInfo.price} 💎`
+                            )}
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-muted-foreground"
+                            onClick={() => setConfirmOpen(true)}
+                            disabled={generate.isPending}
+                        >
+                            Regenerate fresh…
+                        </Button>
+                    </div>
+                </div>
+            ) : long === null ? (
                 <p
                     data-testid="summary-empty"
                     className="rounded-2xl border border-dashed border-primary/25 p-5 text-muted-foreground"
@@ -150,7 +206,7 @@ export function SummaryTab({
                 error={generate.error ? (generate.error as Error).message : null}
                 showAdvanced={devMode}
                 modelPresets={modelPresets}
-                estimate={estimate.data ?? null}
+                estimate={dialogEstimate}
                 estimatePending={estimate.isPending && confirmOpen}
                 onSelectionChange={setModelSel}
                 progress={pipelineProgress}

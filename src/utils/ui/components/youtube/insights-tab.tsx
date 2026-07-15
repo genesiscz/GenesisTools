@@ -9,7 +9,14 @@ import {
 } from "@app/utils/ui/components/youtube/summary-controls";
 import type { PipelineProgress } from "@app/utils/ui/components/youtube/tabs";
 import { TimestampedSummaryView } from "@app/utils/ui/components/youtube/timestamped-summary-view";
-import type { LlmEstimate, LockedArtifact, TimestampedSummaryEntry, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
+import type {
+    LlmEstimate,
+    LockedArtifact,
+    TimestampedSummaryEntry,
+    VideoId,
+    VideoLongSummary,
+} from "@app/youtube/lib/types";
+import { CREDIT_COSTS } from "@app/youtube/lib/types";
 import { useState } from "react";
 
 const NO_ESTIMATE = { data: undefined, isPending: false } as const;
@@ -70,6 +77,13 @@ export function InsightsTab({
     const estimate = useEstimate?.(videoId, { mode: "timestamped", ...modelSel, enabled: confirmOpen }) ?? NO_ESTIMATE;
     const entries = (timestamped.data && !timestamped.data.locked && timestamped.data.timestamped) || [];
     const tldr = (long.data && !long.data.locked && long.data.long?.tldr) || null;
+    // With entries visible the generate button forces a fresh run at full
+    // price — quote that, not the reuse/owned price the estimate reports.
+    const dialogEstimate: LlmEstimate | null = estimate.data
+        ? entries.length > 0
+            ? { ...estimate.data, reused: false, creditCost: CREDIT_COSTS["summary:timestamped"] }
+            : estimate.data
+        : null;
 
     if (timestamped.isPending) {
         return <Loading label="Loading insights" />;
@@ -126,7 +140,7 @@ export function InsightsTab({
                 error={generate.error ? (generate.error as Error).message : null}
                 showAdvanced={devMode}
                 modelPresets={modelPresets}
-                estimate={estimate.data ?? null}
+                estimate={dialogEstimate}
                 estimatePending={estimate.isPending && confirmOpen}
                 onSelectionChange={setModelSel}
                 progress={pipelineProgress}
