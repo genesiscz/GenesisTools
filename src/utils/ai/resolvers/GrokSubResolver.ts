@@ -18,10 +18,22 @@ export class GrokSubResolver implements AccountResolver {
         const { buildCliProxyHeaders } = await import("../grok/headers");
         const { createOpenAI } = await import("@ai-sdk/openai");
         // The CLI chat proxy 426s without the Grok CLI identification headers.
+        // Token + headers are resolved per REQUEST (live file read) so a
+        // long-running process picks up CLI-refreshed JWTs automatically.
+        const freshTokenFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+            const { token: fresh } = await resolveGrokSubToken(accountName);
+            const headers = new Headers(init?.headers);
+
+            for (const [name, value] of Object.entries(buildCliProxyHeaders({ token: fresh }))) {
+                headers.set(name, value);
+            }
+
+            return fetch(input, { ...init, headers });
+        };
         const provider = createOpenAI({
             baseURL: GROK_CLI_CHAT_PROXY_BASE_URL,
-            apiKey: token,
-            headers: buildCliProxyHeaders({ token }),
+            apiKey: "grok-sub-placeholder",
+            fetch: freshTokenFetch as typeof fetch,
         });
 
         const { GROK_STATIC_CATALOG } = await import("../grok/models");

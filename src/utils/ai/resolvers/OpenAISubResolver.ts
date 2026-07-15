@@ -14,10 +14,23 @@ export class OpenAISubResolver implements AccountResolver {
         const entry = config.getAccount(accountName);
 
         const { createOpenAI } = await import("@ai-sdk/openai");
+        // Per-request token resolve so a long-running process follows CLI /
+        // account refreshes instead of serving the token from detection time.
+        const freshTokenFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+            const fresh = await resolveCodexAccountToken(accountName);
+            const headers = new Headers(init?.headers);
+            headers.set("Authorization", `Bearer ${fresh.token}`);
+
+            if (fresh.accountId) {
+                headers.set("ChatGPT-Account-Id", fresh.accountId);
+            }
+
+            return fetch(input, { ...init, headers });
+        };
         const provider = createOpenAI({
-            apiKey: token,
+            apiKey: "codex-sub-placeholder",
             baseURL: WHAM_BASE_URL,
-            headers: accountId ? { "ChatGPT-Account-Id": accountId } : undefined,
+            fetch: freshTokenFetch as typeof fetch,
         });
 
         const { fetchWhamModels } = await import("../openai/sub-models");

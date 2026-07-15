@@ -14,14 +14,36 @@ export class AnthropicSubResolver implements AccountResolver {
             "@app/utils/claude/subscription-billing"
         );
 
+        // Resolve the token per REQUEST, not at detection time: a long-running
+        // process otherwise keeps serving a token another process has rotated
+        // away (revoked-but-unexpired → upstream 401). On 401, force-refresh
+        // once (fresh disk read + OAuth refresh) and retry.
+        const subscriptionFetch = createSubscriptionFetch();
+        const freshTokenFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+            const call = (bearer: string): Promise<Response> => {
+                const headers = new Headers(init?.headers);
+                headers.set("Authorization", `Bearer ${bearer}`);
+                return subscriptionFetch(input, { ...init, headers });
+            };
+
+            const { token: current } = await resolveAccountToken(accountName);
+            const response = await call(current);
+
+            if (response.status !== 401) {
+                return response;
+            }
+
+            const { token: refreshed } = await resolveAccountToken(accountName, { forceRefresh: true });
+            return call(refreshed);
+        };
+
         const { createAnthropic } = await import("@ai-sdk/anthropic");
         const provider = createAnthropic({
             apiKey: "oauth-placeholder",
             headers: {
-                Authorization: `Bearer ${token}`,
                 "anthropic-beta": SUBSCRIPTION_BETAS,
             },
-            fetch: createSubscriptionFetch(),
+            fetch: freshTokenFetch as typeof fetch,
         });
 
         const { models, config: providerConfig } = await resolveModelsWithPricing("anthropic");
