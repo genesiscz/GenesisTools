@@ -5,6 +5,7 @@ import type {
     JobStage,
     LlmEstimate,
     PipelineJob,
+    QaHistoryItem,
     SummaryFormat,
     SummaryLength,
     SummaryTone,
@@ -14,6 +15,7 @@ import type {
     VideoComment,
     VideoId,
     VideoLongSummary,
+    YtUser,
 } from "@app/youtube/lib/types";
 import type { ExtensionConfig } from "@ext/shared/types";
 
@@ -49,7 +51,13 @@ export type ExtensionRequest =
           mode: "short" | "timestamped" | "long";
           provider?: string;
           model?: string;
-      };
+      }
+    | { type: "api:register"; email: string; password: string }
+    | { type: "api:login"; email: string; password: string }
+    | { type: "api:logout" } // local-only: clears the stored token
+    | { type: "api:me" }
+    | { type: "api:topup"; amount?: number }
+    | { type: "api:qaHistory"; id?: VideoId; limit?: number };
 
 export type ExtensionResponse = { ok: true; data: unknown } | { ok: false; error: string };
 
@@ -78,6 +86,9 @@ export interface ExtensionApiMap {
     "api:askVideo": {
         answer: string;
         citations: Array<{ videoId: string; chunkIdx: number; startSec: number | null; endSec: number | null }>;
+        creditsSpent: number;
+        credits: number;
+        historyId: number;
     };
     "api:startPipeline": { job: PipelineJob };
     "api:getJob": { job: PipelineJob };
@@ -86,4 +97,10 @@ export interface ExtensionApiMap {
         defaults: { summarize?: string | null; qa?: string | null; transcribe?: string | null; embed?: string | null };
     };
     "api:estimate": LlmEstimate;
+    "api:register": { user: YtUser; token: string };
+    "api:login": { user: YtUser; token: string };
+    "api:logout": { ok: true };
+    "api:me": { user: YtUser };
+    "api:topup": { user: YtUser };
+    "api:qaHistory": { items: QaHistoryItem[] };
 }

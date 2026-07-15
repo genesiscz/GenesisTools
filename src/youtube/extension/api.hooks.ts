@@ -155,14 +155,81 @@ export function useGenerateSummary(id: VideoId) {
         onSuccess: (_data, opts) => {
             queryClient.invalidateQueries({ queryKey: ["summary", id, opts.mode] });
             queryClient.invalidateQueries({ queryKey: ["video", id] });
+            queryClient.invalidateQueries({ queryKey: ["me"] });
         },
     });
 }
 
 export function useAskVideo(id: VideoId) {
+    const queryClient = useQueryClient();
+
     return useMutation({
         mutationFn: (vars: { question: string; topK?: number; provider?: string; model?: string }) =>
             send<ExtensionApiMap["api:askVideo"]>({ type: "api:askVideo", id, ...vars }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["me"] });
+            queryClient.invalidateQueries({ queryKey: ["qaHistory", id] });
+        },
+    });
+}
+
+export function useMe(enabled = true) {
+    return useQuery({
+        queryKey: ["me"],
+        queryFn: () => send<ExtensionApiMap["api:me"]>({ type: "api:me" }),
+        retry: false,
+        enabled,
+    });
+}
+
+export function useRegister() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (vars: { email: string; password: string }) =>
+            send<ExtensionApiMap["api:register"]>({ type: "api:register", ...vars }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["me"] }),
+    });
+}
+
+export function useLogin() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (vars: { email: string; password: string }) =>
+            send<ExtensionApiMap["api:login"]>({ type: "api:login", ...vars }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["me"] }),
+    });
+}
+
+export function useLogout() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: () => send<ExtensionApiMap["api:logout"]>({ type: "api:logout" }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["me"] });
+            queryClient.invalidateQueries({ queryKey: ["qaHistory"] });
+        },
+    });
+}
+
+export function useTopup() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (vars: { amount?: number } = {}) =>
+            send<ExtensionApiMap["api:topup"]>({ type: "api:topup", ...vars }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["me"] }),
+    });
+}
+
+export function useQaHistory(id: VideoId | null) {
+    return useQuery({
+        queryKey: ["qaHistory", id],
+        queryFn: () => send<ExtensionApiMap["api:qaHistory"]>({ type: "api:qaHistory", id: id ?? undefined }),
+        retry: false,
+        enabled: id !== null,
     });
 }
 
@@ -220,6 +287,7 @@ export const dataSource: VideoDetailDataSource = {
     useGenerateSummary,
     useAskVideo,
     useEstimate,
+    useQaHistory,
 };
 
 export type { Channel };
