@@ -1,0 +1,17 @@
+{
+  "name": "@genesis/tools-utils",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "GenesisTools pure utils surface for Genesis monorepo consumption. Full GT tree remains under genesis-tools root; this package only exports modules without @app/* aliases.",
+  "exports": {
+    ".": "./index.ts",
+    "./format": "./format.ts",
+    "./array": "./array.ts",
+    "./date": "./date.ts",
+    "./string": "./string.ts"
+  },
+  "scripts": {
+    "typecheck": "echo 'tools-utils: typecheck is owned by GenesisTools root (tsgo)'"
+  }
+}
