@@ -137,6 +137,86 @@ describe("youtube server foundation", () => {
         }
     });
 
+    it("upserts speaker labels and returns them from the transcript GET", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "youtube-server-routes-"));
+        const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
+
+        try {
+            handle.youtube.db.upsertChannel({ handle: "@mkbhd" });
+            handle.youtube.db.upsertVideo({ id: "abc123def45", channelHandle: "@mkbhd", title: "Interview" });
+            handle.youtube.db.saveTranscript({
+                videoId: "abc123def45",
+                lang: "en",
+                source: "ai",
+                text: "hello there",
+                segments: [
+                    { text: "hello", start: 0, end: 1, speaker: 0 },
+                    { text: "there", start: 1, end: 2, speaker: 1 },
+                ],
+                durationSec: 2,
+            });
+            handle.youtube.db.createUser({
+                email: "speakers@example.com",
+                passwordHash: "hash",
+                apiToken: "ytu_speakers_test",
+            });
+            const authHeaders = { "Content-Type": "application/json", Authorization: "Bearer ytu_speakers_test" };
+
+            const unauthedResponse = await fetch(
+                `http://localhost:${handle.port}/api/v1/videos/abc123def45/speakers`,
+                {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: SafeJSON.stringify({ speakers: [{ idx: 0, label: "Host" }] }),
+                }
+            );
+
+            expect(unauthedResponse.status).toBe(401);
+
+            const putResponse = await fetch(`http://localhost:${handle.port}/api/v1/videos/abc123def45/speakers`, {
+                method: "PUT",
+                headers: authHeaders,
+                body: SafeJSON.stringify({
+                    speakers: [
+                        { idx: 0, label: "Host" },
+                        { idx: 1, label: "Guest" },
+                    ],
+                }),
+            });
+            const putBody = await putResponse.json();
+
+            expect(putResponse.status).toBe(200);
+            expect(putBody.speakerLabels).toEqual({ "0": "Host", "1": "Guest" });
+
+            const getResponse = await fetch(`http://localhost:${handle.port}/api/v1/videos/abc123def45/transcript`);
+            const getBody = await getResponse.json();
+
+            expect(getResponse.status).toBe(200);
+            expect(getBody.speakerLabels).toEqual({ "0": "Host", "1": "Guest" });
+            expect(getBody.transcript.segments[0].speaker).toBe(0);
+
+            const renameResponse = await fetch(`http://localhost:${handle.port}/api/v1/videos/abc123def45/speakers`, {
+                method: "PUT",
+                headers: authHeaders,
+                body: SafeJSON.stringify({ speakers: [{ idx: 1, label: "Expert" }] }),
+            });
+            const renameBody = await renameResponse.json();
+
+            expect(renameBody.speakerLabels).toEqual({ "0": "Host", "1": "Expert" });
+
+            const badResponse = await fetch(`http://localhost:${handle.port}/api/v1/videos/abc123def45/speakers`, {
+                method: "PUT",
+                headers: authHeaders,
+                body: SafeJSON.stringify({ speakers: [{ idx: -1, label: "" }] }),
+            });
+
+            expect(badResponse.status).toBe(400);
+        } finally {
+            await handle.stop();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
     it("enqueues, lists, reads, and cancels pipeline jobs", async () => {
         const dir = await mkdtemp(join(tmpdir(), "youtube-server-routes-"));
         const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });

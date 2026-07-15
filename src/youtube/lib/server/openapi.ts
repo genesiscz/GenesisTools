@@ -619,7 +619,15 @@ function buildPaths(): Record<string, OpenApiPathItem> {
                             "application/json": {
                                 schema: {
                                     type: "object",
-                                    properties: { transcript: ref("Transcript") },
+                                    properties: {
+                                        transcript: ref("Transcript"),
+                                        speakerLabels: {
+                                            type: "object",
+                                            description:
+                                                "Custom speaker names keyed by diarized speaker index (empty when none set).",
+                                            additionalProperties: { type: "string" },
+                                        },
+                                    },
                                     required: ["transcript"],
                                 },
                             },
@@ -628,6 +636,40 @@ function buildPaths(): Record<string, OpenApiPathItem> {
                             "text/vtt": { schema: { type: "string" } },
                         },
                     },
+                    "404": errorResponse,
+                },
+            },
+        },
+        "/api/v1/videos/{id}/speakers": {
+            put: {
+                operationId: "setVideoSpeakers",
+                summary: "Upsert custom labels for diarized speakers",
+                description: "Stores per-video display names for diarized speaker indices (chips in the transcript UI).",
+                tags: ["videos"],
+                parameters: [videoIdParam],
+                requestBody: jsonBody({
+                    type: "object",
+                    properties: {
+                        speakers: arrayOf({
+                            type: "object",
+                            properties: {
+                                idx: { type: "integer", description: "Diarized speaker index (0-based)." },
+                                label: { type: "string", description: "Display name for the speaker." },
+                            },
+                            required: ["idx", "label"],
+                        }),
+                    },
+                    required: ["speakers"],
+                }),
+                responses: {
+                    "200": jsonResponse("Updated label map", {
+                        type: "object",
+                        properties: {
+                            speakerLabels: { type: "object", additionalProperties: { type: "string" } },
+                        },
+                        required: ["speakerLabels"],
+                    }),
+                    "400": errorResponse,
                     "404": errorResponse,
                 },
             },
