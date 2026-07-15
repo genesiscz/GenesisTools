@@ -230,87 +230,87 @@ export function VideoDetailTabs({
 
     return (
         <div ref={rootRef} className="contents">
-        <Tabs
-            value={active}
-            onValueChange={(value) => onActiveChange(value as VideoDetailTab)}
-            className={chromeless ? "yt-tabs-root p-4" : "yt-tabs-root yt-panel rounded-3xl p-4"}
-        >
-            <TabsList className="grid grid-cols-3 gap-2 lg:grid-cols-5">
-                <TabsTrigger value="insights">Insights</TabsTrigger>
-                <TabsTrigger value="summary">Summary</TabsTrigger>
-                <TabsTrigger value="ask">Ask</TabsTrigger>
-                <TabsTrigger value="comments">Comments</TabsTrigger>
-                <TabsTrigger value="transcript">Transcript</TabsTrigger>
-            </TabsList>
-            <TabsContent value="insights" className="yt-tab-pane">
-                <InsightsTab
-                    videoId={videoId}
-                    onSeek={onSeek}
-                    useSummary={ds.useSummary}
-                    useGenerateSummary={ds.useGenerateSummary}
-                    useEstimate={ds.useEstimate}
-                    devMode={devMode}
-                    modelPresets={modelPresets}
-                    pipelineProgress={pipelineProgress}
-                    partialTimestamped={partialSummaries?.timestamped}
-                    streaming={streamingMode === "timestamped"}
-                />
-            </TabsContent>
-            <TabsContent value="summary" className="yt-tab-pane">
-                <SummaryTab
-                    videoId={videoId}
-                    useSummary={ds.useSummary}
-                    useGenerateSummary={ds.useGenerateSummary}
-                    useEstimate={ds.useEstimate}
-                    useCreateShare={ds.useCreateShare}
-                    useListPresets={ds.useListPresets}
-                    useCreatePreset={ds.useCreatePreset}
-                    devMode={devMode}
-                    modelPresets={modelPresets}
-                    pipelineProgress={pipelineProgress}
-                    partialLong={partialSummaries?.long}
-                    streaming={streamingMode === "long"}
-                    onSeek={onSeek}
-                    playerTime={playerTime}
-                />
-            </TabsContent>
-            <TabsContent value="ask" className="yt-tab-pane">
-                <AskTab
-                    videoId={videoId}
-                    onSeek={onSeek}
-                    useAskVideo={ds.useAskVideo}
-                    useQaHistory={ds.useQaHistory}
-                    useCreateShare={ds.useCreateShare}
-                    useListPresets={ds.useListPresets}
-                    useCreatePreset={ds.useCreatePreset}
-                    onRequireLogin={onRequireLogin}
-                    useComments={ds.useComments}
-                    runPipeline={runPipeline}
-                    pipelineProgress={pipelineProgress}
-                    onShowComment={showComment}
-                    onOpenWatch={onOpenWatch}
-                />
-            </TabsContent>
-            <TabsContent value="comments" className="yt-tab-pane">
-                <CommentsTab
-                    videoId={videoId}
-                    useComments={ds.useComments}
-                    runPipeline={runPipeline}
-                    pipelineProgress={pipelineProgress}
-                />
-            </TabsContent>
-            <TabsContent value="transcript" className="yt-tab-pane">
-                <TranscriptTab
-                    videoId={videoId}
-                    onSeek={onSeek}
-                    useTranscript={ds.useTranscript}
-                    useSetSpeakers={ds.useSetSpeakers}
-                    runPipeline={runPipeline}
-                    pipelineProgress={pipelineProgress}
-                    playerTime={playerTime}
-                />
-            </TabsContent>
-        </Tabs>
+            <Tabs
+                value={active}
+                onValueChange={(value) => onActiveChange(value as VideoDetailTab)}
+                className={chromeless ? "yt-tabs-root p-4" : "yt-tabs-root yt-panel rounded-3xl p-4"}
+            >
+                <TabsList className="grid grid-cols-3 gap-2 lg:grid-cols-5">
+                    <TabsTrigger value="insights">Insights</TabsTrigger>
+                    <TabsTrigger value="summary">Summary</TabsTrigger>
+                    <TabsTrigger value="ask">Ask</TabsTrigger>
+                    <TabsTrigger value="comments">Comments</TabsTrigger>
+                    <TabsTrigger value="transcript">Transcript</TabsTrigger>
+                </TabsList>
+                <TabsContent value="insights" className="yt-tab-pane">
+                    <InsightsTab
+                        videoId={videoId}
+                        onSeek={onSeek}
+                        useSummary={ds.useSummary}
+                        useGenerateSummary={ds.useGenerateSummary}
+                        useEstimate={ds.useEstimate}
+                        devMode={devMode}
+                        modelPresets={modelPresets}
+                        pipelineProgress={pipelineProgress}
+                        partialTimestamped={partialSummaries?.timestamped}
+                        streaming={streamingMode === "timestamped"}
+                    />
+                </TabsContent>
+                <TabsContent value="summary" className="yt-tab-pane">
+                    <SummaryTab
+                        videoId={videoId}
+                        useSummary={ds.useSummary}
+                        useGenerateSummary={ds.useGenerateSummary}
+                        useEstimate={ds.useEstimate}
+                        useCreateShare={ds.useCreateShare}
+                        useListPresets={ds.useListPresets}
+                        useCreatePreset={ds.useCreatePreset}
+                        devMode={devMode}
+                        modelPresets={modelPresets}
+                        pipelineProgress={pipelineProgress}
+                        partialLong={partialSummaries?.long}
+                        streaming={streamingMode === "long"}
+                        onSeek={onSeek}
+                        playerTime={playerTime}
+                    />
+                </TabsContent>
+                <TabsContent value="ask" className="yt-tab-pane">
+                    <AskTab
+                        videoId={videoId}
+                        onSeek={onSeek}
+                        useAskVideo={ds.useAskVideo}
+                        useQaHistory={ds.useQaHistory}
+                        useCreateShare={ds.useCreateShare}
+                        useListPresets={ds.useListPresets}
+                        useCreatePreset={ds.useCreatePreset}
+                        onRequireLogin={onRequireLogin}
+                        useComments={ds.useComments}
+                        runPipeline={runPipeline}
+                        pipelineProgress={pipelineProgress}
+                        onShowComment={showComment}
+                        onOpenWatch={onOpenWatch}
+                    />
+                </TabsContent>
+                <TabsContent value="comments" className="yt-tab-pane">
+                    <CommentsTab
+                        videoId={videoId}
+                        useComments={ds.useComments}
+                        runPipeline={runPipeline}
+                        pipelineProgress={pipelineProgress}
+                    />
+                </TabsContent>
+                <TabsContent value="transcript" className="yt-tab-pane">
+                    <TranscriptTab
+                        videoId={videoId}
+                        onSeek={onSeek}
+                        useTranscript={ds.useTranscript}
+                        useSetSpeakers={ds.useSetSpeakers}
+                        runPipeline={runPipeline}
+                        pipelineProgress={pipelineProgress}
+                        playerTime={playerTime}
+                    />
+                </TabsContent>
+            </Tabs>
         </div>
     );
 }
