@@ -39,7 +39,13 @@ describe("artifact-access pricing matrix", () => {
         const b = createUser("b@example.com");
 
         // A generates: artifact stored + access row at full price.
-        db.setVideoSummary(VIDEO, "long", { tldr: "the gist of it", keyPoints: [], learnings: [], chapters: [], conclusion: null });
+        db.setVideoSummary(VIDEO, "long", {
+            tldr: "the gist of it",
+            keyPoints: [],
+            learnings: [],
+            chapters: [],
+            conclusion: null,
+        });
         grantArtifactAccess(db, {
             userId: a.id,
             kind: "summary:long",

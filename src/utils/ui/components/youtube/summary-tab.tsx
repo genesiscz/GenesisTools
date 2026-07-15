@@ -147,7 +147,10 @@ export function SummaryTab({
                 />
             ) : null}
             {lockedInfo !== null ? (
-                <div data-testid="summary-locked" className="space-y-3 rounded-2xl border border-white/8 bg-black/20 p-3">
+                <div
+                    data-testid="summary-locked"
+                    className="space-y-3 rounded-2xl border border-white/8 bg-black/20 p-3"
+                >
                     <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-secondary">summary</p>
                     <p className="line-clamp-3 text-sm text-muted-foreground [mask-image:linear-gradient(to_bottom,black_40%,transparent)]">
                         {lockedInfo.preview.tldr}

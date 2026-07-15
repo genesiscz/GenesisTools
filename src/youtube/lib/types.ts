@@ -69,9 +69,9 @@ export type {
     Video,
     VideoId,
     VideoLongSummary,
-    VideoReport,
     VideoLongSummaryChapter,
     VideoMetadata,
+    VideoReport,
 } from "@app/youtube/lib/video.types";
 export type { YoutubeDeps, YoutubeOptions, YoutubeServices } from "@app/youtube/lib/youtube.types";
 export type {

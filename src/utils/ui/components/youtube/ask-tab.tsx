@@ -174,11 +174,7 @@ function ExchangeBody({
                             <div key={videoId}>
                                 <div className="mt-3 flex items-center gap-2">
                                     {meta?.thumbUrl ? (
-                                        <img
-                                            src={meta.thumbUrl}
-                                            alt=""
-                                            className="h-6 w-10 rounded-md object-cover"
-                                        />
+                                        <img src={meta.thumbUrl} alt="" className="h-6 w-10 rounded-md object-cover" />
                                     ) : null}
                                     <span className="truncate text-sm font-medium">{meta?.title ?? videoId}</span>
                                     {meta?.uploadDate ? (
@@ -373,8 +369,8 @@ export function AskTab({
                     {scope === "channel" ? (
                         <>
                             Searches across this channel's indexed videos ·{" "}
-                            <span className="tabular-nums text-foreground/80">{CREDIT_COSTS["qa:channel"]} 💎</span>{" "}
-                            per ask
+                            <span className="tabular-nums text-foreground/80">{CREDIT_COSTS["qa:channel"]} 💎</span> per
+                            ask
                         </>
                     ) : (
                         "Answers come from the transcript (semantic search + your configured LLM), with timestamp citations."
