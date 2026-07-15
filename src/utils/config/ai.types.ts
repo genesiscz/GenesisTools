@@ -8,10 +8,16 @@ export type AIProvider =
     | "google"
     | "groq"
     | "elevenlabs"
-    | "huggingface";
+    | "huggingface"
+    | "xai" // API key (xai-...)
+    | "grok-sub"; // Grok CLI subscription (JWT live-read from ~/.grok/auth.json; the Grok CLI owns refresh)
 
 export interface AIAccountTokens {
     apiKey?: string; // Standard API key
+    /** Env variable NAME holding the API key — a live reference, the key is never copied into the config. Used when `apiKey` is unset. */
+    apiKeyEnv?: string;
+    /** grok-sub: Grok-CLI-format auth file to live-read the JWT from (default `~/.grok/auth.json`). Reference, never copied. */
+    authFile?: string;
     accessToken?: string; // OAuth access token
     refreshToken?: string; // OAuth refresh token
     expiresAt?: number; // Token expiry (Unix ms)

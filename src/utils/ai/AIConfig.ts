@@ -9,6 +9,7 @@ import type {
     ProviderConfig,
     TaskConfig,
 } from "@app/utils/config/ai.types";
+import { env } from "@app/utils/env";
 import { Storage } from "@app/utils/storage/storage";
 
 const DEFAULT_TASKS: Record<string, TaskConfig> = {
@@ -106,6 +107,40 @@ export class AIConfig {
 
     getAccountsByApp(app: string): AIAccountEntry[] {
         return this.data.accounts.filter((a) => a.apps?.includes(app)).map((a) => structuredClone(a));
+    }
+
+    /**
+     * API key for an account: stored `apiKey` wins, otherwise the env variable
+     * named by `apiKeyEnv` is read live (reference semantics — the key is
+     * never copied into the config file).
+     */
+    static resolveApiKey(entry: AIAccountEntry): string | undefined {
+        if (entry.tokens.apiKey) {
+            return entry.tokens.apiKey;
+        }
+
+        if (entry.tokens.apiKeyEnv) {
+            return env.getTrimmed(entry.tokens.apiKeyEnv as never);
+        }
+
+        return undefined;
+    }
+
+    /** First account of `provider` whose API key resolves (stored or env-referenced). */
+    getProviderApiKey(provider: string): string | undefined {
+        for (const account of this.data.accounts) {
+            if (account.provider !== provider) {
+                continue;
+            }
+
+            const key = AIConfig.resolveApiKey(account);
+
+            if (key) {
+                return key;
+            }
+        }
+
+        return undefined;
     }
 
     /**

@@ -69,6 +69,11 @@ export interface AiProxyRuntimeState {
 }
 
 export interface AiProxyGrokAccountConfig {
+    /**
+     * Name of the grok-sub account in ~/.genesis-tools/ai/config.json to bill
+     * (its `authFile` reference is live-read). Wins over `authPath`.
+     */
+    accountName?: string;
     authPath?: string;
 }
 

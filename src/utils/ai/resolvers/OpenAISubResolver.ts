@@ -62,6 +62,7 @@ export class OpenAISubResolver implements AccountResolver {
                 envKey: "",
                 priority: 1,
             },
+            subscription: true,
             account: { name: entry?.name ?? accountName, label: entry?.label },
         };
     }

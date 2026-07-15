@@ -46,12 +46,14 @@ export async function ensureResolversInitialized(): Promise<void> {
         { OpenAIApiKeyResolver },
         { OpenAISubResolver },
         { HuggingFaceResolver },
+        { GrokSubResolver },
     ] = await Promise.all([
         import("./AnthropicSubResolver"),
         import("./AnthropicApiKeyResolver"),
         import("./OpenAIApiKeyResolver"),
         import("./OpenAISubResolver"),
         import("./HuggingFaceResolver"),
+        import("./GrokSubResolver"),
     ]);
 
     registerResolver(new AnthropicSubResolver());
@@ -59,6 +61,7 @@ export async function ensureResolversInitialized(): Promise<void> {
     registerResolver(new OpenAIApiKeyResolver());
     registerResolver(new OpenAISubResolver());
     registerResolver(new HuggingFaceResolver());
+    registerResolver(new GrokSubResolver());
 
     initialized = true;
 }

@@ -314,6 +314,14 @@ Key SDK type files: `sdk.d.ts` (session/message/streaming types), `sdk-tools.d.t
 -   **TypeScript Config**: Strict mode enabled, ES modules, no emit (Bun runs TS directly)
 -   **Logging**: Check `~/.genesis-tools/logs/` for debug information if tools encounter errors
 
+## LLM Model Library & Pricing (one place — do not add new rate tables)
+
+- **Canonical model list + pricing**: `providerManager.detectProviders()` (`src/ask/providers/ProviderManager.ts`) returns `ModelInfo[]` with `pricing?: PricingInfo` (`inputPer1M`/`outputPer1M`, `src/ask/types/provider.ts`). Pricing is populated by `dynamicPricingManager.getPricing(provider, modelId)` (`src/ask/providers/DynamicPricing.ts`), sourced from LiteLLM's `model_prices_and_context_window.json` (cached as `litellm-pricing.json`) + OpenRouter.
+- **Cost math (pure)**: `src/utils/ai/llm-cost.ts` — `estimateLlmCallCostUsd({pricing, inputTokens, outputTokens})`, `estimateSpeechTokens(durationSec)`. No rates in there, math only.
+- **Deliberate exception**: `src/ai-proxy/lib/billing/pricing.ts` keeps a small STATIC table — it's the ai-proxy client-ledger invoicing source of truth (deterministic, offline). Don't "deduplicate" it into the dynamic path, and don't copy it anywhere else.
+- Resolving a user's provider/model choice (default account, `-sub` suffix handling): `resolveProviderChoice()` in `src/youtube/lib/provider-choice.ts` wraps `modelSelector`/`providerManager`.
+- **Accounts** live in `~/.genesis-tools/ai/config.json` (`AIConfig`, types in `src/utils/config/ai.types.ts`). Subscription billing is flagged by `DetectedProvider.subscription` (set by the `*SubResolver`s in `src/utils/ai/resolvers/`) — never infer it from name suffixes. API-key accounts may REFERENCE an env var via `tokens.apiKeyEnv` (resolved by `AIConfig.resolveApiKey`, never copied); `grok-sub` accounts reference the Grok CLI auth file via `tokens.authFile` (default `~/.grok/auth.json`, resolved by `resolveGrokSubToken` in `src/utils/ai/grok/account.ts`). ai-proxy's subscription providers bill these same accounts by `accountName` reference.
+
 ## Database Infrastructure
 
 - **Storage**: `src/utils/storage/storage.ts` owns per-tool config/cache directories under `~/.genesis-tools/<tool>/`; wrap it with tool-specific subclasses such as `IndexerStorage`.

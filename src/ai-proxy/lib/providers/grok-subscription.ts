@@ -4,7 +4,12 @@ import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/typ
 import { prepareGrokUpstreamBody } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
 import { logger } from "@app/logger";
-import { formatBillingSummary, GrokAuthExpiredError, GrokSubscriptionClient } from "@app/utils/ai/grok";
+import {
+    formatBillingSummary,
+    GrokAuthExpiredError,
+    GrokSubscriptionClient,
+    resolveGrokSubToken,
+} from "@app/utils/ai/grok";
 import { GROK_CLI_CHAT_PROXY_BASE_URL } from "@app/utils/ai/grok/paths";
 import { SafeJSON } from "@app/utils/json";
 
@@ -21,6 +26,20 @@ export class GrokSubscriptionProvider implements ProxyProvider {
     }
 
     static async create(account: AiProxyAccountConfig): Promise<GrokSubscriptionProvider> {
+        // grok-sub account in ~/.genesis-tools/ai/config.json — resolves the
+        // token via the account's authFile reference (same store the other
+        // subscription providers bill through).
+        if (account.grok?.accountName) {
+            const { token, authPath } = await resolveGrokSubToken(account.grok.accountName);
+            const client = new GrokSubscriptionClient({
+                token,
+                authPath,
+                baseUrl: account.baseUrl ?? GROK_CLI_CHAT_PROXY_BASE_URL,
+            });
+
+            return new GrokSubscriptionProvider(account, client);
+        }
+
         const authPath = resolveGrokAuthPath(account);
         const fromFile = await GrokSubscriptionClient.fromAuthFile(authPath);
 

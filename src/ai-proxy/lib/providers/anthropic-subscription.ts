@@ -113,20 +113,37 @@ export class AnthropicSubscriptionProvider implements ProxyProvider {
         }
 
         const started = performance.now();
-        let upstream: Response;
-        try {
-            upstream = await this.upstreamFetch(ANTHROPIC_MESSAGES_URL, {
+        const callUpstream = (bearer: string): Promise<Response> =>
+            this.upstreamFetch(ANTHROPIC_MESSAGES_URL, {
                 method: "POST",
                 headers: {
                     "content-type": "application/json",
                     "anthropic-version": ANTHROPIC_VERSION,
                     "anthropic-beta": SUBSCRIPTION_BETAS,
-                    Authorization: `Bearer ${token}`,
+                    Authorization: `Bearer ${bearer}`,
                     Accept: streaming ? "text/event-stream" : "application/json",
                 },
                 body: SafeJSON.stringify(anthropicBody),
                 signal: req.signal,
             });
+
+        let upstream: Response;
+        try {
+            upstream = await callUpstream(token);
+
+            // A long-running proxy can hold a revoked-but-unexpired token:
+            // another process rotating the OAuth chain revokes our cached
+            // access token while `expiresAt` still looks valid, so the fast
+            // path in resolveAccountToken never re-reads disk. On 401,
+            // force-resolve once (fresh disk read + refresh if needed) and retry.
+            if (upstream.status === 401) {
+                logger.warn(
+                    { account: this.account.name, billingAccount: this.billingAccountName },
+                    "ai-proxy: anthropic upstream 401 — force-refreshing subscription token and retrying once"
+                );
+                ({ token } = await resolveAccountToken(this.billingAccountName, { forceRefresh: true }));
+                upstream = await callUpstream(token);
+            }
         } catch (err) {
             const aborted = clientAbortResponse(err, { err, account: this.account.name, model: concreteModel });
             if (aborted) {

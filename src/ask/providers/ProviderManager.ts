@@ -59,13 +59,15 @@ export class ProviderManager {
                 continue;
             }
 
-            const apiKey = env.ai.getByEnvKey(config.envKey);
+            // Env var first, then an AIConfig account of this provider type
+            // (whose key may itself be an `apiKeyEnv` reference).
+            const apiKey = env.ai.getByEnvKey(config.envKey) ?? aiConfig.getProviderApiKey(config.name);
             if (!apiKey) {
                 continue;
             }
 
             try {
-                const provider = await this.createProvider(config);
+                const provider = await this.createProvider(config, apiKey);
 
                 if (provider) {
                     const models = await this.getAvailableModels(config, provider);
@@ -96,6 +98,11 @@ export class ProviderManager {
         // Check for OpenAI subscription (Codex) if not already detected via env key
         if (!this.detectedProviders.has("openai") && (!targetProvider || targetProvider === "openai")) {
             await this.detectOpenAISubscription(detected);
+        }
+
+        // Check for a Grok CLI subscription (grok-sub account in AIConfig)
+        if (!this.detectedProviders.has("grok") && (!targetProvider || targetProvider === "grok")) {
+            await this.detectGrokSubscription(detected);
         }
 
         this.initialized = true;
@@ -167,12 +174,13 @@ export class ProviderManager {
             const models = await this.getAvailableModels(anthropicConfig, sdkProvider);
             const detectedProvider: DetectedProvider = {
                 name: "anthropic",
-                type: "anthropic",
+                type: "anthropic-sub",
                 key: `${token.slice(0, 20)}...`,
                 provider: sdkProvider,
                 models,
                 config: anthropicConfig,
                 systemPromptPrefix: SUBSCRIPTION_SYSTEM_PREFIX,
+                subscription: true,
             };
 
             detected.push(detectedProvider);
@@ -207,6 +215,30 @@ export class ProviderManager {
             return await getResolver("anthropic-sub").resolve(account.name);
         } catch {
             return null;
+        }
+    }
+
+    private async detectGrokSubscription(detected: DetectedProvider[]): Promise<void> {
+        try {
+            const { AIConfig } = await import("@app/utils/ai/AIConfig");
+            const aiConfig = await AIConfig.load();
+            const subAccounts = aiConfig.getAccountsByProvider("grok-sub");
+
+            if (subAccounts.length === 0) {
+                return;
+            }
+
+            const { ensureResolversInitialized, getResolver } = await import("@app/utils/ai/resolvers");
+            await ensureResolversInitialized();
+            const provider = await getResolver("grok-sub").resolve(subAccounts[0].name);
+
+            detected.push(provider);
+            this.detectedProviders.set("grok", provider);
+
+            const hint = subAccounts[0].label ? ` (${subAccounts[0].label})` : "";
+            askUI().logDetectedSubscription({ provider: "grok", hint });
+        } catch (error) {
+            logger.warn(`Failed to detect Grok subscription: ${error}`);
         }
     }
 
@@ -272,33 +304,38 @@ export class ProviderManager {
         }
     }
 
-    private async createProvider(config: ProviderConfig): Promise<AiSdkProvider> {
+    private async createProvider(config: ProviderConfig, apiKey?: string): Promise<AiSdkProvider> {
+        // Explicit key (env var or AIConfig account, possibly env-referenced via
+        // `apiKeyEnv`) — the bare SDK singletons only read their own env vars,
+        // so account-sourced keys need the create* factories.
+        const key = apiKey ?? env.ai.getByEnvKey(config.envKey);
+
         try {
             switch (config.type) {
                 case "openai": {
-                    const { openai } = await import("@ai-sdk/openai");
-                    return openai;
+                    const { createOpenAI, openai } = await import("@ai-sdk/openai");
+                    return key ? createOpenAI({ apiKey: key }) : openai;
                 }
 
                 case "anthropic": {
-                    const { anthropic } = await import("@ai-sdk/anthropic");
-                    return anthropic;
+                    const { anthropic, createAnthropic } = await import("@ai-sdk/anthropic");
+                    return key ? createAnthropic({ apiKey: key }) : anthropic;
                 }
 
                 case "google": {
-                    const { google } = await import("@ai-sdk/google");
-                    return google;
+                    const { createGoogleGenerativeAI, google } = await import("@ai-sdk/google");
+                    return key ? createGoogleGenerativeAI({ apiKey: key }) : google;
                 }
 
                 case "groq": {
-                    const { groq } = await import("@ai-sdk/groq");
-                    return groq;
+                    const { createGroq, groq } = await import("@ai-sdk/groq");
+                    return key ? createGroq({ apiKey: key }) : groq;
                 }
 
                 case "openai-compatible": {
                     const { createOpenAI } = await import("@ai-sdk/openai");
                     return createOpenAI({
-                        apiKey: env.ai.getByEnvKey(config.envKey),
+                        apiKey: key,
                         baseURL: config.baseURL,
                     });
                 }

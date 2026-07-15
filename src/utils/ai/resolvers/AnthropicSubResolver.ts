@@ -28,12 +28,13 @@ export class AnthropicSubResolver implements AccountResolver {
 
         return {
             name: "anthropic",
-            type: "anthropic",
+            type: "anthropic-sub",
             key: `${token.slice(0, 20)}...`,
             provider,
             models,
             config: providerConfig,
             systemPromptPrefix: SUBSCRIPTION_SYSTEM_PREFIX,
+            subscription: true,
             account: { name: account.name, label: account.label },
         };
     }
