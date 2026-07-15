@@ -48,6 +48,7 @@ export interface VideoReport {
 export type SummaryTone = "insightful" | "funny" | "actionable" | "controversial";
 export type SummaryFormat = "list" | "qa";
 export type SummaryLength = "short" | "auto" | "detailed";
+export type SummaryMode = "short" | "timestamped" | "long";
 
 export interface VideoMetadata {
     id: VideoId;

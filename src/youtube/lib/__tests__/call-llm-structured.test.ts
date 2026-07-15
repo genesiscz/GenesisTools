@@ -4,9 +4,11 @@ import { toLanguageModelUsage } from "@ask/utils/helpers";
 import { z } from "zod";
 
 const generateObjectMock = mock();
+const streamObjectMock = mock();
 
 mock.module("ai", () => ({
     generateObject: (...args: unknown[]) => generateObjectMock(...args),
+    streamObject: (...args: unknown[]) => streamObjectMock(...args),
     generateText: () => {
         throw new Error("generateText should not be called by callLLMStructured");
     },
@@ -34,11 +36,19 @@ mock.module("@app/utils/ai/prompt-caching", () => ({
 
 beforeEach(() => {
     generateObjectMock.mockReset();
+    streamObjectMock.mockReset();
 });
 
 afterEach(() => {
     generateObjectMock.mockReset();
+    streamObjectMock.mockReset();
 });
+
+async function* partialsOf(...values: unknown[]): AsyncGenerator<unknown> {
+    for (const value of values) {
+        yield value;
+    }
+}
 
 describe("callLLMStructured", () => {
     it("returns the typed object, JSON-stringified content, and usage", async () => {
@@ -82,5 +92,79 @@ describe("callLLMStructured", () => {
                 schema: z.object({ a: z.string() }),
             })
         ).rejects.toThrow("schema mismatch");
+    });
+
+    it("streams partials through onPartial and resolves the final object", async () => {
+        const { callLLMStructured } = await import("@app/utils/ai/call-llm");
+        const fakeUsage = toLanguageModelUsage({ inputTokens: 10, outputTokens: 5, totalTokens: 15 });
+        streamObjectMock.mockReturnValueOnce({
+            partialObjectStream: partialsOf({ tldr: "he" }, { tldr: "hello" }),
+            object: Promise.resolve({ tldr: "hello" }),
+            usage: Promise.resolve(fakeUsage),
+        });
+
+        const partials: unknown[] = [];
+        const result = await callLLMStructured({
+            systemPrompt: "x",
+            userPrompt: "y",
+            providerChoice: fakeProviderChoice,
+            schema: z.object({ tldr: z.string() }),
+            onPartial: (partial) => partials.push(partial),
+        });
+
+        expect(partials).toEqual([{ tldr: "he" }, { tldr: "hello" }]);
+        expect(result.object).toEqual({ tldr: "hello" });
+        expect(result.usage).toEqual(fakeUsage);
+        expect(generateObjectMock).not.toHaveBeenCalled();
+    });
+
+    it("falls back to generateObject when streaming fails before the first chunk", async () => {
+        const { callLLMStructured } = await import("@app/utils/ai/call-llm");
+        streamObjectMock.mockImplementationOnce(() => {
+            throw new Error("streaming unsupported");
+        });
+        generateObjectMock.mockResolvedValueOnce({ object: { tldr: "fallback" }, usage: undefined });
+
+        const partials: unknown[] = [];
+        const result = await callLLMStructured({
+            systemPrompt: "x",
+            userPrompt: "y",
+            providerChoice: fakeProviderChoice,
+            schema: z.object({ tldr: z.string() }),
+            onPartial: (partial) => partials.push(partial),
+        });
+
+        expect(partials).toEqual([]);
+        expect(result.object).toEqual({ tldr: "fallback" });
+        expect(generateObjectMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("propagates a mid-stream error after the first chunk (no fallback)", async () => {
+        const { callLLMStructured } = await import("@app/utils/ai/call-llm");
+        async function* failingStream(): AsyncGenerator<unknown> {
+            yield { tldr: "he" };
+            throw new Error("stream died");
+        }
+
+        const rejectedObject = Promise.reject(new Error("stream died"));
+        const rejectedUsage = Promise.reject(new Error("stream died"));
+        rejectedObject.catch(() => {});
+        rejectedUsage.catch(() => {});
+        streamObjectMock.mockReturnValueOnce({
+            partialObjectStream: failingStream(),
+            object: rejectedObject,
+            usage: rejectedUsage,
+        });
+
+        await expect(
+            callLLMStructured({
+                systemPrompt: "x",
+                userPrompt: "y",
+                providerChoice: fakeProviderChoice,
+                schema: z.object({ tldr: z.string() }),
+                onPartial: () => {},
+            })
+        ).rejects.toThrow("stream died");
+        expect(generateObjectMock).not.toHaveBeenCalled();
     });
 });

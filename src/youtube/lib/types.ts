@@ -64,6 +64,7 @@ export { CREDIT_COSTS, InsufficientCreditsError, REUSE_COST, STARTING_CREDITS } 
 export type {
     SummaryFormat,
     SummaryLength,
+    SummaryMode,
     SummaryTone,
     TimestampedSummaryEntry,
     Video,

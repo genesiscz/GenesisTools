@@ -20,6 +20,7 @@ const PIPELINE_EVENTS: JobEvent["type"][] = [
     "stage:started",
     "stage:progress",
     "stage:completed",
+    "summary:partial",
     "job:completed",
     "job:failed",
     "job:cancelled",

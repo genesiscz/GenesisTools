@@ -1,3 +1,5 @@
+import type { SummaryMode } from "@app/youtube/lib/video.types";
+
 export type JobStage =
     | "discover"
     | "metadata"
@@ -37,6 +39,7 @@ export type JobEvent =
     | { type: "stage:started"; jobId: number; stage: JobStage }
     | { type: "stage:progress"; jobId: number; stage: JobStage; progress: number; message?: string }
     | { type: "stage:completed"; jobId: number; stage: JobStage }
+    | { type: "summary:partial"; jobId: number; videoId: string; mode: SummaryMode; partial: unknown }
     | { type: "job:completed"; job: PipelineJob }
     | { type: "job:failed"; job: PipelineJob; error: string }
     | { type: "job:cancelled"; jobId: number }
