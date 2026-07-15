@@ -30,6 +30,7 @@ export type {
     StageHandler,
     StageHandlerCtx,
 } from "@app/youtube/lib/pipeline.types";
+export type { PresetKind, PromptPreset } from "@app/youtube/lib/presets.types";
 export type {
     AskCitation,
     AskOpts,

@@ -4,6 +4,7 @@ import { LlmConfirmDialog, type ModelPreset } from "@app/utils/ui/components/you
 import { Loading } from "@app/utils/ui/components/youtube/loading";
 import { LongSummaryView } from "@app/utils/ui/components/youtube/long-summary-view";
 import { ShareButton } from "@app/utils/ui/components/youtube/share-button";
+import { StyleSelect } from "@app/utils/ui/components/youtube/style-select";
 import {
     DEFAULT_SUMMARY_CONTROLS,
     SummaryControlsBar,
@@ -29,6 +30,7 @@ export interface SummaryTabProps {
             model?: string;
             tone?: SummaryControlsState["tone"];
             length?: SummaryControlsState["length"];
+            presetId?: number;
         }) => Promise<{ long?: VideoLongSummary | null; cached: boolean; jobId?: number }>;
         isPending: boolean;
         error?: Error | null;
@@ -38,6 +40,8 @@ export interface SummaryTabProps {
         opts: { mode: "short" | "timestamped" | "long"; provider?: string; model?: string; enabled?: boolean }
     ) => { data: LlmEstimate | undefined; isPending: boolean };
     useCreateShare?: VideoDetailDataSource["useCreateShare"];
+    useListPresets?: VideoDetailDataSource["useListPresets"];
+    useCreatePreset?: VideoDetailDataSource["useCreatePreset"];
 }
 
 export function SummaryTab({
@@ -46,6 +50,8 @@ export function SummaryTab({
     useGenerateSummary,
     useEstimate,
     useCreateShare,
+    useListPresets,
+    useCreatePreset,
     devMode,
     modelPresets,
     pipelineProgress,
@@ -53,10 +59,13 @@ export function SummaryTab({
     const summary = useSummary(videoId, "long");
     const generate = useGenerateSummary(videoId);
     const createShare = useCreateShare?.();
+    const userPresets = useListPresets?.("summary");
+    const createPreset = useCreatePreset?.();
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [controls, setControls] = useState<SummaryControlsState>(DEFAULT_SUMMARY_CONTROLS);
     const [modelSel, setModelSel] = useState<{ provider?: string; model?: string }>({});
     const [linkCopied, setLinkCopied] = useState(false);
+    const [presetId, setPresetId] = useState<number | null>(null);
     const estimate = useEstimate?.(videoId, { mode: "long", ...modelSel, enabled: confirmOpen }) ?? NO_ESTIMATE;
     const long = summary.data?.long ?? null;
 
@@ -72,6 +81,7 @@ export function SummaryTab({
             model,
             tone: controls.tone,
             length: controls.length,
+            presetId: presetId ?? undefined,
         });
         setConfirmOpen(false);
     }
@@ -104,6 +114,16 @@ export function SummaryTab({
             </div>
             {linkCopied ? <p className="text-sm text-primary">Link copied</p> : null}
             <SummaryControlsBar value={controls} onChange={setControls} disabled={generate.isPending} hideFormat />
+            {userPresets && createPreset ? (
+                <StyleSelect
+                    kind="summary"
+                    presets={userPresets.data ?? []}
+                    selectedId={presetId}
+                    onSelect={setPresetId}
+                    onCreate={createPreset.mutateAsync}
+                    creating={createPreset.isPending}
+                />
+            ) : null}
             {long === null ? (
                 <p
                     data-testid="summary-empty"

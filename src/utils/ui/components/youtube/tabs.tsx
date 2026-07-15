@@ -10,6 +10,8 @@ import type {
     AskCitation,
     JobStage,
     LlmEstimate,
+    PresetKind,
+    PromptPreset,
     QaHistoryItem,
     TimestampedSummaryEntry,
     Transcript,
@@ -70,6 +72,7 @@ export interface VideoDetailDataSource {
             tone?: "insightful" | "funny" | "actionable" | "controversial";
             format?: "list" | "qa";
             length?: "short" | "auto" | "detailed";
+            presetId?: number;
         }) => Promise<{
             short?: string;
             timestamped?: TimestampedSummaryEntry[];
@@ -86,6 +89,7 @@ export interface VideoDetailDataSource {
             topK?: number;
             provider?: string;
             model?: string;
+            presetId?: number;
         }) => Promise<{ answer: string; citations?: AskCitation[] }>;
         isPending: boolean;
     };
@@ -110,6 +114,15 @@ export interface VideoDetailDataSource {
             mode?: "short" | "timestamped" | "long";
             qaHistoryId?: number;
         }) => Promise<{ url: string }>;
+        isPending: boolean;
+    };
+    /** Feature 11 style presets (`GET /users/presets`). Optional — consumers
+     *  without user accounts don't get the Style picker. */
+    useListPresets?: (kind?: PresetKind, enabled?: boolean) => { data: PromptPreset[] | undefined; isPending: boolean };
+    useCreatePreset?: () => {
+        mutateAsync: (vars: { name: string; kind: PresetKind; instructions: string }) => Promise<{
+            preset: PromptPreset;
+        }>;
         isPending: boolean;
     };
 }
@@ -178,6 +191,8 @@ export function VideoDetailTabs({
                     useGenerateSummary={ds.useGenerateSummary}
                     useEstimate={ds.useEstimate}
                     useCreateShare={ds.useCreateShare}
+                    useListPresets={ds.useListPresets}
+                    useCreatePreset={ds.useCreatePreset}
                     devMode={devMode}
                     modelPresets={modelPresets}
                     pipelineProgress={pipelineProgress}
@@ -190,6 +205,8 @@ export function VideoDetailTabs({
                     useAskVideo={ds.useAskVideo}
                     useQaHistory={ds.useQaHistory}
                     useCreateShare={ds.useCreateShare}
+                    useListPresets={ds.useListPresets}
+                    useCreatePreset={ds.useCreatePreset}
                     onRequireLogin={onRequireLogin}
                 />
             </TabsContent>

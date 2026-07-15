@@ -130,6 +130,7 @@ export function useGenerateSummary(id: VideoId) {
             tone?: SummaryTone;
             format?: SummaryFormat;
             length?: SummaryLength;
+            presetId?: number;
         }) => {
             const response = await send<ExtensionApiMap["api:generateSummary"]>({
                 type: "api:generateSummary",
@@ -164,7 +165,7 @@ export function useAskVideo(id: VideoId) {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: (vars: { question: string; topK?: number; provider?: string; model?: string }) =>
+        mutationFn: (vars: { question: string; topK?: number; provider?: string; model?: string; presetId?: number }) =>
             send<ExtensionApiMap["api:askVideo"]>({ type: "api:askVideo", id, ...vars }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["me"] });
@@ -286,6 +287,45 @@ export function useRevokeShare() {
     });
 }
 
+export function useListPresets(kind?: "summary" | "insights" | "ask", enabled = true) {
+    return useQuery({
+        queryKey: ["presets", kind],
+        queryFn: () => send<ExtensionApiMap["api:listPresets"]>({ type: "api:listPresets", kind }),
+        select: (response) => response.presets,
+        enabled,
+    });
+}
+
+export function useCreatePreset() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (vars: { name: string; kind: "summary" | "insights" | "ask"; instructions: string }) =>
+            send<ExtensionApiMap["api:createPreset"]>({ type: "api:createPreset", ...vars }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["presets"] }),
+    });
+}
+
+export function useUpdatePreset() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (vars: { id: number; name?: string; instructions?: string }) =>
+            send<ExtensionApiMap["api:updatePreset"]>({ type: "api:updatePreset", ...vars }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["presets"] }),
+    });
+}
+
+export function useDeletePreset() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (vars: { id: number }) =>
+            send<ExtensionApiMap["api:deletePreset"]>({ type: "api:deletePreset", ...vars }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["presets"] }),
+    });
+}
+
 export function useQaHistory(id: VideoId | null) {
     return useQuery({
         queryKey: ["qaHistory", id],
@@ -351,6 +391,8 @@ export const dataSource: VideoDetailDataSource = {
     useEstimate,
     useQaHistory,
     useCreateShare,
+    useListPresets,
+    useCreatePreset,
 };
 
 export type { Channel };

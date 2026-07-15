@@ -93,6 +93,7 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
                     tone: req.tone,
                     format: req.format,
                     length: req.length,
+                    presetId: req.presetId,
                 }),
             });
         case "api:askVideo":
@@ -103,6 +104,7 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
                     topK: req.topK,
                     provider: req.provider,
                     model: req.model,
+                    presetId: req.presetId,
                 }),
             });
         case "api:startPipeline":
@@ -202,6 +204,22 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
             return apiCall(`${base}/api/v1/shares`);
         case "api:revokeShare":
             return apiCall(`${base}/api/v1/shares/${encodeURIComponent(req.slug)}`, { method: "DELETE" });
+        case "api:listPresets": {
+            const suffix = req.kind ? `?kind=${encodeURIComponent(req.kind)}` : "";
+            return apiCall(`${base}/api/v1/users/presets${suffix}`);
+        }
+        case "api:createPreset":
+            return apiCall(`${base}/api/v1/users/presets`, {
+                method: "POST",
+                body: JSON.stringify({ name: req.name, kind: req.kind, instructions: req.instructions }),
+            });
+        case "api:updatePreset":
+            return apiCall(`${base}/api/v1/users/presets/${req.id}`, {
+                method: "PUT",
+                body: JSON.stringify({ name: req.name, instructions: req.instructions }),
+            });
+        case "api:deletePreset":
+            return apiCall(`${base}/api/v1/users/presets/${req.id}`, { method: "DELETE" });
     }
 }
 
