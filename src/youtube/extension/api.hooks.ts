@@ -99,6 +99,27 @@ export function useTranslateTranscript(id: VideoId) {
     });
 }
 
+export function useGenerateSummaryAudio(id: VideoId) {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (vars: { voice?: string } = {}) =>
+            send<ExtensionApiMap["api:generateSummaryAudio"]>({ type: "api:generateSummaryAudio", id, ...vars }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["me"] }),
+    });
+}
+
+/** Turns the relative `url` a `generateSummaryAudio` response returns into a fetchable, authenticated URL for `<audio src>` — the element can't send an Authorization header, so the token travels as `?token=`. */
+export function buildAudioSrc(
+    relativeUrl: string,
+    config: { apiBaseUrl: string; userToken?: string; serviceKey?: string }
+): string {
+    const base = config.apiBaseUrl.replace(/\/$/, "");
+    const token = config.userToken ?? config.serviceKey ?? "";
+
+    return `${base}${relativeUrl}?token=${encodeURIComponent(token)}`;
+}
+
 export function usePatchMe() {
     const queryClient = useQueryClient();
 
@@ -480,6 +501,15 @@ export const dataSource: VideoDetailDataSource = {
     useCreatePreset,
     useSetSpeakers,
     useTranslateTranscript,
+    useGenerateSummaryAudio: (id: VideoId) => {
+        const mutation = useGenerateSummaryAudio(id);
+
+        return {
+            mutateAsync: (vars?: { voice?: string }) => mutation.mutateAsync(vars ?? {}),
+            isPending: mutation.isPending,
+            error: mutation.error,
+        };
+    },
 };
 
 export type { Channel };

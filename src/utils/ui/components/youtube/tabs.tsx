@@ -159,6 +159,14 @@ export interface VideoDetailDataSource {
         isPending: boolean;
         error?: Error | null;
     };
+    /** Feature 12: POSTs the summary-audio synthesis
+     *  (`POST /videos/:id/summary/audio`). Optional — consumers without user
+     *  accounts don't get the "Listen" mini player. */
+    useGenerateSummaryAudio?: (id: VideoId) => {
+        mutateAsync: (vars?: { voice?: string }) => Promise<{ url: string; cached: boolean }>;
+        isPending: boolean;
+        error?: Error | null;
+    };
 }
 
 export interface VideoDetailTabsProps {
@@ -190,6 +198,12 @@ export interface VideoDetailTabsProps {
      *  ISO), or "en" when signed out / unset — seeds the generation dialogs'
      *  language Select and the Ask tab's active-language suffix. */
     outputLang?: string;
+    /** Feature 12: turns the relative URL `useGenerateSummaryAudio` resolves
+     *  into a fetchable, token-authenticated URL for `<audio src>`. */
+    buildAudioSrc?: (relativeUrl: string) => string;
+    /** Feature 12: pauses the YouTube player via the existing postMessage
+     *  bridge — called right before the summary mini player starts. */
+    onPlayVideo?: () => void;
 }
 
 export function VideoDetailTabs({
@@ -209,6 +223,8 @@ export function VideoDetailTabs({
     streamingMode,
     playerTime,
     outputLang,
+    buildAudioSrc,
+    onPlayVideo,
 }: VideoDetailTabsProps) {
     const rootRef = useRef<HTMLDivElement | null>(null);
     const pendingCommentRef = useRef<string | null>(null);
@@ -292,6 +308,9 @@ export function VideoDetailTabs({
                         onSeek={onSeek}
                         playerTime={playerTime}
                         outputLang={outputLang}
+                        useGenerateSummaryAudio={ds.useGenerateSummaryAudio}
+                        buildAudioSrc={buildAudioSrc}
+                        onPlayVideo={onPlayVideo}
                     />
                 </TabsContent>
                 <TabsContent value="ask" className="yt-tab-pane">

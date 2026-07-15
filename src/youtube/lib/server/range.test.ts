@@ -50,7 +50,9 @@ describe("serveFileWithRange", () => {
     });
 
     it("416s on a range starting at or past the file size", async () => {
-        const req = new Request("http://localhost/audio", { headers: { Range: `bytes=${BODY.length}-${BODY.length + 10}` } });
+        const req = new Request("http://localhost/audio", {
+            headers: { Range: `bytes=${BODY.length}-${BODY.length + 10}` },
+        });
         const res = await serveFileWithRange(req, filePath, "audio/mpeg");
 
         expect(res.status).toBe(416);
