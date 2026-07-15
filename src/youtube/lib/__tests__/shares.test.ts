@@ -117,7 +117,9 @@ describe("shares", () => {
             videoId,
             question: "What's the thesis?",
             answer: "It's about X.",
-            citations: [{ videoId, chunkIdx: 0, startSec: 42, endSec: 60 }],
+            citations: [
+                { videoId, chunkIdx: 0, startSec: 42, endSec: 60, source: "transcript", author: null, commentId: null },
+            ],
             creditsSpent: 5,
         });
 
