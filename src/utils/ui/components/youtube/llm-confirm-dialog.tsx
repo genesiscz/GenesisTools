@@ -1,26 +1,65 @@
 import { Button } from "@app/utils/ui/components/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
-import { Input } from "@app/utils/ui/components/input";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
+import type { LlmEstimate } from "@app/youtube/lib/types";
+import { AlertTriangle } from "lucide-react";
 import { type ReactNode, useState } from "react";
+
+export interface ModelPreset {
+    label: string;
+    provider: string;
+    model: string;
+    subscription?: boolean;
+}
+
+const DEV_MODEL_DEFAULT = "__server_default__";
+
+function formatTokens(count: number): string {
+    if (count >= 1000) {
+        return `${(count / 1000).toFixed(count >= 10_000 ? 0 : 1)}k`;
+    }
+
+    return String(count);
+}
+
+function formatUsd(usd: number): string {
+    if (usd >= 0.995) {
+        return `$${usd.toFixed(2)}`;
+    }
+
+    if (usd >= 0.01) {
+        return `$${usd.toFixed(3)}`;
+    }
+
+    return "< $0.01";
+}
 
 export interface LlmConfirmDialogProps {
     open: boolean;
     title: string;
     description: ReactNode;
-    /** Short summary of what will be sent (e.g. "transcript ~35,000 tokens"). */
     payloadSummary: ReactNode;
-    /** Default provider shown as placeholder hint only. */
     defaultProvider?: string;
-    /** Default model shown as placeholder hint only. */
     defaultModel?: string;
-    /** Whether the chosen model is billed via subscription (true) or pay-per-call. */
     subscription?: boolean;
     billingNote?: ReactNode;
     busy?: boolean;
     confirmLabel?: string;
     cancelLabel?: string;
-    /** Last error from the parent's mutation. Shown in a red banner so the user can see what went wrong. */
     error?: string | null;
+    /** Dev mode: expose provider/model override select. Regular users don't
+     *  see it — server picks its configured default. */
+    showAdvanced?: boolean;
+    /** Model presets fetched from the server (`/api/v1/models`). Empty =
+     *  server-default only. Extension side-panel provides via `useModels`. */
+    modelPresets?: ModelPreset[];
+    /** Server-computed pre-flight cost estimate (`/videos/:id/estimate`).
+     *  Absent → generic billing copy. */
+    estimate?: LlmEstimate | null;
+    estimatePending?: boolean;
+    /** Fired when the dev model select changes, so the owner can re-fetch
+     *  the estimate for the chosen provider/model. `{}` = server default. */
+    onSelectionChange?: (sel: { provider?: string; model?: string }) => void;
     onCancel: () => void;
     onConfirm: (overrides: { provider?: string; model?: string }) => void;
 }
@@ -35,97 +74,134 @@ export function LlmConfirmDialog({
     subscription,
     billingNote,
     busy,
-    confirmLabel = "Run LLM call",
+    confirmLabel = "Run",
     cancelLabel = "Cancel",
     error,
+    showAdvanced,
+    modelPresets = [],
+    estimate,
+    estimatePending,
+    onSelectionChange,
     onCancel,
     onConfirm,
 }: LlmConfirmDialogProps) {
-    const [provider, setProvider] = useState("");
-    const [model, setModel] = useState("");
+    const [preset, setPreset] = useState(DEV_MODEL_DEFAULT);
 
-    if (!open) {
-        return null;
+    function selectPreset(value: string) {
+        setPreset(value);
+        const chosen = modelPresets.find((p) => p.label === value);
+        onSelectionChange?.(chosen ? { provider: chosen.provider, model: chosen.model } : {});
+    }
+
+    const fallbackBilling =
+        subscription === true
+            ? "Counted against your subscription quota."
+            : subscription === false
+              ? "Pay-per-call API spend on your configured provider."
+              : "Cost depends on your configured provider.";
+
+    let billing: ReactNode = fallbackBilling;
+
+    if (estimatePending) {
+        billing = "Estimating cost…";
+    } else if (estimate && estimate.inputTokens !== null) {
+        const tokens = `~${formatTokens(estimate.inputTokens)} in / ~${formatTokens(estimate.outputTokens)} out tokens`;
+        const source = estimate.basis === "duration" ? " (estimated from video length — no transcript yet)" : "";
+        billing = estimate.subscription ? (
+            <>
+                Subscription quota · {tokens} · {estimate.provider}/{estimate.model}
+                {source}
+            </>
+        ) : estimate.estUsd !== null ? (
+            <>
+                ≈ {formatUsd(estimate.estUsd)} · {tokens} · {estimate.provider}/{estimate.model}
+                {source}
+            </>
+        ) : (
+            <>
+                {tokens} · {estimate.provider}/{estimate.model} (no price data){source}
+            </>
+        );
     }
 
     return (
-        <div
-            className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-background/80 px-4 pb-12 pt-[12vh] backdrop-blur-sm"
-            data-testid="llm-confirm-dialog"
-            onClick={onCancel}
-        >
-            <Card className="w-full max-w-lg border-primary/40 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-                <CardHeader>
-                    <CardTitle>{title}</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <p className="text-sm text-muted-foreground">{description}</p>
-                    <div className="rounded-md border border-primary/20 bg-primary/5 p-3 text-sm">
-                        <p className="font-mono text-xs uppercase tracking-wider text-primary">Will send</p>
-                        <p className="mt-1">{payloadSummary}</p>
+        <Dialog open={open} onOpenChange={(o) => !o && onCancel()}>
+            <DialogContent
+                showCloseButton={false}
+                data-testid="llm-confirm-dialog"
+                className="max-w-md bg-card border-white/10"
+                onOpenAutoFocus={(e) => e.preventDefault()}
+            >
+                <DialogHeader>
+                    <DialogTitle className="text-lg">{title}</DialogTitle>
+                    <DialogDescription className="text-sm leading-relaxed text-muted-foreground">
+                        {description}
+                    </DialogDescription>
+                </DialogHeader>
+
+                <div className="rounded-lg border border-white/8 bg-black/20 p-3 text-sm">
+                    <p className="mb-1 font-mono text-xs uppercase tracking-wider text-muted-foreground">Will send</p>
+                    <p className="text-foreground/90">{payloadSummary}</p>
+                </div>
+
+                {showAdvanced ? (
+                    <div className="space-y-1">
+                        <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                            Model · dev
+                        </label>
+                        <Select value={preset} onValueChange={selectPreset}>
+                            <SelectTrigger className="h-8 w-full text-sm">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value={DEV_MODEL_DEFAULT}>
+                                    server default
+                                    {defaultProvider ? ` (${defaultProvider}/${defaultModel ?? "?"})` : ""}
+                                </SelectItem>
+                                {modelPresets.map((p) => (
+                                    <SelectItem key={p.label} value={p.label}>
+                                        {p.label}
+                                        {p.subscription ? " · sub" : ""}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
-                        <div>
-                            <label
-                                htmlFor="llm-provider"
-                                className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
-                            >
-                                Provider
-                            </label>
-                            <Input
-                                id="llm-provider"
-                                placeholder={defaultProvider ?? "(server default)"}
-                                value={provider}
-                                onChange={(event) => setProvider(event.currentTarget.value)}
-                            />
-                        </div>
-                        <div>
-                            <label
-                                htmlFor="llm-model"
-                                className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
-                            >
-                                Model
-                            </label>
-                            <Input
-                                id="llm-model"
-                                placeholder={defaultModel ?? "(server default)"}
-                                value={model}
-                                onChange={(event) => setModel(event.currentTarget.value)}
-                            />
-                        </div>
+                ) : null}
+
+                <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-2.5 text-sm leading-relaxed text-amber-100/90">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-400/80" strokeWidth={2} />
+                    <div>
+                        <span className="text-amber-200">{billing}</span>
+                        {billingNote && !(estimate && estimate.inputTokens !== null) ? (
+                            <span className="text-amber-100/70"> {billingNote}</span>
+                        ) : null}
                     </div>
-                    <div className="rounded-md border border-amber-400/40 bg-amber-500/10 p-3 text-xs text-amber-100">
-                        <p className="font-semibold">Billing</p>
-                        <p className="mt-1">
-                            {subscription === true
-                                ? "Counted against your subscription / plan quota."
-                                : subscription === false
-                                  ? "Pay-per-call API spend on your configured provider."
-                                  : "Cost depends on your configured provider — check your dashboard."}
-                        </p>
-                        {billingNote ? <p className="mt-1 text-amber-200/80">{billingNote}</p> : null}
+                </div>
+
+                {error ? (
+                    <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-sm">
+                        <p className="font-medium text-destructive">Generation failed</p>
+                        <p className="mt-1 break-words text-destructive/80">{error}</p>
                     </div>
-                    {error ? (
-                        <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive">
-                            <p className="font-semibold uppercase tracking-wider">Generation failed</p>
-                            <p className="mt-1 break-words text-destructive/90">{error}</p>
-                        </div>
-                    ) : null}
-                    <div className="flex justify-end gap-2 pt-2">
-                        <Button variant="ghost" onClick={onCancel} disabled={busy}>
-                            {cancelLabel}
-                        </Button>
-                        <Button
-                            onClick={() =>
-                                onConfirm({ provider: provider.trim() || undefined, model: model.trim() || undefined })
-                            }
-                            disabled={busy}
-                        >
-                            {busy ? "Running…" : confirmLabel}
-                        </Button>
-                    </div>
-                </CardContent>
-            </Card>
-        </div>
+                ) : null}
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                    <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>
+                        {cancelLabel}
+                    </Button>
+                    <Button
+                        size="sm"
+                        onClick={() => {
+                            const chosen = modelPresets.find((p) => p.label === preset);
+                            onConfirm(chosen ? { provider: chosen.provider, model: chosen.model } : {});
+                        }}
+                        disabled={busy}
+                    >
+                        {busy ? "Running…" : confirmLabel}
+                    </Button>
+                </div>
+            </DialogContent>
+        </Dialog>
     );
 }

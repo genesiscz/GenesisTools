@@ -1,7 +1,25 @@
 import { mountSidePanel, unmountSidePanel } from "@ext/content-script-mount";
 import type { PanelTarget } from "@ext/side-panel/target";
 
+declare global {
+    interface Window {
+        // Set by whichever content-script version is currently mounted so a
+        // re-inject via chrome.scripting.executeScript can wipe the old
+        // instance before the new one mounts. No page reload, video keeps
+        // playing.
+        __genesisYtCleanup?: () => void;
+    }
+}
+
+// Wipe any previous instance's DOM + listeners before we set up.
+if (typeof window !== "undefined" && window.__genesisYtCleanup) {
+    try {
+        window.__genesisYtCleanup();
+    } catch {}
+}
+
 const hostId = "genesis-yt-side-panel";
+type Placement = "inline" | "fixed";
 
 function isChannelPath(pathname: string): boolean {
     return /^\/(@[^/]+|channel\/[^/]+|c\/[^/]+)/.test(pathname);
@@ -40,6 +58,74 @@ function getPanelTarget(): PanelTarget | null {
     return null;
 }
 
+function findWatchSecondaryColumn(): HTMLElement | null {
+    // On a watch page, ytd-watch-flexy renders #primary + #secondary siblings;
+    // #secondary is the related-videos rail. Injecting there makes the panel
+    // flow with the page instead of covering the video.
+    return document.querySelector<HTMLElement>("ytd-watch-flexy #secondary");
+}
+
+const HEIGHT_ANIMATION = [
+    "interpolate-size: allow-keywords",
+    "transition: height 400ms cubic-bezier(0.4, 0, 0.2, 1)",
+].join("; ");
+
+function applyInlineStyles(host: HTMLElement): void {
+    // Auto-height: panel matches its content, growing smoothly when tab data
+    // loads. Capped by max-height (viewport-relative) with overflow-y inside
+    // the panel itself. `interpolate-size` + transition are set on the host
+    // element itself so height:auto → height:auto changes animate.
+    host.style.cssText = [
+        "display: block",
+        "width: 100%",
+        "position: relative",
+        "margin-bottom: 16px",
+        "height: auto",
+        "min-height: 120px",
+        "max-height: min(calc(100vh - 96px), 900px)",
+        "z-index: 1",
+        HEIGHT_ANIMATION,
+    ].join("; ");
+}
+
+function applyFixedStyles(host: HTMLElement): void {
+    host.style.cssText = [
+        "position: fixed",
+        "right: 16px",
+        "top: 72px",
+        "width: 400px",
+        "height: auto",
+        "min-height: 120px",
+        "max-height: min(calc(100vh - 96px), 900px)",
+        "z-index: 2147483647",
+        "pointer-events: auto",
+        HEIGHT_ANIMATION,
+    ].join("; ");
+}
+
+function attachHost(target: PanelTarget): { host: HTMLElement; placement: Placement } {
+    const existing = document.getElementById(hostId);
+    if (existing) {
+        existing.remove();
+    }
+
+    const host = document.createElement("div");
+    host.id = hostId;
+
+    if (target.kind === "video" && location.pathname === "/watch") {
+        const secondary = findWatchSecondaryColumn();
+        if (secondary) {
+            applyInlineStyles(host);
+            secondary.insertBefore(host, secondary.firstChild);
+            return { host, placement: "inline" };
+        }
+    }
+
+    applyFixedStyles(host);
+    document.body.appendChild(host);
+    return { host, placement: "fixed" };
+}
+
 function ensureSidePanel(): void {
     const target = getPanelTarget();
 
@@ -48,21 +134,9 @@ function ensureSidePanel(): void {
         return;
     }
 
-    let host = document.getElementById(hostId);
-    if (!host) {
-        host = document.createElement("div");
-        host.id = hostId;
-        host.style.position = "fixed";
-        host.style.right = "0";
-        host.style.top = "56px";
-        host.style.bottom = "0";
-        host.style.width = "430px";
-        host.style.zIndex = "2147483647";
-        document.body.appendChild(host);
-    }
-
+    const { host, placement } = attachHost(target);
     const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
-    mountSidePanel(shadow, target, () => removeSidePanel());
+    mountSidePanel(shadow, target, placement, () => removeSidePanel());
 }
 
 function removeSidePanel(): void {
@@ -76,9 +150,28 @@ function removeSidePanel(): void {
 }
 
 function scheduleMount(): void {
-    window.setTimeout(() => ensureSidePanel(), 250);
+    // #secondary is populated asynchronously on watch nav; retry until it
+    // exists, otherwise the fixed fallback kicks in after the attempt cap.
+    let attempts = 0;
+    const tryMount = (): void => {
+        ensureSidePanel();
+        attempts += 1;
+        const target = getPanelTarget();
+        const stillWaiting =
+            target?.kind === "video" && location.pathname === "/watch" && !findWatchSecondaryColumn() && attempts < 20;
+        if (stillWaiting) {
+            window.setTimeout(tryMount, 250);
+        }
+    };
+    tryMount();
 }
 
 scheduleMount();
 window.addEventListener("yt-navigate-finish", scheduleMount);
 window.addEventListener("popstate", scheduleMount);
+
+window.__genesisYtCleanup = () => {
+    removeSidePanel();
+    window.removeEventListener("yt-navigate-finish", scheduleMount);
+    window.removeEventListener("popstate", scheduleMount);
+};

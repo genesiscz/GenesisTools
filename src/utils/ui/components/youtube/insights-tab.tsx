@@ -1,6 +1,6 @@
 import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
-import { LlmConfirmDialog } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
+import { LlmConfirmDialog, type ModelPreset } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
 import { Loading } from "@app/utils/ui/components/youtube/loading";
 import {
     DEFAULT_SUMMARY_CONTROLS,
@@ -8,8 +8,10 @@ import {
     type SummaryControlsState,
 } from "@app/utils/ui/components/youtube/summary-controls";
 import { TimestampedSummaryView } from "@app/utils/ui/components/youtube/timestamped-summary-view";
-import type { TimestampedSummaryEntry, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
+import type { LlmEstimate, TimestampedSummaryEntry, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
 import { useState } from "react";
+
+const NO_ESTIMATE = { data: undefined, isPending: false } as const;
 
 export interface InsightsTabProps {
     videoId: VideoId;
@@ -34,14 +36,28 @@ export interface InsightsTabProps {
         isPending: boolean;
         error?: Error | null;
     };
+    useEstimate?: (
+        id: VideoId | null,
+        opts: { mode: "short" | "timestamped" | "long"; provider?: string; model?: string; enabled?: boolean }
+    ) => { data: LlmEstimate | undefined; isPending: boolean };
 }
 
-export function InsightsTab({ videoId, onSeek, useSummary, useGenerateSummary }: InsightsTabProps) {
+export function InsightsTab({
+    videoId,
+    onSeek,
+    useSummary,
+    useGenerateSummary,
+    useEstimate,
+    devMode,
+    modelPresets,
+}: InsightsTabProps & { devMode?: boolean; modelPresets?: ModelPreset[] }) {
     const timestamped = useSummary(videoId, "timestamped");
     const long = useSummary(videoId, "long");
     const generate = useGenerateSummary(videoId);
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [controls, setControls] = useState<SummaryControlsState>(DEFAULT_SUMMARY_CONTROLS);
+    const [modelSel, setModelSel] = useState<{ provider?: string; model?: string }>({});
+    const estimate = useEstimate?.(videoId, { mode: "timestamped", ...modelSel, enabled: confirmOpen }) ?? NO_ESTIMATE;
     const entries = timestamped.data?.timestamped ?? [];
     const tldr = long.data?.long?.tldr ?? null;
 
@@ -95,10 +111,14 @@ export function InsightsTab({ videoId, onSeek, useSummary, useGenerateSummary }:
                 title="Generate timestamped insights?"
                 description={`Sends the compacted transcript to your LLM and asks for ~${entries.length === 0 ? "12" : "12"} sections with icon + title + 1-2 sentence body each. Tone: ${controls.tone}. Format: ${controls.format}. Length: ${controls.length}.`}
                 payloadSummary="Compacted transcript with timestamps; structured-output JSON response."
-                billingNote="LLM cost depends on the provider you select."
                 busy={generate.isPending}
                 confirmLabel={entries.length === 0 ? "Generate" : "Re-generate"}
                 error={generate.error ? (generate.error as Error).message : null}
+                showAdvanced={devMode}
+                modelPresets={modelPresets}
+                estimate={estimate.data ?? null}
+                estimatePending={estimate.isPending && confirmOpen}
+                onSelectionChange={setModelSel}
                 onCancel={() => setConfirmOpen(false)}
                 onConfirm={runGenerate}
             />

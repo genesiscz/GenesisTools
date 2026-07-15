@@ -1,11 +1,18 @@
+import { estimateLlmCallCostUsd, estimateSpeechTokens } from "@app/utils/ai/llm-cost";
 import { SafeJSON } from "@app/utils/json";
+import { estimateTokens } from "@app/utils/tokens";
 import { withJobActivity } from "@app/youtube/lib/job-activity";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
+import { compactTranscript } from "@app/youtube/lib/transcript-compact";
 import type { ChannelHandle, Transcript, VideoId } from "@app/youtube/lib/types";
 import type { Youtube } from "@app/youtube/lib/youtube";
+import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
+
+/** System prompt + instructions sent alongside the transcript. */
+const PROMPT_OVERHEAD_TOKENS = 700;
 
 export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Promise<Response> {
     try {
@@ -118,11 +125,10 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
         if (summaryPost) {
             const id = summaryPost.id as VideoId;
-            const video = yt.videos.show(id);
-
-            if (!video) {
-                return jsonError("video not found", 404);
-            }
+            // Extension can request a summary for a video the DB has never
+            // seen (user just opened the watch page) — ingest metadata on
+            // demand instead of 404ing.
+            await yt.videos.ensureMetadata(id);
 
             const body = (await safeJsonBody(req)) ?? {};
             const mode = parseMode(body.mode);
@@ -253,15 +259,62 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             }
         }
 
+        const estimateRoute = matchRoute(req, "GET", "/api/v1/videos/:id/estimate", url.pathname);
+
+        if (estimateRoute) {
+            const id = estimateRoute.id as VideoId;
+            const mode = parseMode(url.searchParams.get("mode"));
+            const choice = await resolveProviderChoice({
+                provider: url.searchParams.get("provider") ?? undefined,
+                model: url.searchParams.get("model") ?? undefined,
+            });
+            const transcript = yt.db.getTranscript(id);
+            const video = yt.videos.show(id);
+            const outputTokens = mode === "long" ? 1200 : mode === "timestamped" ? 700 : 350;
+
+            let inputTokens: number | null = null;
+            let basis: "transcript" | "duration" | null = null;
+
+            if (transcript) {
+                const compacted = compactTranscript(transcript, { mergeSentences: true });
+                inputTokens = PROMPT_OVERHEAD_TOKENS + estimateTokens(compacted.text);
+                basis = "transcript";
+            } else if (video?.durationSec) {
+                inputTokens = PROMPT_OVERHEAD_TOKENS + estimateSpeechTokens(video.durationSec);
+                basis = "duration";
+            }
+
+            const subscription = choice.provider.subscription === true;
+            let estUsd: number | null = null;
+
+            if (inputTokens !== null && !subscription) {
+                const pricing =
+                    choice.model.pricing ??
+                    (await dynamicPricingManager.getPricing(choice.provider.name, choice.model.id)) ??
+                    undefined;
+                estUsd = estimateLlmCallCostUsd({ pricing, inputTokens, outputTokens });
+            }
+
+            return Response.json(
+                {
+                    provider: choice.provider.name,
+                    model: choice.model.id,
+                    subscription,
+                    mode,
+                    inputTokens,
+                    outputTokens,
+                    estUsd,
+                    basis,
+                },
+                { headers: CORS_HEADERS }
+            );
+        }
+
         const qa = matchRoute(req, "POST", "/api/v1/videos/:id/qa", url.pathname);
 
         if (qa) {
             const id = qa.id as VideoId;
-            const video = yt.videos.show(id);
-
-            if (!video) {
-                return jsonError("video not found", 404);
-            }
+            await yt.videos.ensureMetadata(id);
 
             const body = await safeJsonBody(req);
 

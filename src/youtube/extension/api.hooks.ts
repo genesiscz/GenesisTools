@@ -176,6 +176,34 @@ export function useStartPipeline() {
     });
 }
 
+export function useEstimate(
+    id: VideoId | null,
+    opts: { mode: "short" | "timestamped" | "long"; provider?: string; model?: string; enabled?: boolean }
+) {
+    return useQuery({
+        queryKey: ["estimate", id, opts.mode, opts.provider, opts.model],
+        queryFn: () =>
+            send<ExtensionApiMap["api:estimate"]>({
+                type: "api:estimate",
+                id: id as VideoId,
+                mode: opts.mode,
+                provider: opts.provider,
+                model: opts.model,
+            }),
+        staleTime: 60_000,
+        enabled: id !== null && opts.enabled !== false,
+    });
+}
+
+export function useModels(enabled = true) {
+    return useQuery({
+        queryKey: ["models"],
+        queryFn: () => send<ExtensionApiMap["api:listModels"]>({ type: "api:listModels" }),
+        staleTime: 60_000,
+        enabled,
+    });
+}
+
 export function useJob(id: number | null) {
     return useQuery({
         queryKey: ["job", id],
@@ -191,6 +219,7 @@ export const dataSource: VideoDetailDataSource = {
     useSummary,
     useGenerateSummary,
     useAskVideo,
+    useEstimate,
 };
 
 export type { Channel };

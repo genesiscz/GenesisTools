@@ -1,16 +1,23 @@
-import { Button } from "@app/utils/ui/components/button";
-import { X } from "lucide-react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 
-export function Header({ onClose }: { onClose: () => void }) {
+export function Header({ collapsed, onToggleCollapse }: { collapsed: boolean; onToggleCollapse: () => void }) {
+    const Icon = collapsed ? ChevronDown : ChevronUp;
     return (
-        <header className="flex items-center justify-between border-b border-primary/20 bg-black/30 px-4 py-3 backdrop-blur-xl">
-            <div>
-                <p className="font-mono text-[10px] uppercase tracking-[0.32em] text-secondary">GenesisTools</p>
-                <h1 className="text-sm font-semibold text-foreground">YouTube Signal Deck</h1>
+        <header className="flex items-center justify-between px-4 py-2.5">
+            <div className="flex items-center gap-2">
+                <div className="size-1.5 rounded-full bg-accent" />
+                <span className="text-xs font-medium tracking-wide text-foreground/90">GenesisTools</span>
+                <span className="text-xs text-muted-foreground">· YouTube</span>
             </div>
-            <Button variant="cyber-ghost" size="icon-sm" onClick={onClose} aria-label="Close GenesisTools panel">
-                <X className="size-4" />
-            </Button>
+            <button
+                type="button"
+                onClick={onToggleCollapse}
+                aria-label={collapsed ? "Expand panel" : "Collapse panel"}
+                title={collapsed ? "Expand" : "Collapse"}
+                className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-white/6 hover:text-foreground"
+            >
+                <Icon className="size-3.5" strokeWidth={2} />
+            </button>
         </header>
     );
 }

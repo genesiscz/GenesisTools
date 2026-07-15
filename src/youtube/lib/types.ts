@@ -32,6 +32,7 @@ export type {
     QaChunk,
 } from "@app/youtube/lib/qa.types";
 export type {
+    LlmEstimate,
     SummarizeOpts,
     SummarizeResult,
     SummaryBin,

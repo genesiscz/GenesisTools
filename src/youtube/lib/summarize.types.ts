@@ -72,3 +72,17 @@ export interface SummaryServiceDeps {
     callLLM: (opts: CallLLMOptions) => Promise<CallLLMResult>;
     callLLMStructured: <T>(opts: CallLLMStructuredOptions<T>) => Promise<CallLLMStructuredResult<T>>;
 }
+
+/** Pre-flight cost estimate for an LLM summarize/QA call (GET /videos/:id/estimate). */
+export interface LlmEstimate {
+    provider: string;
+    model: string;
+    subscription: boolean;
+    mode: "short" | "timestamped" | "long";
+    /** null = nothing to estimate from (no transcript, no metadata yet) */
+    inputTokens: number | null;
+    outputTokens: number;
+    /** null = subscription model or unknown pricing */
+    estUsd: number | null;
+    basis: "transcript" | "duration" | null;
+}

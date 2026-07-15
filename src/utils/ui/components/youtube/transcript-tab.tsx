@@ -4,6 +4,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Loading } from "@app/utils/ui/components/youtube/loading";
 import type { RunPipeline } from "@app/utils/ui/components/youtube/tabs";
 import { formatTimecode } from "@app/utils/ui/components/youtube/time";
+import { segmentsToParagraphs, type TranscriptParagraph } from "@app/utils/ui/components/youtube/transcript-paragraphs";
 import type { Transcript, TranscriptSegment, VideoId } from "@app/youtube/lib/types";
 import { Captions, Search } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -22,51 +23,52 @@ const BUCKET_OPTIONS: { value: string; label: string }[] = [
 interface TranscriptBlock {
     start: number;
     end: number;
-    text: string;
+    paragraphs: TranscriptParagraph[];
 }
 
 function bucketSegments(segments: TranscriptSegment[], bucketSec: number): TranscriptBlock[] {
-    if (bucketSec <= 0 || segments.length === 0) {
+    if (segments.length === 0) {
+        return [];
+    }
+
+    // No grouping = one bucket per segment; paragraph splitter turns it into
+    // one paragraph per row.
+    if (bucketSec <= 0) {
         return segments.map((segment) => ({
             start: segment.start,
             end: segment.end,
-            text: segment.text.trim(),
+            paragraphs: segmentsToParagraphs([segment]),
         }));
     }
 
-    const blocks: TranscriptBlock[] = [];
-    let current: TranscriptBlock | null = null;
+    const bucketed: { start: number; end: number; segments: TranscriptSegment[] }[] = [];
+    let current: { start: number; end: number; segments: TranscriptSegment[] } | null = null;
     let bucketBoundary = 0;
 
     for (const segment of segments) {
         if (!current || segment.start >= bucketBoundary) {
             if (current) {
-                blocks.push(current);
+                bucketed.push(current);
             }
-
             const blockStart = Math.floor(segment.start / bucketSec) * bucketSec;
             bucketBoundary = blockStart + bucketSec;
-            current = { start: blockStart, end: segment.end, text: segment.text.trim() };
-
+            current = { start: blockStart, end: segment.end, segments: [segment] };
             continue;
         }
 
         current.end = segment.end;
-        const trimmed = segment.text.trim();
-
-        if (trimmed.length === 0) {
-            continue;
-        }
-
-        const sep = current.text.endsWith(".") || current.text.endsWith("?") || current.text.endsWith("!") ? " " : " ";
-        current.text = `${current.text}${sep}${trimmed}`;
+        current.segments.push(segment);
     }
 
     if (current) {
-        blocks.push(current);
+        bucketed.push(current);
     }
 
-    return blocks;
+    return bucketed.map((b) => ({
+        start: b.start,
+        end: b.end,
+        paragraphs: segmentsToParagraphs(b.segments),
+    }));
 }
 
 export interface TranscriptTabProps {
@@ -94,7 +96,7 @@ export function TranscriptTab({ videoId, onSeek, useTranscript, runPipeline }: T
         }
 
         const needle = query.toLowerCase();
-        return blocks.filter((block) => block.text.toLowerCase().includes(needle));
+        return blocks.filter((block) => block.paragraphs.some((p) => p.text.toLowerCase().includes(needle)));
     }, [blocks, query]);
 
     const trimmed = useMemo(() => {
@@ -144,43 +146,37 @@ export function TranscriptTab({ videoId, onSeek, useTranscript, runPipeline }: T
     }
 
     const hidden = filtered.length - trimmed.length;
+    const totalParagraphs = filtered.reduce((n, b) => n + b.paragraphs.length, 0);
 
     return (
-        <div className="space-y-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                    <p className="font-mono text-xs uppercase tracking-[0.28em] text-secondary">Transcript</p>
-                    <h3 className="mt-2 text-2xl font-bold">Searchable timecodes</h3>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                        {segments.length.toLocaleString()} segments · {blocks.length.toLocaleString()} block
-                        {blocks.length === 1 ? "" : "s"} · {transcript.data?.transcript.source ?? "captions"}
-                    </p>
+        <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+                <Select value={String(bucketSec)} onValueChange={(value) => setBucketSec(Number(value))}>
+                    <SelectTrigger className="h-8 w-[110px]">
+                        <SelectValue placeholder="Group by" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {BUCKET_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                            </SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+                <div className="relative flex-1 min-w-[140px]">
+                    <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                        placeholder="Search"
+                        className="h-8 pl-8 text-xs"
+                    />
                 </div>
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <Select value={String(bucketSec)} onValueChange={(value) => setBucketSec(Number(value))}>
-                        <SelectTrigger className="sm:w-[140px]">
-                            <SelectValue placeholder="Group by" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {BUCKET_OPTIONS.map((option) => (
-                                <SelectItem key={option.value} value={option.value}>
-                                    {option.label}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input
-                            value={query}
-                            onChange={(event) => setQuery(event.target.value)}
-                            placeholder="Search transcript"
-                            className="pl-9 sm:w-64"
-                        />
-                    </div>
-                </div>
+                <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground/70">
+                    {segments.length.toLocaleString()} segments · {totalParagraphs.toLocaleString()} paragraphs
+                </span>
             </div>
-            <div className="yt-scroll max-h-[62vh] space-y-2 overflow-auto pr-2">
+            <div className="yt-scroll min-w-0 space-y-4 overflow-y-auto">
                 {trimmed.map((block, index) => (
                     <TranscriptRow
                         key={`${block.start}-${index}`}
@@ -192,13 +188,12 @@ export function TranscriptTab({ videoId, onSeek, useTranscript, runPipeline }: T
                 ))}
             </div>
             {hidden > 0 ? (
-                <div className="flex items-center justify-center gap-3 rounded-2xl border border-dashed border-primary/30 bg-primary/5 p-3 text-sm">
+                <div className="flex items-center justify-center gap-2 rounded-lg border border-white/8 p-2 text-xs">
                     <span className="text-muted-foreground">
-                        Showing first {DEFAULT_RENDER_LIMIT.toLocaleString()} of {filtered.length.toLocaleString()}{" "}
-                        blocks.
+                        First {DEFAULT_RENDER_LIMIT.toLocaleString()} of {filtered.length.toLocaleString()}
                     </span>
                     <Button variant="ghost" size="sm" onClick={() => setShowAll(true)}>
-                        Show all {filtered.length.toLocaleString()}
+                        Show all
                     </Button>
                 </div>
             ) : null}
@@ -222,16 +217,24 @@ function TranscriptRow({
         : formatTimecode(block.start);
 
     return (
-        <article className="grid gap-3 rounded-2xl border border-primary/15 bg-black/20 p-3 sm:grid-cols-[7.5rem_1fr]">
-            <Button
-                variant="ghost"
-                size="sm"
-                className="yt-timecode h-8 justify-self-start whitespace-nowrap"
+        <article className="min-w-0 space-y-2">
+            <button
+                type="button"
                 onClick={() => onSeek(block.start)}
+                className="yt-timecode inline-flex h-6 items-center px-2 text-[12px] font-mono tabular-nums"
             >
                 {label}
-            </Button>
-            <p className="leading-7 text-foreground/90">{highlight(block.text, query)}</p>
+            </button>
+            <div className="min-w-0 space-y-3">
+                {block.paragraphs.map((paragraph, i) => (
+                    <p
+                        key={`${paragraph.start}-${i}`}
+                        className="min-w-0 break-words text-sm leading-[1.65] text-foreground/85"
+                    >
+                        {highlight(paragraph.text, query)}
+                    </p>
+                ))}
+            </div>
         </article>
     );
 }

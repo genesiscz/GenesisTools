@@ -9,6 +9,7 @@ import { clearPortFile, writePortFile } from "@app/youtube/lib/server/port-file"
 import { handleCacheRoute } from "@app/youtube/lib/server/routes/cache";
 import { handleChannelsRoute } from "@app/youtube/lib/server/routes/channels";
 import { handleConfigRoute } from "@app/youtube/lib/server/routes/config";
+import { handleModelsRoute } from "@app/youtube/lib/server/routes/models";
 import { handlePipelineRoute } from "@app/youtube/lib/server/routes/pipeline";
 import { handleMetaRoute } from "@app/youtube/lib/server/routes/server-meta";
 import { handleVideosRoute } from "@app/youtube/lib/server/routes/videos";
@@ -105,6 +106,10 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
 
                 if (url.pathname.startsWith("/api/v1/config")) {
                     return await handleConfigRoute(req, url, youtube);
+                }
+
+                if (url.pathname === "/api/v1/models") {
+                    return await handleModelsRoute(req, url, youtube);
                 }
 
                 if (

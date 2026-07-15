@@ -1,57 +1,51 @@
-import { Button } from "@app/utils/ui/components/button";
-import { type RunPipeline, type VideoDetailTab, VideoDetailTabs } from "@app/utils/ui/components/youtube/tabs";
+import { type VideoDetailTab, VideoDetailTabs } from "@app/utils/ui/components/youtube/tabs";
 import type { JobStage } from "@app/youtube/lib/types";
-import { dataSource, useStartPipeline } from "@ext/api.hooks";
+import { dataSource, useModels, useStartPipeline } from "@ext/api.hooks";
 import type { ExtensionEvent } from "@ext/shared/messages";
 import { ChannelPanel } from "@ext/side-panel/channel-panel";
 import { Header } from "@ext/side-panel/header";
 import { connectEventPort } from "@ext/side-panel/port";
 import type { PanelTarget } from "@ext/side-panel/target";
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-export function SidePanel({ target, onClose }: { target: PanelTarget; onClose: () => void }) {
+declare const __EXT_DEV_RELOAD__: boolean;
+const IS_DEV_BUILD = typeof __EXT_DEV_RELOAD__ !== "undefined" && __EXT_DEV_RELOAD__;
+
+type Placement = "inline" | "fixed";
+
+export function SidePanel({
+    target,
+    placement,
+    onClose,
+}: {
+    target: PanelTarget;
+    placement: Placement;
+    onClose: () => void;
+}) {
     if (target.kind === "channel") {
         return <ChannelPanel handle={target.handle} onClose={onClose} />;
     }
 
-    return <VideoPanel videoId={target.videoId} onClose={onClose} />;
+    return <VideoPanel videoId={target.videoId} placement={placement} />;
 }
 
-type PipelineActionKey = "transcribe" | "summarise" | "comments" | "full";
-
-const PIPELINE_ACTIONS: Array<{ key: PipelineActionKey; label: string; pendingLabel: string; stages: JobStage[] }> = [
-    {
-        key: "transcribe",
-        label: "Transcribe",
-        pendingLabel: "Transcribing…",
-        stages: ["metadata", "captions", "transcribe"],
-    },
-    {
-        key: "summarise",
-        label: "Summarise",
-        pendingLabel: "Summarising…",
-        stages: ["metadata", "captions", "summarize"],
-    },
-    { key: "comments", label: "Fetch comments", pendingLabel: "Fetching…", stages: ["metadata", "comments"] },
-    {
-        key: "full",
-        label: "Full analysis",
-        pendingLabel: "Running…",
-        stages: ["metadata", "captions", "transcribe", "summarize", "comments"],
-    },
-];
-
-function VideoPanel({ videoId, onClose }: { videoId: string; onClose: () => void }) {
+function VideoPanel({ videoId, placement }: { videoId: string; placement: Placement }) {
     const [active, setActive] = useState<VideoDetailTab>("summary");
-    const [pendingAction, setPendingAction] = useState<PipelineActionKey | null>(null);
-    const [runningJobs, setRunningJobs] = useState<Partial<Record<PipelineActionKey, number>>>({});
+    const [collapsed, setCollapsed] = useState(false);
     const startPipeline = useStartPipeline();
+    const queryClient = useQueryClient();
+    // Dev-only model picker data; regular builds never fetch it.
+    const models = useModels(IS_DEV_BUILD);
 
     useEffect(() => {
         const cleanup = connectEventPort();
         return cleanup;
     }, []);
 
+    // When any pipeline job finishes, invalidate the query for the tab whose
+    // data it touched. Without this the "Fetch comments" button enqueues a
+    // job but the panel never notices when comments actually land.
     useEffect(() => {
         function onExtensionEvent(event: Event): void {
             const detail = (event as CustomEvent<ExtensionEvent>).detail;
@@ -60,34 +54,27 @@ function VideoPanel({ videoId, onClose }: { videoId: string; onClose: () => void
             }
 
             const jobEvent = detail.event;
-            const isTerminal =
-                jobEvent.type === "job:completed" ||
-                jobEvent.type === "job:failed" ||
-                jobEvent.type === "job:cancelled";
-            if (!isTerminal) {
+            if (jobEvent.type !== "job:completed") {
                 return;
             }
 
-            const jobId = jobEvent.type === "job:cancelled" ? jobEvent.jobId : jobEvent.job.id;
-            setRunningJobs((prev) => {
-                const next: Partial<Record<PipelineActionKey, number>> = {};
-                let changed = false;
-                for (const key of Object.keys(prev) as PipelineActionKey[]) {
-                    if (prev[key] === jobId) {
-                        changed = true;
-                        continue;
-                    }
-
-                    next[key] = prev[key];
-                }
-
-                return changed ? next : prev;
-            });
+            const stages = jobEvent.job.stages ?? [];
+            if (stages.includes("comments")) {
+                queryClient.invalidateQueries({ queryKey: ["comments", videoId] });
+            }
+            if (stages.includes("captions") || stages.includes("transcribe")) {
+                queryClient.invalidateQueries({ queryKey: ["transcript", videoId] });
+            }
+            if (stages.includes("summarize")) {
+                queryClient.invalidateQueries({ queryKey: ["summary", videoId] });
+            }
+            if (stages.includes("metadata")) {
+                queryClient.invalidateQueries({ queryKey: ["video", videoId] });
+            }
         }
-
         document.addEventListener("yt-extension-event", onExtensionEvent);
         return () => document.removeEventListener("yt-extension-event", onExtensionEvent);
-    }, []);
+    }, [queryClient, videoId]);
 
     function seek(seconds: number): void {
         window.postMessage({ event: "command", func: "seekTo", args: [seconds, true] }, "https://www.youtube.com");
@@ -100,52 +87,35 @@ function VideoPanel({ videoId, onClose }: { videoId: string; onClose: () => void
         [startPipeline.mutateAsync, videoId]
     );
 
-    async function runAction(action: PipelineActionKey, stages: JobStage[]): Promise<void> {
-        setPendingAction(action);
-        try {
-            const { job } = await startPipeline.mutateAsync({ target: videoId, targetKind: "video", stages });
-            setRunningJobs((prev) => ({ ...prev, [action]: job.id }));
-        } catch (error) {
-            console.error("Failed to run pipeline action:", error);
-        } finally {
-            setPendingAction(null);
-        }
-    }
-
-    const runPipeline = useMemo<RunPipeline>(
+    const runPipeline = useMemo(
         () => ({ isPending: startPipeline.isPending, run: runStages }),
         [startPipeline.isPending, runStages]
     );
 
-    function isBusy(action: PipelineActionKey): boolean {
-        return pendingAction === action || runningJobs[action] !== undefined;
-    }
+    // Single surface — border + bg live on this one wrapper. VideoDetailTabs
+    // renders chromeless so we don't nest two containers.
+    const containerClass =
+        placement === "inline"
+            ? "flex h-auto min-h-0 flex-col overflow-hidden rounded-xl border border-white/8 bg-card"
+            : "flex h-auto min-h-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-card shadow-2xl shadow-black/40";
 
     return (
-        <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground shadow-[-24px_0_70px_rgba(0,0,0,0.55)]">
-            <Header onClose={onClose} />
-            <div className="grid grid-cols-2 gap-2 border-b border-primary/15 bg-primary/5 p-3">
-                {PIPELINE_ACTIONS.map((action) => (
-                    <Button
-                        key={action.key}
-                        size="sm"
-                        variant={action.key === "full" ? undefined : "cyber-secondary"}
-                        onClick={() => runAction(action.key, action.stages)}
-                        disabled={isBusy(action.key)}
-                    >
-                        {isBusy(action.key) ? action.pendingLabel : action.label}
-                    </Button>
-                ))}
-            </div>
-            <div className="yt-scroll min-h-0 flex-1 overflow-auto p-3">
-                <VideoDetailTabs
-                    videoId={videoId}
-                    ds={dataSource}
-                    onSeek={seek}
-                    active={active}
-                    onActiveChange={setActive}
-                    runPipeline={runPipeline}
-                />
+        <div className={containerClass}>
+            <Header collapsed={collapsed} onToggleCollapse={() => setCollapsed((v) => !v)} />
+            <div className="yt-body-collapsible min-h-0 flex-1" data-collapsed={collapsed}>
+                <div className="yt-scroll min-h-0 h-full overflow-auto">
+                    <VideoDetailTabs
+                        videoId={videoId}
+                        ds={dataSource}
+                        onSeek={seek}
+                        active={active}
+                        onActiveChange={setActive}
+                        runPipeline={runPipeline}
+                        chromeless
+                        devMode={IS_DEV_BUILD}
+                        modelPresets={models.data?.presets ?? []}
+                    />
+                </div>
             </div>
         </div>
     );
