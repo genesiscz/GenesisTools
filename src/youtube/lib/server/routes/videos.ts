@@ -12,6 +12,14 @@ import { requireUser, resolveUser } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
+import { serveFileWithRange } from "@app/youtube/lib/server/range";
+import {
+    getOrSynthesizeSummaryAudio,
+    NoSummaryError,
+    NoTtsProviderError,
+    resolveSummaryAudioTarget,
+    summaryAudioCacheHit,
+} from "@app/youtube/lib/summary-audio";
 import { compactTranscript } from "@app/youtube/lib/transcript-compact";
 import { translateTranscript } from "@app/youtube/lib/transcripts";
 import type { ChannelHandle, QaSource, Transcript, Video, VideoId } from "@app/youtube/lib/types";
@@ -137,6 +145,115 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             const credits = yt.db.spendCredits(user.id, creditCost, "transcript:translate");
 
             return Response.json({ transcript, creditsSpent: creditCost, credits }, { headers: CORS_HEADERS });
+        }
+
+        const audioPost = matchRoute(req, "POST", "/api/v1/videos/:id/summary/audio", url.pathname);
+
+        if (audioPost) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const id = audioPost.id as VideoId;
+            const body = (await safeJsonBody(req)) ?? {};
+            const voice = typeof body.voice === "string" ? body.voice : (user.ttsVoice ?? undefined);
+
+            let target: Awaited<ReturnType<typeof resolveSummaryAudioTarget>>;
+
+            try {
+                target = await resolveSummaryAudioTarget({ db: yt.db, videoId: id, mode: "long", voice });
+            } catch (error) {
+                if (error instanceof NoTtsProviderError) {
+                    return jsonError("no TTS provider configured", 503);
+                }
+
+                if (error instanceof NoSummaryError) {
+                    return jsonError("no long summary yet — generate one first", 409);
+                }
+
+                throw error;
+            }
+
+            // Cache is checked BEFORE the credit charge — a hit never spends.
+            const cached = await summaryAudioCacheHit(target);
+
+            if (!cached) {
+                const creditCost = CREDIT_COSTS["tts:summary"];
+
+                if (user.credits < creditCost) {
+                    return insufficientDiamonds(user.credits, creditCost);
+                }
+            }
+
+            const result = await getOrSynthesizeSummaryAudio({
+                db: yt.db,
+                videoId: id,
+                mode: "long",
+                voice,
+                userId: user.id,
+            });
+            let credits = user.credits;
+
+            if (!result.cached) {
+                credits = yt.db.spendCredits(user.id, CREDIT_COSTS["tts:summary"], `tts:${id}`);
+            }
+
+            return Response.json(
+                {
+                    url: `/api/v1/videos/${id}/summary/audio`,
+                    cached: result.cached,
+                    creditsSpent: result.cached ? 0 : CREDIT_COSTS["tts:summary"],
+                    credits,
+                },
+                { headers: CORS_HEADERS }
+            );
+        }
+
+        const audioGet = matchRoute(req, "GET", "/api/v1/videos/:id/summary/audio", url.pathname);
+
+        if (audioGet) {
+            // `<audio>` elements can't set an Authorization header — the token
+            // travels as a query param instead, mirrored onto `access_token` so
+            // it goes through the same requireUser path as every other route.
+            const authUrl = new URL(url);
+            const token = url.searchParams.get("token");
+
+            if (token) {
+                authUrl.searchParams.set("access_token", token);
+            }
+
+            const user = requireUser(req, authUrl, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const id = audioGet.id as VideoId;
+            const voice = url.searchParams.get("voice") ?? user.ttsVoice ?? undefined;
+
+            let target: Awaited<ReturnType<typeof resolveSummaryAudioTarget>>;
+
+            try {
+                target = await resolveSummaryAudioTarget({ db: yt.db, videoId: id, mode: "long", voice });
+            } catch (error) {
+                if (error instanceof NoTtsProviderError) {
+                    return jsonError("no TTS provider configured", 503);
+                }
+
+                if (error instanceof NoSummaryError) {
+                    return jsonError("no long summary yet — generate one first", 404);
+                }
+
+                throw error;
+            }
+
+            if (!(await summaryAudioCacheHit(target))) {
+                return jsonError("audio not synthesized yet — POST first", 404);
+            }
+
+            return serveFileWithRange(req, target.path, "audio/mpeg");
         }
 
         const speakersPut = matchRoute(req, "PUT", "/api/v1/videos/:id/speakers", url.pathname);
