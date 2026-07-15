@@ -10,8 +10,9 @@ import type { UpsertVideoInput } from "@app/youtube/lib/db.types";
 import type { JobStage } from "@app/youtube/lib/jobs.types";
 import { Pipeline } from "@app/youtube/lib/pipeline";
 import type { PipelineHandlerMap } from "@app/youtube/lib/pipeline.types";
+import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
 import { QaService } from "@app/youtube/lib/qa";
-import { SummaryService } from "@app/youtube/lib/summarize";
+import { type ReportMember, SummaryService } from "@app/youtube/lib/summarize";
 import { TranscriptService } from "@app/youtube/lib/transcripts";
 import type { VideoId } from "@app/youtube/lib/video.types";
 import type { YoutubeDeps, YoutubeOptions } from "@app/youtube/lib/youtube.types";
@@ -397,6 +398,78 @@ export class Youtube {
             },
             summarize: async (ctx) => {
                 await this.summary.summarize({ videoId: ctx.job.target as VideoId, mode: "short", signal: ctx.signal });
+            },
+            reportSynthesize: async (ctx) => {
+                if (ctx.job.targetKind !== "report") {
+                    logger.warn(
+                        { jobId: ctx.job.id, targetKind: ctx.job.targetKind },
+                        "youtube reportSynthesize stage skipped for non-report target"
+                    );
+                    return;
+                }
+
+                const reportId = Number(ctx.job.target);
+                const report = this.db.getReport(reportId);
+
+                if (!report) {
+                    throw new Error(`unknown report ${reportId}`);
+                }
+
+                const params = report.params ?? {};
+                const providerChoice = await resolveProviderChoice({
+                    provider: typeof params.provider === "string" ? params.provider : undefined,
+                    model: typeof params.model === "string" ? params.model : undefined,
+                });
+                const members: ReportMember[] = [];
+
+                for (let i = 0; i < report.memberIds.length; i++) {
+                    const videoId = report.memberIds[i] as VideoId;
+                    ctx.onProgress(
+                        (i / (report.memberIds.length + 1)) * 0.8,
+                        `video ${i + 1}/${report.memberIds.length} summarized`
+                    );
+
+                    try {
+                        const video = await this.videos.ensureMetadata(videoId, { signal: ctx.signal });
+
+                        if (!this.db.getTranscript(videoId)) {
+                            await this.transcripts.transcribe({ videoId, signal: ctx.signal });
+                        }
+
+                        const summary = await this.summary.summarize({
+                            videoId,
+                            mode: "long",
+                            providerChoice,
+                            signal: ctx.signal,
+                        });
+                        members.push({
+                            videoId,
+                            title: video.title,
+                            uploadDate: video.uploadDate,
+                            summary: summary.long ?? null,
+                            skipped: summary.long ? null : "no long summary produced",
+                        });
+                    } catch (error) {
+                        ctx.signal.throwIfAborted();
+                        // A failed member NEVER fails the whole report — it lands
+                        // as a skipped entry with its reason.
+                        const reason = error instanceof Error ? error.message : String(error);
+                        logger.warn({ videoId, reportId, reason }, "youtube report member skipped");
+                        const video = this.db.getVideo(videoId);
+                        members.push({
+                            videoId,
+                            title: video?.title ?? videoId,
+                            uploadDate: video?.uploadDate ?? null,
+                            summary: null,
+                            skipped: reason,
+                        });
+                    }
+                }
+
+                ctx.onProgress(0.85, "Synthesizing report");
+                const result = await this.summary.synthesizeReport({ members, providerChoice });
+                this.db.setReportResult(reportId, result);
+                logger.info({ reportId, members: members.length }, "youtube report synthesized");
             },
         };
     }

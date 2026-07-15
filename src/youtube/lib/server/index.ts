@@ -11,6 +11,7 @@ import { handleChannelsRoute } from "@app/youtube/lib/server/routes/channels";
 import { handleConfigRoute } from "@app/youtube/lib/server/routes/config";
 import { handleModelsRoute } from "@app/youtube/lib/server/routes/models";
 import { handlePipelineRoute } from "@app/youtube/lib/server/routes/pipeline";
+import { handleReportsRoute } from "@app/youtube/lib/server/routes/reports";
 import { handleMetaRoute } from "@app/youtube/lib/server/routes/server-meta";
 import { handleSharePageRoute } from "@app/youtube/lib/server/routes/share-page";
 import { handleSharesRoute } from "@app/youtube/lib/server/routes/shares";
@@ -125,6 +126,10 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
 
                 if (url.pathname.startsWith("/api/v1/webhooks")) {
                     return await handleWebhooksRoute(req, url, youtube);
+                }
+
+                if (url.pathname.startsWith("/api/v1/reports")) {
+                    return await handleReportsRoute(req, url, youtube);
                 }
 
                 if (url.pathname.startsWith("/api/v1/pipeline") || url.pathname.startsWith("/api/v1/jobs")) {

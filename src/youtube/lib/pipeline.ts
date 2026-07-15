@@ -253,6 +253,7 @@ export class Pipeline {
             case "transcribe":
                 return Math.max(1, Math.max(concurrency.localTranscribe, concurrency.cloudTranscribe));
             case "summarize":
+            case "reportSynthesize":
                 return Math.max(1, concurrency.summarize);
             case "video":
                 return Math.max(1, concurrency.download);
@@ -280,6 +281,7 @@ const JOB_STAGES: JobStage[] = [
     "video",
     "transcribe",
     "summarize",
+    "reportSynthesize",
 ];
 
 function remainingStagesAfter(job: PipelineJob, claimedStage: JobStage): JobStage[] {

@@ -36,6 +36,15 @@ export interface VideoLongSummary {
     conclusion: string | null;
 }
 
+/** Structured multi-video report synthesized from member LONG summaries. */
+export interface VideoReport {
+    overview: string;
+    themes: { title: string; detail: string; videoIds: string[] }[];
+    perVideo: { videoId: string; capsule: string; standout: string; skipped: string | null }[];
+    disagreements: { topic: string; positions: string }[];
+    recommendation: string;
+}
+
 export type SummaryTone = "insightful" | "funny" | "actionable" | "controversial";
 export type SummaryFormat = "list" | "qa";
 export type SummaryLength = "short" | "auto" | "detailed";

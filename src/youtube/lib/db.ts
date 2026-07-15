@@ -40,7 +40,13 @@ import type { AskCitation, QaChunk, QaSource } from "@app/youtube/lib/qa.types";
 import type { Language, Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
 import type { ArtifactKind, CreditReason, QaHistoryItem, YtUser } from "@app/youtube/lib/users.types";
 import { InsufficientCreditsError } from "@app/youtube/lib/users.types";
-import type { TimestampedSummaryEntry, Video, VideoId, VideoLongSummary } from "@app/youtube/lib/video.types";
+import type {
+    TimestampedSummaryEntry,
+    Video,
+    VideoId,
+    VideoLongSummary,
+    VideoReport,
+} from "@app/youtube/lib/video.types";
 
 export const DEFAULT_DB_PATH = join(homedir(), ".genesis-tools", "youtube", "youtube.db");
 
@@ -352,6 +358,21 @@ export class YoutubeDatabase extends BaseDatabase {
             if (!cols.some((column) => column.name === "scope_json")) {
                 this.db.exec("ALTER TABLE qa_history ADD COLUMN scope_json TEXT");
             }
+        });
+
+        this.runMigration("add-reports", () => {
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS reports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    title TEXT NOT NULL,
+                    member_ids_json TEXT NOT NULL,
+                    params_json TEXT,
+                    result_json TEXT,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_reports_user ON reports(user_id, id DESC);
+            `);
         });
 
         this.runMigration("add-artifact-access", () => {
@@ -1526,6 +1547,49 @@ export class YoutubeDatabase extends BaseDatabase {
         );
     }
 
+    insertReport(input: {
+        userId: number;
+        title: string;
+        memberIds: string[];
+        params?: Record<string, unknown> | null;
+    }): VideoReportRecord {
+        const row = this.db
+            .query<ReportRow, [number, string, string, string | null]>(
+                `INSERT INTO reports (user_id, title, member_ids_json, params_json, created_at)
+                 VALUES (?, ?, ?, ?, ${SQL_NOW_UTC}) RETURNING *`
+            )
+            .get(
+                input.userId,
+                input.title,
+                SafeJSON.stringify(input.memberIds),
+                input.params ? SafeJSON.stringify(input.params) : null
+            );
+
+        if (!row) {
+            throw new Error("insertReport failed: insert returned no row");
+        }
+
+        return rowToReport(row);
+    }
+
+    getReport(id: number): VideoReportRecord | null {
+        const row = this.db.query<ReportRow, [number]>("SELECT * FROM reports WHERE id = ?").get(id);
+
+        return row ? rowToReport(row) : null;
+    }
+
+    listReports(userId: number, limit = 50): VideoReportRecord[] {
+        const rows = this.db
+            .query<ReportRow, [number, number]>("SELECT * FROM reports WHERE user_id = ? ORDER BY id DESC LIMIT ?")
+            .all(userId, limit);
+
+        return rows.map(rowToReport);
+    }
+
+    setReportResult(id: number, result: VideoReport): void {
+        this.db.run("UPDATE reports SET result_json = ? WHERE id = ?", [SafeJSON.stringify(result), id]);
+    }
+
     initSchemaForTest(): void {
         this.initSchema();
     }
@@ -1550,6 +1614,38 @@ export interface ShareRow {
     payload_json: string;
     created_at: string;
     revoked_at: string | null;
+}
+
+export interface VideoReportRecord {
+    id: number;
+    userId: number;
+    title: string;
+    memberIds: string[];
+    params: Record<string, unknown> | null;
+    result: VideoReport | null;
+    createdAt: string;
+}
+
+interface ReportRow {
+    id: number;
+    user_id: number;
+    title: string;
+    member_ids_json: string;
+    params_json: string | null;
+    result_json: string | null;
+    created_at: string;
+}
+
+function rowToReport(row: ReportRow): VideoReportRecord {
+    return {
+        id: row.id,
+        userId: row.user_id,
+        title: row.title,
+        memberIds: parseNullableJsonArray<string>(row.member_ids_json) ?? [],
+        params: row.params_json ? (SafeJSON.parse(row.params_json) as Record<string, unknown>) : null,
+        result: row.result_json ? (SafeJSON.parse(row.result_json) as VideoReport) : null,
+        createdAt: row.created_at,
+    };
 }
 
 interface UserRow {
@@ -1886,7 +1982,8 @@ function isJobStage(value: unknown): value is JobStage {
         value === "audio" ||
         value === "video" ||
         value === "transcribe" ||
-        value === "summarize"
+        value === "summarize" ||
+        value === "reportSynthesize"
     );
 }
 
