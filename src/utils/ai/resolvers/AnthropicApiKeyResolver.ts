@@ -26,6 +26,7 @@ export class AnthropicApiKeyResolver implements AccountResolver {
             provider,
             models,
             config: providerConfig,
+            subscription: false,
             account: { name: entry.name, label: entry.label },
         };
     }

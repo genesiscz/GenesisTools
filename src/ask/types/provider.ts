@@ -77,7 +77,7 @@ export interface DetectedProvider {
     config: ProviderConfig;
     systemPromptPrefix?: string;
     /** True when calls bill a subscription plan (Claude Max/Pro, Codex, SuperGrok) instead of pay-per-token API spend. */
-    subscription?: boolean;
+    subscription: boolean;
     /** The account used to create this provider, set at resolution time. */
     account?: { name: string; label?: string };
 }

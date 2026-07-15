@@ -34,6 +34,7 @@ export class AnthropicSubResolver implements AccountResolver {
             models,
             config: providerConfig,
             systemPromptPrefix: SUBSCRIPTION_SYSTEM_PREFIX,
+            subscription: true,
             account: { name: account.name, label: account.label },
         };
     }
