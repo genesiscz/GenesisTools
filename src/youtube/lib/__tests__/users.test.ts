@@ -42,9 +42,7 @@ describe("registerUser", () => {
 
     it("rejects duplicate emails case-insensitively", async () => {
         await registerUser(db, { email: "a@b.co", password: "password123" });
-        await expect(registerUser(db, { email: "A@B.CO", password: "password456" })).rejects.toThrow(
-            "already exists"
-        );
+        await expect(registerUser(db, { email: "A@B.CO", password: "password456" })).rejects.toThrow("already exists");
     });
 });
 
