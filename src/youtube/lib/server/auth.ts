@@ -1,7 +1,9 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
+import type { YtUser } from "@app/youtube/lib/users.types";
 
 /**
  * Optional per-user service-key auth for the YouTube API server.
@@ -121,4 +123,38 @@ export function requireServiceKey(req: Request, keys: string[]): Response | null
     logger.debug({ method, path }, "youtube API: accepted request with valid service key");
 
     return null;
+}
+
+const USER_TOKEN_PREFIX = "ytu_";
+
+/**
+ * Returns the authenticated user, or a ready 401 JSON Response. Never throws.
+ *
+ * Token source: `Authorization: Bearer ytu_…` header first, then
+ * `?access_token=` query param (WS-style fallback). Tokens without the `ytu_`
+ * prefix are ignored here — they may be service keys handled elsewhere.
+ */
+export function requireUser(req: Request, url: URL, db: YoutubeDatabase): YtUser | Response {
+    const presented = extractBearerToken(req) ?? url.searchParams.get("access_token");
+    const token = presented?.startsWith(USER_TOKEN_PREFIX) ? presented : null;
+    const user = token ? db.getUserByToken(token) : null;
+
+    if (user) {
+        return user;
+    }
+
+    logger.warn(
+        {
+            method: req.method,
+            path: url.pathname,
+            reason: token ? "invalid-token" : "no-token",
+            tokenPrefix: token?.slice(0, 8),
+        },
+        "youtube API: user auth required"
+    );
+
+    return new Response(SafeJSON.stringify({ error: "login required" }, { strict: true }), {
+        status: 401,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    });
 }

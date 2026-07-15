@@ -3,11 +3,13 @@ import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import { withJobActivity } from "@app/youtube/lib/job-activity";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
+import { requireUser } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
 import { compactTranscript } from "@app/youtube/lib/transcript-compact";
 import type { ChannelHandle, Transcript, VideoId } from "@app/youtube/lib/types";
+import { CREDIT_COSTS, InsufficientCreditsError } from "@app/youtube/lib/types";
 import type { Youtube } from "@app/youtube/lib/youtube";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 
@@ -124,6 +126,12 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
         const summaryPost = matchRoute(req, "POST", "/api/v1/videos/:id/summary", url.pathname);
 
         if (summaryPost) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
             const id = summaryPost.id as VideoId;
             // Extension can request a summary for a video the DB has never
             // seen (user just opened the watch page) — ingest metadata on
@@ -132,6 +140,15 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
             const body = (await safeJsonBody(req)) ?? {};
             const mode = parseMode(body.mode);
+            const creditCost = CREDIT_COSTS[`summary:${mode}`];
+
+            // Balance pre-check → 402 BEFORE spending LLM tokens. The debit
+            // itself happens after the summarize succeeds; a race between two
+            // tabs can briefly overspend and is accepted for now.
+            if (user.credits < creditCost) {
+                return insufficientDiamonds(user.credits, creditCost);
+            }
+
             const force = body.force === true;
             const provider = typeof body.provider === "string" ? body.provider : undefined;
             const model = typeof body.model === "string" ? body.model : undefined;
@@ -234,6 +251,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 const completedJob = yt.db.getJob(job.id) ?? job;
                 yt.pipeline.emitExternal({ type: "stage:completed", jobId: job.id, stage: "summarize" });
                 yt.pipeline.emitExternal({ type: "job:completed", job: completedJob });
+                const credits = yt.db.spendCredits(user.id, creditCost, `summary:${mode}`);
 
                 return Response.json(
                     {
@@ -247,6 +265,8 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         cached: false,
                         jobId: job.id,
                         startedAt,
+                        creditsSpent: creditCost,
+                        credits,
                     },
                     { headers: CORS_HEADERS }
                 );
@@ -305,6 +325,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     outputTokens,
                     estUsd,
                     basis,
+                    creditCost: CREDIT_COSTS[`summary:${mode}`],
                 },
                 { headers: CORS_HEADERS }
             );
@@ -313,6 +334,16 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
         const qa = matchRoute(req, "POST", "/api/v1/videos/:id/qa", url.pathname);
 
         if (qa) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            if (user.credits < CREDIT_COSTS.ask) {
+                return insufficientDiamonds(user.credits, CREDIT_COSTS.ask);
+            }
+
             const id = qa.id as VideoId;
             await yt.videos.ensureMetadata(id);
 
@@ -374,8 +405,20 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 const completedJob = yt.db.getJob(job.id) ?? job;
                 yt.pipeline.emitExternal({ type: "stage:completed", jobId: job.id, stage: "summarize" });
                 yt.pipeline.emitExternal({ type: "job:completed", job: completedJob });
+                const credits = yt.db.spendCredits(user.id, CREDIT_COSTS.ask, "ask");
+                const historyItem = yt.db.insertQaHistory({
+                    userId: user.id,
+                    videoId: id,
+                    question,
+                    answer: result.answer,
+                    citations: result.citations,
+                    creditsSpent: CREDIT_COSTS.ask,
+                });
 
-                return Response.json({ ...result, jobId: job.id }, { headers: CORS_HEADERS });
+                return Response.json(
+                    { ...result, jobId: job.id, creditsSpent: CREDIT_COSTS.ask, credits, historyId: historyItem.id },
+                    { headers: CORS_HEADERS }
+                );
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 yt.db.updateJob(job.id, { status: "failed", error: message, completedAt: new Date().toISOString() });
@@ -387,8 +430,21 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
         return jsonError("not found", 404);
     } catch (err) {
+        if (err instanceof InsufficientCreditsError) {
+            // Lost the two-tab race: the pre-check passed but the debit after
+            // the LLM call found the balance already drained.
+            return insufficientDiamonds(err.balance, err.required);
+        }
+
         return toErrorResponse(err);
     }
+}
+
+function insufficientDiamonds(balance: number, required: number): Response {
+    return new Response(SafeJSON.stringify({ error: "Not enough diamonds", balance, required }, { strict: true }), {
+        status: 402,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    });
 }
 
 function handleTranscriptRoute(url: URL, yt: Youtube, id: VideoId): Response {
