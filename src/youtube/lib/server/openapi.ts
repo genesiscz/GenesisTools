@@ -295,7 +295,7 @@ function buildSchemas(): Record<string, OpenApiSchema> {
         },
         JobStage: {
             type: "string",
-            enum: ["discover", "metadata", "captions", "audio", "video", "transcribe", "summarize"],
+            enum: ["discover", "metadata", "captions", "audio", "video", "transcribe", "summarize", "qa"],
         },
         JobStatus: {
             type: "string",

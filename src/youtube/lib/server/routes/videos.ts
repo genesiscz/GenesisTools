@@ -774,22 +774,22 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             // Debit BEFORE the retrieval/LLM work so concurrent requests cannot
             // pass a stale balance check and burn provider cost; refunded on failure.
             const creditsAfterDebit = yt.db.spendCredits(user.id, askCost, scope === "channel" ? "qa:channel" : "ask");
-            const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: ["summarize"] });
+            const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: ["qa"] });
             yt.pipeline.emitExternal({ type: "job:created", job });
-            yt.db.updateJob(job.id, { status: "running", currentStage: "summarize" });
+            yt.db.updateJob(job.id, { status: "running", currentStage: "qa" });
             const startedJob = yt.db.getJob(job.id) ?? job;
             yt.pipeline.emitExternal({ type: "job:started", job: startedJob });
-            yt.pipeline.emitExternal({ type: "stage:started", jobId: job.id, stage: "summarize" });
+            yt.pipeline.emitExternal({ type: "stage:started", jobId: job.id, stage: "qa" });
             yt.pipeline.emitExternal({
                 type: "stage:progress",
                 jobId: job.id,
-                stage: "summarize",
+                stage: "qa",
                 progress: 0.05,
                 message: "Indexing transcript",
             });
 
             try {
-                const result = await withJobActivity({ jobId: job.id, stage: "summarize", db: yt.db }, async () => {
+                const result = await withJobActivity({ jobId: job.id, stage: "qa", db: yt.db }, async () => {
                     for (const videoId of videoIds) {
                         await yt.qa.index({ videoId, sources });
                     }
@@ -797,7 +797,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     yt.pipeline.emitExternal({
                         type: "stage:progress",
                         jobId: job.id,
-                        stage: "summarize",
+                        stage: "qa",
                         progress: 0.5,
                         message: "Answering question",
                     });
@@ -819,7 +819,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     completedAt: new Date().toISOString(),
                 });
                 const completedJob = yt.db.getJob(job.id) ?? job;
-                yt.pipeline.emitExternal({ type: "stage:completed", jobId: job.id, stage: "summarize" });
+                yt.pipeline.emitExternal({ type: "stage:completed", jobId: job.id, stage: "qa" });
                 yt.pipeline.emitExternal({ type: "job:completed", job: completedJob });
                 const historyItem = yt.db.insertQaHistory({
                     userId: user.id,

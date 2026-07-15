@@ -9,6 +9,7 @@ export type JobStage =
     | "video"
     | "transcribe"
     | "summarize"
+    | "qa"
     | "reportSynthesize";
 
 export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted";

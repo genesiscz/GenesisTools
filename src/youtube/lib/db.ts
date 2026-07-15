@@ -2128,6 +2128,7 @@ function isJobStage(value: unknown): value is JobStage {
         value === "video" ||
         value === "transcribe" ||
         value === "summarize" ||
+        value === "qa" ||
         value === "reportSynthesize"
     );
 }
