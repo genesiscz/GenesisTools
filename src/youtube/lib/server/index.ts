@@ -14,6 +14,7 @@ import { handlePipelineRoute } from "@app/youtube/lib/server/routes/pipeline";
 import { handleMetaRoute } from "@app/youtube/lib/server/routes/server-meta";
 import { handleUsersRoute } from "@app/youtube/lib/server/routes/users";
 import { handleVideosRoute } from "@app/youtube/lib/server/routes/videos";
+import { handleWebhooksRoute } from "@app/youtube/lib/server/routes/webhooks";
 import type { WebsocketState } from "@app/youtube/lib/server/websocket";
 import { setupWebsocket } from "@app/youtube/lib/server/websocket";
 import { Youtube } from "@app/youtube/lib/youtube";
@@ -64,11 +65,14 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
                 }
 
                 // Meta routes (liveness + public discovery) stay open so health
-                // checks and readiness probes work without a key.
+                // checks and readiness probes work without a key. Webhooks stay
+                // open too — Stripe can't present our service key; it
+                // authenticates via its own request signature instead.
                 const isOpenRoute =
                     url.pathname === "/api/v1/healthz" ||
                     url.pathname === "/api/v1/version" ||
-                    url.pathname === "/api/v1/openapi.json";
+                    url.pathname === "/api/v1/openapi.json" ||
+                    url.pathname.startsWith("/api/v1/webhooks/");
 
                 if (!isOpenRoute) {
                     const authError = requireServiceKey(req, serviceKeys);
@@ -99,6 +103,10 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
 
                 if (url.pathname.startsWith("/api/v1/users")) {
                     return await handleUsersRoute(req, url, youtube);
+                }
+
+                if (url.pathname.startsWith("/api/v1/webhooks")) {
+                    return await handleWebhooksRoute(req, url, youtube);
                 }
 
                 if (url.pathname.startsWith("/api/v1/pipeline") || url.pathname.startsWith("/api/v1/jobs")) {
