@@ -52,6 +52,7 @@ tools github get https://github.com/owner/repo/blob/main/src/index.ts --clipboar
 
 # Safe stack-aware merge (retargets dependents before optional branch delete)
 tools github merge 123 --rebase
+tools github merge 123 --ff-only          # true FF (base ref → head SHA; keeps commit SHAs)
 tools github merge 123 --squash --delete-branch --subject "feat: ship (#123)"
 tools github merge https://github.com/owner/repo/pull/123 --merge --delete-remote
 
@@ -83,12 +84,17 @@ GitHub only auto-retargets dependent PRs when a branch is deleted via the **web 
 
 `tools github merge` always:
 
-1. Merges via Octokit (`merge` / `rebase` / `squash`) **without** deleting the head branch
+1. Merges **without** deleting the head branch via the merge API:
+   - `--merge` / `--rebase` / `--squash` → GitHub `pulls.merge`
+   - `--ff-only` (alias `--ff`) → true fast-forward: move base ref to head SHA
+     (`git.updateRef` with `force=false` after a compare preflight). Preserves
+     commit SHAs; fails if base is not an ancestor of head.
 2. Finds open PRs whose `base` is the merged head branch
 3. Retargets each onto the merged PR's base
 4. Only then, if `--delete-branch` / `--delete-remote`, deletes the remote head ref
 
-Exactly one of `--merge`, `--rebase`, or `--squash` is required. All progress logs go to stdout.
+Exactly one of `--merge`, `--rebase`, `--squash`, or `--ff-only` is required.
+All progress logs go to stdout.
 
 Run any subcommand with `--help` for its full option list. The most common flags (`--format ai|json`, `--limit`, `--last`, `--no-bots`, `--min-reactions`, `--stats`, `--clipboard`) work across multiple subcommands.
 

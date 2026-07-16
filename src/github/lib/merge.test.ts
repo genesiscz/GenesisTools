@@ -21,6 +21,8 @@ function makeMock(opts: {
     failRetarget?: number[];
     /** Fail deleteBranch. */
     failDelete?: boolean;
+    /** Fail fastForwardBase. */
+    failFf?: boolean | string;
     /** Mutate dependent state after base update. */
     afterRetarget?: (dep: DependentPull, newBase: string) => DependentPull;
 }): { client: MergeGitHubClient; calls: CallLog } {
@@ -48,6 +50,22 @@ function makeMock(opts: {
                     sha: "abc123deadbeef",
                     merged: true,
                     message: "Pull Request successfully merged",
+                }
+            );
+        },
+        async fastForwardBase(_owner, _repo, baseRef, headSha) {
+            calls.push({ op: "fastForwardBase", args: [baseRef, headSha] });
+            if (opts.failFf) {
+                throw new Error(
+                    typeof opts.failFf === "string" ? opts.failFf : `Cannot fast-forward origin/${baseRef}`
+                );
+            }
+            merged = true;
+            return (
+                opts.mergeResult ?? {
+                    sha: headSha,
+                    merged: true,
+                    message: `Fast-forwarded origin/${baseRef} to ${headSha.slice(0, 7)}`,
                 }
             );
         },
@@ -97,6 +115,8 @@ function basePr(over: Partial<PullRef> = {}): PullRef {
         mergeable: true,
         headRef: "branch-a",
         baseRef: "main",
+        headSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        baseSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         htmlUrl: "https://github.com/o/r/pull/1",
         ...over,
     };
@@ -118,11 +138,14 @@ describe("resolveMergeMethod", () => {
         expect(resolveMergeMethod({ merge: true })).toBe("merge");
         expect(resolveMergeMethod({ rebase: true })).toBe("rebase");
         expect(resolveMergeMethod({ squash: true })).toBe("squash");
+        expect(resolveMergeMethod({ ffOnly: true })).toBe("ff-only");
+        expect(resolveMergeMethod({ ff: true })).toBe("ff-only");
     });
 
     test("rejects zero or multiple flags", () => {
         expect(() => resolveMergeMethod({})).toThrow(/exactly one/);
         expect(() => resolveMergeMethod({ merge: true, rebase: true })).toThrow(/Conflicting/);
+        expect(() => resolveMergeMethod({ ffOnly: true, rebase: true })).toThrow(/Conflicting/);
     });
 });
 
@@ -325,5 +348,98 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
                 client,
             })
         ).rejects.toThrow(/no longer open/);
+    });
+
+    test("--ff-only: uses fastForwardBase (not mergePull), then retargets dependents", async () => {
+        const logs: string[] = [];
+        const headSha = "cccccccccccccccccccccccccccccccccccccccc";
+        const { client, calls } = makeMock({
+            pr: basePr({ headSha }),
+            dependents: [dep({ number: 2, title: "PR B", headRef: "branch-b", baseRef: "branch-a" })],
+        });
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "ff-only",
+            deleteBranch: false,
+            client,
+            log: (m) => logs.push(m),
+        });
+
+        expect(result.method).toBe("ff-only");
+        expect(result.mergeSha).toBe(headSha);
+        expect(result.retargeted).toEqual([
+            {
+                number: 2,
+                title: "PR B",
+                fromBase: "branch-a",
+                toBase: "main",
+                ok: true,
+                state: "open",
+            },
+        ]);
+
+        const ops = calls.map((c) => c.op);
+        expect(ops).toContain("fastForwardBase");
+        expect(ops).not.toContain("mergePull");
+        expect(ops).toContain("updatePullBase");
+        expect(ops).not.toContain("deleteBranch");
+
+        const ffIdx = ops.indexOf("fastForwardBase");
+        const retargetIdx = ops.indexOf("updatePullBase");
+        expect(ffIdx).toBeLessThan(retargetIdx);
+
+        const ffCall = calls.find((c) => c.op === "fastForwardBase");
+        expect(ffCall?.args).toEqual(["main", headSha]);
+
+        expect(logs.some((l) => l.includes("Fast-forwarding"))).toBe(true);
+        expect(logs.some((l) => l.includes("Keeping remote branch"))).toBe(true);
+    });
+
+    test("--ff-only + --delete-branch: retarget before delete", async () => {
+        const { client, calls } = makeMock({
+            pr: basePr(),
+            dependents: [dep({ number: 2, title: "PR B", headRef: "branch-b", baseRef: "branch-a" })],
+        });
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "ff-only",
+            deleteBranch: true,
+            client,
+        });
+
+        expect(result.branchDeleted).toBe(true);
+        const ops = calls.map((c) => c.op);
+        expect(ops.indexOf("deleteBranch")).toBeGreaterThan(ops.indexOf("updatePullBase"));
+        expect(ops).not.toContain("mergePull");
+    });
+
+    test("--ff-only fails closed when fastForwardBase rejects (diverged)", async () => {
+        const { client, calls } = makeMock({
+            pr: basePr(),
+            dependents: [dep({ number: 2, title: "PR B", headRef: "branch-b", baseRef: "branch-a" })],
+            failFf: "Cannot fast-forward: compare status=diverged",
+        });
+
+        await expect(
+            safeMergePull({
+                owner: "o",
+                repo: "r",
+                number: 1,
+                method: "ff-only",
+                deleteBranch: true,
+                client,
+            })
+        ).rejects.toThrow(/diverged/);
+
+        const ops = calls.map((c) => c.op);
+        expect(ops).toContain("fastForwardBase");
+        expect(ops).not.toContain("updatePullBase");
+        expect(ops).not.toContain("deleteBranch");
     });
 });

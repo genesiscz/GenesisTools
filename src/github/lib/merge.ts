@@ -4,6 +4,8 @@
 // the web UI "Delete branch" button. CLI/API deletes close child PRs instead
 // (cli/cli#1168). This module never relies on that broken path:
 //   1. merge without deleting the head branch
+//      - merge / rebase / squash → GitHub pulls.merge API
+//      - ff-only → update base ref to head SHA (force=false) so SHAs stay intact
 //   2. find open PRs whose base is the merged head
 //   3. retarget each dependent onto the merged PR's base
 //   4. only then optionally delete the remote head branch
@@ -11,7 +13,8 @@
 import { getOctokitForWrite } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
 
-export type MergeMethod = "merge" | "rebase" | "squash";
+/** GitHub API merge methods plus local-ref fast-forward. */
+export type MergeMethod = "merge" | "rebase" | "squash" | "ff-only";
 
 export interface PullRef {
     number: number;
@@ -22,6 +25,10 @@ export interface PullRef {
     mergeable: boolean | null;
     headRef: string;
     baseRef: string;
+    /** Tip SHA of the head branch (required for ff-only). */
+    headSha: string;
+    /** Tip SHA of the base branch at PR resolution time. */
+    baseSha: string;
     htmlUrl: string;
 }
 
@@ -34,8 +41,11 @@ export interface DependentPull {
     state: string;
 }
 
+/** Methods accepted by GitHub's pulls.merge API (not ff-only). */
+export type GithubApiMergeMethod = Exclude<MergeMethod, "ff-only">;
+
 export interface MergePullOptions {
-    method: MergeMethod;
+    method: GithubApiMergeMethod;
     commitTitle?: string;
     commitMessage?: string;
 }
@@ -51,6 +61,11 @@ export interface MergeGitHubClient {
     getPull(owner: string, repo: string, number: number): Promise<PullRef>;
     listOpenPullsByBase(owner: string, repo: string, base: string): Promise<DependentPull[]>;
     mergePull(owner: string, repo: string, number: number, options: MergePullOptions): Promise<MergePullResult>;
+    /**
+     * True fast-forward: move `baseRef` to `headSha` only if base is an ancestor
+     * of head (Git ref update with force=false). Does not rewrite commits.
+     */
+    fastForwardBase(owner: string, repo: string, baseRef: string, headSha: string): Promise<MergePullResult>;
     updatePullBase(owner: string, repo: string, number: number, base: string): Promise<DependentPull>;
     deleteBranch(owner: string, repo: string, branch: string): Promise<void>;
 }
@@ -128,6 +143,8 @@ export function createOctokitMergeClient(): MergeGitHubClient {
                 mergeable: data.mergeable ?? null,
                 headRef: data.head.ref,
                 baseRef: data.base.ref,
+                headSha: data.head.sha,
+                baseSha: data.base.sha,
                 htmlUrl: data.html_url,
             };
         },
@@ -190,6 +207,57 @@ export function createOctokitMergeClient(): MergeGitHubClient {
                 sha: data.sha ?? "",
                 merged: Boolean(data.merged),
                 message: data.message ?? "merged",
+            };
+        },
+
+        async fastForwardBase(owner, repo, baseRef, headSha) {
+            // Preflight: base must be an ancestor of head (or already identical).
+            const { data: cmp } = await withRetry(
+                () =>
+                    octokit.rest.repos.compareCommitsWithBasehead({
+                        owner,
+                        repo,
+                        basehead: `${baseRef}...${headSha}`,
+                    }),
+                { label: `GET /repos/${owner}/${repo}/compare/${baseRef}...${headSha.slice(0, 7)}` }
+            );
+
+            // ahead  = head is strictly ahead of base → FF ok
+            // identical = already same tip → no-op ok
+            // behind / diverged = cannot FF
+            if (cmp.status === "diverged" || cmp.status === "behind") {
+                throw new Error(
+                    `Cannot fast-forward origin/${baseRef} to ${headSha.slice(0, 7)}: ` +
+                        `compare status=${cmp.status} (ahead_by=${cmp.ahead_by}, behind_by=${cmp.behind_by}). ` +
+                        `Rebase the PR onto ${baseRef} first, or use --rebase / --merge.`
+                );
+            }
+
+            if (cmp.status === "identical") {
+                return {
+                    sha: headSha,
+                    merged: true,
+                    message: `origin/${baseRef} already at ${headSha.slice(0, 7)} (identical)`,
+                };
+            }
+
+            // force: false → GitHub rejects non-FF updates (extra safety net).
+            await withRetry(
+                () =>
+                    octokit.rest.git.updateRef({
+                        owner,
+                        repo,
+                        ref: `heads/${baseRef}`,
+                        sha: headSha,
+                        force: false,
+                    }),
+                { label: `PATCH /repos/${owner}/${repo}/git/refs/heads/${baseRef} → ${headSha.slice(0, 7)} (ff)` }
+            );
+
+            return {
+                sha: headSha,
+                merged: true,
+                message: `Fast-forwarded origin/${baseRef} to ${headSha.slice(0, 7)}`,
             };
         },
 
@@ -267,15 +335,32 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
         }
     }
 
-    logLine(log, `Merging #${number} via ${method} (branch will NOT be deleted by the merge call)...`);
-    const mergeResult = await client.mergePull(owner, repo, number, {
-        method,
-        commitTitle,
-        commitMessage,
-    });
+    let mergeResult: MergePullResult;
+
+    if (method === "ff-only") {
+        if (commitTitle || commitMessage) {
+            logLine(log, "  note: --subject/--body ignored for --ff-only (no merge commit)");
+        }
+        if (!pr.headSha) {
+            throw new Error(`PR #${number} has no head SHA — cannot fast-forward`);
+        }
+        logLine(
+            log,
+            `Fast-forwarding origin/${pr.baseRef} → ${pr.headSha.slice(0, 7)} ` +
+                `(head=${pr.headRef}; branch will NOT be deleted by the FF)...`
+        );
+        mergeResult = await client.fastForwardBase(owner, repo, pr.baseRef, pr.headSha);
+    } else {
+        logLine(log, `Merging #${number} via ${method} (branch will NOT be deleted by the merge call)...`);
+        mergeResult = await client.mergePull(owner, repo, number, {
+            method: method as GithubApiMergeMethod,
+            commitTitle,
+            commitMessage,
+        });
+    }
 
     if (!mergeResult.merged) {
-        throw new Error(`Merge API returned merged=false: ${mergeResult.message}`);
+        throw new Error(`Merge returned merged=false: ${mergeResult.message}`);
     }
 
     logLine(log, `  merged sha=${mergeResult.sha || "(none)"} — ${mergeResult.message}`);
@@ -408,7 +493,14 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
 /**
  * Resolve exactly one merge method from CLI flags.
  */
-export function resolveMergeMethod(flags: { merge?: boolean; rebase?: boolean; squash?: boolean }): MergeMethod {
+export function resolveMergeMethod(flags: {
+    merge?: boolean;
+    rebase?: boolean;
+    squash?: boolean;
+    ffOnly?: boolean;
+    /** Alias for ffOnly (--ff). */
+    ff?: boolean;
+}): MergeMethod {
     const selected: MergeMethod[] = [];
 
     if (flags.merge) {
@@ -423,12 +515,18 @@ export function resolveMergeMethod(flags: { merge?: boolean; rebase?: boolean; s
         selected.push("squash");
     }
 
+    if (flags.ffOnly || flags.ff) {
+        selected.push("ff-only");
+    }
+
     if (selected.length === 0) {
-        throw new Error("Specify exactly one of --merge, --rebase, or --squash");
+        throw new Error("Specify exactly one of --merge, --rebase, --squash, or --ff-only");
     }
 
     if (selected.length > 1) {
-        throw new Error(`Conflicting merge methods: ${selected.map((m) => `--${m}`).join(", ")}`);
+        throw new Error(
+            `Conflicting merge methods: ${selected.map((m) => (m === "ff-only" ? "--ff-only" : `--${m}`)).join(", ")}`
+        );
     }
 
     return selected[0];

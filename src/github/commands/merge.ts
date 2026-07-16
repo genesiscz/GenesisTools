@@ -12,6 +12,10 @@ export interface MergeCommandOptions {
     merge?: boolean;
     rebase?: boolean;
     squash?: boolean;
+    /** True fast-forward of base → head SHA (preserves commits; no merge API). */
+    ffOnly?: boolean;
+    /** Alias for ffOnly. */
+    ff?: boolean;
     deleteBranch?: boolean;
     deleteRemote?: boolean;
     subject?: string;
@@ -58,6 +62,8 @@ export async function mergeCommand(input: string, options: MergeCommandOptions):
         merge: options.merge,
         rebase: options.rebase,
         squash: options.squash,
+        ffOnly: options.ffOnly,
+        ff: options.ff,
     });
 
     const deleteBranch = Boolean(options.deleteBranch || options.deleteRemote);
@@ -129,12 +135,17 @@ export function createMergeCommand(): Command {
         .option("--rebase", "Rebase and merge (preserves individual commits)")
         .option("--squash", "Squash and merge")
         .option(
+            "--ff-only",
+            "True fast-forward: move base ref to head SHA (preserves commits; fails if not FF-able). Auto-retargets stack dependents like other methods."
+        )
+        .option("--ff", "Alias for --ff-only")
+        .option(
             "--delete-branch",
             "After retargeting dependents, delete the remote head branch (never passes delete to the merge API)"
         )
         .option("--delete-remote", "Alias for --delete-branch")
-        .option("--subject <title>", "Commit title (merge/squash commit_title)")
-        .option("--body <text>", "Commit message body (merge/squash commit_message)")
+        .option("--subject <title>", "Commit title (merge/squash commit_title; ignored for --ff-only)")
+        .option("--body <text>", "Commit message body (merge/squash commit_message; ignored for --ff-only)")
         .option("-f, --format <format>", "Output format: text|json", "text")
         .option("-v, --verbose", "Verbose logging (reserved)")
         .action(async (input: string, opts: MergeCommandOptions) => {
