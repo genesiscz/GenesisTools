@@ -7,6 +7,12 @@ import { deleteIfExists } from "@app/youtube/lib/cache";
 import type { Channel, ChannelHandle } from "@app/youtube/lib/channel.types";
 import type { FetchedComment, VideoComment } from "@app/youtube/lib/comments.types";
 import type {
+    AdminListAiCallsOpts,
+    AdminListUsersOpts,
+    AdminListWebhookLogsOpts,
+    AdminRevenueSummary,
+    AdminUserRow,
+    AdminUserTotals,
     AiCallRecord,
     AskMessageRecord,
     AskMessageRole,
@@ -1877,6 +1883,15 @@ export class YoutubeDatabase extends BaseDatabase {
         return row?.user_id ?? null;
     }
 
+    /** Read-only lookup of a user's existing referral code (never creates one). */
+    getReferralCodeForUser(userId: number): string | null {
+        const row = this.db
+            .query<{ code: string }, [number]>("SELECT code FROM referral_codes WHERE user_id = ?")
+            .get(userId);
+
+        return row?.code ?? null;
+    }
+
     createReferral(input: {
         code: string;
         referrerUserId: number;
@@ -2008,6 +2023,224 @@ export class YoutubeDatabase extends BaseDatabase {
         const row = this.db.query<UserRow, [string]>("SELECT * FROM users WHERE api_token = ?").get(apiToken);
 
         return row ? rowToUser(row) : null;
+    }
+
+    getUserById(userId: number): YtUser | null {
+        const row = this.db.query<UserRow, [number]>("SELECT * FROM users WHERE id = ?").get(userId);
+
+        return row ? rowToUser(row) : null;
+    }
+
+    /**
+     * Admin users table: one row per user with money aggregates joined from
+     * pre-aggregated subqueries (one row per user_id each) so payments × ai_calls
+     * never multiply. Role is config-derived and attached in the route, not here.
+     */
+    adminListUsers(opts: AdminListUsersOpts): { rows: AdminUserRow[]; total: number } {
+        const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+        const offset = Math.max(opts.offset ?? 0, 0);
+        const filters: string[] = [];
+        const params: Array<string> = [];
+
+        if (opts.search) {
+            filters.push("u.email LIKE ?");
+            params.push(`%${opts.search}%`);
+        }
+
+        if (opts.subscription === "none") {
+            filters.push("s.status IS NULL");
+        } else if (opts.subscription) {
+            filters.push("s.status = ?");
+            params.push(opts.subscription);
+        }
+
+        const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
+        const orderCol = ADMIN_USER_SORTS[opts.sort ?? "created"] ?? ADMIN_USER_SORTS.created;
+        const dir = opts.dir === "asc" ? "ASC" : "DESC";
+        const base = `
+            FROM users u
+            LEFT JOIN (SELECT user_id, SUM(amount_cents) AS revenue_cents FROM payments WHERE status = 'succeeded' GROUP BY user_id) p ON p.user_id = u.id
+            LEFT JOIN (SELECT user_id, SUM(cost_usd) AS cost_usd FROM ai_calls GROUP BY user_id) a ON a.user_id = u.id
+            LEFT JOIN subscriptions s ON s.user_id = u.id
+            ${where}`;
+        const total = this.db.query<{ n: number }, string[]>(`SELECT COUNT(*) AS n ${base}`).get(...params)?.n ?? 0;
+        const rows = this.db
+            .query<AdminUserRowRaw, [...string[], number, number]>(
+                `SELECT u.id, u.email, u.credits, u.created_at, u.last_login_at,
+                        COALESCE(p.revenue_cents, 0) AS revenue_cents,
+                        COALESCE(a.cost_usd, 0) AS cost_usd,
+                        s.status AS sub_status, s.plan_id AS sub_plan_id
+                 ${base}
+                 ORDER BY ${orderCol} ${dir}, u.id DESC
+                 LIMIT ? OFFSET ?`
+            )
+            .all(...params, limit, offset);
+
+        return { rows: rows.map(rowToAdminUser), total };
+    }
+
+    /** Money aggregates + row counts for one user's admin profile header. */
+    adminUserTotals(userId: number): AdminUserTotals {
+        const row = this.db
+            .query<
+                { revenue_cents: number; cost_usd: number; payments_count: number; ai_calls_count: number },
+                [number, number, number, number]
+            >(
+                `SELECT
+                    (SELECT COALESCE(SUM(amount_cents), 0) FROM payments WHERE user_id = ? AND status = 'succeeded') AS revenue_cents,
+                    (SELECT COALESCE(SUM(cost_usd), 0) FROM ai_calls WHERE user_id = ?) AS cost_usd,
+                    (SELECT COUNT(*) FROM payments WHERE user_id = ?) AS payments_count,
+                    (SELECT COUNT(*) FROM ai_calls WHERE user_id = ?) AS ai_calls_count`
+            )
+            .get(userId, userId, userId, userId);
+
+        return {
+            revenueCents: row?.revenue_cents ?? 0,
+            aiCostUsd: row?.cost_usd ?? 0,
+            paymentsCount: row?.payments_count ?? 0,
+            aiCallsCount: row?.ai_calls_count ?? 0,
+        };
+    }
+
+    /** Paginated ai_calls for the admin ops view, filterable by provider/action/user. Newest first. */
+    adminListAiCalls(opts: AdminListAiCallsOpts = {}): { rows: AiCallRecord[]; total: number } {
+        const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+        const offset = Math.max(opts.offset ?? 0, 0);
+        const where: string[] = [];
+        const params: Array<string | number> = [];
+
+        if (opts.provider) {
+            where.push("provider = ?");
+            params.push(opts.provider);
+        }
+
+        if (opts.action) {
+            where.push("action = ?");
+            params.push(opts.action);
+        }
+
+        if (opts.userId !== undefined) {
+            where.push("user_id = ?");
+            params.push(opts.userId);
+        }
+
+        const whereClause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+        const total =
+            this.db
+                .query<{ n: number }, Array<string | number>>(`SELECT COUNT(*) AS n FROM ai_calls ${whereClause}`)
+                .get(...params)?.n ?? 0;
+        const rows = this.db
+            .query<AiCallRow, [...Array<string | number>, number, number]>(
+                `SELECT * FROM ai_calls ${whereClause} ORDER BY id DESC LIMIT ? OFFSET ?`
+            )
+            .all(...params, limit, offset);
+
+        return { rows: rows.map(rowToAiCall), total };
+    }
+
+    /** Paginated webhook_logs for the admin ops view, filterable by outcome. Newest first. */
+    adminListWebhookLogs(opts: AdminListWebhookLogsOpts = {}): { rows: WebhookLogRecord[]; total: number } {
+        const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+        const offset = Math.max(opts.offset ?? 0, 0);
+        const whereClause = opts.outcome ? "WHERE outcome = ?" : "";
+        const params: string[] = opts.outcome ? [opts.outcome] : [];
+        const total =
+            this.db
+                .query<{ n: number }, string[]>(`SELECT COUNT(*) AS n FROM webhook_logs ${whereClause}`)
+                .get(...params)?.n ?? 0;
+        const rows = this.db
+            .query<WebhookLogRow, [...string[], number, number]>(
+                `SELECT * FROM webhook_logs ${whereClause} ORDER BY id DESC LIMIT ? OFFSET ?`
+            )
+            .all(...params, limit, offset);
+
+        return { rows: rows.map(rowToWebhookLog), total };
+    }
+
+    /** Paginated jobs list for the admin ops view (reuses listJobs), plus the matching total. */
+    adminListJobs(opts: { status?: JobStatus; limit?: number; offset?: number } = {}): {
+        rows: PipelineJob[];
+        total: number;
+    } {
+        const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+        const offset = Math.max(opts.offset ?? 0, 0);
+        const whereClause = opts.status ? "WHERE status = ?" : "";
+        const params: string[] = opts.status ? [opts.status] : [];
+        const total =
+            this.db.query<{ n: number }, string[]>(`SELECT COUNT(*) AS n FROM jobs ${whereClause}`).get(...params)?.n ??
+            0;
+        const rows = this.listJobs({ status: opts.status, limit, offset });
+
+        return { rows, total };
+    }
+
+    /**
+     * Platform revenue summary: lifetime totals plus per-day revenue/AI-cost
+     * buckets over the last `days` (zero-filled, oldest→newest, UTC day keys).
+     */
+    adminRevenueSummary(opts: { days?: number } = {}): AdminRevenueSummary {
+        const days = Math.min(Math.max(opts.days ?? 30, 1), 365);
+        const totalsRow = this.db
+            .query<
+                {
+                    revenue_cents: number;
+                    cost_usd: number;
+                    payments_count: number;
+                    refunds_count: number;
+                    active_subscriptions: number;
+                },
+                []
+            >(
+                `SELECT
+                    (SELECT COALESCE(SUM(amount_cents), 0) FROM payments WHERE status = 'succeeded') AS revenue_cents,
+                    (SELECT COALESCE(SUM(cost_usd), 0) FROM ai_calls) AS cost_usd,
+                    (SELECT COUNT(*) FROM payments WHERE status = 'succeeded') AS payments_count,
+                    (SELECT COUNT(*) FROM payments WHERE status = 'refunded') AS refunds_count,
+                    (SELECT COUNT(*) FROM subscriptions WHERE status = 'active') AS active_subscriptions`
+            )
+            .get();
+
+        const now = Date.now();
+        const cutoff = new Date(now - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+        const revenueByDay = new Map<string, number>();
+
+        for (const row of this.db
+            .query<{ day: string; revenue_cents: number }, [string]>(
+                `SELECT substr(created_at, 1, 10) AS day, COALESCE(SUM(amount_cents), 0) AS revenue_cents
+                 FROM payments WHERE status = 'succeeded' AND substr(created_at, 1, 10) >= ? GROUP BY day`
+            )
+            .all(cutoff)) {
+            revenueByDay.set(row.day, row.revenue_cents);
+        }
+
+        const costByDay = new Map<string, number>();
+
+        for (const row of this.db
+            .query<{ day: string; cost_usd: number }, [string]>(
+                `SELECT substr(created_at, 1, 10) AS day, COALESCE(SUM(cost_usd), 0) AS cost_usd
+                 FROM ai_calls WHERE substr(created_at, 1, 10) >= ? GROUP BY day`
+            )
+            .all(cutoff)) {
+            costByDay.set(row.day, row.cost_usd);
+        }
+
+        const daily: AdminRevenueSummary["daily"] = [];
+
+        for (let i = days - 1; i >= 0; i--) {
+            const day = new Date(now - i * 86_400_000).toISOString().slice(0, 10);
+            daily.push({ day, revenueCents: revenueByDay.get(day) ?? 0, aiCostUsd: costByDay.get(day) ?? 0 });
+        }
+
+        return {
+            totals: {
+                revenueCents: totalsRow?.revenue_cents ?? 0,
+                aiCostUsd: totalsRow?.cost_usd ?? 0,
+                paymentsCount: totalsRow?.payments_count ?? 0,
+                refundsCount: totalsRow?.refunds_count ?? 0,
+                activeSubscriptions: totalsRow?.active_subscriptions ?? 0,
+            },
+            daily,
+        };
     }
 
     touchUserLogin(id: number): void {
@@ -3726,6 +3959,40 @@ interface ReferralRow {
     offer_from: string;
     offer_to: string;
     created_at: string;
+}
+
+/** Fixed sort whitelist — never interpolate a raw sort key into SQL. */
+const ADMIN_USER_SORTS = {
+    created: "u.created_at",
+    revenue: "COALESCE(p.revenue_cents, 0)",
+    net: "(COALESCE(p.revenue_cents, 0) / 100.0 - COALESCE(a.cost_usd, 0))",
+    credits: "u.credits",
+} as const;
+
+interface AdminUserRowRaw {
+    id: number;
+    email: string;
+    credits: number;
+    created_at: string;
+    last_login_at: string | null;
+    revenue_cents: number;
+    cost_usd: number;
+    sub_status: string | null;
+    sub_plan_id: string | null;
+}
+
+function rowToAdminUser(row: AdminUserRowRaw): AdminUserRow {
+    return {
+        id: row.id,
+        email: row.email,
+        credits: row.credits,
+        revenueCents: row.revenue_cents,
+        aiCostUsd: row.cost_usd,
+        subStatus: row.sub_status,
+        subPlanId: row.sub_plan_id,
+        createdAt: row.created_at,
+        lastLoginAt: row.last_login_at,
+    };
 }
 
 function rowToReferral(row: ReferralRow): ReferralRecord {
