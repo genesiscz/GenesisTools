@@ -8,7 +8,13 @@ import type { Channel, ChannelHandle } from "@app/youtube/lib/channel.types";
 import type { FetchedComment, VideoComment } from "@app/youtube/lib/comments.types";
 import type {
     AiCallRecord,
+    AskMessageRecord,
+    AskMessageRole,
+    AskThreadRecord,
     ClaimJobOpts,
+    CollectionKind,
+    CollectionRecord,
+    CreateCollectionInput,
     EnqueueJobInput,
     GetTranscriptOpts,
     ListJobsOpts,
@@ -30,11 +36,13 @@ import type {
     UpsertChannelInput,
     UpsertQaChunkInput,
     UpsertVideoInput,
+    VideoLite,
     VideoLogKind,
     VideoLogRecord,
     VideoSearchField,
     VideoSearchHit,
     VideoWatchRecord,
+    WatchlistEntry,
 } from "@app/youtube/lib/db.types";
 import type {
     JobActivity,
@@ -541,6 +549,73 @@ export class YoutubeDatabase extends BaseDatabase {
             if (!cols.some((column) => column.name === "user_id")) {
                 this.db.exec("ALTER TABLE jobs ADD COLUMN user_id INTEGER");
             }
+        });
+
+        // User-owned video collections (Phase 3). Manual and dynamic share one
+        // table (`kind` + nullable rule); membership rows are only meaningful
+        // for kind='manual' — dynamic membership resolves live from rules.
+        this.runMigration("add-collections", () => {
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS collections (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    kind TEXT NOT NULL CHECK (kind IN ('manual','dynamic')),
+                    rule_json TEXT,
+                    created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
+                    updated_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC})
+                );
+                CREATE INDEX IF NOT EXISTS idx_collections_user ON collections(user_id, id DESC);
+
+                CREATE TABLE IF NOT EXISTS collection_videos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    collection_id INTEGER NOT NULL,
+                    video_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
+                    UNIQUE (collection_id, video_id)
+                );
+            `);
+        });
+
+        // Collection-Ask conversations (Phase 3). Tool calls persist as
+        // role='tool' rows so a replay shows WHAT the agent looked at.
+        this.runMigration("add-ask-threads", () => {
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS ask_threads (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    collection_id INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
+                    updated_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC})
+                );
+                CREATE INDEX IF NOT EXISTS idx_ask_threads_user ON ask_threads(user_id, updated_at DESC);
+
+                CREATE TABLE IF NOT EXISTS ask_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    thread_id INTEGER NOT NULL,
+                    role TEXT NOT NULL CHECK (role IN ('user','assistant','tool')),
+                    content TEXT NOT NULL,
+                    tool_name TEXT,
+                    tool_args_json TEXT,
+                    created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC})
+                );
+                CREATE INDEX IF NOT EXISTS idx_ask_messages_thread ON ask_messages(thread_id, id ASC);
+            `);
+        });
+
+        // Per-user channel follows (Phase 3). Distinct from the global
+        // `channels` table, which is operator state.
+        this.runMigration("add-watchlist", () => {
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS channel_watchlist (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    channel_handle TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
+                    UNIQUE (user_id, channel_handle)
+                );
+            `);
         });
 
         const existing = this.db
@@ -1204,6 +1279,11 @@ export class YoutubeDatabase extends BaseDatabase {
         if (opts.parentJobId !== undefined) {
             where.push("parent_job_id = ?");
             params.push(opts.parentJobId);
+        }
+
+        if (opts.userId !== undefined) {
+            where.push("user_id = ?");
+            params.push(opts.userId);
         }
 
         const whereClause = where.length ? `WHERE ${where.join(" AND ")}` : "";
@@ -2101,6 +2181,257 @@ export class YoutubeDatabase extends BaseDatabase {
         this.db.run("UPDATE reports SET result_json = ? WHERE id = ?", [SafeJSON.stringify(result), id]);
     }
 
+    createCollection(input: CreateCollectionInput): CollectionRecord {
+        const row = this.db
+            .query<CollectionRow, [number, string, string, string | null]>(
+                `INSERT INTO collections (user_id, name, kind, rule_json)
+                 VALUES (?, ?, ?, ?) RETURNING *`
+            )
+            .get(input.userId, input.name, input.kind, input.ruleJson ?? null);
+
+        if (!row) {
+            throw new Error("createCollection: insert returned no row");
+        }
+
+        return rowToCollection(row);
+    }
+
+    getCollection(userId: number, id: number): CollectionRecord | null {
+        const row = this.db
+            .query<CollectionRow, [number, number]>("SELECT * FROM collections WHERE id = ? AND user_id = ?")
+            .get(id, userId);
+
+        return row ? rowToCollection(row) : null;
+    }
+
+    listCollections(userId: number): CollectionRecord[] {
+        const rows = this.db
+            .query<CollectionRow, [number]>("SELECT * FROM collections WHERE user_id = ? ORDER BY id DESC")
+            .all(userId);
+
+        return rows.map(rowToCollection);
+    }
+
+    updateCollectionName(userId: number, id: number, name: string): CollectionRecord | null {
+        const row = this.db
+            .query<CollectionRow, [string, number, number]>(
+                `UPDATE collections SET name = ?, updated_at = ${SQL_NOW_UTC}
+                 WHERE id = ? AND user_id = ? RETURNING *`
+            )
+            .get(name, id, userId);
+
+        return row ? rowToCollection(row) : null;
+    }
+
+    deleteCollection(userId: number, id: number): boolean {
+        const removed = this.db.transaction(() => {
+            const result = this.db.run("DELETE FROM collections WHERE id = ? AND user_id = ?", [id, userId]);
+
+            if (result.changes > 0) {
+                this.db.run("DELETE FROM collection_videos WHERE collection_id = ?", [id]);
+            }
+
+            return result.changes > 0;
+        });
+
+        return removed();
+    }
+
+    addCollectionVideo(collectionId: number, videoId: string): void {
+        this.db.run("INSERT OR IGNORE INTO collection_videos (collection_id, video_id) VALUES (?, ?)", [
+            collectionId,
+            videoId,
+        ]);
+    }
+
+    removeCollectionVideo(collectionId: number, videoId: string): boolean {
+        const result = this.db.run("DELETE FROM collection_videos WHERE collection_id = ? AND video_id = ?", [
+            collectionId,
+            videoId,
+        ]);
+
+        return result.changes > 0;
+    }
+
+    listCollectionVideoIds(collectionId: number): string[] {
+        const rows = this.db
+            .query<{ video_id: string }, [number]>(
+                "SELECT video_id FROM collection_videos WHERE collection_id = ? ORDER BY id ASC"
+            )
+            .all(collectionId);
+
+        return rows.map((row) => row.video_id);
+    }
+
+    createAskThread(input: { userId: number; collectionId: number; title: string }): AskThreadRecord {
+        const row = this.db
+            .query<AskThreadRow, [number, number, string]>(
+                "INSERT INTO ask_threads (user_id, collection_id, title) VALUES (?, ?, ?) RETURNING *"
+            )
+            .get(input.userId, input.collectionId, input.title);
+
+        if (!row) {
+            throw new Error("createAskThread: insert returned no row");
+        }
+
+        return rowToAskThread(row);
+    }
+
+    getAskThread(userId: number, id: number): AskThreadRecord | null {
+        const row = this.db
+            .query<AskThreadRow, [number, number]>("SELECT * FROM ask_threads WHERE id = ? AND user_id = ?")
+            .get(id, userId);
+
+        return row ? rowToAskThread(row) : null;
+    }
+
+    listAskThreads(userId: number, collectionId?: number): AskThreadRecord[] {
+        const rows =
+            collectionId !== undefined
+                ? this.db
+                      .query<AskThreadRow, [number, number]>(
+                          "SELECT * FROM ask_threads WHERE user_id = ? AND collection_id = ? ORDER BY updated_at DESC, id DESC"
+                      )
+                      .all(userId, collectionId)
+                : this.db
+                      .query<AskThreadRow, [number]>(
+                          "SELECT * FROM ask_threads WHERE user_id = ? ORDER BY updated_at DESC, id DESC"
+                      )
+                      .all(userId);
+
+        return rows.map(rowToAskThread);
+    }
+
+    appendAskMessage(input: {
+        threadId: number;
+        role: AskMessageRole;
+        content: string;
+        toolName?: string | null;
+        toolArgsJson?: string | null;
+    }): AskMessageRecord {
+        const row = this.db
+            .query<AskMessageRow, [number, string, string, string | null, string | null]>(
+                `INSERT INTO ask_messages (thread_id, role, content, tool_name, tool_args_json)
+                 VALUES (?, ?, ?, ?, ?) RETURNING *`
+            )
+            .get(input.threadId, input.role, input.content, input.toolName ?? null, input.toolArgsJson ?? null);
+
+        if (!row) {
+            throw new Error("appendAskMessage: insert returned no row");
+        }
+
+        return rowToAskMessage(row);
+    }
+
+    listAskMessages(threadId: number): AskMessageRecord[] {
+        const rows = this.db
+            .query<AskMessageRow, [number]>("SELECT * FROM ask_messages WHERE thread_id = ? ORDER BY id ASC")
+            .all(threadId);
+
+        return rows.map(rowToAskMessage);
+    }
+
+    touchAskThread(id: number): void {
+        this.db.run(`UPDATE ask_threads SET updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [id]);
+    }
+
+    addWatchlistChannel(userId: number, channelHandle: string): void {
+        this.db.run("INSERT OR IGNORE INTO channel_watchlist (user_id, channel_handle) VALUES (?, ?)", [
+            userId,
+            channelHandle,
+        ]);
+    }
+
+    removeWatchlistChannel(userId: number, channelHandle: string): boolean {
+        const result = this.db.run("DELETE FROM channel_watchlist WHERE user_id = ? AND channel_handle = ?", [
+            userId,
+            channelHandle,
+        ]);
+
+        return result.changes > 0;
+    }
+
+    listWatchlist(userId: number): WatchlistEntry[] {
+        const rows = this.db
+            .query<{ id: number; user_id: number; channel_handle: string; created_at: string }, [number]>(
+                "SELECT * FROM channel_watchlist WHERE user_id = ? ORDER BY id ASC"
+            )
+            .all(userId);
+
+        return rows.map((row) => ({
+            id: row.id,
+            userId: row.user_id,
+            channelHandle: row.channel_handle,
+            createdAt: row.created_at,
+        }));
+    }
+
+    /** Server-side gate for the collection-ask transcript tool. */
+    hasWatched(userId: number, videoId: string): boolean {
+        const row = this.db
+            .query<{ found: number }, [number, string]>(
+                "SELECT 1 AS found FROM video_watchers WHERE user_id = ? AND video_id = ? LIMIT 1"
+            )
+            .get(userId, videoId);
+
+        return row !== null;
+    }
+
+    /** Distinct watched video ids since `sinceIso`, most recently watched first. */
+    listWatchedVideoIdsSince(userId: number, sinceIso: string): string[] {
+        const rows = this.db
+            .query<{ video_id: string }, [number, string]>(
+                `SELECT video_id, MAX(id) AS last_id FROM video_watchers
+                 WHERE user_id = ? AND created_at >= ?
+                 GROUP BY video_id ORDER BY last_id DESC`
+            )
+            .all(userId, sinceIso);
+
+        return rows.map((row) => row.video_id);
+    }
+
+    listWatchesByUser(userId: number, limit = 200): VideoWatchRecord[] {
+        const rows = this.db
+            .query<VideoWatcherRow, [number, number]>(
+                "SELECT * FROM video_watchers WHERE user_id = ? ORDER BY id DESC LIMIT ?"
+            )
+            .all(userId, limit);
+
+        return rows.map((row) => ({
+            id: row.id,
+            userId: row.user_id,
+            videoId: row.video_id,
+            createdAt: row.created_at,
+        }));
+    }
+
+    getVideosByIds(ids: string[]): VideoLite[] {
+        if (ids.length === 0) {
+            return [];
+        }
+
+        const placeholders = ids.map(() => "?").join(",");
+        const rows = this.db
+            .query<VideoLiteRow, string[]>(
+                `SELECT v.id, v.title, v.channel_handle, v.thumb_url, v.upload_date, v.duration_sec,
+                        (v.summary_short IS NOT NULL OR v.summary_timestamped_json IS NOT NULL OR v.summary_long_json IS NOT NULL) AS has_summary,
+                        EXISTS (SELECT 1 FROM transcripts t WHERE t.video_id = v.id) AS has_transcript
+                 FROM videos v WHERE v.id IN (${placeholders})`
+            )
+            .all(...ids);
+
+        return rows.map((row) => ({
+            id: row.id,
+            title: row.title,
+            channelHandle: row.channel_handle,
+            thumbUrl: row.thumb_url,
+            uploadDate: row.upload_date,
+            durationSec: row.duration_sec,
+            hasSummary: row.has_summary === 1,
+            hasTranscript: row.has_transcript === 1,
+        }));
+    }
+
     initSchemaForTest(): void {
         this.initSchema();
     }
@@ -2843,4 +3174,79 @@ function snippetAround(text: string, loweredQuery: string, contextChars = 80): s
     const suffix = end < text.length ? "…" : "";
 
     return `${prefix}${text.slice(start, end)}${suffix}`.replace(/\s+/g, " ").trim();
+}
+
+interface CollectionRow {
+    id: number;
+    user_id: number;
+    name: string;
+    kind: CollectionKind;
+    rule_json: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+function rowToCollection(row: CollectionRow): CollectionRecord {
+    return {
+        id: row.id,
+        userId: row.user_id,
+        name: row.name,
+        kind: row.kind,
+        ruleJson: row.rule_json,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    };
+}
+
+interface AskThreadRow {
+    id: number;
+    user_id: number;
+    collection_id: number;
+    title: string;
+    created_at: string;
+    updated_at: string;
+}
+
+function rowToAskThread(row: AskThreadRow): AskThreadRecord {
+    return {
+        id: row.id,
+        userId: row.user_id,
+        collectionId: row.collection_id,
+        title: row.title,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    };
+}
+
+interface AskMessageRow {
+    id: number;
+    thread_id: number;
+    role: AskMessageRole;
+    content: string;
+    tool_name: string | null;
+    tool_args_json: string | null;
+    created_at: string;
+}
+
+interface VideoLiteRow {
+    id: string;
+    title: string;
+    channel_handle: string;
+    thumb_url: string | null;
+    upload_date: string | null;
+    duration_sec: number | null;
+    has_summary: number;
+    has_transcript: number;
+}
+
+function rowToAskMessage(row: AskMessageRow): AskMessageRecord {
+    return {
+        id: row.id,
+        threadId: row.thread_id,
+        role: row.role,
+        content: row.content,
+        toolName: row.tool_name,
+        toolArgsJson: row.tool_args_json,
+        createdAt: row.created_at,
+    };
 }
