@@ -257,19 +257,39 @@ function removeSidePanel(): void {
     host.remove();
 }
 
+let mountRetryTimer: number | null = null;
+
 function scheduleMount(): void {
     // #secondary is populated asynchronously on watch nav; retry until it
     // exists, otherwise the fixed fallback kicks in after the attempt cap.
+    // A single tracked timer is cancelled on every reschedule/cleanup so
+    // overlapping navigations can't run competing retry chains, and
+    // ensureSidePanel() only re-runs (recreating the host + resetting React
+    // state) on the first attempt or once the inline target is available.
+    if (mountRetryTimer !== null) {
+        window.clearTimeout(mountRetryTimer);
+        mountRetryTimer = null;
+    }
+
     let attempts = 0;
     const tryMount = (): void => {
-        ensureSidePanel();
+        const target = getPanelTarget();
+        const secondaryReady =
+            target?.kind === "video" && location.pathname === "/watch" && findWatchSecondaryColumn() !== null;
+
+        if (attempts === 0 || secondaryReady) {
+            ensureSidePanel();
+        }
+
         ensureChapterTicks();
         attempts += 1;
-        const target = getPanelTarget();
         const stillWaiting =
-            target?.kind === "video" && location.pathname === "/watch" && !findWatchSecondaryColumn() && attempts < 20;
+            target?.kind === "video" && location.pathname === "/watch" && !secondaryReady && attempts < 20;
+
         if (stillWaiting) {
-            window.setTimeout(tryMount, 250);
+            mountRetryTimer = window.setTimeout(tryMount, 250);
+        } else {
+            mountRetryTimer = null;
         }
     };
     tryMount();
@@ -409,6 +429,11 @@ window.addEventListener("yt-navigate-finish", scheduleMount);
 window.addEventListener("popstate", scheduleMount);
 
 window.__genesisYtCleanup = () => {
+    if (mountRetryTimer !== null) {
+        window.clearTimeout(mountRetryTimer);
+        mountRetryTimer = null;
+    }
+
     removeSidePanel();
     window.removeEventListener("yt-navigate-finish", scheduleMount);
     window.removeEventListener("popstate", scheduleMount);
