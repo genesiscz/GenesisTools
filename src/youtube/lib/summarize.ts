@@ -1,5 +1,5 @@
 import { logger } from "@app/logger";
-import { callLLM, callLLMStructured } from "@app/utils/ai/call-llm";
+import { type CallLLMStructuredResult, callLLM, callLLMStructured } from "@app/utils/ai/call-llm";
 import { Summarizer } from "@app/utils/ai/tasks/Summarizer";
 import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
@@ -16,6 +16,7 @@ import type {
     SummaryTone,
     TimestampedSummaryEntry,
     VideoLongSummary,
+    VideoLongSummaryChapter,
     VideoReport,
 } from "@app/youtube/lib/video.types";
 import type { ProviderChoice } from "@ask/types";
@@ -164,39 +165,73 @@ export class SummaryService {
 
         const transcript = compactTranscript(transcriptRaw, { mergeSentences: true, ...(opts.compactOpts ?? {}) });
 
+        const defaultShaping = isDefaultShaping(opts);
+
         if (opts.mode === "short") {
-            if (!opts.forceRecompute && video.summaryShort && sameLang(video.summaryShortLang, opts.lang)) {
+            if (
+                !opts.forceRecompute &&
+                video.summaryShort &&
+                sameLang(video.summaryShortLang, opts.lang) &&
+                defaultShaping
+            ) {
                 return { short: video.summaryShort };
             }
 
-            const summary = await this.summarizeText(transcript.text, opts);
-            this.db.setVideoSummary(opts.videoId, "short", summary, opts.lang ?? "en");
+            const { summary, langUsed } = await this.summarizeText(transcript.text, opts);
+
+            if (defaultShaping) {
+                this.db.setVideoSummary(opts.videoId, "short", summary, langUsed);
+            }
 
             return { short: summary };
         }
 
         if (opts.mode === "long") {
-            if (!opts.forceRecompute && video.summaryLong && sameLang(video.summaryLongLang, opts.lang)) {
+            if (
+                !opts.forceRecompute &&
+                video.summaryLong &&
+                sameLang(video.summaryLongLang, opts.lang) &&
+                defaultShaping
+            ) {
                 return { long: video.summaryLong };
             }
 
             const long = await this.summarizeLong(transcript, opts);
-            this.db.setVideoSummary(opts.videoId, "long", long, opts.lang ?? "en");
+
+            if (defaultShaping) {
+                this.db.setVideoSummary(opts.videoId, "long", long, opts.lang ?? "en");
+            }
 
             return { long };
         }
 
-        if (!opts.forceRecompute && video.summaryTimestamped && sameLang(video.summaryTimestampedLang, opts.lang)) {
+        if (
+            !opts.forceRecompute &&
+            video.summaryTimestamped &&
+            sameLang(video.summaryTimestampedLang, opts.lang) &&
+            defaultShaping
+        ) {
             return { timestamped: video.summaryTimestamped };
         }
 
         const timestamped = await this.summarizeTimestamped(transcript, opts);
-        this.db.setVideoSummary(opts.videoId, "timestamped", timestamped, opts.lang ?? "en");
+
+        if (defaultShaping) {
+            this.db.setVideoSummary(opts.videoId, "timestamped", timestamped, opts.lang ?? "en");
+        }
 
         return { timestamped };
     }
 
-    private async summarizeText(text: string, opts: SummarizeOpts): Promise<string> {
+    /**
+     * Produces the short summary and reports the language actually used.
+     * The `providerChoice` path honours `opts.lang` via the system prompt; the
+     * legacy `createSummarizer` fallback has no language/tone knob (its API is
+     * `summarize(text)` only), so it always emits English default-shaped prose —
+     * hence `langUsed: "en"` there, so the caller never mis-tags a stored
+     * artifact with a language it wasn't generated in.
+     */
+    private async summarizeText(text: string, opts: SummarizeOpts): Promise<{ summary: string; langUsed: string }> {
         opts.onProgress?.({ phase: "summarize", percent: 30, message: "Calling LLM for short summary" });
         const systemPrompt = withPreset(
             withLang(withTone(SHORT_SUMMARY_SYSTEM_BASE, opts.tone), opts.lang),
@@ -227,7 +262,7 @@ export class SummaryService {
                 completedAt: completedAt.toISOString(),
             });
 
-            return result.content;
+            return { summary: result.content, langUsed: opts.lang ?? "en" };
         }
 
         const configuredSpec = resolveAiSpecForTask(await this.config.getAll(), "summary");
@@ -244,7 +279,7 @@ export class SummaryService {
                 videoId: opts.videoId,
             });
 
-            return result.summary;
+            return { summary: result.summary, langUsed: "en" };
         } finally {
             summarizer.dispose();
         }
@@ -287,21 +322,30 @@ export class SummaryService {
         });
         const startedAt = new Date();
         const throttle = createSummaryPartialThrottle(opts.onPartial);
-        const result = isQa
-            ? await this.deps.callLLMStructured({
-                  systemPrompt,
-                  userPrompt,
-                  providerChoice: opts.providerChoice,
-                  schema: TimestampedQaSchema,
-                  ...(throttle ? { onPartial: (partial: unknown) => throttle.push(partial) } : {}),
-              })
-            : await this.deps.callLLMStructured({
-                  systemPrompt,
-                  userPrompt,
-                  providerChoice: opts.providerChoice,
-                  schema: TimestampedListSchema,
-                  ...(throttle ? { onPartial: (partial: unknown) => throttle.push(partial) } : {}),
-              });
+        let result: CallLLMStructuredResult<unknown>;
+
+        try {
+            result = isQa
+                ? await this.deps.callLLMStructured({
+                      systemPrompt,
+                      userPrompt,
+                      providerChoice: opts.providerChoice,
+                      schema: TimestampedQaSchema,
+                      ...(throttle ? { onPartial: (partial: unknown) => throttle.push(partial) } : {}),
+                  })
+                : await this.deps.callLLMStructured({
+                      systemPrompt,
+                      userPrompt,
+                      providerChoice: opts.providerChoice,
+                      schema: TimestampedListSchema,
+                      ...(throttle ? { onPartial: (partial: unknown) => throttle.push(partial) } : {}),
+                  });
+        } catch (error) {
+            // A thrown call must not leave a queued partial to fire later.
+            throttle?.cancel();
+            throw error;
+        }
+
         throttle?.flush();
         opts.onProgress?.({ phase: "summarize", percent: 90, message: "Parsing timestamped sections" });
         const completedAt = new Date();
@@ -353,13 +397,22 @@ export class SummaryService {
         });
         const startedAt = new Date();
         const throttle = createSummaryPartialThrottle(opts.onPartial);
-        const result = await this.deps.callLLMStructured({
-            systemPrompt,
-            userPrompt,
-            providerChoice: opts.providerChoice,
-            schema: LongSchema,
-            ...(throttle ? { onPartial: (partial: unknown) => throttle.push(partial) } : {}),
-        });
+        let result: CallLLMStructuredResult<unknown>;
+
+        try {
+            result = await this.deps.callLLMStructured({
+                systemPrompt,
+                userPrompt,
+                providerChoice: opts.providerChoice,
+                schema: LongSchema,
+                ...(throttle ? { onPartial: (partial: unknown) => throttle.push(partial) } : {}),
+            });
+        } catch (error) {
+            // A thrown call must not leave a queued partial to fire later.
+            throttle?.cancel();
+            throw error;
+        }
+
         throttle?.flush();
         opts.onProgress?.({ phase: "summarize", percent: 90, message: "Parsing long-form structured response" });
         const completedAt = new Date();
@@ -378,7 +431,9 @@ export class SummaryService {
             completedAt: completedAt.toISOString(),
         });
 
-        return result.object as VideoLongSummary;
+        const long = result.object as VideoLongSummary;
+
+        return { ...long, chapters: clampChapters(long.chapters, totalSec) };
     }
 
     /**
@@ -448,22 +503,52 @@ export class SummaryService {
             perVideo: Array<{ videoId: string; capsule: string; standout: string }>;
         };
 
-        // Merge: LLM-covered members keep their capsules; skipped members are
-        // appended with their reason so a failed member never fails the report.
+        // Index the LLM's per-video entries, folding duplicates (a video id the
+        // model emitted twice keeps the first entry, not silently the last).
+        const byLlm = new Map<string, { capsule: string; standout: string }>();
+        const duplicateIds: string[] = [];
+
+        for (const entry of synthesized.perVideo) {
+            if (byLlm.has(entry.videoId)) {
+                duplicateIds.push(entry.videoId);
+                continue;
+            }
+
+            byLlm.set(entry.videoId, entry);
+        }
+
+        // Merge: covered members must have a synthesized capsule — a missing one
+        // becomes an explicit skipped reason instead of a silent blank row.
+        // Skipped members are appended with their own reason so a failed member
+        // never fails the report.
+        const missingIds: string[] = [];
         const perVideo: VideoReport["perVideo"] = opts.members.map((member) => {
             if (member.summary === null) {
                 return { videoId: member.videoId, capsule: "", standout: "", skipped: member.skipped ?? "skipped" };
             }
 
-            const fromLlm = synthesized.perVideo.find((entry) => entry.videoId === member.videoId);
+            const fromLlm = byLlm.get(member.videoId);
 
-            return {
-                videoId: member.videoId,
-                capsule: fromLlm?.capsule ?? "",
-                standout: fromLlm?.standout ?? "",
-                skipped: null,
-            };
+            if (!fromLlm) {
+                missingIds.push(member.videoId);
+
+                return {
+                    videoId: member.videoId,
+                    capsule: "",
+                    standout: "",
+                    skipped: "synthesis did not cover this video",
+                };
+            }
+
+            return { videoId: member.videoId, capsule: fromLlm.capsule, standout: fromLlm.standout, skipped: null };
         });
+
+        if (duplicateIds.length > 0 || missingIds.length > 0) {
+            logger.warn(
+                { duplicateIds, missingIds, covered: covered.length },
+                "youtube report synthesis: LLM per-video coverage mismatch"
+            );
+        }
 
         return { ...synthesized, perVideo };
     }
@@ -519,6 +604,41 @@ function clampSections(sections: TimestampedSummaryEntry[], totalSec: number): T
         .filter((section) => section.text.length > 0);
 }
 
+/**
+ * Post-validates long-summary chapters the way `clampSections` does for
+ * timestamped sections: clamp startSec/endSec into `[0, totalSec]`, and drop
+ * any chapter whose clamped start would break ascending order (a hallucinated
+ * out-of-order anchor must not corrupt the tick rendering). Chapters without a
+ * numeric anchor (back-compat rows) pass through untouched.
+ */
+function clampChapters(chapters: VideoLongSummaryChapter[], totalSec: number): VideoLongSummaryChapter[] {
+    const cap = Math.max(0, Math.round(totalSec));
+    const out: VideoLongSummaryChapter[] = [];
+    let lastStart = -1;
+
+    for (const chapter of chapters) {
+        if (typeof chapter.startSec !== "number") {
+            out.push(chapter);
+            continue;
+        }
+
+        const startSec = clampSec(chapter.startSec, cap);
+
+        if (startSec < lastStart) {
+            continue;
+        }
+
+        const endSec =
+            chapter.endSec === null || chapter.endSec === undefined
+                ? chapter.endSec
+                : Math.max(clampSec(chapter.endSec, cap), startSec);
+        out.push({ ...chapter, startSec, endSec });
+        lastStart = startSec;
+    }
+
+    return out;
+}
+
 const PARTIAL_MIN_GAP_MS = 250;
 
 function createSummaryPartialThrottle(onPartial?: (partial: unknown) => void): PartialThrottle<unknown> | null {
@@ -540,6 +660,22 @@ function withTone(base: string, tone?: SummaryTone): string {
 /** Whether a stored artifact's lang matches the requested lang (both default to `"en"`). */
 function sameLang(stored: string, requested?: string): boolean {
     return (requested ?? "en") === (stored ?? "en");
+}
+
+/**
+ * Whether a request carries no prompt-shaping beyond the persisted language.
+ * The video summary columns store `lang` but NOT tone/length/format/preset, so
+ * a shaped request must neither be served from that cache (it would get a
+ * mismatched artifact) nor written into it (it would poison later default
+ * requests). The documented defaults — tone "insightful", length "auto", format
+ * "list", no preset — count as default; anything else is shaped.
+ */
+function isDefaultShaping(opts: SummarizeOpts): boolean {
+    const defaultTone = !opts.tone || opts.tone === "insightful";
+    const defaultLength = !opts.length || opts.length === "auto";
+    const defaultFormat = !opts.format || opts.format === "list";
+
+    return defaultTone && defaultLength && defaultFormat && !opts.presetInstructions;
 }
 
 function withLang(base: string, lang?: string): string {
@@ -639,5 +775,3 @@ export function bucketSegments(transcript: Transcript, binSizeSec: number): Summ
         return [{ startSec: bin.startSec, endSec: bin.endSec, text: bin.texts.join(" ") }];
     });
 }
-
-void logger; // imported for parity with other lib modules; not used directly here

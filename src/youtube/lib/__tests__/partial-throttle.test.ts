@@ -79,6 +79,30 @@ describe("createPartialThrottle", () => {
         expect(emissions.map((e) => e.value)).toEqual(["a", "b"]);
     });
 
+    test("cancel drops the pending value so no timed emission fires", async () => {
+        const { emissions, emit } = collector<string>();
+        const throttle = createPartialThrottle({ minGapMs: MIN_GAP_MS, emit });
+
+        throttle.push("a");
+        throttle.push("b");
+        throttle.cancel();
+        await sleep(MIN_GAP_MS * 2);
+
+        expect(emissions.map((e) => e.value)).toEqual(["a"]);
+    });
+
+    test("flush after cancel is a no-op (the pending value is gone)", async () => {
+        const { emissions, emit } = collector<string>();
+        const throttle = createPartialThrottle({ minGapMs: MIN_GAP_MS, emit });
+
+        throttle.push("a");
+        throttle.push("b");
+        throttle.cancel();
+        throttle.flush();
+
+        expect(emissions.map((e) => e.value)).toEqual(["a"]);
+    });
+
     test("push after a full gap emits immediately again", async () => {
         const { emissions, emit } = collector<string>();
         const throttle = createPartialThrottle({ minGapMs: MIN_GAP_MS, emit });
