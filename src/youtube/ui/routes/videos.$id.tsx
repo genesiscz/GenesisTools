@@ -18,6 +18,7 @@ import {
     useTranscript,
     useVideo,
 } from "@app/yt/api.hooks";
+import { AddToCollectionButton } from "@app/yt/components/collections/add-to-collection-button";
 import { ProgressBar } from "@app/yt/components/pipeline/progress-bar";
 import { Loading } from "@app/yt/components/shared/loading";
 import { formatDate, formatDuration, formatNumber } from "@app/yt/lib/format";
@@ -136,6 +137,9 @@ function VideoDetailPage() {
                             <Captions className="size-3" /> {video.data.transcripts.length} transcript
                             {video.data.transcripts.length === 1 ? "" : "s"}
                         </Badge>
+                    </div>
+                    <div className="mt-3">
+                        <AddToCollectionButton videoId={id} />
                     </div>
                 </header>
                 <ProgressBar value={progress} message={progressMessage} />
