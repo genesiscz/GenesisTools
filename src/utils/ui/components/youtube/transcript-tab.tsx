@@ -3,7 +3,7 @@ import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import { LlmConfirmDialog } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
-import { Loading } from "@app/utils/ui/components/youtube/loading";
+import { PanelLoading } from "@app/utils/ui/components/youtube/loading";
 import { OUTPUT_LANGS, outputLangLabel } from "@app/utils/ui/components/youtube/output-langs";
 import { scrollIntoPanelView } from "@app/utils/ui/components/youtube/scroll";
 import type { PipelineProgress, RunPipeline } from "@app/utils/ui/components/youtube/tabs";
@@ -293,7 +293,7 @@ export function TranscriptTab({
     }
 
     if (transcript.isPending) {
-        return <Loading label="Loading transcript" />;
+        return <PanelLoading label="Loading transcript" />;
     }
 
     if (segments.length === 0) {
@@ -306,8 +306,7 @@ export function TranscriptTab({
                     <div className="space-y-1">
                         <p className="text-sm font-semibold">No transcript yet</p>
                         <p className="text-sm text-muted-foreground">
-                            We haven't fetched captions for this video yet. Run the captions stage to grab YouTube's
-                            captions, falling back to audio + AI transcription if needed.
+                            Fetch it to read and search everything said in the video.
                         </p>
                     </div>
                 </div>
@@ -333,10 +332,6 @@ export function TranscriptTab({
                             {pipelineProgress.message ? ` · ${pipelineProgress.message}` : ""}
                         </span>
                     ) : null}
-                    <span className="font-mono text-xs text-muted-foreground/70">
-                        Or run{" "}
-                        <code className="rounded bg-muted/40 px-1.5 py-0.5">tools youtube transcribe {videoId}</code>
-                    </span>
                 </div>
             </div>
         );

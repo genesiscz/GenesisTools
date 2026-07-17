@@ -25,7 +25,7 @@ const statusTone: Record<JobStatus, { label: string; className: string; icon: ty
     },
     cancelled: {
         label: "cancelled",
-        className: "border-zinc-400/25 bg-zinc-400/5 text-zinc-300",
+        className: "border-muted-foreground/25 bg-muted/40 text-muted-foreground",
         icon: XCircle,
     },
     interrupted: {

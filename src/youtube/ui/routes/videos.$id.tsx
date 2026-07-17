@@ -49,6 +49,7 @@ function VideoDetailPage() {
     const [seekToSec, setSeekToSec] = useState<number | null>(null);
     const [progress, setProgress] = useState(0);
     const [progressMessage, setProgressMessage] = useState<string | null>(null);
+    const [activeJobId, setActiveJobId] = useState<number | null>(null);
     const queryClient = useQueryClient();
     const startPipeline = useStartPipeline();
     const runPipeline = useMemo<RunPipeline>(
@@ -56,7 +57,8 @@ function VideoDetailPage() {
             isPending: startPipeline.isPending,
             run: async (stages: JobStage[]) => {
                 try {
-                    await startPipeline.mutateAsync({ target: id, targetKind: "video", stages });
+                    const { job } = await startPipeline.mutateAsync({ target: id, targetKind: "video", stages });
+                    setActiveJobId(job.id);
                 } catch (error) {
                     toast.error("Pipeline failed to start", {
                         description: error instanceof Error ? error.message : String(error),
@@ -69,7 +71,14 @@ function VideoDetailPage() {
 
     useEventStream({
         enabled: true,
+        jobIds: activeJobId !== null ? [activeJobId] : undefined,
         onEvent: (event) => {
+            const eventJobId = "job" in event ? event.job.id : event.jobId;
+
+            if (activeJobId === null || eventJobId !== activeJobId) {
+                return;
+            }
+
             if (event.type === "job:started" || event.type === "stage:started") {
                 setProgress(0.02);
                 setProgressMessage("Starting…");
@@ -129,7 +138,7 @@ function VideoDetailPage() {
                         </Badge>
                     </div>
                 </header>
-                <ProgressBar videoId={id as VideoId} value={progress} message={progressMessage} />
+                <ProgressBar value={progress} message={progressMessage} />
             </section>
             <aside className="col-span-12 lg:col-span-5">
                 <VideoDetailTabs
@@ -139,6 +148,7 @@ function VideoDetailPage() {
                     onActiveChange={setActiveTab}
                     onSeek={setSeekToSec}
                     runPipeline={runPipeline}
+                    pipelineProgress={progress > 0 && progress < 1 ? { progress, message: progressMessage } : null}
                 />
             </aside>
         </div>

@@ -14,6 +14,42 @@ function isLocalhost(hostname: string): boolean {
     return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
 }
 
+/** Pull the YouTube video id out of a tab URL (`?v=` on /watch, or the /shorts/ path segment). Returns null for any non-YouTube-video URL. */
+function extractVideoId(rawUrl: string): string | null {
+    let url: URL;
+    try {
+        url = new URL(rawUrl);
+    } catch {
+        return null;
+    }
+
+    if (url.hostname !== "www.youtube.com" && url.hostname !== "youtube.com" && url.hostname !== "m.youtube.com") {
+        return null;
+    }
+
+    const fromWatch = url.searchParams.get("v");
+    if (fromWatch) {
+        return fromWatch;
+    }
+
+    const shorts = url.pathname.match(/^\/shorts\/([^/?#]+)/);
+    if (shorts) {
+        return decodeURIComponent(shorts[1]);
+    }
+
+    return null;
+}
+
+/** The active tab's video id, or null when it isn't a YouTube video page. The manifest's youtube.com host permission (plus activeTab) exposes the tab URL. */
+async function resolveActiveVideoId(): Promise<string | null> {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.url) {
+        return null;
+    }
+
+    return extractVideoId(tab.url);
+}
+
 /**
  * A non-localhost origin isn't in the manifest's static host_permissions, so
  * request it at runtime (from the Save click gesture). Returns "granted" when the
@@ -45,6 +81,7 @@ function Popup() {
     const [status, setStatus] = useState<"unknown" | "ok" | "down">("unknown");
     const [note, setNote] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
+    const [videoId, setVideoId] = useState<string | null>(null);
 
     useEffect(() => {
         send<{ apiBaseUrl: string; serviceKey?: string }>({ type: "config:get" })
@@ -55,7 +92,25 @@ function Popup() {
             .catch(() => setStatus("down"));
     }, []);
 
+    useEffect(() => {
+        void resolveActiveVideoId().then(setVideoId);
+    }, []);
+
     async function checkHealth(): Promise<void> {
+        setNote(null);
+        const permission = await ensureHostPermission(apiUrl);
+        if (permission === "invalid-url") {
+            setNote("That doesn't look like a valid URL.");
+            setStatus("down");
+            return;
+        }
+
+        if (permission === "denied") {
+            setNote("Permission for that origin was denied — the extension can't reach it.");
+            setStatus("down");
+            return;
+        }
+
         try {
             const base = apiUrl.replace(/\/$/, "");
             const authHeaders: Record<string, string> = serviceKey ? { Authorization: `Bearer ${serviceKey}` } : {};
@@ -94,15 +149,17 @@ function Popup() {
     }
 
     function openDashboard(): void {
-        chrome.runtime.sendMessage({ type: "config:get" }).then(() => {
-            window.open(apiUrl.replace(/\/$/, ""), "_blank", "noopener,noreferrer");
-        });
+        window.open(apiUrl.replace(/\/$/, ""), "_blank", "noopener,noreferrer");
     }
 
     function runAction(stages: Array<"metadata" | "captions" | "transcribe" | "summarize">): void {
+        if (!videoId) {
+            return;
+        }
+
         setBusy(true);
         chrome.runtime
-            .sendMessage({ type: "api:startPipeline", target: "current", targetKind: "video", stages })
+            .sendMessage({ type: "api:startPipeline", target: videoId, targetKind: "video", stages })
             .finally(() => setBusy(false));
     }
 
@@ -111,7 +168,7 @@ function Popup() {
             <header className="flex items-start justify-between gap-3">
                 <div>
                     <p className="font-mono text-[10px] uppercase tracking-[0.32em] text-secondary">GenesisTools</p>
-                    <h1 className="text-base font-semibold">YouTube Pipeline</h1>
+                    <h1 className="text-base font-semibold">YouTube</h1>
                 </div>
                 <ApiStatus status={status} />
             </header>
@@ -152,6 +209,7 @@ function Popup() {
                 onTranscribe={() => runAction(["metadata", "captions", "transcribe"])}
                 onSummarise={() => runAction(["metadata", "captions", "summarize"])}
                 disabled={busy}
+                videoAvailable={videoId !== null}
             />
         </main>
     );

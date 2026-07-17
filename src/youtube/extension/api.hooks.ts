@@ -19,6 +19,10 @@ import { send } from "@ext/api.bridge";
 import type { ExtensionApiMap } from "@ext/shared/messages";
 import type { ExtensionConfig } from "@ext/shared/types";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRef } from "react";
+
+/** Stop polling a still-generating report after this long and tell the user to check the dashboard. */
+const REPORT_POLL_TIMEOUT_MS = 10 * 60_000;
 
 export function useConfig() {
     return useQuery({
@@ -433,13 +437,42 @@ export function useCreateReport() {
 }
 
 export function useReport(id: number | null) {
-    return useQuery({
+    // When polling began for the current report — bounds how long we poll a
+    // job that never finishes.
+    const pollStartRef = useRef<number | null>(null);
+
+    if (id === null) {
+        pollStartRef.current = null;
+    } else if (pollStartRef.current === null) {
+        pollStartRef.current = Date.now();
+    }
+
+    const query = useQuery({
         queryKey: ["report", id],
         queryFn: () => send<ExtensionApiMap["api:getReport"]>({ type: "api:getReport", id: id as number }),
         enabled: id !== null,
-        // Poll while the synthesis job is still running.
-        refetchInterval: (query) => (query.state.data?.report.result ? false : 3000),
+        // Poll while the report is still being generated, but give up after the
+        // timeout so a stuck job doesn't poll forever.
+        refetchInterval: (query) => {
+            if (query.state.data?.report.result) {
+                return false;
+            }
+
+            if (pollStartRef.current !== null && Date.now() - pollStartRef.current >= REPORT_POLL_TIMEOUT_MS) {
+                return false;
+            }
+
+            return 3000;
+        },
     });
+
+    const pollTimedOut =
+        id !== null &&
+        query.data?.report.result == null &&
+        pollStartRef.current !== null &&
+        Date.now() - pollStartRef.current >= REPORT_POLL_TIMEOUT_MS;
+
+    return { ...query, pollTimedOut };
 }
 
 export function useStartPipeline() {

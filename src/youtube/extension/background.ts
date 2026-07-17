@@ -1,16 +1,45 @@
 // Native JSON only — SafeJSON pulls in esprima/comment-json (~150 kB) which
 // balloons the MV3 service-worker cold-start to multi-second latency on every
 // idle → wake cycle. Bodies here are our own plain objects, never comments.
+import type { JobEvent } from "@app/youtube/lib/jobs.types";
 import { startDevReload } from "@ext/dev-reload";
 import type { ExtensionEvent, ExtensionRequest, ExtensionResponse } from "@ext/shared/messages";
 import { getExtensionConfig, setExtensionConfig } from "@ext/shared/storage";
 
 declare const __EXT_DEV_RELOAD__: boolean;
 
+// Job events the server emits on the events socket. Everything else on that
+// socket (hello / pong / subscribed control frames) is protocol chatter the
+// panel must never see as a job event. Mirrors PIPELINE_EVENTS in
+// src/youtube/lib/server/websocket.ts.
+const PIPELINE_EVENT_TYPES = new Set<JobEvent["type"]>([
+    "job:created",
+    "job:started",
+    "stage:started",
+    "stage:progress",
+    "stage:completed",
+    "summary:partial",
+    "job:completed",
+    "job:failed",
+    "job:cancelled",
+]);
+
+// Reconnect backoff: exponential from 5s, capped at 5min, reset on a live
+// connection (ws.onopen) so a brief blip retries fast while a long outage
+// backs off instead of hammering a dead server every 5s.
+const RECONNECT_BASE_MS = 5000;
+const RECONNECT_CAP_MS = 5 * 60_000;
+
+// nav:openWatch interpolates the id into a youtube.com/watch URL opened in a
+// new tab. It's already encodeURIComponent'd (can't break out), but validate
+// the shape so an arbitrary string can't open a bogus YouTube URL.
+const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{6,20}$/;
+
 const ports = new Set<chrome.runtime.Port>();
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let pingTimer: ReturnType<typeof setInterval> | null = null;
+let reconnectAttempts = 0;
 
 chrome.runtime.onConnect.addListener((port) => {
     ports.add(port);
@@ -31,11 +60,18 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
 
     if (req.type === "config:set") {
         const next = await setExtensionConfig({ apiBaseUrl: req.apiBaseUrl, serviceKey: req.serviceKey });
+        // New server target — retry from the base delay rather than inheriting
+        // the previous target's backoff.
+        reconnectAttempts = 0;
         await reconnectWebsocket();
         return { ok: true, data: next };
     }
 
     if (req.type === "nav:openWatch") {
+        if (!VIDEO_ID_PATTERN.test(req.id)) {
+            return { ok: false, error: "invalid video id" };
+        }
+
         const seconds = Math.max(0, Math.floor(req.t));
         await chrome.tabs.create({
             url: `https://www.youtube.com/watch?v=${encodeURIComponent(req.id)}&t=${seconds}s`,
@@ -267,6 +303,13 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
             });
         case "api:deletePreset":
             return apiCall(`${base}/api/v1/users/presets/${req.id}`, { method: "DELETE" });
+        default: {
+            // Exhaustiveness guard: every ExtensionRequest above returns, so a
+            // new variant added without a case fails this assignment at compile
+            // time instead of silently returning undefined at runtime.
+            const unhandled: never = req;
+            return { ok: false, error: `unhandled request: ${String((unhandled as ExtensionRequest).type)}` };
+        }
     }
 }
 
@@ -331,6 +374,7 @@ async function reconnectWebsocket(): Promise<void> {
     try {
         ws = new WebSocket(url);
         ws.onopen = () => {
+            reconnectAttempts = 0;
             broadcast({ type: "ws:status", connected: true });
             // Chrome ≥116 extends the MV3 service-worker lifetime on WS
             // activity — without this 20s ping the SW idles out after ~30s,
@@ -348,9 +392,17 @@ async function reconnectWebsocket(): Promise<void> {
         };
         ws.onmessage = (message) => {
             try {
-                const event = JSON.parse(typeof message.data === "string" ? message.data : String(message.data));
-                broadcast({ type: "job:event", event });
-            } catch {}
+                const raw = typeof message.data === "string" ? message.data : String(message.data);
+                const event = JSON.parse(raw) as { type?: unknown };
+
+                if (typeof event.type !== "string" || !PIPELINE_EVENT_TYPES.has(event.type as JobEvent["type"])) {
+                    return;
+                }
+
+                broadcast({ type: "job:event", event: event as JobEvent });
+            } catch (error) {
+                console.debug("[genesis-yt] failed to parse events WS frame", error);
+            }
         };
         ws.onclose = () => {
             if (pingTimer !== null) {
@@ -361,7 +413,8 @@ async function reconnectWebsocket(): Promise<void> {
             scheduleReconnect();
         };
         ws.onerror = () => scheduleReconnect();
-    } catch {
+    } catch (error) {
+        console.debug("[genesis-yt] events WebSocket construction failed", error);
         scheduleReconnect();
     }
 }
@@ -371,10 +424,16 @@ function scheduleReconnect(): void {
         return;
     }
 
+    const backoff = Math.min(RECONNECT_CAP_MS, RECONNECT_BASE_MS * 2 ** reconnectAttempts);
+    // Up to 25% jitter so many extensions reconnecting to a recovered server
+    // don't stampede in lockstep.
+    const delay = backoff + Math.random() * backoff * 0.25;
+    reconnectAttempts += 1;
+
     reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         reconnectWebsocket();
-    }, 5000);
+    }, delay);
 }
 
 function broadcast(event: ExtensionEvent): void {
@@ -392,5 +451,3 @@ reconnectWebsocket();
 if (typeof __EXT_DEV_RELOAD__ !== "undefined" && __EXT_DEV_RELOAD__) {
     startDevReload();
 }
-
-// touch: 1784066216583

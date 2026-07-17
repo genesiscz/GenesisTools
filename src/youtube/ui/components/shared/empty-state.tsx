@@ -1,4 +1,3 @@
-import { Button } from "@app/utils/ui/components/button";
 import { Card, CardContent } from "@app/utils/ui/components/card";
 import { SearchX } from "lucide-react";
 import type { ReactNode } from "react";
@@ -15,7 +14,7 @@ export function EmptyState({ title, body, cta }: { title: string; body: string; 
                         <h3 className="text-2xl font-semibold">{title}</h3>
                         <p className="mt-2 text-sm leading-6 text-muted-foreground">{body}</p>
                     </div>
-                    {cta ? <div className="pt-2">{cta}</div> : <Button variant="outline">Refresh</Button>}
+                    {cta ? <div className="pt-2">{cta}</div> : null}
                 </div>
             </CardContent>
         </Card>

@@ -33,7 +33,7 @@ function collectPlaylistVideoIds(): string[] {
     return ids;
 }
 
-export function PlaylistPanel({ listId, onClose: _onClose }: { listId: string; onClose: () => void }) {
+export function PlaylistPanel({ listId }: { listId: string }) {
     const [collapsed, setCollapsed] = useState(false);
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [reportId, setReportId] = useState<number | null>(null);
@@ -61,6 +61,14 @@ export function PlaylistPanel({ listId, onClose: _onClose }: { listId: string; o
                             report={report.data?.report.result ?? null}
                             members={report.data?.members ?? {}}
                             title={report.data?.report.title ?? "Report"}
+                            error={
+                                report.isError
+                                    ? report.error instanceof Error
+                                        ? report.error.message
+                                        : "Couldn't load this report."
+                                    : null
+                            }
+                            timedOut={report.pollTimedOut}
                             onBack={() => setReportId(null)}
                         />
                     ) : (
@@ -97,8 +105,8 @@ export function PlaylistPanel({ listId, onClose: _onClose }: { listId: string; o
                                 <div className="flex items-start gap-3 rounded-2xl border border-dashed border-primary/25 p-5">
                                     <FileText className="mt-0.5 size-5 shrink-0 text-primary" />
                                     <p className="text-sm text-muted-foreground">
-                                        Generate one structured report across the first {memberIds.length} videos:
-                                        shared themes, contradictions, per-video capsules, and a watch/skip verdict.
+                                        Generate one combined report across the first {memberIds.length} videos:
+                                        shared themes, contradictions, per-video highlights, and a watch/skip verdict.
                                     </p>
                                 </div>
                             )}
@@ -109,8 +117,8 @@ export function PlaylistPanel({ listId, onClose: _onClose }: { listId: string; o
             <LlmConfirmDialog
                 open={confirmOpen}
                 title="Generate multi-video report?"
-                description={`Ensures every member has a long summary, then synthesizes one structured report across ${memberIds.length} videos.`}
-                payloadSummary="Member long summaries only (never raw transcripts); structured-output JSON synthesis."
+                description={`Ensures every video has a summary, then combines them into one report across ${memberIds.length} videos.`}
+                payloadSummary="Uses each video's summary only — never the full transcript."
                 busy={create.isPending}
                 confirmLabel="Generate report"
                 error={create.error ? create.error.message : null}
@@ -136,11 +144,15 @@ function ReportView({
     report,
     members,
     title,
+    error,
+    timedOut,
     onBack,
 }: {
     report: VideoReport | null;
     members: Record<string, ReportMemberMeta>;
     title: string;
+    error?: string | null;
+    timedOut?: boolean;
     onBack: () => void;
 }) {
     return (
@@ -157,13 +169,25 @@ function ReportView({
                 <h2 className="truncate text-lg font-semibold text-foreground/95">{title}</h2>
             </div>
             {report === null ? (
-                <div className="flex items-start gap-3 rounded-2xl border border-white/8 bg-black/20 p-4">
-                    <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-primary" />
-                    <p className="text-sm text-muted-foreground">
-                        Generating… members are summarized first, then synthesized into one report. This view refreshes
-                        automatically.
-                    </p>
-                </div>
+                error ? (
+                    <div className="flex items-start gap-3 rounded-2xl border border-destructive/40 bg-destructive/10 p-4">
+                        <p className="text-sm text-destructive/90">{error}</p>
+                    </div>
+                ) : timedOut ? (
+                    <div className="flex items-start gap-3 rounded-2xl border border-white/8 bg-black/20 p-4">
+                        <p className="text-sm text-muted-foreground">
+                            This is taking longer than expected — check the dashboard for the report's progress.
+                        </p>
+                    </div>
+                ) : (
+                    <div className="flex items-start gap-3 rounded-2xl border border-white/8 bg-black/20 p-4">
+                        <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-primary" />
+                        <p className="text-sm text-muted-foreground">
+                            Generating… each video is summarized first, then combined into one report. This view
+                            refreshes automatically.
+                        </p>
+                    </div>
+                )
             ) : (
                 <>
                     <div>

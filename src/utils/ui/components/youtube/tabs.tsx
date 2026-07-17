@@ -258,24 +258,56 @@ export function VideoDetailTabs({
         }
 
         const commentId = pendingCommentRef.current;
-        let tries = 0;
-        const timer = setInterval(() => {
-            const card = rootRef.current?.querySelector(`[data-comment-id="${CSS.escape(commentId)}"]`);
-            tries += 1;
+        const root = rootRef.current;
+
+        if (!root) {
+            return;
+        }
+
+        let observer: MutationObserver | null = null;
+        let timeout: number | null = null;
+
+        function reveal(card: Element) {
+            pendingCommentRef.current = null;
+            observer?.disconnect();
+
+            if (timeout !== null) {
+                window.clearTimeout(timeout);
+            }
+
+            scrollIntoPanelView(card);
+            card.classList.add("yt-flash");
+            setTimeout(() => card.classList.remove("yt-flash"), 2100);
+        }
+
+        const existing = root.querySelector(`[data-comment-id="${CSS.escape(commentId)}"]`);
+
+        if (existing) {
+            reveal(existing);
+            return;
+        }
+
+        observer = new MutationObserver(() => {
+            const card = root.querySelector(`[data-comment-id="${CSS.escape(commentId)}"]`);
 
             if (card) {
-                clearInterval(timer);
-                pendingCommentRef.current = null;
-                scrollIntoPanelView(card);
-                card.classList.add("yt-flash");
-                setTimeout(() => card.classList.remove("yt-flash"), 2100);
-            } else if (tries > 20) {
-                clearInterval(timer);
-                pendingCommentRef.current = null;
+                reveal(card);
             }
-        }, 100);
+        });
+        observer.observe(root, { childList: true, subtree: true });
 
-        return () => clearInterval(timer);
+        timeout = window.setTimeout(() => {
+            observer?.disconnect();
+            pendingCommentRef.current = null;
+        }, 3000);
+
+        return () => {
+            observer?.disconnect();
+
+            if (timeout !== null) {
+                window.clearTimeout(timeout);
+            }
+        };
     }, [active]);
 
     return (

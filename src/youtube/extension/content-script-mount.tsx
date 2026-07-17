@@ -1,3 +1,4 @@
+import { logger } from "@app/logger/client";
 import { PortalContainerProvider } from "@app/utils/ui/components/select";
 import { SidePanel } from "@ext/side-panel/side-panel";
 import sidePanelCss from "@ext/side-panel/side-panel.css?inline";
@@ -18,7 +19,7 @@ const PROPERTY_FALLBACK_GUARD = /@supports \(\(\(-webkit-hyphens:\s*none\)\).*?\
 const guardFound = PROPERTY_FALLBACK_GUARD.test(sidePanelCss);
 
 if (!guardFound) {
-    console.warn("[genesis-yt] Tailwind @property fallback guard not found — --tw-* vars will inherit in shadow DOM");
+    logger.warn("[genesis-yt] Tailwind @property fallback guard not found — --tw-* vars will inherit in shadow DOM");
 }
 
 const scopedCss = guardFound ? sidePanelCss.replace(PROPERTY_FALLBACK_GUARD, "@supports (color:red)") : sidePanelCss;
@@ -32,12 +33,7 @@ const queryClient = new QueryClient({
     defaultOptions: { queries: { staleTime: 30_000, retry: false, refetchOnWindowFocus: false } },
 });
 
-export function mountSidePanel(
-    shadow: ShadowRoot,
-    target: PanelTarget,
-    placement: "inline" | "fixed",
-    onClose: () => void
-): void {
+export function mountSidePanel(shadow: ShadowRoot, target: PanelTarget, placement: "inline" | "fixed"): void {
     if (mountedRoot) {
         mountedRoot.unmount();
         mountedRoot = null;
@@ -64,7 +60,7 @@ export function mountSidePanel(
         <StrictMode>
             <QueryClientProvider client={queryClient}>
                 <PortalContainerProvider container={portalTarget}>
-                    <SidePanel target={target} placement={placement} onClose={onClose} />
+                    <SidePanel target={target} placement={placement} />
                 </PortalContainerProvider>
             </QueryClientProvider>
         </StrictMode>

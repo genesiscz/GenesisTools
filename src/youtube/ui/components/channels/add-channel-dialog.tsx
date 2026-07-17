@@ -1,3 +1,4 @@
+import { logger } from "@app/logger/client";
 import { Button } from "@app/utils/ui/components/button";
 import {
     Dialog,
@@ -27,11 +28,15 @@ export function AddChannelDialog({ open, onOpenChange }: { open: boolean; onOpen
             return;
         }
 
-        const result = await addChannels.mutateAsync(handles);
-        await Promise.all(result.added.map((handle) => syncChannel.mutateAsync({ handle })));
-        toast.success(`${result.added.length} channel${result.added.length === 1 ? "" : "s"} added and queued`);
-        setRawHandles("");
-        onOpenChange(false);
+        try {
+            const result = await addChannels.mutateAsync(handles);
+            await Promise.all(result.added.map((handle) => syncChannel.mutateAsync({ handle })));
+            toast.success(`${result.added.length} channel${result.added.length === 1 ? "" : "s"} added and queued`);
+            setRawHandles("");
+            onOpenChange(false);
+        } catch (error) {
+            logger.debug({ error }, "add-channel-dialog: add/sync failed");
+        }
     }
 
     async function onFile(file: File | undefined) {
@@ -57,7 +62,7 @@ export function AddChannelDialog({ open, onOpenChange }: { open: boolean; onOpen
                     <Textarea
                         value={rawHandles}
                         onChange={(event) => setRawHandles(event.target.value)}
-                        placeholder="@mkbhd\nhttps://youtube.com/@veritasium"
+                        placeholder={"@mkbhd\nhttps://youtube.com/@veritasium"}
                         className="min-h-44 font-mono"
                     />
                     <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">

@@ -5,7 +5,7 @@ import { Header } from "@ext/side-panel/header";
 import { ExternalLink, Plus } from "lucide-react";
 import { useState } from "react";
 
-export function ChannelPanel({ handle, onClose: _onClose }: { handle: string | null; onClose: () => void }) {
+export function ChannelPanel({ handle }: { handle: string | null }) {
     const channelHandle = handle as ChannelHandle | null;
     const config = useConfig();
     const channels = useChannels();
@@ -24,7 +24,7 @@ export function ChannelPanel({ handle, onClose: _onClose }: { handle: string | n
             <div className="yt-body-collapsible min-h-0 flex-1" data-collapsed={collapsed}>
                 <div className="yt-scroll min-h-0 flex-1 space-y-4 overflow-auto p-4">
                     <div>
-                        <p className="font-mono text-[10px] uppercase tracking-[0.32em] text-secondary">Channel</p>
+                        <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-secondary">Channel</p>
                         <h2 className="mt-1 text-lg font-semibold text-foreground">
                             {channelHandle ?? "This channel"}
                         </h2>
@@ -62,17 +62,21 @@ export function ChannelPanel({ handle, onClose: _onClose }: { handle: string | n
                     ) : null}
 
                     <section className="space-y-2">
-                        <p className="font-mono text-xs uppercase tracking-[0.28em] text-secondary">
+                        <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-secondary">
                             Recent tracked videos
                         </p>
                         {channelHandle !== null && videos.isPending ? (
                             <p className="text-sm text-muted-foreground">Loading…</p>
+                        ) : videos.isError ? (
+                            <p className="rounded-2xl border border-dashed border-destructive/40 p-4 text-sm text-destructive/90">
+                                {videos.error instanceof Error ? videos.error.message : "Couldn't load this channel's videos."}
+                            </p>
                         ) : rows.length === 0 ? (
                             <p className="rounded-2xl border border-dashed border-primary/25 p-4 text-sm text-muted-foreground">
-                                No ingested videos for this channel yet.
+                                No videos for this channel yet.
                                 {tracked
-                                    ? " Run a sync from the web UI to fetch its videos."
-                                    : " Track it, then sync from the web UI."}
+                                    ? " They'll appear here once the dashboard has fetched them."
+                                    : " Track the channel on the dashboard to fetch its videos."}
                             </p>
                         ) : (
                             <ul className="space-y-2">

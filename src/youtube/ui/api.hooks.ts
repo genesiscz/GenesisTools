@@ -26,6 +26,9 @@ export function useAddChannels() {
     return useMutation({
         mutationFn: (handles: string[]) => apiClient.addChannels(handles),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["channels"] }),
+        onError: (error) => {
+            toast.error("Adding channels failed", { description: errorMessage(error) });
+        },
     });
 }
 
@@ -37,6 +40,9 @@ export function useRemoveChannel() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["channels"] });
             queryClient.invalidateQueries({ queryKey: ["videos"] });
+        },
+        onError: (error) => {
+            toast.error("Removing channel failed", { description: errorMessage(error) });
         },
     });
 }
@@ -52,6 +58,9 @@ export function useSyncChannel() {
                 since: args.since,
             }),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+        onError: (error) => {
+            toast.error("Sync failed", { description: errorMessage(error) });
+        },
     });
 }
 
@@ -181,6 +190,9 @@ export function useCancelJob() {
     return useMutation({
         mutationFn: (id: number) => apiClient.cancelJob(id),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+        onError: (error) => {
+            toast.error("Cancelling job failed", { description: errorMessage(error) });
+        },
     });
 }
 
@@ -204,6 +216,9 @@ export function usePruneCache() {
     return useMutation({
         mutationFn: (dryRun: boolean) => apiClient.pruneCache(dryRun),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["cache-stats"] }),
+        onError: (error) => {
+            toast.error("Prune failed", { description: errorMessage(error) });
+        },
     });
 }
 
@@ -214,6 +229,9 @@ export function useClearCache() {
         mutationFn: (body: { audio?: boolean; video?: boolean; thumbs?: boolean; all?: boolean }) =>
             apiClient.clearCache(body),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["cache-stats"] }),
+        onError: (error) => {
+            toast.error("Clearing cache failed", { description: errorMessage(error) });
+        },
     });
 }
 
@@ -230,6 +248,9 @@ export function usePatchServerConfig() {
             clearApiBaseUrlCache();
             queryClient.invalidateQueries({ queryKey: ["server-config"] });
             queryClient.invalidateQueries({ queryKey: ["cache-stats"] });
+        },
+        onError: (error) => {
+            toast.error("Saving settings failed", { description: errorMessage(error) });
         },
     });
 }

@@ -105,7 +105,7 @@ export function SummaryAudioPlayer({ priceLabel, onPrepare, onPlayVideo, playerT
     }
 
     return (
-        <div className="flex items-center gap-3 rounded-2xl border border-white/8 bg-black/20 px-3 py-2">
+        <div className="flex items-center gap-3 rounded-2xl border border-border/50 bg-black/20 px-3 py-2">
             <audio
                 ref={audioRef}
                 src={src ?? undefined}

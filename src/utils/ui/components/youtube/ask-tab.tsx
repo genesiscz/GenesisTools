@@ -386,7 +386,7 @@ export function AskTab({
                             ask
                         </>
                     ) : (
-                        "Answers come from the transcript (semantic search + your configured LLM), with timestamp citations."
+                        "Answers come from what's said in the video, with clickable timestamps for every point."
                     )}
                 </p>
             </div>

@@ -1,3 +1,4 @@
+import { logger } from "@app/logger/client";
 import { activeChapterIndex } from "@app/utils/ui/components/youtube/chapters";
 
 export interface ChapterTick {
@@ -129,7 +130,10 @@ export function mountChapterTicks(opts: MountChapterTicksOpts): ChapterTicksHand
         const pct = tickPositionPct(chapter.startSec, duration);
 
         if (pct === null) {
-            console.debug("[gt-chapter] dropping tick outside duration", chapter.startSec, duration);
+            logger.debug(
+                { startSec: chapter.startSec, duration },
+                "player-chapters: dropping tick outside duration"
+            );
             continue;
         }
 

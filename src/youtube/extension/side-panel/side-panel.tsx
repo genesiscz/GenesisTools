@@ -20,21 +20,13 @@ const IS_DEV_BUILD = typeof __EXT_DEV_RELOAD__ !== "undefined" && __EXT_DEV_RELO
 
 type Placement = "inline" | "fixed";
 
-export function SidePanel({
-    target,
-    placement,
-    onClose,
-}: {
-    target: PanelTarget;
-    placement: Placement;
-    onClose: () => void;
-}) {
+export function SidePanel({ target, placement }: { target: PanelTarget; placement: Placement }) {
     if (target.kind === "channel") {
-        return <ChannelPanel handle={target.handle} onClose={onClose} />;
+        return <ChannelPanel handle={target.handle} />;
     }
 
     if (target.kind === "playlist") {
-        return <PlaylistPanel listId={target.listId} onClose={onClose} />;
+        return <PlaylistPanel listId={target.listId} />;
     }
 
     return <VideoPanel videoId={target.videoId} placement={placement} />;
@@ -45,7 +37,13 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
     const [collapsed, setCollapsed] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [view, setView] = useState<"tabs" | "activity">("tabs");
+    // `playerTime` is the throttled value handed to the tab subtree; the ref
+    // holds the raw 1 Hz position so we can push an exact value the instant a
+    // consumer that needs it (the transcript's follow-mode) becomes visible.
     const [playerTime, setPlayerTime] = useState<number | null>(null);
+    const playerTimeRef = useRef<number | null>(null);
+    const activeRef = useRef(active);
+    const lastPushedTimeBucketRef = useRef<number | null>(null);
     const startPipeline = useStartPipeline();
     const queryClient = useQueryClient();
     // Dev-only model picker data; regular builds never fetch it.
@@ -81,6 +79,18 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
         void loadUiLang();
     }, []);
 
+    // Entering the transcript tab needs the current second immediately (its
+    // follow-mode drives off it) instead of waiting up to 5s for the next
+    // pushed tick, so flush the raw ref value on the switch.
+    useEffect(() => {
+        activeRef.current = active;
+
+        if (active === "transcript" && playerTimeRef.current !== null) {
+            lastPushedTimeBucketRef.current = Math.floor(playerTimeRef.current / 5);
+            setPlayerTime(playerTimeRef.current);
+        }
+    }, [active]);
+
     useEffect(() => {
         function onWindowMessage(event: MessageEvent): void {
             if (event.source !== window) {
@@ -93,7 +103,24 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                 return;
             }
 
-            setPlayerTime(data.t);
+            const t = data.t;
+            playerTimeRef.current = t;
+
+            // The transcript tab's follow-mode needs the exact second every
+            // tick; the other consumers (chapter highlight, audio-jump
+            // detection) only need ~5s granularity. Skip the 1 Hz whole-subtree
+            // re-render unless the transcript is showing or the 5s bucket rolled.
+            const bucket = Math.floor(t / 5);
+            if (activeRef.current === "transcript") {
+                lastPushedTimeBucketRef.current = bucket;
+                setPlayerTime(t);
+                return;
+            }
+
+            if (bucket !== lastPushedTimeBucketRef.current) {
+                lastPushedTimeBucketRef.current = bucket;
+                setPlayerTime(t);
+            }
         }
 
         window.addEventListener("message", onWindowMessage);

@@ -1,6 +1,6 @@
 import { Button } from "@app/utils/ui/components/button";
 import { LlmConfirmDialog, type ModelPreset } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
-import { Loading } from "@app/utils/ui/components/youtube/loading";
+import { PanelLoading } from "@app/utils/ui/components/youtube/loading";
 import { LongSummaryView } from "@app/utils/ui/components/youtube/long-summary-view";
 import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
 import { ShareButton } from "@app/utils/ui/components/youtube/share-button";
@@ -157,7 +157,7 @@ export function SummaryTab({
     const idleSummary = long ?? partial;
 
     if (summary.isPending && !partial) {
-        return <Loading label="Loading summary" />;
+        return <PanelLoading label="Loading summary" />;
     }
 
     async function runGenerate({ provider, model }: { provider?: string; model?: string }) {
@@ -232,7 +232,7 @@ export function SummaryTab({
             ) : lockedInfo !== null ? (
                 <div
                     data-testid="summary-locked"
-                    className="space-y-3 rounded-2xl border border-white/8 bg-black/20 p-3"
+                    className="space-y-3 rounded-2xl border border-border/50 bg-black/20 p-3"
                 >
                     <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-secondary">summary</p>
                     <p className="line-clamp-3 text-sm text-muted-foreground [mask-image:linear-gradient(to_bottom,black_40%,transparent)]">
@@ -274,10 +274,9 @@ export function SummaryTab({
                     data-testid="summary-empty"
                     className="rounded-xl border border-dashed border-primary/25 p-4 text-sm text-muted-foreground"
                 >
-                    No long-form summary yet. Click{" "}
-                    <span className="font-semibold text-foreground/95">Generate summary</span> to send the compacted
-                    transcript to your LLM and get back a structured TL;DR + key points + learnings + chapters +
-                    verdict.
+                    No summary yet. Click <span className="font-semibold text-foreground/95">Generate summary</span> to
+                    get a quick TL;DR, the key points, lessons worth keeping, chapters, and a verdict — all from what's
+                    said in the video.
                 </p>
             ) : (
                 <>

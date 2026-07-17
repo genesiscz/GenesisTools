@@ -1,6 +1,6 @@
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
-import { Loading } from "@app/utils/ui/components/youtube/loading";
+import { PanelLoading } from "@app/utils/ui/components/youtube/loading";
 import type { PipelineProgress, RunPipeline } from "@app/utils/ui/components/youtube/tabs";
 import { formatRelativeTime } from "@app/utils/ui/components/youtube/time";
 import type { VideoComment, VideoId } from "@app/youtube/lib/types";
@@ -73,7 +73,7 @@ export function CommentsTab({ videoId, useComments, runPipeline, pipelineProgres
     }, [filtered, showAll]);
 
     if (comments.isPending) {
-        return <Loading label="Loading comments" />;
+        return <PanelLoading label="Loading comments" />;
     }
 
     if (rows.length === 0) {
@@ -86,8 +86,7 @@ export function CommentsTab({ videoId, useComments, runPipeline, pipelineProgres
                     <div className="space-y-1">
                         <p className="text-sm font-semibold">No comments yet</p>
                         <p className="text-sm text-muted-foreground">
-                            We haven't fetched comments for this video yet. Run the comments stage to pull the top
-                            comment threads via yt-dlp.
+                            We haven't loaded comments for this video yet. Fetch them to see the top threads.
                         </p>
                     </div>
                 </div>

@@ -7,7 +7,7 @@ import { useCancelJob } from "@app/yt/api.hooks";
 import { JobActivityDrawer } from "@app/yt/components/jobs/job-activity-drawer";
 import { JobStatusBadge } from "@app/yt/components/jobs/job-status-badge";
 import { EmptyState } from "@app/yt/components/shared/empty-state";
-import { formatDateTime, parseSqliteDate } from "@app/yt/lib/format";
+import { parseSqliteDate } from "@app/yt/lib/format";
 import { Activity, Ban, ChevronRight, PlayCircle } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -190,7 +190,7 @@ function formatJobDuration(job: PipelineJob): string {
     const end = parseSqliteDate(job.completedAt ?? job.updatedAt)?.getTime();
 
     if (start === undefined || end === undefined || Number.isNaN(start) || Number.isNaN(end)) {
-        return formatDateTime(job.updatedAt);
+        return "—";
     }
 
     return formatDuration(Math.max(0, end - start), "ms", "hms");

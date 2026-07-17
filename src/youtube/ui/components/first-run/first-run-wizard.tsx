@@ -16,7 +16,7 @@ export function FirstRunWizard() {
         setSubmitting(true);
         try {
             await patchUiConfig({ apiBaseUrl: apiUrl, firstRunComplete: true });
-            toast.success("Connected. Let's index some signal.");
+            toast.success("Connected. Let's get started.");
             navigate({ to: "/" });
         } catch (err) {
             toast.error(err instanceof Error ? err.message : String(err));
@@ -39,8 +39,8 @@ export function FirstRunWizard() {
                         </div>
                     </div>
                     <CardDescription className="text-base leading-7">
-                        The local dashboard talks to the YouTube pipeline over HTTP. Keep the default for a local
-                        server, or point at a remote tunnel.
+                        The dashboard connects to your YouTube server. Keep the default if it's running on this
+                        computer, or enter a different address.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-5">

@@ -26,6 +26,17 @@ import { toast } from "sonner";
 
 const providerOptions = ["local-hf", "cloud", "openai", "groq", "openrouter", "ollama", "anthropic", "google"];
 
+const providerLabels: Record<string, string> = {
+    "local-hf": "Local (on this computer)",
+    cloud: "Cloud",
+    openai: "OpenAI",
+    groq: "Groq",
+    openrouter: "OpenRouter",
+    ollama: "Ollama",
+    anthropic: "Anthropic",
+    google: "Google",
+};
+
 export const Route = createFileRoute("/settings")({
     component: SettingsPage,
 });
@@ -111,10 +122,17 @@ function SettingsPage() {
                             onChange={(event) => setDraft({ ...draft, apiBaseUrl: event.target.value })}
                         />
                     </Field>
-                    <Button variant="outline" onClick={onTestConnection} disabled={healthStatus === "checking"}>
-                        <CheckCircle2 className="mr-2 size-4" />{" "}
-                        {healthStatus === "checking" ? "Checking" : "Test connection"}
-                    </Button>
+                    <div className="space-y-1.5">
+                        <Button variant="outline" onClick={onTestConnection} disabled={healthStatus === "checking"}>
+                            <CheckCircle2 className="mr-2 size-4" />{" "}
+                            {healthStatus === "checking" ? "Checking" : "Test connection"}
+                        </Button>
+                        {healthStatus === "ok" ? (
+                            <p className="flex items-center gap-1.5 text-xs text-emerald-400">
+                                <CheckCircle2 className="size-3.5" /> Connected
+                            </p>
+                        ) : null}
+                    </div>
                 </div>
             </SettingsCard>
 
@@ -318,7 +336,7 @@ function ProviderSelect({
                 <SelectContent>
                     {providerOptions.map((option) => (
                         <SelectItem key={option} value={option}>
-                            {option}
+                            {providerLabels[option] ?? option}
                         </SelectItem>
                     ))}
                 </SelectContent>

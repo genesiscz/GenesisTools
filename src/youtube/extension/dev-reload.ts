@@ -77,7 +77,9 @@ function connect(): void {
         keepaliveTimer = setInterval(() => {
             try {
                 socket?.send("ping");
-            } catch {}
+            } catch (error) {
+                console.debug("[genesis-yt dev-reload] keepalive ping failed", error);
+            }
         }, KEEPALIVE_MS);
     };
     socket.onmessage = (event) => {
@@ -104,7 +106,9 @@ function connect(): void {
     socket.onerror = () => {
         try {
             socket?.close();
-        } catch {}
+        } catch (error) {
+            console.debug("[genesis-yt dev-reload] socket close threw", error);
+        }
     };
 }
 

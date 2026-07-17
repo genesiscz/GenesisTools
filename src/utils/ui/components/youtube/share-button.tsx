@@ -6,7 +6,7 @@ import { useState } from "react";
  *  an extension content-script world (permissions-policy / focus quirks), and
  *  when it does the user just saw a share button do nothing. The textarea +
  *  execCommand path still works there. */
-async function copyText(text: string): Promise<void> {
+export async function copyText(text: string): Promise<void> {
     try {
         await navigator.clipboard.writeText(text);
         return;

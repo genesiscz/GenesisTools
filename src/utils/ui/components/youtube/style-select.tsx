@@ -58,9 +58,7 @@ export function StyleSelect({
     const value = selectedId !== null ? String(selectedId) : NONE_VALUE;
 
     return (
-        <label
-            className={`flex items-center gap-1.5 text-xs text-muted-foreground ${className ?? ""}`}
-        >
+        <label className={`flex items-center gap-1.5 text-xs text-muted-foreground ${className ?? ""}`}>
             Style
             <Select
                 value={value}
