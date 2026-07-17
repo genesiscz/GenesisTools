@@ -160,7 +160,7 @@ export function SummaryTab({
     const hasPartial = partialLong !== undefined;
 
     function openConfirm() {
-        setLang(outputLang ?? "en");
+        setLang(taskDefault?.lang ?? outputLang ?? "en");
         setConfirmOpen(true);
     }
 

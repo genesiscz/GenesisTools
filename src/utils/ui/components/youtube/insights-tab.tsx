@@ -129,7 +129,7 @@ export function InsightsTab({
     const hasPartial = partialTimestamped !== undefined;
 
     function openConfirm() {
-        setLang(outputLang ?? "en");
+        setLang(taskDefault?.lang ?? outputLang ?? "en");
         setConfirmOpen(true);
     }
 
