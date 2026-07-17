@@ -3,7 +3,8 @@ import { Button } from "@app/utils/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
-import { useCollections, useCreateCollection, useDeleteCollection } from "@app/yt/api.hooks";
+import { useCollections, useCreateCollection, useDeleteCollection, useMe } from "@app/yt/api.hooks";
+import { SignInRequired } from "@app/yt/components/shared/sign-in-required";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -30,12 +31,22 @@ function buildCreateBody(name: string, preset: string) {
 }
 
 function CollectionsPage() {
+    const me = useMe();
     const collections = useCollections();
     const create = useCreateCollection();
     const remove = useDeleteCollection();
     const navigate = useNavigate();
     const [name, setName] = useState("");
     const [preset, setPreset] = useState("manual");
+
+    if (!me.isPending && !me.data) {
+        return (
+            <div className="mx-auto max-w-4xl space-y-4 p-4">
+                <h1 className="text-xl font-semibold">Collections</h1>
+                <SignInRequired action="create and view collections" />
+            </div>
+        );
+    }
 
     const onCreate = () => {
         const trimmed = name.trim();
