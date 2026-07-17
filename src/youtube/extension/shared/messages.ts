@@ -11,6 +11,7 @@ import type {
     PromptPreset,
     QaHistoryItem,
     QaSource,
+    QueueStats,
     ShareSummary,
     SummaryFormat,
     SummaryLength,
@@ -23,6 +24,7 @@ import type {
     VideoId,
     VideoLongSummary,
     VideoReport,
+    YtRole,
     YtUser,
 } from "@app/youtube/lib/types";
 import type { ExtensionConfig } from "@ext/shared/types";
@@ -103,9 +105,10 @@ export type ExtensionRequest =
     | { type: "nav:openWatch"; id: string; t: number } // open watch page in a new tab (cross-video citation)
     | { type: "api:reportEstimate"; videoIds: string[] }
     | { type: "api:createReport"; videoIds: string[]; title?: string }
-    | { type: "api:getReport"; id: number };
+    | { type: "api:getReport"; id: number }
+    | { type: "api:queueStats" };
 
-export type ExtensionResponse = { ok: true; data: unknown } | { ok: false; error: string };
+export type ExtensionResponse = { ok: true; data: unknown } | { ok: false; error: string; code?: string };
 
 export type ExtensionEvent = { type: "job:event"; event: JobEvent } | { type: "ws:status"; connected: boolean };
 
@@ -183,7 +186,8 @@ export interface ExtensionApiMap {
     "api:register": { user: YtUser; token: string };
     "api:login": { user: YtUser; token: string };
     "api:logout": { ok: true };
-    "api:me": { user: YtUser };
+    "api:me": { user: YtUser; role: YtRole };
+    "api:queueStats": { queue: QueueStats };
     "api:topup": { user: YtUser };
     "api:qaHistory": { items: QaHistoryItem[] };
     "api:checkout": { url: string };

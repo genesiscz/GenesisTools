@@ -1,6 +1,7 @@
 import { Button } from "@app/utils/ui/components/button";
 import { Markdown } from "@app/utils/ui/components/markdown";
 import { LlmConfirmDialog } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
+import { errorCodeOf } from "@app/utils/ui/components/youtube/login-required";
 import type { VideoReport } from "@app/youtube/lib/types";
 import { useCreateReport, useReport, useReportEstimate } from "@ext/api.hooks";
 import type { ReportMemberMeta } from "@ext/shared/messages";
@@ -105,8 +106,8 @@ export function PlaylistPanel({ listId }: { listId: string }) {
                                 <div className="flex items-start gap-3 rounded-2xl border border-dashed border-primary/25 p-5">
                                     <FileText className="mt-0.5 size-5 shrink-0 text-primary" />
                                     <p className="text-sm text-muted-foreground">
-                                        Generate one combined report across the first {memberIds.length} videos:
-                                        shared themes, contradictions, per-video highlights, and a watch/skip verdict.
+                                        Generate one combined report across the first {memberIds.length} videos: shared
+                                        themes, contradictions, per-video highlights, and a watch/skip verdict.
                                     </p>
                                 </div>
                             )}
@@ -122,6 +123,7 @@ export function PlaylistPanel({ listId }: { listId: string }) {
                 busy={create.isPending}
                 confirmLabel="Generate report"
                 error={create.error ? create.error.message : null}
+                errorCode={errorCodeOf(create.error)}
                 billingNote={
                     estimate.data ? (
                         <>

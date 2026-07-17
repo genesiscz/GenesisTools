@@ -49,6 +49,7 @@ const jobs: PipelineJob[] = [
         progress: 1,
         progressMessage: null,
         parentJobId: null,
+        userId: null,
         workerId: null,
         claimedAt: null,
         createdAt: "2026-04-01",
