@@ -5,11 +5,13 @@ import { Transcriber } from "@app/utils/ai/tasks/Transcriber";
 import { speakerIndexFromLabel } from "@app/utils/ai/transcription/speaker-label";
 import { withFileLock } from "@app/utils/storage";
 import { estimateTokens } from "@app/utils/tokens";
+import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import { audioPath, ensureBinaryDir } from "@app/youtube/lib/cache";
 import { fetchCaptions } from "@app/youtube/lib/captions";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import { englishLanguageName } from "@app/youtube/lib/languages";
+import { parseProviderSpec } from "@app/youtube/lib/provider-choice";
 import type { Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
 import type {
     TranscribeOpts,
@@ -93,8 +95,8 @@ export class TranscriptService {
             audio = nextAudio;
         }
 
-        const provider = await this.config.get("provider");
-        const providerName = opts.provider ?? provider.transcribe;
+        const configuredSpec = resolveAiSpecForTask(await this.config.getAll(), "transcribe");
+        const providerName = opts.provider ?? parseProviderSpec(configuredSpec).provider;
         // Diarization is Deepgram-native only; other providers would trigger the
         // heavy local-pyannote fallback, so keep them exactly as before.
         const diarize = providerName?.includes("deepgram") ?? false;

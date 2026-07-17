@@ -1,6 +1,7 @@
 import { logger } from "@app/logger";
 import { callLLM } from "@app/utils/ai/call-llm";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
+import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import type { VideoComment } from "@app/youtube/lib/comments.types";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
@@ -8,6 +9,7 @@ import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { TranscriptSearchHit } from "@app/youtube/lib/db.types";
 import { englishLanguageName } from "@app/youtube/lib/languages";
 import { buildPresetBlock } from "@app/youtube/lib/presets";
+import { parseProviderSpec } from "@app/youtube/lib/provider-choice";
 import type {
     AskOpts,
     AskResult,
@@ -60,10 +62,10 @@ export class QaService {
 
     async index(opts: IndexOpts): Promise<IndexResult> {
         const sources = opts.sources ?? ["transcript"];
-        const provider = await this.config.get("provider");
+        const embedProvider = parseProviderSpec(resolveAiSpecForTask(await this.config.getAll(), "embed")).provider;
         const modelId = opts.model ?? DEFAULT_MODEL_ID;
         const embedder = await this.deps.createEmbedder({
-            provider: opts.provider ?? provider.embed,
+            provider: opts.provider ?? embedProvider,
             model: opts.model,
         });
 
@@ -83,7 +85,7 @@ export class QaService {
                     const vectors = await embedder.embedBatch(chunks.map((chunk) => chunk.text));
                     await recordYoutubeUsage({
                         action: "qa:embed",
-                        provider: opts.provider ?? provider.embed ?? "default",
+                        provider: opts.provider ?? embedProvider ?? "default",
                         model: modelId,
                         scope: opts.videoId,
                         videoId: opts.videoId,
@@ -125,7 +127,7 @@ export class QaService {
                     const vectors = await embedder.embedBatch(chunks.map((chunk) => chunk.text));
                     await recordYoutubeUsage({
                         action: "qa:embed",
-                        provider: opts.provider ?? provider.embed ?? "default",
+                        provider: opts.provider ?? embedProvider ?? "default",
                         model: modelId,
                         scope: opts.videoId,
                         videoId: opts.videoId,

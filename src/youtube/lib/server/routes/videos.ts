@@ -2,6 +2,7 @@ import { logger } from "@app/logger";
 import { estimateLlmCallCostUsd, estimateSpeechTokens } from "@app/utils/ai/llm-cost";
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
+import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import { grantArtifactAccess, resolveArtifactPrice } from "@app/youtube/lib/artifact-access";
 import { withJobActivity } from "@app/youtube/lib/job-activity";
 import { isOutputLang } from "@app/youtube/lib/languages";
@@ -487,7 +488,10 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 ? await resolveProviderChoice({
                       provider,
                       model,
-                      fallbackSpec: (await yt.config.get("provider")).summarize,
+                      fallbackSpec: resolveAiSpecForTask(
+                          await yt.config.getAll(),
+                          mode === "timestamped" ? "insights" : "summary"
+                      ),
                   })
                 : undefined;
             // Reserve BEFORE the pipeline work so concurrent requests cannot pass
@@ -555,45 +559,47 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     message: "Compacting transcript",
                 });
 
-                const result = await withJobActivity({ jobId: job.id, stage: "summarize", db: yt.db, userId: user.id }, () =>
-                    yt.summary.summarize({
-                        videoId: id,
-                        mode,
-                        provider,
-                        providerChoice,
-                        targetBins,
-                        forceRecompute: force,
-                        tone,
-                        format,
-                        length,
-                        lang,
-                        presetInstructions,
-                        onProgress: (info) => {
-                            const progress = (info.percent ?? 50) / 100;
-                            yt.db.updateJob(job.id, { progress, progressMessage: info.message });
-                            yt.pipeline.emitExternal({
-                                type: "stage:progress",
-                                jobId: job.id,
-                                stage: "summarize",
-                                progress,
-                                message: info.message,
-                            });
-                        },
-                        onPartial: (partial) => {
-                            if (partial === null || typeof partial !== "object") {
-                                logger.debug({ jobId: job.id, videoId: id }, "skipping malformed summary partial");
-                                return;
-                            }
+                const result = await withJobActivity(
+                    { jobId: job.id, stage: "summarize", db: yt.db, userId: user.id },
+                    () =>
+                        yt.summary.summarize({
+                            videoId: id,
+                            mode,
+                            provider,
+                            providerChoice,
+                            targetBins,
+                            forceRecompute: force,
+                            tone,
+                            format,
+                            length,
+                            lang,
+                            presetInstructions,
+                            onProgress: (info) => {
+                                const progress = (info.percent ?? 50) / 100;
+                                yt.db.updateJob(job.id, { progress, progressMessage: info.message });
+                                yt.pipeline.emitExternal({
+                                    type: "stage:progress",
+                                    jobId: job.id,
+                                    stage: "summarize",
+                                    progress,
+                                    message: info.message,
+                                });
+                            },
+                            onPartial: (partial) => {
+                                if (partial === null || typeof partial !== "object") {
+                                    logger.debug({ jobId: job.id, videoId: id }, "skipping malformed summary partial");
+                                    return;
+                                }
 
-                            yt.pipeline.emitExternal({
-                                type: "summary:partial",
-                                jobId: job.id,
-                                videoId: id,
-                                mode,
-                                partial,
-                            });
-                        },
-                    })
+                                yt.pipeline.emitExternal({
+                                    type: "summary:partial",
+                                    jobId: job.id,
+                                    videoId: id,
+                                    mode,
+                                    partial,
+                                });
+                            },
+                        })
                 );
                 yt.db.updateJob(job.id, {
                     status: "completed",
@@ -654,7 +660,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 provider: url.searchParams.get("provider") ?? undefined,
                 model: url.searchParams.get("model") ?? undefined,
                 // Estimates front the summary dialog, so quote the summarize default.
-                fallbackSpec: (await yt.config.get("provider")).summarize,
+                fallbackSpec: resolveAiSpecForTask(await yt.config.getAll(), mode === "timestamped" ? "insights" : "summary"),
             });
             const transcript = yt.db.getTranscript(id);
             const video = yt.videos.show(id);
@@ -786,7 +792,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             const providerChoice = await resolveProviderChoice({
                 provider: typeof body.provider === "string" ? body.provider : undefined,
                 model: typeof body.model === "string" ? body.model : undefined,
-                fallbackSpec: (await yt.config.get("provider")).qa,
+                fallbackSpec: resolveAiSpecForTask(await yt.config.getAll(), "qa"),
             });
             const presetId = typeof body.presetId === "number" ? body.presetId : undefined;
             let presetInstructions: string | undefined;

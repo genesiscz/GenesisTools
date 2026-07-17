@@ -1,5 +1,6 @@
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
 import { isPowerRole, roleForEmail } from "@app/youtube/lib/roles";
 import { resolveUser } from "@app/youtube/lib/server/auth";
@@ -80,12 +81,13 @@ export async function handleModelsRoute(req: Request, url: URL, yt: Youtube): Pr
             }
         }
 
-        const cfg = await yt.config.get("provider");
+        const all = await yt.config.getAll();
         const defaults = {
-            summarize: await resolveTaskDefault(cfg?.summarize),
-            qa: await resolveTaskDefault(cfg?.qa),
-            transcribe: cfg?.transcribe ?? null,
-            embed: cfg?.embed ?? null,
+            summarize: await resolveTaskDefault(resolveAiSpecForTask(all, "summary")),
+            insights: await resolveTaskDefault(resolveAiSpecForTask(all, "insights")),
+            qa: await resolveTaskDefault(resolveAiSpecForTask(all, "qa")),
+            transcribe: resolveAiSpecForTask(all, "transcribe"),
+            embed: resolveAiSpecForTask(all, "embed"),
         };
 
         return Response.json({ presets, defaults }, { headers: CORS_HEADERS });
