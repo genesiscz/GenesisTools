@@ -250,7 +250,14 @@ function LanguageSection({ outputLang }: { outputLang: string | null }) {
                 <label htmlFor="settings-panel-lang" className="text-xs font-medium text-muted-foreground">
                     {t("settings.panelLanguage")}
                 </label>
-                <Select value={uiLang} onValueChange={(value) => void persistUiLang(value)}>
+                <Select
+                    value={uiLang}
+                    onValueChange={(value) => {
+                        persistUiLang(value).catch((error) => {
+                            logger.warn({ error }, "settings-dialog: persist panel language failed");
+                        });
+                    }}
+                >
                     <SelectTrigger id="settings-panel-lang" className="h-8 w-full text-sm">
                         <SelectValue />
                     </SelectTrigger>
