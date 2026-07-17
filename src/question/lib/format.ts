@@ -14,8 +14,8 @@ type FormattableEntry = Pick<QaEntry, "ts" | "project" | "branch" | "tag" | "que
 
 /**
  * Single source of truth for one Q→A entry's terminal rendering. Used by both
- * `tools question log` (newest-first digest) and `tools question tail` (live
- * feed) so they are visually identical per entry.
+ * `tools question log` (oldest→newest digest of the last N) and
+ * `tools question tail` (live feed) so they are visually identical per entry.
  */
 export function formatQaEntry(e: FormattableEntry): string {
     const when = new Date(e.ts).toISOString().slice(0, 16).replace("T", " ");

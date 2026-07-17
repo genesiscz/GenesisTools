@@ -17,7 +17,8 @@ function watchToday(opts: { lines?: number }): void {
         try {
             const rows = queryEntries(db, { limit: backlog });
             if (rows.length > 0) {
-                process.stdout.write(`${[...rows].reverse().map(formatQaEntry).join("\n")}\n`);
+                // queryEntries already returns the last N oldest→newest.
+                process.stdout.write(`${rows.map(formatQaEntry).join("\n")}\n`);
             }
         } finally {
             db.close();

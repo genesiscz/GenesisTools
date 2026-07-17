@@ -57,6 +57,20 @@ describe("read-model", () => {
         expect(queryEntries(db, { logBase, unread: true }).length).toBe(2);
     });
 
+    it("returns last N entries oldest→newest", () => {
+        const logBase = mkdtempSync(join(tmpdir(), "qa-log-"));
+        const dbPath = join(mkdtempSync(join(tmpdir(), "qa-db-")), "qa.db");
+        const t0 = 1779000000000;
+        appendEntry(e("old", { ts: t0, question: "oldest" }), logBase);
+        appendEntry(e("mid", { ts: t0 + 1000, question: "middle" }), logBase);
+        appendEntry(e("new", { ts: t0 + 2000, question: "newest" }), logBase);
+        const db = openReadModel(dbPath);
+        const last2 = queryEntries(db, { logBase, limit: 2 });
+        expect(last2.map((r) => r.question)).toEqual(["middle", "newest"]);
+        const all = queryEntries(db, { logBase, limit: 50 });
+        expect(all.map((r) => r.question)).toEqual(["oldest", "middle", "newest"]);
+    });
+
     it("marks entries read without touching already-read rows", () => {
         const logBase = mkdtempSync(join(tmpdir(), "qa-log-"));
         const dbPath = join(mkdtempSync(join(tmpdir(), "qa-db-")), "qa.db");

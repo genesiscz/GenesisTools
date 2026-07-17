@@ -187,7 +187,14 @@ export function queryEntries(db: Database, opts: QueryOpts = {}): QaRow[] {
         where.push("read_at IS NULL");
     }
 
-    const sql = `SELECT * FROM entries WHERE ${where.join(" AND ")} ORDER BY ts DESC LIMIT ?`;
+    // Window = last N by time (DESC + LIMIT), then re-order ASC so digests read
+    // oldest→newest (build-log / chat chronological). Callers that used to reverse
+    // a DESC result no longer need to.
+    const sql = `
+        SELECT * FROM (
+            SELECT * FROM entries WHERE ${where.join(" AND ")} ORDER BY ts DESC LIMIT ?
+        ) ORDER BY ts ASC
+    `;
     params.push(opts.limit ?? 50);
     return (db.query(sql).all(...params) as Record<string, unknown>[]).map(rowToQaRow);
 }

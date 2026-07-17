@@ -8,11 +8,12 @@ import type { QaEntry } from "../lib/types";
 import { renderDigest } from "./log";
 
 describe("renderDigest", () => {
-    it("renders newest-first grouped lines", () => {
+    it("renders last-N entries oldest→newest", () => {
         const logBase = mkdtempSync(join(tmpdir(), "qa-log-"));
-        const base: QaEntry = {
-            id: "1",
-            ts: 1779000000000,
+        const dbPath = join(mkdtempSync(join(tmpdir(), "db-")), "qa.db");
+        const base = (id: string, ts: number, question: string): QaEntry => ({
+            id,
+            ts,
             sessionId: "s",
             sessionTitle: null,
             project: "GenesisTools",
@@ -27,17 +28,20 @@ describe("renderDigest", () => {
             aiAgent: null,
             agentLabel: null,
             tag: "question",
-            question: "why TanStack?",
-            answerMd: "invalidation + devtools",
+            question,
+            answerMd: `answer-${id}`,
             refs: [],
             source: "cli",
             turnUuid: null,
-        };
-        appendEntry(base, logBase);
-        const out = renderDigest({ logBase, dbPath: join(mkdtempSync(join(tmpdir(), "db-")), "qa.db") });
+        });
+        appendEntry(base("1", 1779000000000, "why TanStack?"), logBase);
+        appendEntry(base("2", 1779000001000, "code-review xhigh PR #288"), logBase);
+        const out = renderDigest({ logBase, dbPath, limit: 50 });
         expect(out).toContain("GenesisTools");
         expect(out).toContain("why TanStack?");
-        expect(out).toContain("invalidation + devtools");
+        expect(out).toContain("code-review xhigh PR #288");
+        // Chronological: older question appears before newer.
+        expect(out.indexOf("why TanStack?")).toBeLessThan(out.indexOf("code-review xhigh PR #288"));
     });
 
     it("returns a placeholder when nothing is recorded", () => {

@@ -27,7 +27,7 @@ export function renderDigest(opts: QueryOpts & { dbPath: string }): string {
 export function registerLogCommand(program: Command): void {
     program
         .command("log")
-        .description("Show recorded Q→A (newest first)")
+        .description("Show recorded Q→A (oldest first; last N entries)")
         .option("-p, --project <name>", "filter by project")
         .option("-t, --tag <tag>", "filter by tag")
         .option("--unread", "only unread")
