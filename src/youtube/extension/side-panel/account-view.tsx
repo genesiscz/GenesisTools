@@ -4,17 +4,19 @@ import { useMe, useUserHistory } from "@ext/api.hooks";
 import { CollectionsSection } from "@ext/side-panel/account-collections";
 import { DigestSection } from "@ext/side-panel/account-digest";
 import { ActivityView } from "@ext/side-panel/activity-view";
+import { ReferralSection } from "@ext/side-panel/referral-section";
 import { ArrowLeft } from "lucide-react";
 import { useState } from "react";
 
-/** Sub-surfaces of the account hub. Grows as Phase 4a features land. */
-export type AccountSection = "activity" | "history" | "collections" | "digest";
+/** Sub-surfaces of the account hub. Grows as Phase 4 features land. */
+export type AccountSection = "activity" | "history" | "collections" | "digest" | "referral";
 
 const SECTIONS: Array<{ id: AccountSection; label: string }> = [
     { id: "activity", label: "Activity" },
     { id: "history", label: "History" },
     { id: "collections", label: "Collections" },
     { id: "digest", label: "Digest" },
+    { id: "referral", label: "Referral" },
 ];
 
 export function AccountView({
@@ -68,6 +70,8 @@ export function AccountView({
                 <CollectionsSection onOpenWatch={onOpenWatch} />
             ) : section === "digest" ? (
                 <DigestSection onOpenWatch={onOpenWatch} />
+            ) : section === "referral" ? (
+                <ReferralSection />
             ) : (
                 <ActivityView />
             )}

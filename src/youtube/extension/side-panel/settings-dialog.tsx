@@ -32,6 +32,7 @@ import { LowBalanceNudge, SubscriptionSection } from "@ext/side-panel/subscripti
 import {
     CreditCard,
     Gem,
+    Gift,
     History,
     Library,
     Loader2,
@@ -180,6 +181,14 @@ function LibraryNav({ onOpen }: { onOpen: (section: AccountSection) => void }) {
                 onClick={() => onOpen("digest")}
             >
                 <Newspaper className="size-4" /> Digest
+            </Button>
+            <Button
+                size="sm"
+                variant="ghost"
+                className="w-full justify-start text-muted-foreground"
+                onClick={() => onOpen("referral")}
+            >
+                <Gift className="size-4" /> Referral
             </Button>
         </div>
     );
