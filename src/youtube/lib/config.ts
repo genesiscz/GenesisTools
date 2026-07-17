@@ -14,6 +14,9 @@ export const DEFAULT_YOUTUBE_CONFIG: YoutubeConfigShape = {
     apiPort: 9876,
     apiBaseUrl: "http://localhost:9876",
     provider: {},
+    powerUsers: [],
+    ai: [],
+    referrals: { enabled: false, offers: [] },
     defaultQuality: "720p",
     concurrency: {
         download: 4,
@@ -124,6 +127,13 @@ function mergeConfig(base: YoutubeConfigShape, patch: YoutubeConfigPatch): Youtu
         ...base,
         ...patch,
         provider: { ...base.provider, ...patch.provider },
+        powerUsers: patch.powerUsers ?? base.powerUsers,
+        ai: patch.ai ?? base.ai,
+        referrals: {
+            ...base.referrals,
+            ...patch.referrals,
+            offers: patch.referrals?.offers ?? base.referrals.offers,
+        },
         concurrency: { ...base.concurrency, ...patch.concurrency },
         ttls: { ...base.ttls, ...patch.ttls },
         preferredLangs: patch.preferredLangs ?? base.preferredLangs,
