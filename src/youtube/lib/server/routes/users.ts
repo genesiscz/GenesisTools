@@ -7,6 +7,7 @@ import { isOutputLang } from "@app/youtube/lib/languages";
 import { getLedgerPage, getUsageSummary } from "@app/youtube/lib/ledger-views";
 import { createPreset, deletePreset, listPresets, updatePreset } from "@app/youtube/lib/presets";
 import type { PresetKind } from "@app/youtube/lib/presets.types";
+import { roleForEmail } from "@app/youtube/lib/roles";
 import { requireUser } from "@app/youtube/lib/server/auth";
 import { safeJsonBody } from "@app/youtube/lib/server/body";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
@@ -56,7 +57,9 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
                 return user;
             }
 
-            return Response.json({ user }, { headers: CORS_HEADERS });
+            const role = roleForEmail(await yt.config.get("powerUsers"), user.email);
+
+            return Response.json({ user, role }, { headers: CORS_HEADERS });
         }
 
         if (matchRoute(req, "PATCH", "/api/v1/users/me", url.pathname)) {

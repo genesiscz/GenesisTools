@@ -1,9 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { env } from "@app/utils/env";
+import { YoutubeDatabase } from "@app/youtube/lib/db";
 import {
     extractServiceToken,
     parseServiceKeys,
     requireServiceKey,
+    requireUser,
     resolveServiceKeys,
 } from "@app/youtube/lib/server/auth";
 
@@ -122,5 +124,45 @@ describe("YOUTUBE_SERVICE_KEY env → guard path stays closed on garbage", () =>
             expect(env.youtube.getServiceKey()).toBeUndefined();
             expect(resolveServiceKeys(env.youtube.getServiceKey())).toEqual([]);
         });
+    });
+});
+
+describe("requireServiceKey with user tokens", () => {
+    it("accepts a valid ytu_ user token when keys are configured", () => {
+        const db = new YoutubeDatabase(":memory:");
+        const user = db.createUser({ email: "a@example.com", passwordHash: "h", apiToken: "ytu_valid" });
+        const req = new Request("http://localhost/api/v1/videos", {
+            headers: { Authorization: "Bearer ytu_valid" },
+        });
+
+        expect(user.id).toBeGreaterThan(0);
+        expect(requireServiceKey(req, ["sk-real"], db)).toBeNull();
+        db.close();
+    });
+
+    it("still rejects unknown ytu_ tokens", () => {
+        const db = new YoutubeDatabase(":memory:");
+        const req = new Request("http://localhost/api/v1/videos", {
+            headers: { Authorization: "Bearer ytu_bogus" },
+        });
+        const res = requireServiceKey(req, ["sk-real"], db);
+
+        expect(res?.status).toBe(401);
+        db.close();
+    });
+});
+
+describe("requireUser typed 401", () => {
+    it("returns code login_required in the 401 body", async () => {
+        const db = new YoutubeDatabase(":memory:");
+        const url = new URL("http://localhost/api/v1/users/me");
+        const result = requireUser(new Request(url), url, db);
+
+        expect(result instanceof Response).toBe(true);
+        const body = (await (result as Response).json()) as { error: string; code?: string };
+
+        expect(body.error).toBe("login required");
+        expect(body.code).toBe("login_required");
+        db.close();
     });
 });

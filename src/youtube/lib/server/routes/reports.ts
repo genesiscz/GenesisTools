@@ -85,6 +85,7 @@ export async function handleReportsRoute(req: Request, url: URL, yt: Youtube): P
                 targetKind: "report",
                 target: String(report.id),
                 stages: ["reportSynthesize"],
+                userId: user.id,
             });
 
             return Response.json(

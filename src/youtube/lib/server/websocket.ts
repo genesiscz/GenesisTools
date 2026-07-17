@@ -5,6 +5,9 @@ import type { ServerWebSocket, WebSocketHandler } from "bun";
 
 export interface WebsocketState {
     subscribedJobIds: Set<number> | "all";
+    /** "all" = operator socket (service key or open mode); "user" = only events for jobs owned by userId. */
+    scope: "all" | "user";
+    userId: number | null;
 }
 
 export interface WebsocketServer {
@@ -26,24 +29,61 @@ const PIPELINE_EVENTS: JobEvent["type"][] = [
     "job:cancelled",
 ];
 
+const TERMINAL_EVENTS: ReadonlySet<JobEvent["type"]> = new Set(["job:completed", "job:failed", "job:cancelled"]);
+
 export function setupWebsocket(yt: Youtube): WebsocketServer {
     const sockets = new Set<ServerWebSocket<WebsocketState>>();
+    // jobId → owner, fed by job-carrying events with a lazy DB lookup for
+    // jobId-only events, so user filtering doesn't hit SQLite per socket.
+    const jobOwners = new Map<number, number | null>();
     const offHandlers = PIPELINE_EVENTS.map((event) => yt.pipeline.on(event, broadcast));
+
+    function ownerOf(event: JobEvent): number | null {
+        if ("job" in event) {
+            jobOwners.set(event.job.id, event.job.userId);
+
+            return event.job.userId;
+        }
+
+        const jobId = getEventJobId(event);
+
+        if (jobId === null) {
+            return null;
+        }
+
+        if (!jobOwners.has(jobId)) {
+            jobOwners.set(jobId, yt.db.getJob(jobId)?.userId ?? null);
+        }
+
+        return jobOwners.get(jobId) ?? null;
+    }
 
     function broadcast(event: JobEvent): void {
         const payload = SafeJSON.stringify(event);
+        const owner = ownerOf(event);
 
         for (const ws of sockets) {
-            if (filterMatches(ws.data, event)) {
+            if (filterMatches(ws.data, event, owner)) {
                 ws.send(payload);
             }
+        }
+
+        const jobId = getEventJobId(event);
+
+        if (TERMINAL_EVENTS.has(event.type) && jobId !== null) {
+            jobOwners.delete(jobId);
         }
     }
 
     return {
         handler: {
             open(ws) {
-                ws.data = { subscribedJobIds: "all" };
+                // Keep the upgrade-time scope/user; only (re)set the job filter.
+                ws.data = {
+                    subscribedJobIds: "all",
+                    scope: ws.data?.scope ?? "all",
+                    userId: ws.data?.userId ?? null,
+                };
                 sockets.add(ws);
                 ws.send(SafeJSON.stringify({ type: "hello", protocolVersion: 1 }));
             },
@@ -62,7 +102,7 @@ export function setupWebsocket(yt: Youtube): WebsocketServer {
                     return;
                 }
 
-                ws.data = { subscribedJobIds: message.jobIds ? new Set(message.jobIds) : "all" };
+                ws.data = { ...ws.data, subscribedJobIds: message.jobIds ? new Set(message.jobIds) : "all" };
                 ws.send(SafeJSON.stringify({ type: "subscribed", jobIds: message.jobIds ?? null }));
             },
         },
@@ -76,16 +116,22 @@ export function setupWebsocket(yt: Youtube): WebsocketServer {
             }
 
             sockets.clear();
+            jobOwners.clear();
         },
     };
 }
 
-function filterMatches(state: WebsocketState, event: JobEvent): boolean {
+function filterMatches(state: WebsocketState, event: JobEvent, owner: number | null): boolean {
+    if (state.scope === "user" && owner !== state.userId) {
+        return false;
+    }
+
     if (state.subscribedJobIds === "all") {
         return true;
     }
 
     const jobId = getEventJobId(event);
+
     return jobId !== null && state.subscribedJobIds.has(jobId);
 }
 
@@ -116,6 +162,7 @@ function parseClientMessage(raw: string | Buffer): ClientMessage | null {
             }
 
             const jobIds = parsed.jobIds.filter((value): value is number => Number.isInteger(value));
+
             return { type: "subscribe", jobIds };
         }
     } catch {

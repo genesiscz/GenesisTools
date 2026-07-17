@@ -1,6 +1,9 @@
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
+import { isPowerRole, roleForEmail } from "@app/youtube/lib/roles";
+import { resolveUser } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import type { Youtube } from "@app/youtube/lib/youtube";
@@ -36,13 +39,31 @@ async function resolveTaskDefault(spec: string | null | undefined): Promise<Reso
  * flatten to a `{provider, model}` matrix. The extension's dev-mode picker
  * renders this so users pick a real account instead of typing model IDs.
  */
-export async function handleModelsRoute(req: Request, _url: URL, yt: Youtube): Promise<Response> {
+export async function handleModelsRoute(req: Request, url: URL, yt: Youtube): Promise<Response> {
     try {
         if (req.method !== "GET") {
             return new Response(SafeJSON.stringify({ error: "method not allowed" }, { strict: true }), {
                 status: 405,
                 headers: { "Content-Type": "application/json", ...CORS_HEADERS },
             });
+        }
+
+        // Model internals are admin/dev-only (spec §1). Anonymous = local
+        // operator (open mode) or service key — those stay allowed; in key
+        // mode anonymous requests were already rejected at the gate.
+        const viewer = resolveUser(req, url, yt.db);
+
+        if (viewer) {
+            const role = roleForEmail(await yt.config.get("powerUsers"), viewer.email);
+
+            if (!isPowerRole(role)) {
+                logger.debug({ userId: viewer.id, role }, "models route: rejected non-power user");
+
+                return new Response(
+                    SafeJSON.stringify({ error: "model catalog is admin-only", code: "forbidden" }, { strict: true }),
+                    { status: 403, headers: { "Content-Type": "application/json", ...CORS_HEADERS } }
+                );
+            }
         }
 
         const providers = await providerManager.detectProviders();
@@ -60,12 +81,13 @@ export async function handleModelsRoute(req: Request, _url: URL, yt: Youtube): P
             }
         }
 
-        const cfg = await yt.config.get("provider");
+        const all = await yt.config.getAll();
         const defaults = {
-            summarize: await resolveTaskDefault(cfg?.summarize),
-            qa: await resolveTaskDefault(cfg?.qa),
-            transcribe: cfg?.transcribe ?? null,
-            embed: cfg?.embed ?? null,
+            summarize: await resolveTaskDefault(resolveAiSpecForTask(all, "summary")),
+            insights: await resolveTaskDefault(resolveAiSpecForTask(all, "insights")),
+            qa: await resolveTaskDefault(resolveAiSpecForTask(all, "qa")),
+            transcribe: resolveAiSpecForTask(all, "transcribe"),
+            embed: resolveAiSpecForTask(all, "embed"),
         };
 
         return Response.json({ presets, defaults }, { headers: CORS_HEADERS });

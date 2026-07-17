@@ -70,6 +70,40 @@ describe("youtube server websocket", () => {
             await rm(dir, { recursive: true, force: true });
         }
     });
+
+    it("scopes events to the token's user (ytu_ handshake)", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "youtube-server-ws-"));
+        const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
+        const userA = handle.youtube.db.createUser({ email: "a@example.com", passwordHash: "h", apiToken: "ytu_a" });
+        const userB = handle.youtube.db.createUser({ email: "b@example.com", passwordHash: "h", apiToken: "ytu_b" });
+        const ws = new WebSocket(`ws://localhost:${handle.port}/api/v1/events?access_token=ytu_a`);
+
+        try {
+            await nextMessage(ws);
+
+            // B's job first — it must NOT reach A's socket; A's own job must.
+            handle.youtube.pipeline.enqueue({
+                targetKind: "video",
+                target: "bbbbbbbbbbb",
+                stages: ["metadata"],
+                userId: userB.id,
+            });
+            const own = handle.youtube.pipeline.enqueue({
+                targetKind: "video",
+                target: "aaaaaaaaaaa",
+                stages: ["metadata"],
+                userId: userA.id,
+            });
+            const created = await nextMessage(ws);
+
+            expect(created.type).toBe("job:created");
+            expect(created.job?.id).toBe(own.id);
+        } finally {
+            ws.close();
+            await handle.stop();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
 });
 
 function nextMessage(ws: WebSocket): Promise<WsMessage> {

@@ -1,7 +1,14 @@
 import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
-import { requireServiceKey, resolveServiceKeys } from "@app/youtube/lib/server/auth";
+import { withRequestContext } from "@app/youtube/lib/request-context";
+import {
+    extractBearerToken,
+    requireServiceKey,
+    resolveServiceKeys,
+    resolveUser,
+    USER_TOKEN_PREFIX,
+} from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { clearPid, registerSignalHandlers, writePid } from "@app/youtube/lib/server/daemon";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
@@ -98,7 +105,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
                     url.pathname.startsWith("/api/v1/webhooks/");
 
                 if (!isOpenRoute) {
-                    const authError = requireServiceKey(req, serviceKeys);
+                    const authError = requireServiceKey(req, serviceKeys, youtube.db);
 
                     if (authError) {
                         return authError;
@@ -106,7 +113,20 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
                 }
 
                 if (url.pathname === "/api/v1/events") {
-                    if (server.upgrade(req, { data: { subscribedJobIds: "all" } })) {
+                    // Scope the socket at upgrade time: a ytu_ token pins it to
+                    // that user's jobs; service key / open mode stays operator-wide.
+                    const presented =
+                        extractBearerToken(req) ??
+                        url.searchParams.get("access_token") ??
+                        url.searchParams.get("token");
+                    const wsUser = presented?.startsWith(USER_TOKEN_PREFIX)
+                        ? youtube.db.getUserByToken(presented)
+                        : null;
+                    const data: WebsocketState = wsUser
+                        ? { subscribedJobIds: "all", scope: "user", userId: wsUser.id }
+                        : { subscribedJobIds: "all", scope: "all", userId: null };
+
+                    if (server.upgrade(req, { data })) {
                         return undefined;
                     }
 
@@ -116,58 +136,11 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
                     });
                 }
 
-                if (url.pathname.startsWith("/api/v1/channels")) {
-                    return await handleChannelsRoute(req, url, youtube);
-                }
+                const viewer = resolveUser(req, url, youtube.db);
 
-                if (url.pathname.startsWith("/api/v1/videos")) {
-                    return await handleVideosRoute(req, url, youtube);
-                }
-
-                if (url.pathname.startsWith("/api/v1/users")) {
-                    return await handleUsersRoute(req, url, youtube);
-                }
-
-                if (url.pathname.startsWith("/api/v1/shares")) {
-                    return await handleSharesRoute(req, url, youtube);
-                }
-
-                if (url.pathname.startsWith("/api/v1/webhooks")) {
-                    return await handleWebhooksRoute(req, url, youtube);
-                }
-
-                if (url.pathname.startsWith("/api/v1/reports")) {
-                    return await handleReportsRoute(req, url, youtube);
-                }
-
-                if (url.pathname.startsWith("/api/v1/pipeline") || url.pathname.startsWith("/api/v1/jobs")) {
-                    return await handlePipelineRoute(req, url, youtube);
-                }
-
-                if (url.pathname.startsWith("/api/v1/cache")) {
-                    return await handleCacheRoute(req, url, youtube);
-                }
-
-                if (url.pathname.startsWith("/api/v1/config")) {
-                    return await handleConfigRoute(req, url, youtube);
-                }
-
-                if (url.pathname === "/api/v1/models") {
-                    return await handleModelsRoute(req, url, youtube);
-                }
-
-                if (
-                    url.pathname === "/api/v1/healthz" ||
-                    url.pathname === "/api/v1/version" ||
-                    url.pathname === "/api/v1/openapi.json"
-                ) {
-                    return await handleMetaRoute(req, url, { startedAt: STARTED_AT });
-                }
-
-                return new Response(SafeJSON.stringify({ error: "not found" }, { strict: true }), {
-                    status: 404,
-                    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
-                });
+                return await withRequestContext({ userId: viewer?.id ?? null, db: youtube.db }, () =>
+                    dispatchApiRoute(req, url, youtube)
+                );
             } catch (err) {
                 return toErrorResponse(err);
             }
@@ -204,6 +177,61 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
             clearPid();
         },
     };
+}
+
+async function dispatchApiRoute(req: Request, url: URL, youtube: Youtube): Promise<Response> {
+    if (url.pathname.startsWith("/api/v1/channels")) {
+        return handleChannelsRoute(req, url, youtube);
+    }
+
+    if (url.pathname.startsWith("/api/v1/videos")) {
+        return handleVideosRoute(req, url, youtube);
+    }
+
+    if (url.pathname.startsWith("/api/v1/users")) {
+        return handleUsersRoute(req, url, youtube);
+    }
+
+    if (url.pathname.startsWith("/api/v1/shares")) {
+        return handleSharesRoute(req, url, youtube);
+    }
+
+    if (url.pathname.startsWith("/api/v1/webhooks")) {
+        return handleWebhooksRoute(req, url, youtube);
+    }
+
+    if (url.pathname.startsWith("/api/v1/reports")) {
+        return handleReportsRoute(req, url, youtube);
+    }
+
+    if (url.pathname.startsWith("/api/v1/pipeline") || url.pathname.startsWith("/api/v1/jobs")) {
+        return handlePipelineRoute(req, url, youtube);
+    }
+
+    if (url.pathname.startsWith("/api/v1/cache")) {
+        return handleCacheRoute(req, url, youtube);
+    }
+
+    if (url.pathname.startsWith("/api/v1/config")) {
+        return handleConfigRoute(req, url, youtube);
+    }
+
+    if (url.pathname === "/api/v1/models") {
+        return handleModelsRoute(req, url, youtube);
+    }
+
+    if (
+        url.pathname === "/api/v1/healthz" ||
+        url.pathname === "/api/v1/version" ||
+        url.pathname === "/api/v1/openapi.json"
+    ) {
+        return handleMetaRoute(req, url, { startedAt: STARTED_AT });
+    }
+
+    return new Response(SafeJSON.stringify({ error: "not found" }, { strict: true }), {
+        status: 404,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    });
 }
 
 if (import.meta.main) {
