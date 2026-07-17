@@ -19,22 +19,30 @@ import type {
     GetTranscriptOpts,
     ListJobsOpts,
     ListVideosOpts,
+    PaymentKind,
+    PaymentRecord,
+    PaymentStatus,
     PruneExpiredBinariesOpts,
     PruneExpiredBinariesResult,
     QueueStats,
     RecordAiCallInput,
     RecordJobActivityInput,
+    RecordPaymentInput,
     RecordVideoLogInput,
+    RecordWebhookLogInput,
     SaveTranscriptInput,
     SearchTranscriptsOpts,
     SearchVideosOpts,
     SetVideoBinaryPathInput,
     SetVideoSummaryInput,
+    SubscriptionRecord,
     TranscriptSearchHit,
     UpdateJobPartial,
+    UpdateSubscriptionPartial,
     UpdateUserPrefsInput,
     UpsertChannelInput,
     UpsertQaChunkInput,
+    UpsertSubscriptionInput,
     UpsertVideoInput,
     VideoLite,
     VideoLogKind,
@@ -43,6 +51,8 @@ import type {
     VideoSearchHit,
     VideoWatchRecord,
     WatchlistEntry,
+    WebhookLogRecord,
+    WebhookOutcome,
 } from "@app/youtube/lib/db.types";
 import type {
     JobActivity,
@@ -614,6 +624,61 @@ export class YoutubeDatabase extends BaseDatabase {
                     channel_handle TEXT NOT NULL,
                     created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
                     UNIQUE (user_id, channel_handle)
+                );
+            `);
+        });
+
+        // Billing state + audit (Phase 2). No FKs — billing history must
+        // survive user/row deletion, same rationale as add-audit-tables.
+        this.runMigration("add-billing-tables", () => {
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS subscriptions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL UNIQUE,
+                    stripe_customer_id TEXT,
+                    stripe_subscription_id TEXT UNIQUE,
+                    plan_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    allowance INTEGER NOT NULL,
+                    period_start TEXT,
+                    period_end TEXT,
+                    period_start_balance INTEGER NOT NULL DEFAULT 0,
+                    cancel_at_period_end INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
+                    updated_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC})
+                );
+
+                CREATE TABLE IF NOT EXISTS payments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    kind TEXT NOT NULL CHECK (kind IN ('pack','subscription','refund')),
+                    stripe_ref TEXT NOT NULL UNIQUE,
+                    pack_id TEXT,
+                    plan_id TEXT,
+                    amount_cents INTEGER,
+                    currency TEXT,
+                    credits INTEGER,
+                    status TEXT NOT NULL CHECK (status IN ('succeeded','failed','refunded')),
+                    created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC})
+                );
+                CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id, id DESC);
+
+                CREATE TABLE IF NOT EXISTS webhook_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    stripe_event_id TEXT NOT NULL UNIQUE,
+                    type TEXT NOT NULL,
+                    payload_hash TEXT NOT NULL,
+                    outcome TEXT NOT NULL CHECK (outcome IN ('processed','skipped','duplicate','error')),
+                    detail TEXT,
+                    created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC})
+                );
+
+                CREATE TABLE IF NOT EXISTS quota_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    month TEXT NOT NULL,
+                    actions INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE (user_id, month)
                 );
             `);
         });
@@ -1533,6 +1598,230 @@ export class YoutubeDatabase extends BaseDatabase {
             : null;
 
         return { queued, running, perStage, oldestQueuedAgeSec };
+    }
+
+    upsertSubscription(input: UpsertSubscriptionInput): SubscriptionRecord {
+        this.db.run(
+            `INSERT INTO subscriptions
+                (user_id, stripe_customer_id, stripe_subscription_id, plan_id, status, allowance,
+                 period_start, period_end, period_start_balance, cancel_at_period_end, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${SQL_NOW_UTC})
+             ON CONFLICT(user_id) DO UPDATE SET
+                stripe_customer_id = COALESCE(excluded.stripe_customer_id, subscriptions.stripe_customer_id),
+                stripe_subscription_id = COALESCE(excluded.stripe_subscription_id, subscriptions.stripe_subscription_id),
+                plan_id = excluded.plan_id,
+                status = excluded.status,
+                allowance = excluded.allowance,
+                period_start = COALESCE(excluded.period_start, subscriptions.period_start),
+                period_end = COALESCE(excluded.period_end, subscriptions.period_end),
+                period_start_balance = excluded.period_start_balance,
+                cancel_at_period_end = excluded.cancel_at_period_end,
+                updated_at = ${SQL_NOW_UTC}`,
+            [
+                input.userId,
+                input.stripeCustomerId ?? null,
+                input.stripeSubscriptionId ?? null,
+                input.planId,
+                input.status,
+                input.allowance,
+                input.periodStart ?? null,
+                input.periodEnd ?? null,
+                input.periodStartBalance ?? 0,
+                input.cancelAtPeriodEnd ? 1 : 0,
+            ]
+        );
+        const row = this.getSubscriptionByUserId(input.userId);
+
+        if (!row) {
+            throw new Error(`upsertSubscription: user ${input.userId} row missing after upsert`);
+        }
+
+        return row;
+    }
+
+    getSubscriptionByUserId(userId: number): SubscriptionRecord | null {
+        const row = this.db
+            .query<SubscriptionRow, [number]>("SELECT * FROM subscriptions WHERE user_id = ?")
+            .get(userId);
+
+        return row ? rowToSubscription(row) : null;
+    }
+
+    getSubscriptionByStripeId(stripeSubscriptionId: string): SubscriptionRecord | null {
+        const row = this.db
+            .query<SubscriptionRow, [string]>("SELECT * FROM subscriptions WHERE stripe_subscription_id = ?")
+            .get(stripeSubscriptionId);
+
+        return row ? rowToSubscription(row) : null;
+    }
+
+    updateSubscription(id: number, partial: UpdateSubscriptionPartial): void {
+        const sets: string[] = [];
+        const params: Array<string | number | null> = [];
+        const push = (column: string, value: string | number | null): void => {
+            sets.push(`${column} = ?`);
+            params.push(value);
+        };
+
+        if (partial.stripeCustomerId !== undefined) {
+            push("stripe_customer_id", partial.stripeCustomerId);
+        }
+
+        if (partial.stripeSubscriptionId !== undefined) {
+            push("stripe_subscription_id", partial.stripeSubscriptionId);
+        }
+
+        if (partial.status !== undefined) {
+            push("status", partial.status);
+        }
+
+        if (partial.allowance !== undefined) {
+            push("allowance", partial.allowance);
+        }
+
+        if (partial.periodStart !== undefined) {
+            push("period_start", partial.periodStart);
+        }
+
+        if (partial.periodEnd !== undefined) {
+            push("period_end", partial.periodEnd);
+        }
+
+        if (partial.periodStartBalance !== undefined) {
+            push("period_start_balance", partial.periodStartBalance);
+        }
+
+        if (partial.cancelAtPeriodEnd !== undefined) {
+            push("cancel_at_period_end", partial.cancelAtPeriodEnd ? 1 : 0);
+        }
+
+        if (sets.length === 0) {
+            return;
+        }
+
+        sets.push(`updated_at = ${SQL_NOW_UTC}`);
+        params.push(id);
+        this.db.run(`UPDATE subscriptions SET ${sets.join(", ")} WHERE id = ?`, params);
+    }
+
+    /** Replay-safe on `stripe_ref` — a webhook retry inserts nothing new. */
+    recordPayment(input: RecordPaymentInput): void {
+        this.db.run(
+            `INSERT OR IGNORE INTO payments
+                (user_id, kind, stripe_ref, pack_id, plan_id, amount_cents, currency, credits, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                input.userId,
+                input.kind,
+                input.stripeRef,
+                input.packId ?? null,
+                input.planId ?? null,
+                input.amountCents ?? null,
+                input.currency ?? null,
+                input.credits ?? null,
+                input.status,
+            ]
+        );
+    }
+
+    listPayments(opts: { userId?: number; limit?: number } = {}): PaymentRecord[] {
+        const where = opts.userId !== undefined ? "WHERE user_id = ?" : "";
+        const params: Array<number> = opts.userId !== undefined ? [opts.userId] : [];
+        const rows = this.db
+            .query<PaymentRow, [...number[], number]>(
+                `SELECT * FROM payments ${where} ORDER BY id DESC LIMIT ?`
+            )
+            .all(...params, opts.limit ?? 100);
+
+        return rows.map(rowToPayment);
+    }
+
+    getWebhookLog(stripeEventId: string): WebhookLogRecord | null {
+        const row = this.db
+            .query<WebhookLogRow, [string]>("SELECT * FROM webhook_logs WHERE stripe_event_id = ?")
+            .get(stripeEventId);
+
+        return row ? rowToWebhookLog(row) : null;
+    }
+
+    recordWebhookLog(input: RecordWebhookLogInput): void {
+        this.db.run(
+            `INSERT INTO webhook_logs (stripe_event_id, type, payload_hash, outcome, detail)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(stripe_event_id) DO UPDATE SET
+                outcome = excluded.outcome,
+                detail = excluded.detail`,
+            [input.stripeEventId, input.type, input.payloadHash, input.outcome, input.detail ?? null]
+        );
+    }
+
+    /** Balance lookup by id — the webhook reset math needs it (users are otherwise fetched by token/email). */
+    getUserCredits(userId: number): number | null {
+        const row = this.db
+            .query<{ credits: number }, [number]>("SELECT credits FROM users WHERE id = ?")
+            .get(userId);
+
+        return row?.credits ?? null;
+    }
+
+    /** SUM of positive grant-type deltas since `sinceIso` — the frozen grant-reason set. */
+    getGrantsSince(userId: number, sinceIso: string): number {
+        const row = this.db
+            .query<{ total: number | null }, [number, string]>(
+                `SELECT SUM(delta) AS total FROM credit_ledger
+                 WHERE user_id = ? AND created_at >= ? AND delta > 0
+                   AND (reason LIKE 'stripe:%' OR reason = 'dev-topup' OR reason LIKE 'referral:%' OR reason = 'register-grant')`
+            )
+            .get(userId, sinceIso);
+
+        return row?.total ?? 0;
+    }
+
+    /** True when the user ever completed a Stripe purchase (quota exemption). */
+    hasAnyStripeGrant(userId: number): boolean {
+        const row = this.db
+            .query<{ found: number }, [number]>(
+                "SELECT 1 AS found FROM credit_ledger WHERE user_id = ? AND delta > 0 AND reason LIKE 'stripe:%' LIMIT 1"
+            )
+            .get(userId);
+
+        return row !== null;
+    }
+
+    /** Atomic check-and-increment: never increments past `limit`. */
+    incrementQuotaIfBelow(userId: number, month: string, limit: number): { allowed: boolean; used: number } {
+        const bump = this.db.transaction(() => {
+            const existing = this.db
+                .query<{ actions: number }, [number, string]>(
+                    "SELECT actions FROM quota_usage WHERE user_id = ? AND month = ?"
+                )
+                .get(userId, month);
+            const used = existing?.actions ?? 0;
+
+            if (used >= limit) {
+                return { allowed: false, used };
+            }
+
+            this.db.run(
+                `INSERT INTO quota_usage (user_id, month, actions) VALUES (?, ?, 1)
+                 ON CONFLICT(user_id, month) DO UPDATE SET actions = actions + 1`,
+                [userId, month]
+            );
+
+            return { allowed: true, used: used + 1 };
+        });
+
+        return bump();
+    }
+
+    getQuotaUsed(userId: number, month: string): number {
+        const row = this.db
+            .query<{ actions: number }, [number, string]>(
+                "SELECT actions FROM quota_usage WHERE user_id = ? AND month = ?"
+            )
+            .get(userId, month);
+
+        return row?.actions ?? 0;
     }
 
     async pruneExpiredBinaries(opts: PruneExpiredBinariesOpts): Promise<PruneExpiredBinariesResult> {
@@ -3247,6 +3536,92 @@ function rowToAskMessage(row: AskMessageRow): AskMessageRecord {
         content: row.content,
         toolName: row.tool_name,
         toolArgsJson: row.tool_args_json,
+        createdAt: row.created_at,
+    };
+}
+
+interface SubscriptionRow {
+    id: number;
+    user_id: number;
+    stripe_customer_id: string | null;
+    stripe_subscription_id: string | null;
+    plan_id: string;
+    status: string;
+    allowance: number;
+    period_start: string | null;
+    period_end: string | null;
+    period_start_balance: number;
+    cancel_at_period_end: number;
+    created_at: string;
+    updated_at: string;
+}
+
+interface PaymentRow {
+    id: number;
+    user_id: number | null;
+    kind: PaymentKind;
+    stripe_ref: string;
+    pack_id: string | null;
+    plan_id: string | null;
+    amount_cents: number | null;
+    currency: string | null;
+    credits: number | null;
+    status: PaymentStatus;
+    created_at: string;
+}
+
+interface WebhookLogRow {
+    id: number;
+    stripe_event_id: string;
+    type: string;
+    payload_hash: string;
+    outcome: WebhookOutcome;
+    detail: string | null;
+    created_at: string;
+}
+
+function rowToSubscription(row: SubscriptionRow): SubscriptionRecord {
+    return {
+        id: row.id,
+        userId: row.user_id,
+        stripeCustomerId: row.stripe_customer_id,
+        stripeSubscriptionId: row.stripe_subscription_id,
+        planId: row.plan_id,
+        status: row.status,
+        allowance: row.allowance,
+        periodStart: row.period_start,
+        periodEnd: row.period_end,
+        periodStartBalance: row.period_start_balance,
+        cancelAtPeriodEnd: row.cancel_at_period_end === 1,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    };
+}
+
+function rowToPayment(row: PaymentRow): PaymentRecord {
+    return {
+        id: row.id,
+        userId: row.user_id,
+        kind: row.kind,
+        stripeRef: row.stripe_ref,
+        packId: row.pack_id,
+        planId: row.plan_id,
+        amountCents: row.amount_cents,
+        currency: row.currency,
+        credits: row.credits,
+        status: row.status,
+        createdAt: row.created_at,
+    };
+}
+
+function rowToWebhookLog(row: WebhookLogRow): WebhookLogRecord {
+    return {
+        id: row.id,
+        stripeEventId: row.stripe_event_id,
+        type: row.type,
+        payloadHash: row.payload_hash,
+        outcome: row.outcome,
+        detail: row.detail,
         createdAt: row.created_at,
     };
 }

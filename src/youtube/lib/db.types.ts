@@ -302,3 +302,92 @@ export interface VideoLite {
     hasSummary: boolean;
     hasTranscript: boolean;
 }
+
+export interface UpsertSubscriptionInput {
+    userId: number;
+    stripeCustomerId?: string | null;
+    stripeSubscriptionId?: string | null;
+    planId: string;
+    status: string;
+    allowance: number;
+    periodStart?: string | null;
+    periodEnd?: string | null;
+    periodStartBalance?: number;
+    cancelAtPeriodEnd?: boolean;
+}
+
+export interface SubscriptionRecord {
+    id: number;
+    userId: number;
+    stripeCustomerId: string | null;
+    stripeSubscriptionId: string | null;
+    planId: string;
+    status: string;
+    allowance: number;
+    periodStart: string | null;
+    periodEnd: string | null;
+    periodStartBalance: number;
+    cancelAtPeriodEnd: boolean;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface UpdateSubscriptionPartial {
+    stripeCustomerId?: string | null;
+    stripeSubscriptionId?: string | null;
+    status?: string;
+    allowance?: number;
+    periodStart?: string | null;
+    periodEnd?: string | null;
+    periodStartBalance?: number;
+    cancelAtPeriodEnd?: boolean;
+}
+
+export type PaymentKind = "pack" | "subscription" | "refund";
+export type PaymentStatus = "succeeded" | "failed" | "refunded";
+
+export interface RecordPaymentInput {
+    userId: number | null;
+    kind: PaymentKind;
+    stripeRef: string;
+    packId?: string | null;
+    planId?: string | null;
+    amountCents?: number | null;
+    currency?: string | null;
+    credits?: number | null;
+    status: PaymentStatus;
+}
+
+export interface PaymentRecord {
+    id: number;
+    userId: number | null;
+    kind: PaymentKind;
+    stripeRef: string;
+    packId: string | null;
+    planId: string | null;
+    amountCents: number | null;
+    currency: string | null;
+    credits: number | null;
+    status: PaymentStatus;
+    createdAt: string;
+}
+
+export type WebhookOutcome = "processed" | "skipped" | "duplicate" | "error";
+
+export interface RecordWebhookLogInput {
+    stripeEventId: string;
+    type: string;
+    payloadHash: string;
+    outcome: WebhookOutcome;
+    detail?: string | null;
+}
+
+export interface WebhookLogRecord {
+    id: number;
+    stripeEventId: string;
+    type: string;
+    payloadHash: string;
+    outcome: WebhookOutcome;
+    detail: string | null;
+    createdAt: string;
+}
