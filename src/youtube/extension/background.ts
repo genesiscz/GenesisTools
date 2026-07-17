@@ -506,8 +506,8 @@ async function apiCall(url: string, init: RequestInit = {}): Promise<ExtensionRe
                 if (typeof body.code === "string" && body.code !== "") {
                     code = body.code;
                 }
-            } catch {
-                // non-JSON error body — fall back to status line
+            } catch (error) {
+                console.debug("[genesis-yt] non-JSON error body — falling back to status line", error);
             }
             return {
                 ok: false,
