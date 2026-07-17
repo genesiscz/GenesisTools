@@ -1,5 +1,6 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import type { SummaryFormat, SummaryLength, SummaryTone } from "@app/youtube/lib/types";
+import type { TaskDefaultSettings } from "@app/youtube/lib/user-settings";
 
 export interface SummaryControlsState {
     tone: SummaryTone;
@@ -12,6 +13,16 @@ export const DEFAULT_SUMMARY_CONTROLS: SummaryControlsState = {
     format: "list",
     length: "auto",
 };
+
+/** Seeds the tab controls from a user's saved per-task defaults (Phase 5),
+ *  falling back to the global defaults for any unset field. */
+export function seedControlsFromTaskDefault(taskDefault?: TaskDefaultSettings): SummaryControlsState {
+    return {
+        tone: taskDefault?.tone ?? DEFAULT_SUMMARY_CONTROLS.tone,
+        format: taskDefault?.format ?? DEFAULT_SUMMARY_CONTROLS.format,
+        length: taskDefault?.length ?? DEFAULT_SUMMARY_CONTROLS.length,
+    };
+}
 
 const TONES: SummaryTone[] = ["insightful", "funny", "actionable", "controversial"];
 const FORMATS: SummaryFormat[] = ["list", "qa"];

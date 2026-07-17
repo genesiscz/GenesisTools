@@ -13,6 +13,7 @@ import {
     useSettings,
     useStartPipeline,
     useSummary,
+    useUpdateSettings,
 } from "@ext/api.hooks";
 import { loadUiLang } from "@ext/shared/i18n";
 import type { ExtensionEvent, PlayerChaptersMessage } from "@ext/shared/messages";
@@ -31,6 +32,12 @@ declare const __EXT_DEV_RELOAD__: boolean;
 const IS_DEV_BUILD = typeof __EXT_DEV_RELOAD__ !== "undefined" && __EXT_DEV_RELOAD__;
 
 type Placement = "inline" | "fixed";
+
+const VIDEO_DETAIL_TABS: VideoDetailTab[] = ["insights", "summary", "ask", "comments", "transcript"];
+
+function isVideoDetailTab(value: string): value is VideoDetailTab {
+    return (VIDEO_DETAIL_TABS as string[]).includes(value);
+}
 
 export function SidePanel({ target, placement }: { target: PanelTarget; placement: Placement }) {
     const settings = useSettings();
@@ -116,6 +123,44 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
     const models = useModels(IS_DEV_BUILD);
     const me = useMe();
     const config = useConfig();
+    const settings = useSettings();
+    const updateSettings = useUpdateSettings();
+
+    // Panel behavior rules (spec §6): seed the initial tab + collapse from the
+    // user's saved settings once the async query resolves — one-shot so it never
+    // fights the user's own clicks afterward.
+    const seededPanelRef = useRef(false);
+    useEffect(() => {
+        if (seededPanelRef.current || !settings.data) {
+            return;
+        }
+
+        seededPanelRef.current = true;
+        const panel = settings.data.settings.panel ?? {};
+
+        if (panel.defaultTab && isVideoDetailTab(panel.defaultTab)) {
+            setActive(panel.defaultTab);
+        }
+
+        if (panel.autoOpen === false) {
+            setCollapsed(true);
+        } else if (typeof panel.collapsed === "boolean") {
+            setCollapsed(panel.collapsed);
+        }
+    }, [settings.data]);
+
+    // Persist collapse toggles only when the user opted into remembering them.
+    const toggleCollapse = useCallback(() => {
+        setCollapsed((prev) => {
+            const next = !prev;
+
+            if (settings.data?.settings.panel?.rememberCollapse) {
+                updateSettings.mutate({ panel: { collapsed: next } });
+            }
+
+            return next;
+        });
+    }, [settings.data, updateSettings]);
 
     // Login-gated action retry: a 401'd action registers itself here before
     // the settings dialog opens; the moment `useMe` reports a user, the dialog
@@ -419,7 +464,7 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
         <div className={containerClass}>
             <Header
                 collapsed={collapsed}
-                onToggleCollapse={() => setCollapsed((v) => !v)}
+                onToggleCollapse={toggleCollapse}
                 onOpenSettings={() => setSettingsOpen(true)}
             />
             {/* Nested flex (not h-full): percentage heights can't resolve against
@@ -452,6 +497,7 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                             modelDefaults={models.data?.defaults}
                             pipelineProgress={pipelineProgress}
                             queueStats={queueStats.data?.queue}
+                            taskDefaults={settings.data?.settings.taskDefaults}
                             onRequireLogin={requireLogin}
                             onUpgrade={() => setSettingsOpen(true)}
                             onOpenWatch={(id, t) => void send({ type: "nav:openWatch", id, t })}

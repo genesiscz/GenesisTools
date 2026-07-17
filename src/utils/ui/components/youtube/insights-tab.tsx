@@ -4,10 +4,10 @@ import { PanelLoading } from "@app/utils/ui/components/youtube/loading";
 import { errorCodeOf } from "@app/utils/ui/components/youtube/login-required";
 import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
 import {
-    DEFAULT_SUMMARY_CONTROLS,
     LENGTH_PHRASES,
     SummaryControlsBar,
     type SummaryControlsState,
+    seedControlsFromTaskDefault,
     TONE_PHRASES,
 } from "@app/utils/ui/components/youtube/summary-controls";
 import { toPartialTimestampedEntries } from "@app/utils/ui/components/youtube/summary-partials";
@@ -21,8 +21,9 @@ import type {
     VideoLongSummary,
 } from "@app/youtube/lib/types";
 import { CREDIT_COSTS } from "@app/youtube/lib/types";
+import type { TaskDefaultSettings } from "@app/youtube/lib/user-settings";
 import { Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const NO_ESTIMATE = { data: undefined, isPending: false } as const;
 
@@ -88,6 +89,7 @@ export function InsightsTab({
     modelDefault,
     onRequireLogin,
     onUpgrade,
+    taskDefault,
     pipelineProgress,
     partialTimestamped,
     streaming,
@@ -98,15 +100,30 @@ export function InsightsTab({
     modelDefault?: { provider: string; model: string } | null;
     onRequireLogin?: (retry?: () => void) => void;
     onUpgrade?: () => void;
+    taskDefault?: TaskDefaultSettings;
     pipelineProgress?: PipelineProgress | null;
 }) {
     const timestamped = useSummary(videoId, "timestamped");
     const long = useSummary(videoId, "long");
     const generate = useGenerateSummary(videoId);
     const [confirmOpen, setConfirmOpen] = useState(false);
-    const [controls, setControls] = useState<SummaryControlsState>(DEFAULT_SUMMARY_CONTROLS);
+    const [controls, setControls] = useState<SummaryControlsState>(() => seedControlsFromTaskDefault(taskDefault));
     const [modelSel, setModelSel] = useState<{ provider?: string; model?: string }>({});
-    const [lang, setLang] = useState(outputLang ?? "en");
+    const [lang, setLang] = useState(() => taskDefault?.lang ?? outputLang ?? "en");
+    // Seed once when the async settings query resolves (see summary-tab).
+    const seededTaskDefaultRef = useRef(false);
+    useEffect(() => {
+        if (seededTaskDefaultRef.current || !taskDefault) {
+            return;
+        }
+
+        seededTaskDefaultRef.current = true;
+        setControls(seedControlsFromTaskDefault(taskDefault));
+
+        if (taskDefault.lang) {
+            setLang(taskDefault.lang);
+        }
+    }, [taskDefault]);
     const estimate =
         useEstimate?.(videoId, { mode: "timestamped", ...modelSel, lang, enabled: confirmOpen }) ?? NO_ESTIMATE;
     const hasPartial = partialTimestamped !== undefined;

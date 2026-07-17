@@ -8,18 +8,19 @@ import { ShareButton } from "@app/utils/ui/components/youtube/share-button";
 import { StyleSelect } from "@app/utils/ui/components/youtube/style-select";
 import { SummaryAudioPlayer } from "@app/utils/ui/components/youtube/summary-audio-player";
 import {
-    DEFAULT_SUMMARY_CONTROLS,
     LENGTH_PHRASES,
     SummaryControlsBar,
     type SummaryControlsState,
+    seedControlsFromTaskDefault,
     TONE_PHRASES,
 } from "@app/utils/ui/components/youtube/summary-controls";
 import { toPartialLongSummary } from "@app/utils/ui/components/youtube/summary-partials";
 import type { PipelineProgress, VideoDetailDataSource } from "@app/utils/ui/components/youtube/tabs";
 import type { LlmEstimate, LockedArtifact, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
 import { CREDIT_COSTS } from "@app/youtube/lib/types";
+import type { TaskDefaultSettings } from "@app/youtube/lib/user-settings";
 import { Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const NO_ESTIMATE = { data: undefined, isPending: false } as const;
 
@@ -99,6 +100,7 @@ export function SummaryTab({
     modelDefault,
     onRequireLogin,
     onUpgrade,
+    taskDefault,
     pipelineProgress,
     partialLong,
     streaming,
@@ -114,6 +116,7 @@ export function SummaryTab({
     modelDefault?: { provider: string; model: string } | null;
     onRequireLogin?: (retry?: () => void) => void;
     onUpgrade?: () => void;
+    taskDefault?: TaskDefaultSettings;
     pipelineProgress?: PipelineProgress | null;
 }) {
     const summary = useSummary(videoId, "long");
@@ -123,11 +126,27 @@ export function SummaryTab({
     const createPreset = useCreatePreset?.();
     const generateAudio = useGenerateSummaryAudio?.(videoId);
     const [confirmOpen, setConfirmOpen] = useState(false);
-    const [controls, setControls] = useState<SummaryControlsState>(DEFAULT_SUMMARY_CONTROLS);
+    const [controls, setControls] = useState<SummaryControlsState>(() => seedControlsFromTaskDefault(taskDefault));
     const [modelSel, setModelSel] = useState<{ provider?: string; model?: string }>({});
     const [linkCopied, setLinkCopied] = useState(false);
     const [presetId, setPresetId] = useState<number | null>(null);
-    const [lang, setLang] = useState(outputLang ?? "en");
+    const [lang, setLang] = useState(() => taskDefault?.lang ?? outputLang ?? "en");
+    // Settings can resolve after this tab mounts (async query). Seed once, when
+    // the per-task default first becomes available, so a saved preference still
+    // applies without clobbering later user changes.
+    const seededTaskDefaultRef = useRef(false);
+    useEffect(() => {
+        if (seededTaskDefaultRef.current || !taskDefault) {
+            return;
+        }
+
+        seededTaskDefaultRef.current = true;
+        setControls(seedControlsFromTaskDefault(taskDefault));
+
+        if (taskDefault.lang) {
+            setLang(taskDefault.lang);
+        }
+    }, [taskDefault]);
     const estimate = useEstimate?.(videoId, { mode: "long", ...modelSel, lang, enabled: confirmOpen }) ?? NO_ESTIMATE;
     // The dialog only ever fronts a fresh (re)generation — unlocking happens
     // on the teaser card — so quote the full generation price, not the
