@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { startServer } from "@app/youtube/lib/server";
+import { apiUrl } from "./test-helpers";
 
 // No Stripe CLI in this environment — webhook deliveries are hand-signed
 // here with the same HMAC scheme `verifyStripeSignature` checks, per the
@@ -33,7 +34,7 @@ describe("youtube server billing routes", () => {
         const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
 
         try {
-            const register = await fetch(`http://localhost:${handle.port}/api/v1/users/register`, {
+            const register = await fetch(apiUrl(handle.port, `/users/register`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: SafeJSON.stringify({ email: "buyer@example.com", password: "hunter22" }),
@@ -41,7 +42,7 @@ describe("youtube server billing routes", () => {
             const { token } = (await register.json()) as { token: string };
 
             await env.testing.withOverrides({ STRIPE_SECRET_KEY: undefined }, async () => {
-                const checkout = await fetch(`http://localhost:${handle.port}/api/v1/users/checkout`, {
+                const checkout = await fetch(apiUrl(handle.port, `/users/checkout`), {
                     method: "POST",
                     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
                     body: SafeJSON.stringify({ packId: "pack-medium" }),
@@ -60,7 +61,7 @@ describe("youtube server billing routes", () => {
         const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
 
         try {
-            const register = await fetch(`http://localhost:${handle.port}/api/v1/users/register`, {
+            const register = await fetch(apiUrl(handle.port, `/users/register`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: SafeJSON.stringify({ email: "buyer2@example.com", password: "hunter22" }),
@@ -68,7 +69,7 @@ describe("youtube server billing routes", () => {
             const { token } = (await register.json()) as { token: string };
 
             await env.testing.withOverrides({ STRIPE_SECRET_KEY: "sk_test_123" }, async () => {
-                const checkout = await fetch(`http://localhost:${handle.port}/api/v1/users/checkout`, {
+                const checkout = await fetch(apiUrl(handle.port, `/users/checkout`), {
                     method: "POST",
                     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
                     body: SafeJSON.stringify({ packId: "pack-huge" }),
@@ -85,7 +86,7 @@ describe("youtube server billing routes", () => {
         const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
 
         try {
-            const register = await fetch(`http://localhost:${handle.port}/api/v1/users/register`, {
+            const register = await fetch(apiUrl(handle.port, `/users/register`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: SafeJSON.stringify({ email: "webhook-buyer@example.com", password: "hunter22" }),
@@ -105,21 +106,21 @@ describe("youtube server billing routes", () => {
             });
 
             await env.testing.withOverrides({ STRIPE_WEBHOOK_SECRET: webhookSecret }, async () => {
-                const badSig = await fetch(`http://localhost:${handle.port}/api/v1/webhooks/stripe`, {
+                const badSig = await fetch(apiUrl(handle.port, `/webhooks/stripe`), {
                     method: "POST",
                     headers: { "Content-Type": "application/json", "Stripe-Signature": "t=1,v1=deadbeef" },
                     body: payload,
                 });
                 expect(badSig.status).toBe(400);
 
-                const first = await fetch(`http://localhost:${handle.port}/api/v1/webhooks/stripe`, {
+                const first = await fetch(apiUrl(handle.port, `/webhooks/stripe`), {
                     method: "POST",
                     headers: { "Content-Type": "application/json", "Stripe-Signature": signature },
                     body: payload,
                 });
                 expect(first.status).toBe(200);
 
-                const replay = await fetch(`http://localhost:${handle.port}/api/v1/webhooks/stripe`, {
+                const replay = await fetch(apiUrl(handle.port, `/webhooks/stripe`), {
                     method: "POST",
                     headers: { "Content-Type": "application/json", "Stripe-Signature": signature },
                     body: payload,
@@ -127,7 +128,7 @@ describe("youtube server billing routes", () => {
                 expect(replay.status).toBe(200);
             });
 
-            const me = await fetch(`http://localhost:${handle.port}/api/v1/users/me`, {
+            const me = await fetch(apiUrl(handle.port, `/users/me`), {
                 headers: { Authorization: `Bearer ${token}` },
             });
             const meBody = (await me.json()) as { user: { credits: number } };
@@ -144,7 +145,7 @@ describe("youtube server billing routes", () => {
         const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
 
         try {
-            const register = await fetch(`http://localhost:${handle.port}/api/v1/users/register`, {
+            const register = await fetch(apiUrl(handle.port, `/users/register`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: SafeJSON.stringify({ email: "unpaid-buyer@example.com", password: "hunter22" }),
@@ -164,7 +165,7 @@ describe("youtube server billing routes", () => {
             });
 
             await env.testing.withOverrides({ STRIPE_WEBHOOK_SECRET: webhookSecret }, async () => {
-                const res = await fetch(`http://localhost:${handle.port}/api/v1/webhooks/stripe`, {
+                const res = await fetch(apiUrl(handle.port, `/webhooks/stripe`), {
                     method: "POST",
                     headers: { "Content-Type": "application/json", "Stripe-Signature": signature },
                     body: payload,
@@ -172,7 +173,7 @@ describe("youtube server billing routes", () => {
                 expect(res.status).toBe(200);
             });
 
-            const me = await fetch(`http://localhost:${handle.port}/api/v1/users/me`, {
+            const me = await fetch(apiUrl(handle.port, `/users/me`), {
                 headers: { Authorization: `Bearer ${token}` },
             });
             const meBody = (await me.json()) as { user: { credits: number } };
@@ -206,7 +207,7 @@ describe("youtube server billing routes", () => {
             });
 
             await env.testing.withOverrides({ STRIPE_WEBHOOK_SECRET: webhookSecret }, async () => {
-                const res = await fetch(`http://localhost:${handle.port}/api/v1/webhooks/stripe`, {
+                const res = await fetch(apiUrl(handle.port, `/webhooks/stripe`), {
                     method: "POST",
                     headers: { "Content-Type": "application/json", "Stripe-Signature": signature },
                     body: payload,
@@ -235,7 +236,7 @@ describe("youtube server billing routes", () => {
                         type: "customer.created",
                         data: { object: {} },
                     });
-                    const res = await fetch(`http://localhost:${handle.port}/api/v1/webhooks/stripe`, {
+                    const res = await fetch(apiUrl(handle.port, `/webhooks/stripe`), {
                         method: "POST",
                         headers: { "Content-Type": "application/json", "Stripe-Signature": signature },
                         body: payload,

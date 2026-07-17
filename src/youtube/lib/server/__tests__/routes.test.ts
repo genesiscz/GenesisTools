@@ -6,6 +6,7 @@ import { SafeJSON } from "@app/utils/json";
 import { skip } from "@app/utils/test/skip";
 import { startServer } from "@app/youtube/lib/server";
 import type { SummarizeOpts, SummarizeResult } from "@app/youtube/lib/summarize.types";
+import { apiUrl } from "./test-helpers";
 
 describe("youtube server foundation", () => {
     it("starts on a random port, serves health, and stops", async () => {
@@ -13,7 +14,7 @@ describe("youtube server foundation", () => {
         const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
 
         try {
-            const response = await fetch(`http://localhost:${handle.port}/api/v1/healthz`);
+            const response = await fetch(apiUrl(handle.port, `/healthz`));
             const body = await response.json();
 
             expect(response.status).toBe(200);
@@ -31,7 +32,7 @@ describe("youtube server foundation", () => {
         const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
 
         try {
-            const response = await fetch(`http://localhost:${handle.port}/api/v1/healthz`, { method: "OPTIONS" });
+            const response = await fetch(apiUrl(handle.port, `/healthz`), { method: "OPTIONS" });
 
             expect(response.status).toBe(204);
             expect(response.headers.get("access-control-allow-methods")).toContain("GET");
@@ -46,7 +47,7 @@ describe("youtube server foundation", () => {
         const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
 
         try {
-            const addResponse = await fetch(`http://localhost:${handle.port}/api/v1/channels`, {
+            const addResponse = await fetch(apiUrl(handle.port, `/channels`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: SafeJSON.stringify({ handles: ["mkbhd", "@veritasium"] }),
@@ -56,7 +57,7 @@ describe("youtube server foundation", () => {
             expect(addResponse.status).toBe(200);
             expect(addBody.added).toEqual(["@mkbhd", "@veritasium"]);
 
-            const listResponse = await fetch(`http://localhost:${handle.port}/api/v1/channels`);
+            const listResponse = await fetch(apiUrl(handle.port, `/channels`));
             const listBody = await listResponse.json();
 
             expect(listBody.channels.map((channel: { handle: string }) => channel.handle)).toEqual([
@@ -64,7 +65,7 @@ describe("youtube server foundation", () => {
                 "@veritasium",
             ]);
 
-            const deleteResponse = await fetch(`http://localhost:${handle.port}/api/v1/channels/%40mkbhd`, {
+            const deleteResponse = await fetch(apiUrl(handle.port, `/channels/%40mkbhd`), {
                 method: "DELETE",
             });
             const deleteBody = await deleteResponse.json();
@@ -99,34 +100,30 @@ describe("youtube server foundation", () => {
             });
             handle.youtube.db.setVideoSummary("abc123def45", "short", "Cached summary");
 
-            const listResponse = await fetch(
-                `http://localhost:${handle.port}/api/v1/videos?channel=%40mkbhd&includeShorts=true`
-            );
+            const listResponse = await fetch(apiUrl(handle.port, `/videos?channel=%40mkbhd&includeShorts=true`));
             const listBody = await listResponse.json();
 
             expect(listResponse.status).toBe(200);
             expect(listBody.videos).toHaveLength(1);
 
-            const showResponse = await fetch(`http://localhost:${handle.port}/api/v1/videos/abc123def45`);
+            const showResponse = await fetch(apiUrl(handle.port, `/videos/abc123def45`));
             const showBody = await showResponse.json();
 
             expect(showResponse.status).toBe(200);
             expect(showBody.video.title).toBe("Test Video");
             expect(showBody.transcripts).toHaveLength(1);
 
-            const transcriptResponse = await fetch(
-                `http://localhost:${handle.port}/api/v1/videos/abc123def45/transcript?format=text`
-            );
+            const transcriptResponse = await fetch(apiUrl(handle.port, `/videos/abc123def45/transcript?format=text`));
 
             expect(transcriptResponse.headers.get("content-type")).toContain("text/plain");
             expect(await transcriptResponse.text()).toBe("hello searchable world");
 
-            const summaryResponse = await fetch(`http://localhost:${handle.port}/api/v1/videos/abc123def45/summary`);
+            const summaryResponse = await fetch(apiUrl(handle.port, `/videos/abc123def45/summary`));
             const summaryBody = await summaryResponse.json();
 
             expect(summaryBody.summary).toBe("Cached summary");
 
-            const searchResponse = await fetch(`http://localhost:${handle.port}/api/v1/videos/search?q=searchable`);
+            const searchResponse = await fetch(apiUrl(handle.port, `/videos/search?q=searchable`));
             const searchBody = await searchResponse.json();
 
             expect(searchResponse.status).toBe(200);
@@ -162,7 +159,7 @@ describe("youtube server foundation", () => {
             });
             const authHeaders = { "Content-Type": "application/json", Authorization: "Bearer ytu_speakers_test" };
 
-            const unauthedResponse = await fetch(`http://localhost:${handle.port}/api/v1/videos/abc123def45/speakers`, {
+            const unauthedResponse = await fetch(apiUrl(handle.port, `/videos/abc123def45/speakers`), {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: SafeJSON.stringify({ speakers: [{ idx: 0, label: "Host" }] }),
@@ -170,7 +167,7 @@ describe("youtube server foundation", () => {
 
             expect(unauthedResponse.status).toBe(401);
 
-            const putResponse = await fetch(`http://localhost:${handle.port}/api/v1/videos/abc123def45/speakers`, {
+            const putResponse = await fetch(apiUrl(handle.port, `/videos/abc123def45/speakers`), {
                 method: "PUT",
                 headers: authHeaders,
                 body: SafeJSON.stringify({
@@ -185,14 +182,14 @@ describe("youtube server foundation", () => {
             expect(putResponse.status).toBe(200);
             expect(putBody.speakerLabels).toEqual({ "0": "Host", "1": "Guest" });
 
-            const getResponse = await fetch(`http://localhost:${handle.port}/api/v1/videos/abc123def45/transcript`);
+            const getResponse = await fetch(apiUrl(handle.port, `/videos/abc123def45/transcript`));
             const getBody = await getResponse.json();
 
             expect(getResponse.status).toBe(200);
             expect(getBody.speakerLabels).toEqual({ "0": "Host", "1": "Guest" });
             expect(getBody.transcript.segments[0].speaker).toBe(0);
 
-            const renameResponse = await fetch(`http://localhost:${handle.port}/api/v1/videos/abc123def45/speakers`, {
+            const renameResponse = await fetch(apiUrl(handle.port, `/videos/abc123def45/speakers`), {
                 method: "PUT",
                 headers: authHeaders,
                 body: SafeJSON.stringify({ speakers: [{ idx: 1, label: "Expert" }] }),
@@ -201,7 +198,7 @@ describe("youtube server foundation", () => {
 
             expect(renameBody.speakerLabels).toEqual({ "0": "Host", "1": "Expert" });
 
-            const badResponse = await fetch(`http://localhost:${handle.port}/api/v1/videos/abc123def45/speakers`, {
+            const badResponse = await fetch(apiUrl(handle.port, `/videos/abc123def45/speakers`), {
                 method: "PUT",
                 headers: authHeaders,
                 body: SafeJSON.stringify({ speakers: [{ idx: -1, label: "" }] }),
@@ -219,7 +216,7 @@ describe("youtube server foundation", () => {
         const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
 
         try {
-            const enqueueResponse = await fetch(`http://localhost:${handle.port}/api/v1/pipeline`, {
+            const enqueueResponse = await fetch(apiUrl(handle.port, `/pipeline`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: SafeJSON.stringify({ target: "abc123def45", stages: ["metadata"] }),
@@ -230,17 +227,17 @@ describe("youtube server foundation", () => {
             expect(enqueueBody.job.targetKind).toBe("video");
 
             const id = enqueueBody.job.id;
-            const listResponse = await fetch(`http://localhost:${handle.port}/api/v1/jobs?status=pending`);
+            const listResponse = await fetch(apiUrl(handle.port, `/jobs?status=pending`));
             const listBody = await listResponse.json();
 
             expect(listBody.jobs.map((job: { id: number }) => job.id)).toContain(id);
 
-            const showResponse = await fetch(`http://localhost:${handle.port}/api/v1/jobs/${id}`);
+            const showResponse = await fetch(apiUrl(handle.port, `/jobs/${id}`));
             const showBody = await showResponse.json();
 
             expect(showBody.job.id).toBe(id);
 
-            const cancelResponse = await fetch(`http://localhost:${handle.port}/api/v1/jobs/${id}/cancel`, {
+            const cancelResponse = await fetch(apiUrl(handle.port, `/jobs/${id}/cancel`), {
                 method: "POST",
             });
             const cancelBody = await cancelResponse.json();
@@ -290,7 +287,7 @@ describe("youtube server foundation", () => {
                     };
                 };
 
-                const res = await fetch(`http://localhost:${handle.port}/api/v1/videos/abc123def45/summary`, {
+                const res = await fetch(apiUrl(handle.port, `/videos/abc123def45/summary`), {
                     method: "POST",
                     headers: { "content-type": "application/json" },
                     body: SafeJSON.stringify({
@@ -337,7 +334,7 @@ describe("youtube server foundation", () => {
                 durationSec: 1,
             });
 
-            const statsResponse = await fetch(`http://localhost:${handle.port}/api/v1/cache/stats`);
+            const statsResponse = await fetch(apiUrl(handle.port, `/cache/stats`));
             const statsBody = await statsResponse.json();
 
             expect(statsResponse.status).toBe(200);
@@ -345,14 +342,14 @@ describe("youtube server foundation", () => {
             expect(statsBody.videos).toBe(1);
             expect(statsBody.transcripts).toBe(1);
 
-            const configResponse = await fetch(`http://localhost:${handle.port}/api/v1/config`);
+            const configResponse = await fetch(apiUrl(handle.port, `/config`));
             const configBody = await configResponse.json();
 
             expect(configResponse.status).toBe(200);
             expect(configBody.config.apiPort).toBe(9876);
             expect(configBody.where).toContain("server.json");
 
-            const patchResponse = await fetch(`http://localhost:${handle.port}/api/v1/config`, {
+            const patchResponse = await fetch(apiUrl(handle.port, `/config`), {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: SafeJSON.stringify({ apiPort: 9999 }),
@@ -362,7 +359,7 @@ describe("youtube server foundation", () => {
             expect(patchResponse.status).toBe(200);
             expect(patchBody.config.apiPort).toBe(9999);
 
-            const pruneResponse = await fetch(`http://localhost:${handle.port}/api/v1/cache/prune`, {
+            const pruneResponse = await fetch(apiUrl(handle.port, `/cache/prune`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: SafeJSON.stringify({ dryRun: true }),

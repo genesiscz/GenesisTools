@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 import { startServer } from "@app/youtube/lib/server";
+import { apiUrl } from "./test-helpers";
 
 describe("youtube server presets routes", () => {
     let dir: string;
@@ -17,7 +18,7 @@ describe("youtube server presets routes", () => {
     });
 
     async function registeredToken(port: number, email: string): Promise<string> {
-        const res = await fetch(`http://localhost:${port}/api/v1/users/register`, {
+        const res = await fetch(apiUrl(port, `/users/register`), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: SafeJSON.stringify({ email, password: "hunter22" }),
@@ -33,7 +34,7 @@ describe("youtube server presets routes", () => {
             const token = await registeredToken(handle.port, "preset-user@example.com");
             const auth = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
 
-            const createRes = await fetch(`http://localhost:${handle.port}/api/v1/users/presets`, {
+            const createRes = await fetch(apiUrl(handle.port, `/users/presets`), {
                 method: "POST",
                 headers: auth,
                 body: SafeJSON.stringify({
@@ -47,7 +48,7 @@ describe("youtube server presets routes", () => {
             expect(createRes.status).toBe(200);
             expect(createBody.preset.name).toBe("Skeptic mode");
 
-            const listRes = await fetch(`http://localhost:${handle.port}/api/v1/users/presets`, {
+            const listRes = await fetch(apiUrl(handle.port, `/users/presets`), {
                 headers: { Authorization: `Bearer ${token}` },
             });
             const listBody = (await listRes.json()) as { presets: Array<{ id: number }> };
@@ -56,7 +57,7 @@ describe("youtube server presets routes", () => {
             expect(listBody.presets).toHaveLength(1);
 
             const presetId = createBody.preset.id;
-            const updateRes = await fetch(`http://localhost:${handle.port}/api/v1/users/presets/${presetId}`, {
+            const updateRes = await fetch(apiUrl(handle.port, `/users/presets/${presetId}`), {
                 method: "PUT",
                 headers: auth,
                 body: SafeJSON.stringify({ instructions: "Updated instructions." }),
@@ -66,13 +67,13 @@ describe("youtube server presets routes", () => {
             expect(updateRes.status).toBe(200);
             expect(updateBody.preset.instructions).toBe("Updated instructions.");
 
-            const deleteRes = await fetch(`http://localhost:${handle.port}/api/v1/users/presets/${presetId}`, {
+            const deleteRes = await fetch(apiUrl(handle.port, `/users/presets/${presetId}`), {
                 method: "DELETE",
                 headers: { Authorization: `Bearer ${token}` },
             });
             expect(deleteRes.status).toBe(200);
 
-            const listAfterDelete = await fetch(`http://localhost:${handle.port}/api/v1/users/presets`, {
+            const listAfterDelete = await fetch(apiUrl(handle.port, `/users/presets`), {
                 headers: { Authorization: `Bearer ${token}` },
             });
             const listAfterDeleteBody = (await listAfterDelete.json()) as { presets: unknown[] };
@@ -90,7 +91,7 @@ describe("youtube server presets routes", () => {
             const auth = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
             const tooLong = "x".repeat(1001);
 
-            const res = await fetch(`http://localhost:${handle.port}/api/v1/users/presets`, {
+            const res = await fetch(apiUrl(handle.port, `/users/presets`), {
                 method: "POST",
                 headers: auth,
                 body: SafeJSON.stringify({ name: "Too long", kind: "ask", instructions: tooLong }),
@@ -108,21 +109,21 @@ describe("youtube server presets routes", () => {
         try {
             const tokenA = await registeredToken(handle.port, "owner-preset@example.com");
             const tokenB = await registeredToken(handle.port, "attacker-preset@example.com");
-            const createRes = await fetch(`http://localhost:${handle.port}/api/v1/users/presets`, {
+            const createRes = await fetch(apiUrl(handle.port, `/users/presets`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenA}` },
                 body: SafeJSON.stringify({ name: "A's preset", kind: "summary", instructions: "Text." }),
             });
             const { preset } = (await createRes.json()) as { preset: { id: number } };
 
-            const updateRes = await fetch(`http://localhost:${handle.port}/api/v1/users/presets/${preset.id}`, {
+            const updateRes = await fetch(apiUrl(handle.port, `/users/presets/${preset.id}`), {
                 method: "PUT",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenB}` },
                 body: SafeJSON.stringify({ name: "Hijacked" }),
             });
             expect(updateRes.status).toBe(404);
 
-            const deleteRes = await fetch(`http://localhost:${handle.port}/api/v1/users/presets/${preset.id}`, {
+            const deleteRes = await fetch(apiUrl(handle.port, `/users/presets/${preset.id}`), {
                 method: "DELETE",
                 headers: { Authorization: `Bearer ${tokenB}` },
             });
@@ -149,7 +150,7 @@ describe("youtube server presets routes", () => {
             });
             const before = handle.youtube.db.getUserByToken(token)?.credits;
 
-            const res = await fetch(`http://localhost:${handle.port}/api/v1/videos/vidPreset/summary`, {
+            const res = await fetch(apiUrl(handle.port, `/videos/vidPreset/summary`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
                 body: SafeJSON.stringify({ mode: "short", presetId: 999999 }),

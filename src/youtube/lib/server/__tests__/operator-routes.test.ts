@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { startServer } from "@app/youtube/lib/server";
+import { apiUrl } from "./test-helpers";
 
 /**
  * Operator-only routes (PATCH /config, POST /cache/clear|prune) must not be
@@ -32,7 +33,7 @@ describe("operator-only routes reject plain user tokens", () => {
                 handle.youtube.db.createUser({ email: "admin@example.com", passwordHash: "h", apiToken: "ytu_admin" });
                 await handle.youtube.config.update({ powerUsers: [{ email: "admin@example.com", type: "admin" }] });
 
-                const base = `http://localhost:${handle.port}/api/v1/config`;
+                const base = apiUrl(handle.port, `/config`);
 
                 const asUser = await fetch(base, {
                     method: "PATCH",
@@ -71,7 +72,7 @@ describe("operator-only routes reject plain user tokens", () => {
                     passwordHash: "h",
                     apiToken: "ytu_plain2",
                 });
-                const base = `http://localhost:${handle.port}/api/v1/cache/clear`;
+                const base = apiUrl(handle.port, `/cache/clear`);
 
                 const asUser = await fetch(base, {
                     method: "POST",

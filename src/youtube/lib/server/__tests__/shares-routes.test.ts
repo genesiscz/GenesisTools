@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { startServer } from "@app/youtube/lib/server";
+import { apiUrl } from "./test-helpers";
 
 describe("youtube server shares routes", () => {
     let dir: string;
@@ -18,7 +19,7 @@ describe("youtube server shares routes", () => {
     });
 
     async function registeredToken(port: number, email: string): Promise<{ token: string; userId: number }> {
-        const res = await fetch(`http://localhost:${port}/api/v1/users/register`, {
+        const res = await fetch(apiUrl(port, `/users/register`), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: SafeJSON.stringify({ email, password: "hunter22" }),
@@ -42,7 +43,7 @@ describe("youtube server shares routes", () => {
                 creditsSpent: 0,
             });
 
-            const createRes = await fetch(`http://localhost:${handle.port}/api/v1/shares`, {
+            const createRes = await fetch(apiUrl(handle.port, `/shares`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
                 body: SafeJSON.stringify({ kind: "summary", videoId: "vidABC", mode: "short" }),
@@ -61,7 +62,7 @@ describe("youtube server shares routes", () => {
             expect(pageHtml).toContain("The video explains X in depth");
             expect(pageHtml).not.toContain("sharer@example.com");
 
-            const deleteRes = await fetch(`http://localhost:${handle.port}/api/v1/shares/${createBody.slug}`, {
+            const deleteRes = await fetch(apiUrl(handle.port, `/shares/${createBody.slug}`), {
                 method: "DELETE",
                 headers: { Authorization: `Bearer ${token}` },
             });
@@ -83,7 +84,7 @@ describe("youtube server shares routes", () => {
             handle.youtube.db.upsertVideo({ id: "vidLocked", channelHandle: "@chan", title: "Locked Video" });
             handle.youtube.db.setVideoSummary("vidLocked", "short", "Someone else generated this summary.");
 
-            const res = await fetch(`http://localhost:${handle.port}/api/v1/shares`, {
+            const res = await fetch(apiUrl(handle.port, `/shares`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
                 body: SafeJSON.stringify({ kind: "summary", videoId: "vidLocked", mode: "short" }),
@@ -113,7 +114,7 @@ describe("youtube server shares routes", () => {
                 creditsSpent: 5,
             });
 
-            const res = await fetch(`http://localhost:${handle.port}/api/v1/shares`, {
+            const res = await fetch(apiUrl(handle.port, `/shares`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenB}` },
                 body: SafeJSON.stringify({ kind: "qa", videoId: "vidQA", qaHistoryId: qa.id }),
@@ -143,13 +144,13 @@ describe("youtube server shares routes", () => {
                 creditsSpent: 0,
             });
 
-            await fetch(`http://localhost:${handle.port}/api/v1/shares`, {
+            await fetch(apiUrl(handle.port, `/shares`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
                 body: SafeJSON.stringify({ kind: "summary", videoId: "vidList", mode: "short" }),
             });
 
-            const listRes = await fetch(`http://localhost:${handle.port}/api/v1/shares`, {
+            const listRes = await fetch(apiUrl(handle.port, `/shares`), {
                 headers: { Authorization: `Bearer ${token}` },
             });
             const listBody = (await listRes.json()) as { shares: Array<{ slug: string; videoTitle: string }> };
