@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { logger } from "@app/logger";
 import { BaseDatabase, SQL_NOW_UTC } from "@app/utils/database";
 import { SafeJSON } from "@app/utils/json";
 import { withFileLock } from "@app/utils/storage";
@@ -71,6 +72,7 @@ import type {
 } from "@app/youtube/lib/jobs.types";
 import type { AskCitation, QaChunk, QaSource } from "@app/youtube/lib/qa.types";
 import type { Language, Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
+import type { UserSettings } from "@app/youtube/lib/user-settings";
 import type { ArtifactKind, CreditHold, CreditReason, QaHistoryItem, YtUser } from "@app/youtube/lib/users.types";
 import { InsufficientCreditsError } from "@app/youtube/lib/users.types";
 import type {
@@ -711,6 +713,16 @@ export class YoutubeDatabase extends BaseDatabase {
                 );
                 CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_user_id, id DESC);
             `);
+        });
+
+        this.runMigration("add-user-settings", () => {
+            const userCols = this.db.query<{ name: string }, []>("PRAGMA table_info(users)").all() as Array<{
+                name: string;
+            }>;
+
+            if (!userCols.some((column) => column.name === "settings")) {
+                this.db.exec("ALTER TABLE users ADD COLUMN settings TEXT NOT NULL DEFAULT '{}'");
+            }
         });
 
         const existing = this.db
@@ -2285,6 +2297,19 @@ export class YoutubeDatabase extends BaseDatabase {
         return rowToUser(row);
     }
 
+    /** Persist the full (already-merged + validated) customization settings blob for a user. */
+    updateUserSettings(userId: number, settings: UserSettings): YtUser {
+        const row = this.db
+            .query<UserRow, [string, number]>("UPDATE users SET settings = ? WHERE id = ? RETURNING *")
+            .get(SafeJSON.stringify(settings), userId);
+
+        if (!row) {
+            throw new Error(`updateUserSettings: user ${userId} not found`);
+        }
+
+        return rowToUser(row);
+    }
+
     /**
      * Atomic conditional debit: only succeeds while the balance covers the
      * amount; throws `InsufficientCreditsError` otherwise. Ledger row is
@@ -3125,6 +3150,7 @@ interface UserRow {
     last_login_at: string | null;
     output_lang: string | null;
     tts_voice: string | null;
+    settings: string | null;
 }
 
 function rowToUser(row: UserRow): YtUser {
@@ -3135,7 +3161,27 @@ function rowToUser(row: UserRow): YtUser {
         createdAt: row.created_at,
         outputLang: row.output_lang,
         ttsVoice: row.tts_voice,
+        settings: parseUserSettings(row.settings),
     };
+}
+
+/** Parse the stored settings JSON; a corrupt/absent value degrades to `{}` rather than throwing. */
+function parseUserSettings(raw: string | null): UserSettings {
+    if (!raw) {
+        return {};
+    }
+
+    try {
+        const parsed = SafeJSON.parse(raw);
+
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            return parsed as UserSettings;
+        }
+    } catch (err) {
+        logger.debug({ err }, "youtube db: failed to parse user settings JSON");
+    }
+
+    return {};
 }
 
 interface QaHistoryRow {

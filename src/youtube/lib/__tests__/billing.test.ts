@@ -105,7 +105,15 @@ function fakeGateway() {
 }
 
 describe("createCheckoutSession (gateway)", () => {
-    const user = { id: 7, email: "u@example.com", credits: 0, createdAt: "", outputLang: null, ttsVoice: null };
+    const user = {
+        id: 7,
+        email: "u@example.com",
+        credits: 0,
+        createdAt: "",
+        outputLang: null,
+        ttsVoice: null,
+        settings: {},
+    };
 
     it("resolves the pack price and returns the gateway url", async () => {
         const { gateway, calls } = fakeGateway();
@@ -134,7 +142,15 @@ describe("createCheckoutSession (gateway)", () => {
 });
 
 describe("createSubscriptionCheckoutSession", () => {
-    const user = { id: 7, email: "u@example.com", credits: 0, createdAt: "", outputLang: null, ttsVoice: null };
+    const user = {
+        id: 7,
+        email: "u@example.com",
+        credits: 0,
+        createdAt: "",
+        outputLang: null,
+        ttsVoice: null,
+        settings: {},
+    };
 
     it("resolves the plan price and returns the gateway url", async () => {
         const { gateway, calls } = fakeGateway();
