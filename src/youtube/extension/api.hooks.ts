@@ -16,6 +16,7 @@ import type {
     VideoId,
     VideoLongSummary,
 } from "@app/youtube/lib/types";
+import { mergeUserSettings, type UserSettings } from "@app/youtube/lib/user-settings";
 import { send } from "@ext/api.bridge";
 import type { ExtensionApiMap } from "@ext/shared/messages";
 import type { ExtensionConfig } from "@ext/shared/types";
@@ -779,6 +780,49 @@ export function useAdminJobs(opts: { status?: string; enabled?: boolean }) {
         queryFn: () => send<ExtensionApiMap["api:adminJobs"]>({ type: "api:adminJobs", status: opts.status }),
         retry: false,
         enabled: opts.enabled !== false,
+    });
+}
+
+export function useSettings(enabled = true) {
+    return useQuery({
+        queryKey: ["settings"],
+        queryFn: () => send<ExtensionApiMap["api:getSettings"]>({ type: "api:getSettings" }),
+        retry: false,
+        enabled,
+    });
+}
+
+export function useUpdateSettings() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (patch: UserSettings) =>
+            send<ExtensionApiMap["api:updateSettings"]>({ type: "api:updateSettings", patch }),
+        // Auto-persist with an optimistic write so the panel reflects the change
+        // the instant the user picks it (Martin's "no save button" requirement).
+        onMutate: async (patch) => {
+            await queryClient.cancelQueries({ queryKey: ["settings"] });
+            const previous = queryClient.getQueryData<ExtensionApiMap["api:getSettings"]>(["settings"]);
+
+            if (previous) {
+                queryClient.setQueryData<ExtensionApiMap["api:getSettings"]>(["settings"], {
+                    settings: mergeUserSettings(previous.settings, patch),
+                });
+            }
+
+            return { previous };
+        },
+        onError: (_error, _patch, context) => {
+            if (context?.previous) {
+                queryClient.setQueryData(["settings"], context.previous);
+            }
+        },
+        onSuccess: (data) => {
+            queryClient.setQueryData(["settings"], data);
+        },
+        onSettled: () => {
+            queryClient.invalidateQueries({ queryKey: ["me"] });
+        },
     });
 }
 

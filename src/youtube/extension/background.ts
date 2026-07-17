@@ -459,6 +459,13 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
             const suffix = typeof req.days === "number" ? `?days=${req.days}` : "";
             return apiCall(`${base}/api/v1/admin/revenue${suffix}`);
         }
+        case "api:getSettings":
+            return apiCall(`${base}/api/v1/users/settings`);
+        case "api:updateSettings":
+            return apiCall(`${base}/api/v1/users/settings`, {
+                method: "PATCH",
+                body: JSON.stringify(req.patch),
+            });
         default: {
             // Exhaustiveness guard: every ExtensionRequest above returns, so a
             // new variant added without a case fails this assignment at compile

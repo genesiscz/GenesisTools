@@ -28,6 +28,7 @@ import {
 } from "@ext/api.hooks";
 import { persistUiLang, useT, useUiLang } from "@ext/shared/i18n";
 import type { AccountSection } from "@ext/side-panel/account-view";
+import { CustomizationSection } from "@ext/side-panel/customization-section";
 import { LowBalanceNudge, SubscriptionSection } from "@ext/side-panel/subscription-section";
 import {
     CreditCard,
@@ -158,6 +159,8 @@ function SignedInView({
             ) : null}
 
             <LanguageSection outputLang={outputLang} />
+
+            <CustomizationSection />
 
             <SharesSection />
 

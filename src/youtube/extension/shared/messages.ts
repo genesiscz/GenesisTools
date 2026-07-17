@@ -45,6 +45,7 @@ import type {
     YtRole,
     YtUser,
 } from "@app/youtube/lib/types";
+import type { UserSettings } from "@app/youtube/lib/user-settings";
 import type { ExtensionConfig } from "@ext/shared/types";
 
 export type ExtensionRequest =
@@ -158,7 +159,10 @@ export type ExtensionRequest =
     | { type: "api:adminAiCalls"; provider?: string; action?: string; userId?: number; limit?: number; offset?: number }
     | { type: "api:adminWebhookLogs"; outcome?: string; limit?: number; offset?: number }
     | { type: "api:adminJobs"; status?: string; limit?: number; offset?: number }
-    | { type: "api:adminRevenue"; days?: number };
+    | { type: "api:adminRevenue"; days?: number }
+    // Phase 5 — user customization settings (auto-persisted).
+    | { type: "api:getSettings" }
+    | { type: "api:updateSettings"; patch: UserSettings };
 
 export type ExtensionResponse = { ok: true; data: unknown } | { ok: false; error: string; code?: string };
 
@@ -289,6 +293,8 @@ export interface ExtensionApiMap {
     "api:adminWebhookLogs": { webhookLogs: WebhookLogRecord[]; total: number; limit: number; offset: number };
     "api:adminJobs": { jobs: PipelineJob[]; queue: QueueStats; total: number; limit: number; offset: number };
     "api:adminRevenue": AdminRevenueSummary;
+    "api:getSettings": { settings: UserSettings };
+    "api:updateSettings": { settings: UserSettings };
 }
 
 /** One row of the admin users table (route maps `AdminUserRow` + role + net). */
