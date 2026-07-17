@@ -200,7 +200,10 @@ export class QaService {
             const questionEmbedding = await embedder.embed(opts.question);
             const qVec = questionEmbedding.vector;
             const scored = opts.videoIds
-                .flatMap((videoId) => this.db.listQaChunks(videoId))
+                // Scope retrieval to the embedder model ask() embeds the question
+                // with — same-dimension vectors from a different embedding model
+                // would otherwise silently mix incompatible spaces.
+                .flatMap((videoId) => this.db.listQaChunks(videoId, DEFAULT_MODEL_ID))
                 .filter((chunk) => sources.includes(chunk.source))
                 .filter((chunk) => chunk.embedding && chunk.embedding.length === qVec.length)
                 .map((chunk) => ({ chunk, score: cosine(qVec, chunk.embedding!) }));

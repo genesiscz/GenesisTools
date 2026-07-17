@@ -97,7 +97,9 @@ export function getLedgerPage(
     userId: number,
     opts: { limit?: number; before?: number } = {}
 ): LedgerPage {
-    const limit = opts.limit ?? 50;
+    // Clamp at the lib boundary: limit=0 would index into an empty page and a
+    // negative value is "unbounded" under SQLite's negative-LIMIT semantics.
+    const limit = Math.min(100, Math.max(1, Math.floor(opts.limit ?? 50)));
     // Fetch one extra row to detect a further page without a second query. If
     // the final page holds exactly `limit` rows, the sentinel is absent and
     // nextBefore stays null (no wasted empty follow-up request).

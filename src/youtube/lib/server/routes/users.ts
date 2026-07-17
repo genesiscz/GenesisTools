@@ -139,6 +139,11 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
             }
 
             const body = (await safeJsonBody(req)) ?? {};
+
+            if (body.amount !== undefined && (typeof body.amount !== "number" || !Number.isFinite(body.amount))) {
+                return jsonError("amount must be a finite number", 400);
+            }
+
             const requested = typeof body.amount === "number" ? Math.floor(body.amount) : 100;
             const amount = Math.min(10_000, Math.max(1, requested));
             const credits = yt.db.grantCredits(user.id, amount, "dev-topup");
@@ -218,9 +223,9 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
             }
 
             const code = yt.db.getOrCreateReferralCode(user.id, generateReferralCode());
-            const referrals = yt.db.listReferralsByReferrer(user.id);
+            const referrals = yt.db.listReferralsWithEmails(user.id);
             const referees = referrals.map((referral) => ({
-                email: maskEmail(yt.db.getUserEmailById(referral.refereeUserId) ?? "unknown"),
+                email: maskEmail(referral.refereeEmail ?? "unknown"),
                 redeemedAt: referral.createdAt,
                 reward: referral.reward,
             }));
@@ -579,6 +584,9 @@ function presetErrorResponse(error: unknown): { message: string; status: number 
         return { message, status: 422 };
     }
 
+    // Anything reaching the generic 400 wasn't a recognized validation error —
+    // log it so unexpected failures aren't silently reshaped into client faults.
+    logger.warn({ error }, "youtube presets: unrecognized error mapped to 400");
     return { message, status: 400 };
 }
 

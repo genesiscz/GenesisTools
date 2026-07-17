@@ -788,6 +788,14 @@ export class YoutubeDatabase extends BaseDatabase {
             );
         });
 
+        // Plain indexes the partial idempotency index can't serve: ledger
+        // pagination (user_id, id DESC) and hasLedgerReason lookups for
+        // reasons outside the idempotency prefix set (ask, register-grant, …).
+        this.runMigration("add-credit-ledger-plain-indexes", () => {
+            this.db.exec("CREATE INDEX IF NOT EXISTS idx_credit_ledger_user_id ON credit_ledger(user_id, id DESC)");
+            this.db.exec("CREATE INDEX IF NOT EXISTS idx_credit_ledger_user_reason ON credit_ledger(user_id, reason)");
+        });
+
         const existing = this.db
             .query<{ version: number }, [number]>("SELECT version FROM schema_version WHERE version = ?")
             .get(SCHEMA_VERSION);
@@ -1889,12 +1897,15 @@ export class YoutubeDatabase extends BaseDatabase {
         return row?.email ?? null;
     }
 
-    /** SUM of positive grant-type deltas since `sinceIso` — the frozen grant-reason set. */
+    /** SUM of positive grant-type deltas strictly after `sinceIso` — the frozen
+     *  grant-reason set. Strict `>`: the period-start allowance grant shares the
+     *  periodStart timestamp and is already accounted via `allowanceGranted`, so
+     *  `>=` would double-count it. */
     getGrantsSince(userId: number, sinceIso: string): number {
         const row = this.db
             .query<{ total: number | null }, [number, string]>(
                 `SELECT SUM(delta) AS total FROM credit_ledger
-                 WHERE user_id = ? AND created_at >= ? AND delta > 0
+                 WHERE user_id = ? AND created_at > ? AND delta > 0
                    AND (reason LIKE 'stripe:%' OR reason = 'dev-topup' OR reason LIKE 'referral:%' OR reason = 'register-grant')`
             )
             .get(userId, sinceIso);
@@ -2039,6 +2050,20 @@ export class YoutubeDatabase extends BaseDatabase {
             .all(referrerUserId);
 
         return rows.map(rowToReferral);
+    }
+
+    /** Referrals joined with the referee's email in one query — avoids the
+     *  per-referral getUserEmailById N+1 on the referral overview route. */
+    listReferralsWithEmails(referrerUserId: number): Array<ReferralRecord & { refereeEmail: string | null }> {
+        const rows = this.db
+            .query<ReferralRow & { referee_email: string | null }, [number]>(
+                `SELECT r.*, u.email AS referee_email FROM referrals r
+                 LEFT JOIN users u ON u.id = r.referee_user_id
+                 WHERE r.referrer_user_id = ? ORDER BY r.id DESC`
+            )
+            .all(referrerUserId);
+
+        return rows.map((row) => ({ ...rowToReferral(row), refereeEmail: row.referee_email }));
     }
 
     async pruneExpiredBinaries(opts: PruneExpiredBinariesOpts): Promise<PruneExpiredBinariesResult> {
@@ -2312,13 +2337,16 @@ export class YoutubeDatabase extends BaseDatabase {
             .get();
 
         const now = Date.now();
+        // Bare-column compare on purpose: substr(created_at,…) in the WHERE
+        // defeats any created_at index, and a 10-char date cutoff compares
+        // correctly against full ISO timestamps lexicographically.
         const cutoff = new Date(now - (days - 1) * 86_400_000).toISOString().slice(0, 10);
         const revenueByDay = new Map<string, number>();
 
         for (const row of this.db
             .query<{ day: string; revenue_cents: number }, [string]>(
                 `SELECT substr(created_at, 1, 10) AS day, COALESCE(SUM(amount_cents), 0) AS revenue_cents
-                 FROM payments WHERE status = 'succeeded' AND substr(created_at, 1, 10) >= ? GROUP BY day`
+                 FROM payments WHERE status = 'succeeded' AND created_at >= ? GROUP BY day`
             )
             .all(cutoff)) {
             revenueByDay.set(row.day, row.revenue_cents);
@@ -2329,7 +2357,7 @@ export class YoutubeDatabase extends BaseDatabase {
         for (const row of this.db
             .query<{ day: string; cost_usd: number }, [string]>(
                 `SELECT substr(created_at, 1, 10) AS day, COALESCE(SUM(cost_usd), 0) AS cost_usd
-                 FROM ai_calls WHERE substr(created_at, 1, 10) >= ? GROUP BY day`
+                 FROM ai_calls WHERE created_at >= ? GROUP BY day`
             )
             .all(cutoff)) {
             costByDay.set(row.day, row.cost_usd);

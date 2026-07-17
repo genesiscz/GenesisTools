@@ -198,10 +198,10 @@ function buildSchemas(): Record<string, OpenApiSchema> {
                 title: { type: "string" },
                 summary: { type: "string" },
                 startSec: {
-                    type: "number",
+                    type: "integer",
                     description: "Second where the chapter's topic begins. Absent on old rows.",
                 },
-                endSec: nullableNumber("Second where the topic ends, or null. Absent on old rows."),
+                endSec: nullableInteger("Second where the topic ends, or null. Absent on old rows."),
             },
             required: ["title", "summary"],
         },
@@ -674,7 +674,11 @@ function buildPaths(): Record<string, OpenApiPathItem> {
                             speakers: arrayOf({
                                 type: "object",
                                 properties: {
-                                    idx: { type: "integer", description: "Diarized speaker index (0-based)." },
+                                    idx: {
+                                        type: "integer",
+                                        minimum: 0,
+                                        description: "Diarized speaker index (0-based).",
+                                    },
                                     label: { type: "string", description: "Display name for the speaker." },
                                 },
                                 required: ["idx", "label"],
