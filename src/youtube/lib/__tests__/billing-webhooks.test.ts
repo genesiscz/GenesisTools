@@ -1,5 +1,5 @@
-import { createHmac } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { createHmac } from "node:crypto";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { handleStripeEvent } from "@app/youtube/lib/billing";
@@ -127,7 +127,14 @@ describe("subscription webhook lifecycle", () => {
         await deliver({
             id: "evt_upd_1",
             type: "customer.subscription.updated",
-            data: { object: { id: "sub_1", status: "active", cancel_at_period_end: true, current_period_end: 1_800_000_000 } },
+            data: {
+                object: {
+                    id: "sub_1",
+                    status: "active",
+                    cancel_at_period_end: true,
+                    current_period_end: 1_800_000_000,
+                },
+            },
         });
 
         expect(db.getSubscriptionByUserId(user.id)?.cancelAtPeriodEnd).toBe(true);

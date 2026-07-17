@@ -81,7 +81,13 @@ describe("quota gate wiring (translate route)", () => {
         db.grantCredits(user.id, 100, "register-grant");
         db.upsertChannel({ handle: "@chan" });
         db.upsertVideo({ id: "vid00000001", channelHandle: "@chan", title: "t" });
-        db.saveTranscript({ videoId: "vid00000001", lang: "en", source: "captions", text: "hi", segments: [{ text: "hi", start: 0, end: 1 }] });
+        db.saveTranscript({
+            videoId: "vid00000001",
+            lang: "en",
+            source: "captions",
+            text: "hi",
+            segments: [{ text: "hi", start: 0, end: 1 }],
+        });
 
         const url = new URL("http://localhost/api/v1/videos/vid00000001/transcript/translate");
         const req = new Request(url, {

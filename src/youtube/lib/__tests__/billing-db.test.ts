@@ -42,7 +42,11 @@ describe("subscriptions", () => {
 
     it("applies partial updates", () => {
         const sub = db.upsertSubscription({ userId: 8, planId: "sub-monthly", status: "active", allowance: 3000 });
-        db.updateSubscription(sub.id, { status: "canceled", cancelAtPeriodEnd: true, periodEnd: "2026-08-01T00:00:00.000Z" });
+        db.updateSubscription(sub.id, {
+            status: "canceled",
+            cancelAtPeriodEnd: true,
+            periodEnd: "2026-08-01T00:00:00.000Z",
+        });
         const read = db.getSubscriptionByUserId(8);
 
         expect(read?.status).toBe("canceled");
@@ -53,14 +57,38 @@ describe("subscriptions", () => {
 
 describe("payments + webhook logs", () => {
     it("payments are replay-safe on stripe_ref", () => {
-        db.recordPayment({ userId: 7, kind: "pack", stripeRef: "cs_1", packId: "pack-small", amountCents: 499, currency: "usd", credits: 500, status: "succeeded" });
-        db.recordPayment({ userId: 7, kind: "pack", stripeRef: "cs_1", packId: "pack-small", amountCents: 499, currency: "usd", credits: 500, status: "succeeded" });
+        db.recordPayment({
+            userId: 7,
+            kind: "pack",
+            stripeRef: "cs_1",
+            packId: "pack-small",
+            amountCents: 499,
+            currency: "usd",
+            credits: 500,
+            status: "succeeded",
+        });
+        db.recordPayment({
+            userId: 7,
+            kind: "pack",
+            stripeRef: "cs_1",
+            packId: "pack-small",
+            amountCents: 499,
+            currency: "usd",
+            credits: 500,
+            status: "succeeded",
+        });
 
         expect(db.listPayments({ userId: 7 })).toHaveLength(1);
     });
 
     it("webhook logs upsert on event id", () => {
-        db.recordWebhookLog({ stripeEventId: "evt_1", type: "invoice.paid", payloadHash: "aa", outcome: "error", detail: "boom" });
+        db.recordWebhookLog({
+            stripeEventId: "evt_1",
+            type: "invoice.paid",
+            payloadHash: "aa",
+            outcome: "error",
+            detail: "boom",
+        });
         db.recordWebhookLog({ stripeEventId: "evt_1", type: "invoice.paid", payloadHash: "aa", outcome: "processed" });
         const log = db.getWebhookLog("evt_1");
 

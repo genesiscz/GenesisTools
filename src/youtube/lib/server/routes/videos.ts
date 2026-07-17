@@ -692,7 +692,8 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         cached: false,
                         jobId: job.id,
                         startedAt,
-                        creditsSpent: creditCost + (transcribeHold.current !== null ? CREDIT_COSTS["transcribe:ai"] : 0),
+                        creditsSpent:
+                            creditCost + (transcribeHold.current !== null ? CREDIT_COSTS["transcribe:ai"] : 0),
                         credits: transcribeHold.current !== null ? transcribeHold.current.credits : hold.credits,
                     },
                     { headers: CORS_HEADERS }

@@ -82,7 +82,9 @@ describe("referral flow", () => {
         const code = (await call("GET", "/api/v1/users/referral", user.token)).json.code as string;
 
         expect((await call("POST", "/api/v1/users/referral/redeem", user.token, { code })).status).toBe(400);
-        expect((await call("POST", "/api/v1/users/referral/redeem", user.token, { code: "NOPE2222" })).status).toBe(400);
+        expect((await call("POST", "/api/v1/users/referral/redeem", user.token, { code: "NOPE2222" })).status).toBe(
+            400
+        );
 
         await yt.config.update({ referrals: { enabled: false, offers: [] } });
         const other = createUser("other@example.com");
