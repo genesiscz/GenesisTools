@@ -21,6 +21,7 @@ export interface EnqueuePipelineJobInput {
     target: string;
     stages: JobStage[];
     parentJobId?: number;
+    userId?: number | null;
 }
 
 export interface ListPipelineJobsOpts {

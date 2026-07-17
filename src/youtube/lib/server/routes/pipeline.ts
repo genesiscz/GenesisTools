@@ -1,4 +1,5 @@
 import { SafeJSON } from "@app/utils/json";
+import { resolveUser } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
@@ -16,7 +17,13 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
         if (matchRoute(req, "POST", "/api/v1/pipeline", url.pathname)) {
             const body = (await req.json()) as EnqueueBody;
             const targetKind = body.targetKind ?? inferTargetKind(body.target);
-            const job = yt.pipeline.enqueue({ targetKind, target: body.target, stages: body.stages });
+            const user = resolveUser(req, url, yt.db);
+            const job = yt.pipeline.enqueue({
+                targetKind,
+                target: body.target,
+                stages: body.stages,
+                userId: user?.id ?? null,
+            });
 
             return Response.json({ job }, { headers: CORS_HEADERS });
         }

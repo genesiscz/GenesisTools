@@ -124,6 +124,8 @@ export interface EnqueueJobInput {
     target: string;
     stages: JobStage[];
     parentJobId?: number | null;
+    /** Requesting user, when the job was triggered by an authenticated request. Null for CLI/operator jobs. */
+    userId?: number | null;
 }
 
 export interface ClaimJobOpts {

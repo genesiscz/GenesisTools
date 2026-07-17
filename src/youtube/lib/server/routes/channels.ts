@@ -1,4 +1,5 @@
 import { SafeJSON } from "@app/utils/json";
+import { resolveUser } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
@@ -42,10 +43,12 @@ export async function handleChannelsRoute(req: Request, url: URL, yt: Youtube): 
 
         if (sync) {
             const handle = normaliseHandle(sync.handle);
+            const user = resolveUser(req, url, yt.db);
             const job = yt.pipeline.enqueue({
                 targetKind: "channel",
                 target: handle,
                 stages: ["discover", "metadata"],
+                userId: user?.id ?? null,
             });
 
             return Response.json({ enqueuedJobIds: [job.id], enqueuedJobId: job.id }, { headers: CORS_HEADERS });

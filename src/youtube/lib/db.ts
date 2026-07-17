@@ -532,6 +532,16 @@ export class YoutubeDatabase extends BaseDatabase {
             `);
         });
 
+        this.runMigration("add-jobs-user", () => {
+            const cols = this.db.query<{ name: string }, []>("PRAGMA table_info(jobs)").all() as Array<{
+                name: string;
+            }>;
+
+            if (!cols.some((column) => column.name === "user_id")) {
+                this.db.exec("ALTER TABLE jobs ADD COLUMN user_id INTEGER");
+            }
+        });
+
         const existing = this.db
             .query<{ version: number }, [number]>("SELECT version FROM schema_version WHERE version = ?")
             .get(SCHEMA_VERSION);
@@ -1064,11 +1074,17 @@ export class YoutubeDatabase extends BaseDatabase {
 
     enqueueJob(input: EnqueueJobInput): PipelineJob {
         const result = this.db
-            .query<{ id: number }, [string, string, string, number | null]>(
-                `INSERT INTO jobs (target_kind, target, stages, parent_job_id, status)
-                 VALUES (?, ?, ?, ?, 'pending') RETURNING id`
+            .query<{ id: number }, [string, string, string, number | null, number | null]>(
+                `INSERT INTO jobs (target_kind, target, stages, parent_job_id, user_id, status)
+                 VALUES (?, ?, ?, ?, ?, 'pending') RETURNING id`
             )
-            .get(input.targetKind, input.target, SafeJSON.stringify(input.stages), input.parentJobId ?? null);
+            .get(
+                input.targetKind,
+                input.target,
+                SafeJSON.stringify(input.stages),
+                input.parentJobId ?? null,
+                input.userId ?? null
+            );
 
         if (!result) {
             throw new Error("enqueueJob failed: insert returned no id");
@@ -1334,7 +1350,12 @@ export class YoutubeDatabase extends BaseDatabase {
             )
             .all(videoId, limit);
 
-        return rows.map((row) => ({ id: row.id, userId: row.user_id, videoId: row.video_id, createdAt: row.created_at }));
+        return rows.map((row) => ({
+            id: row.id,
+            userId: row.user_id,
+            videoId: row.video_id,
+            createdAt: row.created_at,
+        }));
     }
 
     listVideoLogs(opts: { videoId?: string; userId?: number; limit?: number } = {}): VideoLogRecord[] {
@@ -2467,6 +2488,7 @@ interface JobRow {
     progress: number;
     progress_message: string | null;
     parent_job_id: number | null;
+    user_id: number | null;
     worker_id: string | null;
     claimed_at: string | null;
     created_at: string;
@@ -2486,6 +2508,7 @@ function rowToJob(row: JobRow): PipelineJob {
         progress: row.progress,
         progressMessage: row.progress_message,
         parentJobId: row.parent_job_id,
+        userId: row.user_id ?? null,
         workerId: row.worker_id,
         claimedAt: row.claimed_at,
         createdAt: row.created_at,

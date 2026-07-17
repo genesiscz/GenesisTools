@@ -499,7 +499,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 context: id,
             });
             const stages = hasTranscript ? (["summarize"] as const) : (["captions", "summarize"] as const);
-            const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: [...stages] });
+            const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: [...stages], userId: user.id });
             yt.pipeline.emitExternal({ type: "job:created", job });
             const startedAt = new Date().toISOString();
             yt.db.updateJob(job.id, {
@@ -521,7 +521,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         progress: 0.05,
                         message: "Fetching captions",
                     });
-                    await withJobActivity({ jobId: job.id, stage: "captions", db: yt.db }, () =>
+                    await withJobActivity({ jobId: job.id, stage: "captions", db: yt.db, userId: user.id }, () =>
                         yt.transcripts.transcribe({
                             videoId: id,
                             onProgress: (info) => {
@@ -555,7 +555,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     message: "Compacting transcript",
                 });
 
-                const result = await withJobActivity({ jobId: job.id, stage: "summarize", db: yt.db }, () =>
+                const result = await withJobActivity({ jobId: job.id, stage: "summarize", db: yt.db, userId: user.id }, () =>
                     yt.summary.summarize({
                         videoId: id,
                         mode,
@@ -809,7 +809,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 reason: scope === "channel" ? "qa:channel" : "ask",
                 context: id,
             });
-            const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: ["qa"] });
+            const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: ["qa"], userId: user.id });
             yt.pipeline.emitExternal({ type: "job:created", job });
             yt.db.updateJob(job.id, { status: "running", currentStage: "qa" });
             const startedJob = yt.db.getJob(job.id) ?? job;

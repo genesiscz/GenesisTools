@@ -31,6 +31,7 @@ mock.module("@app/youtube/commands/_shared/ensure-pipeline", () => ({
                     progress: 1,
                     progressMessage: null,
                     parentJobId: null,
+                    userId: null,
                     workerId: null,
                     claimedAt: null,
                     createdAt: "2026-04-01",
