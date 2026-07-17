@@ -1,15 +1,24 @@
-// Safe PR merge with stack-aware base retargeting.
+// Safe PR merge with stack-aware base retargeting (+ stack-safe rebase).
 //
 // GitHub only auto-retargets dependents when the parent branch is deleted via
 // the web UI "Delete branch" button. CLI/API deletes close child PRs instead
 // (cli/cli#1168). This module never relies on that broken path:
 //   1. merge without deleting the head branch
-//      - merge / rebase / squash → GitHub pulls.merge API
+//      - merge / squash → GitHub pulls.merge API
+//      - rebase → stack-safe path (local restack + FF) unless --no-restack
 //      - ff-only → update base ref to head SHA (force=false) so SHAs stay intact
 //   2. find open PRs whose base is the merged head
 //   3. retarget each dependent onto the merged PR's base
-//   4. only then optionally delete the remote head branch
+//   4. for stack-safe rebase: restack dependents with git rebase --onto
+//      (gh-stack cascade algorithm) so the next PR is FF-able
+//   5. only then optionally delete the remote head branch
 
+import {
+    createGitStackRestack,
+    createNoopStackRestack,
+    type RestackBranchResult,
+    type StackRestackOps,
+} from "@app/github/lib/stack-restack";
 import { getOctokitForWrite } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
 
@@ -39,6 +48,8 @@ export interface DependentPull {
     baseRef: string;
     htmlUrl: string;
     state: string;
+    /** Tip SHA of the dependent head (when available from list/get). */
+    headSha?: string;
 }
 
 /** Methods accepted by GitHub's pulls.merge API (not ff-only). */
@@ -77,11 +88,18 @@ export interface SafeMergeOptions {
     method: MergeMethod;
     /** After retargeting dependents, delete the merged PR's head branch. */
     deleteBranch?: boolean;
+    /**
+     * For --rebase: skip local restack + FF; call GitHub merge_method=rebase
+     * directly (breaks cascading stacks after parent rewrite). Default false.
+     */
+    noRestack?: boolean;
     commitTitle?: string;
     commitMessage?: string;
     /** Progress / decision logs (caller routes to stdout). */
     log?: (message: string) => void;
     client?: MergeGitHubClient;
+    /** Injectable restack (default: temp-clone git restack). */
+    restack?: StackRestackOps;
 }
 
 export interface RetargetResult {
@@ -94,6 +112,16 @@ export interface RetargetResult {
     error?: string;
 }
 
+export interface DependentRestackResult {
+    number: number;
+    title: string;
+    headRef: string;
+    ok: boolean;
+    rebased: boolean;
+    headSha?: string;
+    error?: string;
+}
+
 export interface SafeMergeResult {
     owner: string;
     repo: string;
@@ -103,8 +131,12 @@ export interface SafeMergeResult {
     headRef: string;
     baseRef: string;
     mergeSha: string;
+    /** How the merge was applied when method=rebase (stack-safe path). */
+    rebaseMode?: "stack-safe-ff" | "api-rewrite";
+    headRestack?: RestackBranchResult;
     dependentsFound: DependentPull[];
     retargeted: RetargetResult[];
+    dependentsRestacked: DependentRestackResult[];
     branchDeleted: boolean;
     branchDeleteError?: string;
 }
@@ -176,6 +208,7 @@ export function createOctokitMergeClient(): MergeGitHubClient {
                         baseRef: pr.base.ref,
                         htmlUrl: pr.html_url,
                         state: pr.state,
+                        headSha: pr.head.sha,
                     });
                 }
 
@@ -280,6 +313,7 @@ export function createOctokitMergeClient(): MergeGitHubClient {
                 baseRef: data.base.ref,
                 htmlUrl: data.html_url,
                 state: data.state,
+                headSha: data.head.sha,
             };
         },
 
@@ -300,10 +334,30 @@ export function createOctokitMergeClient(): MergeGitHubClient {
 /**
  * Merge a PR, retarget every open PR that based on its head, then optionally
  * delete the head branch. Never deletes before retargeting.
+ *
+ * For method=rebase (default stack-safe):
+ *   restack head onto base if needed → force-with-lease → FF base →
+ *   retarget dependents → restack each dependent with rebase --onto.
  */
 export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMergeResult> {
-    const { owner, repo, number, method, deleteBranch = false, commitTitle, commitMessage, log } = options;
+    const {
+        owner,
+        repo,
+        number,
+        method,
+        deleteBranch = false,
+        noRestack = false,
+        commitTitle,
+        commitMessage,
+        log,
+    } = options;
     const client = options.client ?? createOctokitMergeClient();
+    const stackSafeRebase = method === "rebase" && !noRestack;
+    // Prefer injected restack; otherwise real git restack only for stack-safe rebase.
+    // When tests pass a mock client without restack, use no-op so unit tests stay offline.
+    const restack: StackRestackOps =
+        options.restack ??
+        (stackSafeRebase && !options.client ? createGitStackRestack({ log }) : createNoopStackRestack());
 
     logLine(log, `Resolving ${owner}/${repo}#${number}...`);
     const pr = await client.getPull(owner, repo, number);
@@ -335,6 +389,11 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
         }
     }
 
+    // Tip of the PR head before any rewrite — used as --onto oldBase for children.
+    const preMergeHeadSha = pr.headSha;
+    let effectiveHeadSha = pr.headSha;
+    let headRestack: RestackBranchResult | undefined;
+    let rebaseMode: SafeMergeResult["rebaseMode"];
     let mergeResult: MergePullResult;
 
     if (method === "ff-only") {
@@ -350,8 +409,50 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
                 `(head=${pr.headRef}; branch will NOT be deleted by the FF)...`
         );
         mergeResult = await client.fastForwardBase(owner, repo, pr.baseRef, pr.headSha);
+    } else if (stackSafeRebase) {
+        rebaseMode = "stack-safe-ff";
+        if (commitTitle || commitMessage) {
+            logLine(log, "  note: --subject/--body ignored for stack-safe --rebase (FF merge, no rewrite commit)");
+        }
+        if (!pr.headSha) {
+            throw new Error(`PR #${number} has no head SHA — cannot stack-safe rebase`);
+        }
+
+        logLine(
+            log,
+            `Stack-safe rebase for #${number}: restack ${pr.headRef} onto ${pr.baseRef} if needed, then FF...`
+        );
+        headRestack = await restack.restackBranch({
+            owner,
+            repo,
+            branch: pr.headRef,
+            expectedHeadSha: pr.headSha,
+            newBase: pr.baseRef,
+        });
+        effectiveHeadSha = headRestack.headSha;
+
+        if (headRestack.rebased) {
+            logLine(log, `  head restacked: ${pr.headSha.slice(0, 7)} → ${effectiveHeadSha.slice(0, 7)}`);
+        } else {
+            logLine(log, `  head already linear on ${pr.baseRef}`);
+        }
+
+        logLine(
+            log,
+            `Fast-forwarding origin/${pr.baseRef} → ${effectiveHeadSha.slice(0, 7)} ` +
+                `(preserves SHAs; dependents stay stackable)...`
+        );
+        mergeResult = await client.fastForwardBase(owner, repo, pr.baseRef, effectiveHeadSha);
     } else {
-        logLine(log, `Merging #${number} via ${method} (branch will NOT be deleted by the merge call)...`);
+        if (method === "rebase") {
+            rebaseMode = "api-rewrite";
+            logLine(
+                log,
+                `Merging #${number} via GitHub rebase API (--no-restack; rewrites SHAs, may break stack children)...`
+            );
+        } else {
+            logLine(log, `Merging #${number} via ${method} (branch will NOT be deleted by the merge call)...`);
+        }
         mergeResult = await client.mergePull(owner, repo, number, {
             method: method as GithubApiMergeMethod,
             commitTitle,
@@ -443,13 +544,107 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
         }
     }
 
+    // Stack-safe rebase: restack each successfully retargeted child onto the
+    // new base, dropping commits through the pre-merge parent tip (gh-stack --onto).
+    const dependentsRestacked: DependentRestackResult[] = [];
+    const parentWasRewritten = Boolean(headRestack?.rebased);
+
+    if (stackSafeRebase && toRetarget.length > 0) {
+        const okRetargets = retargeted.filter((r) => r.ok);
+        if (okRetargets.length > 0) {
+            logLine(
+                log,
+                `Restacking ${okRetargets.length} dependent(s) onto ${pr.baseRef}` +
+                    (parentWasRewritten
+                        ? ` (--onto drop ≤ ${preMergeHeadSha.slice(0, 7)})...`
+                        : " (only if not already linear)...")
+            );
+        }
+
+        for (const r of okRetargets) {
+            const dep = toRetarget.find((d) => d.number === r.number);
+            if (!dep) {
+                continue;
+            }
+
+            const expectedSha = dep.headSha;
+            if (!expectedSha) {
+                // Refresh tip from getPull when list didn't include sha.
+                try {
+                    const fresh = await client.getPull(owner, repo, dep.number);
+                    dep.headSha = fresh.headSha;
+                } catch (err) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    dependentsRestacked.push({
+                        number: dep.number,
+                        title: dep.title,
+                        headRef: dep.headRef,
+                        ok: false,
+                        rebased: false,
+                        error: `could not resolve head SHA: ${message}`,
+                    });
+                    logLine(log, `  #${dep.number} restack ✘ no head SHA`);
+                    continue;
+                }
+            }
+
+            const headSha = dep.headSha!;
+            try {
+                // Always pass preMergeHeadSha as oldBase when parent rewrote, so
+                // unique child commits replay onto trunk. When parent was pure FF,
+                // oldBase is still correct (already on base) and restack short-circuits.
+                const result = await restack.restackBranch({
+                    owner,
+                    repo,
+                    branch: dep.headRef,
+                    expectedHeadSha: headSha,
+                    newBase: pr.baseRef,
+                    oldBaseSha: preMergeHeadSha,
+                });
+                dependentsRestacked.push({
+                    number: dep.number,
+                    title: dep.title,
+                    headRef: dep.headRef,
+                    ok: true,
+                    rebased: result.rebased,
+                    headSha: result.headSha,
+                });
+                logLine(
+                    log,
+                    result.rebased
+                        ? `  #${dep.number} restack ✔ ${headSha.slice(0, 7)} → ${result.headSha.slice(0, 7)}`
+                        : `  #${dep.number} restack ✔ already linear`
+                );
+            } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                dependentsRestacked.push({
+                    number: dep.number,
+                    title: dep.title,
+                    headRef: dep.headRef,
+                    ok: false,
+                    rebased: false,
+                    error: message,
+                });
+                logLine(log, `  #${dep.number} restack ✘ ${message.split("\n")[0]}`);
+            }
+        }
+    }
+
     const failedRetargets = retargeted.filter((r) => !r.ok);
+    const failedRestacks = dependentsRestacked.filter((r) => !r.ok);
     let branchDeleted = false;
     let branchDeleteError: string | undefined;
 
     if (deleteBranch) {
-        if (failedRetargets.length > 0) {
-            branchDeleteError = `skipped branch delete: ${failedRetargets.length} dependent retarget(s) failed`;
+        if (failedRetargets.length > 0 || failedRestacks.length > 0) {
+            const parts: string[] = [];
+            if (failedRetargets.length > 0) {
+                parts.push(`${failedRetargets.length} retarget(s) failed`);
+            }
+            if (failedRestacks.length > 0) {
+                parts.push(`${failedRestacks.length} restack(s) failed`);
+            }
+            branchDeleteError = `skipped branch delete: ${parts.join(", ")}`;
             logLine(log, `NOT deleting branch "${pr.headRef}" — ${branchDeleteError}`);
         } else {
             logLine(log, `Deleting remote branch "${pr.headRef}"...`);
@@ -467,11 +662,21 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
         logLine(log, `Keeping remote branch "${pr.headRef}" (pass --delete-branch to remove after retarget)`);
     }
 
-    if (failedRetargets.length > 0) {
-        throw new Error(
-            `Merged #${number} but ${failedRetargets.length} dependent retarget(s) failed: ` +
-                failedRetargets.map((r) => `#${r.number}${r.error ? ` (${r.error})` : ""}`).join(", ")
-        );
+    if (failedRetargets.length > 0 || failedRestacks.length > 0) {
+        const bits: string[] = [];
+        if (failedRetargets.length > 0) {
+            bits.push(
+                `${failedRetargets.length} dependent retarget(s) failed: ` +
+                    failedRetargets.map((r) => `#${r.number}${r.error ? ` (${r.error})` : ""}`).join(", ")
+            );
+        }
+        if (failedRestacks.length > 0) {
+            bits.push(
+                `${failedRestacks.length} dependent restack(s) failed: ` +
+                    failedRestacks.map((r) => `#${r.number}${r.error ? ` (${r.error.split("\n")[0]})` : ""}`).join(", ")
+            );
+        }
+        throw new Error(`Merged #${number} but ${bits.join("; ")}`);
     }
 
     return {
@@ -482,9 +687,12 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
         method,
         headRef: pr.headRef,
         baseRef: pr.baseRef,
-        mergeSha: mergeResult.sha,
+        mergeSha: mergeResult.sha || effectiveHeadSha,
+        rebaseMode,
+        headRestack,
         dependentsFound: toRetarget,
         retargeted,
+        dependentsRestacked,
         branchDeleted,
         branchDeleteError,
     };

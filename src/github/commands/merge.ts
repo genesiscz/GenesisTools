@@ -16,6 +16,11 @@ export interface MergeCommandOptions {
     ffOnly?: boolean;
     /** Alias for ffOnly. */
     ff?: boolean;
+    /**
+     * With --rebase: call GitHub merge_method=rebase (rewrites SHAs) instead of
+     * local restack + FF + dependent restack. Breaks cascading stacks.
+     */
+    noRestack?: boolean;
     deleteBranch?: boolean;
     deleteRemote?: boolean;
     subject?: string;
@@ -33,6 +38,14 @@ function formatTextSummary(result: SafeMergeResult): string {
     lines.push(`  base:   ${result.baseRef}`);
     lines.push(`  sha:    ${result.mergeSha || "(n/a)"}`);
 
+    if (result.rebaseMode) {
+        lines.push(`  rebase: ${result.rebaseMode}`);
+    }
+
+    if (result.headRestack?.rebased) {
+        lines.push(`  head restack: rebased → ${result.headRestack.headSha.slice(0, 7)}`);
+    }
+
     if (result.retargeted.length === 0) {
         lines.push("  dependents: none");
     } else {
@@ -40,6 +53,19 @@ function formatTextSummary(result: SafeMergeResult): string {
         for (const dep of result.retargeted) {
             const mark = dep.ok ? chalk.green("✔") : chalk.red("✘");
             lines.push(`    ${mark} #${dep.number} base ${dep.fromBase} → ${dep.toBase} (${dep.state})`);
+        }
+    }
+
+    if (result.dependentsRestacked.length > 0) {
+        lines.push(`  dependents restacked (${result.dependentsRestacked.length}):`);
+        for (const dep of result.dependentsRestacked) {
+            const mark = dep.ok ? chalk.green("✔") : chalk.red("✘");
+            const detail = dep.ok
+                ? dep.rebased
+                    ? `rebased → ${dep.headSha?.slice(0, 7) ?? "?"}`
+                    : "already linear"
+                : (dep.error?.split("\n")[0] ?? "failed");
+            lines.push(`    ${mark} #${dep.number} ${dep.headRef}: ${detail}`);
         }
     }
 
@@ -90,6 +116,7 @@ export async function mergeCommand(input: string, options: MergeCommandOptions):
         number,
         method,
         deleteBranch,
+        noRestack: Boolean(options.noRestack),
         commitTitle: options.subject,
         commitMessage: options.body,
         log: (message) => out.println(message),
@@ -107,7 +134,10 @@ export async function mergeCommand(input: string, options: MergeCommandOptions):
                     headRef: result.headRef,
                     baseRef: result.baseRef,
                     mergeSha: result.mergeSha,
+                    rebaseMode: result.rebaseMode ?? null,
+                    headRestack: result.headRestack ?? null,
                     dependents: result.retargeted,
+                    dependentsRestacked: result.dependentsRestacked,
                     branchDeleted: result.branchDeleted,
                     branchDeleteError: result.branchDeleteError ?? null,
                 },
@@ -132,13 +162,20 @@ export function createMergeCommand(): Command {
         .argument("<input>", "PR number, owner/repo#N, or full PR URL")
         .option("-r, --repo <owner/repo>", "Repository (auto-detected from URL or git remote)")
         .option("--merge", "Create a merge commit")
-        .option("--rebase", "Rebase and merge (preserves individual commits)")
+        .option(
+            "--rebase",
+            "Stack-safe rebase: local restack head onto base if needed, force-with-lease, FF base (preserves SHAs), restack dependents with rebase --onto"
+        )
         .option("--squash", "Squash and merge")
         .option(
             "--ff-only",
             "True fast-forward: move base ref to head SHA (preserves commits; fails if not FF-able). Auto-retargets stack dependents like other methods."
         )
         .option("--ff", "Alias for --ff-only")
+        .option(
+            "--no-restack",
+            "With --rebase only: use GitHub merge_method=rebase (rewrites SHAs; breaks cascading child PRs)"
+        )
         .option(
             "--delete-branch",
             "After retargeting dependents, delete the remote head branch (never passes delete to the merge API)"

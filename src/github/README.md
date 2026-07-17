@@ -51,7 +51,8 @@ tools github activity --since 1d --type pr
 tools github get https://github.com/owner/repo/blob/main/src/index.ts --clipboard
 
 # Safe stack-aware merge (retargets dependents before optional branch delete)
-tools github merge 123 --rebase
+tools github merge 123 --rebase           # stack-safe: restack+FF (preserves SHAs) + restack children
+tools github merge 123 --rebase --no-restack  # legacy GitHub rewrite rebase (breaks cascades)
 tools github merge 123 --ff-only          # true FF (base ref → head SHA; keeps commit SHAs)
 tools github merge 123 --squash --delete-branch --subject "feat: ship (#123)"
 tools github merge https://github.com/owner/repo/pull/123 --merge --delete-remote
@@ -85,13 +86,19 @@ GitHub only auto-retargets dependent PRs when a branch is deleted via the **web 
 `tools github merge` always:
 
 1. Merges **without** deleting the head branch via the merge API:
-   - `--merge` / `--rebase` / `--squash` → GitHub `pulls.merge`
+   - `--merge` / `--squash` → GitHub `pulls.merge`
+   - `--rebase` (default stack-safe) → local restack head onto base if needed,
+     `git push --force-with-lease`, then true FF of base → head (preserves SHAs).
+     After retarget, restacks each dependent with `git rebase --onto <base> <old-parent-tip>`
+     (same algorithm as `gh stack` cascade). Pass `--no-restack` for legacy
+     GitHub `merge_method=rebase` (rewrites SHAs; breaks cascading children).
    - `--ff-only` (alias `--ff`) → true fast-forward: move base ref to head SHA
      (`git.updateRef` with `force=false` after a compare preflight). Preserves
      commit SHAs; fails if base is not an ancestor of head.
 2. Finds open PRs whose `base` is the merged head branch
 3. Retargets each onto the merged PR's base
-4. Only then, if `--delete-branch` / `--delete-remote`, deletes the remote head ref
+4. (stack-safe `--rebase`) Restacks dependents so the next PR is FF-able
+5. Only then, if `--delete-branch` / `--delete-remote`, deletes the remote head ref
 
 Exactly one of `--merge`, `--rebase`, `--squash`, or `--ff-only` is required.
 All progress logs go to stdout.

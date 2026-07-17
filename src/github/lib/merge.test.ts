@@ -8,6 +8,7 @@ import {
     resolveMergeMethod,
     safeMergePull,
 } from "./merge";
+import type { RestackBranchInput, RestackBranchResult, StackRestackOps } from "./stack-restack";
 
 type CallLog = Array<{ op: string; args: unknown[] }>;
 
@@ -34,6 +35,23 @@ function makeMock(opts: {
     const client: MergeGitHubClient = {
         async getPull(_owner, _repo, number) {
             calls.push({ op: "getPull", args: [number] });
+            // Dependents may refresh head SHA via getPull after merge.
+            const dep = [...dependents, ...postMerge].find((d) => d.number === number);
+            if (dep && number !== opts.pr.number) {
+                return {
+                    number: dep.number,
+                    title: dep.title,
+                    state: dep.state,
+                    merged: false,
+                    draft: false,
+                    mergeable: true,
+                    headRef: dep.headRef,
+                    baseRef: dep.baseRef,
+                    headSha: dep.headSha ?? "dddddddddddddddddddddddddddddddddddddddd",
+                    baseSha: opts.pr.baseSha,
+                    htmlUrl: dep.htmlUrl,
+                };
+            }
             return { ...opts.pr, number, merged };
         },
         async listOpenPullsByBase(_owner, _repo, base) {
@@ -105,6 +123,32 @@ function makeMock(opts: {
     return { client, calls };
 }
 
+function makeRestackMock(opts?: {
+    /** Map branch → result override. */
+    byBranch?: Record<string, Partial<RestackBranchResult>>;
+    /** Fail restack for these branch names. */
+    failBranches?: string[];
+}): { restack: StackRestackOps; calls: RestackBranchInput[] } {
+    const calls: RestackBranchInput[] = [];
+    const restack: StackRestackOps = {
+        async restackBranch(input) {
+            calls.push(input);
+            if (opts?.failBranches?.includes(input.branch)) {
+                throw new Error(`restack conflict on ${input.branch}`);
+            }
+            const over = opts?.byBranch?.[input.branch];
+            const rebased = over?.rebased ?? false;
+            return {
+                headSha:
+                    over?.headSha ?? (rebased ? "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" : input.expectedHeadSha),
+                rebased,
+                alreadyLinear: over?.alreadyLinear ?? !rebased,
+            };
+        },
+    };
+    return { restack, calls };
+}
+
 function basePr(over: Partial<PullRef> = {}): PullRef {
     return {
         number: 1,
@@ -129,6 +173,7 @@ function dep(over: Partial<DependentPull> & { number: number }): DependentPull {
         baseRef: "branch-a",
         htmlUrl: `https://github.com/o/r/pull/${over.number}`,
         state: "open",
+        headSha: `c${String(over.number).padStart(39, "c")}`,
         ...over,
     };
 }
@@ -150,12 +195,14 @@ describe("resolveMergeMethod", () => {
 });
 
 describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
-    test("merge without --delete-branch never deletes and retargets dependents first", async () => {
+    test("stack-safe --rebase uses FF (not merge API), retargets, restacks dependents", async () => {
         const logs: string[] = [];
+        const headSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         const { client, calls } = makeMock({
-            pr: basePr(),
+            pr: basePr({ headSha }),
             dependents: [dep({ number: 2, title: "PR B", headRef: "branch-b", baseRef: "branch-a" })],
         });
+        const { restack, calls: restackCalls } = makeRestackMock();
 
         const result = await safeMergePull({
             owner: "o",
@@ -164,10 +211,12 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
             method: "rebase",
             deleteBranch: false,
             client,
+            restack,
             log: (m) => logs.push(m),
         });
 
         expect(result.branchDeleted).toBe(false);
+        expect(result.rebaseMode).toBe("stack-safe-ff");
         expect(result.retargeted).toEqual([
             {
                 number: 2,
@@ -178,23 +227,63 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
                 state: "open",
             },
         ]);
+        expect(result.dependentsRestacked).toHaveLength(1);
+        expect(result.dependentsRestacked[0].ok).toBe(true);
 
-        // Order: discover → merge → retarget. No delete.
+        // Order: discover → restack head → FF → retarget → restack child. No delete, no rewrite merge.
         const ops = calls.map((c) => c.op);
-        expect(ops).toContain("mergePull");
+        expect(ops).toContain("fastForwardBase");
+        expect(ops).not.toContain("mergePull");
         expect(ops).toContain("updatePullBase");
         expect(ops).not.toContain("deleteBranch");
 
-        const mergeIdx = ops.indexOf("mergePull");
+        const ffIdx = ops.indexOf("fastForwardBase");
         const retargetIdx = ops.indexOf("updatePullBase");
-        expect(mergeIdx).toBeLessThan(retargetIdx);
+        expect(ffIdx).toBeLessThan(retargetIdx);
 
-        // Merge API never gets a delete flag — only method/title/message.
+        expect(calls.find((c) => c.op === "fastForwardBase")?.args).toEqual(["main", headSha]);
+
+        // Head restack + child restack with --onto old parent tip.
+        expect(restackCalls.length).toBeGreaterThanOrEqual(2);
+        expect(restackCalls[0]).toMatchObject({
+            branch: "branch-a",
+            newBase: "main",
+            expectedHeadSha: headSha,
+        });
+        expect(restackCalls[0].oldBaseSha).toBeUndefined();
+        const childCall = restackCalls.find((c) => c.branch === "branch-b");
+        expect(childCall).toMatchObject({
+            newBase: "main",
+            oldBaseSha: headSha,
+        });
+
+        expect(logs.some((l) => l.includes("Stack-safe rebase"))).toBe(true);
+        expect(logs.some((l) => l.includes("Keeping remote branch"))).toBe(true);
+    });
+
+    test("--rebase --no-restack uses GitHub rewrite merge API", async () => {
+        const { client, calls } = makeMock({
+            pr: basePr(),
+            dependents: [dep({ number: 2, title: "PR B", headRef: "branch-b", baseRef: "branch-a" })],
+        });
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "rebase",
+            noRestack: true,
+            deleteBranch: false,
+            client,
+        });
+
+        expect(result.rebaseMode).toBe("api-rewrite");
+        expect(result.dependentsRestacked).toEqual([]);
+        const ops = calls.map((c) => c.op);
+        expect(ops).toContain("mergePull");
+        expect(ops).not.toContain("fastForwardBase");
         const mergeCall = calls.find((c) => c.op === "mergePull");
         expect(mergeCall?.args[1]).toEqual({ method: "rebase", commitTitle: undefined, commitMessage: undefined });
-
-        expect(logs.some((l) => l.includes('base="branch-a"'))).toBe(true);
-        expect(logs.some((l) => l.includes("Keeping remote branch"))).toBe(true);
     });
 
     test("with --delete-branch: retarget ALL dependents BEFORE delete", async () => {
@@ -252,11 +341,13 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
         expect(calls.map((c) => c.op)).toContain("mergePull");
     });
 
-    test("independent PR (no dependents) merges and can delete branch", async () => {
+    test("independent PR (no dependents) stack-safe rebases via FF and can delete branch", async () => {
+        const headSha = "ffffffffffffffffffffffffffffffffffffffff";
         const { client, calls } = makeMock({
-            pr: basePr({ number: 6, title: "Independent", headRef: "branch-f", baseRef: "main" }),
+            pr: basePr({ number: 6, title: "Independent", headRef: "branch-f", baseRef: "main", headSha }),
             dependents: [],
         });
+        const { restack } = makeRestackMock();
 
         const result = await safeMergePull({
             owner: "o",
@@ -265,12 +356,68 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
             method: "rebase",
             deleteBranch: true,
             client,
+            restack,
         });
 
         expect(result.dependentsFound).toEqual([]);
         expect(result.retargeted).toEqual([]);
+        expect(result.dependentsRestacked).toEqual([]);
         expect(result.branchDeleted).toBe(true);
+        expect(calls.map((c) => c.op)).toContain("fastForwardBase");
         expect(calls.map((c) => c.op)).toContain("deleteBranch");
+        expect(calls.map((c) => c.op)).not.toContain("mergePull");
+    });
+
+    test("stack-safe rebase: head restack rewrites tip then FF uses new SHA", async () => {
+        const oldSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const newSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        const { client, calls } = makeMock({
+            pr: basePr({ headSha: oldSha }),
+            dependents: [],
+        });
+        const { restack, calls: restackCalls } = makeRestackMock({
+            byBranch: {
+                "branch-a": { rebased: true, headSha: newSha, alreadyLinear: false },
+            },
+        });
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "rebase",
+            client,
+            restack,
+        });
+
+        expect(result.headRestack?.rebased).toBe(true);
+        expect(result.headRestack?.headSha).toBe(newSha);
+        expect(calls.find((c) => c.op === "fastForwardBase")?.args).toEqual(["main", newSha]);
+        expect(restackCalls[0].expectedHeadSha).toBe(oldSha);
+    });
+
+    test("stack-safe rebase: failed dependent restack blocks branch delete and throws", async () => {
+        const { client, calls } = makeMock({
+            pr: basePr(),
+            dependents: [dep({ number: 2, title: "PR B", headRef: "branch-b", baseRef: "branch-a" })],
+        });
+        const { restack } = makeRestackMock({ failBranches: ["branch-b"] });
+
+        await expect(
+            safeMergePull({
+                owner: "o",
+                repo: "r",
+                number: 1,
+                method: "rebase",
+                deleteBranch: true,
+                client,
+                restack,
+            })
+        ).rejects.toThrow(/restack\(s\) failed/);
+
+        expect(calls.map((c) => c.op)).toContain("fastForwardBase");
+        expect(calls.map((c) => c.op)).toContain("updatePullBase");
+        expect(calls.map((c) => c.op)).not.toContain("deleteBranch");
     });
 
     test("rejects already-merged / closed / draft PRs before calling merge", async () => {
@@ -294,6 +441,7 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
             dependents: [dep({ number: 2, title: "PR B", headRef: "branch-b", baseRef: "branch-a" })],
             // C exists in the repo but is NOT returned by listOpenPullsByBase("branch-a")
         });
+        const { restack } = makeRestackMock();
 
         const result = await safeMergePull({
             owner: "o",
@@ -302,6 +450,7 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
             method: "rebase",
             deleteBranch: true,
             client,
+            restack,
         });
 
         expect(result.retargeted.map((r) => r.number)).toEqual([2]);
