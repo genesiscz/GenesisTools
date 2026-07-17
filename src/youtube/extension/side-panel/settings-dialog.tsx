@@ -4,6 +4,7 @@ import { Button } from "@app/utils/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
+import { ActivityGraph } from "@app/utils/ui/components/youtube/activity-graph";
 import { Diamond, formatDiamonds } from "@app/utils/ui/components/youtube/diamond";
 import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
 import { formatRelativeTime } from "@app/utils/ui/components/youtube/time";
@@ -231,39 +232,10 @@ function LanguageSection({ outputLang }: { outputLang: string | null }) {
 
 function ActivitySparkline({ onViewAll }: { onViewAll: () => void }) {
     const summary = useUsageSummary();
-    const days = summary.data?.days ?? [];
-    const maxSpent = Math.max(1, ...days.map((d) => d.spent));
-
-    if (summary.isPending) {
-        return (
-            <div className="space-y-2">
-                <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                    activity · last 30 days
-                </p>
-                <div className="flex items-center justify-center py-4 text-muted-foreground">
-                    <Loader2 className="size-4 animate-spin" />
-                </div>
-            </div>
-        );
-    }
 
     return (
         <div className="space-y-2">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                activity · last 30 days
-            </p>
-            <div className="flex h-12 items-end gap-[2px]">
-                {days.map((day, i) => (
-                    <div
-                        key={day.date}
-                        title={`${day.date} · ${day.spent} 💎`}
-                        className={`flex-1 rounded-sm ${
-                            day.spent === 0 ? "bg-white/5" : i === days.length - 1 ? "bg-primary/70" : "bg-primary/30"
-                        }`}
-                        style={{ height: `${Math.max(8, (day.spent / maxSpent) * 100)}%` }}
-                    />
-                ))}
-            </div>
+            <ActivityGraph days={summary.data?.days ?? []} loading={summary.isPending} />
             <p className="text-sm text-muted-foreground">
                 This month:{" "}
                 <span className="font-semibold tabular-nums text-foreground">{summary.data?.month.spent ?? 0} 💎</span>{" "}

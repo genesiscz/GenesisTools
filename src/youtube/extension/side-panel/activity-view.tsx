@@ -1,3 +1,5 @@
+import { ActivityGraph } from "@app/utils/ui/components/youtube/activity-graph";
+import { formatLedgerReason } from "@app/utils/ui/components/youtube/ledger-copy";
 import { formatRelativeTime } from "@app/utils/ui/components/youtube/time";
 import { type LedgerRowData, ledgerReasonGroup } from "@app/youtube/lib/types";
 import { useLedger, useUsageSummary } from "@ext/api.hooks";
@@ -16,13 +18,21 @@ export function ActivityView({ onBack }: { onBack?: () => void }) {
     const summary = useUsageSummary();
     const ledger = useLedger();
     const [selectedReasons, setSelectedReasons] = useState<Set<string>>(new Set());
+    const [selectedDate, setSelectedDate] = useState<string | null>(null);
     const sentinelRef = useRef<HTMLDivElement | null>(null);
 
     const allRows = useMemo(() => ledger.data?.pages.flatMap((page) => page.rows) ?? [], [ledger.data]);
-    const filteredRows =
-        selectedReasons.size === 0
-            ? allRows
-            : allRows.filter((row) => selectedReasons.has(ledgerReasonGroup(row.reason)));
+    const filteredRows = allRows.filter((row) => {
+        if (selectedReasons.size > 0 && !selectedReasons.has(ledgerReasonGroup(row.reason))) {
+            return false;
+        }
+
+        if (selectedDate !== null && row.createdAt.slice(0, 10) !== selectedDate) {
+            return false;
+        }
+
+        return true;
+    });
 
     useEffect(() => {
         const sentinel = sentinelRef.current;
@@ -85,12 +95,19 @@ export function ActivityView({ onBack }: { onBack?: () => void }) {
                 </p>
             </div>
 
+            <ActivityGraph
+                days={summary.data?.days ?? []}
+                selectedDate={selectedDate}
+                onSelectDate={setSelectedDate}
+                loading={summary.isPending}
+            />
+
             {summary.data && summary.data.byReason.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">
                     {summary.data.byReason.map((entry) => (
                         <ReasonChip
                             key={entry.reason}
-                            label={entry.reason}
+                            label={formatLedgerReason(entry.reason).label}
                             count={entry.count}
                             active={selectedReasons.has(entry.reason)}
                             onToggle={() => toggleReason(entry.reason)}
@@ -163,22 +180,25 @@ function ReasonChip({
 function LedgerRow({ row }: { row: LedgerRowData }) {
     const [expanded, setExpanded] = useState(false);
     const spend = row.delta < 0;
+    const copy = formatLedgerReason(row.reason);
 
     return (
         <div className="rounded-2xl border border-white/8 bg-black/20 p-3">
             <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
-                    <ReasonChip label={ledgerReasonGroup(row.reason)} />
+                    <p className="text-sm font-medium text-foreground/95">{copy.label}</p>
                     {row.context ? (
                         <button
                             type="button"
                             onClick={() => setExpanded((value) => !value)}
-                            className={`mt-1.5 block w-full text-left text-sm text-muted-foreground hover:text-foreground ${
+                            className={`mt-0.5 block w-full text-left text-sm text-muted-foreground hover:text-foreground ${
                                 expanded ? "" : "truncate"
                             }`}
                         >
                             {row.context}
                         </button>
+                    ) : copy.detail ? (
+                        <p className="mt-0.5 text-sm text-muted-foreground">{copy.detail}</p>
                     ) : null}
                 </div>
                 <div className="shrink-0 text-right">
