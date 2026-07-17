@@ -1,7 +1,12 @@
 import type {
+    ActionHistoryGroup,
     AskCitation,
+    AskMessageRecord,
+    AskThreadRecord,
     Channel,
     ChannelHandle,
+    CollectionKind,
+    CollectionRecord,
     JobEvent,
     JobStage,
     LedgerPage,
@@ -22,9 +27,12 @@ import type {
     UsageSummary,
     Video,
     VideoComment,
+    VideoHistoryGroup,
     VideoId,
+    VideoLite,
     VideoLongSummary,
     VideoReport,
+    WatchlistEntry,
     YtRole,
     YtUser,
 } from "@app/youtube/lib/types";
@@ -107,7 +115,23 @@ export type ExtensionRequest =
     | { type: "api:reportEstimate"; videoIds: string[] }
     | { type: "api:createReport"; videoIds: string[]; title?: string }
     | { type: "api:getReport"; id: number }
-    | { type: "api:queueStats" };
+    | { type: "api:queueStats" }
+    // Phase 4a — per-user collections / history / watchlist / digest.
+    | { type: "api:listCollections" }
+    | { type: "api:createCollection"; name: string; kind: CollectionKind; rule?: unknown }
+    | { type: "api:getCollection"; id: number }
+    | { type: "api:deleteCollection"; id: number }
+    | { type: "api:addCollectionVideo"; id: number; videoId: string }
+    | { type: "api:removeCollectionVideo"; id: number; videoId: string }
+    | { type: "api:listThreads"; id: number }
+    | { type: "api:getThread"; threadId: number }
+    | { type: "api:askCollection"; id: number; question: string; threadId?: number; provider?: string; model?: string }
+    | { type: "api:userHistory"; groupBy: "video" | "action"; limit?: number }
+    | { type: "api:getWatchlist" }
+    | { type: "api:addWatchlistChannel"; handle: string }
+    | { type: "api:removeWatchlistChannel"; handle: string }
+    | { type: "api:getDigest"; sinceDays?: number }
+    | { type: "api:syncDigest" };
 
 export type ExtensionResponse = { ok: true; data: unknown } | { ok: false; error: string; code?: string };
 
@@ -205,6 +229,26 @@ export interface ExtensionApiMap {
     "api:reportEstimate": { creditCost: number; membersNeedingSummary: number; perMemberCost: Record<string, number> };
     "api:createReport": { report: ReportRecordShape; jobId: number; creditsSpent: number; credits: number };
     "api:getReport": { report: ReportRecordShape; members: Record<string, ReportMemberMeta> };
+    "api:listCollections": { collections: Array<CollectionRecord & { videoCount: number }> };
+    "api:createCollection": { collection: CollectionRecord };
+    "api:getCollection": { collection: CollectionRecord; videos: VideoLite[] };
+    "api:deleteCollection": { deleted: boolean };
+    "api:addCollectionVideo": { added: boolean };
+    "api:removeCollectionVideo": { removed: boolean };
+    "api:listThreads": { threads: AskThreadRecord[] };
+    "api:getThread": { thread: AskThreadRecord; messages: AskMessageRecord[] };
+    "api:askCollection": { threadId: number; answer: string; toolCalls: number; creditsSpent: number; credits: number };
+    "api:userHistory": {
+        groupBy: "video" | "action";
+        videos?: VideoHistoryGroup[];
+        actions?: ActionHistoryGroup[];
+        videosById: Record<string, VideoLite>;
+    };
+    "api:getWatchlist": { channels: WatchlistEntry[] };
+    "api:addWatchlistChannel": { added: boolean };
+    "api:removeWatchlistChannel": { removed: boolean };
+    "api:getDigest": { since: string; channels: Array<{ handle: string; videos: VideoLite[] }> };
+    "api:syncDigest": { enqueuedJobIds: number[] };
 }
 
 /** Wire shape of a stored report (subset of the server's report record). */

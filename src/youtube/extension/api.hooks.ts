@@ -2,6 +2,7 @@ import type { VideoDetailDataSource } from "@app/utils/ui/components/youtube/tab
 import type {
     Channel,
     ChannelHandle,
+    CollectionKind,
     JobStage,
     PipelineJob,
     QaSource,
@@ -536,6 +537,156 @@ export function useQueueStats(enabled = true) {
         queryFn: () => send<ExtensionApiMap["api:queueStats"]>({ type: "api:queueStats" }),
         refetchInterval: 5000,
         enabled,
+    });
+}
+
+export function useUserHistory(groupBy: "video" | "action") {
+    return useQuery({
+        queryKey: ["userHistory", groupBy],
+        queryFn: () => send<ExtensionApiMap["api:userHistory"]>({ type: "api:userHistory", groupBy }),
+        retry: false,
+    });
+}
+
+export function useCollections(enabled = true) {
+    return useQuery({
+        queryKey: ["collections"],
+        queryFn: () => send<ExtensionApiMap["api:listCollections"]>({ type: "api:listCollections" }),
+        select: (response) => response.collections,
+        retry: false,
+        enabled,
+    });
+}
+
+export function useCollection(id: number | null) {
+    return useQuery({
+        queryKey: ["collection", id],
+        queryFn: () => send<ExtensionApiMap["api:getCollection"]>({ type: "api:getCollection", id: id as number }),
+        enabled: id !== null,
+    });
+}
+
+export function useCreateCollection() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (vars: { name: string; kind: CollectionKind; rule?: unknown }) =>
+            send<ExtensionApiMap["api:createCollection"]>({ type: "api:createCollection", ...vars }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["collections"] }),
+    });
+}
+
+export function useDeleteCollection() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (id: number) => send<ExtensionApiMap["api:deleteCollection"]>({ type: "api:deleteCollection", id }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["collections"] }),
+    });
+}
+
+export function useAddCollectionVideo(id: number) {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (videoId: string) =>
+            send<ExtensionApiMap["api:addCollectionVideo"]>({ type: "api:addCollectionVideo", id, videoId }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["collection", id] });
+            queryClient.invalidateQueries({ queryKey: ["collections"] });
+        },
+    });
+}
+
+export function useRemoveCollectionVideo(id: number) {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (videoId: string) =>
+            send<ExtensionApiMap["api:removeCollectionVideo"]>({ type: "api:removeCollectionVideo", id, videoId }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["collection", id] });
+            queryClient.invalidateQueries({ queryKey: ["collections"] });
+        },
+    });
+}
+
+export function useCollectionThreads(id: number | null) {
+    return useQuery({
+        queryKey: ["threads", id],
+        queryFn: () => send<ExtensionApiMap["api:listThreads"]>({ type: "api:listThreads", id: id as number }),
+        select: (response) => response.threads,
+        enabled: id !== null,
+    });
+}
+
+export function useCollectionThread(threadId: number | null) {
+    return useQuery({
+        queryKey: ["thread", threadId],
+        queryFn: () => send<ExtensionApiMap["api:getThread"]>({ type: "api:getThread", threadId: threadId as number }),
+        enabled: threadId !== null,
+    });
+}
+
+export function useAskCollection(id: number) {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (vars: { question: string; threadId?: number; provider?: string; model?: string }) =>
+            send<ExtensionApiMap["api:askCollection"]>({ type: "api:askCollection", id, ...vars }),
+        onSuccess: (result) => {
+            queryClient.invalidateQueries({ queryKey: ["threads", id] });
+            queryClient.invalidateQueries({ queryKey: ["thread", result.threadId] });
+            queryClient.invalidateQueries({ queryKey: ["me"] });
+        },
+    });
+}
+
+export function useWatchlist(enabled = true) {
+    return useQuery({
+        queryKey: ["watchlist"],
+        queryFn: () => send<ExtensionApiMap["api:getWatchlist"]>({ type: "api:getWatchlist" }),
+        select: (response) => response.channels,
+        retry: false,
+        enabled,
+    });
+}
+
+export function useToggleWatchlist() {
+    const queryClient = useQueryClient();
+
+    return useMutation<{ added: boolean } | { removed: boolean }, Error, { handle: string; follow: boolean }>({
+        mutationFn: (vars) =>
+            vars.follow
+                ? send<ExtensionApiMap["api:addWatchlistChannel"]>({
+                      type: "api:addWatchlistChannel",
+                      handle: vars.handle,
+                  })
+                : send<ExtensionApiMap["api:removeWatchlistChannel"]>({
+                      type: "api:removeWatchlistChannel",
+                      handle: vars.handle,
+                  }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+            queryClient.invalidateQueries({ queryKey: ["digest"] });
+        },
+    });
+}
+
+export function useDigest(sinceDays: number) {
+    return useQuery({
+        queryKey: ["digest", sinceDays],
+        queryFn: () => send<ExtensionApiMap["api:getDigest"]>({ type: "api:getDigest", sinceDays }),
+        retry: false,
+    });
+}
+
+export function useDigestSync() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: () => send<ExtensionApiMap["api:syncDigest"]>({ type: "api:syncDigest" }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["digest"] }),
     });
 }
 

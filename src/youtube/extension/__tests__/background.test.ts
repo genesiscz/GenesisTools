@@ -174,3 +174,118 @@ describe("extension background request routing", () => {
         expect(body.ttsVoice).toBe("alloy");
     });
 });
+
+describe("extension background — phase 4a collections/history/watchlist/digest", () => {
+    beforeEach(() => {
+        installEnv({ apiBaseUrl: "http://localhost:9876" });
+    });
+
+    afterEach(() => {
+        globalThis.chrome = originalChrome;
+        globalThis.fetch = originalFetch;
+        (globalThis as { WebSocket?: unknown }).WebSocket = originalWebSocket;
+    });
+
+    it("GETs the collections list", async () => {
+        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const handleRequest = await loadHandleRequest();
+
+        await handleRequest({ type: "api:listCollections" });
+
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/collections");
+        expect(calls.at(-1)?.init.method ?? "GET").toBe("GET");
+    });
+
+    it("POSTs createCollection with name/kind/rule", async () => {
+        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const handleRequest = await loadHandleRequest();
+
+        await handleRequest({
+            type: "api:createCollection",
+            name: "last month",
+            kind: "dynamic",
+            rule: { type: "watched", sinceDays: 30 },
+        });
+
+        const call = calls.at(-1);
+        expect(call?.url).toBe("http://localhost:9876/api/v1/collections");
+        expect(call?.init.method).toBe("POST");
+        const body = SafeJSON.parse(String(call?.init.body)) as Record<string, unknown>;
+        expect(body.name).toBe("last month");
+        expect(body.kind).toBe("dynamic");
+        expect(body.rule).toEqual({ type: "watched", sinceDays: 30 });
+    });
+
+    it("routes collection detail, delete, and membership", async () => {
+        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const handleRequest = await loadHandleRequest();
+
+        await handleRequest({ type: "api:getCollection", id: 7 });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/collections/7");
+
+        await handleRequest({ type: "api:deleteCollection", id: 7 });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/collections/7");
+        expect(calls.at(-1)?.init.method).toBe("DELETE");
+
+        await handleRequest({ type: "api:addCollectionVideo", id: 7, videoId: "vid00000001" });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/collections/7/videos");
+        expect(calls.at(-1)?.init.method).toBe("POST");
+        expect((SafeJSON.parse(String(calls.at(-1)?.init.body)) as { videoId: string }).videoId).toBe("vid00000001");
+
+        await handleRequest({ type: "api:removeCollectionVideo", id: 7, videoId: "a/b" });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/collections/7/videos/a%2Fb");
+        expect(calls.at(-1)?.init.method).toBe("DELETE");
+    });
+
+    it("routes thread list, thread detail, and ask", async () => {
+        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const handleRequest = await loadHandleRequest();
+
+        await handleRequest({ type: "api:listThreads", id: 3 });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/collections/3/threads");
+
+        await handleRequest({ type: "api:getThread", threadId: 9 });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/collections/threads/9");
+
+        await handleRequest({ type: "api:askCollection", id: 3, question: "what?", threadId: 9 });
+        const ask = calls.at(-1);
+        expect(ask?.url).toBe("http://localhost:9876/api/v1/collections/3/ask");
+        expect(ask?.init.method).toBe("POST");
+        const body = SafeJSON.parse(String(ask?.init.body)) as Record<string, unknown>;
+        expect(body.question).toBe("what?");
+        expect(body.threadId).toBe(9);
+    });
+
+    it("builds the userHistory query with groupBy and limit", async () => {
+        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const handleRequest = await loadHandleRequest();
+
+        await handleRequest({ type: "api:userHistory", groupBy: "action", limit: 200 });
+
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/history?groupBy=action&limit=200");
+    });
+
+    it("routes watchlist add/remove and digest get/sync", async () => {
+        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const handleRequest = await loadHandleRequest();
+
+        await handleRequest({ type: "api:getWatchlist" });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/watchlist");
+
+        await handleRequest({ type: "api:addWatchlistChannel", handle: "@chan" });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/watchlist");
+        expect(calls.at(-1)?.init.method).toBe("POST");
+        expect((SafeJSON.parse(String(calls.at(-1)?.init.body)) as { handle: string }).handle).toBe("@chan");
+
+        await handleRequest({ type: "api:removeWatchlistChannel", handle: "@chan" });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/watchlist/%40chan");
+        expect(calls.at(-1)?.init.method).toBe("DELETE");
+
+        await handleRequest({ type: "api:getDigest", sinceDays: 30 });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/digest?sinceDays=30");
+
+        await handleRequest({ type: "api:syncDigest" });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/digest/sync");
+        expect(calls.at(-1)?.init.method).toBe("POST");
+    });
+});
