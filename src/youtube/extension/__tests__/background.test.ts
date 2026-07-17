@@ -325,3 +325,49 @@ describe("extension background — phase 4b monetization (subscribe/referral)", 
         expect((SafeJSON.parse(String(calls.at(-1)?.init.body)) as { code: string }).code).toBe("ABCD1234");
     });
 });
+
+describe("extension background — phase 4b admin panel", () => {
+    beforeEach(() => {
+        installEnv({ apiBaseUrl: "http://localhost:9876" });
+    });
+
+    afterEach(() => {
+        globalThis.chrome = originalChrome;
+        globalThis.fetch = originalFetch;
+        (globalThis as { WebSocket?: unknown }).WebSocket = originalWebSocket;
+    });
+
+    it("builds the admin users query with search and sort", async () => {
+        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const handleRequest = await loadHandleRequest();
+
+        await handleRequest({ type: "api:adminUsers", q: "mkbhd", sort: "revenue", dir: "desc" });
+
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/admin/users?q=mkbhd&sort=revenue&dir=desc");
+    });
+
+    it("routes the admin profile drill-in by id", async () => {
+        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const handleRequest = await loadHandleRequest();
+
+        await handleRequest({ type: "api:adminUser", id: 42 });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/admin/users/42");
+    });
+
+    it("builds ops-view queries (ai-calls, webhook-logs, jobs, revenue)", async () => {
+        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const handleRequest = await loadHandleRequest();
+
+        await handleRequest({ type: "api:adminAiCalls", provider: "xai", action: "summary" });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/admin/ai-calls?provider=xai&action=summary");
+
+        await handleRequest({ type: "api:adminWebhookLogs", outcome: "error" });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/admin/webhook-logs?outcome=error");
+
+        await handleRequest({ type: "api:adminJobs", status: "running" });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/admin/jobs?status=running");
+
+        await handleRequest({ type: "api:adminRevenue", days: 30 });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/admin/revenue?days=30");
+    });
+});

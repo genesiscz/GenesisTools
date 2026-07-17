@@ -1,4 +1,13 @@
 import type {
+    AdminRevenueSummary,
+    AdminUserTotals,
+    AiCallRecord,
+    PaymentRecord,
+    VideoLogRecord,
+    VideoWatchRecord,
+    WebhookLogRecord,
+} from "@app/youtube/lib/db.types";
+import type {
     ActionHistoryGroup,
     AskCitation,
     AskMessageRecord,
@@ -134,7 +143,22 @@ export type ExtensionRequest =
     | { type: "api:addWatchlistChannel"; handle: string }
     | { type: "api:removeWatchlistChannel"; handle: string }
     | { type: "api:getDigest"; sinceDays?: number }
-    | { type: "api:syncDigest" };
+    | { type: "api:syncDigest" }
+    // Phase 4b — admin panel (role admin|dev, server-gated).
+    | {
+          type: "api:adminUsers";
+          q?: string;
+          subscription?: string;
+          sort?: "created" | "revenue" | "net" | "credits";
+          dir?: "asc" | "desc";
+          limit?: number;
+          offset?: number;
+      }
+    | { type: "api:adminUser"; id: number }
+    | { type: "api:adminAiCalls"; provider?: string; action?: string; userId?: number; limit?: number; offset?: number }
+    | { type: "api:adminWebhookLogs"; outcome?: string; limit?: number; offset?: number }
+    | { type: "api:adminJobs"; status?: string; limit?: number; offset?: number }
+    | { type: "api:adminRevenue"; days?: number };
 
 export type ExtensionResponse = { ok: true; data: unknown } | { ok: false; error: string; code?: string };
 
@@ -259,6 +283,44 @@ export interface ExtensionApiMap {
     "api:removeWatchlistChannel": { removed: boolean };
     "api:getDigest": { since: string; channels: Array<{ handle: string; videos: VideoLite[] }> };
     "api:syncDigest": { enqueuedJobIds: number[] };
+    "api:adminUsers": { users: AdminUserListItem[]; total: number; limit: number; offset: number };
+    "api:adminUser": AdminUserProfile;
+    "api:adminAiCalls": { aiCalls: AiCallRecord[]; total: number; limit: number; offset: number };
+    "api:adminWebhookLogs": { webhookLogs: WebhookLogRecord[]; total: number; limit: number; offset: number };
+    "api:adminJobs": { jobs: PipelineJob[]; queue: QueueStats; total: number; limit: number; offset: number };
+    "api:adminRevenue": AdminRevenueSummary;
+}
+
+/** One row of the admin users table (route maps `AdminUserRow` + role + net). */
+export interface AdminUserListItem {
+    id: number;
+    email: string;
+    role: YtRole;
+    credits: number;
+    revenueCents: number;
+    aiCostUsd: number;
+    netUsd: number;
+    subscription: { planId: string | null; status: string } | null;
+    createdAt: string;
+    lastLoginAt: string | null;
+}
+
+/** The admin user drill-in (`GET /admin/users/:id`), unmasked emails. */
+export interface AdminUserProfile {
+    user: YtUser;
+    role: YtRole;
+    billing: MeBillingContext;
+    totals: AdminUserTotals & { netUsd: number };
+    ledger: LedgerPage["rows"];
+    payments: PaymentRecord[];
+    referral: {
+        code: string | null;
+        referees: Array<{ email: string; reward: number; redeemedAt: string }>;
+        totalEarned: number;
+        referredBy: { email: string; reward: number; redeemedAt: string } | null;
+    };
+    activity: { watched: VideoWatchRecord[]; logs: VideoLogRecord[] };
+    jobs: PipelineJob[];
 }
 
 /** Wire shape of a stored report (subset of the server's report record). */

@@ -15,6 +15,7 @@ import {
 import { loadUiLang } from "@ext/shared/i18n";
 import type { ExtensionEvent, PlayerChaptersMessage } from "@ext/shared/messages";
 import { type AccountSection, AccountView } from "@ext/side-panel/account-view";
+import { AdminPanelDialog } from "@ext/side-panel/admin-panel";
 import { ChannelPanel } from "@ext/side-panel/channel-panel";
 import { Header } from "@ext/side-panel/header";
 import { PlaylistPanel } from "@ext/side-panel/playlist-panel";
@@ -45,6 +46,7 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
     const [active, setActive] = useState<VideoDetailTab>("summary");
     const [collapsed, setCollapsed] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
+    const [adminOpen, setAdminOpen] = useState(false);
     const [view, setView] = useState<"tabs" | "account">("tabs");
     const [accountSection, setAccountSection] = useState<AccountSection>("activity");
     // `playerTime` is the throttled value handed to the tab subtree; the ref
@@ -428,7 +430,12 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                     setAccountSection(accountSectionId);
                     setView("account");
                 }}
+                onOpenAdmin={() => {
+                    setSettingsOpen(false);
+                    setAdminOpen(true);
+                }}
             />
+            <AdminPanelDialog open={adminOpen} onOpenChange={setAdminOpen} />
         </div>
     );
 }

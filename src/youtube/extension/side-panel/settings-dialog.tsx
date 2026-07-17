@@ -9,7 +9,7 @@ import { Diamond, formatDiamonds } from "@app/utils/ui/components/youtube/diamon
 import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
 import { formatRelativeTime } from "@app/utils/ui/components/youtube/time";
 import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
-import type { PresetKind, PromptPreset, ShareSummary } from "@app/youtube/lib/types";
+import type { PresetKind, PromptPreset, ShareSummary, YtRole } from "@app/youtube/lib/types";
 import {
     useCheckout,
     useCreatePreset,
@@ -40,6 +40,7 @@ import {
     Newspaper,
     Pencil,
     Share2,
+    ShieldCheck,
     Trash2,
     Wand2,
 } from "lucide-react";
@@ -52,14 +53,17 @@ export function SettingsDialog({
     onOpenChange,
     devMode,
     onOpenAccount,
+    onOpenAdmin,
 }: {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     devMode?: boolean;
     onOpenAccount?: (section: AccountSection) => void;
+    onOpenAdmin?: () => void;
 }) {
     const me = useMe(open);
     const user = me.data?.user;
+    const role = me.data?.role;
     const t = useT();
 
     return (
@@ -83,7 +87,9 @@ export function SettingsDialog({
                         credits={user.credits}
                         outputLang={user.outputLang}
                         devMode={devMode}
+                        role={role}
                         onOpenAccount={onOpenAccount}
+                        onOpenAdmin={onOpenAdmin}
                     />
                 ) : (
                     <AuthForm />
@@ -98,16 +104,21 @@ function SignedInView({
     credits,
     outputLang,
     devMode,
+    role,
     onOpenAccount,
+    onOpenAdmin,
 }: {
     email: string;
     credits: number;
     outputLang: string | null;
     devMode?: boolean;
+    role?: YtRole;
     onOpenAccount?: (section: AccountSection) => void;
+    onOpenAdmin?: () => void;
 }) {
     const logout = useLogout();
     const t = useT();
+    const isPower = role === "admin" || role === "dev";
 
     return (
         <div className="space-y-3">
@@ -134,6 +145,17 @@ function SignedInView({
             {onOpenAccount ? <ActivitySparkline onViewAll={() => onOpenAccount("activity")} /> : null}
 
             {onOpenAccount ? <LibraryNav onOpen={onOpenAccount} /> : null}
+
+            {isPower && onOpenAdmin ? (
+                <Button
+                    size="sm"
+                    variant="ghost"
+                    className="w-full justify-start text-muted-foreground"
+                    onClick={onOpenAdmin}
+                >
+                    <ShieldCheck className="size-4" /> Admin panel
+                </Button>
+            ) : null}
 
             <LanguageSection outputLang={outputLang} />
 

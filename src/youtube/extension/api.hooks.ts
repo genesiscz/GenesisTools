@@ -719,6 +719,78 @@ export function useDigestSync() {
     });
 }
 
+export function useAdminUsers(opts: {
+    q?: string;
+    subscription?: string;
+    sort?: "created" | "revenue" | "net" | "credits";
+    dir?: "asc" | "desc";
+    enabled?: boolean;
+}) {
+    return useQuery({
+        queryKey: ["adminUsers", opts.q, opts.subscription, opts.sort, opts.dir],
+        queryFn: () =>
+            send<ExtensionApiMap["api:adminUsers"]>({
+                type: "api:adminUsers",
+                q: opts.q,
+                subscription: opts.subscription,
+                sort: opts.sort,
+                dir: opts.dir,
+            }),
+        retry: false,
+        enabled: opts.enabled !== false,
+    });
+}
+
+export function useAdminUser(id: number | null) {
+    return useQuery({
+        queryKey: ["adminUser", id],
+        queryFn: () => send<ExtensionApiMap["api:adminUser"]>({ type: "api:adminUser", id: id as number }),
+        enabled: id !== null,
+    });
+}
+
+export function useAdminAiCalls(opts: { provider?: string; action?: string; enabled?: boolean }) {
+    return useQuery({
+        queryKey: ["adminAiCalls", opts.provider, opts.action],
+        queryFn: () =>
+            send<ExtensionApiMap["api:adminAiCalls"]>({
+                type: "api:adminAiCalls",
+                provider: opts.provider,
+                action: opts.action,
+            }),
+        retry: false,
+        enabled: opts.enabled !== false,
+    });
+}
+
+export function useAdminWebhookLogs(opts: { outcome?: string; enabled?: boolean }) {
+    return useQuery({
+        queryKey: ["adminWebhookLogs", opts.outcome],
+        queryFn: () =>
+            send<ExtensionApiMap["api:adminWebhookLogs"]>({ type: "api:adminWebhookLogs", outcome: opts.outcome }),
+        retry: false,
+        enabled: opts.enabled !== false,
+    });
+}
+
+export function useAdminJobs(opts: { status?: string; enabled?: boolean }) {
+    return useQuery({
+        queryKey: ["adminJobs", opts.status],
+        queryFn: () => send<ExtensionApiMap["api:adminJobs"]>({ type: "api:adminJobs", status: opts.status }),
+        retry: false,
+        enabled: opts.enabled !== false,
+    });
+}
+
+export function useAdminRevenue(enabled = true) {
+    return useQuery({
+        queryKey: ["adminRevenue"],
+        queryFn: () => send<ExtensionApiMap["api:adminRevenue"]>({ type: "api:adminRevenue", days: 30 }),
+        retry: false,
+        enabled,
+    });
+}
+
 export const dataSource: VideoDetailDataSource = {
     useVideo,
     useTranscript,

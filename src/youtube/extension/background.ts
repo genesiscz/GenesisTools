@@ -382,6 +382,83 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
         }
         case "api:syncDigest":
             return apiCall(`${base}/api/v1/users/digest/sync`, { method: "POST" });
+        case "api:adminUsers": {
+            const query = new URLSearchParams();
+            if (req.q) {
+                query.set("q", req.q);
+            }
+            if (req.subscription) {
+                query.set("subscription", req.subscription);
+            }
+            if (req.sort) {
+                query.set("sort", req.sort);
+            }
+            if (req.dir) {
+                query.set("dir", req.dir);
+            }
+            if (typeof req.limit === "number") {
+                query.set("limit", String(req.limit));
+            }
+            if (typeof req.offset === "number") {
+                query.set("offset", String(req.offset));
+            }
+            const suffix = query.toString() ? `?${query.toString()}` : "";
+            return apiCall(`${base}/api/v1/admin/users${suffix}`);
+        }
+        case "api:adminUser":
+            return apiCall(`${base}/api/v1/admin/users/${req.id}`);
+        case "api:adminAiCalls": {
+            const query = new URLSearchParams();
+            if (req.provider) {
+                query.set("provider", req.provider);
+            }
+            if (req.action) {
+                query.set("action", req.action);
+            }
+            if (typeof req.userId === "number") {
+                query.set("userId", String(req.userId));
+            }
+            if (typeof req.limit === "number") {
+                query.set("limit", String(req.limit));
+            }
+            if (typeof req.offset === "number") {
+                query.set("offset", String(req.offset));
+            }
+            const suffix = query.toString() ? `?${query.toString()}` : "";
+            return apiCall(`${base}/api/v1/admin/ai-calls${suffix}`);
+        }
+        case "api:adminWebhookLogs": {
+            const query = new URLSearchParams();
+            if (req.outcome) {
+                query.set("outcome", req.outcome);
+            }
+            if (typeof req.limit === "number") {
+                query.set("limit", String(req.limit));
+            }
+            if (typeof req.offset === "number") {
+                query.set("offset", String(req.offset));
+            }
+            const suffix = query.toString() ? `?${query.toString()}` : "";
+            return apiCall(`${base}/api/v1/admin/webhook-logs${suffix}`);
+        }
+        case "api:adminJobs": {
+            const query = new URLSearchParams();
+            if (req.status) {
+                query.set("status", req.status);
+            }
+            if (typeof req.limit === "number") {
+                query.set("limit", String(req.limit));
+            }
+            if (typeof req.offset === "number") {
+                query.set("offset", String(req.offset));
+            }
+            const suffix = query.toString() ? `?${query.toString()}` : "";
+            return apiCall(`${base}/api/v1/admin/jobs${suffix}`);
+        }
+        case "api:adminRevenue": {
+            const suffix = typeof req.days === "number" ? `?days=${req.days}` : "";
+            return apiCall(`${base}/api/v1/admin/revenue${suffix}`);
+        }
         default: {
             // Exhaustiveness guard: every ExtensionRequest above returns, so a
             // new variant added without a case fails this assignment at compile
