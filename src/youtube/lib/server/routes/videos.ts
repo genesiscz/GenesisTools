@@ -27,6 +27,8 @@ import { compactTranscript } from "@app/youtube/lib/transcript-compact";
 import { translateTranscript } from "@app/youtube/lib/transcripts";
 import type { ChannelHandle, QaSource, Transcript, Video, VideoId } from "@app/youtube/lib/types";
 import { CREDIT_COSTS, InsufficientCreditsError, REUSE_COST } from "@app/youtube/lib/types";
+import { resolveUserSettings, type TaskDefaultSettings } from "@app/youtube/lib/user-settings";
+import type { SummaryFormat, SummaryLength, SummaryTone } from "@app/youtube/lib/video.types";
 import type { Youtube } from "@app/youtube/lib/youtube";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 
@@ -439,8 +441,13 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             const mode = parseMode(body.mode);
             const creditCost = CREDIT_COSTS[`summary:${mode}`];
             const force = body.force === true;
+            // Per-task customization defaults fill in whatever the request omits
+            // (explicit request params always win). timestamped → insights, else summary.
+            const taskDefaults = resolveUserSettings(user.settings).taskDefaults?.[
+                mode === "timestamped" ? "insights" : "summary"
+            ];
             const requestedLang = typeof body.lang === "string" ? body.lang : undefined;
-            const lang = requestedLang && isOutputLang(requestedLang) ? requestedLang : (user.outputLang ?? "en");
+            const lang = resolveSummaryLang(requestedLang, taskDefaults, user.outputLang);
             // Switching to a language the stored artifact wasn't generated in
             // always regenerates — v1 keeps one summary per mode, so a lang
             // switch replaces it (never served from the reuse/cache path).
@@ -497,9 +504,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
             const provider = typeof body.provider === "string" ? body.provider : undefined;
             const model = typeof body.model === "string" ? body.model : undefined;
-            const tone = parseTone(body.tone);
-            const format = parseFormat(body.format);
-            const length = parseLength(body.length);
+            const { tone, format, length } = resolveSummaryControls(body, taskDefaults);
             const targetBins = typeof body.targetBins === "number" ? body.targetBins : undefined;
             const presetId = typeof body.presetId === "number" ? body.presetId : undefined;
             let presetInstructions: string | undefined;
@@ -1159,6 +1164,34 @@ function parseMode(value: unknown): "short" | "timestamped" | "long" {
     }
 
     return "short";
+}
+
+/**
+ * Resolve the summary controls a request will use: the explicit body value wins,
+ * else the user's per-task default, else undefined (the generator's own default).
+ */
+export function resolveSummaryControls(
+    body: { tone?: unknown; format?: unknown; length?: unknown },
+    taskDefaults: TaskDefaultSettings | undefined
+): { tone?: SummaryTone; format?: SummaryFormat; length?: SummaryLength } {
+    return {
+        tone: parseTone(body.tone) ?? taskDefaults?.tone,
+        format: parseFormat(body.format) ?? taskDefaults?.format,
+        length: parseLength(body.length) ?? taskDefaults?.length,
+    };
+}
+
+/** Output language: valid explicit request lang wins, else per-task default, else the user's global lang, else "en". */
+export function resolveSummaryLang(
+    requestedLang: string | undefined,
+    taskDefaults: TaskDefaultSettings | undefined,
+    userOutputLang: string | null
+): string {
+    if (requestedLang && isOutputLang(requestedLang)) {
+        return requestedLang;
+    }
+
+    return taskDefaults?.lang ?? userOutputLang ?? "en";
 }
 
 function parseTone(value: unknown): "insightful" | "funny" | "actionable" | "controversial" | undefined {
