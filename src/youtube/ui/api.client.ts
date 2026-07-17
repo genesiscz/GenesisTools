@@ -84,10 +84,18 @@ async function baseUrl(): Promise<string> {
 const USER_TOKEN_STORAGE_KEY = "yt.userToken";
 
 export function getUserToken(): string | null {
+    if (typeof localStorage === "undefined") {
+        return null;
+    }
+
     return localStorage.getItem(USER_TOKEN_STORAGE_KEY);
 }
 
 export function setUserToken(token: string | null): void {
+    if (typeof localStorage === "undefined") {
+        return;
+    }
+
     if (token) {
         localStorage.setItem(USER_TOKEN_STORAGE_KEY, token);
     } else {
