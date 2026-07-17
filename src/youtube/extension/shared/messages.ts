@@ -7,6 +7,7 @@ import type {
     LedgerPage,
     LlmEstimate,
     LockedArtifact,
+    MeBillingContext,
     PipelineJob,
     PromptPreset,
     QaHistoryItem,
@@ -186,7 +187,7 @@ export interface ExtensionApiMap {
     "api:register": { user: YtUser; token: string };
     "api:login": { user: YtUser; token: string };
     "api:logout": { ok: true };
-    "api:me": { user: YtUser; role: YtRole };
+    "api:me": { user: YtUser; role: YtRole; billing: MeBillingContext };
     "api:queueStats": { queue: QueueStats };
     "api:topup": { user: YtUser };
     "api:qaHistory": { items: QaHistoryItem[] };
