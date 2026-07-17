@@ -54,6 +54,13 @@ export const env = {
         getGitSha: () => getTrimmed("YOUTUBE_GIT_SHA"),
         getUiPort: () => getTrimmed("YOUTUBE_UI_PORT"),
     },
+
+    extension: {
+        /** EXT_DEV=1 enables the dev-reload WebSocket in the extension build. */
+        isDevReload: () => isFlag("EXT_DEV"),
+        /** EXT_TARGET selects the two-pass build config ('modules' | 'content-script'). */
+        getBuildTarget: () => getTrimmed("EXT_TARGET"),
+    },
 } as const;
 
 export type EnvClient = typeof env;

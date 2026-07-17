@@ -1,5 +1,10 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
+// Relative + client-safe env facade so vite's config loader and rollup's dep
+// scan both inline these without tsconfig path mapping (env.client pulls in no
+// bare @app specifiers; json.ts imports only comment-json).
+import { SafeJSON } from "../../utils/json";
+import { env } from "../../utils/env.client";
 import tailwindcss from "@tailwindcss/vite";
 import viteReact from "@vitejs/plugin-react";
 import { defineConfig, type Plugin, type UserConfig } from "vite";
@@ -22,13 +27,13 @@ function copyExtensionStaticAssets(): Plugin {
     };
 }
 
-const devReload = process.env.EXT_DEV === "1";
+const devReload = env.extension.isDevReload();
 
 const shared: UserConfig = {
     root,
     plugins: [tailwindcss(), viteReact()],
     define: {
-        __EXT_DEV_RELOAD__: JSON.stringify(devReload),
+        __EXT_DEV_RELOAD__: SafeJSON.stringify(devReload),
     },
     resolve: {
         alias: {
@@ -42,7 +47,7 @@ const shared: UserConfig = {
 // Two-pass build: content-script MUST be a self-contained IIFE because Chrome
 // MV3 content scripts don't support ES module imports. Background + popup
 // happily use module chunks; keep them together to share code.
-const target = process.env.EXT_TARGET ?? "modules";
+const target = env.extension.getBuildTarget() ?? "modules";
 
 const configs: Record<string, UserConfig> = {
     modules: {
@@ -76,8 +81,8 @@ const configs: Record<string, UserConfig> = {
         // so React's internals reference `process.env` at runtime. Content
         // scripts run in a browser context with no `process` → replace here.
         define: {
-            "process.env.NODE_ENV": JSON.stringify("production"),
-            __EXT_DEV_RELOAD__: JSON.stringify(devReload),
+            "process.env.NODE_ENV": SafeJSON.stringify("production"),
+            __EXT_DEV_RELOAD__: SafeJSON.stringify(devReload),
         },
         // Chrome MV3 content-script loader rejects files containing chars it
         // reads as non-UTF-8 (e.g. U+FFFF from regex ranges, dozens of Latin-1
