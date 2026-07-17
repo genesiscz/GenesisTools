@@ -7,7 +7,7 @@ import { useAskCollection, useCollection, useRemoveCollectionVideo, useThread, u
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 
-export const Route = createFileRoute("/collections/$id")({
+export const Route = createFileRoute("/collections_/$id")({
     component: CollectionDetailPage,
 });
 
@@ -23,6 +23,12 @@ function CollectionDetailPage() {
     const removeVideo = useRemoveCollectionVideo(validId ?? 0);
     const navigate = useNavigate();
     const [pending, setPending] = useState<string | null>(null);
+
+    // Non-numeric ids disable the query — without this guard they'd sit on
+    // the isPending branch ("Loading collection…") forever.
+    if (validId === null) {
+        return <p className="mx-auto max-w-4xl p-4 text-sm text-muted-foreground">Collection not found.</p>;
+    }
 
     if (collection.isPending) {
         return <p className="mx-auto max-w-4xl p-4 text-sm text-muted-foreground">Loading collection…</p>;

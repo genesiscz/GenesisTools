@@ -18,6 +18,7 @@ import {
     useTranscript,
     useVideo,
 } from "@app/yt/api.hooks";
+import { AddToCollectionButton } from "@app/yt/components/collections/add-to-collection-button";
 import { ProgressBar } from "@app/yt/components/pipeline/progress-bar";
 import { Loading } from "@app/yt/components/shared/loading";
 import { formatDate, formatDuration, formatNumber } from "@app/yt/lib/format";
@@ -57,6 +58,10 @@ function VideoDetailPage() {
             isPending: startPipeline.isPending,
             run: async (stages: JobStage[]) => {
                 try {
+                    // Reset stale progress from a prior run before tracking the
+                    // new job — otherwise the old bar flashes at its last value.
+                    setProgress(0);
+                    setProgressMessage(null);
                     const { job } = await startPipeline.mutateAsync({ target: id, targetKind: "video", stages });
                     setActiveJobId(job.id);
                 } catch (error) {
@@ -95,6 +100,9 @@ function VideoDetailPage() {
                 queryClient.invalidateQueries({ queryKey: ["transcript", id] });
             }
             if (event.type === "job:failed") {
+                // Terminal value: leaving progress mid-range keeps the
+                // pipelineProgress loader (progress > 0 && < 1) alive forever.
+                setProgress(0);
                 setProgressMessage("Failed");
                 queryClient.invalidateQueries({ queryKey: ["video", id] });
                 queryClient.invalidateQueries({ queryKey: ["summary", id] });
@@ -136,6 +144,9 @@ function VideoDetailPage() {
                             <Captions className="size-3" /> {video.data.transcripts.length} transcript
                             {video.data.transcripts.length === 1 ? "" : "s"}
                         </Badge>
+                    </div>
+                    <div className="mt-3">
+                        <AddToCollectionButton videoId={id} />
                     </div>
                 </header>
                 <ProgressBar value={progress} message={progressMessage} />

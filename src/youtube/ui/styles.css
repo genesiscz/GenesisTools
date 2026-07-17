@@ -67,3 +67,16 @@ select {
     border-radius: 999px;
     background: rgb(245 158 11 / 45%);
 }
+
+/* Compact density: tighten card rhythm without changing the palette. */
+.yt-density-compact [data-slot="card"] {
+    gap: 0.85rem;
+    padding-top: 0.85rem;
+    padding-bottom: 0.85rem;
+}
+
+.yt-density-compact [data-slot="card-header"],
+.yt-density-compact [data-slot="card-content"] {
+    padding-left: 1rem;
+    padding-right: 1rem;
+}

@@ -26,6 +26,7 @@ import type {
     YoutubeConfigShape,
     YtUser,
 } from "@app/youtube/lib/types";
+import type { UserSettings } from "@app/youtube/lib/user-settings";
 import { fetchUiConfig } from "@app/yt/config.client";
 import { reportBackendReachable, reportBackendUnreachable } from "./backend-status";
 
@@ -108,14 +109,22 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     const token = getUserToken();
     let res: Response;
 
+    // Headers-based merge: spreading init.headers would silently drop entries
+    // if a caller ever passes a Headers instance (non-enumerable own props).
+    const headers = new Headers(init.headers);
+
+    if (!headers.has("Content-Type")) {
+        headers.set("Content-Type", "application/json");
+    }
+
+    if (token && !headers.has("Authorization")) {
+        headers.set("Authorization", `Bearer ${token}`);
+    }
+
     try {
         res = await fetch(`${base}/api/v1${path}`, {
             ...init,
-            headers: {
-                "Content-Type": "application/json",
-                ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                ...(init.headers ?? {}),
-            },
+            headers,
         });
     } catch (err) {
         // Network-level failure (ERR_CONNECTION_REFUSED etc.) — the backend is down,
@@ -258,6 +267,7 @@ export const apiClient = {
             model?: string;
             sources?: QaSource[];
             scope?: "video" | "channel";
+            presetId?: number;
         }
     ) =>
         api<AskVideoResponse>(`/videos/${encodeURIComponent(id)}/qa`, {
@@ -302,7 +312,10 @@ export const apiClient = {
             method: "POST",
             body: SafeJSON.stringify({ email, password }),
         }),
-    me: () => api<{ user: YtUser; role: string }>("/users/me"),
+    me: () => api<{ user: YtUser; role: string; settings: UserSettings }>("/users/me"),
+    getSettings: () => api<{ settings: UserSettings }>("/users/settings"),
+    updateSettings: (patch: Partial<UserSettings>) =>
+        api<{ settings: UserSettings }>("/users/settings", { method: "PATCH", body: SafeJSON.stringify(patch) }),
 
     listCollections: () => api<{ collections: Array<CollectionRecord & { videoCount: number }> }>("/collections"),
     createCollection: (body: { name: string; kind: CollectionKind; rule?: unknown }) =>

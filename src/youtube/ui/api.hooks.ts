@@ -1,6 +1,8 @@
 import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import type { ChannelHandle, CollectionKind, JobStage, JobStatus, QaSource, VideoId } from "@app/youtube/lib/types";
+import { mergeUserSettings, resolveUserSettings, type UserSettings } from "@app/youtube/lib/user-settings";
 import { apiClient, clearApiBaseUrlCache, setUserToken } from "@app/yt/api.client";
+import { clearUserScopedQueries } from "@app/yt/lib/user-queries";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -138,6 +140,7 @@ export function useAskVideo(id: VideoId) {
             model?: string;
             sources?: QaSource[];
             scope?: "video" | "channel";
+            presetId?: number;
         }) => apiClient.askVideo(id, vars),
     });
 }
@@ -259,6 +262,52 @@ export function useMe() {
     return useQuery({ queryKey: ["me"], queryFn: () => apiClient.me(), retry: false });
 }
 
+export function useUserSettings() {
+    const queryClient = useQueryClient();
+
+    return useQuery({
+        queryKey: ["userSettings"],
+        queryFn: async () => (await apiClient.getSettings()).settings,
+        // Seed from the /users/me cache so the panel renders without a flash.
+        initialData: () => {
+            const me = queryClient.getQueryData<{ settings?: UserSettings }>(["me"]);
+
+            return me?.settings ? resolveUserSettings(me.settings) : undefined;
+        },
+        retry: false,
+    });
+}
+
+export function useUpdateUserSettings() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (patch: Partial<UserSettings>) => apiClient.updateSettings(patch),
+        // Optimistic: apply the merged patch locally, roll back on error.
+        onMutate: async (patch) => {
+            await queryClient.cancelQueries({ queryKey: ["userSettings"] });
+            const previous = queryClient.getQueryData<UserSettings>(["userSettings"]);
+            const base = previous ?? resolveUserSettings(null);
+            queryClient.setQueryData(["userSettings"], mergeUserSettings(base, patch));
+
+            return { previous };
+        },
+        onError: (error, _patch, context) => {
+            if (context?.previous) {
+                queryClient.setQueryData(["userSettings"], context.previous);
+            }
+
+            toast.error("Couldn't save settings", { description: errorMessage(error) });
+        },
+        onSuccess: (data) => {
+            queryClient.setQueryData(["userSettings"], data.settings);
+        },
+        onSettled: () => {
+            queryClient.invalidateQueries({ queryKey: ["me"] });
+        },
+    });
+}
+
 export function useLogin() {
     const queryClient = useQueryClient();
 
@@ -294,7 +343,10 @@ export function useLogout() {
         mutationFn: async () => {
             setUserToken(null);
         },
-        onSuccess: () => queryClient.invalidateQueries(),
+        onSuccess: () => {
+            clearUserScopedQueries(queryClient);
+            queryClient.invalidateQueries();
+        },
     });
 }
 
@@ -343,7 +395,10 @@ export function useAddCollectionVideo(id: number) {
 
     return useMutation({
         mutationFn: (videoId: string) => apiClient.addCollectionVideo(id, videoId),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["collection", id] }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["collection", id] });
+            queryClient.invalidateQueries({ queryKey: ["collections"] });
+        },
         onError: (error) => {
             toast.error("Adding video failed", { description: errorMessage(error) });
         },

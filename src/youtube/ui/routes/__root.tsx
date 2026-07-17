@@ -1,13 +1,16 @@
 import { AppShell, AppSidebar, type SidebarNavItem } from "@app/utils/ui/custom";
 import { cn } from "@app/utils/ui/lib/utils";
+import { useUserSettings } from "@app/yt/api.hooks";
 import { ErrorBoundary } from "@app/yt/components/shared/error-boundary";
 import { fetchUiConfig } from "@app/yt/config.client";
+import { applyAppearance } from "@app/yt/lib/appearance";
 import { pageTitleFromPath } from "@app/yt/lib/theme";
 import { useEventStream } from "@app/yt/ws.client";
 import type { QueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, Link, Outlet, redirect, useRouterState } from "@tanstack/react-router";
 import { BriefcaseBusiness, History, Library, Newspaper, PlaySquare, Settings, Youtube } from "lucide-react";
 import type React from "react";
+import { useEffect } from "react";
 
 interface RouterContext {
     queryClient: QueryClient;
@@ -55,9 +58,32 @@ function YtSidebarItem({
     );
 }
 
+/** Apply the signed-in user's theme + density to the document root, live. */
+function useAppearance() {
+    const settings = useUserSettings();
+    const theme = settings.data?.theme ?? "system";
+    const density = settings.data?.density ?? "comfortable";
+
+    useEffect(() => {
+        applyAppearance({ theme, density });
+
+        if (theme !== "system" || typeof window === "undefined" || typeof window.matchMedia !== "function") {
+            return;
+        }
+
+        const media = window.matchMedia("(prefers-color-scheme: dark)");
+        const onChange = () => applyAppearance({ theme, density });
+        media.addEventListener("change", onChange);
+
+        return () => media.removeEventListener("change", onChange);
+    }, [theme, density]);
+}
+
 function RootLayout() {
     const pathname = useRouterState({ select: (state) => state.location.pathname });
     const { connected } = useEventStream({ enabled: pathname !== "/first-run" });
+
+    useAppearance();
 
     return (
         <AppShell

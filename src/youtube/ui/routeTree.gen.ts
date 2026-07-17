@@ -17,7 +17,7 @@ import { Route as DigestRouteImport } from './routes/digest'
 import { Route as CollectionsRouteImport } from './routes/collections'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as VideosIdRouteImport } from './routes/videos.$id'
-import { Route as CollectionsIdRouteImport } from './routes/collections.$id'
+import { Route as CollectionsIdRouteImport } from './routes/collections_.$id'
 import { Route as ChannelsHandleRouteImport } from './routes/channels.$handle'
 
 const SettingsRoute = SettingsRouteImport.update({
@@ -61,9 +61,9 @@ const VideosIdRoute = VideosIdRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const CollectionsIdRoute = CollectionsIdRouteImport.update({
-  id: '/$id',
-  path: '/$id',
-  getParentRoute: () => CollectionsRoute,
+  id: '/collections_/$id',
+  path: '/collections/$id',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ChannelsHandleRoute = ChannelsHandleRouteImport.update({
   id: '/channels/$handle',
@@ -73,7 +73,7 @@ const ChannelsHandleRoute = ChannelsHandleRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/collections': typeof CollectionsRouteWithChildren
+  '/collections': typeof CollectionsRoute
   '/digest': typeof DigestRoute
   '/first-run': typeof FirstRunRoute
   '/history': typeof HistoryRoute
@@ -85,7 +85,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/collections': typeof CollectionsRouteWithChildren
+  '/collections': typeof CollectionsRoute
   '/digest': typeof DigestRoute
   '/first-run': typeof FirstRunRoute
   '/history': typeof HistoryRoute
@@ -98,14 +98,14 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/collections': typeof CollectionsRouteWithChildren
+  '/collections': typeof CollectionsRoute
   '/digest': typeof DigestRoute
   '/first-run': typeof FirstRunRoute
   '/history': typeof HistoryRoute
   '/jobs': typeof JobsRoute
   '/settings': typeof SettingsRoute
   '/channels/$handle': typeof ChannelsHandleRoute
-  '/collections/$id': typeof CollectionsIdRoute
+  '/collections_/$id': typeof CollectionsIdRoute
   '/videos/$id': typeof VideosIdRoute
 }
 export interface FileRouteTypes {
@@ -143,19 +143,20 @@ export interface FileRouteTypes {
     | '/jobs'
     | '/settings'
     | '/channels/$handle'
-    | '/collections/$id'
+    | '/collections_/$id'
     | '/videos/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  CollectionsRoute: typeof CollectionsRouteWithChildren
+  CollectionsRoute: typeof CollectionsRoute
   DigestRoute: typeof DigestRoute
   FirstRunRoute: typeof FirstRunRoute
   HistoryRoute: typeof HistoryRoute
   JobsRoute: typeof JobsRoute
   SettingsRoute: typeof SettingsRoute
   ChannelsHandleRoute: typeof ChannelsHandleRoute
+  CollectionsIdRoute: typeof CollectionsIdRoute
   VideosIdRoute: typeof VideosIdRoute
 }
 
@@ -217,12 +218,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof VideosIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/collections/$id': {
-      id: '/collections/$id'
-      path: '/$id'
+    '/collections_/$id': {
+      id: '/collections_/$id'
+      path: '/collections/$id'
       fullPath: '/collections/$id'
       preLoaderRoute: typeof CollectionsIdRouteImport
-      parentRoute: typeof CollectionsRoute
+      parentRoute: typeof rootRouteImport
     }
     '/channels/$handle': {
       id: '/channels/$handle'
@@ -234,27 +235,16 @@ declare module '@tanstack/react-router' {
   }
 }
 
-interface CollectionsRouteChildren {
-  CollectionsIdRoute: typeof CollectionsIdRoute
-}
-
-const CollectionsRouteChildren: CollectionsRouteChildren = {
-  CollectionsIdRoute: CollectionsIdRoute,
-}
-
-const CollectionsRouteWithChildren = CollectionsRoute._addFileChildren(
-  CollectionsRouteChildren,
-)
-
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  CollectionsRoute: CollectionsRouteWithChildren,
+  CollectionsRoute: CollectionsRoute,
   DigestRoute: DigestRoute,
   FirstRunRoute: FirstRunRoute,
   HistoryRoute: HistoryRoute,
   JobsRoute: JobsRoute,
   SettingsRoute: SettingsRoute,
   ChannelsHandleRoute: ChannelsHandleRoute,
+  CollectionsIdRoute: CollectionsIdRoute,
   VideosIdRoute: VideosIdRoute,
 }
 export const routeTree = rootRouteImport
