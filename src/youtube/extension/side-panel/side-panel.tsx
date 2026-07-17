@@ -2,7 +2,16 @@ import { type PipelineProgress, type VideoDetailTab, VideoDetailTabs } from "@ap
 import type { PipelineJob } from "@app/youtube/lib/jobs.types";
 import type { JobStage, SummaryMode } from "@app/youtube/lib/types";
 import { send } from "@ext/api.bridge";
-import { buildAudioSrc, dataSource, useConfig, useMe, useModels, useStartPipeline, useSummary } from "@ext/api.hooks";
+import {
+    buildAudioSrc,
+    dataSource,
+    useConfig,
+    useMe,
+    useModels,
+    useQueueStats,
+    useStartPipeline,
+    useSummary,
+} from "@ext/api.hooks";
 import { loadUiLang } from "@ext/shared/i18n";
 import type { ExtensionEvent, PlayerChaptersMessage } from "@ext/shared/messages";
 import { type AccountSection, AccountView } from "@ext/side-panel/account-view";
@@ -137,6 +146,9 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
     // while a job runs for THIS video) and query invalidation when a job
     // finishes (so "Fetch comments" etc. actually surface their data).
     const [pipelineProgress, setPipelineProgress] = useState<PipelineProgress | null>(null);
+    // Only poll the queue while a job is actually in flight — the transcript
+    // tab uses it to show how many jobs are ahead.
+    const queueStats = useQueueStats(pipelineProgress !== null);
     const activeJobIdsRef = useRef<Set<number>>(new Set());
     // Streaming summary:partial payloads (kept past job:completed so the
     // refetched query swaps content in without a flash of emptiness).
@@ -383,6 +395,7 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                             modelPresets={models.data?.presets ?? []}
                             modelDefaults={models.data?.defaults}
                             pipelineProgress={pipelineProgress}
+                            queueStats={queueStats.data?.queue}
                             onRequireLogin={requireLogin}
                             onUpgrade={() => setSettingsOpen(true)}
                             onOpenWatch={(id, t) => void send({ type: "nav:openWatch", id, t })}

@@ -10,8 +10,15 @@ import { scrollIntoPanelView } from "@app/utils/ui/components/youtube/scroll";
 import type { PipelineProgress, RunPipeline } from "@app/utils/ui/components/youtube/tabs";
 import { formatTimecode } from "@app/utils/ui/components/youtube/time";
 import { segmentsToParagraphs, type TranscriptParagraph } from "@app/utils/ui/components/youtube/transcript-paragraphs";
-import type { Transcript, TranscriptSegment, Video, VideoId } from "@app/youtube/lib/types";
-import { Captions, ChevronDown, ChevronUp, Languages, Loader2, LocateFixed, Search } from "lucide-react";
+import {
+    CREDIT_COSTS,
+    type QueueStats,
+    type Transcript,
+    type TranscriptSegment,
+    type Video,
+    type VideoId,
+} from "@app/youtube/lib/types";
+import { Captions, ChevronDown, ChevronUp, Languages, Loader2, LocateFixed, Search, Sparkles } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 /** Sentinel Select value meaning "no lang filter — server picks the default (captions preferred)". */
@@ -100,6 +107,9 @@ export interface TranscriptTabProps {
     };
     runPipeline?: RunPipeline;
     pipelineProgress?: PipelineProgress | null;
+    /** Live queue stats (`GET /jobs/queue`) — shows how many jobs are ahead
+     *  while a fetch waits its turn. Optional; omit to hide queue info. */
+    queueStats?: QueueStats | null;
     /** Current playback second (1 Hz bridge) — drives follow mode. */
     playerTime?: number | null;
     /** Lists every stored transcript row (for the language Select) — reuses
@@ -127,6 +137,7 @@ export function TranscriptTab({
     useTranslateTranscript,
     runPipeline,
     pipelineProgress,
+    queueStats,
     playerTime,
 }: TranscriptTabProps) {
     const [query, setQuery] = useState("");
@@ -298,43 +309,12 @@ export function TranscriptTab({
     }
 
     if (segments.length === 0) {
-        const isRunning = (runPipeline?.isPending ?? false) || pipelineProgress != null;
-
         return (
-            <div className="space-y-3 rounded-xl border border-dashed border-primary/25 p-4">
-                <div className="flex items-start gap-3">
-                    <Captions className="mt-0.5 size-5 shrink-0 text-primary" />
-                    <div className="space-y-1">
-                        <p className="text-sm font-semibold">No transcript yet</p>
-                        <p className="text-sm text-muted-foreground">
-                            Fetch it to read and search everything said in the video.
-                        </p>
-                    </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-3">
-                    {runPipeline ? (
-                        <Button
-                            data-testid="transcript-run-pipeline"
-                            onClick={() => runPipeline.run(["captions"])}
-                            disabled={isRunning}
-                        >
-                            {isRunning ? (
-                                <>
-                                    <Loader2 className="size-4 animate-spin" /> Fetching transcript…
-                                </>
-                            ) : (
-                                "Fetch transcript"
-                            )}
-                        </Button>
-                    ) : null}
-                    {pipelineProgress ? (
-                        <span className="text-xs tabular-nums text-muted-foreground">
-                            {Math.round(pipelineProgress.progress * 100)}%
-                            {pipelineProgress.message ? ` · ${pipelineProgress.message}` : ""}
-                        </span>
-                    ) : null}
-                </div>
-            </div>
+            <TranscriptEmptyState
+                runPipeline={runPipeline}
+                pipelineProgress={pipelineProgress}
+                queueStats={queueStats}
+            />
         );
     }
 
@@ -734,4 +714,107 @@ function countOccurrences(haystack: string, needle: string): number {
 
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Empty-state for a video with no transcript yet. Leads with the cheap caption
+ * fetch; when a video has no captions the user can fall back to AI
+ * transcription from the audio, which costs diamonds (`CREDIT_COSTS`
+ * ["transcribe:ai"]) — so that path routes through an explicit cost confirm
+ * before committing. Shows a live progress bar and, while a job waits its turn,
+ * how many jobs are ahead in the queue.
+ */
+function TranscriptEmptyState({
+    runPipeline,
+    pipelineProgress,
+    queueStats,
+}: {
+    runPipeline?: RunPipeline;
+    pipelineProgress?: PipelineProgress | null;
+    queueStats?: QueueStats | null;
+}) {
+    const [confirmAi, setConfirmAi] = useState(false);
+    const isRunning = (runPipeline?.isPending ?? false) || pipelineProgress != null;
+    // Progress is reported 0..1; treat a running job still at 0 as "queued".
+    const queued = pipelineProgress != null && pipelineProgress.progress <= 0;
+    const ahead = queueStats ? queueStats.queued + queueStats.running : 0;
+
+    return (
+        <div className="space-y-3 rounded-xl border border-dashed border-primary/25 p-4">
+            <div className="flex items-start gap-3">
+                <Captions className="mt-0.5 size-5 shrink-0 text-primary" />
+                <div className="space-y-1">
+                    <p className="text-sm font-semibold">No transcript yet</p>
+                    <p className="text-sm text-muted-foreground">
+                        Fetch it to read and search everything said in the video. No captions? Generate one from the
+                        audio with AI.
+                    </p>
+                </div>
+            </div>
+
+            {isRunning ? (
+                <div className="space-y-1.5">
+                    <div className="h-1 overflow-hidden rounded-full bg-muted">
+                        <div
+                            className="h-full rounded-full bg-primary transition-[width] duration-300"
+                            style={{
+                                width: `${Math.round(Math.min(1, Math.max(0, pipelineProgress?.progress ?? 0)) * 100)}%`,
+                            }}
+                        />
+                    </div>
+                    <p className="text-xs tabular-nums text-muted-foreground">
+                        {queued && ahead > 1
+                            ? `In queue · ${ahead} ahead`
+                            : `${Math.round((pipelineProgress?.progress ?? 0) * 100)}%${
+                                  pipelineProgress?.message ? ` · ${pipelineProgress.message}` : ""
+                              }`}
+                    </p>
+                </div>
+            ) : confirmAi ? (
+                <div className="space-y-2 rounded-lg border border-primary/25 bg-primary/5 p-3">
+                    <p className="text-sm text-foreground/95">
+                        Generate a transcript from the audio using AI for{" "}
+                        <span className="font-semibold tabular-nums text-primary">
+                            {CREDIT_COSTS["transcribe:ai"]} 💎
+                        </span>
+                        .
+                    </p>
+                    <div className="flex items-center gap-2">
+                        <Button
+                            size="sm"
+                            data-testid="transcript-run-transcribe"
+                            onClick={() => {
+                                setConfirmAi(false);
+                                runPipeline?.run(["transcribe"]);
+                            }}
+                        >
+                            <Sparkles className="size-4" /> Transcribe · {CREDIT_COSTS["transcribe:ai"]} 💎
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-muted-foreground"
+                            onClick={() => setConfirmAi(false)}
+                        >
+                            Cancel
+                        </Button>
+                    </div>
+                </div>
+            ) : runPipeline ? (
+                <div className="flex flex-wrap items-center gap-2">
+                    <Button data-testid="transcript-run-pipeline" onClick={() => runPipeline.run(["captions"])}>
+                        Fetch transcript
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-muted-foreground"
+                        onClick={() => setConfirmAi(true)}
+                    >
+                        <Sparkles className="size-4" /> AI transcription · {CREDIT_COSTS["transcribe:ai"]} 💎
+                    </Button>
+                </div>
+            ) : null}
+        </div>
+    );
 }

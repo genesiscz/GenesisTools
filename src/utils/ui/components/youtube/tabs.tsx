@@ -16,6 +16,7 @@ import type {
     PromptPreset,
     QaHistoryItem,
     QaSource,
+    QueueStats,
     SummaryMode,
     TimestampedSummaryEntry,
     Transcript,
@@ -197,6 +198,8 @@ export interface VideoDetailTabsProps {
     };
     /** Live progress of a running job for this video — drives button spinners + dialog progress. */
     pipelineProgress?: PipelineProgress | null;
+    /** Live queue stats — the transcript tab shows how many jobs are ahead. */
+    queueStats?: QueueStats | null;
     /** Opens the sign-in surface (settings dialog) when a spend endpoint
      *  returns 401. Receives the bounced action as `retry` — the owner runs it
      *  after a successful login so the user never has to re-click. */
@@ -237,6 +240,7 @@ export function VideoDetailTabs({
     modelPresets,
     modelDefaults,
     pipelineProgress,
+    queueStats,
     onRequireLogin,
     onUpgrade,
     onOpenWatch,
@@ -432,6 +436,7 @@ export function VideoDetailTabs({
                         useTranslateTranscript={ds.useTranslateTranscript}
                         runPipeline={runPipeline}
                         pipelineProgress={pipelineProgress}
+                        queueStats={queueStats}
                         playerTime={playerTime}
                     />
                 </TabsContent>
