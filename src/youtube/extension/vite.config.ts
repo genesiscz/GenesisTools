@@ -1,13 +1,13 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
+import tailwindcss from "@tailwindcss/vite";
+import viteReact from "@vitejs/plugin-react";
+import { defineConfig, type Plugin, type UserConfig } from "vite";
+import { env } from "../../utils/env.client";
 // Relative + client-safe env facade so vite's config loader and rollup's dep
 // scan both inline these without tsconfig path mapping (env.client pulls in no
 // bare @app specifiers; json.ts imports only comment-json).
 import { SafeJSON } from "../../utils/json";
-import { env } from "../../utils/env.client";
-import tailwindcss from "@tailwindcss/vite";
-import viteReact from "@vitejs/plugin-react";
-import { defineConfig, type Plugin, type UserConfig } from "vite";
 
 const root = resolve(import.meta.dirname);
 const dist = resolve(root, "../../../dist/extension");
