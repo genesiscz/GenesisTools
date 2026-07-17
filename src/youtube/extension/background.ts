@@ -275,6 +275,27 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
             }
             return res;
         }
+        case "api:subscribe": {
+            const res = await apiCall(`${base}/api/v1/users/subscribe`, {
+                method: "POST",
+                body: JSON.stringify({ planId: req.planId }),
+            });
+            // Stripe's hosted subscription page opens in a new tab — never iframed.
+            if (res.ok) {
+                const data = res.data as { url?: string };
+                if (typeof data.url === "string") {
+                    await chrome.tabs.create({ url: data.url });
+                }
+            }
+            return res;
+        }
+        case "api:getReferral":
+            return apiCall(`${base}/api/v1/users/referral`);
+        case "api:redeemReferral":
+            return apiCall(`${base}/api/v1/users/referral/redeem`, {
+                method: "POST",
+                body: JSON.stringify({ code: req.code }),
+            });
         case "api:createShare":
             return apiCall(`${base}/api/v1/shares`, {
                 method: "POST",
@@ -305,6 +326,139 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
             });
         case "api:deletePreset":
             return apiCall(`${base}/api/v1/users/presets/${req.id}`, { method: "DELETE" });
+        case "api:listCollections":
+            return apiCall(`${base}/api/v1/collections`);
+        case "api:createCollection":
+            return apiCall(`${base}/api/v1/collections`, {
+                method: "POST",
+                body: JSON.stringify({ name: req.name, kind: req.kind, rule: req.rule }),
+            });
+        case "api:getCollection":
+            return apiCall(`${base}/api/v1/collections/${req.id}`);
+        case "api:deleteCollection":
+            return apiCall(`${base}/api/v1/collections/${req.id}`, { method: "DELETE" });
+        case "api:addCollectionVideo":
+            return apiCall(`${base}/api/v1/collections/${req.id}/videos`, {
+                method: "POST",
+                body: JSON.stringify({ videoId: req.videoId }),
+            });
+        case "api:removeCollectionVideo":
+            return apiCall(`${base}/api/v1/collections/${req.id}/videos/${encodeURIComponent(req.videoId)}`, {
+                method: "DELETE",
+            });
+        case "api:listThreads":
+            return apiCall(`${base}/api/v1/collections/${req.id}/threads`);
+        case "api:getThread":
+            return apiCall(`${base}/api/v1/collections/threads/${req.threadId}`);
+        case "api:askCollection":
+            return apiCall(`${base}/api/v1/collections/${req.id}/ask`, {
+                method: "POST",
+                body: JSON.stringify({
+                    question: req.question,
+                    threadId: req.threadId,
+                    provider: req.provider,
+                    model: req.model,
+                }),
+            });
+        case "api:userHistory": {
+            const query = new URLSearchParams({ groupBy: req.groupBy });
+            if (typeof req.limit === "number") {
+                query.set("limit", String(req.limit));
+            }
+            return apiCall(`${base}/api/v1/users/history?${query.toString()}`);
+        }
+        case "api:getWatchlist":
+            return apiCall(`${base}/api/v1/users/watchlist`);
+        case "api:addWatchlistChannel":
+            return apiCall(`${base}/api/v1/users/watchlist`, {
+                method: "POST",
+                body: JSON.stringify({ handle: req.handle }),
+            });
+        case "api:removeWatchlistChannel":
+            return apiCall(`${base}/api/v1/users/watchlist/${encodeURIComponent(req.handle)}`, { method: "DELETE" });
+        case "api:getDigest": {
+            const suffix = typeof req.sinceDays === "number" ? `?sinceDays=${req.sinceDays}` : "";
+            return apiCall(`${base}/api/v1/users/digest${suffix}`);
+        }
+        case "api:syncDigest":
+            return apiCall(`${base}/api/v1/users/digest/sync`, { method: "POST" });
+        case "api:adminUsers": {
+            const query = new URLSearchParams();
+            if (req.q) {
+                query.set("q", req.q);
+            }
+            if (req.subscription) {
+                query.set("subscription", req.subscription);
+            }
+            if (req.sort) {
+                query.set("sort", req.sort);
+            }
+            if (req.dir) {
+                query.set("dir", req.dir);
+            }
+            if (typeof req.limit === "number") {
+                query.set("limit", String(req.limit));
+            }
+            if (typeof req.offset === "number") {
+                query.set("offset", String(req.offset));
+            }
+            const suffix = query.toString() ? `?${query.toString()}` : "";
+            return apiCall(`${base}/api/v1/admin/users${suffix}`);
+        }
+        case "api:adminUser":
+            return apiCall(`${base}/api/v1/admin/users/${req.id}`);
+        case "api:adminAiCalls": {
+            const query = new URLSearchParams();
+            if (req.provider) {
+                query.set("provider", req.provider);
+            }
+            if (req.action) {
+                query.set("action", req.action);
+            }
+            if (typeof req.userId === "number") {
+                query.set("userId", String(req.userId));
+            }
+            if (typeof req.limit === "number") {
+                query.set("limit", String(req.limit));
+            }
+            if (typeof req.offset === "number") {
+                query.set("offset", String(req.offset));
+            }
+            const suffix = query.toString() ? `?${query.toString()}` : "";
+            return apiCall(`${base}/api/v1/admin/ai-calls${suffix}`);
+        }
+        case "api:adminWebhookLogs": {
+            const query = new URLSearchParams();
+            if (req.outcome) {
+                query.set("outcome", req.outcome);
+            }
+            if (typeof req.limit === "number") {
+                query.set("limit", String(req.limit));
+            }
+            if (typeof req.offset === "number") {
+                query.set("offset", String(req.offset));
+            }
+            const suffix = query.toString() ? `?${query.toString()}` : "";
+            return apiCall(`${base}/api/v1/admin/webhook-logs${suffix}`);
+        }
+        case "api:adminJobs": {
+            const query = new URLSearchParams();
+            if (req.status) {
+                query.set("status", req.status);
+            }
+            if (typeof req.limit === "number") {
+                query.set("limit", String(req.limit));
+            }
+            if (typeof req.offset === "number") {
+                query.set("offset", String(req.offset));
+            }
+            const suffix = query.toString() ? `?${query.toString()}` : "";
+            return apiCall(`${base}/api/v1/admin/jobs${suffix}`);
+        }
+        case "api:adminRevenue": {
+            const suffix = typeof req.days === "number" ? `?days=${req.days}` : "";
+            return apiCall(`${base}/api/v1/admin/revenue${suffix}`);
+        }
         default: {
             // Exhaustiveness guard: every ExtensionRequest above returns, so a
             // new variant added without a case fails this assignment at compile

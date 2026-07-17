@@ -4,10 +4,12 @@ import { Button } from "@app/utils/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
+import { ActivityGraph } from "@app/utils/ui/components/youtube/activity-graph";
+import { Diamond, formatDiamonds } from "@app/utils/ui/components/youtube/diamond";
 import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
 import { formatRelativeTime } from "@app/utils/ui/components/youtube/time";
 import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
-import type { PresetKind, PromptPreset, ShareSummary } from "@app/youtube/lib/types";
+import type { PresetKind, PromptPreset, ShareSummary, YtRole } from "@app/youtube/lib/types";
 import {
     useCheckout,
     useCreatePreset,
@@ -25,7 +27,23 @@ import {
     useUsageSummary,
 } from "@ext/api.hooks";
 import { persistUiLang, useT, useUiLang } from "@ext/shared/i18n";
-import { CreditCard, Gem, Loader2, LogOut, Pencil, Share2, Trash2, Wand2 } from "lucide-react";
+import type { AccountSection } from "@ext/side-panel/account-view";
+import { LowBalanceNudge, SubscriptionSection } from "@ext/side-panel/subscription-section";
+import {
+    CreditCard,
+    Gem,
+    Gift,
+    History,
+    Library,
+    Loader2,
+    LogOut,
+    Newspaper,
+    Pencil,
+    Share2,
+    ShieldCheck,
+    Trash2,
+    Wand2,
+} from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
 type AuthMode = "login" | "register";
@@ -34,15 +52,18 @@ export function SettingsDialog({
     open,
     onOpenChange,
     devMode,
-    onViewActivity,
+    onOpenAccount,
+    onOpenAdmin,
 }: {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     devMode?: boolean;
-    onViewActivity?: () => void;
+    onOpenAccount?: (section: AccountSection) => void;
+    onOpenAdmin?: () => void;
 }) {
     const me = useMe(open);
     const user = me.data?.user;
+    const role = me.data?.role;
     const t = useT();
 
     return (
@@ -66,7 +87,9 @@ export function SettingsDialog({
                         credits={user.credits}
                         outputLang={user.outputLang}
                         devMode={devMode}
-                        onViewActivity={onViewActivity}
+                        role={role}
+                        onOpenAccount={onOpenAccount}
+                        onOpenAdmin={onOpenAdmin}
                     />
                 ) : (
                     <AuthForm />
@@ -81,16 +104,21 @@ function SignedInView({
     credits,
     outputLang,
     devMode,
-    onViewActivity,
+    role,
+    onOpenAccount,
+    onOpenAdmin,
 }: {
     email: string;
     credits: number;
     outputLang: string | null;
     devMode?: boolean;
-    onViewActivity?: () => void;
+    role?: YtRole;
+    onOpenAccount?: (section: AccountSection) => void;
+    onOpenAdmin?: () => void;
 }) {
     const logout = useLogout();
     const t = useT();
+    const isPower = role === "admin" || role === "dev";
 
     return (
         <div className="space-y-3">
@@ -99,18 +127,35 @@ function SignedInView({
                     {t("settings.signedInAs")}
                 </p>
                 <p className="mt-1 break-all text-sm text-foreground/95">{email}</p>
-                <div className="mt-3 flex items-baseline gap-1.5">
-                    <span className="text-xl leading-none" aria-hidden>
-                        💎
+                <div className="mt-3 flex items-center gap-2">
+                    <Diamond size={22} glow />
+                    <span className="text-2xl font-semibold tabular-nums leading-none text-foreground">
+                        {formatDiamonds(credits)}
                     </span>
-                    <span className="text-2xl font-semibold tabular-nums leading-none text-foreground">{credits}</span>
                     <span className="text-xs text-muted-foreground">diamonds</span>
                 </div>
             </div>
 
+            <LowBalanceNudge />
+
+            <SubscriptionSection />
+
             <DiamondPacksSection devMode={devMode} />
 
-            {onViewActivity ? <ActivitySparkline onViewAll={onViewActivity} /> : null}
+            {onOpenAccount ? <ActivitySparkline onViewAll={() => onOpenAccount("activity")} /> : null}
+
+            {onOpenAccount ? <LibraryNav onOpen={onOpenAccount} /> : null}
+
+            {isPower && onOpenAdmin ? (
+                <Button
+                    size="sm"
+                    variant="ghost"
+                    className="w-full justify-start text-muted-foreground"
+                    onClick={onOpenAdmin}
+                >
+                    <ShieldCheck className="size-4" /> Admin panel
+                </Button>
+            ) : null}
 
             <LanguageSection outputLang={outputLang} />
 
@@ -126,6 +171,46 @@ function SignedInView({
                 onClick={() => logout.mutate()}
             >
                 <LogOut className="size-4" /> {t("action.logOut")}
+            </Button>
+        </div>
+    );
+}
+
+function LibraryNav({ onOpen }: { onOpen: (section: AccountSection) => void }) {
+    return (
+        <div className="space-y-2">
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">your library</p>
+            <Button
+                size="sm"
+                variant="ghost"
+                className="w-full justify-start text-muted-foreground"
+                onClick={() => onOpen("history")}
+            >
+                <History className="size-4" /> History
+            </Button>
+            <Button
+                size="sm"
+                variant="ghost"
+                className="w-full justify-start text-muted-foreground"
+                onClick={() => onOpen("collections")}
+            >
+                <Library className="size-4" /> Collections
+            </Button>
+            <Button
+                size="sm"
+                variant="ghost"
+                className="w-full justify-start text-muted-foreground"
+                onClick={() => onOpen("digest")}
+            >
+                <Newspaper className="size-4" /> Digest
+            </Button>
+            <Button
+                size="sm"
+                variant="ghost"
+                className="w-full justify-start text-muted-foreground"
+                onClick={() => onOpen("referral")}
+            >
+                <Gift className="size-4" /> Referral
             </Button>
         </div>
     );
@@ -178,39 +263,10 @@ function LanguageSection({ outputLang }: { outputLang: string | null }) {
 
 function ActivitySparkline({ onViewAll }: { onViewAll: () => void }) {
     const summary = useUsageSummary();
-    const days = summary.data?.days ?? [];
-    const maxSpent = Math.max(1, ...days.map((d) => d.spent));
-
-    if (summary.isPending) {
-        return (
-            <div className="space-y-2">
-                <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                    activity · last 30 days
-                </p>
-                <div className="flex items-center justify-center py-4 text-muted-foreground">
-                    <Loader2 className="size-4 animate-spin" />
-                </div>
-            </div>
-        );
-    }
 
     return (
         <div className="space-y-2">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                activity · last 30 days
-            </p>
-            <div className="flex h-12 items-end gap-[2px]">
-                {days.map((day, i) => (
-                    <div
-                        key={day.date}
-                        title={`${day.date} · ${day.spent} 💎`}
-                        className={`flex-1 rounded-sm ${
-                            day.spent === 0 ? "bg-white/5" : i === days.length - 1 ? "bg-primary/70" : "bg-primary/30"
-                        }`}
-                        style={{ height: `${Math.max(8, (day.spent / maxSpent) * 100)}%` }}
-                    />
-                ))}
-            </div>
+            <ActivityGraph days={summary.data?.days ?? []} loading={summary.isPending} />
             <p className="text-sm text-muted-foreground">
                 This month:{" "}
                 <span className="font-semibold tabular-nums text-foreground">{summary.data?.month.spent ?? 0} 💎</span>{" "}
@@ -269,8 +325,8 @@ function DiamondPacksSection({ devMode }: { devMode?: boolean }) {
                             onClick={() => void buy(pack.id)}
                             className="rounded-2xl border border-white/8 bg-black/20 p-3 text-left transition-colors hover:border-primary/40 disabled:opacity-60"
                         >
-                            <p className="text-base font-semibold tabular-nums text-foreground">
-                                {pack.diamonds.toLocaleString("en-US").replace(",", " ")} 💎
+                            <p className="flex items-center gap-1 text-base font-semibold tabular-nums text-foreground">
+                                <Diamond size={15} /> {formatDiamonds(pack.diamonds)}
                             </p>
                             {pendingPack === pack.id ? (
                                 <p className="mt-0.5 flex items-center gap-1.5 text-sm text-muted-foreground">

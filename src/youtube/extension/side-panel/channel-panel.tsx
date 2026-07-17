@@ -1,6 +1,14 @@
 import { Button } from "@app/utils/ui/components/button";
 import type { ChannelHandle } from "@app/youtube/lib/types";
-import { useAddChannel, useChannels, useChannelVideos, useConfig } from "@ext/api.hooks";
+import {
+    useAddChannel,
+    useChannels,
+    useChannelVideos,
+    useConfig,
+    useMe,
+    useToggleWatchlist,
+    useWatchlist,
+} from "@ext/api.hooks";
 import { Header } from "@ext/side-panel/header";
 import { ExternalLink, Plus } from "lucide-react";
 import { useState } from "react";
@@ -12,8 +20,13 @@ export function ChannelPanel({ handle }: { handle: string | null }) {
     const addChannel = useAddChannel();
     const videos = useChannelVideos(channelHandle, { limit: 20, includeShorts: true });
     const [collapsed, setCollapsed] = useState(false);
+    const me = useMe();
+    const watchlist = useWatchlist(Boolean(me.data?.user));
+    const toggleWatchlist = useToggleWatchlist();
 
     const tracked = channelHandle !== null && (channels.data ?? []).some((item) => item.handle === channelHandle);
+    const followed =
+        channelHandle !== null && (watchlist.data ?? []).some((entry) => entry.channelHandle === channelHandle);
     const rows = videos.data ?? [];
     const base = config.data?.apiBaseUrl.replace(/\/$/, "") ?? "";
     const webUrl = channelHandle ? `${base}/channels/${encodeURIComponent(channelHandle)}` : base;
@@ -44,6 +57,15 @@ export function ChannelPanel({ handle }: { handle: string | null }) {
                                 <Plus className="size-4" />
                                 {tracked ? "Tracked" : addChannel.isPending ? "Tracking…" : "Track this channel"}
                             </Button>
+                            {me.data?.user ? (
+                                <Button
+                                    variant={followed ? "cyber-secondary" : "default"}
+                                    disabled={toggleWatchlist.isPending}
+                                    onClick={() => toggleWatchlist.mutate({ handle: channelHandle, follow: !followed })}
+                                >
+                                    {followed ? "Following" : "Follow"}
+                                </Button>
+                            ) : null}
                             {base ? (
                                 <Button asChild variant="cyber-secondary">
                                     <a href={webUrl} target="_blank" rel="noopener noreferrer">
@@ -69,7 +91,9 @@ export function ChannelPanel({ handle }: { handle: string | null }) {
                             <p className="text-sm text-muted-foreground">Loading…</p>
                         ) : videos.isError ? (
                             <p className="rounded-2xl border border-dashed border-destructive/40 p-4 text-sm text-destructive/90">
-                                {videos.error instanceof Error ? videos.error.message : "Couldn't load this channel's videos."}
+                                {videos.error instanceof Error
+                                    ? videos.error.message
+                                    : "Couldn't load this channel's videos."}
                             </p>
                         ) : rows.length === 0 ? (
                             <p className="rounded-2xl border border-dashed border-primary/25 p-4 text-sm text-muted-foreground">
