@@ -1,25 +1,27 @@
 ---
 name: macos-control
-description: Control macOS native app UI via Accessibility API. Use when automating native apps — clicking buttons, filling forms, reading element state, finding elements, getting window bounds. Triggers on "click button in app", "fill form in native app", "automate macOS app", "list UI elements", "find button", "read text field value", "get window position", "what actions can I perform", "interact with native app".
+description: Control macOS UI via the Accessibility API and record short screen captures reviewed frame-by-frame. Use when automating native apps — clicking buttons, filling forms, reading element state, finding elements, getting window bounds — or when the user wants a short screen recording of an animation/transition/flicker reviewed via a contact sheet, optionally pushed to a vitrinka board. Triggers on "click button in app", "fill form in native app", "automate macOS app", "list UI elements", "find button", "read text field value", "get window position", "interact with native app", "record the screen", "capture this transition", "Xs recording", "Nfps", "watch this animation", "why does it jump/flicker", "record this app for a few seconds", "push the recording to a board".
 ---
 
-# `tools ax` — macOS Accessibility API Automation
+# `tools control` — macOS UI automation + screen recording
 
-Fast native CLI for reading and controlling macOS app UI via the Accessibility API. 10-30x faster than osascript (~66ms get, ~130ms list, ~170ms press vs 2-5s).
+Fast native CLI for reading and controlling macOS app UI via the Accessibility API (10-30x faster than osascript: ~66ms get, ~130ms list, ~170ms press vs 2-5s), plus a recording runner (`tools control capture`) for multi-frame captures with timed actions. `tools macos control` is an alias.
+
+Resources in this skill: `references/capture.md` (recording discipline — read before writing capture plans), `references/peekaboo.md` (peekaboo flag tables), `references/vitrinka.md` (optional board publishing).
 
 ## Commands
 
 ### Discovery (find elements you want to interact with)
 
 ```bash
-tools ax list --app <name> [--depth N]          # Flat list of all elements (max 2000)
-tools ax tree --app <name> [--depth N]          # Hierarchical nested tree (shows parent-child)
-tools ax find --app <name> --role button        # Fuzzy: "button" matches AXButton
-tools ax find --app <name> --title "Save"       # Find by title (substring, case-insensitive)
-tools ax find --app <name> --text "YouTube"     # Search title+desc+value at once (OR)
-tools ax find --app <name> --desc "Chat"        # Find by description (many SwiftUI elements use this)
-tools ax find --app <name> --subrole close      # Fuzzy: "close" matches AXCloseButton
-tools ax find --app <name> --role button --title "Email" --exact  # --exact forces strict role match
+tools control list --app <name> [--depth N]          # Flat list of all elements (max 2000)
+tools control tree --app <name> [--depth N]          # Hierarchical nested tree (shows parent-child)
+tools control find --app <name> --role button        # Fuzzy: "button" matches AXButton
+tools control find --app <name> --title "Save"       # Find by title (substring, case-insensitive)
+tools control find --app <name> --text "YouTube"     # Search title+desc+value at once (OR)
+tools control find --app <name> --desc "Chat"        # Find by description (many SwiftUI elements use this)
+tools control find --app <name> --subrole close      # Fuzzy: "close" matches AXCloseButton
+tools control find --app <name> --role button --title "Email" --exact  # --exact forces strict role match
 ```
 
 Role/subrole matching is fuzzy by default: `button` finds `AXButton`, `radio` finds `AXRadioButton`, `close` finds `AXCloseButton`. Add `--exact` when you need strict matching.
@@ -27,21 +29,21 @@ Role/subrole matching is fuzzy by default: `button` finds `AXButton`, `radio` fi
 ### Inspection (read element details)
 
 ```bash
-tools ax get --app <name> --id <axId>           # Read role/title/value/description
-tools ax attrs --app <name> --id <axId>         # ALL attributes with decoded values
-tools ax actions --app <name> --id <axId>       # Available AX actions (AXPress, AXShowMenu, etc.)
-tools ax window --app <name>                    # Window bounds: x,y,width,height + minimized/fullscreen
+tools control get --app <name> --id <axId>           # Read role/title/value/description
+tools control attrs --app <name> --id <axId>         # ALL attributes with decoded values
+tools control actions --app <name> --id <axId>       # Available AX actions (AXPress, AXShowMenu, etc.)
+tools control window --app <name>                    # Window bounds: x,y,width,height + minimized/fullscreen
 ```
 
 ### Interaction (modify elements)
 
 ```bash
-tools ax set --app <name> <target> --value "text"                  # Set text field value (AXValue)
-tools ax press --app <name> <target>                               # Press (AXPress — AX action path)
-tools ax click --app <name> <target>                               # CGEvent click at element center
-tools ax perform --app <name> <target> --action AXShowMenu         # Any AX action
-tools ax focus --app <name> [<target>]                             # Activate app + focus element
-tools ax type --app <name> --text "hello" [<target>]               # Type keystrokes via CGEvent
+tools control set --app <name> <target> --value "text"                  # Set text field value (AXValue)
+tools control press --app <name> <target>                               # Press (AXPress — AX action path)
+tools control click --app <name> <target>                               # CGEvent click at element center
+tools control perform --app <name> <target> --action AXShowMenu         # Any AX action
+tools control focus --app <name> [<target>]                             # Activate app + focus element
+tools control type --app <name> --text "hello" [<target>]               # Type keystrokes via CGEvent
 ```
 
 ### Targeting (`<target>`)
@@ -50,20 +52,20 @@ All interaction/inspection commands accept `--id <axId>` OR any combination of `
 
 ```bash
 # By AXIdentifier (native apps with .accessibilityIdentifier)
-tools ax press --app Genesis --id nav-chat
+tools control press --app Genesis --id nav-chat
 
 # By role + description (browser elements — no id needed)
-tools ax click --app "Brave Browser" --desc "Reload" --role AXButton
-tools ax click --app "Brave Browser" --desc "YouTube" --role AXRadioButton
+tools control click --app "Brave Browser" --desc "Reload" --role AXButton
+tools control click --app "Brave Browser" --desc "YouTube" --role AXRadioButton
 
 # By description alone (Genesis settings tabs sharing the same id)
-tools ax press --app Genesis --desc "Account" --role AXButton
+tools control press --app Genesis --desc "Account" --role AXButton
 
 # By subrole (window close/minimize/fullscreen buttons have no id or desc)
-tools ax click --app Genesis --subrole AXCloseButton --window Settings
+tools control click --app Genesis --subrole AXCloseButton --window Settings
 
 # --window scopes search to a specific window (by title substring)
-tools ax click --app Genesis --subrole AXMinimizeButton --window Genesis
+tools control click --app Genesis --subrole AXMinimizeButton --window Genesis
 ```
 
 ## `click` vs `press` vs `set`
@@ -87,7 +89,7 @@ For elements below the fold, prefer `press` (buttons) or `focus` + `type` (text 
 
 ## Gotchas
 
-- **`peekaboo image --app X` captures the wrong window** when an app has multiple windows (e.g. Genesis main + Settings). Always use `peekaboo image --app X --window-title "..."` to target the correct one.
+- **App-level screenshots capture the wrong window** when an app has multiple windows (e.g. Genesis main + Settings) — apps mark popups/strips as "main". Always pass a window title: `tools control screenshot --app X --window "..."` (peekaboo equivalent: `--window-title`).
 - **Browser elements use AXDescription, not AXTitle** — tab text is in `desc`, not `title`. Use `find --text "YouTube"` (searches all attributes) or `find --desc "YouTube"` specifically.
 - **Browser tabs are `AXRadioButton`**, not `AXButton` — `find --role AXButton` finds bookmark bar items, `find --role AXRadioButton` finds actual tabs.
 
@@ -95,7 +97,7 @@ For elements below the fold, prefer `press` (buttons) or `focus` + `type` (text 
 
 All commands return JSON to stdout: `{"ok": true, ...}` on success, `{"ok": false, "error": "..."}` on failure. Add `--json` to the TS wrapper for raw JSON (default is human-friendly formatting).
 
-## Plan runner (`tools ax run`)
+## Plan runner (`tools control run`)
 
 Run a JSON plan file — sequential ax commands with automatic snapshot/restore:
 
@@ -116,8 +118,8 @@ Run a JSON plan file — sequential ax commands with automatic snapshot/restore:
 ```
 
 ```bash
-tools ax run plan.json          # human output: ok/FAIL per step + total
-tools ax run plan.json --json   # machine output: full results array
+tools control run plan.json          # human output: ok/FAIL per step + total
+tools control run plan.json --json   # machine output: full results array
 ```
 
 Plan fields:
@@ -134,19 +136,19 @@ The runner is the declarative equivalent of the shell snapshot/restore pattern b
 
 ```bash
 # 1. Discover what's in the app
-tools ax list --app Genesis --depth 5
+tools control list --app Genesis --depth 5
 
 # 2. Find the text field (by role if no AXIdentifier)
-tools ax find --app Genesis --role AXTextField
+tools control find --app Genesis --role AXTextField
 
 # 3. Check what you can do with it
-tools ax actions --app Genesis --id auth-email
+tools control actions --app Genesis --id auth-email
 
 # 4. Fill the field
-tools ax set --app Genesis --id auth-email --value "user@example.com"
+tools control set --app Genesis --id auth-email --value "user@example.com"
 
 # 5. Press the submit button
-tools ax press --app Genesis --id auth-continue
+tools control press --app Genesis --id auth-continue
 ```
 
 ## Workflow: find elements without AXIdentifier
@@ -155,46 +157,56 @@ Many apps don't set AXIdentifier on all elements. Use `find` to locate by role/t
 
 ```bash
 # Find all buttons
-tools ax find --app Safari --role AXButton
+tools control find --app Safari --role AXButton
 
 # Find element with specific text
-tools ax find --app TextEdit --role AXStaticText --value "Untitled"
+tools control find --app TextEdit --role AXStaticText --value "Untitled"
 
 # Find by title substring
-tools ax find --app "System Settings" --title "Wi-Fi"
+tools control find --app "System Settings" --title "Wi-Fi"
 ```
 
-## Workflow: get window geometry (for screen-capture)
+## Workflow: get window geometry (for screenshots/crops)
 
 ```bash
 # Get exact window bounds for screenshot cropping
-tools ax window --app Genesis
+tools control window --app Genesis
 # Returns: x, y, width, height, minimized, fullscreen per window
 ```
 
-## Integration with screen-capture (capture-with-actions.ts)
+## Recording: `tools control capture` (video + timed actions)
 
-The screen-capture skill's `capture-with-actions.ts` supports three AX action types in recording plans:
+Everything above is single-shot element control. For **multi-frame recording** — capture a transition/animation while firing timed actions, diff-sampled frames, contact sheets, declarative crops, vitrinka publish — use the capture runner:
 
-| Action type | What it does | Needs ax-tool? |
+```bash
+tools control capture preflight [--app "<Name>"]   # ALWAYS FIRST when writing a capture plan
+tools control capture --help                       # full plan/actions contract
+tools control capture plan.json 1>result.json 2>err.log
+```
+
+**Read `references/capture.md` before writing any recording plan** — it holds the full recording discipline (duration/fps parsing, capture-target resolution, timing model, crop markers, focus re-assertion, troubleshooting, anti-patterns). `references/peekaboo.md` has the underlying peekaboo flag tables. Recording requires the external `peekaboo` binary (homebrew); element control does not.
+
+Capture plans support three AX action types (same targeting as the CLI):
+
+| Action type | What it does | Needs ax-tool binary? |
 |-------------|-------------|----------------|
 | `ax-set` | Write a text field value | No (osascript fallback) |
 | `ax-press` | Press a button/toggle | No (osascript fallback) |
 | `ax-perform` | Any AX action (AXShowMenu, AXRaise, etc.) | Yes (no fallback) |
 
-The runner finds ax-tool at `~/Tresors/Projects/GenesisTools/native/ax-tool/.build/release/ax-tool`. When built, all three action types use the fast path (~50-200ms). Without it, `ax-set`/`ax-press` fall back to osascript (~2-5s); `ax-perform` errors.
+The binary auto-builds on first `tools control` run. With it, all three use the fast path (~50-200ms); without it, `ax-set`/`ax-press` fall back to osascript (~2-5s) and `ax-perform` errors.
 
-### Plan authoring workflow (ax-tool for discovery, capture-with-actions for recording)
+### Plan authoring workflow (element discovery, then recording)
 
 ```bash
 # 1. Discover elements with ax-tool
-tools ax list --app Genesis --depth 5           # see all elements
-tools ax find --app Genesis --role AXButton     # find buttons
-tools ax find --app Genesis --desc "Settings"   # find by description
-tools ax actions --app Genesis --id nav-chat    # what actions are available?
+tools control list --app Genesis --depth 5           # see all elements
+tools control find --app Genesis --role AXButton     # find buttons
+tools control find --app Genesis --desc "Settings"   # find by description
+tools control actions --app Genesis --id nav-chat    # what actions are available?
 
 # 2. Get window bounds (same CG point system as click coords / relativeTo)
-tools ax window --app Genesis
+tools control window --app Genesis
 # Returns: x, y, width, height — use for crop regions or relativeTo offsets
 
 # 3. Write the plan using discovered identifiers
@@ -212,28 +224,28 @@ cat > /tmp/plan.json << 'EOF'
 EOF
 
 # 4. Run the capture
-bun ~/.claude/skills/screen-capture/scripts/capture-with-actions.ts /tmp/plan.json \
-  1>/tmp/result.json 2>/tmp/capture.err
+tools control capture /tmp/plan.json 1>/tmp/result.json 2>/tmp/capture.err
 ```
 
-### When to use ax-tool directly vs through capture-with-actions
+### When to use element commands directly vs the capture runner
 
 | Scenario | Use |
 |----------|-----|
-| Fill a form, click a button (no recording needed) | `tools ax set` / `tools ax press` directly |
-| Inspect element attributes, discover identifiers | `tools ax list` / `find` / `attrs` / `actions` directly |
-| Get window bounds for screenshot/crop planning | `tools ax window` directly |
-| Record UI transitions while interacting with native controls | `capture-with-actions.ts` plan with `ax-set`/`ax-press`/`ax-perform` actions |
-| Timed sequence (fill form, wait, press, capture the result) | `capture-with-actions.ts` — timing precision matters |
-| Open a dropdown and capture the menu appearing | `capture-with-actions.ts` with `ax-perform` + AXShowMenu |
+| Fill a form, click a button (no recording needed) | `tools control set` / `tools control press` directly |
+| Inspect element attributes, discover identifiers | `tools control list` / `find` / `attrs` / `actions` directly |
+| Get window bounds for screenshot/crop planning | `tools control window` directly |
+| Static click-through sequence with screenshots at each step | `tools control run plan.json` (~100ms/step, native screenshots) |
+| Record UI transitions while interacting with native controls | `tools control capture` plan with `ax-set`/`ax-press`/`ax-perform` actions |
+| Timed sequence (fill form, wait, press, record the result) | `tools control capture` — timing precision matters |
+| Open a dropdown and record the menu appearing | `tools control capture` with `ax-perform` + AXShowMenu |
 
-### `tools ax window` as `relativeTo` source
+### `tools control window` as `relativeTo` source
 
-`tools ax window` returns window bounds in CG points — the exact coordinate system that `relativeTo` and click coords use. Use it to compute window-relative offsets for capture plans:
+`tools control window` returns window bounds in CG points — the exact coordinate system that `relativeTo` and click coords use. Use it to compute window-relative offsets for capture plans:
 
 ```bash
 # Get Genesis window position
-tools ax window --app Genesis --json
+tools control window --app Genesis --json
 # {"windows": [{"x": 49, "y": 810, "width": 900, "height": 452, ...}]}
 
 # Use in a plan with relativeTo (offsets from window top-left):
