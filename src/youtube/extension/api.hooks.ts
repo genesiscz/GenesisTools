@@ -517,6 +517,7 @@ export function useModels(enabled = true) {
         queryKey: ["models"],
         queryFn: () => send<ExtensionApiMap["api:listModels"]>({ type: "api:listModels" }),
         staleTime: 60_000,
+        retry: false,
         enabled,
     });
 }
@@ -526,6 +527,15 @@ export function useJob(id: number | null) {
         queryKey: ["job", id],
         queryFn: () => send<{ job: PipelineJob }>({ type: "api:getJob", id: id as number }),
         enabled: id !== null,
+    });
+}
+
+export function useQueueStats(enabled = true) {
+    return useQuery({
+        queryKey: ["queueStats"],
+        queryFn: () => send<ExtensionApiMap["api:queueStats"]>({ type: "api:queueStats" }),
+        refetchInterval: 5000,
+        enabled,
     });
 }
 

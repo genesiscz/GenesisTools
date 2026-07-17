@@ -182,6 +182,8 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
             });
         case "api:getJob":
             return apiCall(`${base}/api/v1/jobs/${req.id}`);
+        case "api:queueStats":
+            return apiCall(`${base}/api/v1/jobs/queue`);
         case "api:listModels":
             return apiCall(`${base}/api/v1/models`);
         case "api:estimate": {
@@ -334,15 +336,19 @@ async function apiCall(url: string, init: RequestInit = {}): Promise<ExtensionRe
         });
         if (!res.ok) {
             let detail = "";
+            let code: string | undefined;
             try {
-                const body = (await res.json()) as { error?: unknown };
+                const body = (await res.json()) as { error?: unknown; code?: unknown };
                 if (typeof body.error === "string" && body.error !== "") {
                     detail = body.error;
+                }
+                if (typeof body.code === "string" && body.code !== "") {
+                    code = body.code;
                 }
             } catch {
                 // non-JSON error body — fall back to status line
             }
-            return { ok: false, error: detail !== "" ? detail : `${res.status} ${res.statusText}` };
+            return { ok: false, error: detail !== "" ? detail : `${res.status} ${res.statusText}`, ...(code ? { code } : {}) };
         }
         return { ok: true, data: await res.json() };
     } catch (error) {
@@ -368,8 +374,10 @@ async function reconnectWebsocket(): Promise<void> {
     const cfg = await getExtensionConfig();
     const base = `${cfg.apiBaseUrl.replace(/^http/, "ws").replace(/\/$/, "")}/api/v1/events`;
     // Browsers can't set an Authorization header on a WS handshake, so the
-    // service key rides as a query param (the server reads ?access_token=).
-    const url = cfg.serviceKey ? `${base}?access_token=${encodeURIComponent(cfg.serviceKey)}` : base;
+    // token rides as a query param. The USER token wins: the server scopes the
+    // socket to that user's jobs; the service key would receive everyone's.
+    const token = cfg.userToken ?? cfg.serviceKey;
+    const url = token ? `${base}?access_token=${encodeURIComponent(token)}` : base;
 
     try {
         ws = new WebSocket(url);
