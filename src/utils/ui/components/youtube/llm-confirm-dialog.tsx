@@ -81,6 +81,10 @@ export interface LlmConfirmDialogProps {
      *  passes its own confirm as `retry`, so a successful login immediately
      *  re-runs the generation the user asked for. */
     onRequireLogin?: (retry?: () => void) => void;
+    /** Opens the diamonds/subscription surface when the action bounces with a
+     *  402 (`insufficient_credits` / `quota_exhausted`) — turns the failure into
+     *  a friendly upsell instead of a raw error. */
+    onUpgrade?: () => void;
     onCancel: () => void;
     onConfirm: (overrides: { provider?: string; model?: string }) => void;
 }
@@ -111,6 +115,7 @@ export function LlmConfirmDialog({
     onLangChange,
     currentLang,
     onRequireLogin,
+    onUpgrade,
     onCancel,
     onConfirm,
 }: LlmConfirmDialogProps) {
@@ -293,6 +298,17 @@ export function LlmConfirmDialog({
                             <p className="text-muted-foreground">This costs diamonds, so it needs an account.</p>
                             <Button size="sm" className="shrink-0" onClick={() => onRequireLogin(confirm)}>
                                 Sign in
+                            </Button>
+                        </div>
+                    ) : (errorCode === "quota_exhausted" || errorCode === "insufficient_credits") && onUpgrade ? (
+                        <div className="flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-2.5 text-sm">
+                            <p className="text-muted-foreground">
+                                {errorCode === "quota_exhausted"
+                                    ? "You've used your free actions this month. Top up or subscribe to keep going."
+                                    : "Not enough diamonds for this. Top up or subscribe to continue."}
+                            </p>
+                            <Button size="sm" className="shrink-0" onClick={onUpgrade}>
+                                Get diamonds
                             </Button>
                         </div>
                     ) : (

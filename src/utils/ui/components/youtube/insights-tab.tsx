@@ -87,6 +87,7 @@ export function InsightsTab({
     modelPresets,
     modelDefault,
     onRequireLogin,
+    onUpgrade,
     pipelineProgress,
     partialTimestamped,
     streaming,
@@ -96,6 +97,7 @@ export function InsightsTab({
     modelPresets?: ModelPreset[];
     modelDefault?: { provider: string; model: string } | null;
     onRequireLogin?: (retry?: () => void) => void;
+    onUpgrade?: () => void;
     pipelineProgress?: PipelineProgress | null;
 }) {
     const timestamped = useSummary(videoId, "timestamped");
@@ -216,6 +218,7 @@ export function InsightsTab({
                 confirmLabel={entries.length === 0 ? "Generate" : "Re-generate"}
                 error={generate.error ? (generate.error as Error).message : null}
                 errorCode={errorCodeOf(generate.error)}
+                onUpgrade={onUpgrade}
                 showAdvanced={devMode}
                 modelPresets={modelPresets}
                 defaultProvider={modelDefault?.provider}
