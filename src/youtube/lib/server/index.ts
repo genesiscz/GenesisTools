@@ -15,6 +15,7 @@ import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { clearPortFile, writePortFile } from "@app/youtube/lib/server/port-file";
 import { handleCacheRoute } from "@app/youtube/lib/server/routes/cache";
 import { handleChannelsRoute } from "@app/youtube/lib/server/routes/channels";
+import { handleCollectionsRoute } from "@app/youtube/lib/server/routes/collections";
 import { handleConfigRoute } from "@app/youtube/lib/server/routes/config";
 import { handleModelsRoute } from "@app/youtube/lib/server/routes/models";
 import { handlePipelineRoute } from "@app/youtube/lib/server/routes/pipeline";
@@ -206,6 +207,10 @@ async function dispatchApiRoute(req: Request, url: URL, youtube: Youtube): Promi
 
     if (url.pathname.startsWith("/api/v1/pipeline") || url.pathname.startsWith("/api/v1/jobs")) {
         return handlePipelineRoute(req, url, youtube);
+    }
+
+    if (url.pathname.startsWith("/api/v1/collections")) {
+        return handleCollectionsRoute(req, url, youtube);
     }
 
     if (url.pathname.startsWith("/api/v1/cache")) {
