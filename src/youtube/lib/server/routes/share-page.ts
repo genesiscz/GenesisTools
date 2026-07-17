@@ -2,7 +2,7 @@ import { matchRoute } from "@app/youtube/lib/server/match-route";
 import { renderShareNotFoundPage, renderSharePage } from "@app/youtube/lib/shares";
 import type { Youtube } from "@app/youtube/lib/youtube";
 
-const HTML_HEADERS = { "Content-Type": "text/html; charset=utf-8" };
+const HTML_HEADERS = { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" };
 
 /**
  * Public, unauthenticated `GET /share/:slug` — no `/api` prefix, registered
