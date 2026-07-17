@@ -1,4 +1,5 @@
-import { copyFile, mkdir } from "node:fs/promises";
+import { execSync } from "node:child_process";
+import { copyFile, cp, mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import viteReact from "@vitejs/plugin-react";
@@ -22,6 +23,35 @@ function copyExtensionStaticAssets(): Plugin {
 
             for (const name of ["icon16.png", "icon48.png", "icon128.png"]) {
                 await copyFile(resolve(root, "icons", name), resolve(dist, "icons", name));
+            }
+        },
+    };
+}
+
+// When building from a git worktree, Brave typically has the extension loaded
+// from the MAIN repo's dist/extension — mirror every (re)build there so both
+// checkouts serve the fresh bundle. No-op when already building in the main repo.
+function mirrorDistToMainRepo(): Plugin {
+    return {
+        name: "mirror-dist-to-main-repo",
+        async closeBundle() {
+            try {
+                const commonDir = execSync("git rev-parse --path-format=absolute --git-common-dir", {
+                    cwd: root,
+                })
+                    .toString()
+                    .trim();
+                const mainRoot = resolve(commonDir, "..");
+                const repoRoot = resolve(root, "../../..");
+
+                if (mainRoot === repoRoot) {
+                    return;
+                }
+
+                await cp(dist, resolve(mainRoot, "dist/extension"), { recursive: true });
+                console.info(`[mirror-dist] synced dist/extension to ${mainRoot}`);
+            } catch (err) {
+                console.warn("[mirror-dist] skipped:", err);
             }
         },
     };
@@ -52,7 +82,7 @@ const target = env.extension.getBuildTarget() ?? "modules";
 const configs: Record<string, UserConfig> = {
     modules: {
         ...shared,
-        plugins: [...(shared.plugins ?? []), copyExtensionStaticAssets()],
+        plugins: [...(shared.plugins ?? []), copyExtensionStaticAssets(), mirrorDistToMainRepo()],
         build: {
             outDir: dist,
             // emptyOutDir:false — the content-script pass writes its own file
@@ -77,6 +107,7 @@ const configs: Record<string, UserConfig> = {
     },
     "content-script": {
         ...shared,
+        plugins: [...(shared.plugins ?? []), mirrorDistToMainRepo()],
         // Vite `lib` mode skips the app-build `process.env.NODE_ENV` replace,
         // so React's internals reference `process.env` at runtime. Content
         // scripts run in a browser context with no `process` → replace here.
