@@ -44,6 +44,8 @@ export type CreditReason =
     | `refund:${string}`
     | `hold:${string}`
     | `hold-release:${string}`
+    | `sub-allowance:${string}`
+    | `referral:${string}`
     | `reuse:${string}`
     | `report:${string}`
     | `tts:${string}`;

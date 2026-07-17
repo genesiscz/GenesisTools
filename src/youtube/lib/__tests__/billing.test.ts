@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createHmac } from "node:crypto";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
-import { createCheckoutSession, handleStripeEvent, verifyStripeSignature } from "@app/youtube/lib/billing";
+import {
+    createCheckoutSession,
+    createSubscriptionCheckoutSession,
+    handleStripeEvent,
+    verifyStripeSignature,
+} from "@app/youtube/lib/billing";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
 
 // Golden vector — recomputed via:
@@ -83,69 +88,80 @@ function signPayload(secret: string, payloadObj: unknown): { payload: string; si
     return { payload, signature: `t=${t},v1=${sig}` };
 }
 
-describe("createCheckoutSession", () => {
-    const originalFetch = globalThis.fetch;
+function fakeGateway() {
+    const calls: { pack: unknown[]; sub: unknown[] } = { pack: [], sub: [] };
+    const gateway = {
+        createPackCheckout: async (input: unknown) => {
+            calls.pack.push(input);
+            return { id: "cs_fake", url: "https://checkout.stripe.test/cs_fake" };
+        },
+        createSubscriptionCheckout: async (input: unknown) => {
+            calls.sub.push(input);
+            return { id: "cs_sub_fake", url: "https://checkout.stripe.test/cs_sub_fake" };
+        },
+    };
 
-    afterEach(() => {
-        globalThis.fetch = originalFetch;
-    });
+    return { gateway, calls };
+}
 
-    it("posts to the stripe REST API and returns the checkout url", async () => {
-        let capturedBody = "";
-        let capturedAuth = "";
-        globalThis.fetch = (async (_input, init) => {
-            capturedBody = String(init?.body ?? "");
-            capturedAuth = String((init?.headers as Record<string, string> | undefined)?.Authorization ?? "");
+describe("createCheckoutSession (gateway)", () => {
+    const user = { id: 7, email: "u@example.com", credits: 0, createdAt: "", outputLang: null, ttsVoice: null };
 
-            return new Response(
-                SafeJSON.stringify({ url: "https://checkout.stripe.com/session/abc" }, { strict: true }),
-                { status: 200, headers: { "Content-Type": "application/json" } }
-            );
-        }) as typeof fetch;
+    it("resolves the pack price and returns the gateway url", async () => {
+        const { gateway, calls } = fakeGateway();
+        let url = "";
 
         await env.testing.withOverrides(
-            { STRIPE_SECRET_KEY: "sk_test_123", STRIPE_PRICE_PACK_MEDIUM: "price_medium_123" },
+            { STRIPE_SECRET_KEY: "sk_test_x", STRIPE_PRICE_PACK_SMALL: "price_small" },
             async () => {
-                const result = await createCheckoutSession({
-                    user: {
-                        id: 7,
-                        email: "buyer@example.com",
-                        credits: 0,
-                        createdAt: "2026-01-01T00:00:00.000Z",
-                        outputLang: null,
-                        ttsVoice: null,
-                    },
-                    packId: "pack-medium",
-                    origin: "https://example.com",
-                });
-
-                expect(result.url).toBe("https://checkout.stripe.com/session/abc");
+                ({ url } = await createCheckoutSession({ user, packId: "pack-small", origin: "o", gateway }));
             }
         );
 
-        expect(capturedAuth).toBe("Bearer sk_test_123");
-        expect(capturedBody).toContain("metadata%5BpackId%5D=pack-medium");
-        expect(capturedBody).toContain("metadata%5BuserId%5D=7");
-        expect(capturedBody).toContain("success_url=https%3A%2F%2Fwww.youtube.com");
+        expect(url).toBe("https://checkout.stripe.test/cs_fake");
+        expect(calls.pack).toEqual([{ priceId: "price_small", userId: 7, packId: "pack-small" }]);
     });
 
     it("throws 'billing not configured' when STRIPE_SECRET_KEY is unset", async () => {
+        const { gateway } = fakeGateway();
+
         await env.testing.withOverrides({ STRIPE_SECRET_KEY: undefined }, async () => {
-            await expect(
-                createCheckoutSession({
-                    user: {
-                        id: 1,
-                        email: "a@example.com",
-                        credits: 0,
-                        createdAt: "2026-01-01T00:00:00.000Z",
-                        outputLang: null,
-                        ttsVoice: null,
-                    },
-                    packId: "pack-small",
-                    origin: "https://example.com",
-                })
-            ).rejects.toThrow("billing not configured");
+            await expect(createCheckoutSession({ user, packId: "pack-small", origin: "o", gateway })).rejects.toThrow(
+                "billing not configured"
+            );
         });
+    });
+});
+
+describe("createSubscriptionCheckoutSession", () => {
+    const user = { id: 7, email: "u@example.com", credits: 0, createdAt: "", outputLang: null, ttsVoice: null };
+
+    it("resolves the plan price and returns the gateway url", async () => {
+        const { gateway, calls } = fakeGateway();
+        let url = "";
+
+        await env.testing.withOverrides(
+            { STRIPE_SECRET_KEY: "sk_test_x", STRIPE_PRICE_SUB_MONTHLY: "price_sub" },
+            async () => {
+                ({ url } = await createSubscriptionCheckoutSession({
+                    user,
+                    planId: "sub-monthly",
+                    origin: "o",
+                    gateway,
+                }));
+            }
+        );
+
+        expect(url).toBe("https://checkout.stripe.test/cs_sub_fake");
+        expect(calls.sub).toEqual([{ priceId: "price_sub", userId: 7, planId: "sub-monthly" }]);
+    });
+
+    it("rejects unknown plans", async () => {
+        const { gateway } = fakeGateway();
+
+        await expect(
+            createSubscriptionCheckoutSession({ user, planId: "sub-yearly", origin: "o", gateway })
+        ).rejects.toThrow("unknown subscription plan");
     });
 });
 
