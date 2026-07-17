@@ -1055,6 +1055,405 @@ function buildPaths(): Record<string, OpenApiPathItem> {
                 },
             },
         },
+        "/api/v1/collections": {
+            get: {
+                operationId: "listCollections",
+                summary: "List the signed-in user's collections",
+                tags: ["collections"],
+                responses: {
+                    "200": jsonResponse("Collections", {
+                        type: "object",
+                        properties: { collections: arrayOf({ type: "object" }) },
+                        required: ["collections"],
+                    }),
+                    "401": errorResponse,
+                },
+            },
+            post: {
+                operationId: "createCollection",
+                summary: "Create a manual or dynamic collection",
+                tags: ["collections"],
+                requestBody: jsonBody(
+                    {
+                        type: "object",
+                        properties: {
+                            name: { type: "string" },
+                            kind: { type: "string", enum: ["manual", "dynamic"] },
+                            rule: {
+                                type: "object",
+                                description: "Required for dynamic collections, e.g. {type:'watched', sinceDays:30}.",
+                            },
+                        },
+                        required: ["name", "kind"],
+                    },
+                    { required: true }
+                ),
+                responses: {
+                    "200": jsonResponse("Created collection", {
+                        type: "object",
+                        properties: { collection: { type: "object" } },
+                        required: ["collection"],
+                    }),
+                    "400": errorResponse,
+                    "401": errorResponse,
+                },
+            },
+        },
+        "/api/v1/collections/threads/{threadId}": {
+            get: {
+                operationId: "getCollectionThread",
+                summary: "Get an ask thread with its full message transcript",
+                tags: ["collections"],
+                parameters: [
+                    {
+                        name: "threadId",
+                        in: "path",
+                        required: true,
+                        description: "Ask thread id.",
+                        schema: { type: "integer" },
+                    },
+                ],
+                responses: {
+                    "200": jsonResponse("Thread with messages", {
+                        type: "object",
+                        properties: { thread: { type: "object" }, messages: arrayOf({ type: "object" }) },
+                        required: ["thread", "messages"],
+                    }),
+                    "401": errorResponse,
+                    "404": errorResponse,
+                },
+            },
+        },
+        "/api/v1/collections/{id}": {
+            get: {
+                operationId: "getCollection",
+                summary: "Get a collection with its resolved videos",
+                tags: ["collections"],
+                parameters: [
+                    {
+                        name: "id",
+                        in: "path",
+                        required: true,
+                        description: "Collection id.",
+                        schema: { type: "integer" },
+                    },
+                ],
+                responses: {
+                    "200": jsonResponse("Collection detail", {
+                        type: "object",
+                        properties: { collection: { type: "object" }, videos: arrayOf({ type: "object" }) },
+                        required: ["collection", "videos"],
+                    }),
+                    "401": errorResponse,
+                    "404": errorResponse,
+                },
+            },
+            patch: {
+                operationId: "patchCollection",
+                summary: "Rename a collection",
+                tags: ["collections"],
+                parameters: [
+                    {
+                        name: "id",
+                        in: "path",
+                        required: true,
+                        description: "Collection id.",
+                        schema: { type: "integer" },
+                    },
+                ],
+                requestBody: jsonBody(
+                    { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
+                    { required: true }
+                ),
+                responses: {
+                    "200": jsonResponse("Updated collection", {
+                        type: "object",
+                        properties: { collection: { type: "object" } },
+                        required: ["collection"],
+                    }),
+                    "400": errorResponse,
+                    "401": errorResponse,
+                    "404": errorResponse,
+                },
+            },
+            delete: {
+                operationId: "deleteCollection",
+                summary: "Delete a collection and its membership rows",
+                tags: ["collections"],
+                parameters: [
+                    {
+                        name: "id",
+                        in: "path",
+                        required: true,
+                        description: "Collection id.",
+                        schema: { type: "integer" },
+                    },
+                ],
+                responses: {
+                    "200": jsonResponse("Deleted", {
+                        type: "object",
+                        properties: { deleted: { type: "boolean" } },
+                        required: ["deleted"],
+                    }),
+                    "401": errorResponse,
+                    "404": errorResponse,
+                },
+            },
+        },
+        "/api/v1/collections/{id}/ask": {
+            post: {
+                operationId: "askCollection",
+                summary: "Ask a bounded tool-loop agent about a collection (charges credits)",
+                tags: ["collections"],
+                parameters: [
+                    {
+                        name: "id",
+                        in: "path",
+                        required: true,
+                        description: "Collection id.",
+                        schema: { type: "integer" },
+                    },
+                ],
+                requestBody: jsonBody(
+                    {
+                        type: "object",
+                        properties: {
+                            question: { type: "string" },
+                            threadId: nullableInteger("Continue an existing conversation."),
+                            provider: { type: "string" },
+                            model: { type: "string" },
+                        },
+                        required: ["question"],
+                    },
+                    { required: true }
+                ),
+                responses: {
+                    "200": jsonResponse("Answer", {
+                        type: "object",
+                        properties: {
+                            threadId: { type: "integer" },
+                            answer: { type: "string" },
+                            toolCalls: { type: "integer" },
+                            creditsSpent: { type: "integer" },
+                            credits: { type: "integer" },
+                        },
+                        required: ["threadId", "answer", "toolCalls", "creditsSpent", "credits"],
+                    }),
+                    "400": errorResponse,
+                    "401": errorResponse,
+                    "402": errorResponse,
+                    "404": errorResponse,
+                },
+            },
+        },
+        "/api/v1/collections/{id}/threads": {
+            get: {
+                operationId: "listCollectionThreads",
+                summary: "List ask threads for a collection",
+                tags: ["collections"],
+                parameters: [
+                    {
+                        name: "id",
+                        in: "path",
+                        required: true,
+                        description: "Collection id.",
+                        schema: { type: "integer" },
+                    },
+                ],
+                responses: {
+                    "200": jsonResponse("Threads", {
+                        type: "object",
+                        properties: { threads: arrayOf({ type: "object" }) },
+                        required: ["threads"],
+                    }),
+                    "401": errorResponse,
+                    "404": errorResponse,
+                },
+            },
+        },
+        "/api/v1/collections/{id}/videos": {
+            post: {
+                operationId: "addCollectionVideo",
+                summary: "Add a video to a manual collection",
+                tags: ["collections"],
+                parameters: [
+                    {
+                        name: "id",
+                        in: "path",
+                        required: true,
+                        description: "Collection id.",
+                        schema: { type: "integer" },
+                    },
+                ],
+                requestBody: jsonBody(
+                    { type: "object", properties: { videoId: { type: "string" } }, required: ["videoId"] },
+                    { required: true }
+                ),
+                responses: {
+                    "200": jsonResponse("Added", {
+                        type: "object",
+                        properties: { added: { type: "boolean" } },
+                        required: ["added"],
+                    }),
+                    "400": errorResponse,
+                    "401": errorResponse,
+                    "404": errorResponse,
+                },
+            },
+        },
+        "/api/v1/collections/{id}/videos/{videoId}": {
+            delete: {
+                operationId: "removeCollectionVideo",
+                summary: "Remove a video from a manual collection",
+                tags: ["collections"],
+                parameters: [
+                    {
+                        name: "id",
+                        in: "path",
+                        required: true,
+                        description: "Collection id.",
+                        schema: { type: "integer" },
+                    },
+                    {
+                        name: "videoId",
+                        in: "path",
+                        required: true,
+                        description: "YouTube video id.",
+                        schema: { type: "string" },
+                    },
+                ],
+                responses: {
+                    "200": jsonResponse("Removed", {
+                        type: "object",
+                        properties: { removed: { type: "boolean" } },
+                        required: ["removed"],
+                    }),
+                    "401": errorResponse,
+                    "404": errorResponse,
+                },
+            },
+        },
+        "/api/v1/users/history": {
+            get: {
+                operationId: "getUserHistory",
+                summary: "The signed-in user's activity, grouped by video or by action",
+                tags: ["users"],
+                parameters: [
+                    {
+                        name: "groupBy",
+                        in: "query",
+                        required: false,
+                        description: "video (default) or action.",
+                        schema: { type: "string", enum: ["video", "action"] },
+                    },
+                    { name: "limit", in: "query", required: false, schema: { type: "integer" } },
+                ],
+                responses: {
+                    "200": jsonResponse("History", {
+                        type: "object",
+                        properties: {
+                            groupBy: { type: "string", enum: ["video", "action"] },
+                            videos: arrayOf({ type: "object" }),
+                            actions: arrayOf({ type: "object" }),
+                            videosById: { type: "object" },
+                        },
+                        required: ["groupBy", "videosById"],
+                    }),
+                    "401": errorResponse,
+                },
+            },
+        },
+        "/api/v1/users/watchlist": {
+            get: {
+                operationId: "getWatchlist",
+                summary: "List the channels the signed-in user follows",
+                tags: ["users"],
+                responses: {
+                    "200": jsonResponse("Watchlist", {
+                        type: "object",
+                        properties: { channels: arrayOf({ type: "object" }) },
+                        required: ["channels"],
+                    }),
+                    "401": errorResponse,
+                },
+            },
+            post: {
+                operationId: "addWatchlistChannel",
+                summary: "Follow a channel",
+                tags: ["users"],
+                requestBody: jsonBody(
+                    { type: "object", properties: { handle: { type: "string" } }, required: ["handle"] },
+                    { required: true }
+                ),
+                responses: {
+                    "200": jsonResponse("Added", {
+                        type: "object",
+                        properties: { added: { type: "boolean" } },
+                        required: ["added"],
+                    }),
+                    "400": errorResponse,
+                    "401": errorResponse,
+                },
+            },
+        },
+        "/api/v1/users/watchlist/{handle}": {
+            delete: {
+                operationId: "removeWatchlistChannel",
+                summary: "Unfollow a channel",
+                tags: ["users"],
+                parameters: [
+                    {
+                        name: "handle",
+                        in: "path",
+                        required: true,
+                        description: "Channel handle.",
+                        schema: { type: "string" },
+                    },
+                ],
+                responses: {
+                    "200": jsonResponse("Removed", {
+                        type: "object",
+                        properties: { removed: { type: "boolean" } },
+                        required: ["removed"],
+                    }),
+                    "401": errorResponse,
+                },
+            },
+        },
+        "/api/v1/users/digest": {
+            get: {
+                operationId: "getDigest",
+                summary: "Recent videos from followed channels",
+                tags: ["users"],
+                parameters: [{ name: "sinceDays", in: "query", required: false, schema: { type: "integer" } }],
+                responses: {
+                    "200": jsonResponse("Digest", {
+                        type: "object",
+                        properties: {
+                            since: { type: "string" },
+                            channels: arrayOf({ type: "object" }),
+                        },
+                        required: ["since", "channels"],
+                    }),
+                    "401": errorResponse,
+                },
+            },
+        },
+        "/api/v1/users/digest/sync": {
+            post: {
+                operationId: "syncDigest",
+                summary: "Enqueue discover+metadata jobs for every followed channel",
+                tags: ["users"],
+                responses: {
+                    "200": jsonResponse("Enqueued jobs", {
+                        type: "object",
+                        properties: { enqueuedJobIds: arrayOf({ type: "integer" }) },
+                        required: ["enqueuedJobIds"],
+                    }),
+                    "401": errorResponse,
+                },
+            },
+        },
     };
 }
 
