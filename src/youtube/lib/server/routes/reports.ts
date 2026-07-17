@@ -19,31 +19,40 @@ export async function handleReportsRoute(req: Request, url: URL, yt: Youtube): P
 
         if (matchRoute(req, "POST", "/api/v1/reports/estimate", url.pathname)) {
             const body = await safeJsonBody(req);
-            const videoIds = parseVideoIds(body?.videoIds);
+            const parsed = parseVideoIds(body?.videoIds);
 
-            if (!videoIds) {
+            if (!parsed) {
                 return jsonError(
                     `body must include {videoIds: string[]} with ${REPORT_MIN_MEMBERS}-${REPORT_MAX_MEMBERS} members`,
                     400
                 );
             }
 
-            return Response.json(estimateReportCost(yt.db, { userId: user.id, videoIds }), {
+            if ("invalidIds" in parsed) {
+                return jsonError(`invalid video IDs: ${parsed.invalidIds.join(", ")}`, 400);
+            }
+
+            return Response.json(estimateReportCost(yt.db, { userId: user.id, videoIds: parsed.ids }), {
                 headers: CORS_HEADERS,
             });
         }
 
         if (matchRoute(req, "POST", "/api/v1/reports", url.pathname)) {
             const body = await safeJsonBody(req);
-            const videoIds = parseVideoIds(body?.videoIds);
+            const parsed = parseVideoIds(body?.videoIds);
 
-            if (!videoIds) {
+            if (!parsed) {
                 return jsonError(
                     `body must include {videoIds: string[]} with ${REPORT_MIN_MEMBERS}-${REPORT_MAX_MEMBERS} members`,
                     400
                 );
             }
 
+            if ("invalidIds" in parsed) {
+                return jsonError(`invalid video IDs: ${parsed.invalidIds.join(", ")}`, 400);
+            }
+
+            const videoIds = parsed.ids;
             const estimate = estimateReportCost(yt.db, { userId: user.id, videoIds });
 
             if (user.credits < estimate.creditCost) {
@@ -139,18 +148,34 @@ export async function handleReportsRoute(req: Request, url: URL, yt: Youtube): P
     }
 }
 
-function parseVideoIds(value: unknown): string[] | null {
+const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{6,20}$/;
+
+type ParsedVideoIds = { ids: string[] } | { invalidIds: string[] };
+
+function parseVideoIds(value: unknown): ParsedVideoIds | null {
     if (!Array.isArray(value)) {
         return null;
     }
 
-    const ids = [...new Set(value.filter((entry): entry is string => typeof entry === "string" && entry !== ""))];
+    const ids = [
+        ...new Set(
+            value
+                .filter((entry): entry is string => typeof entry === "string")
+                .map((entry) => entry.trim())
+                .filter((entry) => entry !== "")
+        ),
+    ];
+    const invalidIds = ids.filter((id) => !VIDEO_ID_PATTERN.test(id));
+
+    if (invalidIds.length > 0) {
+        return { invalidIds };
+    }
 
     if (ids.length < REPORT_MIN_MEMBERS || ids.length > REPORT_MAX_MEMBERS) {
         return null;
     }
 
-    return ids;
+    return { ids };
 }
 
 function jsonError(error: string, status: number): Response {
