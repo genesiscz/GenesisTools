@@ -2,20 +2,24 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
-import { DIAMOND_PACKS, type DiamondPack } from "@app/youtube/lib/billing.types";
+import { DIAMOND_PACKS, type DiamondPack, SUBSCRIPTION_PLANS } from "@app/youtube/lib/billing.types";
+import { createStripeGateway, type StripeGateway } from "@app/youtube/lib/billing-gateway";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { YtUser } from "@app/youtube/lib/users.types";
 
 /**
- * Creates a Stripe Checkout session for a diamond pack via the Stripe REST API
- * directly (no SDK dependency). `origin` is accepted for interface symmetry
- * with the route layer but unused — per spec, success/cancel both point at
- * https://www.youtube.com (the extension polls balance; no landing page).
+ * Creates a Stripe Checkout session for a diamond pack. The outbound call goes
+ * through `billing-gateway.ts` (the official Stripe SDK); tests inject a fake
+ * gateway and never hit the network. `origin` is accepted for interface
+ * symmetry with the route layer but unused — per spec, success/cancel both
+ * point at https://www.youtube.com (the extension polls balance; no landing page).
  */
 export async function createCheckoutSession(opts: {
     user: YtUser;
     packId: string;
     origin: string;
+    /** Test seam — production callers omit it and get the SDK gateway. */
+    gateway?: StripeGateway;
 }): Promise<{ url: string }> {
     const pack = DIAMOND_PACKS.find((candidate) => candidate.id === opts.packId);
 
@@ -36,48 +40,41 @@ export async function createCheckoutSession(opts: {
         throw new Error(`billing not configured: ${priceEnvKey} unset`);
     }
 
-    const body = new URLSearchParams();
-    body.set("mode", "payment");
-    body.set("client_reference_id", String(opts.user.id));
-    body.set("line_items[0][price]", priceId);
-    body.set("line_items[0][quantity]", "1");
-    body.set("metadata[packId]", pack.id);
-    body.set("metadata[userId]", String(opts.user.id));
-    // Session-level metadata does not auto-propagate to the resulting charge —
-    // set it on the PaymentIntent too so charge.refunded can attribute the refund.
-    body.set("payment_intent_data[metadata][userId]", String(opts.user.id));
-    body.set("payment_intent_data[metadata][packId]", pack.id);
-    body.set("success_url", "https://www.youtube.com");
-    body.set("cancel_url", "https://www.youtube.com");
+    const gateway = opts.gateway ?? createStripeGateway(secretKey);
+    const session = await gateway.createPackCheckout({ priceId, userId: opts.user.id, packId: pack.id });
 
-    const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
-        method: "POST",
-        headers: {
-            Authorization: `Bearer ${secretKey}`,
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: body.toString(),
-    });
+    return { url: session.url };
+}
 
-    if (!res.ok) {
-        const detail = await res.text().catch((err) => {
-            logger.debug({ error: err }, "youtube billing: failed to read stripe error body");
-            return "";
-        });
-        logger.warn(
-            { status: res.status, detail: detail.slice(0, 500) },
-            "youtube billing: checkout session create failed"
-        );
-        throw new Error(`stripe checkout session create failed: ${res.status}`);
+/** Subscription checkout for a monthly plan. Mirrors the pack flow: env-gated, gateway-backed. */
+export async function createSubscriptionCheckoutSession(opts: {
+    user: YtUser;
+    planId: string;
+    origin: string;
+    gateway?: StripeGateway;
+}): Promise<{ url: string }> {
+    const plan = SUBSCRIPTION_PLANS.find((candidate) => candidate.id === opts.planId);
+
+    if (!plan) {
+        throw new Error(`unknown subscription plan: ${opts.planId}`);
     }
 
-    const data = (await res.json()) as { url?: string };
+    const secretKey = env.stripe.getSecretKey();
 
-    if (!data.url) {
-        throw new Error("stripe checkout session response missing url");
+    if (!secretKey) {
+        throw new Error("billing not configured");
     }
 
-    return { url: data.url };
+    const priceId = env.getTrimmed("STRIPE_PRICE_SUB_MONTHLY");
+
+    if (!priceId) {
+        throw new Error("billing not configured: STRIPE_PRICE_SUB_MONTHLY unset");
+    }
+
+    const gateway = opts.gateway ?? createStripeGateway(secretKey);
+    const session = await gateway.createSubscriptionCheckout({ priceId, userId: opts.user.id, planId: plan.id });
+
+    return { url: session.url };
 }
 
 interface StripeEvent {

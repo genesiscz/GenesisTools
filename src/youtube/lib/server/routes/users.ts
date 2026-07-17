@@ -1,8 +1,8 @@
 import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
-import { createCheckoutSession } from "@app/youtube/lib/billing";
-import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
+import { createCheckoutSession, createSubscriptionCheckoutSession } from "@app/youtube/lib/billing";
+import { DIAMOND_PACKS, SUBSCRIPTION_PLANS } from "@app/youtube/lib/billing.types";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import { buildHistoryEntries, groupHistoryByAction, groupHistoryByVideo } from "@app/youtube/lib/history";
 import { isOutputLang } from "@app/youtube/lib/languages";
@@ -131,6 +131,41 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 logger.warn({ error, userId: user.id, packId }, "youtube billing: checkout session failed");
+                return jsonError(message, message.includes("not configured") ? 503 : 400);
+            }
+        }
+
+        if (matchRoute(req, "POST", "/api/v1/users/subscribe", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const body = (await safeJsonBody(req)) ?? {};
+            const planId = typeof body.planId === "string" ? body.planId : null;
+
+            if (!planId || !SUBSCRIPTION_PLANS.some((plan) => plan.id === planId)) {
+                return jsonError("body must include a known {planId}", 400);
+            }
+
+            if (!env.stripe.getSecretKey()) {
+                return jsonError("billing not configured", 503);
+            }
+
+            const existing = yt.db.getSubscriptionByUserId(user.id);
+
+            if (existing && existing.status === "active") {
+                return jsonError("subscription already active", 409);
+            }
+
+            try {
+                const origin = req.headers.get("Origin") ?? "https://www.youtube.com";
+                const result = await createSubscriptionCheckoutSession({ user, planId, origin });
+                return Response.json(result, { headers: CORS_HEADERS });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                logger.warn({ error, userId: user.id, planId }, "youtube billing: subscribe session failed");
                 return jsonError(message, message.includes("not configured") ? 503 : 400);
             }
         }
