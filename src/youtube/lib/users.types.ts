@@ -41,9 +41,27 @@ export type CreditReason =
     | `stripe:${string}`
     | `stripe-refund:${string}`
     | `refund:${string}`
+    | `hold:${string}`
+    | `hold-release:${string}`
     | `reuse:${string}`
     | `report:${string}`
     | `tts:${string}`;
+
+/** A credit reservation taken before external (LLM/TTS) work starts. The
+ * balance is already decremented while `status` is `"held"` — commit keeps
+ * the money and finalizes the ledger reason, release refunds it. */
+export interface CreditHold {
+    id: number;
+    userId: number;
+    amount: number;
+    /** The final ledger reason written on commit (e.g. `summary:long`). */
+    reason: CreditReason;
+    /** Free-form debug reference (typically the video id); never parsed. */
+    context: string | null;
+    status: "held" | "committed" | "released";
+    createdAt: string;
+    resolvedAt: string | null;
+}
 
 export const CREDIT_COSTS = {
     ask: 5,
