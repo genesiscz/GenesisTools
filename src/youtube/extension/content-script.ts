@@ -257,19 +257,39 @@ function removeSidePanel(): void {
     host.remove();
 }
 
+let mountRetryTimer: number | null = null;
+
 function scheduleMount(): void {
     // #secondary is populated asynchronously on watch nav; retry until it
     // exists, otherwise the fixed fallback kicks in after the attempt cap.
+    // A single tracked timer is cancelled on every reschedule/cleanup so
+    // overlapping navigations can't run competing retry chains, and
+    // ensureSidePanel() only re-runs (recreating the host + resetting React
+    // state) on the first attempt or once the inline target is available.
+    if (mountRetryTimer !== null) {
+        window.clearTimeout(mountRetryTimer);
+        mountRetryTimer = null;
+    }
+
     let attempts = 0;
     const tryMount = (): void => {
-        ensureSidePanel();
+        const target = getPanelTarget();
+        const secondaryReady =
+            target?.kind === "video" && location.pathname === "/watch" && findWatchSecondaryColumn() !== null;
+
+        if (attempts === 0 || secondaryReady) {
+            ensureSidePanel();
+        }
+
         ensureChapterTicks();
         attempts += 1;
-        const target = getPanelTarget();
         const stillWaiting =
-            target?.kind === "video" && location.pathname === "/watch" && !findWatchSecondaryColumn() && attempts < 20;
+            target?.kind === "video" && location.pathname === "/watch" && !secondaryReady && attempts < 20;
+
         if (stillWaiting) {
-            window.setTimeout(tryMount, 250);
+            mountRetryTimer = window.setTimeout(tryMount, 250);
+        } else {
+            mountRetryTimer = null;
         }
     };
     tryMount();
@@ -278,6 +298,8 @@ function scheduleMount(): void {
 // --- Chapter ticks on the player progress bar (page DOM, gt-chapter- styles) ---
 
 let chapterData: PlayerChaptersMessage | null = null;
+/** The payload the currently-mounted ticks were built from. */
+let ticksData: PlayerChaptersMessage | null = null;
 let ticks: ChapterTicksHandle | null = null;
 let ticksBar: HTMLElement | null = null;
 let observedPlayer: HTMLElement | null = null;
@@ -306,6 +328,7 @@ function unmountTicks(): void {
     ticks?.unmount();
     ticks = null;
     ticksBar = null;
+    ticksData = null;
 }
 
 function ensureChapterTicks(): void {
@@ -325,13 +348,16 @@ function ensureChapterTicks(): void {
         return;
     }
 
-    if (ticks && ticksBar === bar && bar.isConnected) {
+    // Keyed on the chapter payload too — same bar element with NEW chapter
+    // data (fresh player:chapters message) must remount, not stay stale.
+    if (ticks && ticksBar === bar && bar.isConnected && ticksData === chapterData) {
         return;
     }
 
     unmountTicks();
     ticks = mountChapterTicks({ chapters: chapterData.chapters, duration, container: bar, onSeek: seekPlayer });
     ticksBar = bar;
+    ticksData = chapterData;
     ticks.setCurrentTime(lastPlayerTime);
 }
 
@@ -409,6 +435,11 @@ window.addEventListener("yt-navigate-finish", scheduleMount);
 window.addEventListener("popstate", scheduleMount);
 
 window.__genesisYtCleanup = () => {
+    if (mountRetryTimer !== null) {
+        window.clearTimeout(mountRetryTimer);
+        mountRetryTimer = null;
+    }
+
     removeSidePanel();
     window.removeEventListener("yt-navigate-finish", scheduleMount);
     window.removeEventListener("popstate", scheduleMount);

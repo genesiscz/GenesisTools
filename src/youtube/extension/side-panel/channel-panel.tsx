@@ -34,7 +34,12 @@ export function ChannelPanel({ handle }: { handle: string | null }) {
     return (
         <div className="flex h-auto min-h-0 flex-col overflow-hidden rounded-xl border border-white/8 bg-card">
             <Header collapsed={collapsed} onToggleCollapse={() => setCollapsed((v) => !v)} />
-            <div className="yt-body-collapsible min-h-0 flex-1" data-collapsed={collapsed}>
+            <div
+                className="yt-body-collapsible min-h-0 flex-1"
+                data-collapsed={collapsed}
+                inert={collapsed}
+                aria-hidden={collapsed}
+            >
                 <div className="yt-scroll min-h-0 flex-1 space-y-4 overflow-auto p-4">
                     <div>
                         <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-secondary">Channel</p>

@@ -130,10 +130,7 @@ export function mountChapterTicks(opts: MountChapterTicksOpts): ChapterTicksHand
         const pct = tickPositionPct(chapter.startSec, duration);
 
         if (pct === null) {
-            logger.debug(
-                { startSec: chapter.startSec, duration },
-                "player-chapters: dropping tick outside duration"
-            );
+            logger.debug({ startSec: chapter.startSec, duration }, "player-chapters: dropping tick outside duration");
             continue;
         }
 

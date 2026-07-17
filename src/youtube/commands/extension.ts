@@ -1,12 +1,12 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 import { logger, out } from "@app/logger";
-import { SafeJSON } from "@app/utils/json";
 import { createWatcher } from "@app/utils/fs/watcher";
+import { SafeJSON } from "@app/utils/json";
 import { toPosixPath } from "@app/utils/paths";
-import { launchDevtoolsBrowser } from "../../../.claude/skills/chrome-extension-dev/scripts/devtools-browser";
-import { captureFrameGrid } from "../../../.claude/skills/chrome-extension-dev/scripts/devtools-frame-grid";
-import { withDevtoolsClient } from "../../../.claude/skills/chrome-extension-dev/scripts/devtools-mcp-client";
+import { launchDevtoolsBrowser } from "@app/youtube/lib/devtools/browser";
+import { captureFrameGrid } from "@app/youtube/lib/devtools/frame-grid";
+import { withDevtoolsClient } from "@app/youtube/lib/devtools/mcp-client";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -38,7 +38,17 @@ export function registerExtensionCommand(program: Command): void {
         .description("Build the extension and launch Chrome/Brave with it loaded + a CDP port open")
         .option("-p, --port <port>", "remote debugging port", "9333")
         .action(async (opts: { port: string }) => {
-            const result = await launchDevtoolsBrowser(Number(opts.port));
+            const port = Number(opts.port);
+
+            if (!Number.isInteger(port) || port < 1 || port > 65535) {
+                p.log.error(`Invalid --port ${opts.port} — expected an integer between 1 and 65535.`);
+                process.exitCode = 1;
+                return;
+            }
+
+            logger.info({ port }, "extension devtools: launching browser");
+            const result = await launchDevtoolsBrowser(port);
+            logger.info({ pid: result.pid, port: result.port, dist: result.dist }, "extension devtools: browser up");
             p.log.success(`Chrome up (pid ${result.pid}), extension loaded from ${result.dist}`);
             p.log.info(`CDP endpoint: http://127.0.0.1:${result.port}`);
             p.log.info(pc.dim(`Kill it with: kill ${result.pid}`));
@@ -47,46 +57,79 @@ export function registerExtensionCommand(program: Command): void {
     devtools
         .command("list-tools")
         .description("List every tool chrome-devtools-mcp exposes")
-        .option("--cdp-url <url>", "CDP endpoint of a running browser", "http://127.0.0.1:9333")
-        .action(async (opts: { cdpUrl: string }) => {
-            await withDevtoolsClient(async (client) => {
-                const { tools } = await client.listTools();
-                out.result(
-                    SafeJSON.stringify(
-                        tools.map((t) => ({ name: t.name, description: t.description })),
-                        { strict: true }
-                    )
-                );
-            }, { cdpUrl: opts.cdpUrl });
+        .option("--cdp-url <url>", "CDP endpoint of a running browser (default: $CDP_URL or http://127.0.0.1:9333)")
+        .action(async (opts: { cdpUrl?: string }) => {
+            logger.debug({ cdpUrl: opts.cdpUrl ?? null }, "extension devtools: list-tools");
+            await withDevtoolsClient(
+                async (client) => {
+                    const { tools } = await client.listTools();
+                    logger.debug({ count: tools.length }, "extension devtools: tools listed");
+                    out.result(
+                        SafeJSON.stringify(
+                            tools.map((t) => ({ name: t.name, description: t.description })),
+                            { strict: true }
+                        )
+                    );
+                },
+                { cdpUrl: opts.cdpUrl }
+            );
         });
 
     devtools
         .command("call <toolName> [argsJson]")
-        .description("Call one chrome-devtools-mcp tool directly, e.g. `call navigate_page '{\"url\":\"...\",\"type\":\"url\"}'`")
-        .option("--cdp-url <url>", "CDP endpoint of a running browser", "http://127.0.0.1:9333")
-        .action(async (toolName: string, argsJson: string | undefined, opts: { cdpUrl: string }) => {
-            const args = argsJson ? SafeJSON.parse(argsJson, { strict: true }) : {};
-            await withDevtoolsClient(async (client) => {
-                const result = await client.callTool({ name: toolName, arguments: args as Record<string, unknown> });
-                out.result(SafeJSON.stringify(result, { strict: true }));
-            }, { cdpUrl: opts.cdpUrl });
+        .description(
+            'Call one chrome-devtools-mcp tool directly, e.g. `call navigate_page \'{"url":"...","type":"url"}\'`'
+        )
+        .option("--cdp-url <url>", "CDP endpoint of a running browser (default: $CDP_URL or http://127.0.0.1:9333)")
+        .action(async (toolName: string, argsJson: string | undefined, opts: { cdpUrl?: string }) => {
+            const parsed: unknown = argsJson ? SafeJSON.parse(argsJson, { strict: true }) : {};
+
+            if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+                p.log.error('argsJson must be a JSON object, e.g. \'{"url":"..."}\'.');
+                process.exitCode = 1;
+                return;
+            }
+
+            const args = parsed as Record<string, unknown>;
+            logger.info(
+                { toolName, argKeys: Object.keys(args), cdpUrl: opts.cdpUrl ?? null },
+                "extension devtools: call"
+            );
+            await withDevtoolsClient(
+                async (client) => {
+                    const result = await client.callTool({
+                        name: toolName,
+                        arguments: args,
+                    });
+                    logger.debug({ toolName, isError: result.isError === true }, "extension devtools: call finished");
+                    out.result(SafeJSON.stringify(result, { strict: true }));
+                },
+                { cdpUrl: opts.cdpUrl }
+            );
         });
 
     devtools
         .command("get-frame-grid <outPath>")
-        .description("Screenshot the page and overlay a labeled coordinate grid — for locating click targets without guessing")
+        .description(
+            "Screenshot the page and overlay a labeled coordinate grid — for locating click targets without guessing"
+        )
         .option("--region <x,y,w,h>", "crop to this region first (screenshot pixel space)")
         .option("--step <n>", "grid line spacing in pixels", "40")
-        .option("--cdp-url <url>", "CDP endpoint of a running browser", "http://127.0.0.1:9333")
-        .action(async (outPath: string, opts: { region?: string; step: string; cdpUrl: string }) => {
-            await withDevtoolsClient(async (client) => {
-                const written = await captureFrameGrid(client, {
-                    outPath,
-                    region: opts.region,
-                    gridStep: Number(opts.step),
-                });
-                p.log.success(`Labeled grid written to ${written}`);
-            }, { cdpUrl: opts.cdpUrl });
+        .option("--cdp-url <url>", "CDP endpoint of a running browser (default: $CDP_URL or http://127.0.0.1:9333)")
+        .action(async (outPath: string, opts: { region?: string; step: string; cdpUrl?: string }) => {
+            logger.info({ outPath, region: opts.region ?? null, step: opts.step }, "extension devtools: frame grid");
+            await withDevtoolsClient(
+                async (client) => {
+                    const written = await captureFrameGrid(client, {
+                        outPath,
+                        region: opts.region,
+                        gridStep: Number(opts.step),
+                    });
+                    logger.debug({ written }, "extension devtools: frame grid written");
+                    p.log.success(`Labeled grid written to ${written}`);
+                },
+                { cdpUrl: opts.cdpUrl }
+            );
         });
 }
 
@@ -194,9 +237,11 @@ async function devExtension(): Promise<void> {
         // tabs reload. Both changed → the more-invasive runtime reload wins.
         const buildTargets: string[] = [];
         if (targetsBatch.has("runtime")) {
-            buildTargets.push("modules");
-        }
-        if (targetsBatch.has("tabs")) {
+            // Runtime-classified changes (incl. vite.config.ts) can affect BOTH
+            // bundles — rebuild content-script too so it never goes stale, and
+            // the runtime reload re-injects it anyway.
+            buildTargets.push("modules", "content-script");
+        } else if (targetsBatch.has("tabs")) {
             buildTargets.push("content-script");
         }
         if (buildTargets.length === 0) {
@@ -242,6 +287,7 @@ async function devExtension(): Promise<void> {
         "extension/dev-reload",
         "extension/shared/storage",
         "extension/manifest",
+        "extension/vite.config",
     ];
 
     function classify(path: string): DevReloadTarget {

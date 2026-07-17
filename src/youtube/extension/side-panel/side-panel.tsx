@@ -1,6 +1,7 @@
 import { type PipelineProgress, type VideoDetailTab, VideoDetailTabs } from "@app/utils/ui/components/youtube/tabs";
 import type { PipelineJob } from "@app/youtube/lib/jobs.types";
 import type { JobStage, SummaryMode } from "@app/youtube/lib/types";
+import type { UserSettings } from "@app/youtube/lib/user-settings";
 import { send } from "@ext/api.bridge";
 import {
     buildAudioSrc,
@@ -9,8 +10,10 @@ import {
     useMe,
     useModels,
     useQueueStats,
+    useSettings,
     useStartPipeline,
     useSummary,
+    useUpdateSettings,
 } from "@ext/api.hooks";
 import { loadUiLang } from "@ext/shared/i18n";
 import type { ExtensionEvent, PlayerChaptersMessage } from "@ext/shared/messages";
@@ -23,23 +26,81 @@ import { connectEventPort } from "@ext/side-panel/port";
 import { SettingsDialog } from "@ext/side-panel/settings-dialog";
 import type { PanelTarget } from "@ext/side-panel/target";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 declare const __EXT_DEV_RELOAD__: boolean;
 const IS_DEV_BUILD = typeof __EXT_DEV_RELOAD__ !== "undefined" && __EXT_DEV_RELOAD__;
 
 type Placement = "inline" | "fixed";
 
+const VIDEO_DETAIL_TABS: VideoDetailTab[] = ["insights", "summary", "ask", "comments", "transcript"];
+
+function isVideoDetailTab(value: string): value is VideoDetailTab {
+    return (VIDEO_DETAIL_TABS as string[]).includes(value);
+}
+
 export function SidePanel({ target, placement }: { target: PanelTarget; placement: Placement }) {
-    if (target.kind === "channel") {
-        return <ChannelPanel handle={target.handle} />;
-    }
+    const settings = useSettings();
+    const anchorRef = useRef<HTMLDivElement>(null);
+    useApplyAppearance(settings.data?.settings, anchorRef);
 
-    if (target.kind === "playlist") {
-        return <PlaylistPanel listId={target.listId} />;
-    }
+    // `display: contents` keeps this wrapper out of layout while still giving
+    // us a DOM anchor to reach the shadow root and stamp the theme/density
+    // attributes onto every `.genesis-yt-extension-root` (panel + portal).
+    return (
+        <div ref={anchorRef} style={{ display: "contents" }}>
+            {target.kind === "channel" ? (
+                <ChannelPanel handle={target.handle} />
+            ) : target.kind === "playlist" ? (
+                <PlaylistPanel listId={target.listId} />
+            ) : (
+                <VideoPanel videoId={target.videoId} placement={placement} />
+            )}
+        </div>
+    );
+}
 
-    return <VideoPanel videoId={target.videoId} placement={placement} />;
+/** Applies the user's theme (system → resolved via `prefers-color-scheme`) and
+ *  density to the extension roots inside the shadow tree. Re-resolves when the
+ *  OS theme flips while "system" is selected. */
+function useApplyAppearance(settings: UserSettings | undefined, anchorRef: RefObject<HTMLDivElement | null>) {
+    const theme = settings?.theme ?? "system";
+    const density = settings?.density ?? "comfortable";
+
+    useEffect(() => {
+        const node = anchorRef.current;
+
+        if (!node) {
+            return;
+        }
+
+        const scope = node.getRootNode();
+
+        if (!(scope instanceof ShadowRoot) && !(scope instanceof Document)) {
+            return;
+        }
+
+        const roots = scope.querySelectorAll<HTMLElement>(".genesis-yt-extension-root");
+        const media = window.matchMedia("(prefers-color-scheme: dark)");
+
+        function apply(): void {
+            const resolved = theme === "system" ? (media.matches ? "dark" : "light") : theme;
+
+            for (const root of roots) {
+                root.dataset.theme = resolved;
+                root.dataset.density = density;
+            }
+        }
+
+        apply();
+
+        if (theme !== "system") {
+            return;
+        }
+
+        media.addEventListener("change", apply);
+        return () => media.removeEventListener("change", apply);
+    }, [theme, density, anchorRef]);
 }
 
 function VideoPanel({ videoId, placement }: { videoId: string; placement: Placement }) {
@@ -61,7 +122,48 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
     // Dev-only model picker data; regular builds never fetch it.
     const models = useModels(IS_DEV_BUILD);
     const me = useMe();
+    // Model-override picker is an admin/dev tool (mirrors the web settings gating);
+    // logged-out visitors and regular users never see it.
+    const isPowerUser = me.data?.role === "admin" || me.data?.role === "dev";
     const config = useConfig();
+    const settings = useSettings();
+    const updateSettings = useUpdateSettings();
+
+    // Panel behavior rules (spec §6): seed the initial tab + collapse from the
+    // user's saved settings once the async query resolves — one-shot so it never
+    // fights the user's own clicks afterward.
+    const seededPanelRef = useRef(false);
+    useEffect(() => {
+        if (seededPanelRef.current || !settings.data) {
+            return;
+        }
+
+        seededPanelRef.current = true;
+        const panel = settings.data.settings.panel ?? {};
+
+        if (panel.defaultTab && isVideoDetailTab(panel.defaultTab)) {
+            setActive(panel.defaultTab);
+        }
+
+        if (panel.autoOpen === false) {
+            setCollapsed(true);
+        } else if (typeof panel.collapsed === "boolean") {
+            setCollapsed(panel.collapsed);
+        }
+    }, [settings.data]);
+
+    // Persist collapse toggles only when the user opted into remembering them.
+    const toggleCollapse = useCallback(() => {
+        setCollapsed((prev) => {
+            const next = !prev;
+
+            if (settings.data?.settings.panel?.rememberCollapse) {
+                updateSettings.mutate({ panel: { collapsed: next } });
+            }
+
+            return next;
+        });
+    }, [settings.data, updateSettings]);
 
     // Login-gated action retry: a 401'd action registers itself here before
     // the settings dialog opens; the moment `useMe` reports a user, the dialog
@@ -273,7 +375,7 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                 }
             }
 
-            if (jobEvent.type !== "job:completed") {
+            if (jobEvent.type !== "job:completed" || jobEvent.job.target !== videoId) {
                 return;
             }
 
@@ -296,6 +398,12 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
         const timer = setInterval(() => {
             for (const jobId of activeJobIdsRef.current) {
                 void send<{ job: PipelineJob }>({ type: "api:getJob", id: jobId }).then(({ job }) => {
+                    // Stale-response guard: the WS handler may have already
+                    // removed this job — a late poll must not resurrect the bar.
+                    if (!activeJobIdsRef.current.has(job.id)) {
+                        return;
+                    }
+
                     if (job.status !== "completed" && job.status !== "failed" && job.status !== "cancelled") {
                         setPipelineProgress({ progress: job.progress, message: job.progressMessage });
                         return;
@@ -365,7 +473,7 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
         <div className={containerClass}>
             <Header
                 collapsed={collapsed}
-                onToggleCollapse={() => setCollapsed((v) => !v)}
+                onToggleCollapse={toggleCollapse}
                 onOpenSettings={() => setSettingsOpen(true)}
             />
             {/* Nested flex (not h-full): percentage heights can't resolve against
@@ -374,7 +482,14 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                 YouTube page. Flex sizing distributes real layout space instead.
                 overscroll-contain stops the page from scrolling when the panel
                 hits its top/bottom. */}
-            <div className="yt-body-collapsible flex min-h-0 flex-1 flex-col" data-collapsed={collapsed}>
+            <div
+                className="yt-body-collapsible flex min-h-0 flex-1 flex-col"
+                data-collapsed={collapsed}
+                // pointer-events:none hides from mouse only — inert also removes
+                // the collapsed body from keyboard/AT reach.
+                inert={collapsed}
+                aria-hidden={collapsed}
+            >
                 <div className="yt-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">
                     {view === "account" ? (
                         <AccountView
@@ -393,11 +508,12 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                             onActiveChange={setActive}
                             runPipeline={runPipeline}
                             chromeless
-                            devMode={IS_DEV_BUILD}
+                            devMode={isPowerUser}
                             modelPresets={models.data?.presets ?? []}
                             modelDefaults={models.data?.defaults}
                             pipelineProgress={pipelineProgress}
                             queueStats={queueStats.data?.queue}
+                            taskDefaults={settings.data?.settings.taskDefaults}
                             onRequireLogin={requireLogin}
                             onUpgrade={() => setSettingsOpen(true)}
                             onOpenWatch={(id, t) => void send({ type: "nav:openWatch", id, t })}
@@ -424,7 +540,7 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                         pendingLoginRetry.current = null;
                     }
                 }}
-                devMode={IS_DEV_BUILD}
+                devMode={isPowerUser}
                 onOpenAccount={(accountSectionId) => {
                     setSettingsOpen(false);
                     setAccountSection(accountSectionId);

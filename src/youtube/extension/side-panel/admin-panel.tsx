@@ -48,7 +48,11 @@ export function AdminPanelDialog({ open, onOpenChange }: { open: boolean; onOpen
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent
                 showCloseButton
-                className="flex aspect-[16/9] max-h-[85vh] w-[96vw] max-w-[min(96vw,960px)] flex-col gap-0 overflow-hidden bg-card p-0"
+                // Width/max-width are set inline because the arbitrary `w-[96vw]`/`max-w-[min(...)]`
+                // utilities don't win over the base DialogContent's `w-full`/`max-w-[calc(100%-2rem)]`
+                // in the extension's shadow-DOM Tailwind build, collapsing it to the ~320px portal width.
+                style={{ width: "min(96vw, 960px)", maxWidth: "none" }}
+                className="flex aspect-[16/9] max-h-[85vh] flex-col gap-0 overflow-hidden bg-card p-0"
                 onOpenAutoFocus={(e) => e.preventDefault()}
             >
                 <div className="flex items-center gap-3 border-b border-white/8 px-4 py-3">

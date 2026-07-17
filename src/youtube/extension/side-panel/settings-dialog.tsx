@@ -1,11 +1,11 @@
 import { logger } from "@app/logger/client";
-import { SafeJSON } from "@app/utils/json";
 import { Button } from "@app/utils/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import { ActivityGraph } from "@app/utils/ui/components/youtube/activity-graph";
 import { Diamond, formatDiamonds } from "@app/utils/ui/components/youtube/diamond";
+import { isLoginRequiredError } from "@app/utils/ui/components/youtube/login-required";
 import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
 import { formatRelativeTime } from "@app/utils/ui/components/youtube/time";
 import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
@@ -28,6 +28,7 @@ import {
 } from "@ext/api.hooks";
 import { persistUiLang, useT, useUiLang } from "@ext/shared/i18n";
 import type { AccountSection } from "@ext/side-panel/account-view";
+import { CustomizationSection } from "@ext/side-panel/customization-section";
 import { LowBalanceNudge, SubscriptionSection } from "@ext/side-panel/subscription-section";
 import {
     CreditCard,
@@ -72,14 +73,21 @@ export function SettingsDialog({
                 <DialogHeader>
                     <DialogTitle className="text-lg">{t("settings.title")}</DialogTitle>
                     <DialogDescription className="text-sm leading-relaxed text-muted-foreground">
-                        {user
-                            ? "Diamonds pay for summaries and questions."
-                            : "Sign in to spend diamonds on summaries and questions. New accounts start with 100."}
+                        {user ? t("settings.descSignedIn") : t("settings.descSignedOut")}
                     </DialogDescription>
                 </DialogHeader>
                 {me.isPending && open ? (
                     <div className="flex items-center justify-center py-8 text-muted-foreground">
                         <Loader2 className="size-4 animate-spin" />
+                    </div>
+                ) : me.isError && !isLoginRequiredError(me.error) ? (
+                    // Transient failure (server down, network) — NOT a logout.
+                    // Showing AuthForm here would read as "you were signed out".
+                    <div className="space-y-2 py-4 text-center">
+                        <p className="text-sm text-destructive/90">Couldn't reach the server.</p>
+                        <Button size="sm" variant="outline" onClick={() => void me.refetch()}>
+                            Retry
+                        </Button>
                     </div>
                 ) : user ? (
                     <SignedInView
@@ -153,11 +161,13 @@ function SignedInView({
                     className="w-full justify-start text-muted-foreground"
                     onClick={onOpenAdmin}
                 >
-                    <ShieldCheck className="size-4" /> Admin panel
+                    <ShieldCheck className="size-4" /> {t("settings.adminPanel")}
                 </Button>
             ) : null}
 
             <LanguageSection outputLang={outputLang} />
+
+            <CustomizationSection />
 
             <SharesSection />
 
@@ -177,16 +187,20 @@ function SignedInView({
 }
 
 function LibraryNav({ onOpen }: { onOpen: (section: AccountSection) => void }) {
+    const t = useT();
+
     return (
         <div className="space-y-2">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">your library</p>
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                {t("library.header")}
+            </p>
             <Button
                 size="sm"
                 variant="ghost"
                 className="w-full justify-start text-muted-foreground"
                 onClick={() => onOpen("history")}
             >
-                <History className="size-4" /> History
+                <History className="size-4" /> {t("library.history")}
             </Button>
             <Button
                 size="sm"
@@ -194,7 +208,7 @@ function LibraryNav({ onOpen }: { onOpen: (section: AccountSection) => void }) {
                 className="w-full justify-start text-muted-foreground"
                 onClick={() => onOpen("collections")}
             >
-                <Library className="size-4" /> Collections
+                <Library className="size-4" /> {t("library.collections")}
             </Button>
             <Button
                 size="sm"
@@ -247,7 +261,14 @@ function LanguageSection({ outputLang }: { outputLang: string | null }) {
                 <label htmlFor="settings-panel-lang" className="text-xs font-medium text-muted-foreground">
                     {t("settings.panelLanguage")}
                 </label>
-                <Select value={uiLang} onValueChange={(value) => void persistUiLang(value)}>
+                <Select
+                    value={uiLang}
+                    onValueChange={(value) => {
+                        persistUiLang(value).catch((error) => {
+                            logger.warn({ error }, "settings-dialog: persist panel language failed");
+                        });
+                    }}
+                >
                     <SelectTrigger id="settings-panel-lang" className="h-8 w-full text-sm">
                         <SelectValue />
                     </SelectTrigger>
@@ -267,11 +288,17 @@ function ActivitySparkline({ onViewAll }: { onViewAll: () => void }) {
     return (
         <div className="space-y-2">
             <ActivityGraph days={summary.data?.days ?? []} loading={summary.isPending} />
-            <p className="text-sm text-muted-foreground">
-                This month:{" "}
-                <span className="font-semibold tabular-nums text-foreground">{summary.data?.month.spent ?? 0} 💎</span>{" "}
-                spent · +{summary.data?.month.earned ?? 0} topped up
-            </p>
+            {summary.isError ? (
+                <p className="text-sm text-muted-foreground">Couldn't load this month's totals.</p>
+            ) : (
+                <p className="text-sm text-muted-foreground">
+                    This month:{" "}
+                    <span className="font-semibold tabular-nums text-foreground">
+                        {summary.data?.month.spent ?? 0} 💎
+                    </span>{" "}
+                    spent · +{summary.data?.month.earned ?? 0} topped up
+                </p>
+            )}
             <Button size="sm" variant="ghost" className="w-full text-muted-foreground" onClick={onViewAll}>
                 View all activity →
             </Button>
@@ -313,7 +340,7 @@ function DiamondPacksSection({ devMode }: { devMode?: boolean }) {
             {unconfigured ? (
                 <div className="flex items-start gap-3 rounded-2xl border border-dashed border-primary/25 p-5">
                     <CreditCard className="mt-0.5 size-5 shrink-0 text-primary" />
-                    <p className="text-sm text-muted-foreground">Payments aren't configured on this server yet.</p>
+                    <p className="text-sm text-muted-foreground">{t("settings.paymentsUnconfigured")}</p>
                 </div>
             ) : (
                 <div className="grid grid-cols-3 gap-2">
@@ -537,7 +564,9 @@ function PresetsSection() {
             kind: preset.kind,
             instructions: preset.instructions,
         }));
-        const blob = new Blob([SafeJSON.stringify(payload, null, 2)], { type: "application/json" });
+        // Native JSON on purpose — this file rides in the content-script IIFE
+        // bundle, where SafeJSON's comment-json dep costs ~150 kB (see background.ts).
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement("a");
         anchor.href = url;
@@ -550,7 +579,7 @@ function PresetsSection() {
         setImportResult(null);
         try {
             const text = await file.text();
-            const parsed: unknown = SafeJSON.parse(text);
+            const parsed: unknown = JSON.parse(text);
 
             if (!Array.isArray(parsed)) {
                 throw new Error("invalid file");
@@ -762,6 +791,8 @@ function AuthForm() {
             await action.mutateAsync({ email, password });
             setPassword("");
         } catch (err) {
+            // No credentials in the payload — mode only.
+            logger.warn({ error: err, mode }, "settings-dialog: auth submit failed");
             setError(err instanceof Error ? err.message : String(err));
         }
     }

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { getUiLang, loadUiLang, persistUiLang, setUiLang, t } from "@ext/shared/i18n";
 
+const hadChrome = "chrome" in globalThis;
 const originalChrome = globalThis.chrome;
 
 function installStorage(initial: Record<string, unknown> = {}): Record<string, unknown> {
@@ -36,7 +37,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-    globalThis.chrome = originalChrome;
+    if (hadChrome) {
+        globalThis.chrome = originalChrome;
+    } else {
+        delete (globalThis as { chrome?: typeof chrome }).chrome;
+    }
 });
 
 describe("i18n", () => {

@@ -459,6 +459,13 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
             const suffix = typeof req.days === "number" ? `?days=${req.days}` : "";
             return apiCall(`${base}/api/v1/admin/revenue${suffix}`);
         }
+        case "api:getSettings":
+            return apiCall(`${base}/api/v1/users/settings`);
+        case "api:updateSettings":
+            return apiCall(`${base}/api/v1/users/settings`, {
+                method: "PATCH",
+                body: JSON.stringify(req.patch),
+            });
         default: {
             // Exhaustiveness guard: every ExtensionRequest above returns, so a
             // new variant added without a case fails this assignment at compile
@@ -499,8 +506,8 @@ async function apiCall(url: string, init: RequestInit = {}): Promise<ExtensionRe
                 if (typeof body.code === "string" && body.code !== "") {
                     code = body.code;
                 }
-            } catch {
-                // non-JSON error body — fall back to status line
+            } catch (error) {
+                console.debug("[genesis-yt] non-JSON error body — falling back to status line", error);
             }
             return {
                 ok: false,
@@ -606,7 +613,9 @@ function broadcast(event: ExtensionEvent): void {
     for (const port of ports) {
         try {
             port.postMessage(event);
-        } catch {
+        } catch (error) {
+            // Disconnected port — drop it, but never silently.
+            console.debug("[genesis-yt] event port postMessage failed — dropping port", error);
             ports.delete(port);
         }
     }

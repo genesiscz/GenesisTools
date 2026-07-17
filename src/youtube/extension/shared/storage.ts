@@ -13,22 +13,28 @@ export async function getExtensionConfig(): Promise<ExtensionConfig> {
 }
 
 export async function setExtensionConfig(patch: Partial<ExtensionConfig>): Promise<ExtensionConfig> {
-    const current = await getExtensionConfig();
-    const next: ExtensionConfig = { ...current, ...patch };
-
-    await chrome.storage.local.set({ apiBaseUrl: next.apiBaseUrl });
-
-    if (next.serviceKey) {
-        await chrome.storage.local.set({ serviceKey: next.serviceKey });
-    } else {
-        await chrome.storage.local.remove("serviceKey");
+    // Write only the keys present in `patch` so concurrent writers (e.g. a
+    // `config:set` racing a logout) can't read-merge-clobber each other's
+    // unrelated fields. chrome.storage.local.set is a partial merge.
+    if (patch.apiBaseUrl !== undefined) {
+        await chrome.storage.local.set({ apiBaseUrl: patch.apiBaseUrl });
     }
 
-    if (next.userToken) {
-        await chrome.storage.local.set({ userToken: next.userToken });
-    } else {
-        await chrome.storage.local.remove("userToken");
+    if ("serviceKey" in patch) {
+        if (patch.serviceKey) {
+            await chrome.storage.local.set({ serviceKey: patch.serviceKey });
+        } else {
+            await chrome.storage.local.remove("serviceKey");
+        }
     }
 
-    return next;
+    if ("userToken" in patch) {
+        if (patch.userToken) {
+            await chrome.storage.local.set({ userToken: patch.userToken });
+        } else {
+            await chrome.storage.local.remove("userToken");
+        }
+    }
+
+    return getExtensionConfig();
 }

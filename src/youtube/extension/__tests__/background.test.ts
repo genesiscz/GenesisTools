@@ -371,3 +371,33 @@ describe("extension background — phase 4b admin panel", () => {
         expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/admin/revenue?days=30");
     });
 });
+
+describe("extension background — phase 5 settings", () => {
+    beforeEach(() => {
+        installEnv({ apiBaseUrl: "http://localhost:9876" });
+    });
+
+    afterEach(() => {
+        globalThis.chrome = originalChrome;
+        globalThis.fetch = originalFetch;
+        (globalThis as { WebSocket?: unknown }).WebSocket = originalWebSocket;
+    });
+
+    it("GETs settings and PATCHes a sparse patch body", async () => {
+        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const handleRequest = await loadHandleRequest();
+
+        await handleRequest({ type: "api:getSettings" });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/settings");
+
+        await handleRequest({ type: "api:updateSettings", patch: { theme: "dark", panel: { defaultTab: "ask" } } });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/settings");
+        expect(calls.at(-1)?.init.method).toBe("PATCH");
+        const body = SafeJSON.parse(String(calls.at(-1)?.init.body)) as {
+            theme: string;
+            panel: { defaultTab: string };
+        };
+        expect(body.theme).toBe("dark");
+        expect(body.panel.defaultTab).toBe("ask");
+    });
+});

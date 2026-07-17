@@ -60,7 +60,8 @@ function connect(): void {
     }
     try {
         socket = new WebSocket(WS_URL);
-    } catch {
+    } catch (error) {
+        console.debug("[genesis-yt dev-reload] WebSocket construction failed, scheduling reconnect", error);
         scheduleReconnect();
         return;
     }

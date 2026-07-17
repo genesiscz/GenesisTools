@@ -16,6 +16,7 @@ import type {
     VideoId,
     VideoLongSummary,
 } from "@app/youtube/lib/types";
+import { mergeUserSettings, type UserSettings } from "@app/youtube/lib/user-settings";
 import { send } from "@ext/api.bridge";
 import type { ExtensionApiMap } from "@ext/shared/messages";
 import type { ExtensionConfig } from "@ext/shared/types";
@@ -269,13 +270,40 @@ export function useMe(enabled = true) {
     });
 }
 
+/** Query keys whose data belongs to the signed-in account. Removed (not just
+ *  invalidated) on login/register/logout so an account switch can never show
+ *  the previous user's ledger, presets, collections, settings, etc. */
+const ACCOUNT_SCOPED_QUERY_KEYS = [
+    "me",
+    "qaHistory",
+    "referral",
+    "ledger",
+    "usageSummary",
+    "shares",
+    "presets",
+    "report",
+    "report-estimate",
+    "jobs",
+    "collections",
+    "threads",
+    "watchlist",
+    "digest",
+    "settings",
+] as const;
+
+function clearAccountScopedQueries(queryClient: ReturnType<typeof useQueryClient>): void {
+    for (const key of ACCOUNT_SCOPED_QUERY_KEYS) {
+        queryClient.removeQueries({ queryKey: [key] });
+    }
+}
+
 export function useRegister() {
     const queryClient = useQueryClient();
 
     return useMutation({
         mutationFn: (vars: { email: string; password: string }) =>
             send<ExtensionApiMap["api:register"]>({ type: "api:register", ...vars }),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["me"] }),
+        onSuccess: () => clearAccountScopedQueries(queryClient),
     });
 }
 
@@ -285,7 +313,7 @@ export function useLogin() {
     return useMutation({
         mutationFn: (vars: { email: string; password: string }) =>
             send<ExtensionApiMap["api:login"]>({ type: "api:login", ...vars }),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["me"] }),
+        onSuccess: () => clearAccountScopedQueries(queryClient),
     });
 }
 
@@ -295,8 +323,7 @@ export function useLogout() {
     return useMutation({
         mutationFn: () => send<ExtensionApiMap["api:logout"]>({ type: "api:logout" }),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["me"] });
-            queryClient.invalidateQueries({ queryKey: ["qaHistory"] });
+            clearAccountScopedQueries(queryClient);
         },
     });
 }
@@ -468,13 +495,14 @@ export function useCreateReport() {
 
 export function useReport(id: number | null) {
     // When polling began for the current report — bounds how long we poll a
-    // job that never finishes.
+    // job that never finishes. Keyed to the id: a direct id→id switch must
+    // restart the clock, not inherit the previous report's start time.
     const pollStartRef = useRef<number | null>(null);
+    const pollIdRef = useRef<number | null>(null);
 
-    if (id === null) {
-        pollStartRef.current = null;
-    } else if (pollStartRef.current === null) {
-        pollStartRef.current = Date.now();
+    if (id !== pollIdRef.current) {
+        pollIdRef.current = id;
+        pollStartRef.current = id === null ? null : Date.now();
     }
 
     const query = useQuery({
@@ -779,6 +807,49 @@ export function useAdminJobs(opts: { status?: string; enabled?: boolean }) {
         queryFn: () => send<ExtensionApiMap["api:adminJobs"]>({ type: "api:adminJobs", status: opts.status }),
         retry: false,
         enabled: opts.enabled !== false,
+    });
+}
+
+export function useSettings(enabled = true) {
+    return useQuery({
+        queryKey: ["settings"],
+        queryFn: () => send<ExtensionApiMap["api:getSettings"]>({ type: "api:getSettings" }),
+        retry: false,
+        enabled,
+    });
+}
+
+export function useUpdateSettings() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (patch: UserSettings) =>
+            send<ExtensionApiMap["api:updateSettings"]>({ type: "api:updateSettings", patch }),
+        // Auto-persist with an optimistic write so the panel reflects the change
+        // the instant the user picks it (Martin's "no save button" requirement).
+        onMutate: async (patch) => {
+            await queryClient.cancelQueries({ queryKey: ["settings"] });
+            const previous = queryClient.getQueryData<ExtensionApiMap["api:getSettings"]>(["settings"]);
+
+            if (previous) {
+                queryClient.setQueryData<ExtensionApiMap["api:getSettings"]>(["settings"], {
+                    settings: mergeUserSettings(previous.settings, patch),
+                });
+            }
+
+            return { previous };
+        },
+        onError: (_error, _patch, context) => {
+            if (context?.previous) {
+                queryClient.setQueryData(["settings"], context.previous);
+            }
+        },
+        onSuccess: (data) => {
+            queryClient.setQueryData(["settings"], data);
+        },
+        onSettled: () => {
+            queryClient.invalidateQueries({ queryKey: ["me"] });
+        },
     });
 }
 
