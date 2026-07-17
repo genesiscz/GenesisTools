@@ -23,10 +23,15 @@ export function PortalContainerProvider({
 // own trigger/content" apart from another select's in the composed path.
 const ShadowSelectIdContext = React.createContext<string | null>(null);
 
-function Select({ open: openProp, onOpenChange, ...props }: React.ComponentProps<typeof SelectPrimitive.Root>) {
+function Select({
+    open: openProp,
+    defaultOpen,
+    onOpenChange,
+    ...props
+}: React.ComponentProps<typeof SelectPrimitive.Root>) {
     const portalContainer = React.useContext(PortalContainerContext);
     const shadowSelectId = React.useId();
-    const [uncontrolledOpen, setUncontrolledOpen] = React.useState(false);
+    const [uncontrolledOpen, setUncontrolledOpen] = React.useState(defaultOpen ?? false);
     const open = openProp ?? uncontrolledOpen;
 
     const handleOpenChange = React.useCallback(

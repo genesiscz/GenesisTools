@@ -66,7 +66,11 @@ describe("operator-only routes reject plain user tokens", () => {
             const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
 
             try {
-                handle.youtube.db.createUser({ email: "plain2@example.com", passwordHash: "h", apiToken: "ytu_plain2" });
+                handle.youtube.db.createUser({
+                    email: "plain2@example.com",
+                    passwordHash: "h",
+                    apiToken: "ytu_plain2",
+                });
                 const base = `http://localhost:${handle.port}/api/v1/cache/clear`;
 
                 const asUser = await fetch(base, {

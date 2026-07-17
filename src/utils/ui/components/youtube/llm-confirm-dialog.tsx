@@ -1,3 +1,4 @@
+import { logger } from "@app/logger/client";
 import { Button } from "@app/utils/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
@@ -86,7 +87,7 @@ export interface LlmConfirmDialogProps {
      *  a friendly upsell instead of a raw error. */
     onUpgrade?: () => void;
     onCancel: () => void;
-    onConfirm: (overrides: { provider?: string; model?: string }) => void;
+    onConfirm: (overrides: { provider?: string; model?: string }) => void | Promise<void>;
 }
 
 export function LlmConfirmDialog({
@@ -123,11 +124,21 @@ export function LlmConfirmDialog({
 
     function confirm(): void {
         const chosen = modelPresets.find((p) => p.label === preset);
-        onConfirm(chosen ? { provider: chosen.provider, model: chosen.model } : {});
+        // onConfirm may be async (impls await a mutation) — swallow the
+        // rejection here so it never surfaces as an unhandled promise. The
+        // dialog's own `error` prop already renders the failure reactively.
+        void Promise.resolve(onConfirm(chosen ? { provider: chosen.provider, model: chosen.model } : {})).catch(
+            (err) => {
+                logger.debug({ err }, "llm-confirm-dialog: onConfirm rejected");
+            }
+        );
     }
     // Unlock flow: the artifact already exists — instant reuse at the flat
     // price, so the run copy, billing block, and progress path all swap out.
     const reuse = estimate?.reused === true;
+    // Login-required failure shows its own "Sign in" CTA — the primary confirm
+    // button would just re-trigger the same 401, so disable it while that's up.
+    const loginRequired = (error === "login required" || errorCode === "login_required") && onRequireLogin != null;
 
     function selectPreset(value: string) {
         setPreset(value);
@@ -323,7 +334,7 @@ export function LlmConfirmDialog({
                     <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>
                         {cancelLabel}
                     </Button>
-                    <Button size="sm" onClick={confirm} disabled={busy}>
+                    <Button size="sm" onClick={confirm} disabled={busy || loginRequired}>
                         {busy
                             ? reuse
                                 ? "Unlocking…"
