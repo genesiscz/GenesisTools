@@ -178,3 +178,63 @@ export interface RecordJobActivityInput {
     completedAt?: string | null;
     error?: string | null;
 }
+
+export type VideoLogKind = "summary:view" | "insights:view" | "transcript:view" | "comments:view";
+
+export interface RecordVideoLogInput {
+    kind: VideoLogKind;
+    userId: number | null;
+    videoId: string;
+    meta?: Record<string, unknown> | null;
+}
+
+export interface VideoWatchRecord {
+    id: number;
+    userId: number | null;
+    videoId: string;
+    createdAt: string;
+}
+
+export interface VideoLogRecord {
+    id: number;
+    kind: VideoLogKind;
+    userId: number | null;
+    videoId: string;
+    meta: Record<string, unknown> | null;
+    createdAt: string;
+}
+
+export interface RecordAiCallInput {
+    provider: string;
+    model: string;
+    action: string;
+    videoId?: string | null;
+    userId?: number | null;
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+    costUsd?: number | null;
+    creditsCharged?: number | null;
+    jobId?: number | null;
+}
+
+export interface AiCallRecord {
+    id: number;
+    provider: string;
+    model: string;
+    action: string;
+    videoId: string | null;
+    userId: number | null;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number | null;
+    creditsCharged: number | null;
+    jobId: number | null;
+    createdAt: string;
+}
+
+export interface QueueStats {
+    queued: number;
+    running: number;
+    perStage: Record<string, { queued: number; running: number }>;
+    oldestQueuedAgeSec: number | null;
+}
