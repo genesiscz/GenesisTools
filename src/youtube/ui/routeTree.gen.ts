@@ -13,6 +13,7 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as JobsRouteImport } from './routes/jobs'
 import { Route as HistoryRouteImport } from './routes/history'
 import { Route as FirstRunRouteImport } from './routes/first-run'
+import { Route as DigestRouteImport } from './routes/digest'
 import { Route as CollectionsRouteImport } from './routes/collections'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as VideosIdRouteImport } from './routes/videos.$id'
@@ -37,6 +38,11 @@ const HistoryRoute = HistoryRouteImport.update({
 const FirstRunRoute = FirstRunRouteImport.update({
   id: '/first-run',
   path: '/first-run',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DigestRoute = DigestRouteImport.update({
+  id: '/digest',
+  path: '/digest',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CollectionsRoute = CollectionsRouteImport.update({
@@ -68,6 +74,7 @@ const ChannelsHandleRoute = ChannelsHandleRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/collections': typeof CollectionsRouteWithChildren
+  '/digest': typeof DigestRoute
   '/first-run': typeof FirstRunRoute
   '/history': typeof HistoryRoute
   '/jobs': typeof JobsRoute
@@ -79,6 +86,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/collections': typeof CollectionsRouteWithChildren
+  '/digest': typeof DigestRoute
   '/first-run': typeof FirstRunRoute
   '/history': typeof HistoryRoute
   '/jobs': typeof JobsRoute
@@ -91,6 +99,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/collections': typeof CollectionsRouteWithChildren
+  '/digest': typeof DigestRoute
   '/first-run': typeof FirstRunRoute
   '/history': typeof HistoryRoute
   '/jobs': typeof JobsRoute
@@ -104,6 +113,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/collections'
+    | '/digest'
     | '/first-run'
     | '/history'
     | '/jobs'
@@ -115,6 +125,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/collections'
+    | '/digest'
     | '/first-run'
     | '/history'
     | '/jobs'
@@ -126,6 +137,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/collections'
+    | '/digest'
     | '/first-run'
     | '/history'
     | '/jobs'
@@ -138,6 +150,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CollectionsRoute: typeof CollectionsRouteWithChildren
+  DigestRoute: typeof DigestRoute
   FirstRunRoute: typeof FirstRunRoute
   HistoryRoute: typeof HistoryRoute
   JobsRoute: typeof JobsRoute
@@ -174,6 +187,13 @@ declare module '@tanstack/react-router' {
       path: '/first-run'
       fullPath: '/first-run'
       preLoaderRoute: typeof FirstRunRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/digest': {
+      id: '/digest'
+      path: '/digest'
+      fullPath: '/digest'
+      preLoaderRoute: typeof DigestRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/collections': {
@@ -229,6 +249,7 @@ const CollectionsRouteWithChildren = CollectionsRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CollectionsRoute: CollectionsRouteWithChildren,
+  DigestRoute: DigestRoute,
   FirstRunRoute: FirstRunRoute,
   HistoryRoute: HistoryRoute,
   JobsRoute: JobsRoute,

@@ -6,7 +6,7 @@ import { pageTitleFromPath } from "@app/yt/lib/theme";
 import { useEventStream } from "@app/yt/ws.client";
 import type { QueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, Link, Outlet, redirect, useRouterState } from "@tanstack/react-router";
-import { BriefcaseBusiness, History, Library, PlaySquare, Settings, Youtube } from "lucide-react";
+import { BriefcaseBusiness, History, Library, Newspaper, PlaySquare, Settings, Youtube } from "lucide-react";
 import type React from "react";
 
 interface RouterContext {
@@ -84,6 +84,7 @@ function RootLayout() {
                                 { title: "Channels", url: "/", icon: Youtube },
                                 { title: "History", url: "/history", icon: History },
                                 { title: "Collections", url: "/collections", icon: Library },
+                                { title: "Digest", url: "/digest", icon: Newspaper },
                                 { title: "Jobs", url: "/jobs", icon: BriefcaseBusiness },
                                 { title: "Settings", url: "/settings", icon: Settings },
                             ],
