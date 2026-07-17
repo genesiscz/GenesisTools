@@ -7,7 +7,7 @@ import { useAskCollection, useCollection, useRemoveCollectionVideo, useThread, u
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 
-export const Route = createFileRoute("/collections/$id")({
+export const Route = createFileRoute("/collections_/$id")({
     component: CollectionDetailPage,
 });
 
