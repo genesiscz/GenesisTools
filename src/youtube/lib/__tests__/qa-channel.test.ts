@@ -150,9 +150,11 @@ describe("QaService.ask cross-video", () => {
                 }),
                 callLLM: async (opts) => {
                     expect(opts.userPrompt).toContain(
-                        "[#1 Dopamine Deep Dive · 2026-05-01 t=30s] dopamine drives seeking"
+                        "[#1 Dopamine Deep Dive · 2026-05-01 · transcript t=30s] dopamine drives seeking"
                     );
-                    expect(opts.userPrompt).toContain("[#2 Focus Toolkit · 2026-06-01 t=90s] focus needs sleep");
+                    expect(opts.userPrompt).toContain(
+                        "[#2 Focus Toolkit · 2026-06-01 · transcript t=90s] focus needs sleep"
+                    );
                     expect(opts.systemPrompt).toContain("attribute claims per video");
                     expect(opts.systemPrompt).toContain("2 candidate video(s) were not searched");
 

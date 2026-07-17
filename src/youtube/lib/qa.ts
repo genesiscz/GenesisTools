@@ -71,6 +71,14 @@ export class QaService {
 
         try {
             let indexed = 0;
+            const recordEmbedUsage = () =>
+                recordYoutubeUsage({
+                    action: "qa:embed",
+                    provider: opts.provider ?? embedProvider ?? "default",
+                    model: modelId,
+                    scope: opts.videoId,
+                    videoId: opts.videoId,
+                });
 
             if (sources.includes("transcript")) {
                 const transcript = this.db.getTranscript(opts.videoId);
@@ -83,76 +91,78 @@ export class QaService {
                     opts.signal?.throwIfAborted();
                     const chunks = chunkTranscript(transcript);
                     const vectors = await embedder.embedBatch(chunks.map((chunk) => chunk.text));
-                    await recordYoutubeUsage({
-                        action: "qa:embed",
-                        provider: opts.provider ?? embedProvider ?? "default",
-                        model: modelId,
-                        scope: opts.videoId,
-                        videoId: opts.videoId,
-                    });
-
-                    for (let i = 0; i < chunks.length; i++) {
-                        opts.signal?.throwIfAborted();
+                    opts.signal?.throwIfAborted();
+                    // Validate every embedding BEFORE touching the stored index so a
+                    // missing vector can't leave a half-replaced set behind.
+                    const rows = chunks.map((chunk, i) => {
                         const vector = vectors[i];
 
                         if (!vector) {
                             throw new Error(`embedding missing for chunk ${i} of ${opts.videoId}`);
                         }
 
+                        return { chunk, vector };
+                    });
+                    await recordEmbedUsage();
+                    // Atomic-ish replace: drop this source's prior index, then insert
+                    // the fresh set. Shorter re-chunks no longer leave stale rows.
+                    this.db.deleteQaChunks(opts.videoId, "transcript", modelId);
+
+                    for (let i = 0; i < rows.length; i++) {
                         this.db.upsertQaChunk({
                             videoId: opts.videoId,
                             chunkIdx: i,
-                            text: chunks[i].text,
-                            startSec: chunks[i].startSec,
-                            endSec: chunks[i].endSec,
-                            embedding: vector.vector,
+                            text: rows[i].chunk.text,
+                            startSec: rows[i].chunk.startSec,
+                            endSec: rows[i].chunk.endSec,
+                            embedding: rows[i].vector.vector,
                             embedderModel: modelId,
                             source: "transcript",
                         });
                     }
 
-                    indexed += chunks.length;
+                    indexed += rows.length;
                 }
             }
 
             if (sources.includes("comments")) {
-                const comments = this.db.getComments(opts.videoId);
-
-                if (
-                    comments.length > 0 &&
-                    (opts.forceReindex || !this.db.hasQaChunks(opts.videoId, modelId, "comments"))
-                ) {
+                if (opts.forceReindex || !this.db.hasQaChunks(opts.videoId, modelId, "comments")) {
                     opts.signal?.throwIfAborted();
+                    const comments = this.db.getComments(opts.videoId);
                     const chunks = chunkComments(comments);
-                    const vectors = await embedder.embedBatch(chunks.map((chunk) => chunk.text));
-                    await recordYoutubeUsage({
-                        action: "qa:embed",
-                        provider: opts.provider ?? embedProvider ?? "default",
-                        model: modelId,
-                        scope: opts.videoId,
-                        videoId: opts.videoId,
-                    });
-
-                    for (let i = 0; i < chunks.length; i++) {
-                        opts.signal?.throwIfAborted();
+                    const vectors = chunks.length ? await embedder.embedBatch(chunks.map((chunk) => chunk.text)) : [];
+                    opts.signal?.throwIfAborted();
+                    const rows = chunks.map((chunk, i) => {
                         const vector = vectors[i];
 
                         if (!vector) {
                             throw new Error(`embedding missing for comment chunk ${i} of ${opts.videoId}`);
                         }
 
+                        return { chunk, vector };
+                    });
+
+                    if (rows.length > 0) {
+                        await recordEmbedUsage();
+                    }
+
+                    // Replace unconditionally — an empty result now clears prior
+                    // comment chunks instead of leaving them orphaned.
+                    this.db.deleteQaChunks(opts.videoId, "comments", modelId);
+
+                    for (let i = 0; i < rows.length; i++) {
                         this.db.upsertQaChunk({
                             videoId: opts.videoId,
                             chunkIdx: COMMENT_CHUNK_IDX_BASE + i,
-                            text: chunks[i].text,
-                            embedding: vector.vector,
+                            text: rows[i].chunk.text,
+                            embedding: rows[i].vector.vector,
                             embedderModel: modelId,
                             source: "comments",
-                            sourceRef: chunks[i].rootCommentIds.join(","),
+                            sourceRef: rows[i].chunk.rootCommentIds.join(","),
                         });
                     }
 
-                    indexed += chunks.length;
+                    indexed += rows.length;
                 }
             }
 
@@ -173,6 +183,19 @@ export class QaService {
         try {
             const sources = opts.sources ?? ["transcript"];
             const bothScope = sources.includes("transcript") && sources.includes("comments");
+            // Authoritative author-per-comment lookup, sourced from the comments
+            // table (NOT reconstructed by splitting chunk text — a comment body
+            // containing blank lines would shift that attribution). Keyed by root
+            // comment id so a merged chunk attributes each thread correctly.
+            const commentAuthorById = new Map<string, string | null>();
+
+            if (sources.includes("comments")) {
+                for (const videoId of new Set(opts.videoIds)) {
+                    for (const comment of this.db.getComments(videoId)) {
+                        commentAuthorById.set(comment.commentId, comment.author);
+                    }
+                }
+            }
             const topK = opts.topK ?? TOP_K_DEFAULT;
             const questionEmbedding = await embedder.embed(opts.question);
             const qVec = questionEmbedding.vector;
@@ -202,10 +225,11 @@ export class QaService {
             const context = ranked
                 .map((rankedChunk, i) => {
                     const meta = opts.crossVideo?.videos[rankedChunk.chunk.videoId];
+                    // Cross-video swaps the raw id for the video title/date but must
+                    // KEEP the source marker (`comment @author` / `transcript t=…`),
+                    // otherwise the model can't tell viewer opinions from the video.
                     const tag = meta
-                        ? `${meta.title} · ${meta.uploadDate ?? "unknown date"}${
-                              rankedChunk.chunk.startSec !== null ? ` t=${Math.round(rankedChunk.chunk.startSec)}s` : ""
-                          }`
+                        ? `${meta.title} · ${meta.uploadDate ?? "unknown date"} · ${sourceMarker(rankedChunk.chunk)}`
                         : chunkTag(rankedChunk.chunk);
 
                     return `[#${i + 1} ${tag}] ${rankedChunk.chunk.text}`;
@@ -231,7 +255,12 @@ export class QaService {
             const systemPrompt = opts.presetInstructions
                 ? `${baseSystemPrompt}\n\n${buildPresetBlock(opts.presetInstructions)}`
                 : baseSystemPrompt;
-            const userPrompt = `Question: ${opts.question}\n\nContext from transcripts:\n${context}`;
+            // Source-neutral heading once comments join the context — the pool is
+            // no longer purely transcript-derived.
+            const contextHeading = sources.includes("comments")
+                ? "Context from video transcripts and viewer comments"
+                : "Context from transcripts";
+            const userPrompt = `Question: ${opts.question}\n\n${contextHeading}:\n${context}`;
             const startedAt = new Date();
             const result = await this.deps.callLLM({
                 systemPrompt,
@@ -259,7 +288,10 @@ export class QaService {
             return {
                 answer: result.content,
                 citations: ranked.map((rankedChunk) => {
-                    const roots = rankedChunk.chunk.source === "comments" ? chunkRoots(rankedChunk.chunk) : undefined;
+                    const roots =
+                        rankedChunk.chunk.source === "comments"
+                            ? chunkRoots(rankedChunk.chunk, commentAuthorById)
+                            : undefined;
 
                     return {
                         videoId: rankedChunk.chunk.videoId,
@@ -267,7 +299,7 @@ export class QaService {
                         startSec: rankedChunk.chunk.startSec,
                         endSec: rankedChunk.chunk.endSec,
                         source: rankedChunk.chunk.source,
-                        author: rankedChunk.chunk.source === "comments" ? chunkAuthor(rankedChunk.chunk.text) : null,
+                        author: roots?.[0]?.author ?? null,
                         commentId: roots?.[0]?.commentId ?? rankedChunk.chunk.sourceRef,
                         roots,
                     };
@@ -508,15 +540,23 @@ export function cosine(a: Float32Array, b: Float32Array): number {
     return normA > 0 && normB > 0 ? dot / Math.sqrt(normA * normB) : 0;
 }
 
-/** Prompt tag per source: `[transcript t=123s]` vs `[comment @handle]` (plus the video id). */
+/** Prompt tag per source: `<videoId> transcript t=123s` vs `<videoId> comment @handle`. */
 function chunkTag(chunk: QaChunk): string {
+    return `${chunk.videoId} ${sourceMarker(chunk)}`;
+}
+
+/**
+ * The source-and-locator portion of a chunk tag WITHOUT the video id, so a
+ * cross-video caller can swap the id for a title/date and still keep the
+ * `comment @author` / `transcript t=…s` marker the model needs to tell viewer
+ * opinions apart from the video itself.
+ */
+function sourceMarker(chunk: QaChunk): string {
     if (chunk.source === "comments") {
-        return `${chunk.videoId} comment @${chunkAuthor(chunk.text) ?? "unknown"}`;
+        return `comment @${chunkAuthor(chunk.text) ?? "unknown"}`;
     }
 
-    return chunk.startSec !== null
-        ? `${chunk.videoId} transcript t=${Math.round(chunk.startSec)}s`
-        : `${chunk.videoId} transcript`;
+    return chunk.startSec !== null ? `transcript t=${Math.round(chunk.startSec)}s` : "transcript";
 }
 
 /** Thread author from the chunk text's `@handle: ` prefix (see `chunkComments`). */
@@ -527,18 +567,34 @@ function chunkAuthor(text: string): string | null {
 }
 
 /**
- * Every thread root a comment chunk covers, with each sub-thread's author.
- * `source_ref` stores the merged roots comma-joined, positionally aligned
- * with the chunk text's `\n\n`-separated sub-chunks (single-id rows from
- * before the merge fix parse as one root).
+ * Normalizes a comment author for citation display: strips a leading `@` and
+ * falls back to "unknown" for a null author (matching the `@unknown:` chunk
+ * text prefix). Returns null only when the comment is no longer in the table.
  */
-function chunkRoots(chunk: QaChunk): { commentId: string; author: string | null }[] | undefined {
+function normalizeCommentAuthor(author: string | null | undefined): string | null {
+    if (author === undefined) {
+        return null;
+    }
+
+    return (author ?? "unknown").replace(/^@/, "");
+}
+
+/**
+ * Every distinct thread root a comment chunk covers, each paired with its
+ * author resolved from the authoritative comments table (`authorById`) rather
+ * than parsed from the chunk's free-form text — a comment body containing blank
+ * lines must not shift attribution. `source_ref` stores the merged roots
+ * comma-joined (single-id rows from before the merge fix parse as one root).
+ */
+function chunkRoots(
+    chunk: QaChunk,
+    authorById: Map<string, string | null>
+): { commentId: string; author: string | null }[] | undefined {
     if (!chunk.sourceRef) {
         return undefined;
     }
 
     const ids = chunk.sourceRef.split(",");
-    const subAuthors = chunk.text.split("\n\n").map((part) => chunkAuthor(part));
     const seen = new Set<string>();
     const roots: { commentId: string; author: string | null }[] = [];
 
@@ -548,7 +604,7 @@ function chunkRoots(chunk: QaChunk): { commentId: string; author: string | null 
         }
 
         seen.add(ids[i]);
-        roots.push({ commentId: ids[i], author: subAuthors[i] ?? subAuthors[0] ?? null });
+        roots.push({ commentId: ids[i], author: normalizeCommentAuthor(authorById.get(ids[i])) });
     }
 
     return roots;

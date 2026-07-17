@@ -1317,6 +1317,25 @@ export class YoutubeDatabase extends BaseDatabase {
         return (row?.count ?? 0) > 0;
     }
 
+    /** Drops a video's qa_chunks, optionally scoped to one source/embedder — the
+     *  delete half of an atomic per-source reindex (see QaService.index). */
+    deleteQaChunks(videoId: VideoId, source?: QaSource, embedderModel?: string): void {
+        const where: string[] = ["video_id = ?"];
+        const params: string[] = [videoId];
+
+        if (source) {
+            where.push("source = ?");
+            params.push(source);
+        }
+
+        if (embedderModel) {
+            where.push("embedder_model = ?");
+            params.push(embedderModel);
+        }
+
+        this.db.run(`DELETE FROM qa_chunks WHERE ${where.join(" AND ")}`, params);
+    }
+
     enqueueJob(input: EnqueueJobInput): PipelineJob {
         const result = this.db
             .query<{ id: number }, [string, string, string, number | null, number | null]>(
