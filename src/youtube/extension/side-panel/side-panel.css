@@ -2,6 +2,45 @@
 @source '..';
 @source '../../../utils/ui/components';
 
+/* Phase 5: the user's theme choice (system→resolved to light/dark by JS) sets
+   data-theme on the extension roots. Light overrides the dark token defaults +
+   flips color-scheme; the tokens cascade to every Tailwind color utility
+   inside the panel. */
+.genesis-yt-extension-root[data-theme="light"] {
+    color-scheme: light;
+    --background: 210 20% 98%;
+    --foreground: 225 25% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 225 25% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 225 25% 12%;
+    --primary: 24 88% 48%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 190 60% 34%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 210 16% 93%;
+    --muted-foreground: 225 10% 38%;
+    --accent: 24 88% 48%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 68% 48%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 14% 86%;
+    --input: 220 14% 90%;
+    --ring: 24 88% 48%;
+}
+
+/* Compact density modestly tightens the whole panel by shrinking the rem base
+   so rem-derived text and spacing scale down; fixed px accents stay put. */
+.genesis-yt-extension-root[data-density="compact"] {
+    font-size: 13px;
+    line-height: 1.45;
+    --text-sm: 13px;
+    --text-base: 14px;
+    --text-lg: 16px;
+    --text-xl: 18px;
+    --text-2xl: 19px;
+}
+
 :host {
     all: initial;
     display: block;
