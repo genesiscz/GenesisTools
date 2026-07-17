@@ -2,7 +2,8 @@ import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { buildBillingContext } from "@app/youtube/lib/billing";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
-import type { AdminListUsersOpts } from "@app/youtube/lib/db.types";
+import type { AdminListAiCallsOpts, AdminListUsersOpts, AdminListWebhookLogsOpts } from "@app/youtube/lib/db.types";
+import type { JobStatus } from "@app/youtube/lib/jobs.types";
 import { getLedgerPage } from "@app/youtube/lib/ledger-views";
 import { isPowerRole, roleForEmail } from "@app/youtube/lib/roles";
 import { requireUser } from "@app/youtube/lib/server/auth";
@@ -103,6 +104,68 @@ export async function handleAdminRoute(req: Request, url: URL, yt: Youtube): Pro
             );
         }
 
+        if (matchRoute(req, "GET", "/api/v1/admin/ai-calls", url.pathname)) {
+            const admin = await requireAdmin(req, url, yt);
+
+            if (admin instanceof Response) {
+                return admin;
+            }
+
+            const opts = parseListAiCallsOpts(url);
+            const { rows, total } = yt.db.adminListAiCalls(opts);
+
+            return Response.json(
+                { aiCalls: rows, total, limit: opts.limit, offset: opts.offset },
+                { headers: CORS_HEADERS }
+            );
+        }
+
+        if (matchRoute(req, "GET", "/api/v1/admin/webhook-logs", url.pathname)) {
+            const admin = await requireAdmin(req, url, yt);
+
+            if (admin instanceof Response) {
+                return admin;
+            }
+
+            const opts = parseListWebhookLogsOpts(url);
+            const { rows, total } = yt.db.adminListWebhookLogs(opts);
+
+            return Response.json(
+                { webhookLogs: rows, total, limit: opts.limit, offset: opts.offset },
+                { headers: CORS_HEADERS }
+            );
+        }
+
+        if (matchRoute(req, "GET", "/api/v1/admin/jobs", url.pathname)) {
+            const admin = await requireAdmin(req, url, yt);
+
+            if (admin instanceof Response) {
+                return admin;
+            }
+
+            const status = parseJobStatus(url.searchParams.get("status"));
+            const limit = clampInt(url.searchParams.get("limit"), 50, 1, 200);
+            const offset = clampInt(url.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
+            const { rows, total } = yt.db.adminListJobs({ status, limit, offset });
+
+            return Response.json(
+                { jobs: rows, queue: yt.db.getQueueStats(), total, limit, offset },
+                { headers: CORS_HEADERS }
+            );
+        }
+
+        if (matchRoute(req, "GET", "/api/v1/admin/revenue", url.pathname)) {
+            const admin = await requireAdmin(req, url, yt);
+
+            if (admin instanceof Response) {
+                return admin;
+            }
+
+            const days = clampInt(url.searchParams.get("days"), 30, 1, 365);
+
+            return Response.json(yt.db.adminRevenueSummary({ days }), { headers: CORS_HEADERS });
+        }
+
         return jsonError("not found", 404);
     } catch (err) {
         return toErrorResponse(err);
@@ -141,6 +204,35 @@ function parseListUsersOpts(url: URL): AdminListUsersOpts & { limit: number; off
     const offset = clampInt(url.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
 
     return { search, subscription, sort, dir, limit, offset };
+}
+
+function parseListAiCallsOpts(url: URL): AdminListAiCallsOpts & { limit: number; offset: number } {
+    const provider = url.searchParams.get("provider")?.trim() || undefined;
+    const action = url.searchParams.get("action")?.trim() || undefined;
+    const rawUser = url.searchParams.get("userId");
+    const userId = rawUser !== null && /^[1-9]\d*$/.test(rawUser) ? Number(rawUser) : undefined;
+    const limit = clampInt(url.searchParams.get("limit"), 50, 1, 200);
+    const offset = clampInt(url.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
+
+    return { provider, action, userId, limit, offset };
+}
+
+function parseListWebhookLogsOpts(url: URL): AdminListWebhookLogsOpts & { limit: number; offset: number } {
+    const outcome = url.searchParams.get("outcome")?.trim() || undefined;
+    const limit = clampInt(url.searchParams.get("limit"), 50, 1, 200);
+    const offset = clampInt(url.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
+
+    return { outcome, limit, offset };
+}
+
+const JOB_STATUSES = new Set<JobStatus>(["pending", "running", "completed", "failed", "cancelled", "interrupted"]);
+
+function parseJobStatus(raw: string | null): JobStatus | undefined {
+    if (raw !== null && JOB_STATUSES.has(raw as JobStatus)) {
+        return raw as JobStatus;
+    }
+
+    return undefined;
 }
 
 function clampInt(raw: string | null, fallback: number, min: number, max: number): number {
