@@ -47,7 +47,15 @@ export function ActivityView({ onBack }: { onBack?: () => void }) {
         const root = sentinel.closest<HTMLElement>(".yt-scroll") ?? null;
         const observer = new IntersectionObserver(
             (entries) => {
-                if (entries[0]?.isIntersecting && ledger.hasNextPage && !ledger.isFetchingNextPage) {
+                // Don't auto-retry a page that just errored — that would loop
+                // the failing request while the sentinel stays in view. The
+                // user re-arms it via the retry button below.
+                if (
+                    entries[0]?.isIntersecting &&
+                    ledger.hasNextPage &&
+                    !ledger.isFetchingNextPage &&
+                    !ledger.isFetchNextPageError
+                ) {
                     ledger.fetchNextPage();
                 }
             },
@@ -56,7 +64,7 @@ export function ActivityView({ onBack }: { onBack?: () => void }) {
 
         observer.observe(sentinel);
         return () => observer.disconnect();
-    }, [ledger.hasNextPage, ledger.isFetchingNextPage, ledger.fetchNextPage]);
+    }, [ledger.hasNextPage, ledger.isFetchingNextPage, ledger.isFetchNextPageError, ledger.fetchNextPage]);
 
     function toggleReason(reason: string): void {
         setSelectedReasons((prev) => {
@@ -72,6 +80,11 @@ export function ActivityView({ onBack }: { onBack?: () => void }) {
         });
     }
 
+    // Read into locals so the JSX branches below don't discriminant-narrow the
+    // react-query result union down to `never` in the retry path.
+    const nextPageErrored = ledger.isFetchNextPageError;
+    const fetchNextPage = ledger.fetchNextPage;
+
     return (
         <div className="space-y-4 p-4">
             {onBack ? (
@@ -86,13 +99,19 @@ export function ActivityView({ onBack }: { onBack?: () => void }) {
 
             <div>
                 <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">activity</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                    This month:{" "}
-                    <span className="font-semibold tabular-nums text-foreground">
-                        {summary.data?.month.spent ?? 0} 💎
-                    </span>{" "}
-                    spent · +{summary.data?.month.earned ?? 0} topped up
-                </p>
+                {summary.isPending ? (
+                    <div className="mt-1 h-4 w-44 animate-pulse rounded bg-white/5" />
+                ) : summary.isError || !summary.data ? (
+                    <p className="mt-1 text-sm text-destructive/90">Couldn’t load this month’s totals.</p>
+                ) : (
+                    <p className="mt-1 text-sm text-muted-foreground">
+                        This month:{" "}
+                        <span className="font-semibold tabular-nums text-foreground">
+                            {summary.data.month.spent} 💎
+                        </span>{" "}
+                        spent · +{summary.data.month.earned} topped up
+                    </p>
+                )}
             </div>
 
             <ActivityGraph
@@ -142,7 +161,17 @@ export function ActivityView({ onBack }: { onBack?: () => void }) {
                     ))}
                     {ledger.hasNextPage ? (
                         <div ref={sentinelRef} className="flex justify-center py-3">
-                            <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                            {nextPageErrored ? (
+                                <button
+                                    type="button"
+                                    onClick={() => fetchNextPage()}
+                                    className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+                                >
+                                    Couldn’t load more — retry
+                                </button>
+                            ) : (
+                                <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                            )}
                         </div>
                     ) : null}
                 </div>
