@@ -17,6 +17,7 @@ export const DEFAULT_YOUTUBE_CONFIG: YoutubeConfigShape = {
     powerUsers: [],
     ai: [],
     referrals: { enabled: false, offers: [] },
+    freeTier: { actionsPerMonth: null },
     defaultQuality: "720p",
     concurrency: {
         download: 4,
@@ -134,6 +135,7 @@ function mergeConfig(base: YoutubeConfigShape, patch: YoutubeConfigPatch): Youtu
             ...patch.referrals,
             offers: patch.referrals?.offers ?? base.referrals.offers,
         },
+        freeTier: { ...base.freeTier, ...patch.freeTier },
         concurrency: { ...base.concurrency, ...patch.concurrency },
         ttls: { ...base.ttls, ...patch.ttls },
         preferredLangs: patch.preferredLangs ?? base.preferredLangs,

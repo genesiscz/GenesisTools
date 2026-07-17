@@ -48,6 +48,8 @@ export interface YoutubeConfigShape {
     ai: AiTaskMapping[];
     /** Referral program schema (logic lands in Phase 2). */
     referrals: ReferralsConfig;
+    /** Monthly free-action cap for logged-in non-subscribers. Null = metering disabled. */
+    freeTier: { actionsPerMonth: number | null };
     defaultQuality: "720p" | "1080p" | "best";
     concurrency: {
         download: number;
