@@ -1333,6 +1333,69 @@ function buildPaths(): Record<string, OpenApiPathItem> {
                 },
             },
         },
+        "/api/v1/users/subscribe": {
+            post: {
+                operationId: "subscribeUser",
+                summary: "Start a monthly subscription checkout session",
+                tags: ["users"],
+                requestBody: jsonBody(
+                    { type: "object", properties: { planId: { type: "string" } }, required: ["planId"] },
+                    { required: true }
+                ),
+                responses: {
+                    "200": jsonResponse("Checkout session", {
+                        type: "object",
+                        properties: { url: { type: "string" } },
+                        required: ["url"],
+                    }),
+                    "400": errorResponse,
+                    "401": errorResponse,
+                    "409": errorResponse,
+                    "503": errorResponse,
+                },
+            },
+        },
+        "/api/v1/users/referral": {
+            get: {
+                operationId: "getReferral",
+                summary: "The signed-in user's referral code and redeemed referees",
+                tags: ["users"],
+                responses: {
+                    "200": jsonResponse("Referral standing", {
+                        type: "object",
+                        properties: {
+                            code: { type: "string" },
+                            referees: arrayOf({ type: "object" }),
+                            totalEarned: { type: "integer" },
+                        },
+                        required: ["code", "referees", "totalEarned"],
+                    }),
+                    "401": errorResponse,
+                },
+            },
+        },
+        "/api/v1/users/referral/redeem": {
+            post: {
+                operationId: "redeemReferral",
+                summary: "Redeem a referral code for both-side rewards",
+                tags: ["users"],
+                requestBody: jsonBody(
+                    { type: "object", properties: { code: { type: "string" } }, required: ["code"] },
+                    { required: true }
+                ),
+                responses: {
+                    "200": jsonResponse("Reward granted", {
+                        type: "object",
+                        properties: { reward: { type: "integer" }, credits: { type: "integer" } },
+                        required: ["reward", "credits"],
+                    }),
+                    "400": errorResponse,
+                    "401": errorResponse,
+                    "403": errorResponse,
+                    "409": errorResponse,
+                },
+            },
+        },
         "/api/v1/users/history": {
             get: {
                 operationId: "getUserHistory",

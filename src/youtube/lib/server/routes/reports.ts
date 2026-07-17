@@ -1,5 +1,6 @@
 import { SafeJSON } from "@app/utils/json";
 import { grantArtifactAccess } from "@app/youtube/lib/artifact-access";
+import { enforceFreeQuota } from "@app/youtube/lib/quota";
 import { estimateReportCost, REPORT_MAX_MEMBERS, REPORT_MIN_MEMBERS } from "@app/youtube/lib/reports";
 import { requireUser } from "@app/youtube/lib/server/auth";
 import { safeJsonBody } from "@app/youtube/lib/server/body";
@@ -67,6 +68,12 @@ export async function handleReportsRoute(req: Request, url: URL, yt: Youtube): P
                 memberIds: videoIds,
                 params: { provider, model },
             });
+            const quotaError = await enforceFreeQuota(yt, user);
+
+            if (quotaError) {
+                return quotaError;
+            }
+
             // The full quote is charged up front; member access rows are granted
             // at their quoted price so summaries generated (or reused) for this
             // report stay unlocked for the requester afterwards.

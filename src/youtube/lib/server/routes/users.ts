@@ -1,14 +1,19 @@
 import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
-import { createCheckoutSession } from "@app/youtube/lib/billing";
-import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
+import {
+    buildBillingContext,
+    createCheckoutSession,
+    createSubscriptionCheckoutSession,
+} from "@app/youtube/lib/billing";
+import { DIAMOND_PACKS, SUBSCRIPTION_PLANS } from "@app/youtube/lib/billing.types";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import { buildHistoryEntries, groupHistoryByAction, groupHistoryByVideo } from "@app/youtube/lib/history";
 import { isOutputLang } from "@app/youtube/lib/languages";
 import { getLedgerPage, getUsageSummary } from "@app/youtube/lib/ledger-views";
 import { createPreset, deletePreset, listPresets, updatePreset } from "@app/youtube/lib/presets";
 import type { PresetKind } from "@app/youtube/lib/presets.types";
+import { findActiveOffer, generateReferralCode, maskEmail } from "@app/youtube/lib/referrals";
 import { roleForEmail } from "@app/youtube/lib/roles";
 import { requireUser } from "@app/youtube/lib/server/auth";
 import { safeJsonBody } from "@app/youtube/lib/server/body";
@@ -60,8 +65,9 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
             }
 
             const role = roleForEmail(await yt.config.get("powerUsers"), user.email);
+            const billing = await buildBillingContext({ db: yt.db, config: yt.config, user });
 
-            return Response.json({ user, role }, { headers: CORS_HEADERS });
+            return Response.json({ user, role, billing }, { headers: CORS_HEADERS });
         }
 
         if (matchRoute(req, "PATCH", "/api/v1/users/me", url.pathname)) {
@@ -133,6 +139,120 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
                 logger.warn({ error, userId: user.id, packId }, "youtube billing: checkout session failed");
                 return jsonError(message, message.includes("not configured") ? 503 : 400);
             }
+        }
+
+        if (matchRoute(req, "POST", "/api/v1/users/subscribe", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const body = (await safeJsonBody(req)) ?? {};
+            const planId = typeof body.planId === "string" ? body.planId : null;
+
+            if (!planId || !SUBSCRIPTION_PLANS.some((plan) => plan.id === planId)) {
+                return jsonError("body must include a known {planId}", 400);
+            }
+
+            if (!env.stripe.getSecretKey()) {
+                return jsonError("billing not configured", 503);
+            }
+
+            const existing = yt.db.getSubscriptionByUserId(user.id);
+
+            if (existing && existing.status === "active") {
+                return jsonError("subscription already active", 409);
+            }
+
+            try {
+                const origin = req.headers.get("Origin") ?? "https://www.youtube.com";
+                const result = await createSubscriptionCheckoutSession({ user, planId, origin });
+                return Response.json(result, { headers: CORS_HEADERS });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                logger.warn({ error, userId: user.id, planId }, "youtube billing: subscribe session failed");
+                return jsonError(message, message.includes("not configured") ? 503 : 400);
+            }
+        }
+
+        if (matchRoute(req, "GET", "/api/v1/users/referral", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const code = yt.db.getOrCreateReferralCode(user.id, generateReferralCode());
+            const referrals = yt.db.listReferralsByReferrer(user.id);
+            const referees = referrals.map((referral) => ({
+                email: maskEmail(yt.db.getUserEmailById(referral.refereeUserId) ?? "unknown"),
+                redeemedAt: referral.createdAt,
+                reward: referral.reward,
+            }));
+            const totalEarned = referrals.reduce((sum, referral) => sum + referral.reward, 0);
+
+            return Response.json({ code, referees, totalEarned }, { headers: CORS_HEADERS });
+        }
+
+        if (matchRoute(req, "POST", "/api/v1/users/referral/redeem", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const body = (await safeJsonBody(req)) ?? {};
+            const code = typeof body.code === "string" ? body.code.trim().toUpperCase() : null;
+
+            if (!code) {
+                return jsonError("body must include {code}", 400);
+            }
+
+            const referrerUserId = yt.db.getReferralCodeOwner(code);
+
+            if (referrerUserId === null) {
+                return jsonError("unknown referral code", 400);
+            }
+
+            if (referrerUserId === user.id) {
+                return jsonError("cannot redeem your own code", 400);
+            }
+
+            if (yt.db.getReferralByReferee(user.id)) {
+                return jsonError("referral already redeemed", 409);
+            }
+
+            const offer = findActiveOffer(await yt.config.get("referrals"), new Date().toISOString());
+
+            if (!offer) {
+                return new Response(
+                    SafeJSON.stringify(
+                        { error: "no referral offer is currently active", code: "offer_inactive" },
+                        { strict: true }
+                    ),
+                    { status: 403, headers: { "Content-Type": "application/json", ...CORS_HEADERS } }
+                );
+            }
+
+            const referralId = yt.db.createReferral({
+                code,
+                referrerUserId,
+                refereeUserId: user.id,
+                reward: offer.reward,
+                offerFrom: offer.from,
+                offerTo: offer.to,
+            });
+            // Both-side reward: two ledger rows share the referral id so the
+            // activity feed can label each side.
+            yt.db.grantCredits(referrerUserId, offer.reward, `referral:${referralId}:referrer`);
+            const credits = yt.db.grantCredits(user.id, offer.reward, `referral:${referralId}:referee`);
+            logger.info(
+                { referralId, referrerUserId, refereeUserId: user.id, reward: offer.reward },
+                "youtube referrals: redeemed"
+            );
+
+            return Response.json({ reward: offer.reward, credits }, { headers: CORS_HEADERS });
         }
 
         if (matchRoute(req, "GET", "/api/v1/users/ledger", url.pathname)) {
