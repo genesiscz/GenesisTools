@@ -108,6 +108,23 @@ describe("subscription webhook lifecycle", () => {
         expect(db.getUserCredits(user.id)).toBe(3000);
     });
 
+    it("invoice.paid before the subscription exists errors (retryable), then grants on replay", async () => {
+        const user = db.createUser({ email: "w6@example.com", passwordHash: "h", apiToken: "ytu_w6" });
+        const nowSec = Math.floor(Date.now() / 1000);
+
+        // Stripe does not order webhooks: invoice.paid can land before
+        // checkout.session.completed created the local subscription. That must be
+        // a retryable error (not a permanent skip), so the retry can grant later.
+        await expect(deliver(invoicePaidEvent("evt_early", "in_early", nowSec, nowSec + 2_592_000))).rejects.toThrow();
+        expect(db.getWebhookLog("evt_early")?.outcome).toBe("error");
+        expect(db.getUserCredits(user.id)).toBe(0);
+
+        // Subscription now exists; the retried event reprocesses and grants.
+        await deliver(subCheckoutEvent(user.id));
+        await deliver(invoicePaidEvent("evt_early", "in_early", nowSec, nowSec + 2_592_000));
+        expect(db.getUserCredits(user.id)).toBe(3000);
+    });
+
     it("invoice.payment_failed marks past_due and records a failed payment", async () => {
         const user = db.createUser({ email: "w4@example.com", passwordHash: "h", apiToken: "ytu_w4" });
         await deliver(subCheckoutEvent(user.id));

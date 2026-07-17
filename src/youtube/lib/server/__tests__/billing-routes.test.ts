@@ -186,6 +186,41 @@ describe("youtube server billing routes", () => {
         }
     });
 
+    it("invoice.paid for an unknown subscription returns 500 so Stripe retries", async () => {
+        const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
+
+        try {
+            const webhookSecret = "whsec_retry";
+            const { payload, signature } = signStripePayload(webhookSecret, {
+                id: "evt_early_route",
+                type: "invoice.paid",
+                data: {
+                    object: {
+                        id: "in_early_route",
+                        subscription: "sub_missing",
+                        amount_paid: 999,
+                        currency: "usd",
+                        lines: { data: [{ period: { start: 1_800_000_000, end: 1_802_592_000 } }] },
+                    },
+                },
+            });
+
+            await env.testing.withOverrides({ STRIPE_WEBHOOK_SECRET: webhookSecret }, async () => {
+                const res = await fetch(`http://localhost:${handle.port}/api/v1/webhooks/stripe`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "Stripe-Signature": signature },
+                    body: payload,
+                });
+
+                expect(res.status).toBe(500);
+            });
+
+            expect(handle.youtube.db.getWebhookLog("evt_early_route")?.outcome).toBe("error");
+        } finally {
+            await handle.stop();
+        }
+    });
+
     it("webhook route is exempt from service-key auth", async () => {
         // resolveServiceKeys runs once at startServer() time, so the override
         // must be in place before the server starts, not just before the request.

@@ -98,6 +98,20 @@ interface StripeEvent {
 }
 
 /**
+ * A webhook that cannot be processed *yet* but should be retried — e.g.
+ * invoice.paid arriving before checkout.session.completed created the local
+ * subscription (Stripe does not order deliveries). Recorded with an "error"
+ * outcome (which reprocesses on redelivery) and answered with a 5xx so Stripe
+ * retries; by then the out-of-order dependency has arrived.
+ */
+export class WebhookRetryableError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "WebhookRetryableError";
+    }
+}
+
+/**
  * Verifies and applies a Stripe webhook event. `checkout.session.completed`
  * grants the purchased pack's diamonds (idempotent on the ledger reason
  * `stripe:<sessionId>`); `charge.refunded` reverses it (idempotent on
@@ -252,7 +266,9 @@ function applyChargeRefunded(db: YoutubeDatabase, charge: Record<string, unknown
     const amount = typeof charge.amount === "number" ? charge.amount : null;
     const amountRefunded = typeof charge.amount_refunded === "number" ? charge.amount_refunded : null;
     const partial = amount !== null && amount > 0 && amountRefunded !== null && amountRefunded < amount;
-    const targetReversal = partial ? Math.floor((pack.diamonds * (amountRefunded as number)) / (amount as number)) : pack.diamonds;
+    const targetReversal = partial
+        ? Math.floor((pack.diamonds * (amountRefunded as number)) / (amount as number))
+        : pack.diamonds;
 
     // The reason embeds the cumulative refunded amount so each distinct
     // cumulative state is its own idempotent ledger row — an exact redelivery of
@@ -328,9 +344,15 @@ function applyInvoicePaid(db: YoutubeDatabase, invoice: Record<string, unknown>)
     const sub = db.getSubscriptionByStripeId(stripeSubscriptionId);
 
     if (!sub) {
-        logger.warn({ invoiceId, stripeSubscriptionId }, "youtube billing: invoice.paid for unknown subscription");
+        // Out-of-order delivery: the subscription checkout event has not landed
+        // yet. Skipping here would be PERMANENT (webhook_logs dedupe), so the
+        // initial allowance would never be granted. Signal retryable instead.
+        logger.warn(
+            { invoiceId, stripeSubscriptionId },
+            "youtube billing: invoice.paid before local subscription exists — retrying"
+        );
 
-        return "skipped";
+        throw new WebhookRetryableError(`invoice.paid for unknown subscription ${stripeSubscriptionId}`);
     }
 
     const reason: CreditReason = `sub-allowance:${invoiceId}`;

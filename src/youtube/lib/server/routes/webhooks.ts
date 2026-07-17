@@ -1,6 +1,6 @@
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
-import { handleStripeEvent } from "@app/youtube/lib/billing";
+import { handleStripeEvent, WebhookRetryableError } from "@app/youtube/lib/billing";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
 import type { Youtube } from "@app/youtube/lib/youtube";
@@ -36,8 +36,17 @@ export async function handleWebhooksRoute(req: Request, url: URL, yt: Youtube): 
             await handleStripeEvent(yt.db, payload, signature);
             return Response.json({ received: true }, { headers: CORS_HEADERS });
         } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+
+            if (error instanceof WebhookRetryableError) {
+                // 5xx → Stripe retries after backoff; by then the out-of-order
+                // dependency (e.g. the subscription row) should exist.
+                logger.warn({ error }, "youtube webhooks: stripe event retryable, asking for redelivery");
+                return jsonError(message, 500);
+            }
+
             logger.warn({ error }, "youtube webhooks: stripe event rejected");
-            return jsonError(error instanceof Error ? error.message : String(error), 400);
+            return jsonError(message, 400);
         }
     }
 
