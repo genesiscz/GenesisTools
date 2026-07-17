@@ -259,6 +259,7 @@ export const apiClient = {
             model?: string;
             sources?: QaSource[];
             scope?: "video" | "channel";
+            presetId?: number;
         }
     ) =>
         api<AskVideoResponse>(`/videos/${encodeURIComponent(id)}/qa`, {

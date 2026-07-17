@@ -140,6 +140,7 @@ export function useAskVideo(id: VideoId) {
             model?: string;
             sources?: QaSource[];
             scope?: "video" | "channel";
+            presetId?: number;
         }) => apiClient.askVideo(id, vars),
     });
 }
