@@ -91,12 +91,14 @@ function tokenMatchesAny(presented: string, keys: string[]): boolean {
     return matched;
 }
 
+export const USER_TOKEN_PREFIX = "ytu_";
+
 /**
  * Returns a 401 `Response` when auth is enabled and the request lacks a valid
  * key, or `null` when the request may proceed. With no keys configured every
  * request proceeds (open mode).
  */
-export function requireServiceKey(req: Request, keys: string[]): Response | null {
+export function requireServiceKey(req: Request, keys: string[], db?: YoutubeDatabase): Response | null {
     if (keys.length === 0) {
         return null;
     }
@@ -104,6 +106,15 @@ export function requireServiceKey(req: Request, keys: string[]): Response | null
     const token = extractServiceToken(req);
     const method = req.method;
     const path = new URL(req.url).pathname;
+
+    // A valid per-user token satisfies the top-level gate too: user routes
+    // re-check identity via requireUser/resolveUser, and browser surfaces
+    // (<audio> tags, WS handshakes) can only present the ytu_ token.
+    if (token?.startsWith(USER_TOKEN_PREFIX) && db?.getUserByToken(token)) {
+        logger.debug({ method, path }, "youtube API: accepted request with valid user token");
+
+        return null;
+    }
 
     if (!token || !tokenMatchesAny(token, keys)) {
         // Log the decision — never the presented key — so auth failures are
@@ -124,8 +135,6 @@ export function requireServiceKey(req: Request, keys: string[]): Response | null
 
     return null;
 }
-
-const USER_TOKEN_PREFIX = "ytu_";
 
 /**
  * Returns the authenticated user, or a ready 401 JSON Response. Never throws.
@@ -165,7 +174,7 @@ export function requireUser(req: Request, url: URL, db: YoutubeDatabase): YtUser
         "youtube API: user auth required"
     );
 
-    return new Response(SafeJSON.stringify({ error: "login required" }, { strict: true }), {
+    return new Response(SafeJSON.stringify({ error: "login required", code: "login_required" }, { strict: true }), {
         status: 401,
         headers: { "Content-Type": "application/json", ...CORS_HEADERS },
     });
