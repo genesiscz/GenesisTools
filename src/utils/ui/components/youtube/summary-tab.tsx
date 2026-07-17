@@ -1,7 +1,7 @@
 import { Button } from "@app/utils/ui/components/button";
 import { LlmConfirmDialog, type ModelPreset } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
 import { PanelLoading } from "@app/utils/ui/components/youtube/loading";
-import { errorCodeOf } from "@app/utils/ui/components/youtube/login-required";
+import { errorCodeOf, isLoginRequiredError } from "@app/utils/ui/components/youtube/login-required";
 import { LongSummaryView } from "@app/utils/ui/components/youtube/long-summary-view";
 import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
 import { ShareButton } from "@app/utils/ui/components/youtube/share-button";
@@ -201,7 +201,15 @@ export function SummaryTab({
     async function unlockSummary() {
         // Teaser IS the confirm — straight to the flat-price charge; the
         // server returns the stored artifact instantly (no job, no LLM).
-        await generate.mutateAsync({ mode: "long" });
+        try {
+            await generate.mutateAsync({ mode: "long" });
+        } catch (error) {
+            // Signed-out unlock gets the sign-in retry flow like share/generate
+            // do; other failures already render via generate.error reactively.
+            if (isLoginRequiredError(error) && onRequireLogin) {
+                onRequireLogin(() => void unlockSummary());
+            }
+        }
     }
 
     async function prepareAudio(): Promise<string> {

@@ -82,6 +82,7 @@ export function ShareButton({
                 type="button"
                 onClick={() => void click()}
                 title="Share (copies link)"
+                aria-label="Share and copy link"
                 className={`inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground ${className ?? ""}`}
             >
                 {state === "busy" ? (

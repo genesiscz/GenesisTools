@@ -26,7 +26,7 @@ import type {
     VideoLongSummary,
 } from "@app/youtube/lib/types";
 import type { SettingsTaskKind, TaskDefaultSettings } from "@app/youtube/lib/user-settings";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type VideoDetailTab = "insights" | "summary" | "ask" | "comments" | "transcript";
 
@@ -258,11 +258,15 @@ export function VideoDetailTabs({
 }: VideoDetailTabsProps) {
     const rootRef = useRef<HTMLDivElement | null>(null);
     const pendingCommentRef = useRef<string | null>(null);
+    // State mirror of pendingCommentRef: CommentsTab needs to re-render (and
+    // lift its 50-thread render cap) when a jump target may sit beyond it.
+    const [revealCommentId, setRevealCommentId] = useState<string | null>(null);
 
     // Cited-comment jump: switch to the Comments tab, then (once its cards
     // exist in the DOM) scroll the thread into view and flash it once.
     function showComment(commentId: string) {
         pendingCommentRef.current = commentId;
+        setRevealCommentId(commentId);
         onActiveChange("comments");
     }
 
@@ -283,6 +287,7 @@ export function VideoDetailTabs({
 
         function reveal(card: Element) {
             pendingCommentRef.current = null;
+            setRevealCommentId(null);
             observer?.disconnect();
 
             if (timeout !== null) {
@@ -313,6 +318,7 @@ export function VideoDetailTabs({
         timeout = window.setTimeout(() => {
             observer?.disconnect();
             pendingCommentRef.current = null;
+            setRevealCommentId(null);
         }, 3000);
 
         return () => {
@@ -431,6 +437,7 @@ export function VideoDetailTabs({
                         useComments={ds.useComments}
                         runPipeline={runPipeline}
                         pipelineProgress={pipelineProgress}
+                        revealCommentId={revealCommentId}
                     />
                 </TabsContent>
                 <TabsContent value="transcript" className="yt-tab-pane">

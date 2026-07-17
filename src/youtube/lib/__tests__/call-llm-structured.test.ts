@@ -139,6 +139,34 @@ describe("callLLMStructured", () => {
         expect(generateObjectMock).toHaveBeenCalledTimes(1);
     });
 
+    it("falls back to generateObject when the stream errors during iteration before the first chunk", async () => {
+        const { callLLMStructured } = await import("@app/utils/ai/call-llm");
+        async function* emptyFailingStream(): AsyncGenerator<unknown> {
+            throw new Error("stream failed before first chunk");
+            // biome-ignore lint/correctness/noUnreachable: generator shape needs a yield
+            yield undefined;
+        }
+        streamObjectMock.mockReturnValueOnce({
+            partialObjectStream: emptyFailingStream(),
+            object: Promise.reject(new Error("unused")).catch(() => undefined),
+            usage: Promise.resolve(undefined),
+        });
+        generateObjectMock.mockResolvedValueOnce({ object: { tldr: "fallback" }, usage: undefined });
+
+        const partials: unknown[] = [];
+        const result = await callLLMStructured({
+            systemPrompt: "x",
+            userPrompt: "y",
+            providerChoice: fakeProviderChoice,
+            schema: z.object({ tldr: z.string() }),
+            onPartial: (partial) => partials.push(partial),
+        });
+
+        expect(partials).toEqual([]);
+        expect(result.object).toEqual({ tldr: "fallback" });
+        expect(generateObjectMock).toHaveBeenCalledTimes(1);
+    });
+
     it("propagates a mid-stream error after the first chunk (no fallback)", async () => {
         const { callLLMStructured } = await import("@app/utils/ai/call-llm");
         async function* failingStream(): AsyncGenerator<unknown> {

@@ -5,7 +5,7 @@ import type { PipelineProgress, RunPipeline } from "@app/utils/ui/components/you
 import { formatRelativeTime } from "@app/utils/ui/components/youtube/time";
 import type { VideoComment, VideoId } from "@app/youtube/lib/types";
 import { Loader2, MessageCircle, Search, ThumbsUp } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 const DEFAULT_RENDER_LIMIT = 50;
 
@@ -38,9 +38,18 @@ export interface CommentsTabProps {
     useComments: (id: VideoId | null) => { data: { comments: VideoComment[] } | undefined; isPending: boolean };
     runPipeline?: RunPipeline;
     pipelineProgress?: PipelineProgress | null;
+    /** Cited-comment jump target — when it sits beyond the render cap, the
+     *  cap is lifted so the card can actually mount for the jump observer. */
+    revealCommentId?: string | null;
 }
 
-export function CommentsTab({ videoId, useComments, runPipeline, pipelineProgress }: CommentsTabProps) {
+export function CommentsTab({
+    videoId,
+    useComments,
+    runPipeline,
+    pipelineProgress,
+    revealCommentId,
+}: CommentsTabProps) {
     const [query, setQuery] = useState("");
     const [showAll, setShowAll] = useState(false);
     const comments = useComments(videoId);
@@ -63,6 +72,20 @@ export function CommentsTab({ videoId, useComments, runPipeline, pipelineProgres
             );
         });
     }, [threads, query]);
+
+    // Lift the render cap when a cited-comment jump targets a thread beyond
+    // the first page — otherwise its card never mounts and the jump observer
+    // in tabs.tsx times out silently.
+    useEffect(() => {
+        if (!revealCommentId || showAll) {
+            return;
+        }
+
+        const index = filtered.findIndex((thread) => thread.root.commentId === revealCommentId);
+        if (index >= DEFAULT_RENDER_LIMIT) {
+            setShowAll(true);
+        }
+    }, [revealCommentId, filtered, showAll]);
 
     const trimmed = useMemo(() => {
         if (showAll || filtered.length <= DEFAULT_RENDER_LIMIT) {
@@ -134,6 +157,11 @@ export function CommentsTab({ videoId, useComments, runPipeline, pipelineProgres
                     {threads.length.toLocaleString()} thread{threads.length === 1 ? "" : "s"}
                 </span>
             </div>
+            {filtered.length === 0 && query.trim() ? (
+                <p className="rounded-xl border border-dashed border-primary/25 p-3 text-sm text-muted-foreground">
+                    No comments match “{query.trim()}”.
+                </p>
+            ) : null}
             <div className="space-y-3">
                 {trimmed.map((thread) => (
                     <CommentThreadView key={thread.root.commentId} thread={thread} />
@@ -158,7 +186,7 @@ function CommentThreadView({ thread }: { thread: CommentThread }) {
     return (
         <article
             data-comment-id={thread.root.commentId}
-            className="rounded-xl border border-primary/15 bg-black/20 p-3"
+            className="rounded-xl border border-primary/15 bg-muted/30 p-3"
         >
             <CommentRow comment={thread.root} />
             {thread.replies.length > 0 ? (
