@@ -233,7 +233,7 @@ export function SummaryTab({
                             size="sm"
                             data-testid="summary-generate"
                             onClick={openConfirm}
-                            disabled={generate.isPending}
+                            disabled={generate.isPending || streaming}
                         >
                             {long === null ? "Generate summary…" : "Re-generate…"}
                         </Button>
@@ -251,10 +251,18 @@ export function SummaryTab({
                 // Generating state: streamed partials render through the normal
                 // view (skeletons for pending sections) — never on the teaser.
                 <LongSummaryView summary={partial} streaming onSeek={onSeek} playerTime={playerTime} />
+            ) : streaming ? (
+                // Streaming started but no partial has arrived yet — show the
+                // writing skeleton, never the stale previous summary.
+                <div className="space-y-2">
+                    <div className="h-4 rounded-md bg-muted/50 animate-pulse" />
+                    <div className="h-4 rounded-md bg-muted/50 animate-pulse" />
+                    <div className="h-4 rounded-md bg-muted/50 animate-pulse" />
+                </div>
             ) : lockedInfo !== null ? (
                 <div
                     data-testid="summary-locked"
-                    className="space-y-3 rounded-2xl border border-border/50 bg-black/20 p-3"
+                    className="space-y-3 rounded-2xl border border-border/50 bg-muted/30 p-3"
                 >
                     <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-secondary">summary</p>
                     <p className="line-clamp-3 text-sm text-muted-foreground [mask-image:linear-gradient(to_bottom,black_40%,transparent)]">
@@ -270,7 +278,7 @@ export function SummaryTab({
                             size="sm"
                             data-testid="summary-unlock"
                             onClick={unlockSummary}
-                            disabled={generate.isPending}
+                            disabled={generate.isPending || streaming}
                         >
                             {generate.isPending ? (
                                 <>
@@ -285,7 +293,7 @@ export function SummaryTab({
                             size="sm"
                             className="text-muted-foreground"
                             onClick={openConfirm}
-                            disabled={generate.isPending}
+                            disabled={generate.isPending || streaming}
                         >
                             Regenerate fresh…
                         </Button>
@@ -304,6 +312,7 @@ export function SummaryTab({
                 <>
                     {long !== null && generateAudio && buildAudioSrc ? (
                         <SummaryAudioPlayer
+                            key={videoId}
                             priceLabel={`${CREDIT_COSTS["tts:summary"]} 💎`}
                             onPrepare={prepareAudio}
                             onPlayVideo={onPlayVideo}
@@ -340,7 +349,7 @@ export function SummaryTab({
                         ) : null}
                     </div>
                 }
-                busy={generate.isPending}
+                busy={generate.isPending || streaming}
                 confirmLabel={long === null ? "Generate" : "Re-generate"}
                 error={generate.error ? (generate.error as Error).message : null}
                 errorCode={errorCodeOf(generate.error)}
