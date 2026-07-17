@@ -195,7 +195,7 @@ export function InsightsTab({
                     className="shrink-0"
                     data-testid="insights-generate"
                     onClick={openConfirm}
-                    disabled={generate.isPending}
+                    disabled={generate.isPending || streaming}
                 >
                     {entries.length === 0 ? "Generate insights…" : "Re-generate…"}
                 </Button>
@@ -231,7 +231,7 @@ export function InsightsTab({
                 controlsSlot={
                     <SummaryControlsBar value={controls} onChange={setControls} disabled={generate.isPending} />
                 }
-                busy={generate.isPending}
+                busy={generate.isPending || streaming}
                 confirmLabel={entries.length === 0 ? "Generate" : "Re-generate"}
                 error={generate.error ? (generate.error as Error).message : null}
                 errorCode={errorCodeOf(generate.error)}
