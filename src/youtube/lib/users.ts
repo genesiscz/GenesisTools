@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { logger } from "@app/logger";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { YtUser } from "@app/youtube/lib/users.types";
@@ -6,6 +6,11 @@ import { STARTING_CREDITS } from "@app/youtube/lib/users.types";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD_LENGTH = 8;
+
+// Fixed argon2id hash verified against on unknown-email logins so the response
+// time matches the wrong-password path — denies account enumeration by timing.
+const DUMMY_PASSWORD_HASH =
+    "$argon2id$v=19$m=65536,t=2,p=1$fYHkbO0CZr8gnIpHcvfJ3CLwnFvntI53nuY2Tkn9q2Q$XewkWtrxB6KvLNEfOceWqdHPg6/7Bq2cWgdREkWXroE";
 
 function normalizeEmail(email: string): string {
     const normalized = email.trim().toLowerCase();
@@ -38,7 +43,10 @@ export async function registerUser(
     const token = `ytu_${randomBytes(32).toString("hex")}`;
     const created = db.createUser({ email, passwordHash, apiToken: token });
     const credits = db.grantCredits(created.id, STARTING_CREDITS, "register-grant");
-    logger.info({ userId: created.id, tokenPrefix: token.slice(0, 8) }, "youtube users: registered");
+    logger.info(
+        { userId: created.id, tokenHash: createHash("sha256").update(token).digest("hex").slice(0, 12) },
+        "youtube users: registered"
+    );
 
     return { user: { ...created, credits }, token };
 }
@@ -53,6 +61,9 @@ export async function loginUser(
     const invalid = new Error("Invalid email or password");
 
     if (!stored) {
+        // Burn a comparable amount of time so an unknown email is not
+        // distinguishable from a wrong password by response latency.
+        await Bun.password.verify(input.password, DUMMY_PASSWORD_HASH);
         logger.warn({ reason: "unknown-email" }, "youtube users: login rejected");
         throw invalid;
     }
