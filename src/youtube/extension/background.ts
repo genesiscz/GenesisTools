@@ -348,7 +348,11 @@ async function apiCall(url: string, init: RequestInit = {}): Promise<ExtensionRe
             } catch {
                 // non-JSON error body — fall back to status line
             }
-            return { ok: false, error: detail !== "" ? detail : `${res.status} ${res.statusText}`, ...(code ? { code } : {}) };
+            return {
+                ok: false,
+                error: detail !== "" ? detail : `${res.status} ${res.statusText}`,
+                ...(code ? { code } : {}),
+            };
         }
         return { ok: true, data: await res.json() };
     } catch (error) {

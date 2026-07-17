@@ -34,7 +34,14 @@ describe("GET /api/v1/jobs/queue", () => {
         const res = await handlePipelineRoute(new Request(url), url, yt);
 
         expect(res.status).toBe(200);
-        const body = (await res.json()) as { queue: { queued: number; running: number; perStage: Record<string, { queued: number; running: number }>; oldestQueuedAgeSec: number | null } };
+        const body = (await res.json()) as {
+            queue: {
+                queued: number;
+                running: number;
+                perStage: Record<string, { queued: number; running: number }>;
+                oldestQueuedAgeSec: number | null;
+            };
+        };
 
         expect(body.queue.queued).toBe(2);
         expect(body.queue.running).toBe(1);
@@ -47,7 +54,9 @@ describe("GET /api/v1/jobs/queue", () => {
     it("returns zeros on an empty queue", async () => {
         const url = new URL("http://localhost/api/v1/jobs/queue");
         const res = await handlePipelineRoute(new Request(url), url, yt);
-        const body = (await res.json()) as { queue: { queued: number; running: number; oldestQueuedAgeSec: number | null } };
+        const body = (await res.json()) as {
+            queue: { queued: number; running: number; oldestQueuedAgeSec: number | null };
+        };
 
         expect(res.status).toBe(200);
         expect(body.queue.queued).toBe(0);

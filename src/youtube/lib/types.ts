@@ -11,7 +11,13 @@ export type {
     YoutubeConfigShape,
     YtRole,
 } from "@app/youtube/lib/config.types";
-export type { QueueStats, SearchVideosOpts, VideoLogKind, VideoSearchField, VideoSearchHit } from "@app/youtube/lib/db.types";
+export type {
+    QueueStats,
+    SearchVideosOpts,
+    VideoLogKind,
+    VideoSearchField,
+    VideoSearchHit,
+} from "@app/youtube/lib/db.types";
 export type {
     JobActivity,
     JobActivityKind,
