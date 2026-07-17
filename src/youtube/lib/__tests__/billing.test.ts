@@ -232,7 +232,10 @@ describe("handleStripeEvent", () => {
         });
 
         expect(db.getUserByToken("ytu_refund")?.credits).toBe(0);
-        expect(db.hasLedgerReason(user.id, "stripe-refund:ch_test_789")).toBe(true);
+        // Reason keys on the cumulative refunded amount ("full" when the minimal
+        // event carries no amount fields); the whole pack is reversed once.
+        expect(db.hasLedgerReason(user.id, "stripe-refund:ch_test_789:full")).toBe(true);
+        expect(db.sumRefundedForCharge(user.id, "ch_test_789")).toBe(2000);
     });
 
     it("rejects a bad signature", async () => {
