@@ -122,6 +122,9 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
     // Dev-only model picker data; regular builds never fetch it.
     const models = useModels(IS_DEV_BUILD);
     const me = useMe();
+    // Model-override picker is an admin/dev tool (mirrors the web settings gating);
+    // logged-out visitors and regular users never see it.
+    const isPowerUser = me.data?.role === "admin" || me.data?.role === "dev";
     const config = useConfig();
     const settings = useSettings();
     const updateSettings = useUpdateSettings();
@@ -492,7 +495,7 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                             onActiveChange={setActive}
                             runPipeline={runPipeline}
                             chromeless
-                            devMode={IS_DEV_BUILD}
+                            devMode={isPowerUser}
                             modelPresets={models.data?.presets ?? []}
                             modelDefaults={models.data?.defaults}
                             pipelineProgress={pipelineProgress}
@@ -524,7 +527,7 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                         pendingLoginRetry.current = null;
                     }
                 }}
-                devMode={IS_DEV_BUILD}
+                devMode={isPowerUser}
                 onOpenAccount={(accountSectionId) => {
                     setSettingsOpen(false);
                     setAccountSection(accountSectionId);
