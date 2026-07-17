@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as JobsRouteImport } from './routes/jobs'
+import { Route as HistoryRouteImport } from './routes/history'
 import { Route as FirstRunRouteImport } from './routes/first-run'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as VideosIdRouteImport } from './routes/videos.$id'
@@ -24,6 +25,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const JobsRoute = JobsRouteImport.update({
   id: '/jobs',
   path: '/jobs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HistoryRoute = HistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FirstRunRoute = FirstRunRouteImport.update({
@@ -50,6 +56,7 @@ const ChannelsHandleRoute = ChannelsHandleRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/first-run': typeof FirstRunRoute
+  '/history': typeof HistoryRoute
   '/jobs': typeof JobsRoute
   '/settings': typeof SettingsRoute
   '/channels/$handle': typeof ChannelsHandleRoute
@@ -58,6 +65,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/first-run': typeof FirstRunRoute
+  '/history': typeof HistoryRoute
   '/jobs': typeof JobsRoute
   '/settings': typeof SettingsRoute
   '/channels/$handle': typeof ChannelsHandleRoute
@@ -67,6 +75,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/first-run': typeof FirstRunRoute
+  '/history': typeof HistoryRoute
   '/jobs': typeof JobsRoute
   '/settings': typeof SettingsRoute
   '/channels/$handle': typeof ChannelsHandleRoute
@@ -77,6 +86,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/first-run'
+    | '/history'
     | '/jobs'
     | '/settings'
     | '/channels/$handle'
@@ -85,6 +95,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/first-run'
+    | '/history'
     | '/jobs'
     | '/settings'
     | '/channels/$handle'
@@ -93,6 +104,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/first-run'
+    | '/history'
     | '/jobs'
     | '/settings'
     | '/channels/$handle'
@@ -102,6 +114,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   FirstRunRoute: typeof FirstRunRoute
+  HistoryRoute: typeof HistoryRoute
   JobsRoute: typeof JobsRoute
   SettingsRoute: typeof SettingsRoute
   ChannelsHandleRoute: typeof ChannelsHandleRoute
@@ -122,6 +135,13 @@ declare module '@tanstack/react-router' {
       path: '/jobs'
       fullPath: '/jobs'
       preLoaderRoute: typeof JobsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/history': {
+      id: '/history'
+      path: '/history'
+      fullPath: '/history'
+      preLoaderRoute: typeof HistoryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/first-run': {
@@ -158,6 +178,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   FirstRunRoute: FirstRunRoute,
+  HistoryRoute: HistoryRoute,
   JobsRoute: JobsRoute,
   SettingsRoute: SettingsRoute,
   ChannelsHandleRoute: ChannelsHandleRoute,
