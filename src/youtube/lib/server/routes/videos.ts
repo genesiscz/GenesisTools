@@ -92,13 +92,15 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 return jsonError("video not found", 404);
             }
 
+            yt.db.recordVideoWatch({ userId: resolveUser(req, url, yt.db)?.id ?? null, videoId: id });
+
             return Response.json({ video, transcripts: yt.db.listTranscripts(id) }, { headers: CORS_HEADERS });
         }
 
         const transcriptRoute = matchRoute(req, "GET", "/api/v1/videos/:id/transcript", url.pathname);
 
         if (transcriptRoute) {
-            return handleTranscriptRoute(url, yt, transcriptRoute.id as VideoId);
+            return handleTranscriptRoute(req, url, yt, transcriptRoute.id as VideoId);
         }
 
         const transcriptTranslate = matchRoute(req, "POST", "/api/v1/videos/:id/transcript/translate", url.pathname);
@@ -339,7 +341,15 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 return jsonError("video not found", 404);
             }
 
-            return Response.json({ comments: yt.db.getComments(id) }, { headers: CORS_HEADERS });
+            const comments = yt.db.getComments(id);
+            yt.db.recordVideoLog({
+                kind: "comments:view",
+                userId: resolveUser(req, url, yt.db)?.id ?? null,
+                videoId: id,
+                meta: { count: comments.length },
+            });
+
+            return Response.json({ comments }, { headers: CORS_HEADERS });
         }
 
         const summaryGet = matchRoute(req, "GET", "/api/v1/videos/:id/summary", url.pathname);
@@ -376,6 +386,15 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                       ? video.summaryLong
                       : video.summaryShort;
             const fallback = mode === "timestamped" ? [] : mode === "long" ? null : "";
+
+            if (cached !== null && cached !== undefined) {
+                yt.db.recordVideoLog({
+                    kind: mode === "timestamped" ? "insights:view" : "summary:view",
+                    userId: resolveUser(req, url, yt.db)?.id ?? null,
+                    videoId: id,
+                    meta: { mode, lang: summaryLangFor(video, mode) },
+                });
+            }
 
             return Response.json(
                 {
@@ -660,7 +679,10 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 provider: url.searchParams.get("provider") ?? undefined,
                 model: url.searchParams.get("model") ?? undefined,
                 // Estimates front the summary dialog, so quote the summarize default.
-                fallbackSpec: resolveAiSpecForTask(await yt.config.getAll(), mode === "timestamped" ? "insights" : "summary"),
+                fallbackSpec: resolveAiSpecForTask(
+                    await yt.config.getAll(),
+                    mode === "timestamped" ? "insights" : "summary"
+                ),
             });
             const transcript = yt.db.getTranscript(id);
             const video = yt.videos.show(id);
@@ -968,7 +990,7 @@ function insufficientDiamonds(balance: number, required: number): Response {
     });
 }
 
-function handleTranscriptRoute(url: URL, yt: Youtube, id: VideoId): Response {
+function handleTranscriptRoute(req: Request, url: URL, yt: Youtube, id: VideoId): Response {
     const lang = url.searchParams.get("lang") ?? undefined;
     const source = url.searchParams.get("source") ?? undefined;
     const format = url.searchParams.get("format") ?? "json";
@@ -980,6 +1002,13 @@ function handleTranscriptRoute(url: URL, yt: Youtube, id: VideoId): Response {
     if (!transcript) {
         return jsonError("no transcript", 404);
     }
+
+    yt.db.recordVideoLog({
+        kind: "transcript:view",
+        userId: resolveUser(req, url, yt.db)?.id ?? null,
+        videoId: id,
+        meta: { lang: transcript.lang, source: transcript.source, format },
+    });
 
     if (format === "text") {
         return new Response(transcript.text, {
