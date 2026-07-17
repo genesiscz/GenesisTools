@@ -1,6 +1,6 @@
 import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
-import type { ChannelHandle, JobStage, JobStatus, QaSource, VideoId } from "@app/youtube/lib/types";
-import { apiClient, clearApiBaseUrlCache } from "@app/yt/api.client";
+import type { ChannelHandle, CollectionKind, JobStage, JobStatus, QaSource, VideoId } from "@app/youtube/lib/types";
+import { apiClient, clearApiBaseUrlCache, setUserToken } from "@app/yt/api.client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -251,6 +251,196 @@ export function usePatchServerConfig() {
         },
         onError: (error) => {
             toast.error("Saving settings failed", { description: errorMessage(error) });
+        },
+    });
+}
+
+export function useMe() {
+    return useQuery({ queryKey: ["me"], queryFn: () => apiClient.me(), retry: false });
+}
+
+export function useLogin() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: async (vars: { email: string; password: string }) => {
+            const result = await apiClient.login(vars.email, vars.password);
+            setUserToken(result.token);
+
+            return result;
+        },
+        onSuccess: () => queryClient.invalidateQueries(),
+    });
+}
+
+export function useRegister() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: async (vars: { email: string; password: string }) => {
+            const result = await apiClient.register(vars.email, vars.password);
+            setUserToken(result.token);
+
+            return result;
+        },
+        onSuccess: () => queryClient.invalidateQueries(),
+    });
+}
+
+export function useLogout() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: async () => {
+            setUserToken(null);
+        },
+        onSuccess: () => queryClient.invalidateQueries(),
+    });
+}
+
+export function useCollections() {
+    return useQuery({
+        queryKey: ["collections"],
+        queryFn: () => apiClient.listCollections(),
+        select: (response) => response.collections,
+    });
+}
+
+export function useCollection(id: number | null) {
+    return useQuery({
+        queryKey: ["collection", id],
+        queryFn: () => apiClient.getCollection(id as number),
+        enabled: id !== null,
+    });
+}
+
+export function useCreateCollection() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (body: { name: string; kind: CollectionKind; rule?: unknown }) => apiClient.createCollection(body),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["collections"] }),
+        onError: (error) => {
+            toast.error("Creating collection failed", { description: errorMessage(error) });
+        },
+    });
+}
+
+export function useDeleteCollection() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (id: number) => apiClient.deleteCollection(id),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["collections"] }),
+        onError: (error) => {
+            toast.error("Deleting collection failed", { description: errorMessage(error) });
+        },
+    });
+}
+
+export function useAddCollectionVideo(id: number) {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (videoId: string) => apiClient.addCollectionVideo(id, videoId),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["collection", id] }),
+        onError: (error) => {
+            toast.error("Adding video failed", { description: errorMessage(error) });
+        },
+    });
+}
+
+export function useRemoveCollectionVideo(id: number) {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (videoId: string) => apiClient.removeCollectionVideo(id, videoId),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["collection", id] }),
+        onError: (error) => {
+            toast.error("Removing video failed", { description: errorMessage(error) });
+        },
+    });
+}
+
+export function useThreads(id: number | null) {
+    return useQuery({
+        queryKey: ["threads", id],
+        queryFn: () => apiClient.listThreads(id as number),
+        enabled: id !== null,
+        select: (response) => response.threads,
+    });
+}
+
+export function useThread(threadId: number | null) {
+    return useQuery({
+        queryKey: ["thread", threadId],
+        queryFn: () => apiClient.getThread(threadId as number),
+        enabled: threadId !== null,
+    });
+}
+
+export function useAskCollection(id: number) {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (body: { question: string; threadId?: number; provider?: string; model?: string }) =>
+            apiClient.askCollection(id, body),
+        onSuccess: (result) => {
+            queryClient.invalidateQueries({ queryKey: ["threads", id] });
+            queryClient.invalidateQueries({ queryKey: ["thread", result.threadId] });
+        },
+        onError: (error) => {
+            toast.error("Ask failed", { description: errorMessage(error) });
+        },
+    });
+}
+
+export function useHistory(groupBy: "video" | "action") {
+    return useQuery({
+        queryKey: ["history", groupBy],
+        queryFn: () => apiClient.getHistory(groupBy),
+    });
+}
+
+export function useWatchlist() {
+    return useQuery({
+        queryKey: ["watchlist"],
+        queryFn: () => apiClient.getWatchlist(),
+        select: (response) => response.channels,
+    });
+}
+
+export function useToggleWatchlist() {
+    const queryClient = useQueryClient();
+
+    return useMutation<{ added: boolean } | { removed: boolean }, Error, { handle: string; follow: boolean }>({
+        mutationFn: (vars) =>
+            vars.follow ? apiClient.addWatchlistChannel(vars.handle) : apiClient.removeWatchlistChannel(vars.handle),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+            queryClient.invalidateQueries({ queryKey: ["digest"] });
+        },
+        onError: (error) => {
+            toast.error("Updating watchlist failed", { description: errorMessage(error) });
+        },
+    });
+}
+
+export function useDigest(sinceDays: number) {
+    return useQuery({
+        queryKey: ["digest", sinceDays],
+        queryFn: () => apiClient.getDigest(sinceDays),
+    });
+}
+
+export function useDigestSync() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: () => apiClient.syncDigest(),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["digest"] }),
+        onError: (error) => {
+            toast.error("Sync failed", { description: errorMessage(error) });
         },
     });
 }

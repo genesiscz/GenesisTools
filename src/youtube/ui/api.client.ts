@@ -1,9 +1,14 @@
 import { SafeJSON } from "@app/utils/json";
 import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import type {
+    ActionHistoryGroup,
     AskCitation,
+    AskMessageRecord,
+    AskThreadRecord,
     Channel,
     ChannelHandle,
+    CollectionKind,
+    CollectionRecord,
     JobActivity,
     JobStage,
     JobStatus,
@@ -13,9 +18,13 @@ import type {
     Transcript,
     Video,
     VideoComment,
+    VideoHistoryGroup,
     VideoId,
+    VideoLite,
     VideoLongSummary,
+    WatchlistEntry,
     YoutubeConfigShape,
+    YtUser,
 } from "@app/youtube/lib/types";
 import { fetchUiConfig } from "@app/yt/config.client";
 import { reportBackendReachable, reportBackendUnreachable } from "./backend-status";
@@ -35,6 +44,26 @@ export interface CacheStatsResponse {
     thumbBytes?: number | { n: number };
 }
 
+export interface CollectionAskResponse {
+    threadId: number;
+    answer: string;
+    toolCalls: number;
+    creditsSpent: number;
+    credits: number;
+}
+
+export interface HistoryResponse {
+    groupBy: "video" | "action";
+    videos?: VideoHistoryGroup[];
+    actions?: ActionHistoryGroup[];
+    videosById: Record<string, VideoLite>;
+}
+
+export interface DigestResponse {
+    since: string;
+    channels: Array<{ handle: string; videos: VideoLite[] }>;
+}
+
 let cachedBase: string | null = null;
 
 export function clearApiBaseUrlCache(): void {
@@ -52,14 +81,33 @@ async function baseUrl(): Promise<string> {
     return cachedBase;
 }
 
+const USER_TOKEN_STORAGE_KEY = "yt.userToken";
+
+export function getUserToken(): string | null {
+    return localStorage.getItem(USER_TOKEN_STORAGE_KEY);
+}
+
+export function setUserToken(token: string | null): void {
+    if (token) {
+        localStorage.setItem(USER_TOKEN_STORAGE_KEY, token);
+    } else {
+        localStorage.removeItem(USER_TOKEN_STORAGE_KEY);
+    }
+}
+
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     const base = await baseUrl();
+    const token = getUserToken();
     let res: Response;
 
     try {
         res = await fetch(`${base}/api/v1${path}`, {
             ...init,
-            headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
+            headers: {
+                "Content-Type": "application/json",
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                ...(init.headers ?? {}),
+            },
         });
     } catch (err) {
         // Network-level failure (ERR_CONNECTION_REFUSED etc.) — the backend is down,
@@ -235,4 +283,47 @@ export const apiClient = {
     patchConfig: (patch: YoutubeConfigPatch) =>
         api<{ config: YoutubeConfigShape }>("/config", { method: "PATCH", body: SafeJSON.stringify(patch) }),
     health: () => api<{ ok?: boolean; status?: string }>("/healthz"),
+
+    register: (email: string, password: string) =>
+        api<{ user: YtUser; token: string }>("/users/register", {
+            method: "POST",
+            body: SafeJSON.stringify({ email, password }),
+        }),
+    login: (email: string, password: string) =>
+        api<{ user: YtUser; token: string }>("/users/login", {
+            method: "POST",
+            body: SafeJSON.stringify({ email, password }),
+        }),
+    me: () => api<{ user: YtUser; role: string }>("/users/me"),
+
+    listCollections: () => api<{ collections: Array<CollectionRecord & { videoCount: number }> }>("/collections"),
+    createCollection: (body: { name: string; kind: CollectionKind; rule?: unknown }) =>
+        api<{ collection: CollectionRecord }>("/collections", { method: "POST", body: SafeJSON.stringify(body) }),
+    getCollection: (id: number) => api<{ collection: CollectionRecord; videos: VideoLite[] }>(`/collections/${id}`),
+    deleteCollection: (id: number) => api<{ deleted: boolean }>(`/collections/${id}`, { method: "DELETE" }),
+    addCollectionVideo: (id: number, videoId: string) =>
+        api<{ added: boolean }>(`/collections/${id}/videos`, { method: "POST", body: SafeJSON.stringify({ videoId }) }),
+    removeCollectionVideo: (id: number, videoId: string) =>
+        api<{ removed: boolean }>(`/collections/${id}/videos/${encodeURIComponent(videoId)}`, { method: "DELETE" }),
+    askCollection: (id: number, body: { question: string; threadId?: number; provider?: string; model?: string }) =>
+        api<CollectionAskResponse>(`/collections/${id}/ask`, { method: "POST", body: SafeJSON.stringify(body) }),
+    listThreads: (id: number) => api<{ threads: AskThreadRecord[] }>(`/collections/${id}/threads`),
+    getThread: (threadId: number) =>
+        api<{ thread: AskThreadRecord; messages: AskMessageRecord[] }>(`/collections/threads/${threadId}`),
+
+    getHistory: (groupBy: "video" | "action", limit?: number) =>
+        api<HistoryResponse>(
+            withQuery("/users/history", [
+                ["groupBy", groupBy],
+                ["limit", limit],
+            ])
+        ),
+
+    getWatchlist: () => api<{ channels: WatchlistEntry[] }>("/users/watchlist"),
+    addWatchlistChannel: (handle: string) =>
+        api<{ added: boolean }>("/users/watchlist", { method: "POST", body: SafeJSON.stringify({ handle }) }),
+    removeWatchlistChannel: (handle: string) =>
+        api<{ removed: boolean }>(`/users/watchlist/${encodeURIComponent(handle)}`, { method: "DELETE" }),
+    getDigest: (sinceDays?: number) => api<DigestResponse>(withQuery("/users/digest", [["sinceDays", sinceDays]])),
+    syncDigest: () => api<{ enqueuedJobIds: number[] }>("/users/digest/sync", { method: "POST" }),
 };
