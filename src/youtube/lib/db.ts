@@ -9,6 +9,7 @@ import type { FetchedComment, VideoComment } from "@app/youtube/lib/comments.typ
 import type {
     AdminListUsersOpts,
     AdminUserRow,
+    AdminUserTotals,
     AiCallRecord,
     AskMessageRecord,
     AskMessageRole,
@@ -1879,6 +1880,15 @@ export class YoutubeDatabase extends BaseDatabase {
         return row?.user_id ?? null;
     }
 
+    /** Read-only lookup of a user's existing referral code (never creates one). */
+    getReferralCodeForUser(userId: number): string | null {
+        const row = this.db
+            .query<{ code: string }, [number]>("SELECT code FROM referral_codes WHERE user_id = ?")
+            .get(userId);
+
+        return row?.code ?? null;
+    }
+
     createReferral(input: {
         code: string;
         referrerUserId: number;
@@ -2050,8 +2060,7 @@ export class YoutubeDatabase extends BaseDatabase {
             LEFT JOIN (SELECT user_id, SUM(cost_usd) AS cost_usd FROM ai_calls GROUP BY user_id) a ON a.user_id = u.id
             LEFT JOIN subscriptions s ON s.user_id = u.id
             ${where}`;
-        const total =
-            this.db.query<{ n: number }, string[]>(`SELECT COUNT(*) AS n ${base}`).get(...params)?.n ?? 0;
+        const total = this.db.query<{ n: number }, string[]>(`SELECT COUNT(*) AS n ${base}`).get(...params)?.n ?? 0;
         const rows = this.db
             .query<AdminUserRowRaw, [...string[], number, number]>(
                 `SELECT u.id, u.email, u.credits, u.created_at, u.last_login_at,
@@ -2065,6 +2074,29 @@ export class YoutubeDatabase extends BaseDatabase {
             .all(...params, limit, offset);
 
         return { rows: rows.map(rowToAdminUser), total };
+    }
+
+    /** Money aggregates + row counts for one user's admin profile header. */
+    adminUserTotals(userId: number): AdminUserTotals {
+        const row = this.db
+            .query<
+                { revenue_cents: number; cost_usd: number; payments_count: number; ai_calls_count: number },
+                [number, number, number, number]
+            >(
+                `SELECT
+                    (SELECT COALESCE(SUM(amount_cents), 0) FROM payments WHERE user_id = ? AND status = 'succeeded') AS revenue_cents,
+                    (SELECT COALESCE(SUM(cost_usd), 0) FROM ai_calls WHERE user_id = ?) AS cost_usd,
+                    (SELECT COUNT(*) FROM payments WHERE user_id = ?) AS payments_count,
+                    (SELECT COUNT(*) FROM ai_calls WHERE user_id = ?) AS ai_calls_count`
+            )
+            .get(userId, userId, userId, userId);
+
+        return {
+            revenueCents: row?.revenue_cents ?? 0,
+            aiCostUsd: row?.cost_usd ?? 0,
+            paymentsCount: row?.payments_count ?? 0,
+            aiCallsCount: row?.ai_calls_count ?? 0,
+        };
     }
 
     touchUserLogin(id: number): void {

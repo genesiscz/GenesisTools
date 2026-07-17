@@ -1,6 +1,9 @@
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { buildBillingContext } from "@app/youtube/lib/billing";
+import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { AdminListUsersOpts } from "@app/youtube/lib/db.types";
+import { getLedgerPage } from "@app/youtube/lib/ledger-views";
 import { isPowerRole, roleForEmail } from "@app/youtube/lib/roles";
 import { requireUser } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
@@ -58,8 +61,44 @@ export async function handleAdminRoute(req: Request, url: URL, yt: Youtube): Pro
                 lastLoginAt: row.lastLoginAt,
             }));
 
+            return Response.json({ users, total, limit: opts.limit, offset: opts.offset }, { headers: CORS_HEADERS });
+        }
+
+        const profile = matchRoute(req, "GET", "/api/v1/admin/users/:id", url.pathname);
+
+        if (profile) {
+            const admin = await requireAdmin(req, url, yt);
+
+            if (admin instanceof Response) {
+                return admin;
+            }
+
+            const userId = parseId(profile.id);
+            const target = userId !== null ? yt.db.getUserById(userId) : null;
+
+            if (!target) {
+                return jsonError("user not found", 404);
+            }
+
+            const role = roleForEmail(await yt.config.get("powerUsers"), target.email);
+            const billing = await buildBillingContext({ db: yt.db, config: yt.config, user: target });
+            const totals = yt.db.adminUserTotals(target.id);
+
             return Response.json(
-                { users, total, limit: opts.limit, offset: opts.offset },
+                {
+                    user: target,
+                    role,
+                    billing,
+                    totals: { ...totals, netUsd: totals.revenueCents / 100 - totals.aiCostUsd },
+                    ledger: getLedgerPage(yt.db, target.id, { limit: 25 }).rows,
+                    payments: yt.db.listPayments({ userId: target.id, limit: 50 }),
+                    referral: buildAdminReferral(yt.db, target.id),
+                    activity: {
+                        watched: yt.db.listWatchesByUser(target.id, 30),
+                        logs: yt.db.listVideoLogs({ userId: target.id, limit: 30 }),
+                    },
+                    jobs: yt.db.listJobs({ userId: target.id, limit: 20 }),
+                },
                 { headers: CORS_HEADERS }
             );
         }
@@ -68,6 +107,28 @@ export async function handleAdminRoute(req: Request, url: URL, yt: Youtube): Pro
     } catch (err) {
         return toErrorResponse(err);
     }
+}
+
+/** Admin sees full (unmasked) emails on both referral sides — they inspect everything. */
+function buildAdminReferral(db: YoutubeDatabase, userId: number) {
+    const code = db.getReferralCodeForUser(userId);
+    const made = db.listReferralsByReferrer(userId);
+    const referees = made.map((referral) => ({
+        email: db.getUserEmailById(referral.refereeUserId) ?? "unknown",
+        reward: referral.reward,
+        redeemedAt: referral.createdAt,
+    }));
+    const totalEarned = made.reduce((sum, referral) => sum + referral.reward, 0);
+    const referred = db.getReferralByReferee(userId);
+    const referredBy = referred
+        ? {
+              email: db.getUserEmailById(referred.referrerUserId) ?? "unknown",
+              reward: referred.reward,
+              redeemedAt: referred.createdAt,
+          }
+        : null;
+
+    return { code, referees, totalEarned, referredBy };
 }
 
 function parseListUsersOpts(url: URL): AdminListUsersOpts & { limit: number; offset: number } {
@@ -90,6 +151,16 @@ function clampInt(raw: string | null, fallback: number, min: number, max: number
     }
 
     return Math.min(Math.max(parsed, min), max);
+}
+
+function parseId(value: string): number | null {
+    if (!/^[1-9]\d*$/.test(value)) {
+        return null;
+    }
+
+    const id = Number(value);
+
+    return Number.isSafeInteger(id) ? id : null;
 }
 
 function jsonError(error: string, status: number, code?: string): Response {
