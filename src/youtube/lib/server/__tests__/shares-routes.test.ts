@@ -68,11 +68,11 @@ describe("youtube server shares routes", () => {
         }
     });
 
-    it("POST from a second account against user A's qaHistoryId returns 4xx", async () => {
+    it("POST from a second account against user A's qaHistoryId returns 404 not-found", async () => {
         const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
 
         try {
-            const { token: tokenA, userId: userIdA } = await registeredToken(handle.port, "owner@example.com");
+            const { userId: userIdA } = await registeredToken(handle.port, "owner@example.com");
             const { token: tokenB } = await registeredToken(handle.port, "attacker@example.com");
             handle.youtube.db.upsertChannel({ handle: "@chan" });
             handle.youtube.db.upsertVideo({ id: "vidQA", channelHandle: "@chan", title: "QA Video" });
@@ -91,10 +91,10 @@ describe("youtube server shares routes", () => {
                 body: SafeJSON.stringify({ kind: "qa", videoId: "vidQA", qaHistoryId: qa.id }),
             });
 
-            expect(res.status).toBeGreaterThanOrEqual(400);
-            expect(res.status).toBeLessThan(500);
-            // tokenA is untouched/unused here besides proving ownership context.
-            expect(tokenA).toBeString();
+            // B cannot resolve A's qaHistory row, so createShare treats it as absent.
+            expect(res.status).toBe(404);
+            const body = (await res.json()) as { error: string };
+            expect(body.error).toBe("qa history entry not found");
         } finally {
             await handle.stop();
         }

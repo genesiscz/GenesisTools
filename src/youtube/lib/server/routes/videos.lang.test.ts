@@ -92,4 +92,21 @@ describe("summary lang plumbing", () => {
 
         expect(res.json.lang).toBe("en");
     });
+
+    it("a non-English saved preference is selected when the request lang is unknown", async () => {
+        // Store the artifact in the saved language so an actually-selected 'cs'
+        // stays on the cached reuse path — proving the preference resolved (and
+        // not the 'en' fallback, which would mismatch and force regeneration).
+        db.setVideoSummary(VIDEO, "short", "Czech summary", "cs");
+        const user = createUser("czech@example.com", 100);
+        db.updateUserPrefs(user.id, { outputLang: "cs" });
+
+        const res = await call("POST", `/api/v1/videos/${VIDEO}/summary`, {
+            token: user.token,
+            body: { mode: "short", lang: "zz" },
+        });
+
+        expect(res.json.lang).toBe("cs");
+        expect(res.json.cached).toBe(true);
+    });
 });
