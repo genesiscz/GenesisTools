@@ -3,6 +3,8 @@ import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { createCheckoutSession } from "@app/youtube/lib/billing";
 import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
+import type { ChannelHandle } from "@app/youtube/lib/channel.types";
+import { buildHistoryEntries, groupHistoryByAction, groupHistoryByVideo } from "@app/youtube/lib/history";
 import { isOutputLang } from "@app/youtube/lib/languages";
 import { getLedgerPage, getUsageSummary } from "@app/youtube/lib/ledger-views";
 import { createPreset, deletePreset, listPresets, updatePreset } from "@app/youtube/lib/presets";
@@ -265,6 +267,116 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
             const items = yt.db.listQaHistory(user.id, video, Number.isNaN(limit) ? undefined : limit);
 
             return Response.json({ items }, { headers: CORS_HEADERS });
+        }
+
+        if (matchRoute(req, "GET", "/api/v1/users/history", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const groupBy = url.searchParams.get("groupBy") === "action" ? "action" : "video";
+            const rawLimit = parseInt(url.searchParams.get("limit") ?? "500", 10);
+            const limit = Number.isNaN(rawLimit) ? 500 : Math.min(2000, Math.max(1, rawLimit));
+            const entries = buildHistoryEntries(yt.db, user.id, limit);
+            const videoIds = [...new Set(entries.map((entry) => entry.videoId))];
+            const videosById = Object.fromEntries(yt.db.getVideosByIds(videoIds).map((video) => [video.id, video]));
+
+            if (groupBy === "action") {
+                return Response.json(
+                    { groupBy, actions: groupHistoryByAction(entries), videosById },
+                    { headers: CORS_HEADERS }
+                );
+            }
+
+            return Response.json(
+                { groupBy, videos: groupHistoryByVideo(entries), videosById },
+                { headers: CORS_HEADERS }
+            );
+        }
+
+        if (matchRoute(req, "GET", "/api/v1/users/watchlist", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            return Response.json({ channels: yt.db.listWatchlist(user.id) }, { headers: CORS_HEADERS });
+        }
+
+        if (matchRoute(req, "POST", "/api/v1/users/watchlist", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const body = (await safeJsonBody(req)) ?? {};
+            const handle = typeof body.handle === "string" ? body.handle.trim() : "";
+
+            if (!handle.startsWith("@") || handle.length < 2) {
+                return jsonError("body must include {handle: '@channel'}", 400);
+            }
+
+            yt.db.addWatchlistChannel(user.id, handle);
+
+            return Response.json({ added: true }, { headers: CORS_HEADERS });
+        }
+
+        const watchlistRemove = matchRoute(req, "DELETE", "/api/v1/users/watchlist/:handle", url.pathname);
+
+        if (watchlistRemove) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            return Response.json(
+                { removed: yt.db.removeWatchlistChannel(user.id, decodeURIComponent(watchlistRemove.handle)) },
+                { headers: CORS_HEADERS }
+            );
+        }
+
+        if (matchRoute(req, "GET", "/api/v1/users/digest", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const rawDays = parseInt(url.searchParams.get("sinceDays") ?? "7", 10);
+            const sinceDays = Number.isNaN(rawDays) ? 7 : Math.min(3650, Math.max(1, rawDays));
+            const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+            const channels = yt.db.listWatchlist(user.id).map((entry) => {
+                const videos = yt.videos.list({ channel: entry.channelHandle as ChannelHandle, since, limit: 50 });
+
+                return { handle: entry.channelHandle, videos: yt.db.getVideosByIds(videos.map((video) => video.id)) };
+            });
+
+            return Response.json({ since, channels }, { headers: CORS_HEADERS });
+        }
+
+        if (matchRoute(req, "POST", "/api/v1/users/digest/sync", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const enqueuedJobIds = yt.db.listWatchlist(user.id).map(
+                (entry) =>
+                    yt.pipeline.enqueue({
+                        targetKind: "channel",
+                        target: entry.channelHandle,
+                        stages: ["discover", "metadata"],
+                        userId: user.id,
+                    }).id
+            );
+
+            return Response.json({ enqueuedJobIds }, { headers: CORS_HEADERS });
         }
 
         return jsonError("not found", 404);
