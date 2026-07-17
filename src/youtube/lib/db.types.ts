@@ -391,3 +391,14 @@ export interface WebhookLogRecord {
     detail: string | null;
     createdAt: string;
 }
+
+export interface ReferralRecord {
+    id: number;
+    code: string;
+    referrerUserId: number;
+    refereeUserId: number;
+    reward: number;
+    offerFrom: string;
+    offerTo: string;
+    createdAt: string;
+}

@@ -30,6 +30,7 @@ import type {
     RecordPaymentInput,
     RecordVideoLogInput,
     RecordWebhookLogInput,
+    ReferralRecord,
     SaveTranscriptInput,
     SearchTranscriptsOpts,
     SearchVideosOpts,
@@ -680,6 +681,29 @@ export class YoutubeDatabase extends BaseDatabase {
                     actions INTEGER NOT NULL DEFAULT 0,
                     UNIQUE (user_id, month)
                 );
+            `);
+        });
+
+        this.runMigration("add-referrals", () => {
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS referral_codes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL UNIQUE,
+                    code TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC})
+                );
+
+                CREATE TABLE IF NOT EXISTS referrals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    code TEXT NOT NULL,
+                    referrer_user_id INTEGER NOT NULL,
+                    referee_user_id INTEGER NOT NULL UNIQUE,
+                    reward INTEGER NOT NULL,
+                    offer_from TEXT NOT NULL,
+                    offer_to TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC})
+                );
+                CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_user_id, id DESC);
             `);
         });
 
@@ -1728,9 +1752,7 @@ export class YoutubeDatabase extends BaseDatabase {
         const where = opts.userId !== undefined ? "WHERE user_id = ?" : "";
         const params: Array<number> = opts.userId !== undefined ? [opts.userId] : [];
         const rows = this.db
-            .query<PaymentRow, [...number[], number]>(
-                `SELECT * FROM payments ${where} ORDER BY id DESC LIMIT ?`
-            )
+            .query<PaymentRow, [...number[], number]>(`SELECT * FROM payments ${where} ORDER BY id DESC LIMIT ?`)
             .all(...params, opts.limit ?? 100);
 
         return rows.map(rowToPayment);
@@ -1757,9 +1779,7 @@ export class YoutubeDatabase extends BaseDatabase {
 
     /** Balance lookup by id — the webhook reset math needs it (users are otherwise fetched by token/email). */
     getUserCredits(userId: number): number | null {
-        const row = this.db
-            .query<{ credits: number }, [number]>("SELECT credits FROM users WHERE id = ?")
-            .get(userId);
+        const row = this.db.query<{ credits: number }, [number]>("SELECT credits FROM users WHERE id = ?").get(userId);
 
         return row?.credits ?? null;
     }
@@ -1822,6 +1842,71 @@ export class YoutubeDatabase extends BaseDatabase {
             .get(userId, month);
 
         return row?.actions ?? 0;
+    }
+
+    /** Returns the user's existing code, or inserts `code` and returns it. */
+    getOrCreateReferralCode(userId: number, code: string): string {
+        const claim = this.db.transaction(() => {
+            const existing = this.db
+                .query<{ code: string }, [number]>("SELECT code FROM referral_codes WHERE user_id = ?")
+                .get(userId);
+
+            if (existing) {
+                return existing.code;
+            }
+
+            this.db.run("INSERT INTO referral_codes (user_id, code) VALUES (?, ?)", [userId, code]);
+
+            return code;
+        });
+
+        return claim();
+    }
+
+    getReferralCodeOwner(code: string): number | null {
+        const row = this.db
+            .query<{ user_id: number }, [string]>("SELECT user_id FROM referral_codes WHERE code = ?")
+            .get(code);
+
+        return row?.user_id ?? null;
+    }
+
+    createReferral(input: {
+        code: string;
+        referrerUserId: number;
+        refereeUserId: number;
+        reward: number;
+        offerFrom: string;
+        offerTo: string;
+    }): number {
+        const row = this.db
+            .query<{ id: number }, [string, number, number, number, string, string]>(
+                `INSERT INTO referrals (code, referrer_user_id, referee_user_id, reward, offer_from, offer_to)
+                 VALUES (?, ?, ?, ?, ?, ?) RETURNING id`
+            )
+            .get(input.code, input.referrerUserId, input.refereeUserId, input.reward, input.offerFrom, input.offerTo);
+
+        if (!row) {
+            throw new Error("createReferral: insert returned no id");
+        }
+
+        return row.id;
+    }
+
+    getReferralByReferee(refereeUserId: number): ReferralRecord | null {
+        const row = this.db
+            .query<ReferralRow, [number]>("SELECT * FROM referrals WHERE referee_user_id = ?")
+            .get(refereeUserId);
+
+        return row ? rowToReferral(row) : null;
+    }
+
+    listReferralsByReferrer(referrerUserId: number): ReferralRecord[] {
+        const rows = this.db
+            .query<ReferralRow, [number]>("SELECT * FROM referrals WHERE referrer_user_id = ? ORDER BY id DESC")
+            .all(referrerUserId);
+
+        return rows.map(rowToReferral);
     }
 
     async pruneExpiredBinaries(opts: PruneExpiredBinariesOpts): Promise<PruneExpiredBinariesResult> {
@@ -3622,6 +3707,30 @@ function rowToWebhookLog(row: WebhookLogRow): WebhookLogRecord {
         payloadHash: row.payload_hash,
         outcome: row.outcome,
         detail: row.detail,
+        createdAt: row.created_at,
+    };
+}
+
+interface ReferralRow {
+    id: number;
+    code: string;
+    referrer_user_id: number;
+    referee_user_id: number;
+    reward: number;
+    offer_from: string;
+    offer_to: string;
+    created_at: string;
+}
+
+function rowToReferral(row: ReferralRow): ReferralRecord {
+    return {
+        id: row.id,
+        code: row.code,
+        referrerUserId: row.referrer_user_id,
+        refereeUserId: row.referee_user_id,
+        reward: row.reward,
+        offerFrom: row.offer_from,
+        offerTo: row.offer_to,
         createdAt: row.created_at,
     };
 }
