@@ -1,3 +1,4 @@
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { requireUser } from "@app/youtube/lib/server/auth";
 import { safeJsonBody } from "@app/youtube/lib/server/body";
@@ -40,9 +41,24 @@ export async function handleSharesRoute(req: Request, url: URL, yt: Youtube): Pr
                 });
                 return Response.json(result, { headers: CORS_HEADERS });
             } catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
-                const status = message.includes("not found") ? 404 : message.includes("rate limit") ? 429 : 400;
-                return jsonError(message, status);
+                if (error instanceof Error && error.message === "share rate limit reached") {
+                    return jsonError(error.message, 429);
+                }
+
+                if (error instanceof Error && error.message.includes("not found")) {
+                    return jsonError(error.message, 404);
+                }
+
+                if (error instanceof Error && error.message.includes("requires")) {
+                    return jsonError(error.message, 400);
+                }
+
+                if (error instanceof Error && error.message.startsWith("no ")) {
+                    return jsonError(error.message, 400);
+                }
+
+                logger.warn({ error, videoId, kind }, "youtube shares: unexpected createShare failure");
+                throw error;
             }
         }
 
