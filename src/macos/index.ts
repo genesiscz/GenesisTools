@@ -39,9 +39,9 @@
  *   tools macos contacts search
  */
 
-import { registerAxCommand } from "@app/macos/commands/ax/index";
 import { registerCalendarCommand } from "@app/macos/commands/calendar/index";
 import { registerClonesCommand } from "@app/macos/commands/clones/index";
+import { registerControlCommand } from "@app/macos/commands/control/index";
 import { registerMailCommand } from "@app/macos/commands/mail/index";
 import { registerMessagesCommand } from "@app/macos/commands/messages/index";
 import { registerRemindersCommand } from "@app/macos/commands/reminders/index";
@@ -61,9 +61,9 @@ program
     .version("1.0.0")
     .showHelpAfterError(true);
 
-registerAxCommand(program);
 registerCalendarCommand(program);
 registerClonesCommand(program);
+registerControlCommand(program);
 registerMailCommand(program);
 registerMessagesCommand(program);
 registerRemindersCommand(program);

@@ -16,8 +16,9 @@
  * Output (stdout): one JSON object — { sessionDir, exitCode, actions, crops, strip, vitrinka, capture }.
  */
 
-import { existsSync, mkdirSync, readdirSync, copyFileSync, statSync } from "node:fs";
-import { join, basename } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { basename, join } from "node:path";
+import { SafeJSON } from "@app/utils/json";
 
 const HELP = `capture-with-actions — declarative peekaboo capture + timed UI actions
 
@@ -167,7 +168,7 @@ PLAN CONTRACT (TypeScript)
         // that window first. Untargeted scroll over wallpaper = zero motion.
 
       | { atMs: number; do: "focus"; app: string; windowTitle?: string; onError?: OnError }
-      | { atMs: number; do: "focus-stop" }
+      | { atMs: number; do: "focus-stop"; onError?: OnError }
 
       | { atMs: number; do: "ax-set"; axId?: string; q?: string; value: string; app: string; onError?: OnError }
       | { atMs: number; do: "ax-press"; axId?: string; q?: string; app: string; onError?: OnError }
@@ -350,18 +351,27 @@ type Action =
     | { atMs: number; do: "osascript"; script: string; onError?: OnError }
     | { atMs: number; do: "hotkey"; keys: string; holdMs?: number; relativeTo?: RelativeTo; onError?: OnError }
     | { atMs: number; do: "type"; text: string; delayMs?: number; relativeTo?: RelativeTo; onError?: OnError }
-    | { atMs: number; do: "scroll"; direction: "up" | "down" | "left" | "right"; amount?: number;
-        coords?: Coords; relativeTo?: RelativeTo; app?: string; windowTitle?: string; onError?: OnError }
+    | {
+          atMs: number;
+          do: "scroll";
+          direction: "up" | "down" | "left" | "right";
+          amount?: number;
+          coords?: Coords;
+          relativeTo?: RelativeTo;
+          app?: string;
+          windowTitle?: string;
+          onError?: OnError;
+      }
     // focus markers steer the ambient refocus target mid-timeline (same
     // marker pattern as crop/crop-stop); see the ambientFocusApp comment.
     | { atMs: number; do: "focus"; app: string; windowTitle?: string; onError?: OnError }
-    | { atMs: number; do: "focus-stop" }
+    | { atMs: number; do: "focus-stop"; onError?: OnError }
     // crop markers live in the SAME timeline as interactions; region markers fire
     // nothing at runtime, target markers do a bounds lookup at their atMs.
     // toMs makes the crop a standalone [atMs, toMs] window (overlap-capable);
     // without it the marker is sequential (opens/closes the single running window).
-    | { atMs: number; do: "crop"; region?: Region; label?: string; toMs?: number; target?: CropTarget }
-    | { atMs: number; do: "crop-stop" }
+    | { atMs: number; do: "crop"; region?: Region; label?: string; toMs?: number; target?: CropTarget; onError?: OnError }
+    | { atMs: number; do: "crop-stop"; onError?: OnError }
     // AX actions: target by axId (AXIdentifier, exact) OR q (universal search:
     // id > title > desc > value > role > subrole, fuzzy, refuses if ambiguous).
     // Elements WITHOUT AXIdentifier (browser tabs, toolbar buttons) work via q.
@@ -506,7 +516,13 @@ function extractCropSpecs(actions: Action[]): CropSpec[] {
 }
 
 const CHROMIUM_APPS = new Set([
-    "Brave Browser", "Google Chrome", "Chromium", "Microsoft Edge", "Arc", "Vivaldi", "Opera",
+    "Brave Browser",
+    "Google Chrome",
+    "Chromium",
+    "Microsoft Edge",
+    "Arc",
+    "Vivaldi",
+    "Opera",
 ]);
 
 // Every spawned command gets a hard timeout: a wedged bridge makes peekaboo
@@ -517,13 +533,19 @@ function runCmd(cmd: string[], timeoutMs = 15_000): { ok: boolean; stdout: strin
     return {
         ok: r.exitCode === 0,
         stdout: r.stdout.toString().trim().slice(0, 500),
-        stderr: (r.stderr.toString().trim() || (r.exitCode !== 0 ? `timed out/killed after ${timeoutMs}ms` : "")).slice(0, 500),
+        stderr: (r.stderr.toString().trim() || (r.exitCode !== 0 ? `timed out/killed after ${timeoutMs}ms` : "")).slice(
+            0,
+            500
+        ),
     };
 }
 
 // peekaboo occasionally prefixes stdout with visualizer/info noise lines —
 // parse from the first "{" so --json output survives it.
-function runPeekabooJson(args: string[], timeoutMs = 15_000): { ok: boolean; data?: unknown; stdout: string; stderr: string } {
+function runPeekabooJson(
+    args: string[],
+    timeoutMs = 15_000
+): { ok: boolean; data?: unknown; stdout: string; stderr: string } {
     const r = Bun.spawnSync(["peekaboo", ...args, "--json"], { timeout: timeoutMs, killSignal: "SIGKILL" });
     const raw = r.stdout.toString();
     const start = raw.indexOf("{");
@@ -531,12 +553,13 @@ function runPeekabooJson(args: string[], timeoutMs = 15_000): { ok: boolean; dat
 
     if (start >= 0) {
         try {
-            const parsed: unknown = JSON.parse(raw.slice(start));
+            const parsed: unknown = SafeJSON.parse(raw.slice(start));
             // keep results small: peekaboo envelopes carry debug_logs/metadata
             // noise — the useful payload is .data
-            data = (parsed !== null && typeof parsed === "object" && "data" in parsed)
-                ? (parsed as { data: unknown }).data
-                : parsed;
+            data =
+                parsed !== null && typeof parsed === "object" && "data" in parsed
+                    ? (parsed as { data: unknown }).data
+                    : parsed;
         } catch {
             data = undefined;
         }
@@ -578,12 +601,19 @@ function runPeekabooListJson(args: string[]): { ok: boolean; data?: unknown; std
 function listScreens(): ScreenInfo[] {
     const r = runPeekabooListJson(["list", "screens"]);
     // runPeekabooJson already unwrapped the envelope's .data
-    const screens = (r.data as {
-        screens?: {
-            index: number; name: string; isPrimary: boolean; scaleFactor: number;
-            position: { x: number; y: number }; resolution: { width: number; height: number };
-        }[];
-    })?.screens ?? [];
+    const screens =
+        (
+            r.data as {
+                screens?: {
+                    index: number;
+                    name: string;
+                    isPrimary: boolean;
+                    scaleFactor: number;
+                    position: { x: number; y: number };
+                    resolution: { width: number; height: number };
+                }[];
+            }
+        )?.screens ?? [];
     const primary = screens.find((s) => s.isPrimary) ?? screens[0];
     const primaryH = primary?.resolution.height ?? 0;
 
@@ -611,12 +641,18 @@ interface WindowBounds {
 
 function listWindowBounds(app: string): WindowBounds[] {
     const r = runPeekabooListJson(["list", "windows", "--app", app, "--include-details", "bounds"]);
-    const wins = (r.data as {
-        windows?: {
-            title: string; index: number; isMainWindow: boolean; isMinimized: boolean;
-            bounds?: [[number, number], [number, number]];
-        }[];
-    })?.windows ?? [];
+    const wins =
+        (
+            r.data as {
+                windows?: {
+                    title: string;
+                    index: number;
+                    isMainWindow: boolean;
+                    isMinimized: boolean;
+                    bounds?: [[number, number], [number, number]];
+                }[];
+            }
+        )?.windows ?? [];
 
     return wins
         .filter((w) => !w.isMinimized && w.bounds)
@@ -642,7 +678,7 @@ function pickLargestWindow(wins: WindowBounds[]): WindowBounds | undefined {
 
 function resolveTargetRegion(
     target: CropTarget,
-    screen: ScreenInfo,
+    screen: ScreenInfo
 ): { region: { x: number; y: number; w: number; h: number } } | { error: string } {
     const wins = listWindowBounds(target.app);
     if (wins.length === 0) {
@@ -655,9 +691,8 @@ function resolveTargetRegion(
     // the screen first; isMainWindow stays untrusted (menu-strip phantoms).
     const sx = screen.originCG.x;
     const sy = screen.originCG.y;
-    const onScreen = wins.filter((w) =>
-        w.x < sx + screen.points.width && w.x + w.w > sx &&
-        w.y < sy + screen.points.height && w.y + w.h > sy,
+    const onScreen = wins.filter(
+        (w) => w.x < sx + screen.points.width && w.x + w.w > sx && w.y < sy + screen.points.height && w.y + w.h > sy
     );
     const pool = onScreen.length > 0 ? onScreen : wins;
 
@@ -665,7 +700,9 @@ function resolveTargetRegion(
         ? pool.find((w) => w.title.toLowerCase().includes(target.windowTitle!.toLowerCase()))
         : pickLargestWindow(pool);
     if (!match) {
-        return { error: `no window of "${target.app}" matches title "${target.windowTitle}" on captured screen ${screen.index}` };
+        return {
+            error: `no window of "${target.app}" matches title "${target.windowTitle}" on captured screen ${screen.index}`,
+        };
     }
 
     const sf = screen.scaleFactor;
@@ -676,29 +713,33 @@ function resolveTargetRegion(
         h: Math.round(match.h * sf),
     };
 
-    if (region.x + region.w <= 0 || region.y + region.h <= 0
-        || region.x >= screen.framePixels.width || region.y >= screen.framePixels.height) {
+    if (
+        region.x + region.w <= 0 ||
+        region.y + region.h <= 0 ||
+        region.x >= screen.framePixels.width ||
+        region.y >= screen.framePixels.height
+    ) {
         return { error: `window "${match.title || target.app}" lies outside captured screen ${screen.index}` };
     }
 
     // clamp to the frame so magick never crops thin air
     const x = Math.max(0, region.x);
     const y = Math.max(0, region.y);
-    return { region: {
-        x, y,
-        w: Math.min(region.w - (x - region.x), screen.framePixels.width - x),
-        h: Math.min(region.h - (y - region.y), screen.framePixels.height - y),
-    } };
+    return {
+        region: {
+            x,
+            y,
+            w: Math.min(region.w - (x - region.x), screen.framePixels.width - x),
+            h: Math.min(region.h - (y - region.y), screen.framePixels.height - y),
+        },
+    };
 }
 
 // Resolve window-relative coords to global CG coords at fire time.
 // coords are offsets from the window's top-left in CG points; this looks up
 // the window's current position and adds the offset. Returns the global coords
 // string "x,y" or an error.
-function resolveRelativeCoords(
-    coords: Coords,
-    rel: RelativeTo,
-): { global: string } | { error: string } {
+function resolveRelativeCoords(coords: Coords, rel: RelativeTo): { global: string } | { error: string } {
     const wins = listWindowBounds(rel.app);
     if (wins.length === 0) {
         return { error: `relativeTo: no windows for "${rel.app}"` };
@@ -711,9 +752,13 @@ function resolveRelativeCoords(
         return { error: `relativeTo: no window of "${rel.app}" matches title "${rel.windowTitle}"` };
     }
 
-    const c = typeof coords === "string"
-        ? (() => { const [x, y] = coords.split(",").map(Number); return { x, y }; })()
-        : coords;
+    const c =
+        typeof coords === "string"
+            ? (() => {
+                  const [x, y] = coords.split(",").map(Number);
+                  return { x, y };
+              })()
+            : coords;
 
     return { global: `${match.x + c.x},${match.y + c.y}` };
 }
@@ -721,7 +766,7 @@ function resolveRelativeCoords(
 // ax-tool binary: compiled Swift CLI (~30-75x faster than osascript).
 // Source of truth is native/ax-tool/ in this repo (`bun run build:native`).
 // Falls back to osascript if not built.
-const AX_TOOL_PATH = join(import.meta.dir, "..", "..", "native", "ax-tool", ".build", "release", "ax-tool");
+const AX_TOOL_PATH = join(import.meta.dir, "..", "..", "..", "native", "ax-tool", ".build", "release", "ax-tool");
 const AX_TOOL_AVAILABLE = existsSync(AX_TOOL_PATH);
 
 function runAxAction(
@@ -730,13 +775,20 @@ function runAxAction(
     mode: "set" | "press" | "perform",
     value?: string,
     axAction?: string,
-    q?: string,
+    q?: string
 ): { ok: boolean; stdout: string; stderr: string } {
     if (AX_TOOL_AVAILABLE) {
         return runAxActionFast(app, axId, mode, value, axAction, q);
     }
     if (mode === "perform" || q) {
-        return { ok: false, stdout: "", stderr: "ax-perform and --q targeting require ax-tool binary (not built); only ax-set/ax-press with axId have osascript fallback" };
+        return {
+            ok: false,
+            stdout: "",
+            stderr: "ax-perform and --q targeting require ax-tool binary (not built); only ax-set/ax-press with axId have osascript fallback",
+        };
+    }
+    if (!axId) {
+        return { ok: false, stdout: "", stderr: "axId required for osascript fallback" };
     }
     return runAxActionOsascript(app, axId, mode, value);
 }
@@ -748,7 +800,7 @@ function runAxActionFast(
     mode: "set" | "press" | "perform",
     value?: string,
     axAction?: string,
-    q?: string,
+    q?: string
 ): { ok: boolean; stdout: string; stderr: string } {
     const args = [AX_TOOL_PATH, mode, "--app", app];
     if (q) {
@@ -765,7 +817,7 @@ function runAxActionFast(
     const r = runCmd(args, 6_000);
     // ax-tool outputs JSON; parse to check ok field
     try {
-        const parsed = JSON.parse(r.stdout);
+        const parsed = SafeJSON.parse(r.stdout);
         if (parsed.ok === false) {
             return { ok: false, stdout: r.stdout, stderr: parsed.error || r.stderr };
         }
@@ -780,7 +832,7 @@ function runAxActionOsascript(
     app: string,
     axId: string,
     mode: "set" | "press",
-    value?: string,
+    value?: string
 ): { ok: boolean; stdout: string; stderr: string } {
     const escapedId = axId.replace(/"/g, '\\"');
     const escapedApp = app.replace(/"/g, '\\"');
@@ -920,7 +972,7 @@ function validatePlan(plan: Plan): string[] {
 
 function focusWindow(
     target: { app: string; windowTitle?: string },
-    timeoutMs = 15_000,
+    timeoutMs = 15_000
 ): { ok: boolean; via: "peekaboo" | "osascript" | "none"; detail: string } {
     const cmd = ["peekaboo", "window", "focus", "--app", target.app];
     if (target.windowTitle) {
@@ -947,7 +999,11 @@ function navigateBrowser(app: string, url: string, target: "new-tab" | "active-t
         }
 
         if (CHROMIUM_APPS.has(app)) {
-            return runCmd(["osascript", "-e", `tell application "${app}" to set URL of active tab of front window to "${url}"`]);
+            return runCmd([
+                "osascript",
+                "-e",
+                `tell application "${app}" to set URL of active tab of front window to "${url}"`,
+            ]);
         }
         // No AppleScript dialect (Firefox & friends) — new tab is the only option.
     }
@@ -958,7 +1014,7 @@ function navigateBrowser(app: string, url: string, target: "new-tab" | "active-t
 function applyCrops(
     sessionDir: string,
     frames: FrameInfo[],
-    specs: CropSpec[],
+    specs: CropSpec[]
 ): { crops: CropOut[]; strip: string | null; stripReview: string | null } {
     const crops: CropOut[] = [];
     let strip: string | null = null;
@@ -988,12 +1044,31 @@ function applyCrops(
             const label = `${spec.label ?? `crop${i}`} t=${f.timestampMs}ms`;
             const outPath = join(cropDir, `${f.file.replace(/\.png$/, "")}-${spec.label ?? `crop${i}`}.png`);
             const r = Bun.spawnSync([
-                "magick", f.path,
-                "-crop", `${w}x${h}+${x}+${y}`, "+repage",
-                "-bordercolor", "#181818", "-border", "0x2",
-                "(", "-size", `${w}x34`, "-background", "#181818", "-fill", "#ffb020",
-                "-pointsize", "20", "-gravity", "west", `label:  ${label}`, ")",
-                "+swap", "-append", outPath,
+                "magick",
+                f.path,
+                "-crop",
+                `${w}x${h}+${x}+${y}`,
+                "+repage",
+                "-bordercolor",
+                "#181818",
+                "-border",
+                "0x2",
+                "(",
+                "-size",
+                `${w}x34`,
+                "-background",
+                "#181818",
+                "-fill",
+                "#ffb020",
+                "-pointsize",
+                "20",
+                "-gravity",
+                "west",
+                `label:  ${label}`,
+                ")",
+                "+swap",
+                "-append",
+                outPath,
             ]);
             crops.push({
                 frame: f.file,
@@ -1035,7 +1110,7 @@ function publishVitrinka(
     sessionDir: string,
     frames: FrameInfo[],
     crops: CropOut[],
-    strip: string | null,
+    strip: string | null
 ): { ok: boolean; urls: string[]; error?: string } {
     const urls: string[] = [];
     try {
@@ -1073,8 +1148,16 @@ function publishVitrinka(
         }
 
         const init = runCmd([
-            "vitrinka", "remote-init", "--root", root,
-            "--project", spec.project, "--branch", spec.branch ?? "review", "--key", spec.key,
+            "vitrinka",
+            "remote-init",
+            "--root",
+            root,
+            "--project",
+            spec.project,
+            "--branch",
+            spec.branch ?? "review",
+            "--key",
+            spec.key,
         ]);
         if (!init.ok) {
             return { ok: false, urls, error: `remote-init: ${init.stderr || init.stdout}` };
@@ -1083,9 +1166,20 @@ function publishVitrinka(
         for (const f of files) {
             const rel = f.path.slice(root.length + 1);
             const add = runCmd([
-                "vitrinka", "add", "--root", root, "--file", rel, "--surface", "web",
-                "--route", spec.route ?? "/", "--title", f.title,
-                "--note", spec.note ?? "published by capture-with-actions",
+                "vitrinka",
+                "add",
+                "--root",
+                root,
+                "--file",
+                rel,
+                "--surface",
+                "web",
+                "--route",
+                spec.route ?? "/",
+                "--title",
+                f.title,
+                "--note",
+                spec.note ?? "published by capture-with-actions",
             ]);
             if (!add.ok) {
                 return { ok: false, urls, error: `add ${rel}: ${add.stderr || add.stdout}` };
@@ -1136,7 +1230,8 @@ if (argv[0] === "preflight") {
     const screens = listScreens();
 
     const frontRes = runCmd([
-        "osascript", "-e",
+        "osascript",
+        "-e",
         'tell application "System Events" to get name of first application process whose frontmost is true',
     ]);
     const app = appIdx >= 0 ? argv[appIdx + 1] : frontRes.stdout;
@@ -1151,9 +1246,12 @@ if (argv[0] === "preflight") {
     if (main) {
         const cx = main.x + main.w / 2;
         const cy = main.y + main.h / 2;
-        activeScreen = screens.find((s) =>
-            cx >= s.originCG.x && cx < s.originCG.x + s.points.width &&
-            cy >= s.originCG.y && cy < s.originCG.y + s.points.height,
+        activeScreen = screens.find(
+            (s) =>
+                cx >= s.originCG.x &&
+                cx < s.originCG.x + s.points.width &&
+                cy >= s.originCG.y &&
+                cy < s.originCG.y + s.points.height
         );
     }
 
@@ -1161,12 +1259,14 @@ if (argv[0] === "preflight") {
 
     let browserTab: { url?: string; title?: string } | undefined;
     if (app && (CHROMIUM_APPS.has(app) || app === "Safari")) {
-        const urlScript = app === "Safari"
-            ? `tell application "Safari" to get URL of front document`
-            : `tell application "${app}" to get URL of active tab of front window`;
-        const titleScript = app === "Safari"
-            ? `tell application "Safari" to get name of front document`
-            : `tell application "${app}" to get title of active tab of front window`;
+        const urlScript =
+            app === "Safari"
+                ? `tell application "Safari" to get URL of front document`
+                : `tell application "${app}" to get URL of active tab of front window`;
+        const titleScript =
+            app === "Safari"
+                ? `tell application "Safari" to get name of front document`
+                : `tell application "${app}" to get title of active tab of front window`;
         const u = runCmd(["osascript", "-e", urlScript]);
         const t = runCmd(["osascript", "-e", titleScript]);
         browserTab = { url: u.ok ? u.stdout : undefined, title: t.ok ? t.stdout : undefined };
@@ -1180,39 +1280,66 @@ if (argv[0] === "preflight") {
         h: Math.round(main.h * sf),
     };
 
-    console.log(JSON.stringify({
-        screens,
-        frontmost: {
-            app,
-            // largest-first so the picked window is always visible in the list
-            windows: realWindows.slice().sort((a, b) => b.w * b.h - a.w * a.h).slice(0, 8),
-            phantomStrips: phantomStrips.length > 0
-                ? phantomStrips.map((w) => ({ title: w.title, index: w.index, isMainWindow: w.isMainWindow, w: w.w, h: w.h }))
-                : undefined,
-            pickedWindow: main ?? null,
-            pickedBy: "largest-area (isMainWindow lies: apps report menu strips/popups as main; <=50px windows filtered as phantom strips)",
-            mainWindowPoints: main ? { x: main.x, y: main.y, w: main.w, h: main.h } : null,
-            mainWindowFramePx: mainFramePx ?? null,
-            activeScreenIndex: activeScreen.index,
-            browserTab,
-        },
-        unitsReminder: {
-            clickCoords: "GLOBAL CG points (mainWindowPoints space; negatives legal)",
-            cropRegion: `FRAME pixels of the captured screen (points x scaleFactor=${sf}; mainWindowFramePx space)`,
-        },
-        suggestedPlan: {
-            capture: {
-                mode: "screen", screenIndex: activeScreen.index,
-                duration: 6, activeFps: 15, threshold: 0.1, videoOut: "/tmp/run.mp4",
-                noRemote: true, captureEngine: "cg",
+    console.log(
+        SafeJSON.stringify(
+            {
+                screens,
+                frontmost: {
+                    app,
+                    // largest-first so the picked window is always visible in the list
+                    windows: realWindows
+                        .slice()
+                        .sort((a, b) => b.w * b.h - a.w * a.h)
+                        .slice(0, 8),
+                    phantomStrips:
+                        phantomStrips.length > 0
+                            ? phantomStrips.map((w) => ({
+                                  title: w.title,
+                                  index: w.index,
+                                  isMainWindow: w.isMainWindow,
+                                  w: w.w,
+                                  h: w.h,
+                              }))
+                            : undefined,
+                    pickedWindow: main ?? null,
+                    pickedBy:
+                        "largest-area (isMainWindow lies: apps report menu strips/popups as main; <=50px windows filtered as phantom strips)",
+                    mainWindowPoints: main ? { x: main.x, y: main.y, w: main.w, h: main.h } : null,
+                    mainWindowFramePx: mainFramePx ?? null,
+                    activeScreenIndex: activeScreen.index,
+                    browserTab,
+                },
+                unitsReminder: {
+                    clickCoords: "GLOBAL CG points (mainWindowPoints space; negatives legal)",
+                    cropRegion: `FRAME pixels of the captured screen (points x scaleFactor=${sf}; mainWindowFramePx space)`,
+                },
+                suggestedPlan: {
+                    capture: {
+                        mode: "screen",
+                        screenIndex: activeScreen.index,
+                        duration: 6,
+                        activeFps: 15,
+                        threshold: 0.1,
+                        videoOut: "/tmp/run.mp4",
+                        noRemote: true,
+                        captureEngine: "cg",
+                    },
+                    actions: [
+                        mainFramePx
+                            ? { atMs: 0, do: "crop", region: mainFramePx, label: "window" }
+                            : {
+                                  atMs: 0,
+                                  do: "crop",
+                                  region: { x: 0, y: 0, w: activeScreen.framePixels.width, h: 300 },
+                                  label: "top-band",
+                              },
+                    ],
+                },
             },
-            actions: [
-                mainFramePx
-                    ? { atMs: 0, do: "crop", region: mainFramePx, label: "window" }
-                    : { atMs: 0, do: "crop", region: { x: 0, y: 0, w: activeScreen.framePixels.width, h: 300 }, label: "top-band" },
-            ],
-        },
-    }, null, 2));
+            null,
+            2
+        )
+    );
     process.exit(0);
 }
 
@@ -1234,9 +1361,7 @@ if (argv[0] === "clickmap") {
     const gridIdx = argv.indexOf("--grid");
     const gridStep = Math.max(20, gridIdx >= 0 ? Number(argv[gridIdx + 1]) || 100 : 100);
     const outIdx = argv.indexOf("--out");
-    const outPath = outIdx >= 0
-        ? argv[outIdx + 1]
-        : join(process.env.TMPDIR ?? "/tmp/", `clickmap-${Date.now()}.png`);
+    const outPath = outIdx >= 0 ? argv[outIdx + 1] : join(process.env.TMPDIR ?? "/tmp/", `clickmap-${Date.now()}.png`);
 
     const wins = listWindowBounds(app);
     const match = windowTitle
@@ -1246,7 +1371,7 @@ if (argv[0] === "clickmap") {
         fail(`no window found for app "${app}"${windowTitle ? ` matching title "${windowTitle}"` : ""}`);
     }
 
-    const rawPath = outPath.replace(/\.png$/, "") + "-raw.png";
+    const rawPath = `${outPath.replace(/\.png$/, "")}-raw.png`;
     const shotCmd = ["peekaboo", "image", "--app", app, "--path", rawPath];
     if (windowTitle) {
         shotCmd.push("--window-title", windowTitle);
@@ -1276,27 +1401,51 @@ if (argv[0] === "clickmap") {
     }
 
     const r = Bun.spawnSync([
-        "magick", rawPath,
-        "-resize", `${w}x${h}!`,
-        "-stroke", "#ff00ff90", "-strokewidth", "1", "-fill", "none", "-draw", lines.join(" "),
-        "-stroke", "none", "-fill", "#ffff00", "-undercolor", "#000000B0",
-        "-pointsize", "12", "-gravity", "NorthWest", ...labels,
+        "magick",
+        rawPath,
+        "-resize",
+        `${w}x${h}!`,
+        "-stroke",
+        "#ff00ff90",
+        "-strokewidth",
+        "1",
+        "-fill",
+        "none",
+        "-draw",
+        lines.join(" "),
+        "-stroke",
+        "none",
+        "-fill",
+        "#ffff00",
+        "-undercolor",
+        "#000000B0",
+        "-pointsize",
+        "12",
+        "-gravity",
+        "NorthWest",
+        ...labels,
         outPath,
     ]);
     if (r.exitCode !== 0 || !existsSync(outPath)) {
         fail(`magick grid overlay failed: ${r.stderr.toString().slice(0, 300)}`);
     }
 
-    console.log(JSON.stringify({
-        out: outPath,
-        raw: rawPath,
-        app,
-        window: { x: match.x, y: match.y, w: match.w, h: match.h, title: match.title },
-        gridStep,
-        units: "grid labels are GLOBAL screen points (CG POINTS, not pixels) — use directly as click coords {x,y}",
-        tip: "Read `out`, interpolate between gridlines for the target, then verify the first click's effect before trusting a whole plan. For relativeTo coords: subtract the window origin (shown below) from the grid label values.",
-        windowOrigin: { x: match.x, y: match.y },
-    }, null, 2));
+    console.log(
+        SafeJSON.stringify(
+            {
+                out: outPath,
+                raw: rawPath,
+                app,
+                window: { x: match.x, y: match.y, w: match.w, h: match.h, title: match.title },
+                gridStep,
+                units: "grid labels are GLOBAL screen points (CG POINTS, not pixels) — use directly as click coords {x,y}",
+                tip: "Read `out`, interpolate between gridlines for the target, then verify the first click's effect before trusting a whole plan. For relativeTo coords: subtract the window origin (shown below) from the grid label values.",
+                windowOrigin: { x: match.x, y: match.y },
+            },
+            null,
+            2
+        )
+    );
     process.exit(0);
 }
 
@@ -1306,9 +1455,10 @@ if (argv[0] === "recrop") {
         fail("usage: recrop <prior-result.json> <plan.json>");
     }
 
-    const prior = JSON.parse(await Bun.file(resultPath).text());
-    const plan: Plan = JSON.parse(await Bun.file(planPath).text());
-    const frames: FrameInfo[] = (prior?.capture?.data?.frames ?? []).slice()
+    const prior = SafeJSON.parse(await Bun.file(resultPath).text());
+    const plan: Plan = SafeJSON.parse(await Bun.file(planPath).text());
+    const frames: FrameInfo[] = (prior?.capture?.data?.frames ?? [])
+        .slice()
         .sort((a: FrameInfo, b: FrameInfo) => a.timestampMs - b.timestampMs);
     if (frames.length === 0) {
         fail("prior result has no frames");
@@ -1323,18 +1473,24 @@ if (argv[0] === "recrop") {
     for (const a of plan.actions ?? []) {
         if (a.do === "crop" && a.target && !a.region) {
             warnings.push(
-                `crop target at ${a.atMs}ms cannot be resolved in recrop mode (bounds would be from NOW, not recording time) — dropped`,
+                `crop target at ${a.atMs}ms cannot be resolved in recrop mode (bounds would be from NOW, not recording time) — dropped`
             );
         }
     }
 
     const { crops, strip, stripReview } = applyCrops(prior.sessionDir, frames, extractCropSpecs(plan.actions ?? []));
     const vitrinka = plan.vitrinka ? publishVitrinka(plan.vitrinka, prior.sessionDir, frames, crops, strip) : undefined;
-    console.log(JSON.stringify({ sessionDir: prior.sessionDir, mode: "recrop", warnings, crops, strip, stripReview, vitrinka }, null, 2));
+    console.log(
+        SafeJSON.stringify(
+            { sessionDir: prior.sessionDir, mode: "recrop", warnings, crops, strip, stripReview, vitrinka },
+            null,
+            2
+        )
+    );
     process.exit(0);
 }
 
-const plan: Plan = JSON.parse(await Bun.file(argv[0]).text());
+const plan: Plan = SafeJSON.parse(await Bun.file(argv[0]).text());
 const cap = plan.capture;
 if (!cap?.mode || !cap?.duration) {
     fail("plan.capture.mode and plan.capture.duration are required");
@@ -1356,7 +1512,9 @@ if (plan.focus) {
         warnings.push(`focus ${plan.focus.app} failed (peekaboo AND osascript): ${f.detail}`);
     } else {
         if (f.via === "osascript") {
-            warnings.push(`focus ${plan.focus.app}: peekaboo window focus failed (bridge?), fell back to osascript activate (windowTitle ignored)`);
+            warnings.push(
+                `focus ${plan.focus.app}: peekaboo window focus failed (bridge?), fell back to osascript activate (windowTitle ignored)`
+            );
         }
 
         await Bun.sleep(300);
@@ -1414,7 +1572,10 @@ mkdirSync(sessionsRoot, { recursive: true });
 // bypass run succeeded 2/2 — the corpse of attempt 1 was the difference).
 function killTree(pid: number): void {
     const kids = Bun.spawnSync(["pgrep", "-P", String(pid)], { timeout: 2_000 })
-        .stdout.toString().trim().split("\n").filter(Boolean);
+        .stdout.toString()
+        .trim()
+        .split("\n")
+        .filter(Boolean);
     for (const k of kids) {
         killTree(Number(k));
     }
@@ -1449,7 +1610,7 @@ async function startCapture(captureArgs: string[]): Promise<CaptureAttempt> {
     const armDeadline = Date.now() + 15_000;
     while (Date.now() < armDeadline) {
         const fresh = readdirSync(sessionsRoot).filter(
-            (d) => !preexisting.has(d) && existsSync(join(sessionsRoot, d, "keep-0001.png")),
+            (d) => !preexisting.has(d) && existsSync(join(sessionsRoot, d, "keep-0001.png"))
         );
 
         if (fresh.length > 0) {
@@ -1477,7 +1638,7 @@ async function startCapture(captureArgs: string[]): Promise<CaptureAttempt> {
         const jsonStart = so.indexOf("{");
         if (jsonStart >= 0) {
             try {
-                const parsed = JSON.parse(so.slice(jsonStart)) as { error?: { code?: string; message?: string } };
+                const parsed = SafeJSON.parse(so.slice(jsonStart)) as { error?: { code?: string; message?: string } };
                 if (parsed.error) {
                     envelope = `${parsed.error.code ?? "?"}: ${parsed.error.message ?? "?"}`;
                 }
@@ -1533,14 +1694,14 @@ if (!attempt.sessionDir) {
         ? stripBypassFlags(args)
         : [...args, "--no-remote", ...(cap.captureEngine ? [] : ["--capture-engine", "cg"])];
     warnings.push(
-        `recording never started via ${bypassed ? "bypass (--no-remote)" : "bridge"} — ${diag1} — retrying once via ${bypassed ? "bridge" : "--no-remote --capture-engine cg"}`,
+        `recording never started via ${bypassed ? "bypass (--no-remote)" : "bridge"} — ${diag1} — retrying once via ${bypassed ? "bridge" : "--no-remote --capture-engine cg"}`
     );
     await Bun.sleep(2_000);
     attempt = await startCapture(retryArgs);
 
     if (!attempt.sessionDir) {
         fail(
-            `recording never started on either transport.\n  attempt 1 (${bypassed ? "bypass" : "bridge"}): ${diag1}\n  retry (${bypassed ? "bridge" : "bypass"}): ${attempt.failDiag}`,
+            `recording never started on either transport.\n  attempt 1 (${bypassed ? "bypass" : "bridge"}): ${diag1}\n  retry (${bypassed ? "bridge" : "bypass"}): ${attempt.failDiag}`
         );
     }
 }
@@ -1601,14 +1762,18 @@ for (const action of sortedActions) {
         if (!f.ok && !refocusWarned) {
             refocusWarned = true;
             warnings.push(
-                `pre-input refocus of ${ambientFocusApp} failed (${f.stderr || f.stdout}) — input may be eaten by macOS click-to-focus`,
+                `pre-input refocus of ${ambientFocusApp} failed (${f.stderr || f.stdout}) — input may be eaten by macOS click-to-focus`
             );
         }
     }
 
     switch (action.do) {
         case "url":
-            result = navigateBrowser(action.app ?? plan.browser ?? "Brave Browser", action.url, action.target ?? "new-tab");
+            result = navigateBrowser(
+                action.app ?? plan.browser ?? "Brave Browser",
+                action.url,
+                action.target ?? "new-tab"
+            );
             break;
         case "osascript":
             result = runCmd(["osascript", "-e", action.script]);
@@ -1631,7 +1796,11 @@ for (const action of sortedActions) {
             // once at the marker; cheap per-input re-asserts take over after
             const f = focusWindow({ app: action.app, windowTitle: action.windowTitle }, 3_000);
             ambientFocusApp = action.app;
-            result = { ok: f.ok, stdout: f.ok ? `focused via ${f.via}; ambient refocus target -> ${action.app}` : "", stderr: f.detail };
+            result = {
+                ok: f.ok,
+                stdout: f.ok ? `focused via ${f.via}; ambient refocus target -> ${action.app}` : "",
+                stderr: f.detail,
+            };
             break;
         }
         case "focus-stop":
@@ -1658,7 +1827,14 @@ for (const action of sortedActions) {
             break;
         }
         case "type":
-            result = runPeekabooJson(["type", action.text, "--profile", "linear", "--delay", String(action.delayMs ?? 0)]);
+            result = runPeekabooJson([
+                "type",
+                action.text,
+                "--profile",
+                "linear",
+                "--delay",
+                String(action.delayMs ?? 0),
+            ]);
             break;
         case "ax-set": {
             result = runAxAction(action.app, action.axId, "set", action.value, undefined, action.q);
@@ -1685,7 +1861,9 @@ for (const action of sortedActions) {
                 }
                 const [cx, cy] = scrollCoords.split(",").map(Number);
                 if (cx < 0 || cy < 0) {
-                    warnings.push(`scroll at ${action.atMs}ms: peekaboo move rejects negative coords (${cx},${cy}) — scrolling at current cursor position`);
+                    warnings.push(
+                        `scroll at ${action.atMs}ms: peekaboo move rejects negative coords (${cx},${cy}) — scrolling at current cursor position`
+                    );
                 } else {
                     runCmd(["peekaboo", "move", "--coords", `${cx},${cy}`]);
                 }
@@ -1709,7 +1887,11 @@ for (const action of sortedActions) {
             screensCache ??= listScreens();
             const screen = screensCache.find((s) => s.index === (cap.screenIndex ?? 0));
             if (!screen || cap.mode !== "screen") {
-                result = { ok: false, stdout: "", stderr: `crop target needs screen-mode capture with a known screenIndex` };
+                result = {
+                    ok: false,
+                    stdout: "",
+                    stderr: `crop target needs screen-mode capture with a known screenIndex`,
+                };
                 break;
             }
 
@@ -1719,7 +1901,7 @@ for (const action of sortedActions) {
                 warnings.push(`crop target at ${action.atMs}ms dropped: ${resolved.error}`);
             } else {
                 action.region = resolved.region;
-                result = { ok: true, stdout: `region ${JSON.stringify(resolved.region)}`, stderr: "" };
+                result = { ok: true, stdout: `region ${SafeJSON.stringify(resolved.region)}`, stderr: "" };
             }
 
             break;
@@ -1755,7 +1937,7 @@ const exitedInTime = await Promise.race([
 
 if (!exitedInTime) {
     warnings.push(
-        `peekaboo did not exit within ${cap.duration}s+${exitGraceMs / 1000}s — killed its process tree; frames salvaged from the session dir (timestamps from file mtimes)`,
+        `peekaboo did not exit within ${cap.duration}s+${exitGraceMs / 1000}s — killed its process tree; frames salvaged from the session dir (timestamps from file mtimes)`
     );
     killTree(proc.pid);
 }
@@ -1765,19 +1947,21 @@ const stderrText = await attempt.stderrText;
 
 let captureResult: unknown;
 try {
-    captureResult = JSON.parse(stdoutText);
+    captureResult = SafeJSON.parse(stdoutText);
 } catch {
     captureResult = { parseError: true, raw: stdoutText.slice(0, 2000), stderr: stderrText.slice(0, 1000) };
 }
 
-let frames: FrameInfo[] =
-    ((captureResult as { data?: { frames?: FrameInfo[] } })?.data?.frames ?? []).slice()
-        .sort((a, b) => a.timestampMs - b.timestampMs);
+let frames: FrameInfo[] = ((captureResult as { data?: { frames?: FrameInfo[] } })?.data?.frames ?? [])
+    .slice()
+    .sort((a, b) => a.timestampMs - b.timestampMs);
 
 if (frames.length === 0) {
     // killed or crashed peekaboo → no result JSON; the kept PNGs are still on
     // disk. Rebuild FrameInfo from mtimes (relative to the first frame).
-    const keeps = readdirSync(sessionDir).filter((f) => /^keep-\d+\.png$/.test(f)).sort();
+    const keeps = readdirSync(sessionDir)
+        .filter((f) => /^keep-\d+\.png$/.test(f))
+        .sort();
     if (keeps.length > 0) {
         const t0mtime = statSync(join(sessionDir, keeps[0])).mtimeMs;
         frames = keeps.map((f) => ({
@@ -1798,11 +1982,21 @@ if (cropSpecs.length > 0 && frames.length > 0) {
 
 // "actions succeeded" != "pixels moved": scroll over dead UI, wrong screen, or
 // wrong focus all leave peekaboo with a 1-frame noMotion result.
-const MOTION_ACTIONS = new Set(["click", "url", "osascript", "hotkey", "type", "scroll", "ax-set", "ax-press", "ax-perform"]);
+const MOTION_ACTIONS = new Set([
+    "click",
+    "url",
+    "osascript",
+    "hotkey",
+    "type",
+    "scroll",
+    "ax-set",
+    "ax-press",
+    "ax-perform",
+]);
 const motionFired = fired.some((f) => f.ok && MOTION_ACTIONS.has(f.action.do));
 if (motionFired && frames.length <= 1) {
     warnings.push(
-        `actions fired ok but capture kept ${frames.length} frame(s) — no visual motion reached the recorded screen (wrong screenIndex? wrong focus? scroll over non-scrolling UI?)`,
+        `actions fired ok but capture kept ${frames.length} frame(s) — no visual motion reached the recorded screen (wrong screenIndex? wrong focus? scroll over non-scrolling UI?)`
     );
 }
 
@@ -1820,9 +2014,19 @@ if (plan.vitrinka) {
 }
 
 console.log(
-    JSON.stringify(
-        { sessionDir, exitCode: proc.exitCode, warnings, actions: fired, crops, strip, stripReview, vitrinka, capture: captureResult },
+    SafeJSON.stringify(
+        {
+            sessionDir,
+            exitCode: proc.exitCode,
+            warnings,
+            actions: fired,
+            crops,
+            strip,
+            stripReview,
+            vitrinka,
+            capture: captureResult,
+        },
         null,
-        2,
-    ),
+        2
+    )
 );
