@@ -91,6 +91,19 @@ describe("getOrSynthesizeSummaryAudio", () => {
         expect(synthesizeCalls).toHaveLength(1);
     });
 
+    it("coalesces concurrent misses into a single synthesis", async () => {
+        const [a, b] = await Promise.all([
+            getOrSynthesizeSummaryAudio({ db, videoId: "abc123def45", mode: "long", userId: 1 }),
+            getOrSynthesizeSummaryAudio({ db, videoId: "abc123def45", mode: "long", userId: 1 }),
+        ]);
+
+        // Only one caller synthesized; the other awaited it and came back cached.
+        expect(synthesizeCalls).toHaveLength(1);
+        expect([a.cached, b.cached].sort()).toEqual([false, true]);
+        expect(a.path).toBe(b.path);
+        expect(existsSync(a.path)).toBe(true);
+    });
+
     it("prefers xai when available, falls back to openai otherwise", async () => {
         xaiAvailable = false;
         openaiAvailable = true;
@@ -98,6 +111,21 @@ describe("getOrSynthesizeSummaryAudio", () => {
         await getOrSynthesizeSummaryAudio({ db, videoId: "abc123def45", mode: "long", userId: 1 });
 
         expect((synthesizeCalls[0] as { provider: string }).provider).toBe("openai");
+    });
+
+    it("serves a cached file even when no provider is currently available", async () => {
+        const first = await getOrSynthesizeSummaryAudio({ db, videoId: "abc123def45", mode: "long", userId: 1 });
+
+        expect(first.cached).toBe(false);
+
+        // Providers go dark, but the cached file must still serve without one.
+        xaiAvailable = false;
+        openaiAvailable = false;
+
+        const second = await getOrSynthesizeSummaryAudio({ db, videoId: "abc123def45", mode: "long", userId: 1 });
+
+        expect(second.cached).toBe(true);
+        expect(second.path).toBe(first.path);
     });
 
     it("throws NoTtsProviderError when neither provider is available", async () => {
