@@ -18,6 +18,7 @@ import type { YoutubeConfigShape } from "@app/youtube/lib/types";
 import { apiClient } from "@app/yt/api.client";
 import { useCacheStats, useClearCache, usePatchServerConfig, usePruneCache, useServerConfig } from "@app/yt/api.hooks";
 import { AccountSection } from "@app/yt/components/account/account-section";
+import { CustomizationSection } from "@app/yt/components/account/customization-section";
 import { Loading } from "@app/yt/components/shared/loading";
 import { formatBytes } from "@app/yt/lib/format";
 import { createFileRoute } from "@tanstack/react-router";
@@ -116,6 +117,8 @@ function SettingsPage() {
             </header>
 
             <AccountSection />
+
+            <CustomizationSection />
 
             <SettingsCard icon={<Server className="size-5" />} title="API Endpoint">
                 <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
