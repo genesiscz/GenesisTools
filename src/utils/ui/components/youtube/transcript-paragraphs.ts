@@ -50,17 +50,30 @@ export function segmentsToParagraphs(segments: TranscriptSegment[]): TranscriptP
     let bufEnd = segments[0].start;
     let bufSentences = 0;
     let bufSpeaker: number | undefined;
+    // Why the paragraph currently at the top of `out` was flushed. A hard-gap
+    // or char-cap boundary is real content structure, so a following short
+    // orphan must NOT be absorbed back across it.
+    type FlushReason = "hard-gap" | "max-chars" | "normal";
+    let lastFlushReason: FlushReason = "normal";
 
-    function flush(): void {
+    function flush(reason: FlushReason): void {
         const trimmed = buf.trim();
         if (!trimmed) {
             return;
         }
 
+        const prev = out.length > 0 ? out[out.length - 1] : null;
         // Short orphans get absorbed into the previous paragraph, but never
-        // across a diarized speaker boundary — chips must stay truthful.
-        if (trimmed.length < MIN_CHARS && out.length > 0 && out[out.length - 1].speaker === bufSpeaker) {
-            const prev = out[out.length - 1];
+        // across a diarized speaker boundary (chips must stay truthful) nor
+        // across a hard-gap / char-cap boundary (those are real breaks).
+        const mergeable =
+            trimmed.length < MIN_CHARS &&
+            prev !== null &&
+            prev.speaker === bufSpeaker &&
+            lastFlushReason !== "hard-gap" &&
+            lastFlushReason !== "max-chars";
+
+        if (mergeable && prev) {
             prev.text = `${prev.text} ${trimmed}`;
             prev.end = bufEnd;
         } else {
@@ -72,6 +85,7 @@ export function segmentsToParagraphs(segments: TranscriptSegment[]): TranscriptP
             });
         }
 
+        lastFlushReason = reason;
         buf = "";
         bufSentences = 0;
     }
@@ -87,7 +101,7 @@ export function segmentsToParagraphs(segments: TranscriptSegment[]): TranscriptP
         // to the timing/punctuation rules). Segments without speaker data
         // never trigger it, so caption transcripts group exactly as before.
         if (buf && seg.speaker !== undefined && seg.speaker !== bufSpeaker) {
-            flush();
+            flush("normal");
         }
 
         if (!buf) {
@@ -106,12 +120,12 @@ export function segmentsToParagraphs(segments: TranscriptSegment[]): TranscriptP
         const nextGap = i + 1 < segments.length ? Math.max(0, segments[i + 1].start - seg.end) : Infinity;
 
         if (buf.length >= MAX_CHARS) {
-            flush();
+            flush("max-chars");
             continue;
         }
 
         if (gapsAreMeaningful && nextGap >= HARD_GAP) {
-            flush();
+            flush("hard-gap");
             continue;
         }
 
@@ -119,16 +133,16 @@ export function segmentsToParagraphs(segments: TranscriptSegment[]): TranscriptP
             const reachedTarget = buf.length >= TARGET_CHARS || bufSentences >= TARGET_SENTS;
             const softPause = gapsAreMeaningful && nextGap >= SOFT_GAP;
             if (buf.length >= MIN_CHARS && (softPause || reachedTarget)) {
-                flush();
+                flush("normal");
                 continue;
             }
         }
 
         if (!gapsAreMeaningful && buf.length >= TARGET_CHARS) {
-            flush();
+            flush("normal");
         }
     }
 
-    flush();
+    flush("normal");
     return out;
 }
