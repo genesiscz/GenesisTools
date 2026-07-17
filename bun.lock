@@ -210,8 +210,8 @@
         "typescript": "^5.0.0",
       },
     },
-    "packages/core": {
-      "name": "@gt/core",
+    "packages/utils": {
+      "name": "@genesiscz/utils",
       "version": "0.0.0",
       "dependencies": {
         "comment-json": "^4.6.2",
@@ -518,6 +518,8 @@
 
     "@genesiscz/darwinkit": ["@genesiscz/darwinkit@0.7.5", "", { "dependencies": { "tar": "^7.0.0" } }, "sha512-2bMDALD7rbq8onG+1B66jHK8SgB4fYCpt7+QQYJa5rljzhRkXZ1PLRSdiNlk98soVwvwnmgNzssyKUni6ck5Tw=="],
 
+    "@genesiscz/utils": ["@genesiscz/utils@workspace:packages/utils"],
+
     "@gitbeaker/core": ["@gitbeaker/core@43.5.0", "", { "dependencies": { "@gitbeaker/requester-utils": "^43.5.0", "qs": "^6.14.0", "xcase": "^2.0.1" } }, "sha512-Lfsl6DE/2RkFvpSEhMEnN6sNuY0IeR68UEQq2qzR0MkUF1RMCmOFlD3OydnT9yY+fkWjB4FPSG4SA/oBVZYTFQ=="],
 
     "@gitbeaker/requester-utils": ["@gitbeaker/requester-utils@43.5.0", "", { "dependencies": { "picomatch-browser": "^2.2.6", "qs": "^6.14.0", "rate-limiter-flexible": "^7.2.0", "xcase": "^2.0.1" } }, "sha512-C6CLAZDy6mNAKHqqt+T2s0RNXf7tmjT9PLAxTZCdtS0276eAj1xmqmPPy9RDKKPzhGaiUicn9q2pA3IyEDM1jQ=="],
@@ -525,8 +527,6 @@
     "@gitbeaker/rest": ["@gitbeaker/rest@43.5.0", "", { "dependencies": { "@gitbeaker/core": "^43.5.0", "@gitbeaker/requester-utils": "^43.5.0" } }, "sha512-HJgzKSBtdHrfpbH3vHj+1qSyH9RR0L/zMDCwvo4NE2Fg9P2nkWMfj2AzhytENHGTtL6gcfSPOS16HLLTQ4uVeg=="],
 
     "@grammyjs/types": ["@grammyjs/types@3.24.0", "", {}, "sha512-qQIEs4lN5WqUdr4aT8MeU6UFpMbGYAvcvYSW1A4OO1PABGJQHz/KLON6qvpf+5RxaNDQBxiY2k2otIhg/AG7RQ=="],
-
-    "@gt/core": ["@gt/core@workspace:packages/core"],
 
     "@hlidac-shopu/actors-common": ["@hlidac-shopu/actors-common@3.2.5", "", { "dependencies": { "@hlidac-shopu/lib": "1.5.3", "@thi.ng/atom": "5.3.52", "linkedom": "0.18.12", "rollbar": "2.26.5" }, "peerDependencies": { "apify": "^3.2.0" } }, "sha512-iFF5h1L2gTwlvxCXWXEdOvbLxWhGNv7BUL689mdEuD17ZXuuWf76Im46TpHqTK/7lOANMI7qJt98w2hFfN6QMg=="],
 

@@ -1,1 +1,1 @@
-export * from "@gt/core/tokens";
+export * from "@genesiscz/utils/tokens";

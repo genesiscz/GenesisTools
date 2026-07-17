@@ -1,1 +1,1 @@
-export * from "@gt/core/date-locale";
+export * from "@genesiscz/utils/date-locale";

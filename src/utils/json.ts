@@ -1,1 +1,1 @@
-export * from "@gt/core/json";
+export * from "@genesiscz/utils/json";

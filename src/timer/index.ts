@@ -7,7 +7,7 @@ import { withCancel } from "@app/utils/prompts/clack/helpers";
 import { Storage } from "@app/utils/storage/storage";
 import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
-import { formatDuration, parseDuration } from "@gt/core/format";
+import { formatDuration, parseDuration } from "@genesiscz/utils/format";
 import { Command } from "commander";
 import pc from "picocolors";
 

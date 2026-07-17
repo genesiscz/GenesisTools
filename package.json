@@ -1,5 +1,5 @@
 {
-    "name": "genesis-tools",
+    "name": "@genesiscz/tools",
     "description": "Useful tools that I use for my projects",
     "module": "index.ts",
     "type": "module",

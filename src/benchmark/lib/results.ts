@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@gt/core/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { SavedResult } from "./types";
 
 const RESULTS_DIR = join(homedir(), ".genesis-tools", "benchmarks");

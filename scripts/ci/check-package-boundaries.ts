@@ -8,13 +8,13 @@
  * layered dependency direction (SPEC §2.1) cannot erode silently.
  *
  * RULES (foundation = warn-mode for the backlog; rules flip to FAIL per phase):
- *  1. FAIL — @gt/core purity: a file in packages/core/** may import only
- *     @gt/core (sibling subpaths / the package itself) or third-party
+ *  1. FAIL — @genesiscz/utils purity: a file in packages/core/** may import only
+ *     @genesiscz/utils (sibling subpaths / the package itself) or third-party
  *     node_modules. ANY @app/* or @gt/<other> import is a hard error. This is
- *     fail-from-day-one because @gt/core is the genuinely import-closed leaf.
+ *     fail-from-day-one because @genesiscz/utils is the genuinely import-closed leaf.
  *  2. FAIL — layer back-edges: a packages/<A> file may import @gt/<B> only when
  *     B is at the same-or-lower layer than A (toward L0). A back-edge (toward a
- *     higher layer) is a hard error. Only @gt/core exists today, so this rule
+ *     higher layer) is a hard error. Only @genesiscz/utils exists today, so this rule
  *     is vacuously green now and tightens as packages land.
  *  3. FAIL — package -> tool: a packages/** file must never import @app/<tool>/*
  *     (a package may not depend on a tool). EXCEPT the §0.3 backlog under
@@ -130,20 +130,20 @@ for (const hit of pkgHits) {
 
     const isTest = /\.test\.tsx?$/.test(hit.file);
 
-    // Rule 1: @gt/core purity — may import only @gt/core or node_modules.
+    // Rule 1: @genesiscz/utils purity — may import only @genesiscz/utils or node_modules.
     if (pkg === "core") {
         // Colocated *.test.ts files are dev-only and not part of the package's
         // `exports` closure, so they may use shared test infra (e.g.
         // @app/utils/test/skip — itself a clean leaf). The purity contract is
         // about what CONSUMERS import, i.e. the source modules.
         if (hit.spec.startsWith("@app/") && !isTest) {
-            hardErrors.push(`${hit.file}:${hit.line}  @gt/core must not import @app/* (impurity): ${hit.spec}`);
+            hardErrors.push(`${hit.file}:${hit.line}  @genesiscz/utils must not import @app/* (impurity): ${hit.spec}`);
             continue;
         }
 
         if (gtTarget !== null && gtTarget !== "core") {
             hardErrors.push(
-                `${hit.file}:${hit.line}  @gt/core must not import @gt/${gtTarget} (leaf must stay closed): ${hit.spec}`
+                `${hit.file}:${hit.line}  @genesiscz/utils must not import @gt/${gtTarget} (leaf must stay closed): ${hit.spec}`
             );
             continue;
         }
@@ -227,5 +227,5 @@ if (hardErrors.length > 0) {
 }
 
 console.log(
-    `✓ package boundaries clean (@gt/core pure, no back-edges, no package->tool); ${warnings.length} known-backlog warnings`
+    `✓ package boundaries clean (@genesiscz/utils pure, no back-edges, no package->tool); ${warnings.length} known-backlog warnings`
 );

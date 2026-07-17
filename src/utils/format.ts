@@ -1,1 +1,1 @@
-export * from "@gt/core/format";
+export * from "@genesiscz/utils/format";

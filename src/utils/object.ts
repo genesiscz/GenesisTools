@@ -1,1 +1,1 @@
-export * from "@gt/core/object";
+export * from "@genesiscz/utils/object";

@@ -1,1 +1,1 @@
-export * from "@gt/core/array";
+export * from "@genesiscz/utils/array";

@@ -1,5 +1,5 @@
 import * as p from "@clack/prompts";
-import { formatDuration } from "@gt/core/format";
+import { formatDuration } from "@genesiscz/utils/format";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { getLastResult } from "../lib/results";

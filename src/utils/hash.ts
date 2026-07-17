@@ -1,1 +1,1 @@
-export * from "@gt/core/hash";
+export * from "@genesiscz/utils/hash";

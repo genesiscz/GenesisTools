@@ -1,1 +1,1 @@
-export * from "@gt/core/date";
+export * from "@genesiscz/utils/date";

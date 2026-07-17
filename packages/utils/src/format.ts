@@ -402,7 +402,7 @@ export function formatClock(
 
 /**
  * Create a simple stopwatch function that returns formatted elapsed time.
- * For a full-featured stopwatch with laps/stamps, use Stopwatch from @gt/core/Stopwatch.
+ * For a full-featured stopwatch with laps/stamps, use Stopwatch from @genesiscz/utils/Stopwatch.
  *
  * @example
  * const elapsed = createStopwatch();

@@ -5,7 +5,7 @@ import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { estimateTokens, formatTokens } from "@ask/utils/helpers";
-import { formatBytes as _formatBytes } from "@gt/core/format";
+import { formatBytes as _formatBytes } from "@genesiscz/utils/format";
 import type { FileSink } from "bun";
 import { Command } from "commander";
 import { minimatch } from "minimatch";

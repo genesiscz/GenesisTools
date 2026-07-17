@@ -1,1 +1,1 @@
-export * from "@gt/core/Stopwatch";
+export * from "@genesiscz/utils/Stopwatch";

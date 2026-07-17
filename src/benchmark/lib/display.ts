@@ -1,6 +1,6 @@
 import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
-import { formatDuration } from "@gt/core/format";
+import { formatDuration } from "@genesiscz/utils/format";
 import pc from "picocolors";
 import type { HyperfineResult, SavedResult } from "./types";
 

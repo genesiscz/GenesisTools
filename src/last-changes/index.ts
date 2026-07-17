@@ -3,8 +3,8 @@ import { join, resolve } from "node:path";
 import { logger, out } from "@app/logger";
 import { Executor, runTool } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
-import { formatDateTime } from "@gt/core/date";
-import { formatRelativeTime as _formatRelativeTime } from "@gt/core/format";
+import { formatDateTime } from "@genesiscz/utils/date";
+import { formatRelativeTime as _formatRelativeTime } from "@genesiscz/utils/format";
 import chalk from "chalk";
 import { Command } from "commander";
 

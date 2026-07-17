@@ -1,1 +1,1 @@
-export * from "@gt/core/math";
+export * from "@genesiscz/utils/math";

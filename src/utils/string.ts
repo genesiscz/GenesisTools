@@ -1,1 +1,1 @@
-export * from "@gt/core/string";
+export * from "@genesiscz/utils/string";

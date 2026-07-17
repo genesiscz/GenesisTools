@@ -8,7 +8,7 @@ import { execSync } from "node:child_process";
 let cachedLocale: string | undefined;
 
 /**
- * @gt/core must stay free of @app/* imports (boundary guard rule 1), so this
+ * @genesiscz/utils must stay free of @app/* imports (boundary guard rule 1), so this
  * can't route through @app/utils/env's trimmed getter — reimplemented locally
  * with the same trim/empty-string semantics.
  */
