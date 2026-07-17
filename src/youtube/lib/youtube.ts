@@ -470,6 +470,10 @@ export class Youtube {
 
                 ctx.onProgress(0.85, "Synthesizing report");
                 const result = await this.summary.synthesizeReport({ members, providerChoice });
+                // A cancel that landed during synthesis is only observed by the
+                // pipeline after this handler returns — don't persist a result
+                // for a job the user already aborted.
+                ctx.signal.throwIfAborted();
                 this.db.setReportResult(reportId, result);
                 logger.info({ reportId, members: members.length }, "youtube report synthesized");
             },
