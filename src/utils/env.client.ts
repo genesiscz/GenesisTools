@@ -54,6 +54,15 @@ export const env = {
         getGitSha: () => getTrimmed("YOUTUBE_GIT_SHA"),
         getUiPort: () => getTrimmed("YOUTUBE_UI_PORT"),
     },
+
+    extension: {
+        /** EXT_DEV=1 enables the dev-reload WebSocket in the extension build. */
+        isDevReload: () => isFlag("EXT_DEV"),
+        /** EXT_TARGET selects the two-pass build config ('modules' | 'content-script'). */
+        getBuildTarget: () => getTrimmed("EXT_TARGET"),
+        /** CDP_URL overrides the default devtools-CLI CDP endpoint (127.0.0.1:9333). */
+        getCdpUrl: () => getTrimmed("CDP_URL"),
+    },
 } as const;
 
 export type EnvClient = typeof env;

@@ -42,11 +42,7 @@ export async function captureFrameGrid(client: Client, opts: FrameGridOpts): Pro
     if (identify.exitCode !== 0) {
         throw new Error(`magick identify failed: ${identify.stderr.toString()}`);
     }
-    const [width, height] = identify.stdout
-        .toString()
-        .trim()
-        .split(" ")
-        .map(Number);
+    const [width, height] = identify.stdout.toString().trim().split(" ").map(Number);
 
     const xOffset = opts.region ? Number(opts.region.split(",")[0]) : 0;
     const yOffset = opts.region ? Number(opts.region.split(",")[1]) : 0;

@@ -230,3 +230,4 @@ vercel-skills
 # repowise workspace artifacts
 .repowise/
 .repowise-workspace.yaml
+.claude/plans/sweep-p6/
