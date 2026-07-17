@@ -1517,6 +1517,36 @@ function buildPaths(): Record<string, OpenApiPathItem> {
                 },
             },
         },
+        "/api/v1/users/settings": {
+            get: {
+                operationId: "getUserSettings",
+                summary: "The signed-in user's customization settings (defaults merged)",
+                tags: ["users"],
+                responses: {
+                    "200": jsonResponse("Settings", {
+                        type: "object",
+                        properties: { settings: { type: "object" } },
+                        required: ["settings"],
+                    }),
+                    "401": errorResponse,
+                },
+            },
+            patch: {
+                operationId: "updateUserSettings",
+                summary: "Deep-merge a partial settings patch (theme/density/taskDefaults/panel); auto-persists",
+                tags: ["users"],
+                requestBody: jsonBody({ type: "object" }, { required: true }),
+                responses: {
+                    "200": jsonResponse("Updated settings", {
+                        type: "object",
+                        properties: { settings: { type: "object" } },
+                        required: ["settings"],
+                    }),
+                    "400": errorResponse,
+                    "401": errorResponse,
+                },
+            },
+        },
         "/api/v1/admin/users": {
             get: {
                 operationId: "adminListUsers",
