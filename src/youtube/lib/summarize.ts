@@ -1,6 +1,7 @@
 import { logger } from "@app/logger";
 import { callLLM, callLLMStructured } from "@app/utils/ai/call-llm";
 import { Summarizer } from "@app/utils/ai/tasks/Summarizer";
+import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import { englishLanguageName } from "@app/youtube/lib/languages";
@@ -218,6 +219,7 @@ export class SummaryService {
                 model: ids.model,
                 usage: result.usage,
                 scope: opts.videoId,
+                videoId: opts.videoId,
                 prompt: formatPrompt(systemPrompt, text),
                 response: result.content,
                 durationMs: completedAt.getTime() - startedAt.getTime(),
@@ -228,9 +230,9 @@ export class SummaryService {
             return result.content;
         }
 
-        const provider = await this.config.get("provider");
-        const providerName = opts.provider ?? provider.summarize ?? "default";
-        const summarizer = await this.deps.createSummarizer({ provider: opts.provider ?? provider.summarize });
+        const configuredSpec = resolveAiSpecForTask(await this.config.getAll(), "summary");
+        const providerName = opts.provider ?? configuredSpec ?? "default";
+        const summarizer = await this.deps.createSummarizer({ provider: opts.provider ?? configuredSpec ?? undefined });
 
         try {
             const result = await summarizer.summarize(text);
@@ -239,6 +241,7 @@ export class SummaryService {
                 provider: providerName,
                 model: "(summarizer-default)",
                 scope: opts.videoId,
+                videoId: opts.videoId,
             });
 
             return result.summary;
@@ -309,6 +312,7 @@ export class SummaryService {
             model: ids.model,
             usage: result.usage,
             scope: opts.videoId,
+            videoId: opts.videoId,
             prompt: formatPrompt(systemPrompt, userPrompt),
             response: result.content,
             durationMs: completedAt.getTime() - startedAt.getTime(),
@@ -366,6 +370,7 @@ export class SummaryService {
             model: ids.model,
             usage: result.usage,
             scope: opts.videoId,
+            videoId: opts.videoId,
             prompt: formatPrompt(systemPrompt, userPrompt),
             response: result.content,
             durationMs: completedAt.getTime() - startedAt.getTime(),
@@ -432,6 +437,7 @@ export class SummaryService {
             model: ids.model,
             usage: result.usage,
             scope: opts.members.map((member) => member.videoId).join(","),
+            videoId: opts.members.map((member) => member.videoId).join(","),
             prompt: formatPrompt(REPORT_SYSTEM_BASE, userPrompt),
             response: result.content,
             durationMs: completedAt.getTime() - startedAt.getTime(),

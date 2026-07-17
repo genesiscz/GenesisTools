@@ -13,6 +13,8 @@ import type { JobStage } from "@app/youtube/lib/jobs.types";
 export interface JobActivityContext {
     jobId: number;
     stage: JobStage;
+    /** Owner of the running job — attribution for ai_calls. Undefined/null = operator work. */
+    userId?: number | null;
     db: YoutubeDatabase;
 }
 

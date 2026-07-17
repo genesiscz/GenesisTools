@@ -7,6 +7,7 @@ import { deleteIfExists } from "@app/youtube/lib/cache";
 import type { Channel, ChannelHandle } from "@app/youtube/lib/channel.types";
 import type { FetchedComment, VideoComment } from "@app/youtube/lib/comments.types";
 import type {
+    AiCallRecord,
     ClaimJobOpts,
     EnqueueJobInput,
     GetTranscriptOpts,
@@ -14,7 +15,10 @@ import type {
     ListVideosOpts,
     PruneExpiredBinariesOpts,
     PruneExpiredBinariesResult,
+    QueueStats,
+    RecordAiCallInput,
     RecordJobActivityInput,
+    RecordVideoLogInput,
     SaveTranscriptInput,
     SearchTranscriptsOpts,
     SearchVideosOpts,
@@ -26,8 +30,11 @@ import type {
     UpsertChannelInput,
     UpsertQaChunkInput,
     UpsertVideoInput,
+    VideoLogKind,
+    VideoLogRecord,
     VideoSearchField,
     VideoSearchHit,
+    VideoWatchRecord,
 } from "@app/youtube/lib/db.types";
 import type {
     JobActivity,
@@ -479,6 +486,61 @@ export class YoutubeDatabase extends BaseDatabase {
                 );
                 CREATE INDEX IF NOT EXISTS idx_credit_holds_status ON credit_holds(status);
             `);
+        });
+
+        // Audit trail (Phase 1 foundations). Deliberately NO foreign keys:
+        // audit rows must survive user/video/job deletion — they are the
+        // history, not live state.
+        this.runMigration("add-audit-tables", () => {
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS video_watchers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    video_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC})
+                );
+                CREATE INDEX IF NOT EXISTS idx_video_watchers_video ON video_watchers(video_id, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_video_watchers_user ON video_watchers(user_id, id DESC);
+
+                CREATE TABLE IF NOT EXISTS video_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT NOT NULL CHECK (kind IN ('summary:view','insights:view','transcript:view','comments:view')),
+                    user_id INTEGER,
+                    video_id TEXT NOT NULL,
+                    meta_json TEXT,
+                    created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC})
+                );
+                CREATE INDEX IF NOT EXISTS idx_video_logs_video ON video_logs(video_id, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_video_logs_user ON video_logs(user_id, id DESC);
+
+                CREATE TABLE IF NOT EXISTS ai_calls (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    video_id TEXT,
+                    user_id INTEGER,
+                    input_tokens INTEGER NOT NULL DEFAULT 0,
+                    output_tokens INTEGER NOT NULL DEFAULT 0,
+                    cost_usd REAL,
+                    credits_charged INTEGER,
+                    job_id INTEGER,
+                    created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC})
+                );
+                CREATE INDEX IF NOT EXISTS idx_ai_calls_user ON ai_calls(user_id, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_ai_calls_video ON ai_calls(video_id, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_ai_calls_job ON ai_calls(job_id);
+            `);
+        });
+
+        this.runMigration("add-jobs-user", () => {
+            const cols = this.db.query<{ name: string }, []>("PRAGMA table_info(jobs)").all() as Array<{
+                name: string;
+            }>;
+
+            if (!cols.some((column) => column.name === "user_id")) {
+                this.db.exec("ALTER TABLE jobs ADD COLUMN user_id INTEGER");
+            }
         });
 
         const existing = this.db
@@ -1013,11 +1075,17 @@ export class YoutubeDatabase extends BaseDatabase {
 
     enqueueJob(input: EnqueueJobInput): PipelineJob {
         const result = this.db
-            .query<{ id: number }, [string, string, string, number | null]>(
-                `INSERT INTO jobs (target_kind, target, stages, parent_job_id, status)
-                 VALUES (?, ?, ?, ?, 'pending') RETURNING id`
+            .query<{ id: number }, [string, string, string, number | null, number | null]>(
+                `INSERT INTO jobs (target_kind, target, stages, parent_job_id, user_id, status)
+                 VALUES (?, ?, ?, ?, ?, 'pending') RETURNING id`
             )
-            .get(input.targetKind, input.target, SafeJSON.stringify(input.stages), input.parentJobId ?? null);
+            .get(
+                input.targetKind,
+                input.target,
+                SafeJSON.stringify(input.stages),
+                input.parentJobId ?? null,
+                input.userId ?? null
+            );
 
         if (!result) {
             throw new Error("enqueueJob failed: insert returned no id");
@@ -1241,6 +1309,150 @@ export class YoutubeDatabase extends BaseDatabase {
             .all(jobId);
 
         return rows.map(rowToJobActivity);
+    }
+
+    recordVideoWatch(input: { userId: number | null; videoId: string }): void {
+        this.db.run("INSERT INTO video_watchers (user_id, video_id) VALUES (?, ?)", [input.userId, input.videoId]);
+    }
+
+    recordVideoLog(input: RecordVideoLogInput): void {
+        this.db.run("INSERT INTO video_logs (kind, user_id, video_id, meta_json) VALUES (?, ?, ?, ?)", [
+            input.kind,
+            input.userId,
+            input.videoId,
+            input.meta ? SafeJSON.stringify(input.meta, { strict: true }) : null,
+        ]);
+    }
+
+    recordAiCall(input: RecordAiCallInput): void {
+        this.db.run(
+            `INSERT INTO ai_calls
+                (provider, model, action, video_id, user_id, input_tokens, output_tokens, cost_usd, credits_charged, job_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                input.provider,
+                input.model,
+                input.action,
+                input.videoId ?? null,
+                input.userId ?? null,
+                input.inputTokens ?? 0,
+                input.outputTokens ?? 0,
+                input.costUsd ?? null,
+                input.creditsCharged ?? null,
+                input.jobId ?? null,
+            ]
+        );
+    }
+
+    listVideoWatchers(videoId: string, limit = 100): VideoWatchRecord[] {
+        const rows = this.db
+            .query<VideoWatcherRow, [string, number]>(
+                "SELECT * FROM video_watchers WHERE video_id = ? ORDER BY id DESC LIMIT ?"
+            )
+            .all(videoId, limit);
+
+        return rows.map((row) => ({
+            id: row.id,
+            userId: row.user_id,
+            videoId: row.video_id,
+            createdAt: row.created_at,
+        }));
+    }
+
+    listVideoLogs(opts: { videoId?: string; userId?: number; limit?: number } = {}): VideoLogRecord[] {
+        const where: string[] = [];
+        const params: Array<string | number> = [];
+
+        if (opts.videoId) {
+            where.push("video_id = ?");
+            params.push(opts.videoId);
+        }
+
+        if (opts.userId !== undefined) {
+            where.push("user_id = ?");
+            params.push(opts.userId);
+        }
+
+        const whereClause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+        const rows = this.db
+            .query<VideoLogRow, [...Array<string | number>, number]>(
+                `SELECT * FROM video_logs ${whereClause} ORDER BY id DESC LIMIT ?`
+            )
+            .all(...params, opts.limit ?? 100);
+
+        return rows.map(rowToVideoLog);
+    }
+
+    listAiCalls(opts: { userId?: number; videoId?: string; jobId?: number; limit?: number } = {}): AiCallRecord[] {
+        const where: string[] = [];
+        const params: Array<string | number> = [];
+
+        if (opts.userId !== undefined) {
+            where.push("user_id = ?");
+            params.push(opts.userId);
+        }
+
+        if (opts.videoId) {
+            where.push("video_id = ?");
+            params.push(opts.videoId);
+        }
+
+        if (opts.jobId !== undefined) {
+            where.push("job_id = ?");
+            params.push(opts.jobId);
+        }
+
+        const whereClause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+        const rows = this.db
+            .query<AiCallRow, [...Array<string | number>, number]>(
+                `SELECT * FROM ai_calls ${whereClause} ORDER BY id DESC LIMIT ?`
+            )
+            .all(...params, opts.limit ?? 100);
+
+        return rows.map(rowToAiCall);
+    }
+
+    getQueueStats(): QueueStats {
+        const pendingRows = this.db
+            .query<{ stage: string | null; count: number }, []>(
+                `SELECT json_extract(stages, '$[0]') AS stage, COUNT(*) AS count
+                 FROM jobs WHERE status = 'pending' GROUP BY stage`
+            )
+            .all();
+        const runningRows = this.db
+            .query<{ stage: string | null; count: number }, []>(
+                `SELECT COALESCE(current_stage, json_extract(stages, '$[0]')) AS stage, COUNT(*) AS count
+                 FROM jobs WHERE status = 'running' GROUP BY stage`
+            )
+            .all();
+        const oldest = this.db
+            .query<{ created_at: string }, []>(
+                "SELECT created_at FROM jobs WHERE status = 'pending' ORDER BY id ASC LIMIT 1"
+            )
+            .get();
+        const perStage: Record<string, { queued: number; running: number }> = {};
+        let queued = 0;
+        let running = 0;
+
+        for (const row of pendingRows) {
+            const stage = row.stage ?? "unknown";
+            perStage[stage] = perStage[stage] ?? { queued: 0, running: 0 };
+            perStage[stage].queued += row.count;
+            queued += row.count;
+        }
+
+        for (const row of runningRows) {
+            const stage = row.stage ?? "unknown";
+            perStage[stage] = perStage[stage] ?? { queued: 0, running: 0 };
+            perStage[stage].running += row.count;
+            running += row.count;
+        }
+
+        const oldestQueuedAgeSec = oldest
+            ? Math.max(0, Math.round((Date.now() - Date.parse(oldest.created_at)) / 1000))
+            : null;
+
+        return { queued, running, perStage, oldestQueuedAgeSec };
     }
 
     async pruneExpiredBinaries(opts: PruneExpiredBinariesOpts): Promise<PruneExpiredBinariesResult> {
@@ -2250,6 +2462,65 @@ interface QaChunkRow {
     source_ref: string | null;
 }
 
+interface VideoWatcherRow {
+    id: number;
+    user_id: number | null;
+    video_id: string;
+    created_at: string;
+}
+
+interface VideoLogRow {
+    id: number;
+    kind: VideoLogKind;
+    user_id: number | null;
+    video_id: string;
+    meta_json: string | null;
+    created_at: string;
+}
+
+interface AiCallRow {
+    id: number;
+    provider: string;
+    model: string;
+    action: string;
+    video_id: string | null;
+    user_id: number | null;
+    input_tokens: number;
+    output_tokens: number;
+    cost_usd: number | null;
+    credits_charged: number | null;
+    job_id: number | null;
+    created_at: string;
+}
+
+function rowToVideoLog(row: VideoLogRow): VideoLogRecord {
+    return {
+        id: row.id,
+        kind: row.kind,
+        userId: row.user_id,
+        videoId: row.video_id,
+        meta: row.meta_json ? (SafeJSON.parse(row.meta_json) as Record<string, unknown>) : null,
+        createdAt: row.created_at,
+    };
+}
+
+function rowToAiCall(row: AiCallRow): AiCallRecord {
+    return {
+        id: row.id,
+        provider: row.provider,
+        model: row.model,
+        action: row.action,
+        videoId: row.video_id,
+        userId: row.user_id,
+        inputTokens: row.input_tokens,
+        outputTokens: row.output_tokens,
+        costUsd: row.cost_usd,
+        creditsCharged: row.credits_charged,
+        jobId: row.job_id,
+        createdAt: row.created_at,
+    };
+}
+
 interface JobRow {
     id: number;
     target_kind: JobTargetKind;
@@ -2261,6 +2532,7 @@ interface JobRow {
     progress: number;
     progress_message: string | null;
     parent_job_id: number | null;
+    user_id: number | null;
     worker_id: string | null;
     claimed_at: string | null;
     created_at: string;
@@ -2280,6 +2552,7 @@ function rowToJob(row: JobRow): PipelineJob {
         progress: row.progress,
         progressMessage: row.progress_message,
         parentJobId: row.parent_job_id,
+        userId: row.user_id ?? null,
         workerId: row.worker_id,
         claimedAt: row.claimed_at,
         createdAt: row.created_at,

@@ -5,12 +5,14 @@ import { Transcriber } from "@app/utils/ai/tasks/Transcriber";
 import { speakerIndexFromLabel } from "@app/utils/ai/transcription/speaker-label";
 import { withFileLock } from "@app/utils/storage";
 import { estimateTokens } from "@app/utils/tokens";
+import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import { audioPath, ensureBinaryDir } from "@app/youtube/lib/cache";
 import { fetchCaptions } from "@app/youtube/lib/captions";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import { englishLanguageName } from "@app/youtube/lib/languages";
-import type { Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
+import { parseProviderSpec } from "@app/youtube/lib/provider-choice";
+import type { Language, Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
 import type {
     TranscribeOpts,
     TranscriberProgressInfo,
@@ -39,37 +41,38 @@ export class TranscriptService {
         private readonly deps: TranscriptServiceDeps = DEFAULT_TRANSCRIPT_DEPS
     ) {}
 
-    async transcribe(opts: TranscribeOpts): Promise<Transcript> {
+    /** Free tier: cached transcript or fresh YouTube captions. Null = no captions available. */
+    async tryCaptions(opts: { videoId: VideoId; lang?: Language }): Promise<Transcript | null> {
+        const cached = this.db.getTranscript(opts.videoId, { preferLang: opts.lang ? [opts.lang] : undefined });
+
+        if (cached) {
+            return cached;
+        }
+
+        const preferredLangs = await this.preferredLangs(opts.lang);
+        const captions = await this.deps.fetchCaptions({ videoId: opts.videoId, preferredLangs });
+
+        if (!captions) {
+            return null;
+        }
+
+        this.db.saveTranscript({
+            videoId: opts.videoId,
+            lang: captions.lang,
+            source: "captions",
+            text: captions.text,
+            segments: captions.segments,
+        });
+
+        return this.db.getTranscript(opts.videoId, { lang: captions.lang, source: "captions" });
+    }
+
+    /** Paid tier: audio download + ASR. Gate credits via `beforeAiTranscription` on `transcribe()`. */
+    async transcribeAudio(opts: TranscribeOpts): Promise<Transcript> {
         const video = this.db.getVideo(opts.videoId);
 
         if (!video) {
             throw new Error(`unknown video: ${opts.videoId}`);
-        }
-
-        if (!opts.forceTranscribe) {
-            const cached = this.db.getTranscript(opts.videoId, { preferLang: opts.lang ? [opts.lang] : undefined });
-
-            if (cached) {
-                return cached;
-            }
-
-            const preferredLangs = await this.preferredLangs(opts.lang);
-            const captions = await this.deps.fetchCaptions({ videoId: opts.videoId, preferredLangs });
-
-            if (captions) {
-                this.db.saveTranscript({
-                    videoId: opts.videoId,
-                    lang: captions.lang,
-                    source: "captions",
-                    text: captions.text,
-                    segments: captions.segments,
-                });
-                const saved = this.db.getTranscript(opts.videoId, { lang: captions.lang, source: "captions" });
-
-                if (saved) {
-                    return saved;
-                }
-            }
         }
 
         let audio = video.audioPath;
@@ -93,8 +96,8 @@ export class TranscriptService {
             audio = nextAudio;
         }
 
-        const provider = await this.config.get("provider");
-        const providerName = opts.provider ?? provider.transcribe;
+        const configuredSpec = resolveAiSpecForTask(await this.config.getAll(), "transcribe");
+        const providerName = opts.provider ?? parseProviderSpec(configuredSpec).provider;
         // Diarization is Deepgram-native only; other providers would trigger the
         // heavy local-pyannote fallback, so keep them exactly as before.
         const diarize = providerName?.includes("deepgram") ?? false;
@@ -116,6 +119,7 @@ export class TranscriptService {
                 provider: providerName ?? "default",
                 model: "(transcriber-default)",
                 scope: opts.videoId,
+                videoId: opts.videoId,
             });
             const lang = result.language ?? opts.lang ?? "en";
             this.db.saveTranscript({
@@ -146,6 +150,29 @@ export class TranscriptService {
         } finally {
             transcriber.dispose();
         }
+    }
+
+    /** The chain: cached/captions (free) → beforeAiTranscription gate → audio+ASR (paid). */
+    async transcribe(opts: TranscribeOpts): Promise<Transcript> {
+        const video = this.db.getVideo(opts.videoId);
+
+        if (!video) {
+            throw new Error(`unknown video: ${opts.videoId}`);
+        }
+
+        if (!opts.forceTranscribe) {
+            const fromCaptions = await this.tryCaptions({ videoId: opts.videoId, lang: opts.lang });
+
+            if (fromCaptions) {
+                return fromCaptions;
+            }
+
+            opts.onProgress?.({ phase: "audio", message: "no captions available — preparing AI transcription" });
+        }
+
+        await opts.beforeAiTranscription?.();
+
+        return this.transcribeAudio(opts);
     }
 
     private async preferredLangs(lang?: string): Promise<string[]> {
@@ -265,6 +292,7 @@ async function translateChunk(opts: {
             model: ids.model,
             usage: result.usage,
             scope: opts.videoId,
+            videoId: opts.videoId,
             prompt: `system:\n${systemPrompt}\n\nuser:\n${userPrompt}`,
             response: result.content,
         });

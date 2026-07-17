@@ -175,7 +175,9 @@ export class Pipeline {
                 },
             };
 
-            await withJobActivity({ jobId: job.id, stage: claimedStage, db: this.db }, () => handler(ctx));
+            await withJobActivity({ jobId: job.id, stage: claimedStage, db: this.db, userId: job.userId }, () =>
+                handler(ctx)
+            );
             logger.debug(
                 { jobId: job.id, stage: claimedStage, targetKind: job.targetKind, target: job.target },
                 "youtube pipeline stage completed"

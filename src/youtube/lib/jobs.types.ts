@@ -27,6 +27,7 @@ export interface PipelineJob {
     progress: number;
     progressMessage: string | null;
     parentJobId: number | null;
+    userId: number | null;
     workerId: string | null;
     claimedAt: string | null;
     createdAt: string;
