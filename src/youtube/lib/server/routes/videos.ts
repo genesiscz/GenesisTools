@@ -9,6 +9,7 @@ import { isOutputLang } from "@app/youtube/lib/languages";
 import { getPresetForUse } from "@app/youtube/lib/presets";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
 import { selectCandidateVideos } from "@app/youtube/lib/qa";
+import { enforceFreeQuota } from "@app/youtube/lib/quota";
 import { requireUser, resolveUser } from "@app/youtube/lib/server/auth";
 import { safeJsonBody } from "@app/youtube/lib/server/body";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
@@ -136,6 +137,12 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             }
 
             const creditCost = CREDIT_COSTS["transcript:translate"];
+            const quotaError = await enforceFreeQuota(yt, user);
+
+            if (quotaError) {
+                return quotaError;
+            }
+
             // Reserve BEFORE the LLM call so concurrent requests cannot pass a
             // stale balance check and burn provider cost; released on failure.
             const hold = yt.db.reserveCredits({
@@ -207,6 +214,12 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             let hold: { holdId: number; credits: number } | undefined;
 
             if (!cached) {
+                const quotaError = await enforceFreeQuota(yt, user);
+
+                if (quotaError) {
+                    return quotaError;
+                }
+
                 // Reserve BEFORE synthesis so concurrent requests cannot pass a
                 // stale balance check and burn provider cost; released on failure.
                 hold = yt.db.reserveCredits({ userId: user.id, amount: creditCost, reason: `tts:${id}` });
@@ -513,6 +526,12 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                       ),
                   })
                 : undefined;
+            const quotaError = await enforceFreeQuota(yt, user);
+
+            if (quotaError) {
+                return quotaError;
+            }
+
             // Reserve BEFORE the pipeline work so concurrent requests cannot pass
             // a stale balance check and burn provider cost; released on failure.
             const hold = yt.db.reserveCredits({
@@ -827,6 +846,12 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 }
 
                 presetInstructions = preset.instructions;
+            }
+
+            const quotaError = await enforceFreeQuota(yt, user);
+
+            if (quotaError) {
+                return quotaError;
             }
 
             // Reserve BEFORE the retrieval/LLM work so concurrent requests cannot
