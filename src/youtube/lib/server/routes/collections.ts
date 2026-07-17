@@ -1,12 +1,16 @@
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
+import { askCollection } from "@app/youtube/lib/collection-ask";
 import { parseCollectionRule, resolveCollectionVideoIds } from "@app/youtube/lib/collection-rules";
 import type { CollectionKind } from "@app/youtube/lib/db.types";
+import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
 import { requireUser } from "@app/youtube/lib/server/auth";
 import { safeJsonBody } from "@app/youtube/lib/server/body";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
+import { CREDIT_COSTS, InsufficientCreditsError } from "@app/youtube/lib/users.types";
 import type { Youtube } from "@app/youtube/lib/youtube";
 
 export async function handleCollectionsRoute(req: Request, url: URL, yt: Youtube): Promise<Response> {
@@ -95,6 +99,77 @@ export async function handleCollectionsRoute(req: Request, url: URL, yt: Youtube
             }
 
             return Response.json({ threads: yt.db.listAskThreads(user.id, collection.id) }, { headers: CORS_HEADERS });
+        }
+
+        const ask = matchRoute(req, "POST", "/api/v1/collections/:id/ask", url.pathname);
+
+        if (ask) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const collection = ownedCollection(yt, user.id, ask.id);
+
+            if (!collection) {
+                return jsonError("collection not found", 404);
+            }
+
+            const body = (await safeJsonBody(req)) ?? {};
+            const question = typeof body.question === "string" ? body.question.trim() : "";
+
+            if (!question) {
+                return jsonError("body must include {question}", 400);
+            }
+
+            const threadId = typeof body.threadId === "number" ? body.threadId : null;
+            const creditCost = CREDIT_COSTS["qa:channel"];
+            let hold: { holdId: number; credits: number };
+
+            try {
+                // Reserve BEFORE provider work; released on any failure below.
+                hold = yt.db.reserveCredits({
+                    userId: user.id,
+                    amount: creditCost,
+                    reason: "qa:channel",
+                    context: `collection:${collection.id}`,
+                });
+            } catch (error) {
+                if (error instanceof InsufficientCreditsError) {
+                    return new Response(
+                        SafeJSON.stringify({ error: error.message, code: "insufficient_credits" }, { strict: true }),
+                        { status: 402, headers: { "Content-Type": "application/json", ...CORS_HEADERS } }
+                    );
+                }
+
+                throw error;
+            }
+
+            try {
+                const providerChoice = await resolveProviderChoice({
+                    provider: typeof body.provider === "string" ? body.provider : undefined,
+                    model: typeof body.model === "string" ? body.model : undefined,
+                    fallbackSpec: resolveAiSpecForTask(await yt.config.getAll(), "qa"),
+                });
+                const result = await askCollection({
+                    db: yt.db,
+                    userId: user.id,
+                    collection,
+                    question,
+                    threadId,
+                    providerChoice,
+                });
+                yt.db.commitHold(hold.holdId);
+
+                return Response.json(
+                    { ...result, creditsSpent: creditCost, credits: hold.credits },
+                    { headers: CORS_HEADERS }
+                );
+            } catch (error) {
+                yt.db.releaseHold(hold.holdId);
+                throw error;
+            }
         }
 
         const addVideo = matchRoute(req, "POST", "/api/v1/collections/:id/videos", url.pathname);

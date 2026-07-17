@@ -99,3 +99,27 @@ describe("collections routes", () => {
         expect((detail.json.videos as unknown[]).length).toBe(1);
     });
 });
+
+describe("POST /collections/:id/ask (pre-LLM paths)", () => {
+    it("404s foreign collections and 400s a missing question", async () => {
+        const owner = createUser("a1@example.com");
+        const stranger = createUser("a2@example.com");
+        const created = await call("POST", "/api/v1/collections", owner.token, { name: "c", kind: "manual" });
+        const id = (created.json.collection as { id: number }).id;
+
+        expect((await call("POST", `/api/v1/collections/${id}/ask`, stranger.token, { question: "?" })).status).toBe(
+            404
+        );
+        expect((await call("POST", `/api/v1/collections/${id}/ask`, owner.token, {})).status).toBe(400);
+    });
+
+    it("402s with a typed code when the balance cannot cover the ask", async () => {
+        const owner = createUser("a3@example.com");
+        const created = await call("POST", "/api/v1/collections", owner.token, { name: "c", kind: "manual" });
+        const id = (created.json.collection as { id: number }).id;
+        const res = await call("POST", `/api/v1/collections/${id}/ask`, owner.token, { question: "hi" });
+
+        expect(res.status).toBe(402);
+        expect(res.json.code).toBe("insufficient_credits");
+    });
+});
