@@ -1517,6 +1517,172 @@ function buildPaths(): Record<string, OpenApiPathItem> {
                 },
             },
         },
+        "/api/v1/admin/users": {
+            get: {
+                operationId: "adminListUsers",
+                summary: "Users table with per-user revenue/AI-cost/net aggregates (admin/dev only)",
+                tags: ["admin"],
+                parameters: [
+                    {
+                        name: "q",
+                        in: "query",
+                        required: false,
+                        description: "Email substring.",
+                        schema: { type: "string" },
+                    },
+                    { name: "subscription", in: "query", required: false, schema: { type: "string" } },
+                    {
+                        name: "sort",
+                        in: "query",
+                        required: false,
+                        schema: { type: "string", enum: ["created", "revenue", "net", "credits"] },
+                    },
+                    { name: "dir", in: "query", required: false, schema: { type: "string", enum: ["asc", "desc"] } },
+                    { name: "limit", in: "query", required: false, schema: { type: "integer" } },
+                    { name: "offset", in: "query", required: false, schema: { type: "integer" } },
+                ],
+                responses: {
+                    "200": jsonResponse("Users table", {
+                        type: "object",
+                        properties: {
+                            users: arrayOf({ type: "object" }),
+                            total: { type: "integer" },
+                            limit: { type: "integer" },
+                            offset: { type: "integer" },
+                        },
+                        required: ["users", "total"],
+                    }),
+                    "401": errorResponse,
+                    "403": errorResponse,
+                },
+            },
+        },
+        "/api/v1/admin/users/{id}": {
+            get: {
+                operationId: "adminGetUser",
+                summary:
+                    "Full user profile drill-in: role, billing, ledger, payments, referrals, activity, jobs (admin/dev only)",
+                tags: ["admin"],
+                parameters: [
+                    { name: "id", in: "path", required: true, description: "User id.", schema: { type: "integer" } },
+                ],
+                responses: {
+                    "200": jsonResponse("User profile", { type: "object" }),
+                    "401": errorResponse,
+                    "403": errorResponse,
+                    "404": errorResponse,
+                },
+            },
+        },
+        "/api/v1/admin/ai-calls": {
+            get: {
+                operationId: "adminListAiCalls",
+                summary: "Paginated AI calls, filterable by provider/action/user (admin/dev only)",
+                tags: ["admin"],
+                parameters: [
+                    { name: "provider", in: "query", required: false, schema: { type: "string" } },
+                    { name: "action", in: "query", required: false, schema: { type: "string" } },
+                    { name: "userId", in: "query", required: false, schema: { type: "integer" } },
+                    { name: "limit", in: "query", required: false, schema: { type: "integer" } },
+                    { name: "offset", in: "query", required: false, schema: { type: "integer" } },
+                ],
+                responses: {
+                    "200": jsonResponse("AI calls", {
+                        type: "object",
+                        properties: {
+                            aiCalls: arrayOf({ type: "object" }),
+                            total: { type: "integer" },
+                            limit: { type: "integer" },
+                            offset: { type: "integer" },
+                        },
+                        required: ["aiCalls", "total"],
+                    }),
+                    "401": errorResponse,
+                    "403": errorResponse,
+                },
+            },
+        },
+        "/api/v1/admin/webhook-logs": {
+            get: {
+                operationId: "adminListWebhookLogs",
+                summary: "Paginated Stripe webhook logs, filterable by outcome (admin/dev only)",
+                tags: ["admin"],
+                parameters: [
+                    { name: "outcome", in: "query", required: false, schema: { type: "string" } },
+                    { name: "limit", in: "query", required: false, schema: { type: "integer" } },
+                    { name: "offset", in: "query", required: false, schema: { type: "integer" } },
+                ],
+                responses: {
+                    "200": jsonResponse("Webhook logs", {
+                        type: "object",
+                        properties: {
+                            webhookLogs: arrayOf({ type: "object" }),
+                            total: { type: "integer" },
+                            limit: { type: "integer" },
+                            offset: { type: "integer" },
+                        },
+                        required: ["webhookLogs", "total"],
+                    }),
+                    "401": errorResponse,
+                    "403": errorResponse,
+                },
+            },
+        },
+        "/api/v1/admin/jobs": {
+            get: {
+                operationId: "adminListJobs",
+                summary: "Paginated pipeline jobs plus current queue stats, filterable by status (admin/dev only)",
+                tags: ["admin"],
+                parameters: [
+                    { name: "status", in: "query", required: false, schema: { type: "string" } },
+                    { name: "limit", in: "query", required: false, schema: { type: "integer" } },
+                    { name: "offset", in: "query", required: false, schema: { type: "integer" } },
+                ],
+                responses: {
+                    "200": jsonResponse("Jobs and queue", {
+                        type: "object",
+                        properties: {
+                            jobs: arrayOf({ type: "object" }),
+                            queue: { type: "object" },
+                            total: { type: "integer" },
+                            limit: { type: "integer" },
+                            offset: { type: "integer" },
+                        },
+                        required: ["jobs", "queue", "total"],
+                    }),
+                    "401": errorResponse,
+                    "403": errorResponse,
+                },
+            },
+        },
+        "/api/v1/admin/revenue": {
+            get: {
+                operationId: "adminRevenueSummary",
+                summary: "Platform revenue totals plus zero-filled daily revenue/cost buckets (admin/dev only)",
+                tags: ["admin"],
+                parameters: [
+                    {
+                        name: "days",
+                        in: "query",
+                        required: false,
+                        description: "Daily-bucket window length (1-365, default 30).",
+                        schema: { type: "integer" },
+                    },
+                ],
+                responses: {
+                    "200": jsonResponse("Revenue summary", {
+                        type: "object",
+                        properties: {
+                            totals: { type: "object" },
+                            daily: arrayOf({ type: "object" }),
+                        },
+                        required: ["totals", "daily"],
+                    }),
+                    "401": errorResponse,
+                    "403": errorResponse,
+                },
+            },
+        },
     };
 }
 
