@@ -35,6 +35,11 @@ import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 /** System prompt + instructions sent alongside the transcript. */
 const PROMPT_OVERHEAD_TOKENS = 700;
 
+// Coalesces concurrent cache-miss translations of the same (video, lang):
+// the loser waits for the winner and serves its cached row instead of
+// double-spending provider cost on an identical translation.
+const inflightTranslations = new Map<string, Promise<unknown>>();
+
 export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Promise<Response> {
     try {
         if (matchRoute(req, "GET", "/api/v1/videos", url.pathname)) {
@@ -145,6 +150,23 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 return quotaError;
             }
 
+            const inflightKey = `${id}:${lang}`;
+            const inflight = inflightTranslations.get(inflightKey);
+
+            if (inflight) {
+                // Wait out the winner (its own error handling applies to it),
+                // then serve the row it cached — free, like any cache hit.
+                await inflight.catch(() => {});
+                const nowCached = yt.db.getTranscript(id, { lang });
+
+                if (nowCached) {
+                    return Response.json(
+                        { transcript: nowCached, creditsSpent: 0, credits: user.credits },
+                        { headers: CORS_HEADERS }
+                    );
+                }
+            }
+
             // Reserve BEFORE the LLM call so concurrent requests cannot pass a
             // stale balance check and burn provider cost; released on failure.
             const hold = yt.db.reserveCredits({
@@ -159,8 +181,16 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     provider: typeof body.provider === "string" ? body.provider : undefined,
                     model: typeof body.model === "string" ? body.model : undefined,
                 });
-                const transcript = await translateTranscript({ db: yt.db, videoId: id, lang, providerChoice });
-                yt.db.commitHold(hold.holdId);
+                const run = translateTranscript({
+                    db: yt.db,
+                    videoId: id,
+                    lang,
+                    providerChoice,
+                    // Commits atomically with the transcript save (see finalize doc).
+                    finalize: () => yt.db.commitHold(hold.holdId),
+                });
+                inflightTranslations.set(inflightKey, run);
+                const transcript = await run;
 
                 return Response.json(
                     { transcript, creditsSpent: creditCost, credits: hold.credits },
@@ -169,6 +199,8 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             } catch (error) {
                 yt.db.releaseHold(hold.holdId);
                 throw error;
+            } finally {
+                inflightTranslations.delete(inflightKey);
             }
         }
 
@@ -670,19 +702,24 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 yt.pipeline.emitExternal({ type: "job:completed", job: completedJob });
                 // Full-price generation also records access — the generator
                 // never pays again, and later users can unlock this artifact.
-                grantArtifactAccess(yt.db, {
-                    userId: user.id,
-                    kind: `summary:${mode}`,
-                    videoId: id,
-                    creditsSpent: creditCost,
-                });
-                if (transcribeHold.current !== null) {
-                    yt.db.commitHold(transcribeHold.current.holdId);
-                }
+                // Access grant + hold commits in one transaction: a crash between
+                // them must not charge without granting access (or vice versa). If
+                // it throws, the rollback leaves the holds "held" and releasable
+                // in the catch below.
+                yt.db.transaction(() => {
+                    grantArtifactAccess(yt.db, {
+                        userId: user.id,
+                        kind: `summary:${mode}`,
+                        videoId: id,
+                        creditsSpent: creditCost,
+                    });
 
-                // Last DB action before the response: anything throwing above
-                // still finds the hold "held" and releasable in the catch.
-                yt.db.commitHold(hold.holdId);
+                    if (transcribeHold.current !== null) {
+                        yt.db.commitHold(transcribeHold.current.holdId);
+                    }
+
+                    yt.db.commitHold(hold.holdId);
+                });
 
                 return Response.json(
                     {

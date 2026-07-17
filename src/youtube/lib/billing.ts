@@ -363,56 +363,65 @@ function applyInvoicePaid(db: YoutubeDatabase, invoice: Record<string, unknown>)
         return "processed";
     }
 
-    const balance = db.getUserCredits(sub.userId);
-
-    if (balance === null) {
-        logger.warn({ invoiceId, userId: sub.userId }, "youtube billing: invoice.paid for missing user");
-
-        return "skipped";
-    }
-
     const period = invoicePeriod(invoice);
-    let delta: number;
-    let newBalance: number;
 
-    if (sub.periodStart === null) {
-        // First invoice: the user never had an allowance — plain additive grant.
-        delta = sub.allowance;
-        newBalance = balance + delta;
-    } else {
-        const reset = computeAllowanceReset({
-            balance,
-            periodStartBalance: sub.periodStartBalance,
-            grantsSince: db.getGrantsSince(sub.userId, sub.periodStart),
-            allowanceGranted: sub.allowance,
-            newAllowance: sub.allowance,
+    // One transaction: the balance read, allowance math, grant, subscription
+    // period update, and payment record must be a single atomic unit — a
+    // concurrent spend between the read and the grant would otherwise skew
+    // the reset delta and periodStartBalance.
+    const outcome = db.transaction((): "processed" | "skipped" => {
+        const balance = db.getUserCredits(sub.userId);
+
+        if (balance === null) {
+            logger.warn({ invoiceId, userId: sub.userId }, "youtube billing: invoice.paid for missing user");
+
+            return "skipped";
+        }
+
+        let delta: number;
+        let newBalance: number;
+
+        if (sub.periodStart === null) {
+            // First invoice: the user never had an allowance — plain additive grant.
+            delta = sub.allowance;
+            newBalance = balance + delta;
+        } else {
+            const reset = computeAllowanceReset({
+                balance,
+                periodStartBalance: sub.periodStartBalance,
+                grantsSince: db.getGrantsSince(sub.userId, sub.periodStart),
+                allowanceGranted: sub.allowance,
+                newAllowance: sub.allowance,
+            });
+            delta = reset.delta;
+            newBalance = reset.newBalance;
+        }
+
+        // A delta of 0 (unspent renewal) still writes the ledger row — the reset
+        // itself is an auditable event, and it doubles as the idempotency marker.
+        db.grantCredits(sub.userId, delta, reason);
+        db.updateSubscription(sub.id, {
+            status: "active",
+            periodStart: period.start,
+            periodEnd: period.end,
+            periodStartBalance: newBalance,
         });
-        delta = reset.delta;
-        newBalance = reset.newBalance;
-    }
+        db.recordPayment({
+            userId: sub.userId,
+            kind: "subscription",
+            stripeRef: invoiceId,
+            planId: sub.planId,
+            amountCents: typeof invoice.amount_paid === "number" ? invoice.amount_paid : null,
+            currency: typeof invoice.currency === "string" ? invoice.currency : null,
+            credits: delta,
+            status: "succeeded",
+        });
+        logger.info({ invoiceId, userId: sub.userId, delta, newBalance }, "youtube billing: allowance period applied");
 
-    // A delta of 0 (unspent renewal) still writes the ledger row — the reset
-    // itself is an auditable event, and it doubles as the idempotency marker.
-    db.grantCredits(sub.userId, delta, reason);
-    db.updateSubscription(sub.id, {
-        status: "active",
-        periodStart: period.start,
-        periodEnd: period.end,
-        periodStartBalance: newBalance,
+        return "processed";
     });
-    db.recordPayment({
-        userId: sub.userId,
-        kind: "subscription",
-        stripeRef: invoiceId,
-        planId: sub.planId,
-        amountCents: typeof invoice.amount_paid === "number" ? invoice.amount_paid : null,
-        currency: typeof invoice.currency === "string" ? invoice.currency : null,
-        credits: delta,
-        status: "succeeded",
-    });
-    logger.info({ invoiceId, userId: sub.userId, delta, newBalance }, "youtube billing: allowance period applied");
 
-    return "processed";
+    return outcome;
 }
 
 function applyInvoicePaymentFailed(db: YoutubeDatabase, invoice: Record<string, unknown>): "processed" | "skipped" {

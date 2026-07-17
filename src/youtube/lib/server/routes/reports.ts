@@ -79,26 +79,34 @@ export async function handleReportsRoute(req: Request, url: URL, yt: Youtube): P
                     : `Report · ${videoIds.length} videos`;
             const provider = typeof body?.provider === "string" ? body.provider : undefined;
             const model = typeof body?.model === "string" ? body.model : undefined;
-            const report = yt.db.insertReport({
-                userId: user.id,
-                title,
-                memberIds: videoIds,
-                params: { provider, model },
-            });
-
-            // The full quote is charged up front; member access rows are granted
-            // at their quoted price so summaries generated (or reused) for this
-            // report stay unlocked for the requester afterwards.
-            const credits = yt.db.spendCredits(user.id, estimate.creditCost, `report:${report.id}`);
-
-            for (const videoId of videoIds) {
-                grantArtifactAccess(yt.db, {
+            // Report row, up-front charge, and member access rows commit as one
+            // unit — a failure mid-way must not leave a charged user without a
+            // report (or an uncharged report). enqueue stays outside: job
+            // creation is retriable and must not roll back the charge.
+            const { report, credits } = yt.db.transaction(() => {
+                const insertedReport = yt.db.insertReport({
                     userId: user.id,
-                    kind: "summary:long",
-                    videoId,
-                    creditsSpent: estimate.perMemberCost[videoId] ?? 0,
+                    title,
+                    memberIds: videoIds,
+                    params: { provider, model },
                 });
-            }
+
+                // The full quote is charged up front; member access rows are granted
+                // at their quoted price so summaries generated (or reused) for this
+                // report stay unlocked for the requester afterwards.
+                const remaining = yt.db.spendCredits(user.id, estimate.creditCost, `report:${insertedReport.id}`);
+
+                for (const videoId of videoIds) {
+                    grantArtifactAccess(yt.db, {
+                        userId: user.id,
+                        kind: "summary:long",
+                        videoId,
+                        creditsSpent: estimate.perMemberCost[videoId] ?? 0,
+                    });
+                }
+
+                return { report: insertedReport, credits: remaining };
+            });
 
             const job = yt.pipeline.enqueue({
                 targetKind: "report",

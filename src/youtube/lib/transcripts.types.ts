@@ -75,6 +75,9 @@ export interface TranslateTranscriptOpts {
     lang: Language;
     providerChoice: ProviderChoice;
     onProgress?: (info: TranslateProgressInfo) => void;
+    /** Runs inside the same DB transaction as the transcript save — for
+     *  atomically committing a credit hold alongside the persisted artifact. */
+    finalize?: () => void;
     /** Test seam — defaults to the real `callLLM`. */
     callLLM?: (opts: CallLLMOptions) => Promise<CallLLMResult>;
 }

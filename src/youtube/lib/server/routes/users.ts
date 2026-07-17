@@ -274,20 +274,26 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
                 );
             }
 
-            const referralId = yt.db.createReferral({
-                code,
-                referrerUserId,
-                refereeUserId: user.id,
-                reward: offer.reward,
-                offerFrom: offer.from,
-                offerTo: offer.to,
+            // Referral row + both-side rewards commit atomically — a crash
+            // between them would otherwise leave a redeemed referral with a
+            // missing (or one-sided) reward.
+            const credits = yt.db.transaction(() => {
+                const referralId = yt.db.createReferral({
+                    code,
+                    referrerUserId,
+                    refereeUserId: user.id,
+                    reward: offer.reward,
+                    offerFrom: offer.from,
+                    offerTo: offer.to,
+                });
+                // Both-side reward: two ledger rows share the referral id so the
+                // activity feed can label each side.
+                yt.db.grantCredits(referrerUserId, offer.reward, `referral:${referralId}:referrer`);
+
+                return yt.db.grantCredits(user.id, offer.reward, `referral:${referralId}:referee`);
             });
-            // Both-side reward: two ledger rows share the referral id so the
-            // activity feed can label each side.
-            yt.db.grantCredits(referrerUserId, offer.reward, `referral:${referralId}:referrer`);
-            const credits = yt.db.grantCredits(user.id, offer.reward, `referral:${referralId}:referee`);
             logger.info(
-                { referralId, referrerUserId, refereeUserId: user.id, reward: offer.reward },
+                { referrerUserId, refereeUserId: user.id, reward: offer.reward },
                 "youtube referrals: redeemed"
             );
 
