@@ -26,6 +26,7 @@ import type {
     YoutubeConfigShape,
     YtUser,
 } from "@app/youtube/lib/types";
+import type { UserSettings } from "@app/youtube/lib/user-settings";
 import { fetchUiConfig } from "@app/yt/config.client";
 import { reportBackendReachable, reportBackendUnreachable } from "./backend-status";
 
@@ -302,7 +303,10 @@ export const apiClient = {
             method: "POST",
             body: SafeJSON.stringify({ email, password }),
         }),
-    me: () => api<{ user: YtUser; role: string }>("/users/me"),
+    me: () => api<{ user: YtUser; role: string; settings: UserSettings }>("/users/me"),
+    getSettings: () => api<{ settings: UserSettings }>("/users/settings"),
+    updateSettings: (patch: Partial<UserSettings>) =>
+        api<{ settings: UserSettings }>("/users/settings", { method: "PATCH", body: SafeJSON.stringify(patch) }),
 
     listCollections: () => api<{ collections: Array<CollectionRecord & { videoCount: number }> }>("/collections"),
     createCollection: (body: { name: string; kind: CollectionKind; rule?: unknown }) =>
