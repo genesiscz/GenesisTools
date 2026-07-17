@@ -25,7 +25,8 @@ import {
     useUsageSummary,
 } from "@ext/api.hooks";
 import { persistUiLang, useT, useUiLang } from "@ext/shared/i18n";
-import { CreditCard, Gem, Loader2, LogOut, Pencil, Share2, Trash2, Wand2 } from "lucide-react";
+import type { AccountSection } from "@ext/side-panel/account-view";
+import { CreditCard, Gem, History, Loader2, LogOut, Pencil, Share2, Trash2, Wand2 } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
 type AuthMode = "login" | "register";
@@ -34,12 +35,12 @@ export function SettingsDialog({
     open,
     onOpenChange,
     devMode,
-    onViewActivity,
+    onOpenAccount,
 }: {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     devMode?: boolean;
-    onViewActivity?: () => void;
+    onOpenAccount?: (section: AccountSection) => void;
 }) {
     const me = useMe(open);
     const user = me.data?.user;
@@ -66,7 +67,7 @@ export function SettingsDialog({
                         credits={user.credits}
                         outputLang={user.outputLang}
                         devMode={devMode}
-                        onViewActivity={onViewActivity}
+                        onOpenAccount={onOpenAccount}
                     />
                 ) : (
                     <AuthForm />
@@ -81,13 +82,13 @@ function SignedInView({
     credits,
     outputLang,
     devMode,
-    onViewActivity,
+    onOpenAccount,
 }: {
     email: string;
     credits: number;
     outputLang: string | null;
     devMode?: boolean;
-    onViewActivity?: () => void;
+    onOpenAccount?: (section: AccountSection) => void;
 }) {
     const logout = useLogout();
     const t = useT();
@@ -110,7 +111,9 @@ function SignedInView({
 
             <DiamondPacksSection devMode={devMode} />
 
-            {onViewActivity ? <ActivitySparkline onViewAll={onViewActivity} /> : null}
+            {onOpenAccount ? <ActivitySparkline onViewAll={() => onOpenAccount("activity")} /> : null}
+
+            {onOpenAccount ? <LibraryNav onOpen={onOpenAccount} /> : null}
 
             <LanguageSection outputLang={outputLang} />
 
@@ -126,6 +129,22 @@ function SignedInView({
                 onClick={() => logout.mutate()}
             >
                 <LogOut className="size-4" /> {t("action.logOut")}
+            </Button>
+        </div>
+    );
+}
+
+function LibraryNav({ onOpen }: { onOpen: (section: AccountSection) => void }) {
+    return (
+        <div className="space-y-2">
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">your library</p>
+            <Button
+                size="sm"
+                variant="ghost"
+                className="w-full justify-start text-muted-foreground"
+                onClick={() => onOpen("history")}
+            >
+                <History className="size-4" /> History
             </Button>
         </div>
     );

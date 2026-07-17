@@ -12,7 +12,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
  * affordance) — the back row here is a fresh, capsule-consistent pattern
  * (ArrowLeft + "Back", matching Feature 11's PresetEditor block).
  */
-export function ActivityView({ onBack }: { onBack: () => void }) {
+export function ActivityView({ onBack }: { onBack?: () => void }) {
     const summary = useUsageSummary();
     const ledger = useLedger();
     const [selectedReasons, setSelectedReasons] = useState<Set<string>>(new Set());
@@ -64,13 +64,15 @@ export function ActivityView({ onBack }: { onBack: () => void }) {
 
     return (
         <div className="space-y-4 p-4">
-            <button
-                type="button"
-                onClick={onBack}
-                className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
-            >
-                <ArrowLeft className="size-4" /> Back
-            </button>
+            {onBack ? (
+                <button
+                    type="button"
+                    onClick={onBack}
+                    className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                >
+                    <ArrowLeft className="size-4" /> Back
+                </button>
+            ) : null}
 
             <div>
                 <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">activity</p>

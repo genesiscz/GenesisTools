@@ -5,7 +5,7 @@ import { send } from "@ext/api.bridge";
 import { buildAudioSrc, dataSource, useConfig, useMe, useModels, useStartPipeline, useSummary } from "@ext/api.hooks";
 import { loadUiLang } from "@ext/shared/i18n";
 import type { ExtensionEvent, PlayerChaptersMessage } from "@ext/shared/messages";
-import { ActivityView } from "@ext/side-panel/activity-view";
+import { type AccountSection, AccountView } from "@ext/side-panel/account-view";
 import { ChannelPanel } from "@ext/side-panel/channel-panel";
 import { Header } from "@ext/side-panel/header";
 import { PlaylistPanel } from "@ext/side-panel/playlist-panel";
@@ -36,7 +36,8 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
     const [active, setActive] = useState<VideoDetailTab>("summary");
     const [collapsed, setCollapsed] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
-    const [view, setView] = useState<"tabs" | "activity">("tabs");
+    const [view, setView] = useState<"tabs" | "account">("tabs");
+    const [accountSection, setAccountSection] = useState<AccountSection>("activity");
     // `playerTime` is the throttled value handed to the tab subtree; the ref
     // holds the raw 1 Hz position so we can push an exact value the instant a
     // consumer that needs it (the transcript's follow-mode) becomes visible.
@@ -361,8 +362,14 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                 hits its top/bottom. */}
             <div className="yt-body-collapsible flex min-h-0 flex-1 flex-col" data-collapsed={collapsed}>
                 <div className="yt-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">
-                    {view === "activity" ? (
-                        <ActivityView onBack={() => setView("tabs")} />
+                    {view === "account" ? (
+                        <AccountView
+                            section={accountSection}
+                            onSectionChange={setAccountSection}
+                            onBack={() => setView("tabs")}
+                            onRequireLogin={requireLogin}
+                            onOpenWatch={(id, t) => void send({ type: "nav:openWatch", id, t })}
+                        />
                     ) : (
                         <VideoDetailTabs
                             videoId={videoId}
@@ -402,9 +409,10 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                     }
                 }}
                 devMode={IS_DEV_BUILD}
-                onViewActivity={() => {
+                onOpenAccount={(accountSectionId) => {
                     setSettingsOpen(false);
-                    setView("activity");
+                    setAccountSection(accountSectionId);
+                    setView("account");
                 }}
             />
         </div>
