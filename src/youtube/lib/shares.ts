@@ -11,6 +11,18 @@ export const SHARE_SLUG_LENGTH = 12;
 const SHARE_RATE_LIMIT_PER_HOUR = 10;
 const BASE62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
+/**
+ * Thrown when the caller tries to share a charged artifact (a stored summary)
+ * they never unlocked — sharing must not hand out content that would otherwise
+ * cost a reuse charge. Mapped to 403 by the shares route.
+ */
+export class ShareAccessError extends Error {
+    constructor() {
+        super("artifact access required");
+        this.name = "ShareAccessError";
+    }
+}
+
 interface SharePayloadBase {
     videoTitle: string;
     channel: string | null;
@@ -113,6 +125,13 @@ function buildSharePayload(opts: {
     if (opts.kind === "summary") {
         if (!opts.mode) {
             throw new Error("summary share requires {mode}");
+        }
+
+        // A stored summary is a charged artifact: sharing it must not hand out
+        // content the caller never unlocked (which would bypass the reuse charge
+        // and expose it publicly). The generator/owner holds an access row.
+        if (!opts.db.hasArtifactAccess(opts.user.id, `summary:${opts.mode}`, opts.videoId)) {
+            throw new ShareAccessError();
         }
 
         if (opts.mode === "short") {

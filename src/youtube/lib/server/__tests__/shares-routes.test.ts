@@ -31,10 +31,16 @@ describe("youtube server shares routes", () => {
         const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
 
         try {
-            const { token } = await registeredToken(handle.port, "sharer@example.com");
+            const { token, userId } = await registeredToken(handle.port, "sharer@example.com");
             handle.youtube.db.upsertChannel({ handle: "@chan" });
             handle.youtube.db.upsertVideo({ id: "vidABC", channelHandle: "@chan", title: "Deep Dive Video" });
             handle.youtube.db.setVideoSummary("vidABC", "short", "The video explains X in depth, with examples.");
+            handle.youtube.db.insertArtifactAccess({
+                userId,
+                kind: "summary:short",
+                videoId: "vidABC",
+                creditsSpent: 0,
+            });
 
             const createRes = await fetch(`http://localhost:${handle.port}/api/v1/shares`, {
                 method: "POST",
@@ -63,6 +69,28 @@ describe("youtube server shares routes", () => {
 
             const afterDelete = await fetch(createBody.url);
             expect(afterDelete.status).toBe(404);
+        } finally {
+            await handle.stop();
+        }
+    });
+
+    it("POST summary share without artifact access returns 403", async () => {
+        const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
+
+        try {
+            const { token } = await registeredToken(handle.port, "nofunds@example.com");
+            handle.youtube.db.upsertChannel({ handle: "@chan" });
+            handle.youtube.db.upsertVideo({ id: "vidLocked", channelHandle: "@chan", title: "Locked Video" });
+            handle.youtube.db.setVideoSummary("vidLocked", "short", "Someone else generated this summary.");
+
+            const res = await fetch(`http://localhost:${handle.port}/api/v1/shares`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                body: SafeJSON.stringify({ kind: "summary", videoId: "vidLocked", mode: "short" }),
+            });
+
+            expect(res.status).toBe(403);
+            expect(((await res.json()) as { error: string }).error).toBe("artifact access required");
         } finally {
             await handle.stop();
         }
@@ -104,10 +132,16 @@ describe("youtube server shares routes", () => {
         const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
 
         try {
-            const { token } = await registeredToken(handle.port, "lister@example.com");
+            const { token, userId } = await registeredToken(handle.port, "lister@example.com");
             handle.youtube.db.upsertChannel({ handle: "@chan" });
             handle.youtube.db.upsertVideo({ id: "vidList", channelHandle: "@chan", title: "List Video" });
             handle.youtube.db.setVideoSummary("vidList", "short", "Short summary text.");
+            handle.youtube.db.insertArtifactAccess({
+                userId,
+                kind: "summary:short",
+                videoId: "vidList",
+                creditsSpent: 0,
+            });
 
             await fetch(`http://localhost:${handle.port}/api/v1/shares`, {
                 method: "POST",
