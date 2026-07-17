@@ -2,6 +2,7 @@ import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import type { ChannelHandle, CollectionKind, JobStage, JobStatus, QaSource, VideoId } from "@app/youtube/lib/types";
 import { mergeUserSettings, resolveUserSettings, type UserSettings } from "@app/youtube/lib/user-settings";
 import { apiClient, clearApiBaseUrlCache, setUserToken } from "@app/yt/api.client";
+import { clearUserScopedQueries } from "@app/yt/lib/user-queries";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -341,7 +342,10 @@ export function useLogout() {
         mutationFn: async () => {
             setUserToken(null);
         },
-        onSuccess: () => queryClient.invalidateQueries(),
+        onSuccess: () => {
+            clearUserScopedQueries(queryClient);
+            queryClient.invalidateQueries();
+        },
     });
 }
 
@@ -390,7 +394,10 @@ export function useAddCollectionVideo(id: number) {
 
     return useMutation({
         mutationFn: (videoId: string) => apiClient.addCollectionVideo(id, videoId),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["collection", id] }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["collection", id] });
+            queryClient.invalidateQueries({ queryKey: ["collections"] });
+        },
         onError: (error) => {
             toast.error("Adding video failed", { description: errorMessage(error) });
         },
