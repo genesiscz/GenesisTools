@@ -174,6 +174,7 @@ export async function getOrSynthesizeSummaryAudio(opts: {
         provider: target.providerId,
         model: "(tts-default)",
         scope: opts.videoId,
+        videoId: opts.videoId,
     });
     await pruneStaleSummaryAudio(opts.videoId, target.path);
 

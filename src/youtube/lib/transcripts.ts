@@ -116,6 +116,7 @@ export class TranscriptService {
                 provider: providerName ?? "default",
                 model: "(transcriber-default)",
                 scope: opts.videoId,
+                videoId: opts.videoId,
             });
             const lang = result.language ?? opts.lang ?? "en";
             this.db.saveTranscript({
@@ -265,6 +266,7 @@ async function translateChunk(opts: {
             model: ids.model,
             usage: result.usage,
             scope: opts.videoId,
+            videoId: opts.videoId,
             prompt: `system:\n${systemPrompt}\n\nuser:\n${userPrompt}`,
             response: result.content,
         });

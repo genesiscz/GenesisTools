@@ -218,6 +218,7 @@ export class SummaryService {
                 model: ids.model,
                 usage: result.usage,
                 scope: opts.videoId,
+                videoId: opts.videoId,
                 prompt: formatPrompt(systemPrompt, text),
                 response: result.content,
                 durationMs: completedAt.getTime() - startedAt.getTime(),
@@ -239,6 +240,7 @@ export class SummaryService {
                 provider: providerName,
                 model: "(summarizer-default)",
                 scope: opts.videoId,
+                videoId: opts.videoId,
             });
 
             return result.summary;
@@ -309,6 +311,7 @@ export class SummaryService {
             model: ids.model,
             usage: result.usage,
             scope: opts.videoId,
+            videoId: opts.videoId,
             prompt: formatPrompt(systemPrompt, userPrompt),
             response: result.content,
             durationMs: completedAt.getTime() - startedAt.getTime(),
@@ -366,6 +369,7 @@ export class SummaryService {
             model: ids.model,
             usage: result.usage,
             scope: opts.videoId,
+            videoId: opts.videoId,
             prompt: formatPrompt(systemPrompt, userPrompt),
             response: result.content,
             durationMs: completedAt.getTime() - startedAt.getTime(),
@@ -432,6 +436,7 @@ export class SummaryService {
             model: ids.model,
             usage: result.usage,
             scope: opts.members.map((member) => member.videoId).join(","),
+            videoId: opts.members.map((member) => member.videoId).join(","),
             prompt: formatPrompt(REPORT_SYSTEM_BASE, userPrompt),
             response: result.content,
             durationMs: completedAt.getTime() - startedAt.getTime(),

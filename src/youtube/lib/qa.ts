@@ -86,6 +86,7 @@ export class QaService {
                         provider: opts.provider ?? provider.embed ?? "default",
                         model: modelId,
                         scope: opts.videoId,
+                        videoId: opts.videoId,
                     });
 
                     for (let i = 0; i < chunks.length; i++) {
@@ -127,6 +128,7 @@ export class QaService {
                         provider: opts.provider ?? provider.embed ?? "default",
                         model: modelId,
                         scope: opts.videoId,
+                        videoId: opts.videoId,
                     });
 
                     for (let i = 0; i < chunks.length; i++) {
@@ -244,6 +246,7 @@ export class QaService {
                 model: ids.model,
                 usage: result.usage,
                 scope: opts.videoIds.join(","),
+                videoId: opts.videoIds.length === 1 ? opts.videoIds[0] : null,
                 prompt: `system:\n${systemPrompt}\n\nuser:\n${userPrompt}`,
                 response: result.content,
                 durationMs: completedAt.getTime() - startedAt.getTime(),
