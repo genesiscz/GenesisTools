@@ -155,6 +155,30 @@ describe("translateTranscript", () => {
         }
     });
 
+    it("rejects an empty translated line and retries instead of erasing the text", async () => {
+        const { db, dir } = await makeFixture();
+
+        try {
+            // First attempt returns an empty payload for line 0 — accepting it would
+            // wipe real transcript text, so it must count as a parse failure.
+            responses = ["[#0]\n[#1] Druhý řádek.", "[#0] První řádek.\n[#1] Druhý řádek."];
+
+            const result = await translateTranscript({
+                db,
+                videoId: "abc123def45",
+                lang: "cs",
+                providerChoice: fakeChoice,
+                callLLM: stubCallLLM,
+            });
+
+            expect(result.segments.map((s) => s.text)).toEqual(["První řádek.", "Druhý řádek."]);
+            expect(callLlmCalls).toHaveLength(2);
+        } finally {
+            db.close();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     it("throws when the line count still mismatches after the retry", async () => {
         const { db, dir } = await makeFixture();
 

@@ -350,7 +350,15 @@ function parseTranslatedLines(content: string, count: number): Map<number, strin
             return null;
         }
 
-        byId.set(id, match[2]);
+        const text = match[2].trim();
+
+        // An empty payload would overwrite real transcript text with nothing —
+        // treat it as a parse failure so the retry (and its stricter prompt) runs.
+        if (text.length === 0) {
+            return null;
+        }
+
+        byId.set(id, text);
     }
 
     return byId.size === count ? byId : null;
