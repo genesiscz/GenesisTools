@@ -170,7 +170,14 @@ export interface ExtensionApiMap {
     "api:getJob": { job: PipelineJob };
     "api:listModels": {
         presets: Array<{ label: string; provider: string; model: string; subscription?: boolean }>;
-        defaults: { summarize?: string | null; qa?: string | null; transcribe?: string | null; embed?: string | null };
+        /** summarize/qa arrive RESOLVED to the concrete pair the server would
+         *  use (same resolution as the generate/qa routes), not the raw spec. */
+        defaults: {
+            summarize?: { provider: string; model: string } | null;
+            qa?: { provider: string; model: string } | null;
+            transcribe?: string | null;
+            embed?: string | null;
+        };
     };
     "api:estimate": LlmEstimate;
     "api:register": { user: YtUser; token: string };

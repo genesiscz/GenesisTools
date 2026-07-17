@@ -69,8 +69,9 @@ export interface AskTabProps {
     useCreateShare?: VideoDetailDataSource["useCreateShare"];
     useListPresets?: VideoDetailDataSource["useListPresets"];
     useCreatePreset?: VideoDetailDataSource["useCreatePreset"];
-    /** Invoked by the "Sign in" affordance when the ask endpoint returns 401. */
-    onRequireLogin?: () => void;
+    /** Invoked by the "Sign in" affordance when the ask endpoint returns 401.
+     *  Receives the failed action as `retry` — a successful login re-runs it. */
+    onRequireLogin?: (retry?: () => void) => void;
     /** Comments presence check for the Comments/Both scopes. */
     useComments?: (id: VideoId | null) => {
         data: { comments: VideoComment[] } | undefined;
@@ -458,7 +459,7 @@ export function AskTab({
                             Questions cost diamonds, so they need an account.
                         </p>
                         {onRequireLogin ? (
-                            <Button size="sm" className="mt-2.5" onClick={onRequireLogin}>
+                            <Button size="sm" className="mt-2.5" onClick={() => onRequireLogin(() => void submit())}>
                                 Sign in
                             </Button>
                         ) : null}
@@ -532,6 +533,7 @@ export function AskTab({
                             <ShareButton
                                 className="shrink-0"
                                 onShare={() => createShare.mutateAsync({ kind: "qa", videoId, qaHistoryId: latest.id })}
+                                onRequireLogin={onRequireLogin}
                                 onCopied={() => {
                                     setLatestLinkCopied(true);
                                     setTimeout(() => setLatestLinkCopied(false), 2000);

@@ -1,4 +1,5 @@
 import { type PipelineProgress, type VideoDetailTab, VideoDetailTabs } from "@app/utils/ui/components/youtube/tabs";
+import type { PipelineJob } from "@app/youtube/lib/jobs.types";
 import type { JobStage, SummaryMode } from "@app/youtube/lib/types";
 import { send } from "@ext/api.bridge";
 import { buildAudioSrc, dataSource, useConfig, useMe, useModels, useStartPipeline, useSummary } from "@ext/api.hooks";
@@ -52,6 +53,30 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
     const me = useMe();
     const config = useConfig();
 
+    // Login-gated action retry: a 401'd action registers itself here before
+    // the settings dialog opens; the moment `useMe` reports a user, the dialog
+    // closes and the action re-runs — the user never has to re-click.
+    const pendingLoginRetry = useRef<(() => void) | null>(null);
+    const requireLogin = useCallback((retry?: () => void) => {
+        pendingLoginRetry.current = retry ?? null;
+        setSettingsOpen(true);
+    }, []);
+
+    useEffect(() => {
+        if (!me.data?.user) {
+            return;
+        }
+
+        const retry = pendingLoginRetry.current;
+        if (!retry) {
+            return;
+        }
+
+        pendingLoginRetry.current = null;
+        setSettingsOpen(false);
+        retry();
+    }, [me.data?.user]);
+
     useEffect(() => {
         void loadUiLang();
     }, []);
@@ -96,6 +121,24 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
         setStreamingMode(null);
         streamingJobRef.current = null;
     }, [videoId]);
+
+    const invalidateForStages = useCallback(
+        (stages: JobStage[]): void => {
+            if (stages.includes("comments")) {
+                queryClient.invalidateQueries({ queryKey: ["comments", videoId] });
+            }
+            if (stages.includes("captions") || stages.includes("transcribe")) {
+                queryClient.invalidateQueries({ queryKey: ["transcript", videoId] });
+            }
+            if (stages.includes("summarize")) {
+                queryClient.invalidateQueries({ queryKey: ["summary", videoId] });
+            }
+            if (stages.includes("metadata")) {
+                queryClient.invalidateQueries({ queryKey: ["video", videoId] });
+            }
+        },
+        [queryClient, videoId]
+    );
 
     const longSummary = useSummary(videoId, "long");
     const longChapters = longSummary.data?.long?.chapters;
@@ -192,23 +235,47 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                 return;
             }
 
-            const stages = jobEvent.job.stages ?? [];
-            if (stages.includes("comments")) {
-                queryClient.invalidateQueries({ queryKey: ["comments", videoId] });
-            }
-            if (stages.includes("captions") || stages.includes("transcribe")) {
-                queryClient.invalidateQueries({ queryKey: ["transcript", videoId] });
-            }
-            if (stages.includes("summarize")) {
-                queryClient.invalidateQueries({ queryKey: ["summary", videoId] });
-            }
-            if (stages.includes("metadata")) {
-                queryClient.invalidateQueries({ queryKey: ["video", videoId] });
-            }
+            invalidateForStages(jobEvent.job.stages ?? []);
         }
         document.addEventListener("yt-extension-event", onExtensionEvent);
         return () => document.removeEventListener("yt-extension-event", onExtensionEvent);
-    }, [queryClient, videoId]);
+    }, [invalidateForStages]);
+
+    // WS fallback poll: the MV3 service worker (and its events WebSocket) can
+    // be dead while a job runs — without this the panel would never learn the
+    // job finished and "Fetch comments" would look like it did nothing. While
+    // any job is tracked, poll its status and run the same invalidations the
+    // WS handler would.
+    useEffect(() => {
+        if (pipelineProgress === null) {
+            return;
+        }
+
+        const timer = setInterval(() => {
+            for (const jobId of activeJobIdsRef.current) {
+                void send<{ job: PipelineJob }>({ type: "api:getJob", id: jobId }).then(({ job }) => {
+                    if (job.status !== "completed" && job.status !== "failed" && job.status !== "cancelled") {
+                        setPipelineProgress({ progress: job.progress, message: job.progressMessage });
+                        return;
+                    }
+
+                    if (!activeJobIdsRef.current.delete(job.id)) {
+                        return;
+                    }
+
+                    if (activeJobIdsRef.current.size === 0) {
+                        setPipelineProgress(null);
+                    }
+
+                    if (job.status === "completed") {
+                        invalidateForStages(job.stages ?? []);
+                    }
+                });
+            }
+        }, 3000);
+
+        return () => clearInterval(timer);
+    }, [pipelineProgress, invalidateForStages]);
 
     function seek(seconds: number): void {
         window.postMessage({ event: "command", func: "seekTo", args: [seconds, true] }, "https://www.youtube.com");
@@ -222,7 +289,11 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
 
     const runStages = useCallback(
         async (stages: JobStage[]): Promise<void> => {
-            await startPipeline.mutateAsync({ target: videoId, targetKind: "video", stages });
+            const result = await startPipeline.mutateAsync({ target: videoId, targetKind: "video", stages });
+            // Track the job from the POST response, not just from WS job:created —
+            // the loader must show even when the events socket is down.
+            activeJobIdsRef.current.add(result.job.id);
+            setPipelineProgress((prev) => prev ?? { progress: 0, message: null });
         },
         [startPipeline.mutateAsync, videoId]
     );
@@ -255,8 +326,14 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                 onToggleCollapse={() => setCollapsed((v) => !v)}
                 onOpenSettings={() => setSettingsOpen(true)}
             />
-            <div className="yt-body-collapsible min-h-0 flex-1" data-collapsed={collapsed}>
-                <div className="yt-scroll min-h-0 h-full overflow-auto">
+            {/* Nested flex (not h-full): percentage heights can't resolve against
+                the collapsible's auto height, so `h-full` computed to auto and the
+                overflow-auto box never scrolled — wheel events fell through to the
+                YouTube page. Flex sizing distributes real layout space instead.
+                overscroll-contain stops the page from scrolling when the panel
+                hits its top/bottom. */}
+            <div className="yt-body-collapsible flex min-h-0 flex-1 flex-col" data-collapsed={collapsed}>
+                <div className="yt-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">
                     {view === "activity" ? (
                         <ActivityView onBack={() => setView("tabs")} />
                     ) : (
@@ -270,8 +347,9 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                             chromeless
                             devMode={IS_DEV_BUILD}
                             modelPresets={models.data?.presets ?? []}
+                            modelDefaults={models.data?.defaults}
                             pipelineProgress={pipelineProgress}
-                            onRequireLogin={() => setSettingsOpen(true)}
+                            onRequireLogin={requireLogin}
                             onOpenWatch={(id, t) => void send({ type: "nav:openWatch", id, t })}
                             partialSummaries={partialSummaries}
                             streamingMode={streamingMode}
@@ -289,7 +367,13 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
             </div>
             <SettingsDialog
                 open={settingsOpen}
-                onOpenChange={setSettingsOpen}
+                onOpenChange={(open) => {
+                    setSettingsOpen(open);
+                    // Manual close without logging in abandons the queued action.
+                    if (!open) {
+                        pendingLoginRetry.current = null;
+                    }
+                }}
                 devMode={IS_DEV_BUILD}
                 onViewActivity={() => {
                     setSettingsOpen(false);

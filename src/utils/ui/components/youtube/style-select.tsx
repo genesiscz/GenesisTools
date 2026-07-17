@@ -59,7 +59,7 @@ export function StyleSelect({
 
     return (
         <label
-            className={`flex items-center gap-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground ${className ?? ""}`}
+            className={`flex items-center gap-1.5 text-xs text-muted-foreground ${className ?? ""}`}
         >
             Style
             <Select
@@ -73,7 +73,7 @@ export function StyleSelect({
                     onSelect(next === NONE_VALUE ? null : Number(next));
                 }}
             >
-                <SelectTrigger className="h-8 min-w-[10rem] text-sm">
+                <SelectTrigger className="h-8 text-xs">
                     <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

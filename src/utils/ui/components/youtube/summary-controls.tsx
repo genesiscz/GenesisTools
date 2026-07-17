@@ -17,6 +17,21 @@ const TONES: SummaryTone[] = ["insightful", "funny", "actionable", "controversia
 const FORMATS: SummaryFormat[] = ["list", "qa"];
 const LENGTHS: SummaryLength[] = ["short", "auto", "detailed"];
 
+/** Human phrasing for the live dialog description — reads as a sentence
+ *  fragment after "written with". */
+export const TONE_PHRASES: Record<SummaryTone, string> = {
+    insightful: "an insightful, analytical voice",
+    funny: "a light, playful voice",
+    actionable: "a focus on practical takeaways",
+    controversial: "the boldest, most debated angles front and center",
+};
+
+export const LENGTH_PHRASES: Record<SummaryLength, string> = {
+    short: "kept brief",
+    auto: "sized to the video",
+    detailed: "with extra detail",
+};
+
 export interface SummaryControlsBarProps {
     value: SummaryControlsState;
     onChange: (next: SummaryControlsState) => void;
@@ -28,7 +43,7 @@ export interface SummaryControlsBarProps {
 
 export function SummaryControlsBar({ value, onChange, hideFormat, disabled }: SummaryControlsBarProps) {
     return (
-        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-primary/15 bg-black/30 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-primary/15 bg-black/30 px-3 py-2">
             <ControlSelect
                 label="Tone"
                 options={TONES}
@@ -70,19 +85,15 @@ function ControlSelect({
     disabled?: boolean;
 }) {
     return (
-        <label className="flex items-center gap-2 mr-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             {label}
             <Select value={value} onValueChange={onChange} disabled={disabled}>
-                <SelectTrigger className="h-8 min-w-[10rem] border-primary/20 bg-black/40 font-mono text-xs uppercase tracking-[0.14em] text-foreground/90">
+                <SelectTrigger className="h-8 border-primary/20 bg-black/40 text-xs capitalize text-foreground/90">
                     <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                     {options.map((option) => (
-                        <SelectItem
-                            key={option}
-                            value={option}
-                            className="font-mono text-xs uppercase tracking-[0.18em]"
-                        >
+                        <SelectItem key={option} value={option} className="text-xs capitalize">
                             {option === "qa" ? "Q&A" : option}
                         </SelectItem>
                     ))}
