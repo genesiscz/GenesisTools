@@ -102,7 +102,9 @@ export function createGitStackRestack(options?: { log?: RestackLog }): StackRest
             const tmpRoot = await mkdtemp(join(tmpdir(), "gt-merge-restack-"));
             const g = gitAt(tmpRoot);
 
-            log?.(`  restack: ${branch} onto ${newBase}` + (oldBaseSha ? ` (drop ≤ ${oldBaseSha.slice(0, 7)})` : ""));
+            log?.(
+                `  restack: ${branch} onto ${newBase}${oldBaseSha ? ` (drop ≤ ${oldBaseSha.slice(0, 7)})` : ""}`
+            )
 
             try {
                 await gitOrThrow(g, ["init", "-q"], "git init");
