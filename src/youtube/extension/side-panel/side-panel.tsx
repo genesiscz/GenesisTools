@@ -398,6 +398,12 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
         const timer = setInterval(() => {
             for (const jobId of activeJobIdsRef.current) {
                 void send<{ job: PipelineJob }>({ type: "api:getJob", id: jobId }).then(({ job }) => {
+                    // Stale-response guard: the WS handler may have already
+                    // removed this job — a late poll must not resurrect the bar.
+                    if (!activeJobIdsRef.current.has(job.id)) {
+                        return;
+                    }
+
                     if (job.status !== "completed" && job.status !== "failed" && job.status !== "cancelled") {
                         setPipelineProgress({ progress: job.progress, message: job.progressMessage });
                         return;

@@ -153,7 +153,13 @@ export function CustomizationSection() {
                                         <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value={ACCOUNT_LANG}>Account language</SelectItem>
+                                        {/* Settings merge is additive by design — a saved override can't
+                                            be cleared yet, so don't offer a reset that would no-op. */}
+                                        <SelectItem value={ACCOUNT_LANG} disabled={task.lang != null}>
+                                            {task.lang != null
+                                                ? "Account language (clearing not supported yet)"
+                                                : "Account language"}
+                                        </SelectItem>
                                         {OUTPUT_LANGS.map((lang) => (
                                             <SelectItem key={lang.code} value={lang.code}>
                                                 <span className="font-mono text-[12px] uppercase">{lang.code}</span>{" "}
@@ -174,7 +180,11 @@ export function CustomizationSection() {
                                         <SelectValue placeholder="Model · dev" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value={ACCOUNT_LANG}>Server default model</SelectItem>
+                                        <SelectItem value={ACCOUNT_LANG} disabled={task.model != null}>
+                                            {task.model != null
+                                                ? "Server default model (clearing not supported yet)"
+                                                : "Server default model"}
+                                        </SelectItem>
                                         {(models.data?.presets ?? []).map((preset) => (
                                             <SelectItem key={preset.label} value={preset.model}>
                                                 {preset.label}

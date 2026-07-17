@@ -1,5 +1,4 @@
 import { logger } from "@app/logger/client";
-import { SafeJSON } from "@app/utils/json";
 import { Button } from "@app/utils/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
 import { Input } from "@app/utils/ui/components/input";
@@ -277,11 +276,17 @@ function ActivitySparkline({ onViewAll }: { onViewAll: () => void }) {
     return (
         <div className="space-y-2">
             <ActivityGraph days={summary.data?.days ?? []} loading={summary.isPending} />
-            <p className="text-sm text-muted-foreground">
-                This month:{" "}
-                <span className="font-semibold tabular-nums text-foreground">{summary.data?.month.spent ?? 0} 💎</span>{" "}
-                spent · +{summary.data?.month.earned ?? 0} topped up
-            </p>
+            {summary.isError ? (
+                <p className="text-sm text-muted-foreground">Couldn't load this month's totals.</p>
+            ) : (
+                <p className="text-sm text-muted-foreground">
+                    This month:{" "}
+                    <span className="font-semibold tabular-nums text-foreground">
+                        {summary.data?.month.spent ?? 0} 💎
+                    </span>{" "}
+                    spent · +{summary.data?.month.earned ?? 0} topped up
+                </p>
+            )}
             <Button size="sm" variant="ghost" className="w-full text-muted-foreground" onClick={onViewAll}>
                 View all activity →
             </Button>
@@ -547,7 +552,9 @@ function PresetsSection() {
             kind: preset.kind,
             instructions: preset.instructions,
         }));
-        const blob = new Blob([SafeJSON.stringify(payload, null, 2)], { type: "application/json" });
+        // Native JSON on purpose — this file rides in the content-script IIFE
+        // bundle, where SafeJSON's comment-json dep costs ~150 kB (see background.ts).
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement("a");
         anchor.href = url;
@@ -560,7 +567,7 @@ function PresetsSection() {
         setImportResult(null);
         try {
             const text = await file.text();
-            const parsed: unknown = SafeJSON.parse(text);
+            const parsed: unknown = JSON.parse(text);
 
             if (!Array.isArray(parsed)) {
                 throw new Error("invalid file");

@@ -469,13 +469,14 @@ export function useCreateReport() {
 
 export function useReport(id: number | null) {
     // When polling began for the current report — bounds how long we poll a
-    // job that never finishes.
+    // job that never finishes. Keyed to the id: a direct id→id switch must
+    // restart the clock, not inherit the previous report's start time.
     const pollStartRef = useRef<number | null>(null);
+    const pollIdRef = useRef<number | null>(null);
 
-    if (id === null) {
-        pollStartRef.current = null;
-    } else if (pollStartRef.current === null) {
-        pollStartRef.current = Date.now();
+    if (id !== pollIdRef.current) {
+        pollIdRef.current = id;
+        pollStartRef.current = id === null ? null : Date.now();
     }
 
     const query = useQuery({

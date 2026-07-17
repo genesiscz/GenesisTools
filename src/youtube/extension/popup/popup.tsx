@@ -98,7 +98,18 @@ function Popup() {
 
     async function checkHealth(): Promise<void> {
         setNote(null);
-        const permission = await ensureHostPermission(apiUrl);
+        let permission: Awaited<ReturnType<typeof ensureHostPermission>>;
+
+        try {
+            permission = await ensureHostPermission(apiUrl);
+        } catch {
+            // chrome.permissions can reject (e.g. gesture requirements) — a
+            // click on Test must never end in an unhandled rejection.
+            setNote("Couldn't request permission for that origin.");
+            setStatus("down");
+            return;
+        }
+
         if (permission === "invalid-url") {
             setNote("That doesn't look like a valid URL.");
             setStatus("down");
@@ -160,6 +171,7 @@ function Popup() {
         setBusy(true);
         chrome.runtime
             .sendMessage({ type: "api:startPipeline", target: videoId, targetKind: "video", stages })
+            .catch(() => setNote("Couldn't start the pipeline — is the background worker alive?"))
             .finally(() => setBusy(false));
     }
 
