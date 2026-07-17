@@ -384,6 +384,7 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                             modelDefaults={models.data?.defaults}
                             pipelineProgress={pipelineProgress}
                             onRequireLogin={requireLogin}
+                            onUpgrade={() => setSettingsOpen(true)}
                             onOpenWatch={(id, t) => void send({ type: "nav:openWatch", id, t })}
                             partialSummaries={partialSummaries}
                             streamingMode={streamingMode}

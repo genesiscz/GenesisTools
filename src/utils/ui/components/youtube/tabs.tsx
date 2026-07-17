@@ -201,6 +201,10 @@ export interface VideoDetailTabsProps {
      *  returns 401. Receives the bounced action as `retry` — the owner runs it
      *  after a successful login so the user never has to re-click. */
     onRequireLogin?: (retry?: () => void) => void;
+    /** Opens the diamonds/subscription surface when a spend endpoint returns a
+     *  402 (out of free quota / diamonds) — the confirm dialogs turn it into a
+     *  friendly upsell. */
+    onUpgrade?: () => void;
     /** Open another video's watch page at a timestamp (cross-video citations). */
     onOpenWatch?: (videoId: string, t: number) => void;
     /** Streaming `summary:partial` payloads keyed by mode (long / timestamped). */
@@ -234,6 +238,7 @@ export function VideoDetailTabs({
     modelDefaults,
     pipelineProgress,
     onRequireLogin,
+    onUpgrade,
     onOpenWatch,
     partialSummaries,
     streamingMode,
@@ -358,6 +363,7 @@ export function VideoDetailTabs({
                         modelPresets={modelPresets}
                         modelDefault={modelDefaults?.summarize}
                         onRequireLogin={onRequireLogin}
+                        onUpgrade={onUpgrade}
                         pipelineProgress={pipelineProgress}
                         partialTimestamped={partialSummaries?.timestamped}
                         streaming={streamingMode === "timestamped"}
@@ -377,6 +383,7 @@ export function VideoDetailTabs({
                         modelPresets={modelPresets}
                         modelDefault={modelDefaults?.summarize}
                         onRequireLogin={onRequireLogin}
+                        onUpgrade={onUpgrade}
                         pipelineProgress={pipelineProgress}
                         partialLong={partialSummaries?.long}
                         streaming={streamingMode === "long"}
@@ -398,6 +405,7 @@ export function VideoDetailTabs({
                         useListPresets={ds.useListPresets}
                         useCreatePreset={ds.useCreatePreset}
                         onRequireLogin={onRequireLogin}
+                        onUpgrade={onUpgrade}
                         useComments={ds.useComments}
                         runPipeline={runPipeline}
                         pipelineProgress={pipelineProgress}

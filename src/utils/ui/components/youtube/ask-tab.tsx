@@ -2,6 +2,7 @@ import { logger } from "@app/logger/client";
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import { Markdown } from "@app/utils/ui/components/markdown";
+import { errorCodeOf } from "@app/utils/ui/components/youtube/login-required";
 import { ShareButton } from "@app/utils/ui/components/youtube/share-button";
 import { StyleSelect } from "@app/utils/ui/components/youtube/style-select";
 import type { PipelineProgress, RunPipeline, VideoDetailDataSource } from "@app/utils/ui/components/youtube/tabs";
@@ -72,6 +73,8 @@ export interface AskTabProps {
     /** Invoked by the "Sign in" affordance when the ask endpoint returns 401.
      *  Receives the failed action as `retry` — a successful login re-runs it. */
     onRequireLogin?: (retry?: () => void) => void;
+    /** Opens the diamonds/subscription surface when Ask bounces with a 402. */
+    onUpgrade?: () => void;
     /** Comments presence check for the Comments/Both scopes. */
     useComments?: (id: VideoId | null) => {
         data: { comments: VideoComment[] } | undefined;
@@ -287,6 +290,7 @@ export function AskTab({
     useListPresets,
     useCreatePreset,
     onRequireLogin,
+    onUpgrade,
     useComments,
     runPipeline,
     pipelineProgress,
@@ -305,6 +309,7 @@ export function AskTab({
     const [scope, setScope] = useState<AskScope>("video");
     const [question, setQuestion] = useState("");
     const [error, setError] = useState<string | null>(null);
+    const [errorCode, setErrorCode] = useState<string | null>(null);
     // Session fallback for consumers without server history — keeps the live
     // answer visible when `useQaHistory` isn't wired.
     const [sessionExchange, setSessionExchange] = useState<{
@@ -320,7 +325,8 @@ export function AskTab({
     const items = history?.data?.items ?? [];
     const latest = items[0];
     const older = items.slice(1);
-    const signInRequired = error === "login required";
+    const signInRequired = error === "login required" || errorCode === "login_required";
+    const upgradeRequired = errorCode === "quota_exhausted" || errorCode === "insufficient_credits";
     const commentsUnfetched = useComments !== undefined && (comments?.data?.comments.length ?? 0) === 0;
     const needsCommentsFetch = (scope === "comments" || scope === "both") && commentsUnfetched;
 
@@ -332,6 +338,7 @@ export function AskTab({
         }
 
         setError(null);
+        setErrorCode(null);
         try {
             const result = await ask.mutateAsync({
                 question: trimmed,
@@ -354,6 +361,7 @@ export function AskTab({
         } catch (error) {
             logger.warn({ error }, "ask-tab: submit failed");
             setError(error instanceof Error ? error.message : String(error));
+            setErrorCode(errorCodeOf(error) ?? null);
         }
     }
 
@@ -461,6 +469,25 @@ export function AskTab({
                         {onRequireLogin ? (
                             <Button size="sm" className="mt-2.5" onClick={() => onRequireLogin(() => void submit())}>
                                 Sign in
+                            </Button>
+                        ) : null}
+                    </div>
+                </div>
+            ) : upgradeRequired ? (
+                <div className="flex items-start gap-3 rounded-2xl border border-primary/25 bg-primary/5 p-4">
+                    <LockKeyhole className="mt-0.5 size-4 shrink-0 text-primary" strokeWidth={2} />
+                    <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-foreground/95">
+                            {errorCode === "quota_exhausted" ? "Out of free questions" : "Not enough diamonds"}
+                        </p>
+                        <p className="mt-0.5 text-sm text-muted-foreground">
+                            {errorCode === "quota_exhausted"
+                                ? "You've used your free actions this month. Top up or subscribe to keep asking."
+                                : "Top up or subscribe to keep asking."}
+                        </p>
+                        {onUpgrade ? (
+                            <Button size="sm" className="mt-2.5" onClick={onUpgrade}>
+                                Get diamonds
                             </Button>
                         ) : null}
                     </div>

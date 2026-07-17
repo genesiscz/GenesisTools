@@ -98,6 +98,7 @@ export function SummaryTab({
     modelPresets,
     modelDefault,
     onRequireLogin,
+    onUpgrade,
     pipelineProgress,
     partialLong,
     streaming,
@@ -112,6 +113,7 @@ export function SummaryTab({
     modelPresets?: ModelPreset[];
     modelDefault?: { provider: string; model: string } | null;
     onRequireLogin?: (retry?: () => void) => void;
+    onUpgrade?: () => void;
     pipelineProgress?: PipelineProgress | null;
 }) {
     const summary = useSummary(videoId, "long");
@@ -323,6 +325,7 @@ export function SummaryTab({
                 confirmLabel={long === null ? "Generate" : "Re-generate"}
                 error={generate.error ? (generate.error as Error).message : null}
                 errorCode={errorCodeOf(generate.error)}
+                onUpgrade={onUpgrade}
                 showAdvanced={devMode}
                 modelPresets={modelPresets}
                 defaultProvider={modelDefault?.provider}
