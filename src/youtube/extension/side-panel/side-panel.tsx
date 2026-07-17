@@ -375,7 +375,7 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                 }
             }
 
-            if (jobEvent.type !== "job:completed") {
+            if (jobEvent.type !== "job:completed" || jobEvent.job.target !== videoId) {
                 return;
             }
 
