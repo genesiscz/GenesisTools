@@ -58,6 +58,10 @@ function VideoDetailPage() {
             isPending: startPipeline.isPending,
             run: async (stages: JobStage[]) => {
                 try {
+                    // Reset stale progress from a prior run before tracking the
+                    // new job — otherwise the old bar flashes at its last value.
+                    setProgress(0);
+                    setProgressMessage(null);
                     const { job } = await startPipeline.mutateAsync({ target: id, targetKind: "video", stages });
                     setActiveJobId(job.id);
                 } catch (error) {
@@ -96,6 +100,9 @@ function VideoDetailPage() {
                 queryClient.invalidateQueries({ queryKey: ["transcript", id] });
             }
             if (event.type === "job:failed") {
+                // Terminal value: leaving progress mid-range keeps the
+                // pipelineProgress loader (progress > 0 && < 1) alive forever.
+                setProgress(0);
                 setProgressMessage("Failed");
                 queryClient.invalidateQueries({ queryKey: ["video", id] });
                 queryClient.invalidateQueries({ queryKey: ["summary", id] });

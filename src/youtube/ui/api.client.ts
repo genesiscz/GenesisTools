@@ -109,14 +109,22 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     const token = getUserToken();
     let res: Response;
 
+    // Headers-based merge: spreading init.headers would silently drop entries
+    // if a caller ever passes a Headers instance (non-enumerable own props).
+    const headers = new Headers(init.headers);
+
+    if (!headers.has("Content-Type")) {
+        headers.set("Content-Type", "application/json");
+    }
+
+    if (token && !headers.has("Authorization")) {
+        headers.set("Authorization", `Bearer ${token}`);
+    }
+
     try {
         res = await fetch(`${base}/api/v1${path}`, {
             ...init,
-            headers: {
-                "Content-Type": "application/json",
-                ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                ...(init.headers ?? {}),
-            },
+            headers,
         });
     } catch (err) {
         // Network-level failure (ERR_CONNECTION_REFUSED etc.) — the backend is down,

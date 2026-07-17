@@ -24,11 +24,10 @@ export const Route = createFileRoute("/jobs")({
 function JobsPage() {
     const [status, setStatus] = useState<JobStatus | "all">("all");
     const allJobs = useJobs({ limit: 100 });
-    const filteredJobs = useMemo(() => {
-        const jobs = allJobs.data ?? [];
-
-        return status === "all" ? jobs : jobs.filter((job) => job.status === status);
-    }, [allJobs.data, status]);
+    // Server-side status filter: filtering the capped "all" fetch client-side
+    // would silently lose matches older than the first 100 jobs.
+    const statusJobs = useJobs(status === "all" ? { limit: 100 } : { status, limit: 100 });
+    const filteredJobs = useMemo(() => statusJobs.data ?? [], [statusJobs.data]);
     const queryClient = useQueryClient();
     const stream = useEventStream({
         onEvent: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
@@ -45,8 +44,19 @@ function JobsPage() {
         return map;
     }, [allJobs.data]);
 
-    if (allJobs.isPending) {
+    if (allJobs.isPending || statusJobs.isPending) {
         return <Loading label="Loading pipeline jobs" />;
+    }
+
+    if (allJobs.isError || statusJobs.isError) {
+        return (
+            <div className="yt-panel rounded-3xl border border-destructive/30 p-6">
+                <p className="text-sm font-semibold text-destructive">Couldn't load pipeline jobs.</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                    The API request failed — check that the server is running, then retry.
+                </p>
+            </div>
+        );
     }
 
     return (

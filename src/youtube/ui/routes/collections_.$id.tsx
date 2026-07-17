@@ -24,6 +24,12 @@ function CollectionDetailPage() {
     const navigate = useNavigate();
     const [pending, setPending] = useState<string | null>(null);
 
+    // Non-numeric ids disable the query — without this guard they'd sit on
+    // the isPending branch ("Loading collection…") forever.
+    if (validId === null) {
+        return <p className="mx-auto max-w-4xl p-4 text-sm text-muted-foreground">Collection not found.</p>;
+    }
+
     if (collection.isPending) {
         return <p className="mx-auto max-w-4xl p-4 text-sm text-muted-foreground">Loading collection…</p>;
     }

@@ -15,7 +15,6 @@ import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import { Switch } from "@app/utils/ui/components/switch";
 import type { YoutubeConfigShape } from "@app/youtube/lib/types";
-import { apiClient } from "@app/yt/api.client";
 import { useCacheStats, useClearCache, usePatchServerConfig, usePruneCache, useServerConfig } from "@app/yt/api.hooks";
 import { AccountSection } from "@app/yt/components/account/account-section";
 import { CustomizationSection } from "@app/yt/components/account/customization-section";
@@ -81,7 +80,20 @@ function SettingsPage() {
     async function onTestConnection() {
         setHealthStatus("checking");
         try {
-            await apiClient.health();
+            // Probe the DRAFT base URL, not the configured client — testing the
+            // old endpoint while editing the field shows a stale "Connected".
+            const base = draft?.apiBaseUrl?.replace(/\/+$/, "");
+
+            if (!base) {
+                throw new Error("API base URL is empty");
+            }
+
+            const res = await fetch(`${base}/api/v1/healthz`);
+
+            if (!res.ok) {
+                throw new Error(`${res.status} ${res.statusText}`);
+            }
+
             setHealthStatus("ok");
             toast.success("API server is reachable");
         } catch (err) {
@@ -125,7 +137,10 @@ function SettingsPage() {
                     <Field label="Base URL">
                         <Input
                             value={draft.apiBaseUrl}
-                            onChange={(event) => setDraft({ ...draft, apiBaseUrl: event.target.value })}
+                            onChange={(event) => {
+                                setDraft({ ...draft, apiBaseUrl: event.target.value });
+                                setHealthStatus("idle");
+                            }}
                         />
                     </Field>
                     <div className="space-y-1.5">

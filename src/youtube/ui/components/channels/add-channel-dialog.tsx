@@ -30,12 +30,25 @@ export function AddChannelDialog({ open, onOpenChange }: { open: boolean; onOpen
 
         try {
             const result = await addChannels.mutateAsync(handles);
-            await Promise.all(result.added.map((handle) => syncChannel.mutateAsync({ handle })));
-            toast.success(`${result.added.length} channel${result.added.length === 1 ? "" : "s"} added and queued`);
+            // allSettled, not all: the channels are already added at this point,
+            // so one failed sync must not eat the whole batch's feedback.
+            const syncs = await Promise.allSettled(result.added.map((handle) => syncChannel.mutateAsync({ handle })));
+            const failed = syncs.filter((sync) => sync.status === "rejected");
+
+            if (failed.length > 0) {
+                logger.debug({ failed }, "add-channel-dialog: some syncs failed");
+                toast.warning(
+                    `${result.added.length} channel${result.added.length === 1 ? "" : "s"} added, but ${failed.length} failed to queue a sync`
+                );
+            } else {
+                toast.success(`${result.added.length} channel${result.added.length === 1 ? "" : "s"} added and queued`);
+            }
+
             setRawHandles("");
             onOpenChange(false);
         } catch (error) {
-            logger.debug({ error }, "add-channel-dialog: add/sync failed");
+            logger.debug({ error }, "add-channel-dialog: add failed");
+            toast.error("Couldn't add channels");
         }
     }
 
