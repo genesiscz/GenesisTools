@@ -210,6 +210,28 @@ describe("reports routes", () => {
         }
     });
 
+    it("does not insert a report row when the free quota is exhausted (402)", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "youtube-report-route-"));
+        const yt = new Youtube({ baseDir: dir, db });
+
+        try {
+            await yt.config.update({ freeTier: { actionsPerMonth: 0 } });
+            const user = createUser("q@example.com", 100);
+            const v1 = seedVideo("qqqqqqqqqq1");
+            const v2 = seedVideo("qqqqqqqqqq2");
+
+            const res = await call(yt, "POST", "/api/v1/reports", {
+                token: user.token,
+                body: { videoIds: [v1, v2] },
+            });
+
+            expect(res.status).toBe(402);
+            expect(db.listReports(user.id)).toHaveLength(0);
+        } finally {
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
     it("rejects member counts outside 2-20 and insufficient balances", async () => {
         const dir = await mkdtemp(join(tmpdir(), "youtube-report-route-"));
         const yt = new Youtube({ baseDir: dir, db });

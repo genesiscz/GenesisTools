@@ -65,6 +65,14 @@ export async function handleReportsRoute(req: Request, url: URL, yt: Youtube): P
                 );
             }
 
+            // Enforce the free-tier quota BEFORE persisting anything — a 402 here
+            // must not leave an orphan report row visible in the user's history.
+            const quotaError = await enforceFreeQuota(yt, user);
+
+            if (quotaError) {
+                return quotaError;
+            }
+
             const title =
                 typeof body?.title === "string" && body.title.trim() !== ""
                     ? body.title.trim()
@@ -77,11 +85,6 @@ export async function handleReportsRoute(req: Request, url: URL, yt: Youtube): P
                 memberIds: videoIds,
                 params: { provider, model },
             });
-            const quotaError = await enforceFreeQuota(yt, user);
-
-            if (quotaError) {
-                return quotaError;
-            }
 
             // The full quote is charged up front; member access rows are granted
             // at their quoted price so summaries generated (or reused) for this
