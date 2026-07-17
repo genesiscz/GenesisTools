@@ -1,3 +1,4 @@
+import { logger } from "@app/logger/client";
 import { Button } from "@app/utils/ui/components/button";
 import { formatTimecode } from "@app/utils/ui/components/youtube/time";
 import { Loader2, Pause, Play } from "lucide-react";
@@ -43,7 +44,7 @@ export function SummaryAudioPlayer({ priceLabel, onPrepare, onPlayVideo, playerT
         }
     }
 
-    function togglePlay(): void {
+    async function togglePlay(): Promise<void> {
         const audio = audioRef.current;
 
         if (!audio) {
@@ -57,8 +58,13 @@ export function SummaryAudioPlayer({ priceLabel, onPrepare, onPlayVideo, playerT
         }
 
         onPlayVideo?.();
-        void audio.play();
-        setPlaying(true);
+
+        try {
+            await audio.play();
+            setPlaying(true);
+        } catch (err) {
+            logger.debug({ err }, "summary-audio-player: audio.play() rejected");
+        }
     }
 
     // Exclusivity, direction 2: YouTube starts moving → pause this audio.
@@ -105,7 +111,7 @@ export function SummaryAudioPlayer({ priceLabel, onPrepare, onPlayVideo, playerT
     }
 
     return (
-        <div className="flex items-center gap-3 rounded-2xl border border-border/50 bg-black/20 px-3 py-2">
+        <div className="flex items-center gap-3 rounded-2xl border border-border/50 bg-muted/30 px-3 py-2">
             <audio
                 ref={audioRef}
                 src={src ?? undefined}
@@ -116,11 +122,18 @@ export function SummaryAudioPlayer({ priceLabel, onPrepare, onPlayVideo, playerT
             >
                 <track kind="captions" />
             </audio>
-            <Button size="sm" variant="ghost" className="size-7 p-0" onClick={togglePlay}>
+            <Button
+                size="sm"
+                variant="ghost"
+                className="size-7 p-0"
+                aria-label={playing ? "Pause summary audio" : "Play summary audio"}
+                onClick={togglePlay}
+            >
                 {playing ? <Pause className="size-4" /> : <Play className="size-4" />}
             </Button>
             <input
                 type="range"
+                aria-label="Audio playback position"
                 className="yt-audio-range flex-1"
                 min={0}
                 max={dur || 1}

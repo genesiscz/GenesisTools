@@ -1,25 +1,26 @@
 import { Button } from "@app/utils/ui/components/button";
 import { LlmConfirmDialog, type ModelPreset } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
 import { PanelLoading } from "@app/utils/ui/components/youtube/loading";
-import { errorCodeOf } from "@app/utils/ui/components/youtube/login-required";
+import { errorCodeOf, isLoginRequiredError } from "@app/utils/ui/components/youtube/login-required";
 import { LongSummaryView } from "@app/utils/ui/components/youtube/long-summary-view";
 import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
 import { ShareButton } from "@app/utils/ui/components/youtube/share-button";
 import { StyleSelect } from "@app/utils/ui/components/youtube/style-select";
 import { SummaryAudioPlayer } from "@app/utils/ui/components/youtube/summary-audio-player";
 import {
-    DEFAULT_SUMMARY_CONTROLS,
     LENGTH_PHRASES,
     SummaryControlsBar,
     type SummaryControlsState,
+    seedControlsFromTaskDefault,
     TONE_PHRASES,
 } from "@app/utils/ui/components/youtube/summary-controls";
 import { toPartialLongSummary } from "@app/utils/ui/components/youtube/summary-partials";
 import type { PipelineProgress, VideoDetailDataSource } from "@app/utils/ui/components/youtube/tabs";
 import type { LlmEstimate, LockedArtifact, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
 import { CREDIT_COSTS } from "@app/youtube/lib/types";
+import type { TaskDefaultSettings } from "@app/youtube/lib/user-settings";
 import { Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const NO_ESTIMATE = { data: undefined, isPending: false } as const;
 
@@ -99,6 +100,7 @@ export function SummaryTab({
     modelDefault,
     onRequireLogin,
     onUpgrade,
+    taskDefault,
     pipelineProgress,
     partialLong,
     streaming,
@@ -114,6 +116,7 @@ export function SummaryTab({
     modelDefault?: { provider: string; model: string } | null;
     onRequireLogin?: (retry?: () => void) => void;
     onUpgrade?: () => void;
+    taskDefault?: TaskDefaultSettings;
     pipelineProgress?: PipelineProgress | null;
 }) {
     const summary = useSummary(videoId, "long");
@@ -123,11 +126,27 @@ export function SummaryTab({
     const createPreset = useCreatePreset?.();
     const generateAudio = useGenerateSummaryAudio?.(videoId);
     const [confirmOpen, setConfirmOpen] = useState(false);
-    const [controls, setControls] = useState<SummaryControlsState>(DEFAULT_SUMMARY_CONTROLS);
+    const [controls, setControls] = useState<SummaryControlsState>(() => seedControlsFromTaskDefault(taskDefault));
     const [modelSel, setModelSel] = useState<{ provider?: string; model?: string }>({});
     const [linkCopied, setLinkCopied] = useState(false);
     const [presetId, setPresetId] = useState<number | null>(null);
-    const [lang, setLang] = useState(outputLang ?? "en");
+    const [lang, setLang] = useState(() => taskDefault?.lang ?? outputLang ?? "en");
+    // Settings can resolve after this tab mounts (async query). Seed once, when
+    // the per-task default first becomes available, so a saved preference still
+    // applies without clobbering later user changes.
+    const seededTaskDefaultRef = useRef(false);
+    useEffect(() => {
+        if (seededTaskDefaultRef.current || !taskDefault) {
+            return;
+        }
+
+        seededTaskDefaultRef.current = true;
+        setControls(seedControlsFromTaskDefault(taskDefault));
+
+        if (taskDefault.lang) {
+            setLang(taskDefault.lang);
+        }
+    }, [taskDefault]);
     const estimate = useEstimate?.(videoId, { mode: "long", ...modelSel, lang, enabled: confirmOpen }) ?? NO_ESTIMATE;
     // The dialog only ever fronts a fresh (re)generation — unlocking happens
     // on the teaser card — so quote the full generation price, not the
@@ -141,7 +160,7 @@ export function SummaryTab({
     const hasPartial = partialLong !== undefined;
 
     function openConfirm() {
-        setLang(outputLang ?? "en");
+        setLang(taskDefault?.lang ?? outputLang ?? "en");
         setConfirmOpen(true);
     }
 
@@ -182,7 +201,15 @@ export function SummaryTab({
     async function unlockSummary() {
         // Teaser IS the confirm — straight to the flat-price charge; the
         // server returns the stored artifact instantly (no job, no LLM).
-        await generate.mutateAsync({ mode: "long" });
+        try {
+            await generate.mutateAsync({ mode: "long" });
+        } catch (error) {
+            // Signed-out unlock gets the sign-in retry flow like share/generate
+            // do; other failures already render via generate.error reactively.
+            if (isLoginRequiredError(error) && onRequireLogin) {
+                onRequireLogin(() => void unlockSummary());
+            }
+        }
     }
 
     async function prepareAudio(): Promise<string> {
@@ -214,7 +241,7 @@ export function SummaryTab({
                             size="sm"
                             data-testid="summary-generate"
                             onClick={openConfirm}
-                            disabled={generate.isPending}
+                            disabled={generate.isPending || streaming}
                         >
                             {long === null ? "Generate summary…" : "Re-generate…"}
                         </Button>
@@ -232,10 +259,18 @@ export function SummaryTab({
                 // Generating state: streamed partials render through the normal
                 // view (skeletons for pending sections) — never on the teaser.
                 <LongSummaryView summary={partial} streaming onSeek={onSeek} playerTime={playerTime} />
+            ) : streaming ? (
+                // Streaming started but no partial has arrived yet — show the
+                // writing skeleton, never the stale previous summary.
+                <div className="space-y-2">
+                    <div className="h-4 rounded-md bg-muted/50 animate-pulse" />
+                    <div className="h-4 rounded-md bg-muted/50 animate-pulse" />
+                    <div className="h-4 rounded-md bg-muted/50 animate-pulse" />
+                </div>
             ) : lockedInfo !== null ? (
                 <div
                     data-testid="summary-locked"
-                    className="space-y-3 rounded-2xl border border-border/50 bg-black/20 p-3"
+                    className="space-y-3 rounded-2xl border border-border/50 bg-muted/30 p-3"
                 >
                     <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-secondary">summary</p>
                     <p className="line-clamp-3 text-sm text-muted-foreground [mask-image:linear-gradient(to_bottom,black_40%,transparent)]">
@@ -251,7 +286,7 @@ export function SummaryTab({
                             size="sm"
                             data-testid="summary-unlock"
                             onClick={unlockSummary}
-                            disabled={generate.isPending}
+                            disabled={generate.isPending || streaming}
                         >
                             {generate.isPending ? (
                                 <>
@@ -266,7 +301,7 @@ export function SummaryTab({
                             size="sm"
                             className="text-muted-foreground"
                             onClick={openConfirm}
-                            disabled={generate.isPending}
+                            disabled={generate.isPending || streaming}
                         >
                             Regenerate fresh…
                         </Button>
@@ -285,6 +320,7 @@ export function SummaryTab({
                 <>
                     {long !== null && generateAudio && buildAudioSrc ? (
                         <SummaryAudioPlayer
+                            key={videoId}
                             priceLabel={`${CREDIT_COSTS["tts:summary"]} 💎`}
                             onPrepare={prepareAudio}
                             onPlayVideo={onPlayVideo}
@@ -321,7 +357,7 @@ export function SummaryTab({
                         ) : null}
                     </div>
                 }
-                busy={generate.isPending}
+                busy={generate.isPending || streaming}
                 confirmLabel={long === null ? "Generate" : "Re-generate"}
                 error={generate.error ? (generate.error as Error).message : null}
                 errorCode={errorCodeOf(generate.error)}

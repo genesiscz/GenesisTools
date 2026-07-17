@@ -25,7 +25,8 @@ import type {
     VideoId,
     VideoLongSummary,
 } from "@app/youtube/lib/types";
-import { useEffect, useRef } from "react";
+import type { SettingsTaskKind, TaskDefaultSettings } from "@app/youtube/lib/user-settings";
+import { useEffect, useRef, useState } from "react";
 
 export type VideoDetailTab = "insights" | "summary" | "ask" | "comments" | "transcript";
 
@@ -200,6 +201,9 @@ export interface VideoDetailTabsProps {
     pipelineProgress?: PipelineProgress | null;
     /** Live queue stats — the transcript tab shows how many jobs are ahead. */
     queueStats?: QueueStats | null;
+    /** Phase 5: per-task generation defaults — seed the summary/insights tab
+     *  controls + output language so a user's saved preferences apply. */
+    taskDefaults?: Partial<Record<SettingsTaskKind, TaskDefaultSettings>>;
     /** Opens the sign-in surface (settings dialog) when a spend endpoint
      *  returns 401. Receives the bounced action as `retry` — the owner runs it
      *  after a successful login so the user never has to re-click. */
@@ -241,6 +245,7 @@ export function VideoDetailTabs({
     modelDefaults,
     pipelineProgress,
     queueStats,
+    taskDefaults,
     onRequireLogin,
     onUpgrade,
     onOpenWatch,
@@ -253,11 +258,15 @@ export function VideoDetailTabs({
 }: VideoDetailTabsProps) {
     const rootRef = useRef<HTMLDivElement | null>(null);
     const pendingCommentRef = useRef<string | null>(null);
+    // State mirror of pendingCommentRef: CommentsTab needs to re-render (and
+    // lift its 50-thread render cap) when a jump target may sit beyond it.
+    const [revealCommentId, setRevealCommentId] = useState<string | null>(null);
 
     // Cited-comment jump: switch to the Comments tab, then (once its cards
     // exist in the DOM) scroll the thread into view and flash it once.
     function showComment(commentId: string) {
         pendingCommentRef.current = commentId;
+        setRevealCommentId(commentId);
         onActiveChange("comments");
     }
 
@@ -278,6 +287,7 @@ export function VideoDetailTabs({
 
         function reveal(card: Element) {
             pendingCommentRef.current = null;
+            setRevealCommentId(null);
             observer?.disconnect();
 
             if (timeout !== null) {
@@ -308,6 +318,7 @@ export function VideoDetailTabs({
         timeout = window.setTimeout(() => {
             observer?.disconnect();
             pendingCommentRef.current = null;
+            setRevealCommentId(null);
         }, 3000);
 
         return () => {
@@ -368,6 +379,7 @@ export function VideoDetailTabs({
                         modelDefault={modelDefaults?.summarize}
                         onRequireLogin={onRequireLogin}
                         onUpgrade={onUpgrade}
+                        taskDefault={taskDefaults?.insights}
                         pipelineProgress={pipelineProgress}
                         partialTimestamped={partialSummaries?.timestamped}
                         streaming={streamingMode === "timestamped"}
@@ -388,6 +400,7 @@ export function VideoDetailTabs({
                         modelDefault={modelDefaults?.summarize}
                         onRequireLogin={onRequireLogin}
                         onUpgrade={onUpgrade}
+                        taskDefault={taskDefaults?.summary}
                         pipelineProgress={pipelineProgress}
                         partialLong={partialSummaries?.long}
                         streaming={streamingMode === "long"}
@@ -424,6 +437,7 @@ export function VideoDetailTabs({
                         useComments={ds.useComments}
                         runPipeline={runPipeline}
                         pipelineProgress={pipelineProgress}
+                        revealCommentId={revealCommentId}
                     />
                 </TabsContent>
                 <TabsContent value="transcript" className="yt-tab-pane">

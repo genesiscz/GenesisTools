@@ -48,4 +48,16 @@ describe("segmentsToParagraphs speaker boundaries", () => {
 
         expect(paragraphs).toEqual([{ text: "a. b. c.", start: 0, end: 6, speaker: 0 }]);
     });
+
+    test("short orphan is not absorbed back across a hard-gap boundary", () => {
+        const paragraphs = segmentsToParagraphs([
+            { text: "Intro line.", start: 0, end: 1 },
+            { text: "Tail.", start: 3, end: 3.5 },
+        ]);
+
+        expect(paragraphs).toEqual([
+            { text: "Intro line.", start: 0, end: 1 },
+            { text: "Tail.", start: 3, end: 3.5 },
+        ]);
+    });
 });

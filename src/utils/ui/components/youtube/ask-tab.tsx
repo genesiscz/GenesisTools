@@ -172,7 +172,13 @@ function ExchangeBody({
                     const citation = citations[index - 1];
 
                     if (citation?.startSec != null) {
-                        onSeek(citation.startSec);
+                        const isCurrent = currentVideoId === undefined || citation.videoId === currentVideoId;
+
+                        if (isCurrent) {
+                            onSeek(citation.startSec);
+                        } else {
+                            onOpenWatch?.(citation.videoId, citation.startSec);
+                        }
                     }
                 }}
             />

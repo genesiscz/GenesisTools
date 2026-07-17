@@ -42,7 +42,10 @@ export function toPartialLongSummary(partial: unknown): PartialLongSummary | nul
             return {
                 title: typeof raw.title === "string" ? raw.title : undefined,
                 summary: typeof raw.summary === "string" ? raw.summary : undefined,
-                startSec: typeof raw.startSec === "number" ? raw.startSec : undefined,
+                startSec:
+                    typeof raw.startSec === "number" && Number.isFinite(raw.startSec) && raw.startSec >= 0
+                        ? raw.startSec
+                        : undefined,
                 endSec: typeof raw.endSec === "number" || raw.endSec === null ? raw.endSec : undefined,
             };
         });

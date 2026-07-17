@@ -23,7 +23,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 /** Sentinel Select value meaning "no lang filter — server picks the default (captions preferred)". */
 const ORIGINAL_LANG = "__original__";
-const TRANSLATE_COST = 5;
+const TRANSLATE_COST = CREDIT_COSTS["transcript:translate"];
 
 const DEFAULT_RENDER_LIMIT = 200;
 const DEFAULT_BUCKET_SEC = 120;
@@ -273,7 +273,10 @@ export function TranscriptTab({
         if (el) {
             scrollIntoPanelView(el, { behavior: "smooth" });
         }
-    }, [activeBlockIndex]);
+        // playerTime is a dep on purpose: keyed only on activeBlockIndex, the
+        // effect would never re-run while playback stays inside one block, so
+        // follow mode couldn't resume after the scroll grace period elapsed.
+    }, [activeBlockIndex, playerTime]);
 
     function labelForSpeaker(idx: number): string {
         return labelOverrides[idx] ?? serverLabels?.[idx] ?? `Speaker ${idx + 1}`;
