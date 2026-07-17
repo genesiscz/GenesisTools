@@ -5,6 +5,7 @@ import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import { ActivityGraph } from "@app/utils/ui/components/youtube/activity-graph";
 import { Diamond, formatDiamonds } from "@app/utils/ui/components/youtube/diamond";
+import { isLoginRequiredError } from "@app/utils/ui/components/youtube/login-required";
 import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
 import { formatRelativeTime } from "@app/utils/ui/components/youtube/time";
 import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
@@ -72,14 +73,21 @@ export function SettingsDialog({
                 <DialogHeader>
                     <DialogTitle className="text-lg">{t("settings.title")}</DialogTitle>
                     <DialogDescription className="text-sm leading-relaxed text-muted-foreground">
-                        {user
-                            ? "Diamonds pay for summaries and questions."
-                            : "Sign in to spend diamonds on summaries and questions. New accounts start with 100."}
+                        {user ? t("settings.descSignedIn") : t("settings.descSignedOut")}
                     </DialogDescription>
                 </DialogHeader>
                 {me.isPending && open ? (
                     <div className="flex items-center justify-center py-8 text-muted-foreground">
                         <Loader2 className="size-4 animate-spin" />
+                    </div>
+                ) : me.isError && !isLoginRequiredError(me.error) ? (
+                    // Transient failure (server down, network) — NOT a logout.
+                    // Showing AuthForm here would read as "you were signed out".
+                    <div className="space-y-2 py-4 text-center">
+                        <p className="text-sm text-destructive/90">Couldn't reach the server.</p>
+                        <Button size="sm" variant="outline" onClick={() => void me.refetch()}>
+                            Retry
+                        </Button>
                     </div>
                 ) : user ? (
                     <SignedInView
@@ -153,7 +161,7 @@ function SignedInView({
                     className="w-full justify-start text-muted-foreground"
                     onClick={onOpenAdmin}
                 >
-                    <ShieldCheck className="size-4" /> Admin panel
+                    <ShieldCheck className="size-4" /> {t("settings.adminPanel")}
                 </Button>
             ) : null}
 
@@ -179,16 +187,20 @@ function SignedInView({
 }
 
 function LibraryNav({ onOpen }: { onOpen: (section: AccountSection) => void }) {
+    const t = useT();
+
     return (
         <div className="space-y-2">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">your library</p>
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                {t("library.header")}
+            </p>
             <Button
                 size="sm"
                 variant="ghost"
                 className="w-full justify-start text-muted-foreground"
                 onClick={() => onOpen("history")}
             >
-                <History className="size-4" /> History
+                <History className="size-4" /> {t("library.history")}
             </Button>
             <Button
                 size="sm"
@@ -196,7 +208,7 @@ function LibraryNav({ onOpen }: { onOpen: (section: AccountSection) => void }) {
                 className="w-full justify-start text-muted-foreground"
                 onClick={() => onOpen("collections")}
             >
-                <Library className="size-4" /> Collections
+                <Library className="size-4" /> {t("library.collections")}
             </Button>
             <Button
                 size="sm"
@@ -328,7 +340,7 @@ function DiamondPacksSection({ devMode }: { devMode?: boolean }) {
             {unconfigured ? (
                 <div className="flex items-start gap-3 rounded-2xl border border-dashed border-primary/25 p-5">
                     <CreditCard className="mt-0.5 size-5 shrink-0 text-primary" />
-                    <p className="text-sm text-muted-foreground">Payments aren't configured on this server yet.</p>
+                    <p className="text-sm text-muted-foreground">{t("settings.paymentsUnconfigured")}</p>
                 </div>
             ) : (
                 <div className="grid grid-cols-3 gap-2">
@@ -779,6 +791,8 @@ function AuthForm() {
             await action.mutateAsync({ email, password });
             setPassword("");
         } catch (err) {
+            // No credentials in the payload — mode only.
+            logger.warn({ error: err, mode }, "settings-dialog: auth submit failed");
             setError(err instanceof Error ? err.message : String(err));
         }
     }

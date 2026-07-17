@@ -237,9 +237,11 @@ async function devExtension(): Promise<void> {
         // tabs reload. Both changed → the more-invasive runtime reload wins.
         const buildTargets: string[] = [];
         if (targetsBatch.has("runtime")) {
-            buildTargets.push("modules");
-        }
-        if (targetsBatch.has("tabs")) {
+            // Runtime-classified changes (incl. vite.config.ts) can affect BOTH
+            // bundles — rebuild content-script too so it never goes stale, and
+            // the runtime reload re-injects it anyway.
+            buildTargets.push("modules", "content-script");
+        } else if (targetsBatch.has("tabs")) {
             buildTargets.push("content-script");
         }
         if (buildTargets.length === 0) {
@@ -285,6 +287,7 @@ async function devExtension(): Promise<void> {
         "extension/dev-reload",
         "extension/shared/storage",
         "extension/manifest",
+        "extension/vite.config",
     ];
 
     function classify(path: string): DevReloadTarget {

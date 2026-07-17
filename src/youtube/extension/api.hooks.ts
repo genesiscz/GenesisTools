@@ -270,13 +270,40 @@ export function useMe(enabled = true) {
     });
 }
 
+/** Query keys whose data belongs to the signed-in account. Removed (not just
+ *  invalidated) on login/register/logout so an account switch can never show
+ *  the previous user's ledger, presets, collections, settings, etc. */
+const ACCOUNT_SCOPED_QUERY_KEYS = [
+    "me",
+    "qaHistory",
+    "referral",
+    "ledger",
+    "usageSummary",
+    "shares",
+    "presets",
+    "report",
+    "report-estimate",
+    "jobs",
+    "collections",
+    "threads",
+    "watchlist",
+    "digest",
+    "settings",
+] as const;
+
+function clearAccountScopedQueries(queryClient: ReturnType<typeof useQueryClient>): void {
+    for (const key of ACCOUNT_SCOPED_QUERY_KEYS) {
+        queryClient.removeQueries({ queryKey: [key] });
+    }
+}
+
 export function useRegister() {
     const queryClient = useQueryClient();
 
     return useMutation({
         mutationFn: (vars: { email: string; password: string }) =>
             send<ExtensionApiMap["api:register"]>({ type: "api:register", ...vars }),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["me"] }),
+        onSuccess: () => clearAccountScopedQueries(queryClient),
     });
 }
 
@@ -286,7 +313,7 @@ export function useLogin() {
     return useMutation({
         mutationFn: (vars: { email: string; password: string }) =>
             send<ExtensionApiMap["api:login"]>({ type: "api:login", ...vars }),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["me"] }),
+        onSuccess: () => clearAccountScopedQueries(queryClient),
     });
 }
 
@@ -296,8 +323,7 @@ export function useLogout() {
     return useMutation({
         mutationFn: () => send<ExtensionApiMap["api:logout"]>({ type: "api:logout" }),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["me"] });
-            queryClient.invalidateQueries({ queryKey: ["qaHistory"] });
+            clearAccountScopedQueries(queryClient);
         },
     });
 }

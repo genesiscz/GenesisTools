@@ -482,7 +482,14 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
                 YouTube page. Flex sizing distributes real layout space instead.
                 overscroll-contain stops the page from scrolling when the panel
                 hits its top/bottom. */}
-            <div className="yt-body-collapsible flex min-h-0 flex-1 flex-col" data-collapsed={collapsed}>
+            <div
+                className="yt-body-collapsible flex min-h-0 flex-1 flex-col"
+                data-collapsed={collapsed}
+                // pointer-events:none hides from mouse only — inert also removes
+                // the collapsed body from keyboard/AT reach.
+                inert={collapsed}
+                aria-hidden={collapsed}
+            >
                 <div className="yt-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">
                     {view === "account" ? (
                         <AccountView

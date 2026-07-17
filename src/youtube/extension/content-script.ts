@@ -298,6 +298,8 @@ function scheduleMount(): void {
 // --- Chapter ticks on the player progress bar (page DOM, gt-chapter- styles) ---
 
 let chapterData: PlayerChaptersMessage | null = null;
+/** The payload the currently-mounted ticks were built from. */
+let ticksData: PlayerChaptersMessage | null = null;
 let ticks: ChapterTicksHandle | null = null;
 let ticksBar: HTMLElement | null = null;
 let observedPlayer: HTMLElement | null = null;
@@ -326,6 +328,7 @@ function unmountTicks(): void {
     ticks?.unmount();
     ticks = null;
     ticksBar = null;
+    ticksData = null;
 }
 
 function ensureChapterTicks(): void {
@@ -345,13 +348,16 @@ function ensureChapterTicks(): void {
         return;
     }
 
-    if (ticks && ticksBar === bar && bar.isConnected) {
+    // Keyed on the chapter payload too — same bar element with NEW chapter
+    // data (fresh player:chapters message) must remount, not stay stale.
+    if (ticks && ticksBar === bar && bar.isConnected && ticksData === chapterData) {
         return;
     }
 
     unmountTicks();
     ticks = mountChapterTicks({ chapters: chapterData.chapters, duration, container: bar, onSeek: seekPlayer });
     ticksBar = bar;
+    ticksData = chapterData;
     ticks.setCurrentTime(lastPlayerTime);
 }
 

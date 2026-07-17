@@ -147,7 +147,7 @@ export function ActivityView({ onBack }: { onBack?: () => void }) {
                         {ledger.error instanceof Error ? ledger.error.message : "Failed to load activity."}
                     </p>
                 </div>
-            ) : filteredRows.length === 0 ? (
+            ) : filteredRows.length === 0 && !ledger.hasNextPage ? (
                 <div className="flex items-start gap-3 rounded-2xl border border-dashed border-primary/25 p-5">
                     <Gem className="mt-0.5 size-5 shrink-0 text-primary" />
                     <p className="text-sm text-muted-foreground">

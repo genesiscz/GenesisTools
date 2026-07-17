@@ -55,7 +55,12 @@ export function PlaylistPanel({ listId }: { listId: string }) {
     return (
         <div className="flex h-auto max-h-[min(70vh,720px)] min-h-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-card shadow-2xl shadow-black/40">
             <Header collapsed={collapsed} onToggleCollapse={() => setCollapsed((v) => !v)} />
-            <div className="yt-body-collapsible min-h-0 flex-1" data-collapsed={collapsed}>
+            <div
+                className="yt-body-collapsible min-h-0 flex-1"
+                data-collapsed={collapsed}
+                inert={collapsed}
+                aria-hidden={collapsed}
+            >
                 <div className="yt-scroll min-h-0 h-full space-y-4 overflow-auto p-4">
                     {reportId !== null ? (
                         <ReportView

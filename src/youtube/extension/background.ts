@@ -613,7 +613,9 @@ function broadcast(event: ExtensionEvent): void {
     for (const port of ports) {
         try {
             port.postMessage(event);
-        } catch {
+        } catch (error) {
+            // Disconnected port — drop it, but never silently.
+            console.debug("[genesis-yt] event port postMessage failed — dropping port", error);
             ports.delete(port);
         }
     }
