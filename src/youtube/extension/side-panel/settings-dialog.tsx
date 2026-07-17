@@ -26,7 +26,7 @@ import {
 } from "@ext/api.hooks";
 import { persistUiLang, useT, useUiLang } from "@ext/shared/i18n";
 import type { AccountSection } from "@ext/side-panel/account-view";
-import { CreditCard, Gem, History, Loader2, LogOut, Pencil, Share2, Trash2, Wand2 } from "lucide-react";
+import { CreditCard, Gem, History, Library, Loader2, LogOut, Pencil, Share2, Trash2, Wand2 } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
 type AuthMode = "login" | "register";
@@ -145,6 +145,14 @@ function LibraryNav({ onOpen }: { onOpen: (section: AccountSection) => void }) {
                 onClick={() => onOpen("history")}
             >
                 <History className="size-4" /> History
+            </Button>
+            <Button
+                size="sm"
+                variant="ghost"
+                className="w-full justify-start text-muted-foreground"
+                onClick={() => onOpen("collections")}
+            >
+                <Library className="size-4" /> Collections
             </Button>
         </div>
     );

@@ -1,16 +1,18 @@
 import { Button } from "@app/utils/ui/components/button";
 import { HistoryView } from "@app/utils/ui/components/youtube/history-view";
 import { useMe, useUserHistory } from "@ext/api.hooks";
+import { CollectionsSection } from "@ext/side-panel/account-collections";
 import { ActivityView } from "@ext/side-panel/activity-view";
 import { ArrowLeft } from "lucide-react";
 import { useState } from "react";
 
 /** Sub-surfaces of the account hub. Grows as Phase 4a features land. */
-export type AccountSection = "activity" | "history";
+export type AccountSection = "activity" | "history" | "collections";
 
 const SECTIONS: Array<{ id: AccountSection; label: string }> = [
     { id: "activity", label: "Activity" },
     { id: "history", label: "History" },
+    { id: "collections", label: "Collections" },
 ];
 
 export function AccountView({
@@ -60,6 +62,8 @@ export function AccountView({
                 <SignInPrompt onRequireLogin={onRequireLogin} />
             ) : section === "history" ? (
                 <HistorySection onOpenWatch={onOpenWatch} />
+            ) : section === "collections" ? (
+                <CollectionsSection onOpenWatch={onOpenWatch} />
             ) : (
                 <ActivityView />
             )}

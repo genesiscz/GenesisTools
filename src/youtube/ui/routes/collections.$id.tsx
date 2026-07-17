@@ -1,9 +1,8 @@
-import { SafeJSON } from "@app/utils/json";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { Card, CardContent } from "@app/utils/ui/components/card";
 import { CollectionAskPanel } from "@app/utils/ui/components/youtube/collection-ask-panel";
-import type { AskMessageRecord } from "@app/youtube/lib/types";
+import { optimisticUserMessage, ruleSummary } from "@app/utils/ui/components/youtube/collection-ui";
 import { useAskCollection, useCollection, useRemoveCollectionVideo, useThread, useThreads } from "@app/yt/api.hooks";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
@@ -11,32 +10,6 @@ import { useState } from "react";
 export const Route = createFileRoute("/collections/$id")({
     component: CollectionDetailPage,
 });
-
-function ruleSummary(ruleJson: string | null): string {
-    if (!ruleJson) {
-        return "Dynamic collection";
-    }
-
-    const rule = SafeJSON.parse(ruleJson) as { type?: string; sinceDays?: number } | null;
-
-    if (rule?.type === "watched" && typeof rule.sinceDays === "number") {
-        return `Videos you watched in the last ${rule.sinceDays} days`;
-    }
-
-    return "Dynamic collection";
-}
-
-function optimisticUserMessage(threadId: number | null, content: string): AskMessageRecord {
-    return {
-        id: -1,
-        threadId: threadId ?? -1,
-        role: "user",
-        content,
-        toolName: null,
-        toolArgsJson: null,
-        createdAt: new Date().toISOString(),
-    };
-}
 
 function CollectionDetailPage() {
     const params = Route.useParams();
