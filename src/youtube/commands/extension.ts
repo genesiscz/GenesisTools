@@ -4,12 +4,12 @@ import { logger, out } from "@app/logger";
 import { createWatcher } from "@app/utils/fs/watcher";
 import { SafeJSON } from "@app/utils/json";
 import { toPosixPath } from "@app/utils/paths";
+import { launchDevtoolsBrowser } from "@app/youtube/lib/devtools/browser";
+import { captureFrameGrid } from "@app/youtube/lib/devtools/frame-grid";
+import { withDevtoolsClient } from "@app/youtube/lib/devtools/mcp-client";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { launchDevtoolsBrowser } from "../../../.claude/skills/chrome-extension-dev/scripts/devtools-browser";
-import { captureFrameGrid } from "../../../.claude/skills/chrome-extension-dev/scripts/devtools-frame-grid";
-import { withDevtoolsClient } from "../../../.claude/skills/chrome-extension-dev/scripts/devtools-mcp-client";
 
 const DEV_RELOAD_PORT = 9877;
 type DevReloadTarget = "tabs" | "runtime";

@@ -60,6 +60,8 @@ export const env = {
         isDevReload: () => isFlag("EXT_DEV"),
         /** EXT_TARGET selects the two-pass build config ('modules' | 'content-script'). */
         getBuildTarget: () => getTrimmed("EXT_TARGET"),
+        /** CDP_URL overrides the default devtools-CLI CDP endpoint (127.0.0.1:9333). */
+        getCdpUrl: () => getTrimmed("CDP_URL"),
     },
 } as const;
 
