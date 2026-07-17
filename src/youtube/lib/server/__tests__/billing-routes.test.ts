@@ -96,7 +96,11 @@ describe("youtube server billing routes", () => {
                 id: "evt_route_1",
                 type: "checkout.session.completed",
                 data: {
-                    object: { id: "cs_route_test_1", metadata: { packId: "pack-medium", userId: String(user.id) } },
+                    object: {
+                        id: "cs_route_test_1",
+                        payment_status: "paid",
+                        metadata: { packId: "pack-medium", userId: String(user.id) },
+                    },
                 },
             });
 
@@ -131,6 +135,52 @@ describe("youtube server billing routes", () => {
             // 100 from the register-grant + 2000 from the webhook.
             expect(meBody.user.credits).toBe(2100);
             expect(handle.youtube.db.hasLedgerReason(user.id, "stripe:cs_route_test_1")).toBe(true);
+        } finally {
+            await handle.stop();
+        }
+    });
+
+    it("webhook defers the grant when checkout.session is not paid (delayed payment method)", async () => {
+        const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
+
+        try {
+            const register = await fetch(`http://localhost:${handle.port}/api/v1/users/register`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: SafeJSON.stringify({ email: "unpaid-buyer@example.com", password: "hunter22" }),
+            });
+            const { user, token } = (await register.json()) as { user: { id: number }; token: string };
+            const webhookSecret = "whsec_route_unpaid";
+            const { payload, signature } = signStripePayload(webhookSecret, {
+                id: "evt_route_unpaid",
+                type: "checkout.session.completed",
+                data: {
+                    object: {
+                        id: "cs_route_unpaid",
+                        payment_status: "unpaid",
+                        metadata: { packId: "pack-medium", userId: String(user.id) },
+                    },
+                },
+            });
+
+            await env.testing.withOverrides({ STRIPE_WEBHOOK_SECRET: webhookSecret }, async () => {
+                const res = await fetch(`http://localhost:${handle.port}/api/v1/webhooks/stripe`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "Stripe-Signature": signature },
+                    body: payload,
+                });
+                expect(res.status).toBe(200);
+            });
+
+            const me = await fetch(`http://localhost:${handle.port}/api/v1/users/me`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const meBody = (await me.json()) as { user: { credits: number } };
+
+            // No grant yet — only the 100 register-grant. The async_payment_succeeded
+            // delivery would fulfill later on the same stripe:<sessionId> reason.
+            expect(meBody.user.credits).toBe(100);
+            expect(handle.youtube.db.hasLedgerReason(user.id, "stripe:cs_route_unpaid")).toBe(false);
         } finally {
             await handle.stop();
         }
