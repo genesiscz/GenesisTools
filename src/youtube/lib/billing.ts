@@ -1,11 +1,17 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
-import { DIAMOND_PACKS, type DiamondPack, SUBSCRIPTION_PLANS } from "@app/youtube/lib/billing.types";
+import { computeAllowanceReset } from "@app/youtube/lib/billing-cycle";
+import {
+    DIAMOND_PACKS,
+    type DiamondPack,
+    SUBSCRIPTION_PLANS,
+    type SubscriptionStatus,
+} from "@app/youtube/lib/billing.types";
 import { createStripeGateway, type StripeGateway } from "@app/youtube/lib/billing-gateway";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
-import type { YtUser } from "@app/youtube/lib/users.types";
+import type { CreditReason, YtUser } from "@app/youtube/lib/users.types";
 
 /**
  * Creates a Stripe Checkout session for a diamond pack. The outbound call goes
@@ -102,21 +108,62 @@ export async function handleStripeEvent(db: YoutubeDatabase, payload: string, si
     }
 
     const event = SafeJSON.parse(payload, { strict: true }) as StripeEvent;
+    const existing = db.getWebhookLog(event.id);
 
-    if (event.type === "checkout.session.completed") {
-        applyCheckoutCompleted(db, event.data.object);
+    if (existing && existing.outcome !== "error") {
+        logger.debug({ eventId: event.id, type: event.type }, "youtube billing: duplicate webhook delivery ignored");
         return;
+    }
+
+    const payloadHash = createHash("sha256").update(payload).digest("hex");
+
+    try {
+        const outcome = applyStripeEvent(db, event);
+        db.recordWebhookLog({ stripeEventId: event.id, type: event.type, payloadHash, outcome });
+    } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        db.recordWebhookLog({ stripeEventId: event.id, type: event.type, payloadHash, outcome: "error", detail });
+        // Rethrow → route answers 400 → Stripe retries; the retry reprocesses
+        // because an "error" outcome does not short-circuit above.
+        throw error;
+    }
+}
+
+function applyStripeEvent(db: YoutubeDatabase, event: StripeEvent): "processed" | "skipped" {
+    if (event.type === "checkout.session.completed") {
+        return applyCheckoutCompleted(db, event.data.object);
+    }
+
+    if (event.type === "invoice.paid") {
+        return applyInvoicePaid(db, event.data.object);
+    }
+
+    if (event.type === "invoice.payment_failed") {
+        return applyInvoicePaymentFailed(db, event.data.object);
+    }
+
+    if (event.type === "customer.subscription.updated") {
+        return applySubscriptionUpdated(db, event.data.object);
+    }
+
+    if (event.type === "customer.subscription.deleted") {
+        return applySubscriptionDeleted(db, event.data.object);
     }
 
     if (event.type === "charge.refunded") {
-        applyChargeRefunded(db, event.data.object);
-        return;
+        return applyChargeRefunded(db, event.data.object);
     }
 
     logger.debug({ type: event.type, id: event.id }, "youtube billing: unhandled stripe event type");
+
+    return "skipped";
 }
 
-function applyCheckoutCompleted(db: YoutubeDatabase, session: Record<string, unknown>): void {
+function applyCheckoutCompleted(db: YoutubeDatabase, session: Record<string, unknown>): "processed" | "skipped" {
+    if (session.mode === "subscription") {
+        return applySubscriptionCheckout(db, session);
+    }
+
     const sessionId = typeof session.id === "string" ? session.id : null;
     const metadata = (session.metadata ?? {}) as Record<string, unknown>;
     const packId = typeof metadata.packId === "string" ? metadata.packId : null;
@@ -124,28 +171,40 @@ function applyCheckoutCompleted(db: YoutubeDatabase, session: Record<string, unk
 
     if (!sessionId || !packId || userId === null) {
         logger.warn({ sessionId, packId, userId }, "youtube billing: checkout.session.completed missing fields");
-        return;
+        return "skipped";
     }
 
     const pack = DIAMOND_PACKS.find((candidate) => candidate.id === packId);
 
     if (!pack) {
         logger.warn({ sessionId, packId }, "youtube billing: checkout.session.completed unknown pack");
-        return;
+        return "skipped";
     }
 
     const reason = `stripe:${sessionId}` as const;
 
     if (db.hasLedgerReason(userId, reason)) {
         logger.debug({ sessionId, userId }, "youtube billing: checkout.session.completed already granted");
-        return;
+        return "processed";
     }
 
     db.grantCredits(userId, pack.diamonds, reason);
+    db.recordPayment({
+        userId,
+        kind: "pack",
+        stripeRef: sessionId,
+        packId: pack.id,
+        amountCents: typeof session.amount_total === "number" ? session.amount_total : null,
+        currency: typeof session.currency === "string" ? session.currency : null,
+        credits: pack.diamonds,
+        status: "succeeded",
+    });
     logger.info({ sessionId, userId, diamonds: pack.diamonds }, "youtube billing: granted diamonds from checkout");
+
+    return "processed";
 }
 
-function applyChargeRefunded(db: YoutubeDatabase, charge: Record<string, unknown>): void {
+function applyChargeRefunded(db: YoutubeDatabase, charge: Record<string, unknown>): "processed" | "skipped" {
     const chargeId = typeof charge.id === "string" ? charge.id : null;
     const metadata = (charge.metadata ?? {}) as Record<string, unknown>;
     const packId = typeof metadata.packId === "string" ? metadata.packId : null;
@@ -153,25 +212,230 @@ function applyChargeRefunded(db: YoutubeDatabase, charge: Record<string, unknown
 
     if (!chargeId || !packId || userId === null) {
         logger.warn({ chargeId, packId, userId }, "youtube billing: charge.refunded missing metadata, skipping");
-        return;
+        return "skipped";
     }
 
     const pack = DIAMOND_PACKS.find((candidate) => candidate.id === packId);
 
     if (!pack) {
         logger.warn({ chargeId, packId }, "youtube billing: charge.refunded unknown pack");
-        return;
+        return "skipped";
     }
 
     const reason = `stripe-refund:${chargeId}` as const;
 
     if (db.hasLedgerReason(userId, reason)) {
         logger.debug({ chargeId, userId }, "youtube billing: charge.refunded already reversed");
-        return;
+        return "processed";
     }
 
     db.grantCredits(userId, -pack.diamonds, reason);
+    db.recordPayment({
+        userId,
+        kind: "refund",
+        stripeRef: `refund:${chargeId}`,
+        packId: pack.id,
+        credits: -pack.diamonds,
+        status: "refunded",
+    });
     logger.info({ chargeId, userId, diamonds: -pack.diamonds }, "youtube billing: reversed diamonds from refund");
+
+    return "processed";
+}
+
+function applySubscriptionCheckout(db: YoutubeDatabase, session: Record<string, unknown>): "processed" | "skipped" {
+    const metadata = (session.metadata ?? {}) as Record<string, unknown>;
+    const userId = parseUserId(metadata.userId ?? session.client_reference_id);
+    const planId = typeof metadata.planId === "string" ? metadata.planId : null;
+    const plan = SUBSCRIPTION_PLANS.find((candidate) => candidate.id === planId);
+
+    if (userId === null || !plan) {
+        logger.warn({ userId, planId }, "youtube billing: subscription checkout missing user/plan metadata");
+
+        return "skipped";
+    }
+
+    // Period fields stay null until the first invoice.paid — that is also the
+    // signal for "grant the initial allowance additively" (see applyInvoicePaid).
+    db.upsertSubscription({
+        userId,
+        stripeCustomerId: typeof session.customer === "string" ? session.customer : null,
+        stripeSubscriptionId: typeof session.subscription === "string" ? session.subscription : null,
+        planId: plan.id,
+        status: "active",
+        allowance: plan.allowance,
+    });
+    logger.info({ userId, planId: plan.id }, "youtube billing: subscription created from checkout");
+
+    return "processed";
+}
+
+function applyInvoicePaid(db: YoutubeDatabase, invoice: Record<string, unknown>): "processed" | "skipped" {
+    const invoiceId = typeof invoice.id === "string" ? invoice.id : null;
+    const stripeSubscriptionId = typeof invoice.subscription === "string" ? invoice.subscription : null;
+
+    if (!invoiceId || !stripeSubscriptionId) {
+        logger.warn({ invoiceId, stripeSubscriptionId }, "youtube billing: invoice.paid missing fields");
+
+        return "skipped";
+    }
+
+    const sub = db.getSubscriptionByStripeId(stripeSubscriptionId);
+
+    if (!sub) {
+        logger.warn({ invoiceId, stripeSubscriptionId }, "youtube billing: invoice.paid for unknown subscription");
+
+        return "skipped";
+    }
+
+    const reason: CreditReason = `sub-allowance:${invoiceId}`;
+
+    if (db.hasLedgerReason(sub.userId, reason)) {
+        logger.debug({ invoiceId, userId: sub.userId }, "youtube billing: allowance already granted for invoice");
+
+        return "processed";
+    }
+
+    const balance = db.getUserCredits(sub.userId);
+
+    if (balance === null) {
+        logger.warn({ invoiceId, userId: sub.userId }, "youtube billing: invoice.paid for missing user");
+
+        return "skipped";
+    }
+
+    const period = invoicePeriod(invoice);
+    let delta: number;
+    let newBalance: number;
+
+    if (sub.periodStart === null) {
+        // First invoice: the user never had an allowance — plain additive grant.
+        delta = sub.allowance;
+        newBalance = balance + delta;
+    } else {
+        const reset = computeAllowanceReset({
+            balance,
+            periodStartBalance: sub.periodStartBalance,
+            grantsSince: db.getGrantsSince(sub.userId, sub.periodStart),
+            allowanceGranted: sub.allowance,
+            newAllowance: sub.allowance,
+        });
+        delta = reset.delta;
+        newBalance = reset.newBalance;
+    }
+
+    // A delta of 0 (unspent renewal) still writes the ledger row — the reset
+    // itself is an auditable event, and it doubles as the idempotency marker.
+    db.grantCredits(sub.userId, delta, reason);
+    db.updateSubscription(sub.id, {
+        status: "active",
+        periodStart: period.start,
+        periodEnd: period.end,
+        periodStartBalance: newBalance,
+    });
+    db.recordPayment({
+        userId: sub.userId,
+        kind: "subscription",
+        stripeRef: invoiceId,
+        planId: sub.planId,
+        amountCents: typeof invoice.amount_paid === "number" ? invoice.amount_paid : null,
+        currency: typeof invoice.currency === "string" ? invoice.currency : null,
+        credits: delta,
+        status: "succeeded",
+    });
+    logger.info({ invoiceId, userId: sub.userId, delta, newBalance }, "youtube billing: allowance period applied");
+
+    return "processed";
+}
+
+function applyInvoicePaymentFailed(db: YoutubeDatabase, invoice: Record<string, unknown>): "processed" | "skipped" {
+    const invoiceId = typeof invoice.id === "string" ? invoice.id : null;
+    const stripeSubscriptionId = typeof invoice.subscription === "string" ? invoice.subscription : null;
+    const sub = stripeSubscriptionId ? db.getSubscriptionByStripeId(stripeSubscriptionId) : null;
+
+    if (!invoiceId || !sub) {
+        logger.warn({ invoiceId, stripeSubscriptionId }, "youtube billing: payment_failed for unknown subscription");
+
+        return "skipped";
+    }
+
+    db.updateSubscription(sub.id, { status: "past_due" });
+    // `failed:` prefix keeps the ref distinct from the eventual invoice.paid
+    // row for the same invoice (stripe_ref is UNIQUE).
+    db.recordPayment({
+        userId: sub.userId,
+        kind: "subscription",
+        stripeRef: `failed:${invoiceId}`,
+        planId: sub.planId,
+        amountCents: typeof invoice.amount_due === "number" ? invoice.amount_due : null,
+        currency: typeof invoice.currency === "string" ? invoice.currency : null,
+        status: "failed",
+    });
+    logger.warn({ invoiceId, userId: sub.userId }, "youtube billing: subscription payment failed");
+
+    return "processed";
+}
+
+function applySubscriptionUpdated(db: YoutubeDatabase, subscription: Record<string, unknown>): "processed" | "skipped" {
+    const stripeId = typeof subscription.id === "string" ? subscription.id : null;
+    const sub = stripeId ? db.getSubscriptionByStripeId(stripeId) : null;
+
+    if (!sub) {
+        logger.warn({ stripeId }, "youtube billing: subscription.updated for unknown subscription");
+
+        return "skipped";
+    }
+
+    const periodEnd =
+        typeof subscription.current_period_end === "number"
+            ? new Date(subscription.current_period_end * 1000).toISOString()
+            : undefined;
+    db.updateSubscription(sub.id, {
+        status: mapStripeSubscriptionStatus(subscription.status),
+        cancelAtPeriodEnd: subscription.cancel_at_period_end === true,
+        ...(periodEnd !== undefined ? { periodEnd } : {}),
+    });
+
+    return "processed";
+}
+
+function applySubscriptionDeleted(db: YoutubeDatabase, subscription: Record<string, unknown>): "processed" | "skipped" {
+    const stripeId = typeof subscription.id === "string" ? subscription.id : null;
+    const sub = stripeId ? db.getSubscriptionByStripeId(stripeId) : null;
+
+    if (!sub) {
+        logger.warn({ stripeId }, "youtube billing: subscription.deleted for unknown subscription");
+
+        return "skipped";
+    }
+
+    // Credits already granted stay — no clawback on cancellation.
+    db.updateSubscription(sub.id, { status: "canceled" });
+    logger.info({ userId: sub.userId }, "youtube billing: subscription canceled");
+
+    return "processed";
+}
+
+function mapStripeSubscriptionStatus(raw: unknown): SubscriptionStatus {
+    if (raw === "canceled" || raw === "incomplete_expired") {
+        return "canceled";
+    }
+
+    if (raw === "past_due" || raw === "unpaid" || raw === "incomplete") {
+        return "past_due";
+    }
+
+    return "active";
+}
+
+function invoicePeriod(invoice: Record<string, unknown>): { start: string; end: string | null } {
+    const lines = invoice.lines as { data?: Array<{ period?: { start?: number; end?: number } }> } | undefined;
+    const period = lines?.data?.[0]?.period;
+
+    return {
+        start: typeof period?.start === "number" ? new Date(period.start * 1000).toISOString() : new Date().toISOString(),
+        end: typeof period?.end === "number" ? new Date(period.end * 1000).toISOString() : null,
+    };
 }
 
 function parseUserId(value: unknown): number | null {
