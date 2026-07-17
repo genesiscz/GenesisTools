@@ -1,6 +1,7 @@
 import { Button } from "@app/utils/ui/components/button";
 import { LlmConfirmDialog, type ModelPreset } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
 import { PanelLoading } from "@app/utils/ui/components/youtube/loading";
+import { errorCodeOf } from "@app/utils/ui/components/youtube/login-required";
 import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
 import {
     DEFAULT_SUMMARY_CONTROLS,
@@ -214,6 +215,7 @@ export function InsightsTab({
                 busy={generate.isPending}
                 confirmLabel={entries.length === 0 ? "Generate" : "Re-generate"}
                 error={generate.error ? (generate.error as Error).message : null}
+                errorCode={errorCodeOf(generate.error)}
                 showAdvanced={devMode}
                 modelPresets={modelPresets}
                 defaultProvider={modelDefault?.provider}

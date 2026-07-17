@@ -50,6 +50,8 @@ export interface LlmConfirmDialogProps {
     confirmLabel?: string;
     cancelLabel?: string;
     error?: string | null;
+    /** Stable server error code for the same failure (e.g. "login_required"). */
+    errorCode?: string | null;
     /** Dev mode: expose provider/model override select. Regular users don't
      *  see it — server picks its configured default. */
     showAdvanced?: boolean;
@@ -96,6 +98,7 @@ export function LlmConfirmDialog({
     confirmLabel = "Run",
     cancelLabel = "Cancel",
     error,
+    errorCode,
     showAdvanced,
     modelPresets = [],
     estimate,
@@ -285,7 +288,7 @@ export function LlmConfirmDialog({
                 ) : null}
 
                 {error ? (
-                    error === "login required" && onRequireLogin ? (
+                    (error === "login required" || errorCode === "login_required") && onRequireLogin ? (
                         <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 p-2.5 text-sm">
                             <p className="text-muted-foreground">This costs diamonds, so it needs an account.</p>
                             <Button size="sm" className="shrink-0" onClick={() => onRequireLogin(confirm)}>

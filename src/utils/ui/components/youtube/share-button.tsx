@@ -1,4 +1,5 @@
 import { logger } from "@app/logger/client";
+import { isLoginRequiredError } from "@app/utils/ui/components/youtube/login-required";
 import { Check, Loader2, Share2 } from "lucide-react";
 import { useState } from "react";
 
@@ -63,7 +64,7 @@ export function ShareButton({
             logger.warn({ error }, "share-button: share failed");
             const message = error instanceof Error ? error.message : String(error);
 
-            if (message === "login required" && onRequireLogin) {
+            if (isLoginRequiredError(error) && onRequireLogin) {
                 setState("idle");
                 onRequireLogin(() => void click());
                 return;

@@ -4,6 +4,7 @@ import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import { LlmConfirmDialog } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
 import { PanelLoading } from "@app/utils/ui/components/youtube/loading";
+import { errorCodeOf } from "@app/utils/ui/components/youtube/login-required";
 import { OUTPUT_LANGS, outputLangLabel } from "@app/utils/ui/components/youtube/output-langs";
 import { scrollIntoPanelView } from "@app/utils/ui/components/youtube/scroll";
 import type { PipelineProgress, RunPipeline } from "@app/utils/ui/components/youtube/tabs";
@@ -523,6 +524,7 @@ export function TranscriptTab({
                     confirmLabel={`Translate · ${TRANSLATE_COST} 💎`}
                     billingNote={`Cost: ${TRANSLATE_COST} 💎, charged once — cached for every future request.`}
                     error={translate.error ? translate.error.message : null}
+                    errorCode={errorCodeOf(translate.error)}
                     onCancel={() => setTranslateTarget(null)}
                     onConfirm={confirmTranslate}
                 />
