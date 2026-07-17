@@ -64,10 +64,32 @@ describe("admin users aggregates", () => {
     it("computes revenue, ai cost, net per user with role + subscription", async () => {
         mkUser("admin@example.com");
         const u = mkUser("payer@example.com");
-        db.recordPayment({ userId: u.id, kind: "pack", stripeRef: "cs_a", amountCents: 499, currency: "usd", credits: 500, status: "succeeded" });
-        db.recordPayment({ userId: u.id, kind: "subscription", stripeRef: "in_a", amountCents: 999, currency: "usd", credits: 3000, status: "succeeded" });
+        db.recordPayment({
+            userId: u.id,
+            kind: "pack",
+            stripeRef: "cs_a",
+            amountCents: 499,
+            currency: "usd",
+            credits: 500,
+            status: "succeeded",
+        });
+        db.recordPayment({
+            userId: u.id,
+            kind: "subscription",
+            stripeRef: "in_a",
+            amountCents: 999,
+            currency: "usd",
+            credits: 3000,
+            status: "succeeded",
+        });
         // failed payment must NOT count toward revenue.
-        db.recordPayment({ userId: u.id, kind: "subscription", stripeRef: "failed:in_b", amountCents: 999, status: "failed" });
+        db.recordPayment({
+            userId: u.id,
+            kind: "subscription",
+            stripeRef: "failed:in_b",
+            amountCents: 999,
+            status: "failed",
+        });
         db.recordAiCall({ provider: "xai", model: "grok", action: "summary", userId: u.id, costUsd: 0.1 });
         db.recordAiCall({ provider: "xai", model: "grok", action: "qa", userId: u.id, costUsd: 0.25 });
         db.upsertSubscription({ userId: u.id, planId: "sub-monthly", status: "active", allowance: 3000 });

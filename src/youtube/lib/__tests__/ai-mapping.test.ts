@@ -3,7 +3,11 @@ import { resolveAiSpecForTask, specOfAiMapping } from "@app/youtube/lib/ai-mappi
 
 const specExample = {
     ai: [
-        { provider: "xai", model: "grok-4-fast-reasoning", for: ["insights", "summary"] as Array<"insights" | "summary"> },
+        {
+            provider: "xai",
+            model: "grok-4-fast-reasoning",
+            for: ["insights", "summary"] as Array<"insights" | "summary">,
+        },
         { provider: "xai", model: "grok-4-fast-non-reasoning", for: ["all"] as Array<"all"> },
     ],
     provider: { summarize: "openai/gpt-5" },

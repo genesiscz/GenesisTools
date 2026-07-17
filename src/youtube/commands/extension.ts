@@ -1,15 +1,15 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 import { logger, out } from "@app/logger";
-import { SafeJSON } from "@app/utils/json";
 import { createWatcher } from "@app/utils/fs/watcher";
+import { SafeJSON } from "@app/utils/json";
 import { toPosixPath } from "@app/utils/paths";
-import { launchDevtoolsBrowser } from "../../../.claude/skills/chrome-extension-dev/scripts/devtools-browser";
-import { captureFrameGrid } from "../../../.claude/skills/chrome-extension-dev/scripts/devtools-frame-grid";
-import { withDevtoolsClient } from "../../../.claude/skills/chrome-extension-dev/scripts/devtools-mcp-client";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { launchDevtoolsBrowser } from "../../../.claude/skills/chrome-extension-dev/scripts/devtools-browser";
+import { captureFrameGrid } from "../../../.claude/skills/chrome-extension-dev/scripts/devtools-frame-grid";
+import { withDevtoolsClient } from "../../../.claude/skills/chrome-extension-dev/scripts/devtools-mcp-client";
 
 const DEV_RELOAD_PORT = 9877;
 type DevReloadTarget = "tabs" | "runtime";
@@ -49,44 +49,60 @@ export function registerExtensionCommand(program: Command): void {
         .description("List every tool chrome-devtools-mcp exposes")
         .option("--cdp-url <url>", "CDP endpoint of a running browser", "http://127.0.0.1:9333")
         .action(async (opts: { cdpUrl: string }) => {
-            await withDevtoolsClient(async (client) => {
-                const { tools } = await client.listTools();
-                out.result(
-                    SafeJSON.stringify(
-                        tools.map((t) => ({ name: t.name, description: t.description })),
-                        { strict: true }
-                    )
-                );
-            }, { cdpUrl: opts.cdpUrl });
+            await withDevtoolsClient(
+                async (client) => {
+                    const { tools } = await client.listTools();
+                    out.result(
+                        SafeJSON.stringify(
+                            tools.map((t) => ({ name: t.name, description: t.description })),
+                            { strict: true }
+                        )
+                    );
+                },
+                { cdpUrl: opts.cdpUrl }
+            );
         });
 
     devtools
         .command("call <toolName> [argsJson]")
-        .description("Call one chrome-devtools-mcp tool directly, e.g. `call navigate_page '{\"url\":\"...\",\"type\":\"url\"}'`")
+        .description(
+            'Call one chrome-devtools-mcp tool directly, e.g. `call navigate_page \'{"url":"...","type":"url"}\'`'
+        )
         .option("--cdp-url <url>", "CDP endpoint of a running browser", "http://127.0.0.1:9333")
         .action(async (toolName: string, argsJson: string | undefined, opts: { cdpUrl: string }) => {
             const args = argsJson ? SafeJSON.parse(argsJson, { strict: true }) : {};
-            await withDevtoolsClient(async (client) => {
-                const result = await client.callTool({ name: toolName, arguments: args as Record<string, unknown> });
-                out.result(SafeJSON.stringify(result, { strict: true }));
-            }, { cdpUrl: opts.cdpUrl });
+            await withDevtoolsClient(
+                async (client) => {
+                    const result = await client.callTool({
+                        name: toolName,
+                        arguments: args as Record<string, unknown>,
+                    });
+                    out.result(SafeJSON.stringify(result, { strict: true }));
+                },
+                { cdpUrl: opts.cdpUrl }
+            );
         });
 
     devtools
         .command("get-frame-grid <outPath>")
-        .description("Screenshot the page and overlay a labeled coordinate grid — for locating click targets without guessing")
+        .description(
+            "Screenshot the page and overlay a labeled coordinate grid — for locating click targets without guessing"
+        )
         .option("--region <x,y,w,h>", "crop to this region first (screenshot pixel space)")
         .option("--step <n>", "grid line spacing in pixels", "40")
         .option("--cdp-url <url>", "CDP endpoint of a running browser", "http://127.0.0.1:9333")
         .action(async (outPath: string, opts: { region?: string; step: string; cdpUrl: string }) => {
-            await withDevtoolsClient(async (client) => {
-                const written = await captureFrameGrid(client, {
-                    outPath,
-                    region: opts.region,
-                    gridStep: Number(opts.step),
-                });
-                p.log.success(`Labeled grid written to ${written}`);
-            }, { cdpUrl: opts.cdpUrl });
+            await withDevtoolsClient(
+                async (client) => {
+                    const written = await captureFrameGrid(client, {
+                        outPath,
+                        region: opts.region,
+                        gridStep: Number(opts.step),
+                    });
+                    p.log.success(`Labeled grid written to ${written}`);
+                },
+                { cdpUrl: opts.cdpUrl }
+            );
         });
 }
 
