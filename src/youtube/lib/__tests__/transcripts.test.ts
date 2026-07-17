@@ -129,6 +129,7 @@ describe("TranscriptService", () => {
             expect(transcriberTranscribeCalls[0]).toMatchObject({ audioPath: expectedAudioPath });
             expect(transcriberDisposeCalls).toHaveLength(1);
             expect(progress).toEqual([
+                { phase: "audio", message: "no captions available — preparing AI transcription" },
                 { phase: "audio", message: "downloading audio" },
                 { phase: "audio", percent: 50, message: "half" },
                 { phase: "transcribe", message: "running ASR" },

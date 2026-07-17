@@ -37,6 +37,7 @@ export type CreditReason =
     | "summary:timestamped"
     | "summary:short"
     | "transcript:translate"
+    | "transcribe:ai"
     | "dev-topup"
     | `stripe:${string}`
     | `stripe-refund:${string}`
@@ -70,6 +71,7 @@ export const CREDIT_COSTS = {
     "summary:timestamped": 10,
     "summary:short": 5,
     "transcript:translate": 5,
+    "transcribe:ai": 10,
     "tts:summary": 5,
 } as const;
 

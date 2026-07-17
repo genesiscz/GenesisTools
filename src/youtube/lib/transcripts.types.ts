@@ -14,6 +14,10 @@ export interface TranscribeProgressInfo {
 export interface TranscribeOpts {
     videoId: VideoId;
     forceTranscribe?: boolean;
+    /** Awaited immediately before ANY paid ASR run (no-captions fallback AND
+     *  forceTranscribe). Throwing aborts the transcription — the pipeline's
+     *  diamond gate reserves credits here. */
+    beforeAiTranscription?: () => void | Promise<void>;
     lang?: Language;
     provider?: string;
     persistProvider?: boolean;

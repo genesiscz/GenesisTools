@@ -9,11 +9,12 @@ import { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { UpsertVideoInput } from "@app/youtube/lib/db.types";
 import type { JobStage } from "@app/youtube/lib/jobs.types";
 import { Pipeline } from "@app/youtube/lib/pipeline";
-import type { PipelineHandlerMap } from "@app/youtube/lib/pipeline.types";
+import type { PipelineHandlerMap, StageHandlerCtx } from "@app/youtube/lib/pipeline.types";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
 import { QaService } from "@app/youtube/lib/qa";
 import { type ReportMember, SummaryService } from "@app/youtube/lib/summarize";
 import { TranscriptService } from "@app/youtube/lib/transcripts";
+import { CREDIT_COSTS } from "@app/youtube/lib/users.types";
 import type { VideoId } from "@app/youtube/lib/video.types";
 import type { YoutubeDeps, YoutubeOptions } from "@app/youtube/lib/youtube.types";
 import {
@@ -366,7 +367,7 @@ export class Youtube {
                 await this.comments.fetch(ctx.job.target as VideoId, { signal: ctx.signal });
             },
             captions: async (ctx) => {
-                await this.transcripts.transcribe({ videoId: ctx.job.target as VideoId, signal: ctx.signal });
+                await this.runGatedTranscribe(ctx, { forceTranscribe: false });
             },
             audio: async (ctx) => {
                 const video = await this.videos.ensureMetadata(ctx.job.target as VideoId, { signal: ctx.signal });
@@ -390,11 +391,7 @@ export class Youtube {
                 await this.downloadVideo(ctx.job.target as VideoId, { signal: ctx.signal });
             },
             transcribe: async (ctx) => {
-                await this.transcripts.transcribe({
-                    videoId: ctx.job.target as VideoId,
-                    forceTranscribe: true,
-                    signal: ctx.signal,
-                });
+                await this.runGatedTranscribe(ctx, { forceTranscribe: true });
             },
             summarize: async (ctx) => {
                 await this.summary.summarize({ videoId: ctx.job.target as VideoId, mode: "short", signal: ctx.signal });
@@ -479,6 +476,54 @@ export class Youtube {
         };
     }
 
+    /** Shared captions/transcribe stage body: metadata ensure → free captions
+     *  tier → diamond-gated ASR fallback, with progress + hold semantics. */
+    private async runGatedTranscribe(ctx: StageHandlerCtx, opts: { forceTranscribe: boolean }): Promise<void> {
+        const videoId = ctx.job.target as VideoId;
+        // Queue path previously skipped metadata → "unknown video" job failures
+        // on fresh videos (POST /pipeline does not ingest, unlike POST /summary).
+        await this.videos.ensureMetadata(videoId, { signal: ctx.signal });
+        const userId = ctx.job.userId;
+        // Ref object (not a bare `let`): TS never invalidates `let` narrowing from
+        // assignments inside a closure, so a `let hold` read after the await would
+        // narrow to `never`; property access on a ref resets narrowing per-read.
+        const holdRef: { current: { holdId: number; credits: number } | null } = { current: null };
+
+        try {
+            await this.transcripts.transcribe({
+                videoId,
+                signal: ctx.signal,
+                forceTranscribe: opts.forceTranscribe,
+                beforeAiTranscription: () => {
+                    if (userId === null) {
+                        return;
+                    }
+
+                    // Reserve before the provider spend; committed on success,
+                    // released on failure. Throws InsufficientCreditsError →
+                    // job fails with an explicit balance message.
+                    holdRef.current = this.db.reserveCredits({
+                        userId,
+                        amount: CREDIT_COSTS["transcribe:ai"],
+                        reason: "transcribe:ai",
+                        context: videoId,
+                    });
+                },
+                onProgress: (info) => ctx.onProgress(transcribeStageFraction(info), info.message),
+            });
+
+            if (holdRef.current) {
+                this.db.commitHold(holdRef.current.holdId);
+            }
+        } catch (error) {
+            if (holdRef.current) {
+                this.db.releaseHold(holdRef.current.holdId);
+            }
+
+            throw error;
+        }
+    }
+
     async downloadVideo(id: VideoId, opts: { quality?: "720p" | "1080p" | "best"; signal?: AbortSignal } = {}) {
         logger.info({ videoId: id, quality: opts.quality }, "youtube video download requested");
         const video = await this.videos.ensureMetadata(id, { signal: opts.signal });
@@ -521,4 +566,11 @@ function listedVideoToInput(handle: ChannelHandle, video: ListedVideo): UpsertVi
         isShort: video.isShort,
         isLive: video.isLive,
     };
+}
+
+/** Maps transcript progress onto the stage's 0..1 bar: audio download fills the first half, ASR the second. */
+function transcribeStageFraction(info: { phase: string; percent?: number }): number {
+    const within = Math.max(0, Math.min(1, (info.percent ?? 0) / 100));
+
+    return info.phase === "audio" ? within * 0.5 : 0.5 + within * 0.5;
 }
