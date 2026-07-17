@@ -138,7 +138,7 @@ export async function handleStripeEvent(db: YoutubeDatabase, payload: string, si
 }
 
 function applyStripeEvent(db: YoutubeDatabase, event: StripeEvent): "processed" | "skipped" {
-    if (event.type === "checkout.session.completed") {
+    if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
         return applyCheckoutCompleted(db, event.data.object);
     }
 
@@ -186,6 +186,20 @@ function applyCheckoutCompleted(db: YoutubeDatabase, session: Record<string, unk
 
     if (!pack) {
         logger.warn({ sessionId, packId }, "youtube billing: checkout.session.completed unknown pack");
+        return "skipped";
+    }
+
+    // Delayed payment methods fire checkout.session.completed before the money
+    // settles; only fulfill once payment_status is "paid". The later
+    // checkout.session.async_payment_succeeded re-enters here with "paid" and
+    // grants then (idempotent on the stripe:<sessionId> ledger reason).
+    const paymentStatus = typeof session.payment_status === "string" ? session.payment_status : null;
+
+    if (paymentStatus !== "paid") {
+        logger.info(
+            { sessionId, userId, paymentStatus },
+            "youtube billing: checkout.session not paid yet, deferring grant"
+        );
         return "skipped";
     }
 
@@ -237,16 +251,33 @@ function applyChargeRefunded(db: YoutubeDatabase, charge: Record<string, unknown
         return "processed";
     }
 
-    db.grantCredits(userId, -pack.diamonds, reason);
+    // charge.refunded fires for partial refunds too. The idempotency key is per
+    // charge (stripe-refund:<chargeId>, DB-unique via credit_ledger), so credits
+    // are reversed exactly once per charge — reverse only the refunded share so a
+    // small partial refund cannot wipe the whole pack. Missing amount fields
+    // (minimal/legacy events) fall back to a full reversal.
+    const amount = typeof charge.amount === "number" ? charge.amount : null;
+    const amountRefunded = typeof charge.amount_refunded === "number" ? charge.amount_refunded : null;
+    let reversal = pack.diamonds;
+    let partial = false;
+
+    if (amount !== null && amount > 0 && amountRefunded !== null && amountRefunded < amount) {
+        reversal = Math.floor((pack.diamonds * amountRefunded) / amount);
+        partial = true;
+    }
+
+    db.grantCredits(userId, -reversal, reason);
     db.recordPayment({
         userId,
         kind: "refund",
         stripeRef: `refund:${chargeId}`,
         packId: pack.id,
-        credits: -pack.diamonds,
+        amountCents: amountRefunded,
+        currency: typeof charge.currency === "string" ? charge.currency : null,
+        credits: -reversal,
         status: "refunded",
     });
-    logger.info({ chargeId, userId, diamonds: -pack.diamonds }, "youtube billing: reversed diamonds from refund");
+    logger.info({ chargeId, userId, diamonds: -reversal, partial }, "youtube billing: reversed diamonds from refund");
 
     return "processed";
 }

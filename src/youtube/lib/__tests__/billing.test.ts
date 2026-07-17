@@ -198,7 +198,13 @@ describe("handleStripeEvent", () => {
         const { payload, signature } = signPayload(webhookSecret, {
             id: "evt_1",
             type: "checkout.session.completed",
-            data: { object: { id: "cs_test_123", metadata: { packId: "pack-medium", userId: String(user.id) } } },
+            data: {
+                object: {
+                    id: "cs_test_123",
+                    payment_status: "paid",
+                    metadata: { packId: "pack-medium", userId: String(user.id) },
+                },
+            },
         });
 
         await env.testing.withOverrides({ STRIPE_WEBHOOK_SECRET: webhookSecret }, async () => {

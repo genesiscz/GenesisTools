@@ -152,3 +152,119 @@ describe("subscription webhook lifecycle", () => {
         expect(db.getWebhookLog("evt_misc")?.outcome).toBe("skipped");
     });
 });
+
+function packCheckoutEvent(opts: {
+    userId: number;
+    eventId?: string;
+    sessionId?: string;
+    paymentStatus?: string;
+    type?: string;
+    packId?: string;
+}) {
+    return {
+        id: opts.eventId ?? "evt_pack_1",
+        type: opts.type ?? "checkout.session.completed",
+        data: {
+            object: {
+                id: opts.sessionId ?? "cs_pack_1",
+                mode: "payment",
+                payment_status: opts.paymentStatus,
+                amount_total: 1499,
+                currency: "usd",
+                metadata: { packId: opts.packId ?? "pack-medium", userId: String(opts.userId) },
+            },
+        },
+    };
+}
+
+describe("pack checkout fulfillment gating (payment_status)", () => {
+    it("grants diamonds only when payment_status is paid", async () => {
+        const user = db.createUser({ email: "p@example.com", passwordHash: "h", apiToken: "ytu_p" });
+        await deliver(packCheckoutEvent({ userId: user.id, paymentStatus: "paid" }));
+
+        expect(db.getUserCredits(user.id)).toBe(2000);
+        expect(db.getWebhookLog("evt_pack_1")?.outcome).toBe("processed");
+    });
+
+    it("does not grant on an unpaid completed session (delayed payment method)", async () => {
+        const user = db.createUser({ email: "p2@example.com", passwordHash: "h", apiToken: "ytu_p2" });
+        await deliver(
+            packCheckoutEvent({ userId: user.id, paymentStatus: "unpaid", eventId: "evt_unpaid", sessionId: "cs_late" })
+        );
+
+        expect(db.getUserCredits(user.id)).toBe(0);
+        expect(db.getWebhookLog("evt_unpaid")?.outcome).toBe("skipped");
+        expect(db.hasLedgerReason(user.id, "stripe:cs_late")).toBe(false);
+    });
+
+    it("checkout.session.async_payment_succeeded fulfills a later-paid session", async () => {
+        const user = db.createUser({ email: "p3@example.com", passwordHash: "h", apiToken: "ytu_p3" });
+        // Delayed method: completed first (unpaid, no grant), then async succeeded (paid).
+        await deliver(
+            packCheckoutEvent({ userId: user.id, paymentStatus: "unpaid", eventId: "evt_c", sessionId: "cs_async" })
+        );
+        expect(db.getUserCredits(user.id)).toBe(0);
+
+        await deliver(
+            packCheckoutEvent({
+                userId: user.id,
+                paymentStatus: "paid",
+                eventId: "evt_async",
+                sessionId: "cs_async",
+                type: "checkout.session.async_payment_succeeded",
+            })
+        );
+
+        expect(db.getUserCredits(user.id)).toBe(2000);
+        expect(db.hasLedgerReason(user.id, "stripe:cs_async")).toBe(true);
+    });
+});
+
+function refundEvent(opts: {
+    userId: number;
+    eventId?: string;
+    chargeId?: string;
+    amount?: number;
+    amountRefunded?: number;
+    packId?: string;
+}) {
+    return {
+        id: opts.eventId ?? "evt_refund_1",
+        type: "charge.refunded",
+        data: {
+            object: {
+                id: opts.chargeId ?? "ch_1",
+                amount: opts.amount,
+                amount_refunded: opts.amountRefunded,
+                metadata: { packId: opts.packId ?? "pack-medium", userId: String(opts.userId) },
+            },
+        },
+    };
+}
+
+describe("charge.refunded partial vs full", () => {
+    it("full refund claws back the whole pack", async () => {
+        const user = db.createUser({ email: "r@example.com", passwordHash: "h", apiToken: "ytu_r" });
+        db.grantCredits(user.id, 2000, "stripe:cs_r");
+        await deliver(refundEvent({ userId: user.id, amount: 1499, amountRefunded: 1499 }));
+
+        expect(db.getUserCredits(user.id)).toBe(0);
+    });
+
+    it("partial refund claws back only the proportional (floored) diamonds", async () => {
+        const user = db.createUser({ email: "r2@example.com", passwordHash: "h", apiToken: "ytu_r2" });
+        db.grantCredits(user.id, 2000, "stripe:cs_r2");
+        // 500/1499 of a 2000-diamond pack → floor(2000 * 500 / 1499) = 667 reversed.
+        await deliver(
+            refundEvent({
+                userId: user.id,
+                eventId: "evt_partial",
+                chargeId: "ch_2",
+                amount: 1499,
+                amountRefunded: 500,
+            })
+        );
+
+        expect(db.getUserCredits(user.id)).toBe(2000 - 667);
+    });
+});

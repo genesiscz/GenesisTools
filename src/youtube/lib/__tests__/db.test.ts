@@ -525,6 +525,30 @@ describe("YoutubeDatabase QA chunks", () => {
         expect(chunks.length).toBe(1);
         expect(chunks[0].text).toBe("New");
     });
+
+    it("keeps transcript and comment chunks with the same idx/model distinct (source in unique key)", () => {
+        db.upsertQaChunk({
+            videoId: "vid00000001",
+            chunkIdx: 0,
+            text: "From transcript",
+            embedderModel: "test-model",
+            source: "transcript",
+        });
+        db.upsertQaChunk({
+            videoId: "vid00000001",
+            chunkIdx: 0,
+            text: "From comment",
+            embedderModel: "test-model",
+            source: "comments",
+            sourceRef: "cmt_1",
+        });
+        const chunks = db.listQaChunks("vid00000001", "test-model");
+
+        expect(chunks).toHaveLength(2);
+        expect(chunks.map((chunk) => chunk.text).sort()).toEqual(["From comment", "From transcript"]);
+        expect(db.hasQaChunks("vid00000001", "test-model", "transcript")).toBe(true);
+        expect(db.hasQaChunks("vid00000001", "test-model", "comments")).toBe(true);
+    });
 });
 
 describe("YoutubeDatabase jobs", () => {

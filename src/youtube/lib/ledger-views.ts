@@ -98,6 +98,10 @@ export function getLedgerPage(
     opts: { limit?: number; before?: number } = {}
 ): LedgerPage {
     const limit = opts.limit ?? 50;
+    // Fetch one extra row to detect a further page without a second query. If
+    // the final page holds exactly `limit` rows, the sentinel is absent and
+    // nextBefore stays null (no wasted empty follow-up request).
+    const fetchLimit = limit + 1;
     const rawRows =
         opts.before !== undefined
             ? db
@@ -106,16 +110,18 @@ export function getLedgerPage(
                       `SELECT id, delta, reason, balance_after, created_at FROM credit_ledger
                        WHERE user_id = ? AND id < ? ORDER BY id DESC LIMIT ?`
                   )
-                  .all(userId, opts.before, limit)
+                  .all(userId, opts.before, fetchLimit)
             : db
                   .getDb()
                   .query<LedgerDbRow, [number, number]>(
                       `SELECT id, delta, reason, balance_after, created_at FROM credit_ledger
                        WHERE user_id = ? ORDER BY id DESC LIMIT ?`
                   )
-                  .all(userId, limit);
+                  .all(userId, fetchLimit);
 
-    const rows: LedgerRowData[] = rawRows.map((row) => ({
+    const hasMore = rawRows.length > limit;
+    const pageRows = hasMore ? rawRows.slice(0, limit) : rawRows;
+    const rows: LedgerRowData[] = pageRows.map((row) => ({
         id: row.id,
         delta: row.delta,
         reason: row.reason,
@@ -129,7 +135,7 @@ export function getLedgerPage(
         context: row.reason === "ask" ? (db.findQaForLedgerRow(userId, row.created_at)?.question ?? null) : null,
     }));
 
-    const nextBefore = rows.length === limit ? rows[rows.length - 1].id : null;
+    const nextBefore = hasMore ? rows[rows.length - 1].id : null;
 
     return { rows, nextBefore };
 }
