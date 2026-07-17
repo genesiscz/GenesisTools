@@ -13,6 +13,7 @@ import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { clearPid, registerSignalHandlers, writePid } from "@app/youtube/lib/server/daemon";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { clearPortFile, writePortFile } from "@app/youtube/lib/server/port-file";
+import { handleAdminRoute } from "@app/youtube/lib/server/routes/admin";
 import { handleCacheRoute } from "@app/youtube/lib/server/routes/cache";
 import { handleChannelsRoute } from "@app/youtube/lib/server/routes/channels";
 import { handleCollectionsRoute } from "@app/youtube/lib/server/routes/collections";
@@ -211,6 +212,10 @@ async function dispatchApiRoute(req: Request, url: URL, youtube: Youtube): Promi
 
     if (url.pathname.startsWith("/api/v1/collections")) {
         return handleCollectionsRoute(req, url, youtube);
+    }
+
+    if (url.pathname.startsWith("/api/v1/admin")) {
+        return handleAdminRoute(req, url, youtube);
     }
 
     if (url.pathname.startsWith("/api/v1/cache")) {

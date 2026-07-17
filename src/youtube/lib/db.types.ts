@@ -402,3 +402,62 @@ export interface ReferralRecord {
     offerTo: string;
     createdAt: string;
 }
+
+export interface AdminListUsersOpts {
+    /** Case-insensitive email substring. */
+    search?: string;
+    /** Subscription filter: a status ("active"|"past_due"|"canceled") or "none". */
+    subscription?: string;
+    sort?: "created" | "revenue" | "net" | "credits";
+    dir?: "asc" | "desc";
+    limit?: number;
+    offset?: number;
+}
+
+/** One row of the admin users table — per-user money aggregates (role attached in the route). */
+export interface AdminUserRow {
+    id: number;
+    email: string;
+    credits: number;
+    /** Sum of succeeded payments (cents). */
+    revenueCents: number;
+    /** Sum of ai_calls.cost_usd. */
+    aiCostUsd: number;
+    subStatus: string | null;
+    subPlanId: string | null;
+    createdAt: string;
+    lastLoginAt: string | null;
+}
+
+export interface AdminUserTotals {
+    revenueCents: number;
+    aiCostUsd: number;
+    paymentsCount: number;
+    aiCallsCount: number;
+}
+
+export interface AdminListAiCallsOpts {
+    provider?: string;
+    action?: string;
+    userId?: number;
+    limit?: number;
+    offset?: number;
+}
+
+export interface AdminListWebhookLogsOpts {
+    outcome?: string;
+    limit?: number;
+    offset?: number;
+}
+
+export interface AdminRevenueSummary {
+    totals: {
+        revenueCents: number;
+        aiCostUsd: number;
+        paymentsCount: number;
+        refundsCount: number;
+        activeSubscriptions: number;
+    };
+    /** Daily buckets, oldest→newest, gaps zero-filled, covering the requested window. */
+    daily: Array<{ day: string; revenueCents: number; aiCostUsd: number }>;
+}

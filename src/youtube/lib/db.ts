@@ -7,6 +7,8 @@ import { deleteIfExists } from "@app/youtube/lib/cache";
 import type { Channel, ChannelHandle } from "@app/youtube/lib/channel.types";
 import type { FetchedComment, VideoComment } from "@app/youtube/lib/comments.types";
 import type {
+    AdminListUsersOpts,
+    AdminUserRow,
     AiCallRecord,
     AskMessageRecord,
     AskMessageRole,
@@ -2010,6 +2012,61 @@ export class YoutubeDatabase extends BaseDatabase {
         return row ? rowToUser(row) : null;
     }
 
+    getUserById(userId: number): YtUser | null {
+        const row = this.db.query<UserRow, [number]>("SELECT * FROM users WHERE id = ?").get(userId);
+
+        return row ? rowToUser(row) : null;
+    }
+
+    /**
+     * Admin users table: one row per user with money aggregates joined from
+     * pre-aggregated subqueries (one row per user_id each) so payments × ai_calls
+     * never multiply. Role is config-derived and attached in the route, not here.
+     */
+    adminListUsers(opts: AdminListUsersOpts): { rows: AdminUserRow[]; total: number } {
+        const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+        const offset = Math.max(opts.offset ?? 0, 0);
+        const filters: string[] = [];
+        const params: Array<string> = [];
+
+        if (opts.search) {
+            filters.push("u.email LIKE ?");
+            params.push(`%${opts.search}%`);
+        }
+
+        if (opts.subscription === "none") {
+            filters.push("s.status IS NULL");
+        } else if (opts.subscription) {
+            filters.push("s.status = ?");
+            params.push(opts.subscription);
+        }
+
+        const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
+        const orderCol = ADMIN_USER_SORTS[opts.sort ?? "created"] ?? ADMIN_USER_SORTS.created;
+        const dir = opts.dir === "asc" ? "ASC" : "DESC";
+        const base = `
+            FROM users u
+            LEFT JOIN (SELECT user_id, SUM(amount_cents) AS revenue_cents FROM payments WHERE status = 'succeeded' GROUP BY user_id) p ON p.user_id = u.id
+            LEFT JOIN (SELECT user_id, SUM(cost_usd) AS cost_usd FROM ai_calls GROUP BY user_id) a ON a.user_id = u.id
+            LEFT JOIN subscriptions s ON s.user_id = u.id
+            ${where}`;
+        const total =
+            this.db.query<{ n: number }, string[]>(`SELECT COUNT(*) AS n ${base}`).get(...params)?.n ?? 0;
+        const rows = this.db
+            .query<AdminUserRowRaw, [...string[], number, number]>(
+                `SELECT u.id, u.email, u.credits, u.created_at, u.last_login_at,
+                        COALESCE(p.revenue_cents, 0) AS revenue_cents,
+                        COALESCE(a.cost_usd, 0) AS cost_usd,
+                        s.status AS sub_status, s.plan_id AS sub_plan_id
+                 ${base}
+                 ORDER BY ${orderCol} ${dir}, u.id DESC
+                 LIMIT ? OFFSET ?`
+            )
+            .all(...params, limit, offset);
+
+        return { rows: rows.map(rowToAdminUser), total };
+    }
+
     touchUserLogin(id: number): void {
         this.db.run(`UPDATE users SET last_login_at = ${SQL_NOW_UTC} WHERE id = ?`, [id]);
     }
@@ -3726,6 +3783,40 @@ interface ReferralRow {
     offer_from: string;
     offer_to: string;
     created_at: string;
+}
+
+/** Fixed sort whitelist — never interpolate a raw sort key into SQL. */
+const ADMIN_USER_SORTS = {
+    created: "u.created_at",
+    revenue: "COALESCE(p.revenue_cents, 0)",
+    net: "(COALESCE(p.revenue_cents, 0) / 100.0 - COALESCE(a.cost_usd, 0))",
+    credits: "u.credits",
+} as const;
+
+interface AdminUserRowRaw {
+    id: number;
+    email: string;
+    credits: number;
+    created_at: string;
+    last_login_at: string | null;
+    revenue_cents: number;
+    cost_usd: number;
+    sub_status: string | null;
+    sub_plan_id: string | null;
+}
+
+function rowToAdminUser(row: AdminUserRowRaw): AdminUserRow {
+    return {
+        id: row.id,
+        email: row.email,
+        credits: row.credits,
+        revenueCents: row.revenue_cents,
+        aiCostUsd: row.cost_usd,
+        subStatus: row.sub_status,
+        subPlanId: row.sub_plan_id,
+        createdAt: row.created_at,
+        lastLoginAt: row.last_login_at,
+    };
 }
 
 function rowToReferral(row: ReferralRow): ReferralRecord {
