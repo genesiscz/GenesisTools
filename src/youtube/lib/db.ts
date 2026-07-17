@@ -1784,6 +1784,12 @@ export class YoutubeDatabase extends BaseDatabase {
         return row?.credits ?? null;
     }
 
+    getUserEmailById(userId: number): string | null {
+        const row = this.db.query<{ email: string }, [number]>("SELECT email FROM users WHERE id = ?").get(userId);
+
+        return row?.email ?? null;
+    }
+
     /** SUM of positive grant-type deltas since `sinceIso` — the frozen grant-reason set. */
     getGrantsSince(userId: number, sinceIso: string): number {
         const row = this.db
