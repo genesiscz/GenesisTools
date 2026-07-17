@@ -3,6 +3,7 @@ export { LOW_BALANCE_THRESHOLD, SUBSCRIPTION_PLANS } from "@app/youtube/lib/bill
 export type { CacheLayout } from "@app/youtube/lib/cache.types";
 export type { FetchCaptionsOpts, FetchCaptionsResult } from "@app/youtube/lib/captions.types";
 export type { Channel, ChannelHandle } from "@app/youtube/lib/channel.types";
+export type { CollectionRule, WatchedRule } from "@app/youtube/lib/collection-rules";
 export type { FetchCommentsOpts, FetchedComment, VideoComment } from "@app/youtube/lib/comments.types";
 export type {
     AiTask,
@@ -14,12 +15,20 @@ export type {
     YtRole,
 } from "@app/youtube/lib/config.types";
 export type {
+    AskMessageRecord,
+    AskMessageRole,
+    AskThreadRecord,
+    CollectionKind,
+    CollectionRecord,
     QueueStats,
     SearchVideosOpts,
+    VideoLite,
     VideoLogKind,
     VideoSearchField,
     VideoSearchHit,
+    WatchlistEntry,
 } from "@app/youtube/lib/db.types";
+export type { ActionHistoryGroup, HistoryEntry, VideoHistoryGroup } from "@app/youtube/lib/history";
 export type {
     JobActivity,
     JobActivityKind,
