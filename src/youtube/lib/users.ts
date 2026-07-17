@@ -41,8 +41,14 @@ export async function registerUser(
 
     const passwordHash = await Bun.password.hash(input.password, "argon2id");
     const token = `ytu_${randomBytes(32).toString("hex")}`;
-    const created = db.createUser({ email, passwordHash, apiToken: token });
-    const credits = db.grantCredits(created.id, STARTING_CREDITS, "register-grant");
+    // Atomic: a crash between the insert and the grant must not leave a
+    // registered account with no starting credits and no ledger row.
+    const { created, credits } = db.transaction(() => {
+        const user = db.createUser({ email, passwordHash, apiToken: token });
+        const balance = db.grantCredits(user.id, STARTING_CREDITS, "register-grant");
+
+        return { created: user, credits: balance };
+    });
     logger.info(
         { userId: created.id, tokenHash: createHash("sha256").update(token).digest("hex").slice(0, 12) },
         "youtube users: registered"

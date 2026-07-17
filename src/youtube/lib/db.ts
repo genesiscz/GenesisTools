@@ -2321,6 +2321,11 @@ export class YoutubeDatabase extends BaseDatabase {
         this.db.run(`UPDATE users SET last_login_at = ${SQL_NOW_UTC} WHERE id = ?`, [id]);
     }
 
+    /** Run a callback inside a single SQLite transaction (commit-or-rollback). */
+    transaction<T>(fn: () => T): T {
+        return this.db.transaction(fn)();
+    }
+
     /** Partial update of user preferences (Feature 08 output lang, Feature 12 TTS voice). Undefined fields are left untouched. */
     updateUserPrefs(userId: number, patch: UpdateUserPrefsInput): YtUser {
         const sets: string[] = [];
