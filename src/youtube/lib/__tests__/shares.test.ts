@@ -33,9 +33,14 @@ describe("shares", () => {
         return id;
     }
 
+    function grantAccess(userId: number, videoId: string, mode: "short" | "timestamped" | "long" = "short") {
+        db.insertArtifactAccess({ userId, kind: `summary:${mode}`, videoId, creditsSpent: 0 });
+    }
+
     it("slug is 12 base62 characters", async () => {
         const user = createTestUser();
         const videoId = seedVideo();
+        grantAccess(user.id, videoId);
 
         const { slug } = await createShare({ db, user, kind: "summary", videoId, mode: "short", baseUrl: BASE_URL });
 
@@ -46,6 +51,7 @@ describe("shares", () => {
     it("snapshot immutability: regenerating the summary after share leaves the page unchanged", async () => {
         const user = createTestUser();
         const videoId = seedVideo();
+        grantAccess(user.id, videoId);
 
         const { slug } = await createShare({ db, user, kind: "summary", videoId, mode: "short", baseUrl: BASE_URL });
         const before = renderSharePage(db.getShareBySlug(slug)!);
@@ -60,6 +66,7 @@ describe("shares", () => {
     it("revoked share is treated as missing by the route layer (revokedAt set)", async () => {
         const user = createTestUser();
         const videoId = seedVideo();
+        grantAccess(user.id, videoId);
 
         const { slug } = await createShare({ db, user, kind: "summary", videoId, mode: "short", baseUrl: BASE_URL });
         const revoked = revokeShare(db, user.id, slug);
@@ -72,6 +79,7 @@ describe("shares", () => {
     it("revoking twice is a no-op the second time", async () => {
         const user = createTestUser();
         const videoId = seedVideo();
+        grantAccess(user.id, videoId);
 
         const { slug } = await createShare({ db, user, kind: "summary", videoId, mode: "short", baseUrl: BASE_URL });
         expect(revokeShare(db, user.id, slug)).toBe(true);
@@ -81,6 +89,7 @@ describe("shares", () => {
     it("the 11th share within an hour throws; the first 10 succeed", async () => {
         const user = createTestUser();
         const videoId = seedVideo();
+        grantAccess(user.id, videoId);
 
         for (let i = 0; i < 10; i++) {
             await createShare({ db, user, kind: "summary", videoId, mode: "short", baseUrl: BASE_URL });
@@ -141,6 +150,7 @@ describe("shares", () => {
     it("listShares returns newest first and includes revoked state", async () => {
         const user = createTestUser();
         const videoId = seedVideo();
+        grantAccess(user.id, videoId);
         const first = await createShare({ db, user, kind: "summary", videoId, mode: "short", baseUrl: BASE_URL });
         const second = await createShare({ db, user, kind: "summary", videoId, mode: "short", baseUrl: BASE_URL });
         revokeShare(db, user.id, first.slug);
@@ -152,9 +162,29 @@ describe("shares", () => {
         expect(list.find((s) => s.slug === second.slug)?.revokedAt).toBeNull();
     });
 
+    it("sharing a summary without an artifact-access row throws ShareAccessError", async () => {
+        const user = createTestUser();
+        const videoId = seedVideo();
+
+        await expect(
+            createShare({ db, user, kind: "summary", videoId, mode: "short", baseUrl: BASE_URL })
+        ).rejects.toThrow("artifact access required");
+    });
+
+    it("sharing a summary succeeds once the caller holds artifact access", async () => {
+        const user = createTestUser();
+        const videoId = seedVideo();
+        grantAccess(user.id, videoId);
+
+        const { slug } = await createShare({ db, user, kind: "summary", videoId, mode: "short", baseUrl: BASE_URL });
+
+        expect(slug).toHaveLength(SHARE_SLUG_LENGTH);
+    });
+
     it("throws when sharing a summary mode that hasn't been generated yet", async () => {
         const user = createTestUser();
         const videoId = seedVideo();
+        grantAccess(user.id, videoId, "long");
 
         await expect(
             createShare({ db, user, kind: "summary", videoId, mode: "long", baseUrl: BASE_URL })

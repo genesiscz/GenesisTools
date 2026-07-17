@@ -1,6 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
 
+function ledgerRowCount(db: YoutubeDatabase, userId: number, reason: string): number {
+    const row = db
+        .getDb()
+        .query<{ count: number }, [number, string]>(
+            "SELECT COUNT(*) AS count FROM credit_ledger WHERE user_id = ? AND reason = ?"
+        )
+        .get(userId, reason);
+
+    return row?.count ?? 0;
+}
+
 let db: YoutubeDatabase;
 
 beforeEach(() => {
@@ -105,6 +116,26 @@ describe("quota + grants", () => {
         expect(db.incrementQuotaIfBelow(7, "2026-07", 2)).toEqual({ allowed: false, used: 2 });
         expect(db.getQuotaUsed(7, "2026-07")).toBe(2);
         expect(db.getQuotaUsed(7, "2026-08")).toBe(0);
+    });
+
+    it("grantCredits is DB-idempotent for stripe reasons: same reason twice → one row, one balance change", () => {
+        const user = db.createUser({ email: "idem@example.com", passwordHash: "h", apiToken: "ytu_idem" });
+        const first = db.grantCredits(user.id, 500, "stripe:cs_dup");
+        const second = db.grantCredits(user.id, 500, "stripe:cs_dup");
+
+        expect(first).toBe(500);
+        expect(second).toBe(500);
+        expect(db.getUserCredits(user.id)).toBe(500);
+        expect(ledgerRowCount(db, user.id, "stripe:cs_dup")).toBe(1);
+    });
+
+    it("grantCredits still allows repeated non-idempotency reasons (e.g. register-grant)", () => {
+        const user = db.createUser({ email: "rep@example.com", passwordHash: "h", apiToken: "ytu_rep" });
+        db.grantCredits(user.id, 100, "register-grant");
+        db.grantCredits(user.id, 100, "register-grant");
+
+        expect(db.getUserCredits(user.id)).toBe(200);
+        expect(ledgerRowCount(db, user.id, "register-grant")).toBe(2);
     });
 
     it("getGrantsSince sums only grant-type positive deltas; hasAnyStripeGrant detects payers", () => {

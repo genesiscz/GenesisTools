@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { logger } from "@app/logger";
 import { BaseDatabase, SQL_NOW_UTC } from "@app/utils/database";
 import { SafeJSON } from "@app/utils/json";
 import { withFileLock } from "@app/utils/storage";
@@ -71,6 +72,7 @@ import type {
 } from "@app/youtube/lib/jobs.types";
 import type { AskCitation, QaChunk, QaSource } from "@app/youtube/lib/qa.types";
 import type { Language, Transcript, TranscriptSegment } from "@app/youtube/lib/transcript.types";
+import type { UserSettings } from "@app/youtube/lib/user-settings";
 import type { ArtifactKind, CreditHold, CreditReason, QaHistoryItem, YtUser } from "@app/youtube/lib/users.types";
 import { InsufficientCreditsError } from "@app/youtube/lib/users.types";
 import type {
@@ -383,6 +385,51 @@ export class YoutubeDatabase extends BaseDatabase {
             }
         });
 
+        // The original qa_chunks UNIQUE was (video_id, chunk_idx, embedder_model) —
+        // an inline (auto-index) constraint, so `source` cannot be folded in without
+        // a table rebuild. Without it a comment chunk collides with the transcript
+        // chunk at the same index/model and the upsert overwrites its text/provenance.
+        this.runMigration("qa-chunks-unique-include-source", () => {
+            const tableSql = this.db
+                .query<{ sql: string }, []>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'qa_chunks'")
+                .get();
+
+            if (!tableSql?.sql.includes("UNIQUE (video_id, chunk_idx, embedder_model)")) {
+                return;
+            }
+
+            const rebuild = this.db.transaction(() => {
+                this.db.exec(`
+                    CREATE TABLE qa_chunks_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        video_id TEXT NOT NULL,
+                        chunk_idx INTEGER NOT NULL,
+                        text TEXT NOT NULL,
+                        start_sec REAL,
+                        end_sec REAL,
+                        embedding BLOB,
+                        embedding_dims INTEGER,
+                        embedder_model TEXT,
+                        source TEXT NOT NULL DEFAULT 'transcript',
+                        source_ref TEXT,
+                        created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
+                        FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE,
+                        UNIQUE (video_id, chunk_idx, embedder_model, source)
+                    );
+                    INSERT INTO qa_chunks_new
+                        (id, video_id, chunk_idx, text, start_sec, end_sec, embedding, embedding_dims, embedder_model, source, source_ref, created_at)
+                    SELECT
+                        id, video_id, chunk_idx, text, start_sec, end_sec, embedding, embedding_dims, embedder_model, source, source_ref, created_at
+                    FROM qa_chunks;
+                    DROP TABLE qa_chunks;
+                    ALTER TABLE qa_chunks_new RENAME TO qa_chunks;
+                    CREATE INDEX IF NOT EXISTS idx_qa_chunks_video ON qa_chunks(video_id);
+                    CREATE INDEX IF NOT EXISTS idx_qa_chunks_video_source ON qa_chunks(video_id, source);
+                `);
+            });
+            rebuild();
+        });
+
         this.runMigration("add-qa-history-scope", () => {
             const cols = this.db.query<{ name: string }, []>("PRAGMA table_info(qa_history)").all() as Array<{
                 name: string;
@@ -417,35 +464,37 @@ export class YoutubeDatabase extends BaseDatabase {
                 return;
             }
 
-            this.db.exec(`
-                CREATE TABLE IF NOT EXISTS artifact_access (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL REFERENCES users(id),
-                    kind TEXT NOT NULL,            -- 'summary:long' | 'summary:short' | 'summary:timestamped' | 'transcript:ai'
-                    video_id TEXT NOT NULL,
-                    credits_spent INTEGER NOT NULL,
-                    created_at TEXT NOT NULL,
-                    UNIQUE (user_id, kind, video_id)
-                );
-            `);
-            // One-time backfill (guarded by the table-existence check above):
-            // artifacts generated before access tracking have no owner — grant
-            // every current user access so nobody is locked out of content
-            // they could already see.
-            this.db.exec(`
-                INSERT OR IGNORE INTO artifact_access (user_id, kind, video_id, credits_spent, created_at)
-                SELECT u.id, 'summary:short', v.id, 0, ${SQL_NOW_UTC}
-                FROM users u, videos v WHERE v.summary_short IS NOT NULL;
-                INSERT OR IGNORE INTO artifact_access (user_id, kind, video_id, credits_spent, created_at)
-                SELECT u.id, 'summary:timestamped', v.id, 0, ${SQL_NOW_UTC}
-                FROM users u, videos v WHERE v.summary_timestamped_json IS NOT NULL;
-                INSERT OR IGNORE INTO artifact_access (user_id, kind, video_id, credits_spent, created_at)
-                SELECT u.id, 'summary:long', v.id, 0, ${SQL_NOW_UTC}
-                FROM users u, videos v WHERE v.summary_long_json IS NOT NULL;
-                INSERT OR IGNORE INTO artifact_access (user_id, kind, video_id, credits_spent, created_at)
-                SELECT u.id, 'transcript:ai', t.video_id, 0, ${SQL_NOW_UTC}
-                FROM users u, transcripts t WHERE t.source = 'ai';
-            `);
+            // Table creation + backfill must be atomic: if any backfill statement
+            // failed after the CREATE committed, the next startup would see the
+            // table exist and permanently skip the remaining backfill, locking
+            // users out of pre-migration artifacts. One transaction rolls back
+            // both on failure so the migration retries fully next time.
+            const create = this.db.transaction(() => {
+                this.db.exec(`
+                    CREATE TABLE IF NOT EXISTS artifact_access (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL REFERENCES users(id),
+                        kind TEXT NOT NULL,            -- 'summary:long' | 'summary:short' | 'summary:timestamped' | 'transcript:ai'
+                        video_id TEXT NOT NULL,
+                        credits_spent INTEGER NOT NULL,
+                        created_at TEXT NOT NULL,
+                        UNIQUE (user_id, kind, video_id)
+                    );
+                    INSERT OR IGNORE INTO artifact_access (user_id, kind, video_id, credits_spent, created_at)
+                    SELECT u.id, 'summary:short', v.id, 0, ${SQL_NOW_UTC}
+                    FROM users u, videos v WHERE v.summary_short IS NOT NULL;
+                    INSERT OR IGNORE INTO artifact_access (user_id, kind, video_id, credits_spent, created_at)
+                    SELECT u.id, 'summary:timestamped', v.id, 0, ${SQL_NOW_UTC}
+                    FROM users u, videos v WHERE v.summary_timestamped_json IS NOT NULL;
+                    INSERT OR IGNORE INTO artifact_access (user_id, kind, video_id, credits_spent, created_at)
+                    SELECT u.id, 'summary:long', v.id, 0, ${SQL_NOW_UTC}
+                    FROM users u, videos v WHERE v.summary_long_json IS NOT NULL;
+                    INSERT OR IGNORE INTO artifact_access (user_id, kind, video_id, credits_spent, created_at)
+                    SELECT u.id, 'transcript:ai', t.video_id, 0, ${SQL_NOW_UTC}
+                    FROM users u, transcripts t WHERE t.source = 'ai';
+                `);
+            });
+            create();
         });
 
         this.runMigration("add-video-speakers", () => {
@@ -711,6 +760,40 @@ export class YoutubeDatabase extends BaseDatabase {
                 );
                 CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_user_id, id DESC);
             `);
+        });
+
+        this.runMigration("add-user-settings", () => {
+            const userCols = this.db.query<{ name: string }, []>("PRAGMA table_info(users)").all() as Array<{
+                name: string;
+            }>;
+
+            if (!userCols.some((column) => column.name === "settings")) {
+                this.db.exec("ALTER TABLE users ADD COLUMN settings TEXT NOT NULL DEFAULT '{}'");
+            }
+        });
+
+        // DB-enforced idempotency for external-event-driven ledger writes. These
+        // reason classes each embed a unique external id (stripe session/charge,
+        // invoice, referral code), so a duplicate row means a duplicated webhook
+        // delivery. The partial UNIQUE index makes grantCredits's INSERT OR IGNORE
+        // a no-op on redelivery even across concurrent processes.
+        this.runMigration("add-credit-ledger-idempotency", () => {
+            this.db.exec(
+                `CREATE UNIQUE INDEX IF NOT EXISTS idx_credit_ledger_idempotency
+                 ON credit_ledger(user_id, reason)
+                 WHERE reason LIKE 'stripe:%'
+                    OR reason LIKE 'stripe-refund:%'
+                    OR reason LIKE 'sub-allowance:%'
+                    OR reason LIKE 'referral:%'`
+            );
+        });
+
+        // Plain indexes the partial idempotency index can't serve: ledger
+        // pagination (user_id, id DESC) and hasLedgerReason lookups for
+        // reasons outside the idempotency prefix set (ask, register-grant, …).
+        this.runMigration("add-credit-ledger-plain-indexes", () => {
+            this.db.exec("CREATE INDEX IF NOT EXISTS idx_credit_ledger_user_id ON credit_ledger(user_id, id DESC)");
+            this.db.exec("CREATE INDEX IF NOT EXISTS idx_credit_ledger_user_reason ON credit_ledger(user_id, reason)");
         });
 
         const existing = this.db
@@ -1185,13 +1268,12 @@ export class YoutubeDatabase extends BaseDatabase {
         this.db.run(
             `INSERT INTO qa_chunks (video_id, chunk_idx, text, start_sec, end_sec, embedding, embedding_dims, embedder_model, source, source_ref)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(video_id, chunk_idx, embedder_model) DO UPDATE SET
+             ON CONFLICT(video_id, chunk_idx, embedder_model, source) DO UPDATE SET
                 text = excluded.text,
                 start_sec = excluded.start_sec,
                 end_sec = excluded.end_sec,
                 embedding = excluded.embedding,
                 embedding_dims = excluded.embedding_dims,
-                source = excluded.source,
                 source_ref = excluded.source_ref`,
             [
                 input.videoId,
@@ -1241,6 +1323,25 @@ export class YoutubeDatabase extends BaseDatabase {
             .get(...params);
 
         return (row?.count ?? 0) > 0;
+    }
+
+    /** Drops a video's qa_chunks, optionally scoped to one source/embedder — the
+     *  delete half of an atomic per-source reindex (see QaService.index). */
+    deleteQaChunks(videoId: VideoId, source?: QaSource, embedderModel?: string): void {
+        const where: string[] = ["video_id = ?"];
+        const params: string[] = [videoId];
+
+        if (source) {
+            where.push("source = ?");
+            params.push(source);
+        }
+
+        if (embedderModel) {
+            where.push("embedder_model = ?");
+            params.push(embedderModel);
+        }
+
+        this.db.run(`DELETE FROM qa_chunks WHERE ${where.join(" AND ")}`, params);
     }
 
     enqueueJob(input: EnqueueJobInput): PipelineJob {
@@ -1796,15 +1897,36 @@ export class YoutubeDatabase extends BaseDatabase {
         return row?.email ?? null;
     }
 
-    /** SUM of positive grant-type deltas since `sinceIso` — the frozen grant-reason set. */
+    /** SUM of positive grant-type deltas strictly after `sinceIso` — the frozen
+     *  grant-reason set. Strict `>`: the period-start allowance grant shares the
+     *  periodStart timestamp and is already accounted via `allowanceGranted`, so
+     *  `>=` would double-count it. */
     getGrantsSince(userId: number, sinceIso: string): number {
         const row = this.db
             .query<{ total: number | null }, [number, string]>(
                 `SELECT SUM(delta) AS total FROM credit_ledger
-                 WHERE user_id = ? AND created_at >= ? AND delta > 0
+                 WHERE user_id = ? AND created_at > ? AND delta > 0
                    AND (reason LIKE 'stripe:%' OR reason = 'dev-topup' OR reason LIKE 'referral:%' OR reason = 'register-grant')`
             )
             .get(userId, sinceIso);
+
+        return row?.total ?? 0;
+    }
+
+    /**
+     * Diamonds already reversed for a Stripe charge (as a positive number),
+     * summing every `stripe-refund:<chargeId>[:<amount>]` debit. GLOB (not LIKE)
+     * so the underscores in charge ids stay literal. Lets partial-refund events
+     * settle cumulatively — each event debits only the not-yet-reversed delta.
+     */
+    sumRefundedForCharge(userId: number, chargeId: string): number {
+        const row = this.db
+            .query<{ total: number | null }, [number, string, string]>(
+                `SELECT COALESCE(SUM(-delta), 0) AS total FROM credit_ledger
+                 WHERE user_id = ? AND delta < 0
+                   AND (reason = ? OR reason GLOB ?)`
+            )
+            .get(userId, `stripe-refund:${chargeId}`, `stripe-refund:${chargeId}:*`);
 
         return row?.total ?? 0;
     }
@@ -1928,6 +2050,20 @@ export class YoutubeDatabase extends BaseDatabase {
             .all(referrerUserId);
 
         return rows.map(rowToReferral);
+    }
+
+    /** Referrals joined with the referee's email in one query — avoids the
+     *  per-referral getUserEmailById N+1 on the referral overview route. */
+    listReferralsWithEmails(referrerUserId: number): Array<ReferralRecord & { refereeEmail: string | null }> {
+        const rows = this.db
+            .query<ReferralRow & { referee_email: string | null }, [number]>(
+                `SELECT r.*, u.email AS referee_email FROM referrals r
+                 LEFT JOIN users u ON u.id = r.referee_user_id
+                 WHERE r.referrer_user_id = ? ORDER BY r.id DESC`
+            )
+            .all(referrerUserId);
+
+        return rows.map((row) => ({ ...rowToReferral(row), refereeEmail: row.referee_email }));
     }
 
     async pruneExpiredBinaries(opts: PruneExpiredBinariesOpts): Promise<PruneExpiredBinariesResult> {
@@ -2201,13 +2337,16 @@ export class YoutubeDatabase extends BaseDatabase {
             .get();
 
         const now = Date.now();
+        // Bare-column compare on purpose: substr(created_at,…) in the WHERE
+        // defeats any created_at index, and a 10-char date cutoff compares
+        // correctly against full ISO timestamps lexicographically.
         const cutoff = new Date(now - (days - 1) * 86_400_000).toISOString().slice(0, 10);
         const revenueByDay = new Map<string, number>();
 
         for (const row of this.db
             .query<{ day: string; revenue_cents: number }, [string]>(
                 `SELECT substr(created_at, 1, 10) AS day, COALESCE(SUM(amount_cents), 0) AS revenue_cents
-                 FROM payments WHERE status = 'succeeded' AND substr(created_at, 1, 10) >= ? GROUP BY day`
+                 FROM payments WHERE status = 'succeeded' AND created_at >= ? GROUP BY day`
             )
             .all(cutoff)) {
             revenueByDay.set(row.day, row.revenue_cents);
@@ -2218,7 +2357,7 @@ export class YoutubeDatabase extends BaseDatabase {
         for (const row of this.db
             .query<{ day: string; cost_usd: number }, [string]>(
                 `SELECT substr(created_at, 1, 10) AS day, COALESCE(SUM(cost_usd), 0) AS cost_usd
-                 FROM ai_calls WHERE substr(created_at, 1, 10) >= ? GROUP BY day`
+                 FROM ai_calls WHERE created_at >= ? GROUP BY day`
             )
             .all(cutoff)) {
             costByDay.set(row.day, row.cost_usd);
@@ -2245,6 +2384,11 @@ export class YoutubeDatabase extends BaseDatabase {
 
     touchUserLogin(id: number): void {
         this.db.run(`UPDATE users SET last_login_at = ${SQL_NOW_UTC} WHERE id = ?`, [id]);
+    }
+
+    /** Run a callback inside a single SQLite transaction (commit-or-rollback). */
+    transaction<T>(fn: () => T): T {
+        return this.db.transaction(fn)();
     }
 
     /** Partial update of user preferences (Feature 08 output lang, Feature 12 TTS voice). Undefined fields are left untouched. */
@@ -2285,6 +2429,19 @@ export class YoutubeDatabase extends BaseDatabase {
         return rowToUser(row);
     }
 
+    /** Persist the full (already-merged + validated) customization settings blob for a user. */
+    updateUserSettings(userId: number, settings: UserSettings): YtUser {
+        const row = this.db
+            .query<UserRow, [string, number]>("UPDATE users SET settings = ? WHERE id = ? RETURNING *")
+            .get(SafeJSON.stringify(settings), userId);
+
+        if (!row) {
+            throw new Error(`updateUserSettings: user ${userId} not found`);
+        }
+
+        return rowToUser(row);
+    }
+
     /**
      * Atomic conditional debit: only succeeds while the balance covers the
      * amount; throws `InsufficientCreditsError` otherwise. Ledger row is
@@ -2315,18 +2472,33 @@ export class YoutubeDatabase extends BaseDatabase {
     /** Unconditional credit; writes the ledger row; returns the new balance. */
     grantCredits(userId: number, amount: number, reason: CreditReason): number {
         const grant = this.db.transaction(() => {
-            const row = this.db
-                .query<{ credits: number }, [number, number]>(
-                    "UPDATE users SET credits = credits + ? WHERE id = ? RETURNING credits"
-                )
-                .get(amount, userId);
+            const current = this.db
+                .query<{ credits: number }, [number]>("SELECT credits FROM users WHERE id = ?")
+                .get(userId);
 
-            if (!row) {
+            if (!current) {
                 throw new Error(`grantCredits: user ${userId} not found`);
             }
 
-            this.writeCreditLedger(userId, amount, reason, row.credits);
-            return row.credits;
+            const after = current.credits + amount;
+            // The ledger insert is the idempotency gate: a partial UNIQUE index on
+            // (user_id, reason) covers the external-event reason classes (stripe:,
+            // stripe-refund:, sub-allowance:, referral:), so a duplicate delivery
+            // yields OR IGNORE → 0 changes and the balance is left untouched. This
+            // makes retries safe even across processes. Reasons outside that index
+            // (ask, register-grant, holds, …) always insert and can repeat freely.
+            const insert = this.db.run(
+                `INSERT OR IGNORE INTO credit_ledger (user_id, delta, reason, balance_after, created_at)
+                 VALUES (?, ?, ?, ?, ${SQL_NOW_UTC})`,
+                [userId, amount, reason, after]
+            );
+
+            if (insert.changes === 0) {
+                return current.credits;
+            }
+
+            this.db.run("UPDATE users SET credits = ? WHERE id = ?", [after, userId]);
+            return after;
         });
 
         return grant();
@@ -2842,6 +3014,13 @@ export class YoutubeDatabase extends BaseDatabase {
 
             if (result.changes > 0) {
                 this.db.run("DELETE FROM collection_videos WHERE collection_id = ?", [id]);
+                // Ask threads reference the collection — no FK cascade exists,
+                // so delete them (and their messages) here or they orphan.
+                this.db.run(
+                    "DELETE FROM ask_messages WHERE thread_id IN (SELECT id FROM ask_threads WHERE collection_id = ?)",
+                    [id]
+                );
+                this.db.run("DELETE FROM ask_threads WHERE collection_id = ?", [id]);
             }
 
             return result.changes > 0;
@@ -3125,6 +3304,7 @@ interface UserRow {
     last_login_at: string | null;
     output_lang: string | null;
     tts_voice: string | null;
+    settings: string | null;
 }
 
 function rowToUser(row: UserRow): YtUser {
@@ -3135,7 +3315,27 @@ function rowToUser(row: UserRow): YtUser {
         createdAt: row.created_at,
         outputLang: row.output_lang,
         ttsVoice: row.tts_voice,
+        settings: parseUserSettings(row.settings),
     };
+}
+
+/** Parse the stored settings JSON; a corrupt/absent value degrades to `{}` rather than throwing. */
+function parseUserSettings(raw: string | null): UserSettings {
+    if (!raw) {
+        return {};
+    }
+
+    try {
+        const parsed = SafeJSON.parse(raw);
+
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            return parsed as UserSettings;
+        }
+    } catch (err) {
+        logger.debug({ err }, "youtube db: failed to parse user settings JSON");
+    }
+
+    return {};
 }
 
 interface QaHistoryRow {

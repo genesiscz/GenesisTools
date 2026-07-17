@@ -225,13 +225,19 @@ export async function translateTranscript(opts: TranslateTranscriptOpts): Promis
     }
 
     opts.onProgress?.({ percent: 100, message: "Saving translated transcript" });
-    opts.db.saveTranscript({
-        videoId: opts.videoId,
-        lang: opts.lang,
-        source: "ai",
-        text: translatedSegments.map((segment) => segment.text).join(" "),
-        segments: translatedSegments,
-        durationSec: original.durationSec,
+    // Persist + caller's finalize (e.g. committing the credit hold) as ONE
+    // transaction — a crash between them must not leave a saved translation
+    // with an uncommitted charge, or vice versa.
+    opts.db.transaction(() => {
+        opts.db.saveTranscript({
+            videoId: opts.videoId,
+            lang: opts.lang,
+            source: "ai",
+            text: translatedSegments.map((segment) => segment.text).join(" "),
+            segments: translatedSegments,
+            durationSec: original.durationSec,
+        });
+        opts.finalize?.();
     });
     const saved = opts.db.getTranscript(opts.videoId, { lang: opts.lang, source: "ai" });
 
@@ -350,7 +356,15 @@ function parseTranslatedLines(content: string, count: number): Map<number, strin
             return null;
         }
 
-        byId.set(id, match[2]);
+        const text = match[2].trim();
+
+        // An empty payload would overwrite real transcript text with nothing —
+        // treat it as a parse failure so the retry (and its stricter prompt) runs.
+        if (text.length === 0) {
+            return null;
+        }
+
+        byId.set(id, text);
     }
 
     return byId.size === count ? byId : null;

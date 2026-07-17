@@ -337,6 +337,79 @@ describe("SummaryService", () => {
         }
     });
 
+    it("does not serve or pollute the default cache for a shaped request", async () => {
+        const { db, config, dir } = await makeFixture();
+
+        try {
+            db.setVideoSummary("abc123def45", "short", "Default cached", "en");
+            llmResponses = ["Funny fresh summary."];
+            const fakeChoice = { provider: "fake", model: "fake" } as unknown as Parameters<
+                typeof SummaryService.prototype.summarize
+            >[0]["providerChoice"];
+            const service = new SummaryService(db, config, makeDeps());
+
+            // A shaped (tone) request must recompute, not serve the default cache.
+            const shaped = await service.summarize({
+                videoId: "abc123def45",
+                mode: "short",
+                providerChoice: fakeChoice,
+                tone: "funny",
+            });
+
+            expect(shaped.short).toBe("Funny fresh summary.");
+            expect(callLlmCalls).toHaveLength(1);
+            // …and the shaped output must NOT overwrite the stored default summary.
+            expect(db.getVideo("abc123def45")?.summaryShort).toBe("Default cached");
+
+            // A later default request still serves the untouched cache — no new call.
+            const dflt = await service.summarize({ videoId: "abc123def45", mode: "short" });
+
+            expect(dflt.short).toBe("Default cached");
+            expect(callLlmCalls).toHaveLength(1);
+        } finally {
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("clamps and drops out-of-range / out-of-order long-summary chapters", async () => {
+        const { db, config, dir } = await makeFixture();
+
+        try {
+            structuredResponses = [
+                {
+                    tldr: "x",
+                    keyPoints: ["one", "two", "three"],
+                    learnings: ["a", "b"],
+                    chapters: [
+                        { title: "A", summary: "s", startSec: 5, endSec: 10 },
+                        { title: "B", summary: "s", startSec: 999, endSec: 1200 },
+                        { title: "C", summary: "s", startSec: 3, endSec: 8 },
+                    ],
+                    conclusion: null,
+                },
+            ];
+            const fakeChoice = { provider: "fake", model: "fake" } as unknown as Parameters<
+                typeof SummaryService.prototype.summarize
+            >[0]["providerChoice"];
+            const service = new SummaryService(db, config, makeDeps());
+
+            const result = await service.summarize({
+                videoId: "abc123def45",
+                mode: "long",
+                providerChoice: fakeChoice,
+            });
+            const chapters = result.long?.chapters ?? [];
+
+            // fixture durationSec is 20: B clamps to 20, C (3 < 20) breaks ascending → dropped.
+            expect(chapters.map((chapter) => chapter.startSec)).toEqual([5, 20]);
+            expect(chapters.every((chapter) => (chapter.startSec ?? 0) <= 20)).toBe(true);
+        } finally {
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
     it("threads format=qa into the prompt and accepts question-shaped sections", async () => {
         const { db, config, dir } = await makeFixture();
 

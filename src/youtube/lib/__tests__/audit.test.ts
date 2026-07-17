@@ -24,7 +24,12 @@ describe("audit tables", () => {
     });
 
     it("records video logs with meta round-trip and kind filter", () => {
-        db.recordVideoLog({ kind: "insights:view", userId: 3, videoId: "vid00000001", meta: { mode: "timestamped", lang: "en" } });
+        db.recordVideoLog({
+            kind: "insights:view",
+            userId: 3,
+            videoId: "vid00000001",
+            meta: { mode: "timestamped", lang: "en" },
+        });
         db.recordVideoLog({ kind: "comments:view", userId: null, videoId: "vid00000002", meta: null });
         const forVideo = db.listVideoLogs({ videoId: "vid00000001" });
 
@@ -42,7 +47,17 @@ describe("audit tables", () => {
     });
 
     it("records ai calls with defaults and filters", () => {
-        db.recordAiCall({ provider: "xai", model: "grok-4", action: "summarize:long", videoId: "vid00000001", userId: 3, inputTokens: 1200, outputTokens: 300, costUsd: 0.0042, jobId: 11 });
+        db.recordAiCall({
+            provider: "xai",
+            model: "grok-4",
+            action: "summarize:long",
+            videoId: "vid00000001",
+            userId: 3,
+            inputTokens: 1200,
+            outputTokens: 300,
+            costUsd: 0.0042,
+            jobId: 11,
+        });
         db.recordAiCall({ provider: "deepgram", model: "nova-3", action: "transcribe:ai" });
         const forUser = db.listAiCalls({ userId: 3 });
 

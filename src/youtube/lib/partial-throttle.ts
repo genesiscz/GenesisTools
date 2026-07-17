@@ -7,6 +7,9 @@ export interface PartialThrottleOpts<T> {
 export interface PartialThrottle<T> {
     push(value: T): void;
     flush(): void;
+    /** Drops the pending value and clears the timer so no further emission can
+     *  fire — use when the producer errored and a stale partial must not land. */
+    cancel(): void;
 }
 
 /**
@@ -62,6 +65,10 @@ export function createPartialThrottle<T>(opts: PartialThrottleOpts<T>): PartialT
             if (pending) {
                 emitNow(pending.value);
             }
+        },
+        cancel(): void {
+            clearTimer();
+            pending = null;
         },
     };
 }

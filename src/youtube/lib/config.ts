@@ -124,12 +124,29 @@ export class YoutubeConfig {
 }
 
 function mergeConfig(base: YoutubeConfigShape, patch: YoutubeConfigPatch): YoutubeConfigShape {
+    // Shape-guard the hand-editable server.json fields that consumers index
+    // into without checks (resolveAiSpecForTask does config.ai.find/…): a
+    // malformed on-disk value must fall back to defaults, not crash requests.
+    const patchedAi = Array.isArray(patch.ai) ? patch.ai : undefined;
+    const patchedProvider =
+        patch.provider !== null && typeof patch.provider === "object" && !Array.isArray(patch.provider)
+            ? patch.provider
+            : undefined;
+
+    if (patch.ai !== undefined && patchedAi === undefined) {
+        logger.warn({ ai: patch.ai }, "youtube config: ignoring malformed 'ai' (expected an array)");
+    }
+
+    if (patch.provider !== undefined && patchedProvider === undefined) {
+        logger.warn({ provider: patch.provider }, "youtube config: ignoring malformed 'provider' (expected an object)");
+    }
+
     return {
         ...base,
         ...patch,
-        provider: { ...base.provider, ...patch.provider },
+        provider: { ...base.provider, ...patchedProvider },
         powerUsers: patch.powerUsers ?? base.powerUsers,
-        ai: patch.ai ?? base.ai,
+        ai: patchedAi ?? base.ai,
         referrals: {
             ...base.referrals,
             ...patch.referrals,

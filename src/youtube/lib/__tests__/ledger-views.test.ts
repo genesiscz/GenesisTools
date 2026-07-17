@@ -127,6 +127,18 @@ describe("ledger-views", () => {
             expect(page.nextBefore).toBeNull();
         });
 
+        it("nextBefore is null when the final page is exactly `limit` rows", () => {
+            const user = createTestUser();
+            // Exactly `limit` (3) ledger rows total: one grant + two spends.
+            db.grantCredits(user.id, 100, "register-grant");
+            db.spendCredits(user.id, 1, "ask");
+            db.spendCredits(user.id, 1, "ask");
+
+            const page = getLedgerPage(db, user.id, { limit: 3 });
+            expect(page.rows).toHaveLength(3);
+            expect(page.nextBefore).toBeNull();
+        });
+
         it("resolves ask context via the nearest qa_history row within 2s, tolerating a miss", () => {
             const user = createTestUser();
             db.grantCredits(user.id, 100, "register-grant");

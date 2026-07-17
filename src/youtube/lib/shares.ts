@@ -11,10 +11,25 @@ export const SHARE_SLUG_LENGTH = 12;
 const SHARE_RATE_LIMIT_PER_HOUR = 10;
 const BASE62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
+/**
+ * Thrown when the caller tries to share a charged artifact (a stored summary)
+ * they never unlocked — sharing must not hand out content that would otherwise
+ * cost a reuse charge. Mapped to 403 by the shares route.
+ */
+export class ShareAccessError extends Error {
+    constructor() {
+        super("artifact access required");
+        this.name = "ShareAccessError";
+    }
+}
+
 interface SharePayloadBase {
     videoTitle: string;
     channel: string | null;
     thumbnailUrl: string | null;
+    /** BCP-47/ISO code of the shared content — drives the page's <html lang>.
+     *  Absent on rows created before the field existed (render falls back "en"). */
+    lang?: string;
 }
 
 interface SummarySharePayloadShort extends SharePayloadBase {
@@ -108,6 +123,7 @@ function buildSharePayload(opts: {
         videoTitle: video.title,
         channel: video.channelHandle,
         thumbnailUrl: video.thumbUrl,
+        lang: "en",
     };
 
     if (opts.kind === "summary") {
@@ -115,12 +131,25 @@ function buildSharePayload(opts: {
             throw new Error("summary share requires {mode}");
         }
 
+        // A stored summary is a charged artifact: sharing it must not hand out
+        // content the caller never unlocked (which would bypass the reuse charge
+        // and expose it publicly). The generator/owner holds an access row.
+        if (!opts.db.hasArtifactAccess(opts.user.id, `summary:${opts.mode}`, opts.videoId)) {
+            throw new ShareAccessError();
+        }
+
         if (opts.mode === "short") {
             if (!video.summaryShort) {
                 throw new Error("no short summary generated for this video yet");
             }
 
-            return { ...base, kind: "summary", mode: "short", content: video.summaryShort };
+            return {
+                ...base,
+                lang: video.summaryShortLang,
+                kind: "summary",
+                mode: "short",
+                content: video.summaryShort,
+            };
         }
 
         if (opts.mode === "timestamped") {
@@ -128,14 +157,20 @@ function buildSharePayload(opts: {
                 throw new Error("no timestamped summary generated for this video yet");
             }
 
-            return { ...base, kind: "summary", mode: "timestamped", content: video.summaryTimestamped };
+            return {
+                ...base,
+                lang: video.summaryTimestampedLang,
+                kind: "summary",
+                mode: "timestamped",
+                content: video.summaryTimestamped,
+            };
         }
 
         if (!video.summaryLong) {
             throw new Error("no long summary generated for this video yet");
         }
 
-        return { ...base, kind: "summary", mode: "long", content: video.summaryLong };
+        return { ...base, lang: video.summaryLongLang, kind: "summary", mode: "long", content: video.summaryLong };
     }
 
     if (!opts.qaHistoryId) {
@@ -351,7 +386,7 @@ export function renderSharePage(row: ShareRow): string {
     const heading = payload.kind === "summary" ? `${payload.videoTitle} — Summary` : `${payload.videoTitle} — Q&A`;
 
     return `<!doctype html>
-<html lang="en">
+<html lang="${escapeAttr(payload.lang ?? "en")}">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />

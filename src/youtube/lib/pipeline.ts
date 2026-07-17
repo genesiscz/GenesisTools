@@ -239,6 +239,12 @@ export class Pipeline {
     }
 
     private async workerCountForStage(stage: JobStage): Promise<number> {
+        // Inline-only stage (POST /videos/:id/qa) — never queue-claimed, even
+        // under a global concurrency override (checked first on purpose).
+        if (stage === "qa") {
+            return 0;
+        }
+
         if (this.globalConcurrencyOverride !== null) {
             return this.globalConcurrencyOverride;
         }
@@ -259,9 +265,6 @@ export class Pipeline {
                 return Math.max(1, concurrency.summarize);
             case "video":
                 return Math.max(1, concurrency.download);
-            case "qa":
-                // Inline-only stage (POST /videos/:id/qa) — never queue-claimed.
-                return 0;
         }
     }
 

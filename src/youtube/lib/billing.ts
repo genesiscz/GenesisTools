@@ -98,6 +98,20 @@ interface StripeEvent {
 }
 
 /**
+ * A webhook that cannot be processed *yet* but should be retried — e.g.
+ * invoice.paid arriving before checkout.session.completed created the local
+ * subscription (Stripe does not order deliveries). Recorded with an "error"
+ * outcome (which reprocesses on redelivery) and answered with a 5xx so Stripe
+ * retries; by then the out-of-order dependency has arrived.
+ */
+export class WebhookRetryableError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "WebhookRetryableError";
+    }
+}
+
+/**
  * Verifies and applies a Stripe webhook event. `checkout.session.completed`
  * grants the purchased pack's diamonds (idempotent on the ledger reason
  * `stripe:<sessionId>`); `charge.refunded` reverses it (idempotent on
@@ -138,7 +152,7 @@ export async function handleStripeEvent(db: YoutubeDatabase, payload: string, si
 }
 
 function applyStripeEvent(db: YoutubeDatabase, event: StripeEvent): "processed" | "skipped" {
-    if (event.type === "checkout.session.completed") {
+    if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
         return applyCheckoutCompleted(db, event.data.object);
     }
 
@@ -189,6 +203,20 @@ function applyCheckoutCompleted(db: YoutubeDatabase, session: Record<string, unk
         return "skipped";
     }
 
+    // Delayed payment methods fire checkout.session.completed before the money
+    // settles; only fulfill once payment_status is "paid". The later
+    // checkout.session.async_payment_succeeded re-enters here with "paid" and
+    // grants then (idempotent on the stripe:<sessionId> ledger reason).
+    const paymentStatus = typeof session.payment_status === "string" ? session.payment_status : null;
+
+    if (paymentStatus !== "paid") {
+        logger.info(
+            { sessionId, userId, paymentStatus },
+            "youtube billing: checkout.session not paid yet, deferring grant"
+        );
+        return "skipped";
+    }
+
     const reason = `stripe:${sessionId}` as const;
 
     if (db.hasLedgerReason(userId, reason)) {
@@ -230,23 +258,48 @@ function applyChargeRefunded(db: YoutubeDatabase, charge: Record<string, unknown
         return "skipped";
     }
 
-    const reason = `stripe-refund:${chargeId}` as const;
+    // charge.refunded fires once per refund with a CUMULATIVE amount_refunded,
+    // so a per-charge idempotency key would drop every refund after the first
+    // (10% then 90% → only 10% reversed). Instead compute the TARGET total
+    // reversal for the current refunded amount and debit only what has not been
+    // reversed yet. Missing amount fields (minimal/legacy events) → full pack.
+    const amount = typeof charge.amount === "number" ? charge.amount : null;
+    const amountRefunded = typeof charge.amount_refunded === "number" ? charge.amount_refunded : null;
+    const partial = amount !== null && amount > 0 && amountRefunded !== null && amountRefunded < amount;
+    const targetReversal = partial
+        ? Math.floor((pack.diamonds * (amountRefunded as number)) / (amount as number))
+        : pack.diamonds;
+
+    // The reason embeds the cumulative refunded amount so each distinct
+    // cumulative state is its own idempotent ledger row — an exact redelivery of
+    // the same event is a no-op via the partial UNIQUE index on (user_id, reason).
+    const reason = `stripe-refund:${chargeId}:${amountRefunded ?? "full"}` as const;
 
     if (db.hasLedgerReason(userId, reason)) {
-        logger.debug({ chargeId, userId }, "youtube billing: charge.refunded already reversed");
+        logger.debug({ chargeId, userId }, "youtube billing: charge.refunded already reversed at this amount");
         return "processed";
     }
 
-    db.grantCredits(userId, -pack.diamonds, reason);
+    const alreadyReversed = db.sumRefundedForCharge(userId, chargeId);
+    const delta = Math.min(targetReversal, pack.diamonds) - alreadyReversed;
+
+    if (delta <= 0) {
+        logger.debug({ chargeId, userId, alreadyReversed, targetReversal }, "youtube billing: refund already covered");
+        return "processed";
+    }
+
+    db.grantCredits(userId, -delta, reason);
     db.recordPayment({
         userId,
         kind: "refund",
-        stripeRef: `refund:${chargeId}`,
+        stripeRef: `refund:${chargeId}:${amountRefunded ?? "full"}`,
         packId: pack.id,
-        credits: -pack.diamonds,
+        amountCents: amountRefunded,
+        currency: typeof charge.currency === "string" ? charge.currency : null,
+        credits: -delta,
         status: "refunded",
     });
-    logger.info({ chargeId, userId, diamonds: -pack.diamonds }, "youtube billing: reversed diamonds from refund");
+    logger.info({ chargeId, userId, diamonds: -delta, partial }, "youtube billing: reversed diamonds from refund");
 
     return "processed";
 }
@@ -291,9 +344,15 @@ function applyInvoicePaid(db: YoutubeDatabase, invoice: Record<string, unknown>)
     const sub = db.getSubscriptionByStripeId(stripeSubscriptionId);
 
     if (!sub) {
-        logger.warn({ invoiceId, stripeSubscriptionId }, "youtube billing: invoice.paid for unknown subscription");
+        // Out-of-order delivery: the subscription checkout event has not landed
+        // yet. Skipping here would be PERMANENT (webhook_logs dedupe), so the
+        // initial allowance would never be granted. Signal retryable instead.
+        logger.warn(
+            { invoiceId, stripeSubscriptionId },
+            "youtube billing: invoice.paid before local subscription exists — retrying"
+        );
 
-        return "skipped";
+        throw new WebhookRetryableError(`invoice.paid for unknown subscription ${stripeSubscriptionId}`);
     }
 
     const reason: CreditReason = `sub-allowance:${invoiceId}`;
@@ -304,56 +363,65 @@ function applyInvoicePaid(db: YoutubeDatabase, invoice: Record<string, unknown>)
         return "processed";
     }
 
-    const balance = db.getUserCredits(sub.userId);
-
-    if (balance === null) {
-        logger.warn({ invoiceId, userId: sub.userId }, "youtube billing: invoice.paid for missing user");
-
-        return "skipped";
-    }
-
     const period = invoicePeriod(invoice);
-    let delta: number;
-    let newBalance: number;
 
-    if (sub.periodStart === null) {
-        // First invoice: the user never had an allowance — plain additive grant.
-        delta = sub.allowance;
-        newBalance = balance + delta;
-    } else {
-        const reset = computeAllowanceReset({
-            balance,
-            periodStartBalance: sub.periodStartBalance,
-            grantsSince: db.getGrantsSince(sub.userId, sub.periodStart),
-            allowanceGranted: sub.allowance,
-            newAllowance: sub.allowance,
+    // One transaction: the balance read, allowance math, grant, subscription
+    // period update, and payment record must be a single atomic unit — a
+    // concurrent spend between the read and the grant would otherwise skew
+    // the reset delta and periodStartBalance.
+    const outcome = db.transaction((): "processed" | "skipped" => {
+        const balance = db.getUserCredits(sub.userId);
+
+        if (balance === null) {
+            logger.warn({ invoiceId, userId: sub.userId }, "youtube billing: invoice.paid for missing user");
+
+            return "skipped";
+        }
+
+        let delta: number;
+        let newBalance: number;
+
+        if (sub.periodStart === null) {
+            // First invoice: the user never had an allowance — plain additive grant.
+            delta = sub.allowance;
+            newBalance = balance + delta;
+        } else {
+            const reset = computeAllowanceReset({
+                balance,
+                periodStartBalance: sub.periodStartBalance,
+                grantsSince: db.getGrantsSince(sub.userId, sub.periodStart),
+                allowanceGranted: sub.allowance,
+                newAllowance: sub.allowance,
+            });
+            delta = reset.delta;
+            newBalance = reset.newBalance;
+        }
+
+        // A delta of 0 (unspent renewal) still writes the ledger row — the reset
+        // itself is an auditable event, and it doubles as the idempotency marker.
+        db.grantCredits(sub.userId, delta, reason);
+        db.updateSubscription(sub.id, {
+            status: "active",
+            periodStart: period.start,
+            periodEnd: period.end,
+            periodStartBalance: newBalance,
         });
-        delta = reset.delta;
-        newBalance = reset.newBalance;
-    }
+        db.recordPayment({
+            userId: sub.userId,
+            kind: "subscription",
+            stripeRef: invoiceId,
+            planId: sub.planId,
+            amountCents: typeof invoice.amount_paid === "number" ? invoice.amount_paid : null,
+            currency: typeof invoice.currency === "string" ? invoice.currency : null,
+            credits: delta,
+            status: "succeeded",
+        });
+        logger.info({ invoiceId, userId: sub.userId, delta, newBalance }, "youtube billing: allowance period applied");
 
-    // A delta of 0 (unspent renewal) still writes the ledger row — the reset
-    // itself is an auditable event, and it doubles as the idempotency marker.
-    db.grantCredits(sub.userId, delta, reason);
-    db.updateSubscription(sub.id, {
-        status: "active",
-        periodStart: period.start,
-        periodEnd: period.end,
-        periodStartBalance: newBalance,
+        return "processed";
     });
-    db.recordPayment({
-        userId: sub.userId,
-        kind: "subscription",
-        stripeRef: invoiceId,
-        planId: sub.planId,
-        amountCents: typeof invoice.amount_paid === "number" ? invoice.amount_paid : null,
-        currency: typeof invoice.currency === "string" ? invoice.currency : null,
-        credits: delta,
-        status: "succeeded",
-    });
-    logger.info({ invoiceId, userId: sub.userId, delta, newBalance }, "youtube billing: allowance period applied");
 
-    return "processed";
+    return outcome;
 }
 
 function applyInvoicePaymentFailed(db: YoutubeDatabase, invoice: Record<string, unknown>): "processed" | "skipped" {

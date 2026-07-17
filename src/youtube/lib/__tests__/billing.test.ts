@@ -105,7 +105,15 @@ function fakeGateway() {
 }
 
 describe("createCheckoutSession (gateway)", () => {
-    const user = { id: 7, email: "u@example.com", credits: 0, createdAt: "", outputLang: null, ttsVoice: null };
+    const user = {
+        id: 7,
+        email: "u@example.com",
+        credits: 0,
+        createdAt: "",
+        outputLang: null,
+        ttsVoice: null,
+        settings: {},
+    };
 
     it("resolves the pack price and returns the gateway url", async () => {
         const { gateway, calls } = fakeGateway();
@@ -134,7 +142,15 @@ describe("createCheckoutSession (gateway)", () => {
 });
 
 describe("createSubscriptionCheckoutSession", () => {
-    const user = { id: 7, email: "u@example.com", credits: 0, createdAt: "", outputLang: null, ttsVoice: null };
+    const user = {
+        id: 7,
+        email: "u@example.com",
+        credits: 0,
+        createdAt: "",
+        outputLang: null,
+        ttsVoice: null,
+        settings: {},
+    };
 
     it("resolves the plan price and returns the gateway url", async () => {
         const { gateway, calls } = fakeGateway();
@@ -182,7 +198,13 @@ describe("handleStripeEvent", () => {
         const { payload, signature } = signPayload(webhookSecret, {
             id: "evt_1",
             type: "checkout.session.completed",
-            data: { object: { id: "cs_test_123", metadata: { packId: "pack-medium", userId: String(user.id) } } },
+            data: {
+                object: {
+                    id: "cs_test_123",
+                    payment_status: "paid",
+                    metadata: { packId: "pack-medium", userId: String(user.id) },
+                },
+            },
         });
 
         await env.testing.withOverrides({ STRIPE_WEBHOOK_SECRET: webhookSecret }, async () => {
@@ -210,7 +232,10 @@ describe("handleStripeEvent", () => {
         });
 
         expect(db.getUserByToken("ytu_refund")?.credits).toBe(0);
-        expect(db.hasLedgerReason(user.id, "stripe-refund:ch_test_789")).toBe(true);
+        // Reason keys on the cumulative refunded amount ("full" when the minimal
+        // event carries no amount fields); the whole pack is reversed once.
+        expect(db.hasLedgerReason(user.id, "stripe-refund:ch_test_789:full")).toBe(true);
+        expect(db.sumRefundedForCharge(user.id, "ch_test_789")).toBe(2000);
     });
 
     it("rejects a bad signature", async () => {

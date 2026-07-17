@@ -55,11 +55,13 @@ describe("chunkSegmentsForTranslation", () => {
 
         const chunks = chunkSegmentsForTranslation(segments, 1000);
 
-        expect(chunks.flat()).toHaveLength(5);
+        // ~625 tokens per segment against a 1000-token budget: each segment
+        // must land in its own chunk — an oversized 2-segment chunk would
+        // still satisfy looser "more than one chunk" assertions.
+        expect(chunks).toHaveLength(5);
         for (const chunk of chunks) {
-            expect(chunk.length).toBeGreaterThan(0);
+            expect(chunk).toHaveLength(1);
         }
-        expect(chunks.length).toBeGreaterThan(1);
     });
 
     it("returns a single chunk when everything fits the budget", () => {
@@ -149,6 +151,30 @@ describe("translateTranscript", () => {
             expect((callLlmCalls[1] as { systemPrompt: string }).systemPrompt).toContain(
                 "You must return exactly 2 lines"
             );
+        } finally {
+            db.close();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("rejects an empty translated line and retries instead of erasing the text", async () => {
+        const { db, dir } = await makeFixture();
+
+        try {
+            // First attempt returns an empty payload for line 0 — accepting it would
+            // wipe real transcript text, so it must count as a parse failure.
+            responses = ["[#0]\n[#1] Druhý řádek.", "[#0] První řádek.\n[#1] Druhý řádek."];
+
+            const result = await translateTranscript({
+                db,
+                videoId: "abc123def45",
+                lang: "cs",
+                providerChoice: fakeChoice,
+                callLLM: stubCallLLM,
+            });
+
+            expect(result.segments.map((s) => s.text)).toEqual(["První řádek.", "Druhý řádek."]);
+            expect(callLlmCalls).toHaveLength(2);
         } finally {
             db.close();
             rmSync(dir, { recursive: true, force: true });

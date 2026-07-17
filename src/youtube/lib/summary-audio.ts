@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
+import { rename } from "node:fs/promises";
 import { join } from "node:path";
+import { logger } from "@app/logger";
 import { getTextToSpeechProvider } from "@app/utils/ai/providers";
 import type { AITextToSpeechProvider } from "@app/utils/ai/types";
 import { Storage } from "@app/utils/storage/storage";
@@ -81,9 +83,14 @@ export function summaryAudioFilePath(videoId: VideoId, hash: string): string {
     return join(summaryAudioDir(), `${videoId}-${hash}.mp3`);
 }
 
+type TtsProviderId = "xai" | "openai";
+
+/** Candidate providers in fallback order — also the ids the cache key can carry. */
+const TTS_PROVIDER_IDS: readonly TtsProviderId[] = ["xai", "openai"];
+
 interface ResolvedTtsProvider {
     provider: AITextToSpeechProvider;
-    providerId: "xai" | "openai";
+    providerId: TtsProviderId;
 }
 
 /** xAI realtime TTS first, OpenAI TTS fallback — never the task-based auto-selector (its fallback list omits both TTS providers). */
@@ -106,16 +113,20 @@ async function resolveTtsProvider(): Promise<ResolvedTtsProvider | null> {
 export interface SummaryAudioTarget {
     script: string;
     voice: string;
-    providerId: "xai" | "openai";
-    provider: AITextToSpeechProvider;
+    providerId: TtsProviderId;
+    /** The live provider to synthesize with, or `null` on a cache hit (a cached
+     *  file serves without any provider being currently available). */
+    provider: AITextToSpeechProvider | null;
     path: string;
 }
 
 /**
  * Resolves everything needed to serve or synthesize a summary's audio
- * (provider, narration script, cache path) without touching disk or the
- * network — cheap enough for a route's pre-charge cache-hit check. Throws
- * `NoSummaryError` / `NoTtsProviderError` for the two "can't proceed" cases.
+ * (narration script, cache path, and — only on a miss — a live provider). The
+ * cache is checked FIRST, across every candidate provider id, so a request that
+ * only wants to serve an already-synthesized file never needs a TTS provider;
+ * `NoTtsProviderError` is thrown solely on a genuine miss. Throws
+ * `NoSummaryError` when there is no long summary to narrate.
  */
 export async function resolveSummaryAudioTarget(opts: {
     db: YoutubeDatabase;
@@ -129,16 +140,26 @@ export async function resolveSummaryAudioTarget(opts: {
         throw new NoSummaryError(opts.videoId);
     }
 
+    const script = buildNarrationScript(video.summaryLong, opts.mode);
+    const voice = opts.voice ?? "";
+
+    // Cache identity includes the provider id, so a hit could exist under either
+    // candidate — check both before demanding a live provider.
+    for (const providerId of TTS_PROVIDER_IDS) {
+        const path = summaryAudioFilePath(opts.videoId, summaryAudioCacheKey(script, voice, providerId));
+
+        if (await Bun.file(path).exists()) {
+            return { script, voice, providerId, provider: null, path };
+        }
+    }
+
     const resolved = await resolveTtsProvider();
 
     if (!resolved) {
         throw new NoTtsProviderError();
     }
 
-    const script = buildNarrationScript(video.summaryLong, opts.mode);
-    const voice = opts.voice ?? "";
-    const hash = summaryAudioCacheKey(script, voice, resolved.providerId);
-    const path = summaryAudioFilePath(opts.videoId, hash);
+    const path = summaryAudioFilePath(opts.videoId, summaryAudioCacheKey(script, voice, resolved.providerId));
 
     return { script, voice, providerId: resolved.providerId, provider: resolved.provider, path };
 }
@@ -147,11 +168,16 @@ export async function summaryAudioCacheHit(target: SummaryAudioTarget): Promise<
     return Bun.file(target.path).exists();
 }
 
+/** Per-cache-key synthesis in flight, so concurrent misses coalesce onto one call. */
+const inflightSynthesis = new Map<string, Promise<void>>();
+
 /**
  * Cache hit → returns the existing path (free). Cache miss → synthesizes via
- * the resolved provider, writes the file, prunes stale `<videoId>-*` files,
- * and records usage. Callers charge credits only when `cached` comes back
- * `false` — this function never charges, it only spends the provider call.
+ * the resolved provider, writes the file atomically (temp + rename), prunes
+ * stale `<videoId>-*` files, and records usage. Concurrent misses for the same
+ * cache key coalesce: only the first caller synthesizes, later callers await it
+ * and come back `cached: true`. Callers charge credits only when `cached` comes
+ * back `false` — this function never charges, it only spends the provider call.
  */
 export async function getOrSynthesizeSummaryAudio(opts: {
     db: YoutubeDatabase;
@@ -166,19 +192,48 @@ export async function getOrSynthesizeSummaryAudio(opts: {
         return { path: target.path, cached: true, contentType: "audio/mpeg" };
     }
 
-    const result = await target.provider.synthesize(target.script, target.voice ? { voice: target.voice } : undefined);
-    ensureBinaryDir(target.path);
-    await Bun.write(target.path, result.audio);
-    await recordYoutubeUsage({
-        action: "tts:summary",
-        provider: target.providerId,
-        model: "(tts-default)",
-        scope: opts.videoId,
-        videoId: opts.videoId,
-    });
-    await pruneStaleSummaryAudio(opts.videoId, target.path);
+    const inflight = inflightSynthesis.get(target.path);
 
-    return { path: target.path, cached: false, contentType: result.contentType };
+    if (inflight) {
+        await inflight;
+
+        return { path: target.path, cached: true, contentType: "audio/mpeg" };
+    }
+
+    if (!target.provider) {
+        // The cached file vanished between resolve and here and no live provider
+        // is available — nothing can synthesize it.
+        throw new NoTtsProviderError();
+    }
+
+    const provider = target.provider;
+    let contentType = "audio/mpeg";
+    const work = (async () => {
+        const result = await provider.synthesize(target.script, target.voice ? { voice: target.voice } : undefined);
+        contentType = result.contentType;
+        ensureBinaryDir(target.path);
+        // Temp-file + rename so a concurrent reader never sees a half-written mp3.
+        const tempPath = `${target.path}.tmp-${process.pid}-${Date.now()}`;
+        await Bun.write(tempPath, result.audio);
+        await rename(tempPath, target.path);
+        await recordYoutubeUsage({
+            action: "tts:summary",
+            provider: target.providerId,
+            model: "(tts-default)",
+            scope: opts.videoId,
+            videoId: opts.videoId,
+        });
+        await pruneStaleSummaryAudio(opts.videoId, target.path);
+    })();
+    inflightSynthesis.set(target.path, work);
+
+    try {
+        await work;
+    } finally {
+        inflightSynthesis.delete(target.path);
+    }
+
+    return { path: target.path, cached: false, contentType };
 }
 
 async function pruneStaleSummaryAudio(videoId: VideoId, keepPath: string): Promise<void> {
@@ -187,7 +242,9 @@ async function pruneStaleSummaryAudio(videoId: VideoId, keepPath: string): Promi
 
     try {
         entries = readdirSync(dir);
-    } catch {
+    } catch (error) {
+        // Dir absent (nothing synthesized yet) or unreadable — nothing to prune.
+        logger.debug({ err: error, dir }, "summary-audio: prune skipped, audio dir not readable");
         return;
     }
 

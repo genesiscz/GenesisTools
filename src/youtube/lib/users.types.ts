@@ -1,4 +1,5 @@
 import type { AskCitation, QaSource } from "@app/youtube/lib/qa.types";
+import type { UserSettings } from "@app/youtube/lib/user-settings";
 
 export interface YtUser {
     id: number;
@@ -9,6 +10,8 @@ export interface YtUser {
     outputLang: string | null;
     /** Preferred TTS voice id (Feature 12). Null = provider default. */
     ttsVoice: string | null;
+    /** Customization settings (theme/density/per-task defaults/panel). Raw stored blob — resolve with `resolveUserSettings`. */
+    settings: UserSettings;
 }
 
 export interface QaHistoryItem {
