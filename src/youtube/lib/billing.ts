@@ -2,14 +2,17 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
-import { computeAllowanceReset } from "@app/youtube/lib/billing-cycle";
 import {
     DIAMOND_PACKS,
     type DiamondPack,
+    LOW_BALANCE_THRESHOLD,
+    type MeBillingContext,
     SUBSCRIPTION_PLANS,
     type SubscriptionStatus,
 } from "@app/youtube/lib/billing.types";
+import { computeAllowanceReset, computePeriodState, monthKeyUtc, toSubscriptionStatus } from "@app/youtube/lib/billing-cycle";
 import { createStripeGateway, type StripeGateway } from "@app/youtube/lib/billing-gateway";
+import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { CreditReason, YtUser } from "@app/youtube/lib/users.types";
 
@@ -433,7 +436,8 @@ function invoicePeriod(invoice: Record<string, unknown>): { start: string; end: 
     const period = lines?.data?.[0]?.period;
 
     return {
-        start: typeof period?.start === "number" ? new Date(period.start * 1000).toISOString() : new Date().toISOString(),
+        start:
+            typeof period?.start === "number" ? new Date(period.start * 1000).toISOString() : new Date().toISOString(),
         end: typeof period?.end === "number" ? new Date(period.end * 1000).toISOString() : null,
     };
 }
@@ -529,4 +533,44 @@ function hexToBuffer(hex: string): Buffer | null {
     }
 
     return Buffer.from(hex, "hex");
+}
+
+/** Balance context for GET /users/me — one authoritative read for client nudges. */
+export async function buildBillingContext(opts: {
+    db: YoutubeDatabase;
+    config: YoutubeConfig;
+    user: YtUser;
+}): Promise<MeBillingContext> {
+    const sub = opts.db.getSubscriptionByUserId(opts.user.id);
+    let subscription: MeBillingContext["subscription"] = null;
+
+    if (sub && sub.status !== "canceled") {
+        const allowanceRemaining =
+            sub.periodStart === null
+                ? 0
+                : computePeriodState({
+                      balance: opts.user.credits,
+                      periodStartBalance: sub.periodStartBalance,
+                      grantsSince: opts.db.getGrantsSince(opts.user.id, sub.periodStart),
+                      allowanceGranted: sub.allowance,
+                  }).allowanceRemaining;
+        subscription = {
+            planId: sub.planId,
+            status: toSubscriptionStatus(sub.status),
+            periodEnd: sub.periodEnd,
+            allowance: sub.allowance,
+            allowanceRemaining,
+            cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+        };
+    }
+
+    const freeTier = await opts.config.get("freeTier");
+    let freeQuota: MeBillingContext["freeQuota"] = null;
+
+    if (freeTier.actionsPerMonth !== null && subscription === null && !opts.db.hasAnyStripeGrant(opts.user.id)) {
+        const month = monthKeyUtc();
+        freeQuota = { used: opts.db.getQuotaUsed(opts.user.id, month), limit: freeTier.actionsPerMonth, month };
+    }
+
+    return { subscription, freeQuota, lowBalance: opts.user.credits < LOW_BALANCE_THRESHOLD };
 }

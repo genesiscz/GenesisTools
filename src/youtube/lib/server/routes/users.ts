@@ -1,7 +1,7 @@
 import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
-import { createCheckoutSession, createSubscriptionCheckoutSession } from "@app/youtube/lib/billing";
+import { buildBillingContext, createCheckoutSession, createSubscriptionCheckoutSession } from "@app/youtube/lib/billing";
 import { DIAMOND_PACKS, SUBSCRIPTION_PLANS } from "@app/youtube/lib/billing.types";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import { buildHistoryEntries, groupHistoryByAction, groupHistoryByVideo } from "@app/youtube/lib/history";
@@ -61,8 +61,9 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
             }
 
             const role = roleForEmail(await yt.config.get("powerUsers"), user.email);
+            const billing = await buildBillingContext({ db: yt.db, config: yt.config, user });
 
-            return Response.json({ user, role }, { headers: CORS_HEADERS });
+            return Response.json({ user, role, billing }, { headers: CORS_HEADERS });
         }
 
         if (matchRoute(req, "PATCH", "/api/v1/users/me", url.pathname)) {
@@ -222,7 +223,10 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
 
             if (!offer) {
                 return new Response(
-                    SafeJSON.stringify({ error: "no referral offer is currently active", code: "offer_inactive" }, { strict: true }),
+                    SafeJSON.stringify(
+                        { error: "no referral offer is currently active", code: "offer_inactive" },
+                        { strict: true }
+                    ),
                     { status: 403, headers: { "Content-Type": "application/json", ...CORS_HEADERS } }
                 );
             }

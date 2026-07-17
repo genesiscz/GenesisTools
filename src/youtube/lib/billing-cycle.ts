@@ -1,3 +1,5 @@
+import type { SubscriptionStatus } from "@app/youtube/lib/billing.types";
+
 /**
  * Pure allowance math for the subscription tier (single-balance design):
  * the ONE spendable balance stays `users.credits`; allowance vs topup are
@@ -51,4 +53,17 @@ export function computeAllowanceReset(input: AllowanceResetInput): AllowanceRese
 /** UTC month bucket key for quota_usage rows. */
 export function monthKeyUtc(date: Date = new Date()): string {
     return date.toISOString().slice(0, 7);
+}
+
+/** Narrow a stored status string to the frozen union without a cast. */
+export function toSubscriptionStatus(raw: string): SubscriptionStatus {
+    if (raw === "canceled") {
+        return "canceled";
+    }
+
+    if (raw === "past_due") {
+        return "past_due";
+    }
+
+    return "active";
 }
