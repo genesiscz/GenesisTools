@@ -17,6 +17,7 @@ import { Switch } from "@app/utils/ui/components/switch";
 import type { YoutubeConfigShape } from "@app/youtube/lib/types";
 import { apiClient } from "@app/yt/api.client";
 import { useCacheStats, useClearCache, usePatchServerConfig, usePruneCache, useServerConfig } from "@app/yt/api.hooks";
+import { AccountSection } from "@app/yt/components/account/account-section";
 import { Loading } from "@app/yt/components/shared/loading";
 import { formatBytes } from "@app/yt/lib/format";
 import { createFileRoute } from "@tanstack/react-router";
@@ -113,6 +114,8 @@ function SettingsPage() {
                     Config path: {config.data?.where ?? "~/.genesis-tools/youtube/server.json"}
                 </p>
             </header>
+
+            <AccountSection />
 
             <SettingsCard icon={<Server className="size-5" />} title="API Endpoint">
                 <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
