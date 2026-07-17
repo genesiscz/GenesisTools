@@ -27,11 +27,18 @@ import { compactTranscript } from "@app/youtube/lib/transcript-compact";
 import { translateTranscript } from "@app/youtube/lib/transcripts";
 import type { ChannelHandle, QaSource, Transcript, Video, VideoId } from "@app/youtube/lib/types";
 import { CREDIT_COSTS, InsufficientCreditsError, REUSE_COST } from "@app/youtube/lib/types";
+import { resolveUserSettings, type TaskDefaultSettings } from "@app/youtube/lib/user-settings";
+import type { SummaryFormat, SummaryLength, SummaryTone } from "@app/youtube/lib/video.types";
 import type { Youtube } from "@app/youtube/lib/youtube";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 
 /** System prompt + instructions sent alongside the transcript. */
 const PROMPT_OVERHEAD_TOKENS = 700;
+
+// Coalesces concurrent cache-miss translations of the same (video, lang):
+// the loser waits for the winner and serves its cached row instead of
+// double-spending provider cost on an identical translation.
+const inflightTranslations = new Map<string, Promise<unknown>>();
 
 export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Promise<Response> {
     try {
@@ -143,6 +150,23 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 return quotaError;
             }
 
+            const inflightKey = `${id}:${lang}`;
+            const inflight = inflightTranslations.get(inflightKey);
+
+            if (inflight) {
+                // Wait out the winner (its own error handling applies to it),
+                // then serve the row it cached — free, like any cache hit.
+                await inflight.catch(() => {});
+                const nowCached = yt.db.getTranscript(id, { lang });
+
+                if (nowCached) {
+                    return Response.json(
+                        { transcript: nowCached, creditsSpent: 0, credits: user.credits },
+                        { headers: CORS_HEADERS }
+                    );
+                }
+            }
+
             // Reserve BEFORE the LLM call so concurrent requests cannot pass a
             // stale balance check and burn provider cost; released on failure.
             const hold = yt.db.reserveCredits({
@@ -157,8 +181,16 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     provider: typeof body.provider === "string" ? body.provider : undefined,
                     model: typeof body.model === "string" ? body.model : undefined,
                 });
-                const transcript = await translateTranscript({ db: yt.db, videoId: id, lang, providerChoice });
-                yt.db.commitHold(hold.holdId);
+                const run = translateTranscript({
+                    db: yt.db,
+                    videoId: id,
+                    lang,
+                    providerChoice,
+                    // Commits atomically with the transcript save (see finalize doc).
+                    finalize: () => yt.db.commitHold(hold.holdId),
+                });
+                inflightTranslations.set(inflightKey, run);
+                const transcript = await run;
 
                 return Response.json(
                     { transcript, creditsSpent: creditCost, credits: hold.credits },
@@ -167,6 +199,8 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             } catch (error) {
                 yt.db.releaseHold(hold.holdId);
                 throw error;
+            } finally {
+                inflightTranslations.delete(inflightKey);
             }
         }
 
@@ -439,8 +473,13 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             const mode = parseMode(body.mode);
             const creditCost = CREDIT_COSTS[`summary:${mode}`];
             const force = body.force === true;
+            // Per-task customization defaults fill in whatever the request omits
+            // (explicit request params always win). timestamped → insights, else summary.
+            const taskDefaults = resolveUserSettings(user.settings).taskDefaults?.[
+                mode === "timestamped" ? "insights" : "summary"
+            ];
             const requestedLang = typeof body.lang === "string" ? body.lang : undefined;
-            const lang = requestedLang && isOutputLang(requestedLang) ? requestedLang : (user.outputLang ?? "en");
+            const lang = resolveSummaryLang(requestedLang, taskDefaults, user.outputLang);
             // Switching to a language the stored artifact wasn't generated in
             // always regenerates — v1 keeps one summary per mode, so a lang
             // switch replaces it (never served from the reuse/cache path).
@@ -497,9 +536,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
             const provider = typeof body.provider === "string" ? body.provider : undefined;
             const model = typeof body.model === "string" ? body.model : undefined;
-            const tone = parseTone(body.tone);
-            const format = parseFormat(body.format);
-            const length = parseLength(body.length);
+            const { tone, format, length } = resolveSummaryControls(body, taskDefaults);
             const targetBins = typeof body.targetBins === "number" ? body.targetBins : undefined;
             const presetId = typeof body.presetId === "number" ? body.presetId : undefined;
             let presetInstructions: string | undefined;
@@ -665,19 +702,24 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 yt.pipeline.emitExternal({ type: "job:completed", job: completedJob });
                 // Full-price generation also records access — the generator
                 // never pays again, and later users can unlock this artifact.
-                grantArtifactAccess(yt.db, {
-                    userId: user.id,
-                    kind: `summary:${mode}`,
-                    videoId: id,
-                    creditsSpent: creditCost,
-                });
-                if (transcribeHold.current !== null) {
-                    yt.db.commitHold(transcribeHold.current.holdId);
-                }
+                // Access grant + hold commits in one transaction: a crash between
+                // them must not charge without granting access (or vice versa). If
+                // it throws, the rollback leaves the holds "held" and releasable
+                // in the catch below.
+                yt.db.transaction(() => {
+                    grantArtifactAccess(yt.db, {
+                        userId: user.id,
+                        kind: `summary:${mode}`,
+                        videoId: id,
+                        creditsSpent: creditCost,
+                    });
 
-                // Last DB action before the response: anything throwing above
-                // still finds the hold "held" and releasable in the catch.
-                yt.db.commitHold(hold.holdId);
+                    if (transcribeHold.current !== null) {
+                        yt.db.commitHold(transcribeHold.current.holdId);
+                    }
+
+                    yt.db.commitHold(hold.holdId);
+                });
 
                 return Response.json(
                     {
@@ -1159,6 +1201,34 @@ function parseMode(value: unknown): "short" | "timestamped" | "long" {
     }
 
     return "short";
+}
+
+/**
+ * Resolve the summary controls a request will use: the explicit body value wins,
+ * else the user's per-task default, else undefined (the generator's own default).
+ */
+export function resolveSummaryControls(
+    body: { tone?: unknown; format?: unknown; length?: unknown },
+    taskDefaults: TaskDefaultSettings | undefined
+): { tone?: SummaryTone; format?: SummaryFormat; length?: SummaryLength } {
+    return {
+        tone: parseTone(body.tone) ?? taskDefaults?.tone,
+        format: parseFormat(body.format) ?? taskDefaults?.format,
+        length: parseLength(body.length) ?? taskDefaults?.length,
+    };
+}
+
+/** Output language: valid explicit request lang wins, else per-task default, else the user's global lang, else "en". */
+export function resolveSummaryLang(
+    requestedLang: string | undefined,
+    taskDefaults: TaskDefaultSettings | undefined,
+    userOutputLang: string | null
+): string {
+    if (requestedLang && isOutputLang(requestedLang)) {
+        return requestedLang;
+    }
+
+    return taskDefaults?.lang ?? userOutputLang ?? "en";
 }
 
 function parseTone(value: unknown): "insightful" | "funny" | "actionable" | "controversial" | undefined {

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 import { startServer } from "@app/youtube/lib/server";
+import { apiUrl } from "./test-helpers";
 
 describe("youtube server ledger + usage-summary routes", () => {
     let dir: string;
@@ -17,7 +18,7 @@ describe("youtube server ledger + usage-summary routes", () => {
     });
 
     async function registeredToken(port: number, email: string): Promise<string> {
-        const res = await fetch(`http://localhost:${port}/api/v1/users/register`, {
+        const res = await fetch(apiUrl(port, `/users/register`), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: SafeJSON.stringify({ email, password: "hunter22" }),
@@ -31,7 +32,7 @@ describe("youtube server ledger + usage-summary routes", () => {
 
         try {
             const token = await registeredToken(handle.port, "summary-user@example.com");
-            const res = await fetch(`http://localhost:${handle.port}/api/v1/users/usage-summary`, {
+            const res = await fetch(apiUrl(handle.port, `/users/usage-summary`), {
                 headers: { Authorization: `Bearer ${token}` },
             });
             const body = (await res.json()) as {
@@ -53,7 +54,7 @@ describe("youtube server ledger + usage-summary routes", () => {
         const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
 
         try {
-            const res = await fetch(`http://localhost:${handle.port}/api/v1/users/usage-summary`);
+            const res = await fetch(apiUrl(handle.port, `/users/usage-summary`));
             expect(res.status).toBe(401);
         } finally {
             await handle.stop();
@@ -69,7 +70,7 @@ describe("youtube server ledger + usage-summary routes", () => {
             handle.youtube.db.spendCredits(1, 5, "ask");
             handle.youtube.db.grantCredits(1, 2000, "stripe:cs_ledger_route");
 
-            const firstRes = await fetch(`http://localhost:${handle.port}/api/v1/users/ledger?limit=2`, {
+            const firstRes = await fetch(apiUrl(handle.port, `/users/ledger?limit=2`), {
                 headers: { Authorization: `Bearer ${token}` },
             });
             const firstBody = (await firstRes.json()) as {
@@ -82,15 +83,20 @@ describe("youtube server ledger + usage-summary routes", () => {
             expect(firstBody.rows[0].reason).toBe("stripe:cs_ledger_route");
             expect(firstBody.nextBefore).not.toBeNull();
 
-            const secondRes = await fetch(
-                `http://localhost:${handle.port}/api/v1/users/ledger?limit=2&before=${firstBody.nextBefore}`,
-                { headers: { Authorization: `Bearer ${token}` } }
-            );
+            const secondRes = await fetch(apiUrl(handle.port, `/users/ledger?limit=2&before=${firstBody.nextBefore}`), {
+                headers: { Authorization: `Bearer ${token}` },
+            });
             const secondBody = (await secondRes.json()) as { rows: Array<{ id: number }> };
 
+            // Length + descending order: disjointness alone would pass for an
+            // empty or mis-ordered second page.
+            expect(secondRes.status).toBe(200);
+            expect(secondBody.rows).toHaveLength(2);
+            expect(secondBody.rows[0].id).toBeGreaterThan(secondBody.rows[1].id);
             const firstIds = new Set(firstBody.rows.map((r) => r.id));
             for (const row of secondBody.rows) {
                 expect(firstIds.has(row.id)).toBe(false);
+                expect(row.id).toBeLessThan(Math.min(...firstBody.rows.map((r) => r.id)));
             }
         } finally {
             await handle.stop();

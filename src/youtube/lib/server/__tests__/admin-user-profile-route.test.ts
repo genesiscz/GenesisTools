@@ -50,7 +50,15 @@ describe("GET /api/v1/admin/users/:id", () => {
 
         db.grantCredits(u.id, 100, "register-grant");
         db.grantCredits(u.id, 500, "stripe:cs_x");
-        db.recordPayment({ userId: u.id, kind: "subscription", stripeRef: "in_a", amountCents: 999, currency: "usd", credits: 3000, status: "succeeded" });
+        db.recordPayment({
+            userId: u.id,
+            kind: "subscription",
+            stripeRef: "in_a",
+            amountCents: 999,
+            currency: "usd",
+            credits: 3000,
+            status: "succeeded",
+        });
         db.recordAiCall({ provider: "xai", model: "grok", action: "summary", userId: u.id, costUsd: 0.2 });
         db.upsertSubscription({
             userId: u.id,
@@ -64,9 +72,23 @@ describe("GET /api/v1/admin/users/:id", () => {
         // u referred someone; u was also referred by `referrer`.
         db.getOrCreateReferralCode(u.id, "MYCODE22");
         const referee = mkUser("referee@example.com");
-        db.createReferral({ code: "MYCODE22", referrerUserId: u.id, refereeUserId: referee.id, reward: 25, offerFrom: "2026-01-01T00:00:00Z", offerTo: "2027-01-01T00:00:00Z" });
+        db.createReferral({
+            code: "MYCODE22",
+            referrerUserId: u.id,
+            refereeUserId: referee.id,
+            reward: 25,
+            offerFrom: "2026-01-01T00:00:00Z",
+            offerTo: "2027-01-01T00:00:00Z",
+        });
         db.getOrCreateReferralCode(referrer.id, "REFR3333");
-        db.createReferral({ code: "REFR3333", referrerUserId: referrer.id, refereeUserId: u.id, reward: 25, offerFrom: "2026-01-01T00:00:00Z", offerTo: "2027-01-01T00:00:00Z" });
+        db.createReferral({
+            code: "REFR3333",
+            referrerUserId: referrer.id,
+            refereeUserId: u.id,
+            reward: 25,
+            offerFrom: "2026-01-01T00:00:00Z",
+            offerTo: "2027-01-01T00:00:00Z",
+        });
         db.recordVideoWatch({ userId: u.id, videoId: "vid00000001" });
         db.recordVideoLog({ kind: "summary:view", userId: u.id, videoId: "vid00000001" });
         db.enqueueJob({ targetKind: "video", target: "vid00000001", stages: ["summarize"], userId: u.id });

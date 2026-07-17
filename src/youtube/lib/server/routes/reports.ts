@@ -19,31 +19,40 @@ export async function handleReportsRoute(req: Request, url: URL, yt: Youtube): P
 
         if (matchRoute(req, "POST", "/api/v1/reports/estimate", url.pathname)) {
             const body = await safeJsonBody(req);
-            const videoIds = parseVideoIds(body?.videoIds);
+            const parsed = parseVideoIds(body?.videoIds);
 
-            if (!videoIds) {
+            if (!parsed) {
                 return jsonError(
                     `body must include {videoIds: string[]} with ${REPORT_MIN_MEMBERS}-${REPORT_MAX_MEMBERS} members`,
                     400
                 );
             }
 
-            return Response.json(estimateReportCost(yt.db, { userId: user.id, videoIds }), {
+            if ("invalidIds" in parsed) {
+                return jsonError(`invalid video IDs: ${parsed.invalidIds.join(", ")}`, 400);
+            }
+
+            return Response.json(estimateReportCost(yt.db, { userId: user.id, videoIds: parsed.ids }), {
                 headers: CORS_HEADERS,
             });
         }
 
         if (matchRoute(req, "POST", "/api/v1/reports", url.pathname)) {
             const body = await safeJsonBody(req);
-            const videoIds = parseVideoIds(body?.videoIds);
+            const parsed = parseVideoIds(body?.videoIds);
 
-            if (!videoIds) {
+            if (!parsed) {
                 return jsonError(
                     `body must include {videoIds: string[]} with ${REPORT_MIN_MEMBERS}-${REPORT_MAX_MEMBERS} members`,
                     400
                 );
             }
 
+            if ("invalidIds" in parsed) {
+                return jsonError(`invalid video IDs: ${parsed.invalidIds.join(", ")}`, 400);
+            }
+
+            const videoIds = parsed.ids;
             const estimate = estimateReportCost(yt.db, { userId: user.id, videoIds });
 
             if (user.credits < estimate.creditCost) {
@@ -56,37 +65,48 @@ export async function handleReportsRoute(req: Request, url: URL, yt: Youtube): P
                 );
             }
 
-            const title =
-                typeof body?.title === "string" && body.title.trim() !== ""
-                    ? body.title.trim()
-                    : `Report · ${videoIds.length} videos`;
-            const provider = typeof body?.provider === "string" ? body.provider : undefined;
-            const model = typeof body?.model === "string" ? body.model : undefined;
-            const report = yt.db.insertReport({
-                userId: user.id,
-                title,
-                memberIds: videoIds,
-                params: { provider, model },
-            });
+            // Enforce the free-tier quota BEFORE persisting anything — a 402 here
+            // must not leave an orphan report row visible in the user's history.
             const quotaError = await enforceFreeQuota(yt, user);
 
             if (quotaError) {
                 return quotaError;
             }
 
-            // The full quote is charged up front; member access rows are granted
-            // at their quoted price so summaries generated (or reused) for this
-            // report stay unlocked for the requester afterwards.
-            const credits = yt.db.spendCredits(user.id, estimate.creditCost, `report:${report.id}`);
-
-            for (const videoId of videoIds) {
-                grantArtifactAccess(yt.db, {
+            const title =
+                typeof body?.title === "string" && body.title.trim() !== ""
+                    ? body.title.trim()
+                    : `Report · ${videoIds.length} videos`;
+            const provider = typeof body?.provider === "string" ? body.provider : undefined;
+            const model = typeof body?.model === "string" ? body.model : undefined;
+            // Report row, up-front charge, and member access rows commit as one
+            // unit — a failure mid-way must not leave a charged user without a
+            // report (or an uncharged report). enqueue stays outside: job
+            // creation is retriable and must not roll back the charge.
+            const { report, credits } = yt.db.transaction(() => {
+                const insertedReport = yt.db.insertReport({
                     userId: user.id,
-                    kind: "summary:long",
-                    videoId,
-                    creditsSpent: estimate.perMemberCost[videoId] ?? 0,
+                    title,
+                    memberIds: videoIds,
+                    params: { provider, model },
                 });
-            }
+
+                // The full quote is charged up front; member access rows are granted
+                // at their quoted price so summaries generated (or reused) for this
+                // report stay unlocked for the requester afterwards.
+                const remaining = yt.db.spendCredits(user.id, estimate.creditCost, `report:${insertedReport.id}`);
+
+                for (const videoId of videoIds) {
+                    grantArtifactAccess(yt.db, {
+                        userId: user.id,
+                        kind: "summary:long",
+                        videoId,
+                        creditsSpent: estimate.perMemberCost[videoId] ?? 0,
+                    });
+                }
+
+                return { report: insertedReport, credits: remaining };
+            });
 
             const job = yt.pipeline.enqueue({
                 targetKind: "report",
@@ -139,18 +159,34 @@ export async function handleReportsRoute(req: Request, url: URL, yt: Youtube): P
     }
 }
 
-function parseVideoIds(value: unknown): string[] | null {
+const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{6,20}$/;
+
+type ParsedVideoIds = { ids: string[] } | { invalidIds: string[] };
+
+function parseVideoIds(value: unknown): ParsedVideoIds | null {
     if (!Array.isArray(value)) {
         return null;
     }
 
-    const ids = [...new Set(value.filter((entry): entry is string => typeof entry === "string" && entry !== ""))];
+    const ids = [
+        ...new Set(
+            value
+                .filter((entry): entry is string => typeof entry === "string")
+                .map((entry) => entry.trim())
+                .filter((entry) => entry !== "")
+        ),
+    ];
+    const invalidIds = ids.filter((id) => !VIDEO_ID_PATTERN.test(id));
+
+    if (invalidIds.length > 0) {
+        return { invalidIds };
+    }
 
     if (ids.length < REPORT_MIN_MEMBERS || ids.length > REPORT_MAX_MEMBERS) {
         return null;
     }
 
-    return ids;
+    return { ids };
 }
 
 function jsonError(error: string, status: number): Response {

@@ -20,6 +20,7 @@ import { safeJsonBody } from "@app/youtube/lib/server/body";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
+import { mergeUserSettings, resolveUserSettings, validateSettingsPatch } from "@app/youtube/lib/user-settings";
 import { loginUser, registerUser } from "@app/youtube/lib/users";
 import type { Youtube } from "@app/youtube/lib/youtube";
 
@@ -67,7 +68,10 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
             const role = roleForEmail(await yt.config.get("powerUsers"), user.email);
             const billing = await buildBillingContext({ db: yt.db, config: yt.config, user });
 
-            return Response.json({ user, role, billing }, { headers: CORS_HEADERS });
+            return Response.json(
+                { user, role, billing, settings: resolveUserSettings(user.settings) },
+                { headers: CORS_HEADERS }
+            );
         }
 
         if (matchRoute(req, "PATCH", "/api/v1/users/me", url.pathname)) {
@@ -91,6 +95,36 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
             return Response.json({ user: patched }, { headers: CORS_HEADERS });
         }
 
+        if (matchRoute(req, "GET", "/api/v1/users/settings", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            return Response.json({ settings: resolveUserSettings(user.settings) }, { headers: CORS_HEADERS });
+        }
+
+        if (matchRoute(req, "PATCH", "/api/v1/users/settings", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const body = (await safeJsonBody(req)) ?? {};
+            const validated = validateSettingsPatch(body);
+
+            if (!validated.ok) {
+                return jsonError(validated.error, 400);
+            }
+
+            const merged = mergeUserSettings(user.settings, validated.value);
+            const updated = yt.db.updateUserSettings(user.id, merged);
+
+            return Response.json({ settings: resolveUserSettings(updated.settings) }, { headers: CORS_HEADERS });
+        }
+
         if (matchRoute(req, "POST", "/api/v1/users/topup", url.pathname)) {
             // Dev stand-in for Stripe: server-gated by YOUTUBE_ALLOW_DEV_TOPUP
             // so a deployed build cannot mint credits outside real billing.
@@ -105,6 +139,11 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
             }
 
             const body = (await safeJsonBody(req)) ?? {};
+
+            if (body.amount !== undefined && (typeof body.amount !== "number" || !Number.isFinite(body.amount))) {
+                return jsonError("amount must be a finite number", 400);
+            }
+
             const requested = typeof body.amount === "number" ? Math.floor(body.amount) : 100;
             const amount = Math.min(10_000, Math.max(1, requested));
             const credits = yt.db.grantCredits(user.id, amount, "dev-topup");
@@ -184,9 +223,9 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
             }
 
             const code = yt.db.getOrCreateReferralCode(user.id, generateReferralCode());
-            const referrals = yt.db.listReferralsByReferrer(user.id);
+            const referrals = yt.db.listReferralsWithEmails(user.id);
             const referees = referrals.map((referral) => ({
-                email: maskEmail(yt.db.getUserEmailById(referral.refereeUserId) ?? "unknown"),
+                email: maskEmail(referral.refereeEmail ?? "unknown"),
                 redeemedAt: referral.createdAt,
                 reward: referral.reward,
             }));
@@ -235,20 +274,26 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
                 );
             }
 
-            const referralId = yt.db.createReferral({
-                code,
-                referrerUserId,
-                refereeUserId: user.id,
-                reward: offer.reward,
-                offerFrom: offer.from,
-                offerTo: offer.to,
+            // Referral row + both-side rewards commit atomically — a crash
+            // between them would otherwise leave a redeemed referral with a
+            // missing (or one-sided) reward.
+            const credits = yt.db.transaction(() => {
+                const referralId = yt.db.createReferral({
+                    code,
+                    referrerUserId,
+                    refereeUserId: user.id,
+                    reward: offer.reward,
+                    offerFrom: offer.from,
+                    offerTo: offer.to,
+                });
+                // Both-side reward: two ledger rows share the referral id so the
+                // activity feed can label each side.
+                yt.db.grantCredits(referrerUserId, offer.reward, `referral:${referralId}:referrer`);
+
+                return yt.db.grantCredits(user.id, offer.reward, `referral:${referralId}:referee`);
             });
-            // Both-side reward: two ledger rows share the referral id so the
-            // activity feed can label each side.
-            yt.db.grantCredits(referrerUserId, offer.reward, `referral:${referralId}:referrer`);
-            const credits = yt.db.grantCredits(user.id, offer.reward, `referral:${referralId}:referee`);
             logger.info(
-                { referralId, referrerUserId, refereeUserId: user.id, reward: offer.reward },
+                { referrerUserId, refereeUserId: user.id, reward: offer.reward },
                 "youtube referrals: redeemed"
             );
 
@@ -545,6 +590,9 @@ function presetErrorResponse(error: unknown): { message: string; status: number 
         return { message, status: 422 };
     }
 
+    // Anything reaching the generic 400 wasn't a recognized validation error —
+    // log it so unexpected failures aren't silently reshaped into client faults.
+    logger.warn({ error }, "youtube presets: unrecognized error mapped to 400");
     return { message, status: 400 };
 }
 

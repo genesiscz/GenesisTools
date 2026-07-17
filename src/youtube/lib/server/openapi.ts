@@ -198,10 +198,10 @@ function buildSchemas(): Record<string, OpenApiSchema> {
                 title: { type: "string" },
                 summary: { type: "string" },
                 startSec: {
-                    type: "number",
+                    type: "integer",
                     description: "Second where the chapter's topic begins. Absent on old rows.",
                 },
-                endSec: nullableNumber("Second where the topic ends, or null. Absent on old rows."),
+                endSec: nullableInteger("Second where the topic ends, or null. Absent on old rows."),
             },
             required: ["title", "summary"],
         },
@@ -266,7 +266,7 @@ function buildSchemas(): Record<string, OpenApiSchema> {
             type: "object",
             properties: {
                 id: { type: "integer" },
-                targetKind: { type: "string", enum: ["video", "channel", "url"] },
+                targetKind: { type: "string", enum: ["video", "channel", "url", "report"] },
                 target: { type: "string" },
                 stages: arrayOf(ref("JobStage")),
                 currentStage: { oneOf: [ref("JobStage"), { type: "null" }] },
@@ -295,7 +295,17 @@ function buildSchemas(): Record<string, OpenApiSchema> {
         },
         JobStage: {
             type: "string",
-            enum: ["discover", "metadata", "captions", "audio", "video", "transcribe", "summarize", "qa"],
+            enum: [
+                "discover",
+                "metadata",
+                "captions",
+                "audio",
+                "video",
+                "transcribe",
+                "summarize",
+                "qa",
+                "reportSynthesize",
+            ],
         },
         JobStatus: {
             type: "string",
@@ -657,20 +667,27 @@ function buildPaths(): Record<string, OpenApiPathItem> {
                     "Stores per-video display names for diarized speaker indices (chips in the transcript UI).",
                 tags: ["videos"],
                 parameters: [videoIdParam],
-                requestBody: jsonBody({
-                    type: "object",
-                    properties: {
-                        speakers: arrayOf({
-                            type: "object",
-                            properties: {
-                                idx: { type: "integer", description: "Diarized speaker index (0-based)." },
-                                label: { type: "string", description: "Display name for the speaker." },
-                            },
-                            required: ["idx", "label"],
-                        }),
+                requestBody: jsonBody(
+                    {
+                        type: "object",
+                        properties: {
+                            speakers: arrayOf({
+                                type: "object",
+                                properties: {
+                                    idx: {
+                                        type: "integer",
+                                        minimum: 0,
+                                        description: "Diarized speaker index (0-based).",
+                                    },
+                                    label: { type: "string", description: "Display name for the speaker." },
+                                },
+                                required: ["idx", "label"],
+                            }),
+                        },
+                        required: ["speakers"],
                     },
-                    required: ["speakers"],
-                }),
+                    { required: true }
+                ),
                 responses: {
                     "200": jsonResponse("Updated label map", {
                         type: "object",
@@ -680,6 +697,7 @@ function buildPaths(): Record<string, OpenApiPathItem> {
                         required: ["speakerLabels"],
                     }),
                     "400": errorResponse,
+                    "401": errorResponse,
                     "404": errorResponse,
                 },
             },
@@ -811,7 +829,7 @@ function buildPaths(): Record<string, OpenApiPathItem> {
                         type: "object",
                         properties: {
                             target: { type: "string", description: "Video id, channel handle, or URL." },
-                            targetKind: { type: "string", enum: ["video", "channel", "url"] },
+                            targetKind: { type: "string", enum: ["video", "channel", "url", "report"] },
                             stages: arrayOf(ref("JobStage")),
                         },
                         required: ["target", "stages"],
@@ -1513,6 +1531,36 @@ function buildPaths(): Record<string, OpenApiPathItem> {
                         properties: { enqueuedJobIds: arrayOf({ type: "integer" }) },
                         required: ["enqueuedJobIds"],
                     }),
+                    "401": errorResponse,
+                },
+            },
+        },
+        "/api/v1/users/settings": {
+            get: {
+                operationId: "getUserSettings",
+                summary: "The signed-in user's customization settings (defaults merged)",
+                tags: ["users"],
+                responses: {
+                    "200": jsonResponse("Settings", {
+                        type: "object",
+                        properties: { settings: { type: "object" } },
+                        required: ["settings"],
+                    }),
+                    "401": errorResponse,
+                },
+            },
+            patch: {
+                operationId: "updateUserSettings",
+                summary: "Deep-merge a partial settings patch (theme/density/taskDefaults/panel); auto-persists",
+                tags: ["users"],
+                requestBody: jsonBody({ type: "object" }, { required: true }),
+                responses: {
+                    "200": jsonResponse("Updated settings", {
+                        type: "object",
+                        properties: { settings: { type: "object" } },
+                        required: ["settings"],
+                    }),
+                    "400": errorResponse,
                     "401": errorResponse,
                 },
             },

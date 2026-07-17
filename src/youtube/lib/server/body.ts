@@ -6,7 +6,9 @@ import { SafeJSON } from "@app/utils/json";
  * Strict parse — request bodies are machine-produced, comments are not welcome.
  */
 export async function safeJsonBody(req: Request): Promise<Record<string, unknown> | null> {
-    if (!req.headers.get("content-type")?.includes("application/json")) {
+    const contentType = req.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+
+    if (contentType !== "application/json") {
         return null;
     }
 

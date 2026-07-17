@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
 import { startServer } from "@app/youtube/lib/server";
+import { apiUrl } from "./test-helpers";
 
 describe("youtube server shares routes", () => {
     let dir: string;
@@ -18,7 +19,7 @@ describe("youtube server shares routes", () => {
     });
 
     async function registeredToken(port: number, email: string): Promise<{ token: string; userId: number }> {
-        const res = await fetch(`http://localhost:${port}/api/v1/users/register`, {
+        const res = await fetch(apiUrl(port, `/users/register`), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: SafeJSON.stringify({ email, password: "hunter22" }),
@@ -31,12 +32,18 @@ describe("youtube server shares routes", () => {
         const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
 
         try {
-            const { token } = await registeredToken(handle.port, "sharer@example.com");
+            const { token, userId } = await registeredToken(handle.port, "sharer@example.com");
             handle.youtube.db.upsertChannel({ handle: "@chan" });
             handle.youtube.db.upsertVideo({ id: "vidABC", channelHandle: "@chan", title: "Deep Dive Video" });
             handle.youtube.db.setVideoSummary("vidABC", "short", "The video explains X in depth, with examples.");
+            handle.youtube.db.insertArtifactAccess({
+                userId,
+                kind: "summary:short",
+                videoId: "vidABC",
+                creditsSpent: 0,
+            });
 
-            const createRes = await fetch(`http://localhost:${handle.port}/api/v1/shares`, {
+            const createRes = await fetch(apiUrl(handle.port, `/shares`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
                 body: SafeJSON.stringify({ kind: "summary", videoId: "vidABC", mode: "short" }),
@@ -55,7 +62,7 @@ describe("youtube server shares routes", () => {
             expect(pageHtml).toContain("The video explains X in depth");
             expect(pageHtml).not.toContain("sharer@example.com");
 
-            const deleteRes = await fetch(`http://localhost:${handle.port}/api/v1/shares/${createBody.slug}`, {
+            const deleteRes = await fetch(apiUrl(handle.port, `/shares/${createBody.slug}`), {
                 method: "DELETE",
                 headers: { Authorization: `Bearer ${token}` },
             });
@@ -68,11 +75,33 @@ describe("youtube server shares routes", () => {
         }
     });
 
-    it("POST from a second account against user A's qaHistoryId returns 4xx", async () => {
+    it("POST summary share without artifact access returns 403", async () => {
         const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
 
         try {
-            const { token: tokenA, userId: userIdA } = await registeredToken(handle.port, "owner@example.com");
+            const { token } = await registeredToken(handle.port, "nofunds@example.com");
+            handle.youtube.db.upsertChannel({ handle: "@chan" });
+            handle.youtube.db.upsertVideo({ id: "vidLocked", channelHandle: "@chan", title: "Locked Video" });
+            handle.youtube.db.setVideoSummary("vidLocked", "short", "Someone else generated this summary.");
+
+            const res = await fetch(apiUrl(handle.port, `/shares`), {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                body: SafeJSON.stringify({ kind: "summary", videoId: "vidLocked", mode: "short" }),
+            });
+
+            expect(res.status).toBe(403);
+            expect(((await res.json()) as { error: string }).error).toBe("artifact access required");
+        } finally {
+            await handle.stop();
+        }
+    });
+
+    it("POST from a second account against user A's qaHistoryId returns 404 not-found", async () => {
+        const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
+
+        try {
+            const { userId: userIdA } = await registeredToken(handle.port, "owner@example.com");
             const { token: tokenB } = await registeredToken(handle.port, "attacker@example.com");
             handle.youtube.db.upsertChannel({ handle: "@chan" });
             handle.youtube.db.upsertVideo({ id: "vidQA", channelHandle: "@chan", title: "QA Video" });
@@ -85,16 +114,16 @@ describe("youtube server shares routes", () => {
                 creditsSpent: 5,
             });
 
-            const res = await fetch(`http://localhost:${handle.port}/api/v1/shares`, {
+            const res = await fetch(apiUrl(handle.port, `/shares`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenB}` },
                 body: SafeJSON.stringify({ kind: "qa", videoId: "vidQA", qaHistoryId: qa.id }),
             });
 
-            expect(res.status).toBeGreaterThanOrEqual(400);
-            expect(res.status).toBeLessThan(500);
-            // tokenA is untouched/unused here besides proving ownership context.
-            expect(tokenA).toBeString();
+            // B cannot resolve A's qaHistory row, so createShare treats it as absent.
+            expect(res.status).toBe(404);
+            const body = (await res.json()) as { error: string };
+            expect(body.error).toBe("qa history entry not found");
         } finally {
             await handle.stop();
         }
@@ -104,25 +133,47 @@ describe("youtube server shares routes", () => {
         const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
 
         try {
-            const { token } = await registeredToken(handle.port, "lister@example.com");
+            const { token, userId } = await registeredToken(handle.port, "lister@example.com");
             handle.youtube.db.upsertChannel({ handle: "@chan" });
             handle.youtube.db.upsertVideo({ id: "vidList", channelHandle: "@chan", title: "List Video" });
             handle.youtube.db.setVideoSummary("vidList", "short", "Short summary text.");
+            handle.youtube.db.insertArtifactAccess({
+                userId,
+                kind: "summary:short",
+                videoId: "vidList",
+                creditsSpent: 0,
+            });
 
-            await fetch(`http://localhost:${handle.port}/api/v1/shares`, {
+            // Two distinguishable shares so "newest first" is actually exercised.
+            handle.youtube.db.upsertVideo({ id: "vidList2", channelHandle: "@chan", title: "Second Video" });
+            handle.youtube.db.setVideoSummary("vidList2", "short", "Second summary text.");
+            handle.youtube.db.insertArtifactAccess({
+                userId,
+                kind: "summary:short",
+                videoId: "vidList2",
+                creditsSpent: 0,
+            });
+
+            await fetch(apiUrl(handle.port, `/shares`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
                 body: SafeJSON.stringify({ kind: "summary", videoId: "vidList", mode: "short" }),
             });
+            await fetch(apiUrl(handle.port, `/shares`), {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                body: SafeJSON.stringify({ kind: "summary", videoId: "vidList2", mode: "short" }),
+            });
 
-            const listRes = await fetch(`http://localhost:${handle.port}/api/v1/shares`, {
+            const listRes = await fetch(apiUrl(handle.port, `/shares`), {
                 headers: { Authorization: `Bearer ${token}` },
             });
             const listBody = (await listRes.json()) as { shares: Array<{ slug: string; videoTitle: string }> };
 
             expect(listRes.status).toBe(200);
-            expect(listBody.shares).toHaveLength(1);
-            expect(listBody.shares[0].videoTitle).toBe("List Video");
+            expect(listBody.shares).toHaveLength(2);
+            expect(listBody.shares[0].videoTitle).toBe("Second Video");
+            expect(listBody.shares[1].videoTitle).toBe("List Video");
         } finally {
             await handle.stop();
         }
