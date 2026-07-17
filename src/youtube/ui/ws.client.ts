@@ -1,3 +1,4 @@
+import { logger } from "@app/logger/client";
 import { SafeJSON } from "@app/utils/json";
 import type { JobEvent } from "@app/youtube/lib/types";
 import { fetchUiConfig } from "@app/yt/config.client";
@@ -46,7 +47,9 @@ export async function createEventStream(opts: UseEventStreamOpts = {}): Promise<
     ws.onmessage = (message) => {
         try {
             opts.onEvent?.(SafeJSON.parse(message.data as string) as JobEvent);
-        } catch {}
+        } catch (error) {
+            logger.debug({ error }, "ws.client: failed to parse event message");
+        }
     };
 
     return handle;

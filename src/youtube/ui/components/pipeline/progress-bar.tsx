@@ -5,7 +5,6 @@ export function ProgressBar({
     label = "Pipeline progress",
     message = null,
 }: {
-    videoId?: string;
     value?: number;
     label?: string;
     message?: string | null;

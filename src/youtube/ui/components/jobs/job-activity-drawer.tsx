@@ -1,6 +1,8 @@
+import { logger } from "@app/logger/client";
 import { formatDuration } from "@app/utils/format";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@app/utils/ui/components/sheet";
 import { Skeleton } from "@app/utils/ui/components/skeleton";
+import { copyText } from "@app/utils/ui/components/youtube/share-button";
 import type { JobActivity } from "@app/youtube/lib/types";
 import { useJobActivity } from "@app/yt/api.hooks";
 import { parseSqliteDate } from "@app/yt/lib/format";
@@ -262,8 +264,12 @@ function PayloadBlock({ label, value, tone }: { label: string; value: string | n
                 <button
                     type="button"
                     onClick={() => {
-                        navigator.clipboard.writeText(value);
-                        toast.success(`${label} copied`);
+                        void copyText(value)
+                            .then(() => toast.success(`${label} copied`))
+                            .catch((error) => {
+                                logger.warn({ error }, "job-activity-drawer: copy failed");
+                                toast.error("Copy failed");
+                            });
                     }}
                     className="inline-flex items-center gap-1 rounded-full border border-border/40 bg-black/40 px-2 py-0.5 font-mono text-[0.6rem] uppercase tracking-[0.22em] text-muted-foreground transition hover:border-amber-400/40 hover:text-amber-200"
                 >

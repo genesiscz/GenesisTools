@@ -1,6 +1,6 @@
 import { Button } from "@app/utils/ui/components/button";
 import { LlmConfirmDialog, type ModelPreset } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
-import { Loading } from "@app/utils/ui/components/youtube/loading";
+import { PanelLoading } from "@app/utils/ui/components/youtube/loading";
 import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
 import {
     DEFAULT_SUMMARY_CONTROLS,
@@ -149,7 +149,7 @@ export function InsightsTab({
         : null;
 
     if (timestamped.isPending && !partial) {
-        return <Loading label="Loading insights" />;
+        return <PanelLoading label="Loading insights" />;
     }
 
     async function runGenerate({ provider, model }: { provider?: string; model?: string }) {
@@ -188,18 +188,17 @@ export function InsightsTab({
             ) : null}
             {entries.length === 0 && streaming ? (
                 <div className="space-y-2">
-                    <div className="h-4 rounded-md bg-white/5 animate-pulse" />
-                    <div className="h-4 rounded-md bg-white/5 animate-pulse" />
-                    <div className="h-4 rounded-md bg-white/5 animate-pulse" />
+                    <div className="h-4 rounded-md bg-muted/50 animate-pulse" />
+                    <div className="h-4 rounded-md bg-muted/50 animate-pulse" />
+                    <div className="h-4 rounded-md bg-muted/50 animate-pulse" />
                 </div>
             ) : entries.length === 0 ? (
                 <p
                     data-testid="insights-empty"
                     className="rounded-xl border border-dashed border-primary/25 p-4 text-sm text-muted-foreground"
                 >
-                    No timestamped insights yet. Click{" "}
-                    <span className="font-semibold text-foreground/95">Generate insights</span> to send the transcript
-                    to your configured LLM and get back per-section highlights with icons + timestamps.
+                    No insights yet. Click <span className="font-semibold text-foreground/95">Generate insights</span>{" "}
+                    to get the video's highlights as a clickable timeline — jump straight to any moment that matters.
                 </p>
             ) : (
                 <TimestampedSummaryView entries={entries} tldr={tldr} onSeek={onSeek} />

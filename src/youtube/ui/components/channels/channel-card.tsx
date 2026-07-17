@@ -1,3 +1,13 @@
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@app/utils/ui/components/alert-dialog";
 import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { Card, CardContent } from "@app/utils/ui/components/card";
@@ -8,12 +18,14 @@ import { useRemoveChannel, useSyncChannel } from "@app/yt/api.hooks";
 import { formatDateTime, formatNumber } from "@app/yt/lib/format";
 import { useNavigate } from "@tanstack/react-router";
 import { MoreVertical, RefreshCw, Trash2 } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 
 export function ChannelCard({ channel }: { channel: Channel }) {
     const navigate = useNavigate();
     const sync = useSyncChannel();
     const remove = useRemoveChannel();
+    const [confirmRemoveOpen, setConfirmRemoveOpen] = useState(false);
 
     async function onSync() {
         await sync.mutateAsync({ handle: channel.handle });
@@ -64,11 +76,32 @@ export function ChannelCard({ channel }: { channel: Channel }) {
                         <DropdownMenuItem onClick={onSync}>
                             <RefreshCw className="size-4" /> Sync
                         </DropdownMenuItem>
-                        <DropdownMenuItem variant="destructive" onClick={onRemove}>
+                        <DropdownMenuItem
+                            variant="destructive"
+                            onSelect={(event) => {
+                                event.preventDefault();
+                                setConfirmRemoveOpen(true);
+                            }}
+                        >
                             <Trash2 className="size-4" /> Remove
                         </DropdownMenuItem>
                     </IconDropdownMenu>
                 </div>
+                <AlertDialog open={confirmRemoveOpen} onOpenChange={setConfirmRemoveOpen}>
+                    <AlertDialogContent>
+                        <AlertDialogHeader>
+                            <AlertDialogTitle>Remove {channel.handle}?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                                This stops tracking the channel and drops its cached videos and transcripts. You can add
+                                it back anytime.
+                            </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction onClick={onRemove}>Remove</AlertDialogAction>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                </AlertDialog>
                 <div className="flex flex-wrap gap-2">
                     <Badge variant="cyber-secondary">{formatNumber(channel.subscriberCount)} subs</Badge>
                     <Badge variant="outline">synced {formatDateTime(channel.lastSyncedAt)}</Badge>

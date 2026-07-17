@@ -1,3 +1,4 @@
+import { logger } from "@app/logger/client";
 import { SafeJSON } from "@app/utils/json";
 import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import type { YoutubeConfigShape } from "@app/youtube/lib/types";
@@ -93,8 +94,9 @@ async function tryFetchDevConfig(): Promise<UiConfigResponse | null> {
         if (res.ok) {
             return (await res.json()) as UiConfigResponse;
         }
-    } catch {
+    } catch (error) {
         // network error or 404 — fall through to production paths
+        logger.debug({ error }, "config.client: dev config fetch failed");
     }
 
     return null;
@@ -107,8 +109,9 @@ async function tryFetchApiConfig(base: string): Promise<UiConfigResponse | null>
         if (res.ok) {
             return (await res.json()) as UiConfigResponse;
         }
-    } catch {
+    } catch (error) {
         // continue to next candidate
+        logger.debug({ error, base }, "config.client: api config candidate fetch failed");
     }
 
     return null;

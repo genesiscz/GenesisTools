@@ -8,9 +8,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
  * Full activity view swapped into the panel body in place of the video
  * tabs (VideoPanel owns the `view` state and the shared Header/settings
  * chrome — see side-panel.tsx). No standalone "back-chevron" component
- * existed to mirror (channel-panel.tsx's `onClose` is unused, contrary to
- * the plan's reference) — the back row here is a fresh, capsule-consistent
- * pattern (ArrowLeft + "Back", matching Feature 11's PresetEditor block).
+ * existed to mirror (the channel/playlist panels expose no dismiss
+ * affordance) — the back row here is a fresh, capsule-consistent pattern
+ * (ArrowLeft + "Back", matching Feature 11's PresetEditor block).
  */
 export function ActivityView({ onBack }: { onBack: () => void }) {
     const summary = useUsageSummary();

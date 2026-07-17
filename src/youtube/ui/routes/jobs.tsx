@@ -23,9 +23,12 @@ export const Route = createFileRoute("/jobs")({
 
 function JobsPage() {
     const [status, setStatus] = useState<JobStatus | "all">("all");
-    const params = useMemo(() => ({ limit: 100, status: status === "all" ? undefined : status }), [status]);
     const allJobs = useJobs({ limit: 100 });
-    const filteredJobs = useJobs(params);
+    const filteredJobs = useMemo(() => {
+        const jobs = allJobs.data ?? [];
+
+        return status === "all" ? jobs : jobs.filter((job) => job.status === status);
+    }, [allJobs.data, status]);
     const queryClient = useQueryClient();
     const stream = useEventStream({
         onEvent: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
@@ -42,7 +45,7 @@ function JobsPage() {
         return map;
     }, [allJobs.data]);
 
-    if (filteredJobs.isPending) {
+    if (allJobs.isPending) {
         return <Loading label="Loading pipeline jobs" />;
     }
 
@@ -109,7 +112,7 @@ function JobsPage() {
                     </div>
                 </div>
             </header>
-            <JobsTable jobs={filteredJobs.data ?? []} />
+            <JobsTable jobs={filteredJobs} />
         </div>
     );
 }

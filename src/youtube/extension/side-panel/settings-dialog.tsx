@@ -1,4 +1,5 @@
 import { logger } from "@app/logger/client";
+import { SafeJSON } from "@app/utils/json";
 import { Button } from "@app/utils/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
 import { Input } from "@app/utils/ui/components/input";
@@ -25,7 +26,7 @@ import {
 } from "@ext/api.hooks";
 import { persistUiLang, useT, useUiLang } from "@ext/shared/i18n";
 import { CreditCard, Gem, Loader2, LogOut, Pencil, Share2, Trash2, Wand2 } from "lucide-react";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
 type AuthMode = "login" | "register";
 
@@ -180,6 +181,19 @@ function ActivitySparkline({ onViewAll }: { onViewAll: () => void }) {
     const days = summary.data?.days ?? [];
     const maxSpent = Math.max(1, ...days.map((d) => d.spent));
 
+    if (summary.isPending) {
+        return (
+            <div className="space-y-2">
+                <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                    activity · last 30 days
+                </p>
+                <div className="flex items-center justify-center py-4 text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" />
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="space-y-2">
             <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
@@ -298,10 +312,26 @@ function SharesSection() {
     const revoke = useRevokeShare();
     const t = useT();
     const [confirmingSlug, setConfirmingSlug] = useState<string | null>(null);
+    const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    useEffect(() => {
+        return () => {
+            if (confirmTimerRef.current !== null) {
+                clearTimeout(confirmTimerRef.current);
+            }
+        };
+    }, []);
 
     function armConfirm(slug: string) {
+        if (confirmTimerRef.current !== null) {
+            clearTimeout(confirmTimerRef.current);
+        }
+
         setConfirmingSlug(slug);
-        setTimeout(() => setConfirmingSlug((current) => (current === slug ? null : current)), 3000);
+        confirmTimerRef.current = setTimeout(() => {
+            setConfirmingSlug((current) => (current === slug ? null : current));
+            confirmTimerRef.current = null;
+        }, 3000);
     }
 
     // Revoked shares are functionally gone — this list manages the active set.
@@ -395,12 +425,28 @@ function PresetsSection() {
     const [editError, setEditError] = useState<string | null>(null);
     const [importResult, setImportResult] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
+    const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const rows = presets.data ?? [];
 
+    useEffect(() => {
+        return () => {
+            if (confirmTimerRef.current !== null) {
+                clearTimeout(confirmTimerRef.current);
+            }
+        };
+    }, []);
+
     function armConfirm(id: number) {
+        if (confirmTimerRef.current !== null) {
+            clearTimeout(confirmTimerRef.current);
+        }
+
         setConfirmingId(id);
-        setTimeout(() => setConfirmingId((current) => (current === id ? null : current)), 3000);
+        confirmTimerRef.current = setTimeout(() => {
+            setConfirmingId((current) => (current === id ? null : current));
+            confirmTimerRef.current = null;
+        }, 3000);
     }
 
     function startEdit(preset: PromptPreset) {
@@ -435,7 +481,7 @@ function PresetsSection() {
             kind: preset.kind,
             instructions: preset.instructions,
         }));
-        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+        const blob = new Blob([SafeJSON.stringify(payload, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement("a");
         anchor.href = url;
@@ -448,7 +494,7 @@ function PresetsSection() {
         setImportResult(null);
         try {
             const text = await file.text();
-            const parsed: unknown = JSON.parse(text);
+            const parsed: unknown = SafeJSON.parse(text);
 
             if (!Array.isArray(parsed)) {
                 throw new Error("invalid file");

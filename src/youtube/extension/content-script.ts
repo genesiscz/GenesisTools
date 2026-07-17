@@ -1,3 +1,4 @@
+import { logger } from "@app/logger/client";
 import { mountSidePanel, unmountSidePanel } from "@ext/content-script-mount";
 import { type ChapterTicksHandle, mountChapterTicks } from "@ext/player-chapters";
 import type { PlayerChaptersMessage, PlayerTimeMessage } from "@ext/shared/messages";
@@ -17,7 +18,9 @@ declare global {
 if (typeof window !== "undefined" && window.__genesisYtCleanup) {
     try {
         window.__genesisYtCleanup();
-    } catch {}
+    } catch (error) {
+        logger.debug({ error }, "content-script: previous instance cleanup threw");
+    }
 }
 
 const hostId = "genesis-yt-side-panel";
@@ -241,7 +244,7 @@ function ensureSidePanel(): void {
 
     const { host, placement } = attachHost(target);
     const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
-    mountSidePanel(shadow, target, placement, () => removeSidePanel());
+    mountSidePanel(shadow, target, placement);
 }
 
 function removeSidePanel(): void {
