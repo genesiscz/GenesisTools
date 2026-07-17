@@ -146,6 +146,8 @@ export interface ListJobsOpts {
     targetKind?: JobTargetKind;
     target?: string;
     parentJobId?: number;
+    /** Only jobs attributed to this user (`jobs.user_id`). */
+    userId?: number;
     limit?: number;
     offset?: number;
 }
@@ -239,4 +241,64 @@ export interface QueueStats {
     running: number;
     perStage: Record<string, { queued: number; running: number }>;
     oldestQueuedAgeSec: number | null;
+}
+
+export type CollectionKind = "manual" | "dynamic";
+
+export interface CollectionRecord {
+    id: number;
+    userId: number;
+    name: string;
+    kind: CollectionKind;
+    /** Serialized `CollectionRule` for `kind='dynamic'`; null for manual collections. */
+    ruleJson: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface CreateCollectionInput {
+    userId: number;
+    name: string;
+    kind: CollectionKind;
+    ruleJson?: string | null;
+}
+
+export interface AskThreadRecord {
+    id: number;
+    userId: number;
+    collectionId: number;
+    title: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export type AskMessageRole = "user" | "assistant" | "tool";
+
+export interface AskMessageRecord {
+    id: number;
+    threadId: number;
+    role: AskMessageRole;
+    content: string;
+    toolName: string | null;
+    toolArgsJson: string | null;
+    createdAt: string;
+}
+
+export interface WatchlistEntry {
+    id: number;
+    userId: number;
+    channelHandle: string;
+    createdAt: string;
+}
+
+/** Cheap hydration record for list surfaces (history, collections, digest). */
+export interface VideoLite {
+    id: string;
+    title: string;
+    channelHandle: string;
+    thumbUrl: string | null;
+    uploadDate: string | null;
+    durationSec: number | null;
+    hasSummary: boolean;
+    hasTranscript: boolean;
 }
