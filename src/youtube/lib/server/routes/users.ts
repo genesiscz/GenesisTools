@@ -20,6 +20,7 @@ import { safeJsonBody } from "@app/youtube/lib/server/body";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
+import { mergeUserSettings, resolveUserSettings, validateSettingsPatch } from "@app/youtube/lib/user-settings";
 import { loginUser, registerUser } from "@app/youtube/lib/users";
 import type { Youtube } from "@app/youtube/lib/youtube";
 
@@ -67,7 +68,10 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
             const role = roleForEmail(await yt.config.get("powerUsers"), user.email);
             const billing = await buildBillingContext({ db: yt.db, config: yt.config, user });
 
-            return Response.json({ user, role, billing }, { headers: CORS_HEADERS });
+            return Response.json(
+                { user, role, billing, settings: resolveUserSettings(user.settings) },
+                { headers: CORS_HEADERS }
+            );
         }
 
         if (matchRoute(req, "PATCH", "/api/v1/users/me", url.pathname)) {
@@ -89,6 +93,36 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
             });
 
             return Response.json({ user: patched }, { headers: CORS_HEADERS });
+        }
+
+        if (matchRoute(req, "GET", "/api/v1/users/settings", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            return Response.json({ settings: resolveUserSettings(user.settings) }, { headers: CORS_HEADERS });
+        }
+
+        if (matchRoute(req, "PATCH", "/api/v1/users/settings", url.pathname)) {
+            const user = requireUser(req, url, yt.db);
+
+            if (user instanceof Response) {
+                return user;
+            }
+
+            const body = (await safeJsonBody(req)) ?? {};
+            const validated = validateSettingsPatch(body);
+
+            if (!validated.ok) {
+                return jsonError(validated.error, 400);
+            }
+
+            const merged = mergeUserSettings(user.settings, validated.value);
+            const updated = yt.db.updateUserSettings(user.id, merged);
+
+            return Response.json({ settings: resolveUserSettings(updated.settings) }, { headers: CORS_HEADERS });
         }
 
         if (matchRoute(req, "POST", "/api/v1/users/topup", url.pathname)) {
