@@ -55,11 +55,13 @@ describe("chunkSegmentsForTranslation", () => {
 
         const chunks = chunkSegmentsForTranslation(segments, 1000);
 
-        expect(chunks.flat()).toHaveLength(5);
+        // ~625 tokens per segment against a 1000-token budget: each segment
+        // must land in its own chunk — an oversized 2-segment chunk would
+        // still satisfy looser "more than one chunk" assertions.
+        expect(chunks).toHaveLength(5);
         for (const chunk of chunks) {
-            expect(chunk.length).toBeGreaterThan(0);
+            expect(chunk).toHaveLength(1);
         }
-        expect(chunks.length).toBeGreaterThan(1);
     });
 
     it("returns a single chunk when everything fits the budget", () => {

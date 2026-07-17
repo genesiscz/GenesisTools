@@ -64,7 +64,7 @@ describe("reserveCredits", () => {
         expect(holds.n).toBe(0);
     });
 
-    it("only one of two concurrent reserves passes when the balance covers a single hold", () => {
+    it("a second reserve over an exhausted balance is rejected", () => {
         const user = createFundedUser(10);
 
         db.reserveCredits({ userId: user.id, amount: 10, reason: "ask" });

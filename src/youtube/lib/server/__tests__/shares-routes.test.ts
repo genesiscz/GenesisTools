@@ -144,10 +144,25 @@ describe("youtube server shares routes", () => {
                 creditsSpent: 0,
             });
 
+            // Two distinguishable shares so "newest first" is actually exercised.
+            handle.youtube.db.upsertVideo({ id: "vidList2", channelHandle: "@chan", title: "Second Video" });
+            handle.youtube.db.setVideoSummary("vidList2", "short", "Second summary text.");
+            handle.youtube.db.insertArtifactAccess({
+                userId,
+                kind: "summary:short",
+                videoId: "vidList2",
+                creditsSpent: 0,
+            });
+
             await fetch(apiUrl(handle.port, `/shares`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
                 body: SafeJSON.stringify({ kind: "summary", videoId: "vidList", mode: "short" }),
+            });
+            await fetch(apiUrl(handle.port, `/shares`), {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                body: SafeJSON.stringify({ kind: "summary", videoId: "vidList2", mode: "short" }),
             });
 
             const listRes = await fetch(apiUrl(handle.port, `/shares`), {
@@ -156,8 +171,9 @@ describe("youtube server shares routes", () => {
             const listBody = (await listRes.json()) as { shares: Array<{ slug: string; videoTitle: string }> };
 
             expect(listRes.status).toBe(200);
-            expect(listBody.shares).toHaveLength(1);
-            expect(listBody.shares[0].videoTitle).toBe("List Video");
+            expect(listBody.shares).toHaveLength(2);
+            expect(listBody.shares[0].videoTitle).toBe("Second Video");
+            expect(listBody.shares[1].videoTitle).toBe("List Video");
         } finally {
             await handle.stop();
         }

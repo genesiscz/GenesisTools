@@ -119,6 +119,10 @@ describe("youtube server billing routes", () => {
                     body: payload,
                 });
                 expect(first.status).toBe(200);
+                // Balance asserted after EACH delivery: a final-balance-only
+                // check can't distinguish "first grants, replay no-ops" from
+                // "first no-ops, replay does the only grant".
+                expect(handle.youtube.db.getUserCredits(user.id)).toBe(2100);
 
                 const replay = await fetch(apiUrl(handle.port, `/webhooks/stripe`), {
                     method: "POST",
@@ -126,6 +130,7 @@ describe("youtube server billing routes", () => {
                     body: payload,
                 });
                 expect(replay.status).toBe(200);
+                expect(handle.youtube.db.getUserCredits(user.id)).toBe(2100);
             });
 
             const me = await fetch(apiUrl(handle.port, `/users/me`), {

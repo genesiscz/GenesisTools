@@ -3014,6 +3014,13 @@ export class YoutubeDatabase extends BaseDatabase {
 
             if (result.changes > 0) {
                 this.db.run("DELETE FROM collection_videos WHERE collection_id = ?", [id]);
+                // Ask threads reference the collection — no FK cascade exists,
+                // so delete them (and their messages) here or they orphan.
+                this.db.run(
+                    "DELETE FROM ask_messages WHERE thread_id IN (SELECT id FROM ask_threads WHERE collection_id = ?)",
+                    [id]
+                );
+                this.db.run("DELETE FROM ask_threads WHERE collection_id = ?", [id]);
             }
 
             return result.changes > 0;

@@ -113,6 +113,15 @@ describe("getOrSynthesizeSummaryAudio", () => {
         expect((synthesizeCalls[0] as { provider: string }).provider).toBe("openai");
     });
 
+    it("picks xai when both providers are available", async () => {
+        xaiAvailable = true;
+        openaiAvailable = true;
+
+        await getOrSynthesizeSummaryAudio({ db, videoId: "abc123def45", mode: "long", userId: 1 });
+
+        expect((synthesizeCalls[0] as { provider: string }).provider).toBe("xai");
+    });
+
     it("serves a cached file even when no provider is currently available", async () => {
         const first = await getOrSynthesizeSummaryAudio({ db, videoId: "abc123def45", mode: "long", userId: 1 });
 

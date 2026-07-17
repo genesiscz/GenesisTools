@@ -88,9 +88,15 @@ describe("youtube server ledger + usage-summary routes", () => {
             });
             const secondBody = (await secondRes.json()) as { rows: Array<{ id: number }> };
 
+            // Length + descending order: disjointness alone would pass for an
+            // empty or mis-ordered second page.
+            expect(secondRes.status).toBe(200);
+            expect(secondBody.rows).toHaveLength(2);
+            expect(secondBody.rows[0].id).toBeGreaterThan(secondBody.rows[1].id);
             const firstIds = new Set(firstBody.rows.map((r) => r.id));
             for (const row of secondBody.rows) {
                 expect(firstIds.has(row.id)).toBe(false);
+                expect(row.id).toBeLessThan(Math.min(...firstBody.rows.map((r) => r.id)));
             }
         } finally {
             await handle.stop();
