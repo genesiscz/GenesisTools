@@ -4,6 +4,7 @@ import { Button } from "@app/utils/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
+import { Diamond, formatDiamonds } from "@app/utils/ui/components/youtube/diamond";
 import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
 import { formatRelativeTime } from "@app/utils/ui/components/youtube/time";
 import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
@@ -112,11 +113,11 @@ function SignedInView({
                     {t("settings.signedInAs")}
                 </p>
                 <p className="mt-1 break-all text-sm text-foreground/95">{email}</p>
-                <div className="mt-3 flex items-baseline gap-1.5">
-                    <span className="text-xl leading-none" aria-hidden>
-                        💎
+                <div className="mt-3 flex items-center gap-2">
+                    <Diamond size={22} glow />
+                    <span className="text-2xl font-semibold tabular-nums leading-none text-foreground">
+                        {formatDiamonds(credits)}
                     </span>
-                    <span className="text-2xl font-semibold tabular-nums leading-none text-foreground">{credits}</span>
                     <span className="text-xs text-muted-foreground">diamonds</span>
                 </div>
             </div>
@@ -316,8 +317,8 @@ function DiamondPacksSection({ devMode }: { devMode?: boolean }) {
                             onClick={() => void buy(pack.id)}
                             className="rounded-2xl border border-white/8 bg-black/20 p-3 text-left transition-colors hover:border-primary/40 disabled:opacity-60"
                         >
-                            <p className="text-base font-semibold tabular-nums text-foreground">
-                                {pack.diamonds.toLocaleString("en-US").replace(",", " ")} 💎
+                            <p className="flex items-center gap-1 text-base font-semibold tabular-nums text-foreground">
+                                <Diamond size={15} /> {formatDiamonds(pack.diamonds)}
                             </p>
                             {pendingPack === pack.id ? (
                                 <p className="mt-0.5 flex items-center gap-1.5 text-sm text-muted-foreground">
