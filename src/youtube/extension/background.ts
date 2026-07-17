@@ -10,6 +10,7 @@ declare const __EXT_DEV_RELOAD__: boolean;
 const ports = new Set<chrome.runtime.Port>();
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let pingTimer: ReturnType<typeof setInterval> | null = null;
 
 chrome.runtime.onConnect.addListener((port) => {
     ports.add(port);
@@ -329,7 +330,22 @@ async function reconnectWebsocket(): Promise<void> {
 
     try {
         ws = new WebSocket(url);
-        ws.onopen = () => broadcast({ type: "ws:status", connected: true });
+        ws.onopen = () => {
+            broadcast({ type: "ws:status", connected: true });
+            // Chrome ≥116 extends the MV3 service-worker lifetime on WS
+            // activity — without this 20s ping the SW idles out after ~30s,
+            // the socket dies with it, and job events (progress, completion
+            // invalidations) silently stop reaching the panel. Same trick
+            // dev-reload uses.
+            if (pingTimer !== null) {
+                clearInterval(pingTimer);
+            }
+            pingTimer = setInterval(() => {
+                if (ws?.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: "ping" }));
+                }
+            }, 20_000);
+        };
         ws.onmessage = (message) => {
             try {
                 const event = JSON.parse(typeof message.data === "string" ? message.data : String(message.data));
@@ -337,6 +353,10 @@ async function reconnectWebsocket(): Promise<void> {
             } catch {}
         };
         ws.onclose = () => {
+            if (pingTimer !== null) {
+                clearInterval(pingTimer);
+                pingTimer = null;
+            }
             broadcast({ type: "ws:status", connected: false });
             scheduleReconnect();
         };

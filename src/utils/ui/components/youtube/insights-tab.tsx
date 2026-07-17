@@ -1,12 +1,13 @@
-import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { LlmConfirmDialog, type ModelPreset } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
 import { Loading } from "@app/utils/ui/components/youtube/loading";
 import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
 import {
     DEFAULT_SUMMARY_CONTROLS,
+    LENGTH_PHRASES,
     SummaryControlsBar,
     type SummaryControlsState,
+    TONE_PHRASES,
 } from "@app/utils/ui/components/youtube/summary-controls";
 import { toPartialTimestampedEntries } from "@app/utils/ui/components/youtube/summary-partials";
 import type { PipelineProgress } from "@app/utils/ui/components/youtube/tabs";
@@ -83,11 +84,19 @@ export function InsightsTab({
     useEstimate,
     devMode,
     modelPresets,
+    modelDefault,
+    onRequireLogin,
     pipelineProgress,
     partialTimestamped,
     streaming,
     outputLang,
-}: InsightsTabProps & { devMode?: boolean; modelPresets?: ModelPreset[]; pipelineProgress?: PipelineProgress | null }) {
+}: InsightsTabProps & {
+    devMode?: boolean;
+    modelPresets?: ModelPreset[];
+    modelDefault?: { provider: string; model: string } | null;
+    onRequireLogin?: (retry?: () => void) => void;
+    pipelineProgress?: PipelineProgress | null;
+}) {
     const timestamped = useSummary(videoId, "timestamped");
     const long = useSummary(videoId, "long");
     const generate = useGenerateSummary(videoId);
@@ -159,16 +168,18 @@ export function InsightsTab({
 
     return (
         <div className="space-y-4">
-            <div className="flex items-start justify-between gap-3">
-                <div>
-                    <Badge variant="cyber-secondary">AI signal · timestamped</Badge>
-                    <h3 className="mt-3 text-2xl font-bold">Key insights</h3>
-                </div>
-                <Button data-testid="insights-generate" onClick={openConfirm} disabled={generate.isPending}>
+            <div className="flex items-center justify-between gap-3">
+                <h3 className="min-w-0 truncate text-base font-semibold">Key insights</h3>
+                <Button
+                    size="sm"
+                    className="shrink-0"
+                    data-testid="insights-generate"
+                    onClick={openConfirm}
+                    disabled={generate.isPending}
+                >
                     {entries.length === 0 ? "Generate insights…" : "Re-generate…"}
                 </Button>
             </div>
-            <SummaryControlsBar value={controls} onChange={setControls} disabled={generate.isPending} />
             {streaming ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="size-4 animate-spin text-primary" />
@@ -184,7 +195,7 @@ export function InsightsTab({
             ) : entries.length === 0 ? (
                 <p
                     data-testid="insights-empty"
-                    className="rounded-2xl border border-dashed border-primary/25 p-5 text-muted-foreground"
+                    className="rounded-xl border border-dashed border-primary/25 p-4 text-sm text-muted-foreground"
                 >
                     No timestamped insights yet. Click{" "}
                     <span className="font-semibold text-foreground/95">Generate insights</span> to send the transcript
@@ -196,13 +207,18 @@ export function InsightsTab({
             <LlmConfirmDialog
                 open={confirmOpen}
                 title="Generate timestamped insights?"
-                description={`Sends the compacted transcript to your LLM and asks for ~${entries.length === 0 ? "12" : "12"} sections with icon + title + 1-2 sentence body each. Tone: ${controls.tone}. Format: ${controls.format}. Length: ${controls.length}.`}
-                payloadSummary="Compacted transcript with timestamps; structured-output JSON response."
+                description={`You'll get the video's highlights as a timeline — click any timestamp to jump straight to that moment. Written with ${TONE_PHRASES[controls.tone]}, ${LENGTH_PHRASES[controls.length]}${controls.format === "qa" ? ", framed as questions and answers" : ""}.`}
+                payloadSummary="We read this video's transcript and pick out the moments worth jumping to. Generated once and saved — reopening the video loads it instantly."
+                controlsSlot={
+                    <SummaryControlsBar value={controls} onChange={setControls} disabled={generate.isPending} />
+                }
                 busy={generate.isPending}
                 confirmLabel={entries.length === 0 ? "Generate" : "Re-generate"}
                 error={generate.error ? (generate.error as Error).message : null}
                 showAdvanced={devMode}
                 modelPresets={modelPresets}
+                defaultProvider={modelDefault?.provider}
+                defaultModel={modelDefault?.model}
                 estimate={dialogEstimate}
                 estimatePending={estimate.isPending && confirmOpen}
                 onSelectionChange={setModelSel}
@@ -211,6 +227,7 @@ export function InsightsTab({
                 lang={lang}
                 onLangChange={setLang}
                 currentLang={currentLang}
+                onRequireLogin={onRequireLogin}
                 onCancel={() => setConfirmOpen(false)}
                 onConfirm={runGenerate}
             />

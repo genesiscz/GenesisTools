@@ -1,4 +1,3 @@
-import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { LlmConfirmDialog, type ModelPreset } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
 import { Loading } from "@app/utils/ui/components/youtube/loading";
@@ -9,8 +8,10 @@ import { StyleSelect } from "@app/utils/ui/components/youtube/style-select";
 import { SummaryAudioPlayer } from "@app/utils/ui/components/youtube/summary-audio-player";
 import {
     DEFAULT_SUMMARY_CONTROLS,
+    LENGTH_PHRASES,
     SummaryControlsBar,
     type SummaryControlsState,
+    TONE_PHRASES,
 } from "@app/utils/ui/components/youtube/summary-controls";
 import { toPartialLongSummary } from "@app/utils/ui/components/youtube/summary-partials";
 import type { PipelineProgress, VideoDetailDataSource } from "@app/utils/ui/components/youtube/tabs";
@@ -94,6 +95,8 @@ export function SummaryTab({
     useCreatePreset,
     devMode,
     modelPresets,
+    modelDefault,
+    onRequireLogin,
     pipelineProgress,
     partialLong,
     streaming,
@@ -103,7 +106,13 @@ export function SummaryTab({
     useGenerateSummaryAudio,
     buildAudioSrc,
     onPlayVideo,
-}: SummaryTabProps & { devMode?: boolean; modelPresets?: ModelPreset[]; pipelineProgress?: PipelineProgress | null }) {
+}: SummaryTabProps & {
+    devMode?: boolean;
+    modelPresets?: ModelPreset[];
+    modelDefault?: { provider: string; model: string } | null;
+    onRequireLogin?: (retry?: () => void) => void;
+    pipelineProgress?: PipelineProgress | null;
+}) {
     const summary = useSummary(videoId, "long");
     const generate = useGenerateSummary(videoId);
     const createShare = useCreateShare?.();
@@ -184,15 +193,13 @@ export function SummaryTab({
 
     return (
         <div className="space-y-4">
-            <div className="flex items-start justify-between gap-3">
-                <div>
-                    <Badge variant="cyber-secondary">AI signal · long-form</Badge>
-                    <h3 className="mt-3 text-2xl font-bold">Whole-video summary</h3>
-                </div>
-                <div className="flex items-center gap-1">
+            <div className="flex items-center justify-between gap-3">
+                <h3 className="min-w-0 truncate text-base font-semibold">Whole-video summary</h3>
+                <div className="flex shrink-0 items-center gap-1">
                     {createShare && long !== null ? (
                         <ShareButton
                             onShare={() => createShare.mutateAsync({ kind: "summary", videoId, mode: "long" })}
+                            onRequireLogin={onRequireLogin}
                             onCopied={() => {
                                 setLinkCopied(true);
                                 setTimeout(() => setLinkCopied(false), 2000);
@@ -200,24 +207,18 @@ export function SummaryTab({
                         />
                     ) : null}
                     {lockedInfo === null ? (
-                        <Button data-testid="summary-generate" onClick={openConfirm} disabled={generate.isPending}>
+                        <Button
+                            size="sm"
+                            data-testid="summary-generate"
+                            onClick={openConfirm}
+                            disabled={generate.isPending}
+                        >
                             {long === null ? "Generate summary…" : "Re-generate…"}
                         </Button>
                     ) : null}
                 </div>
             </div>
             {linkCopied ? <p className="text-sm text-primary">Link copied</p> : null}
-            <SummaryControlsBar value={controls} onChange={setControls} disabled={generate.isPending} hideFormat />
-            {userPresets && createPreset ? (
-                <StyleSelect
-                    kind="summary"
-                    presets={userPresets.data ?? []}
-                    selectedId={presetId}
-                    onSelect={setPresetId}
-                    onCreate={createPreset.mutateAsync}
-                    creating={createPreset.isPending}
-                />
-            ) : null}
             {streaming ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="size-4 animate-spin text-primary" />
@@ -271,7 +272,7 @@ export function SummaryTab({
             ) : idleSummary === null ? (
                 <p
                     data-testid="summary-empty"
-                    className="rounded-2xl border border-dashed border-primary/25 p-5 text-muted-foreground"
+                    className="rounded-xl border border-dashed border-primary/25 p-4 text-sm text-muted-foreground"
                 >
                     No long-form summary yet. Click{" "}
                     <span className="font-semibold text-foreground/95">Generate summary</span> to send the compacted
@@ -296,13 +297,35 @@ export function SummaryTab({
             <LlmConfirmDialog
                 open={confirmOpen}
                 title="Generate long-form summary?"
-                description={`Sends the compacted transcript to your LLM and asks for a TL;DR + 3-10 key points + 2-8 learnings + 1-12 chapters + an optional verdict. Tone: ${controls.tone}. Length: ${controls.length}.`}
-                payloadSummary="Compacted transcript text; structured-output JSON response."
+                description={`You'll get a TL;DR, the key points, lessons worth keeping, and clickable chapters — written with ${TONE_PHRASES[controls.tone]}, ${LENGTH_PHRASES[controls.length]}.`}
+                payloadSummary="We read this video's transcript and turn it into a structured summary. It's generated once and saved — next time you open the video it loads instantly."
+                controlsSlot={
+                    <div className="space-y-3">
+                        <SummaryControlsBar
+                            value={controls}
+                            onChange={setControls}
+                            disabled={generate.isPending}
+                            hideFormat
+                        />
+                        {userPresets && createPreset ? (
+                            <StyleSelect
+                                kind="summary"
+                                presets={userPresets.data ?? []}
+                                selectedId={presetId}
+                                onSelect={setPresetId}
+                                onCreate={createPreset.mutateAsync}
+                                creating={createPreset.isPending}
+                            />
+                        ) : null}
+                    </div>
+                }
                 busy={generate.isPending}
                 confirmLabel={long === null ? "Generate" : "Re-generate"}
                 error={generate.error ? (generate.error as Error).message : null}
                 showAdvanced={devMode}
                 modelPresets={modelPresets}
+                defaultProvider={modelDefault?.provider}
+                defaultModel={modelDefault?.model}
                 estimate={dialogEstimate}
                 estimatePending={estimate.isPending && confirmOpen}
                 onSelectionChange={setModelSel}
@@ -311,6 +334,7 @@ export function SummaryTab({
                 lang={lang}
                 onLangChange={setLang}
                 currentLang={currentLang}
+                onRequireLogin={onRequireLogin}
                 onCancel={() => setConfirmOpen(false)}
                 onConfirm={runGenerate}
             />

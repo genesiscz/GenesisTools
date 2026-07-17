@@ -4,6 +4,7 @@ import { AskTab } from "@app/utils/ui/components/youtube/ask-tab";
 import { CommentsTab } from "@app/utils/ui/components/youtube/comments-tab";
 import { InsightsTab } from "@app/utils/ui/components/youtube/insights-tab";
 import type { ModelPreset } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
+import { scrollIntoPanelView } from "@app/utils/ui/components/youtube/scroll";
 import { SummaryTab } from "@app/utils/ui/components/youtube/summary-tab";
 import { TranscriptTab } from "@app/utils/ui/components/youtube/transcript-tab";
 import type {
@@ -188,10 +189,18 @@ export interface VideoDetailTabsProps {
     devMode?: boolean;
     /** Server-detected provider/model matrix for the dev-mode picker. */
     modelPresets?: ModelPreset[];
+    /** Resolved server defaults per task — names the "server default" row in
+     *  the dev-mode picker instead of leaving it a mystery. */
+    modelDefaults?: {
+        summarize?: { provider: string; model: string } | null;
+        qa?: { provider: string; model: string } | null;
+    };
     /** Live progress of a running job for this video — drives button spinners + dialog progress. */
     pipelineProgress?: PipelineProgress | null;
-    /** Opens the sign-in surface (settings dialog) when a spend endpoint returns 401. */
-    onRequireLogin?: () => void;
+    /** Opens the sign-in surface (settings dialog) when a spend endpoint
+     *  returns 401. Receives the bounced action as `retry` — the owner runs it
+     *  after a successful login so the user never has to re-click. */
+    onRequireLogin?: (retry?: () => void) => void;
     /** Open another video's watch page at a timestamp (cross-video citations). */
     onOpenWatch?: (videoId: string, t: number) => void;
     /** Streaming `summary:partial` payloads keyed by mode (long / timestamped). */
@@ -222,6 +231,7 @@ export function VideoDetailTabs({
     chromeless,
     devMode,
     modelPresets,
+    modelDefaults,
     pipelineProgress,
     onRequireLogin,
     onOpenWatch,
@@ -256,7 +266,7 @@ export function VideoDetailTabs({
             if (card) {
                 clearInterval(timer);
                 pendingCommentRef.current = null;
-                card.scrollIntoView({ block: "center" });
+                scrollIntoPanelView(card);
                 card.classList.add("yt-flash");
                 setTimeout(() => card.classList.remove("yt-flash"), 2100);
             } else if (tries > 20) {
@@ -275,12 +285,35 @@ export function VideoDetailTabs({
                 onValueChange={(value) => onActiveChange(value as VideoDetailTab)}
                 className={chromeless ? "yt-tabs-root p-4" : "yt-tabs-root yt-panel rounded-3xl p-4"}
             >
-                <TabsList className="grid grid-cols-3 gap-2 lg:grid-cols-5">
-                    <TabsTrigger value="insights">Insights</TabsTrigger>
-                    <TabsTrigger value="summary">Summary</TabsTrigger>
-                    <TabsTrigger value="ask">Ask</TabsTrigger>
-                    <TabsTrigger value="comments">Comments</TabsTrigger>
-                    <TabsTrigger value="transcript">Transcript</TabsTrigger>
+                {/* Chromeless = the ~400px extension panel: five triggers only fit
+                    on one row with tighter padding and the panel's 12px caption
+                    size, and the bar pins to the top of the panel's scroller
+                    (full-bleed over the p-4 gutter) so switching tabs never
+                    requires scrolling back up. The dashboard keeps the roomy grid. */}
+                <TabsList
+                    className={
+                        chromeless
+                            ? "sticky top-0 z-10 -mx-4 -mt-4 flex-nowrap justify-between gap-0.5 rounded-none border-x-0 border-t-0 bg-card px-2 py-1.5"
+                            : "grid grid-cols-3 gap-2 lg:grid-cols-5"
+                    }
+                >
+                    {(
+                        [
+                            ["insights", "Insights"],
+                            ["summary", "Summary"],
+                            ["ask", "Ask"],
+                            ["comments", "Comments"],
+                            ["transcript", "Transcript"],
+                        ] as const
+                    ).map(([value, label]) => (
+                        <TabsTrigger
+                            key={value}
+                            value={value}
+                            className={chromeless ? "shrink-0 whitespace-nowrap px-1.5 py-1.5 text-xs" : undefined}
+                        >
+                            {label}
+                        </TabsTrigger>
+                    ))}
                 </TabsList>
                 <TabsContent value="insights" className="yt-tab-pane">
                     <InsightsTab
@@ -291,6 +324,8 @@ export function VideoDetailTabs({
                         useEstimate={ds.useEstimate}
                         devMode={devMode}
                         modelPresets={modelPresets}
+                        modelDefault={modelDefaults?.summarize}
+                        onRequireLogin={onRequireLogin}
                         pipelineProgress={pipelineProgress}
                         partialTimestamped={partialSummaries?.timestamped}
                         streaming={streamingMode === "timestamped"}
@@ -308,6 +343,8 @@ export function VideoDetailTabs({
                         useCreatePreset={ds.useCreatePreset}
                         devMode={devMode}
                         modelPresets={modelPresets}
+                        modelDefault={modelDefaults?.summarize}
+                        onRequireLogin={onRequireLogin}
                         pipelineProgress={pipelineProgress}
                         partialLong={partialSummaries?.long}
                         streaming={streamingMode === "long"}

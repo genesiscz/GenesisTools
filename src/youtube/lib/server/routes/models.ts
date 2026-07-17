@@ -1,4 +1,6 @@
+import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import type { Youtube } from "@app/youtube/lib/youtube";
@@ -9,6 +11,24 @@ export interface ModelPreset {
     provider: string;
     model: string;
     subscription?: boolean;
+}
+
+export interface ResolvedModelDefault {
+    provider: string;
+    model: string;
+}
+
+// Resolves a task's configured spec to the CONCRETE {provider, model} the
+// server would actually use — the same resolution the generate/qa routes run —
+// so clients can display "server default" as a real name instead of a mystery.
+async function resolveTaskDefault(spec: string | null | undefined): Promise<ResolvedModelDefault | null> {
+    try {
+        const choice = await resolveProviderChoice({ fallbackSpec: spec });
+        return { provider: choice.provider.name, model: choice.model.id };
+    } catch (error) {
+        logger.debug({ error, spec }, "models route: task default did not resolve");
+        return null;
+    }
 }
 
 /**
@@ -42,8 +62,8 @@ export async function handleModelsRoute(req: Request, _url: URL, yt: Youtube): P
 
         const cfg = await yt.config.get("provider");
         const defaults = {
-            summarize: cfg?.summarize ?? null,
-            qa: cfg?.qa ?? null,
+            summarize: await resolveTaskDefault(cfg?.summarize),
+            qa: await resolveTaskDefault(cfg?.qa),
             transcribe: cfg?.transcribe ?? null,
             embed: cfg?.embed ?? null,
         };

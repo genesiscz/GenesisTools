@@ -63,6 +63,10 @@ export interface LlmConfirmDialogProps {
     /** Fired when the dev model select changes, so the owner can re-fetch
      *  the estimate for the chosen provider/model. `{}` = server default. */
     onSelectionChange?: (sel: { provider?: string; model?: string }) => void;
+    /** Task-specific option rows (tone/length/style selects) rendered inside
+     *  the dialog, between the description and the language row — everything
+     *  that shapes the run lives in ONE place, not half in the tab header. */
+    controlsSlot?: ReactNode;
     /** Live job progress while `busy` — shown under the payload box. */
     progress?: { progress: number; message: string | null } | null;
     /** Feature 08: output-language options for the controls row. Omit to hide the language Select entirely. */
@@ -71,6 +75,10 @@ export interface LlmConfirmDialogProps {
     onLangChange?: (lang: string) => void;
     /** The stored artifact's lang (when one exists) — drives the "Replaces the current X summary" note. */
     currentLang?: string | null;
+    /** Opens the sign-in surface when the action bounced with 401. The dialog
+     *  passes its own confirm as `retry`, so a successful login immediately
+     *  re-runs the generation the user asked for. */
+    onRequireLogin?: (retry?: () => void) => void;
     onCancel: () => void;
     onConfirm: (overrides: { provider?: string; model?: string }) => void;
 }
@@ -93,15 +101,22 @@ export function LlmConfirmDialog({
     estimate,
     estimatePending,
     onSelectionChange,
+    controlsSlot,
     progress,
     langs,
     lang,
     onLangChange,
     currentLang,
+    onRequireLogin,
     onCancel,
     onConfirm,
 }: LlmConfirmDialogProps) {
     const [preset, setPreset] = useState(DEV_MODEL_DEFAULT);
+
+    function confirm(): void {
+        const chosen = modelPresets.find((p) => p.label === preset);
+        onConfirm(chosen ? { provider: chosen.provider, model: chosen.model } : {});
+    }
     // Unlock flow: the artifact already exists — instant reuse at the flat
     // price, so the run copy, billing block, and progress path all swap out.
     const reuse = estimate?.reused === true;
@@ -152,7 +167,7 @@ export function LlmConfirmDialog({
             <DialogContent
                 showCloseButton={false}
                 data-testid="llm-confirm-dialog"
-                className="max-w-md bg-card border-border"
+                className="max-w-[min(94vw,560px)] sm:max-w-[min(94vw,560px)] bg-card border-border"
                 onOpenAutoFocus={(e) => e.preventDefault()}
             >
                 <DialogHeader>
@@ -162,9 +177,11 @@ export function LlmConfirmDialog({
                     </DialogDescription>
                 </DialogHeader>
 
+                {controlsSlot}
+
                 <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
-                    <p className="mb-1 font-mono text-xs uppercase tracking-wider text-muted-foreground">Will send</p>
-                    <p className="text-foreground/90">{payloadSummary}</p>
+                    <p className="mb-1 text-xs font-medium text-muted-foreground">How it works</p>
+                    <p className="leading-relaxed text-foreground/90">{payloadSummary}</p>
                 </div>
 
                 {langs && langs.length > 0 && lang && onLangChange ? (
@@ -242,8 +259,8 @@ export function LlmConfirmDialog({
                         </div>
                     </div>
                 ) : (
-                    <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-2.5 text-sm leading-relaxed text-amber-100/90">
-                        <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-400/80" strokeWidth={2} />
+                    <div className="flex items-center gap-2.5 rounded-lg border border-amber-500/20 bg-amber-500/5 p-2.5 text-sm leading-relaxed text-amber-100/90">
+                        <AlertTriangle className="size-5 shrink-0 text-amber-400/80" strokeWidth={2} />
                         <div>
                             <span className="text-amber-200">{billing}</span>
                             {billingNote && !(estimate && estimate.inputTokens !== null) ? (
@@ -268,24 +285,26 @@ export function LlmConfirmDialog({
                 ) : null}
 
                 {error ? (
-                    <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-sm">
-                        <p className="font-medium text-destructive">Generation failed</p>
-                        <p className="mt-1 break-words text-destructive/80">{error}</p>
-                    </div>
+                    error === "login required" && onRequireLogin ? (
+                        <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 p-2.5 text-sm">
+                            <p className="text-muted-foreground">This costs diamonds, so it needs an account.</p>
+                            <Button size="sm" className="shrink-0" onClick={() => onRequireLogin(confirm)}>
+                                Sign in
+                            </Button>
+                        </div>
+                    ) : (
+                        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-sm">
+                            <p className="font-medium text-destructive">Generation failed</p>
+                            <p className="mt-1 break-words text-destructive/80">{error}</p>
+                        </div>
+                    )
                 ) : null}
 
                 <div className="flex items-center justify-end gap-2 pt-2">
                     <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>
                         {cancelLabel}
                     </Button>
-                    <Button
-                        size="sm"
-                        onClick={() => {
-                            const chosen = modelPresets.find((p) => p.label === preset);
-                            onConfirm(chosen ? { provider: chosen.provider, model: chosen.model } : {});
-                        }}
-                        disabled={busy}
-                    >
+                    <Button size="sm" onClick={confirm} disabled={busy}>
                         {busy
                             ? reuse
                                 ? "Unlocking…"

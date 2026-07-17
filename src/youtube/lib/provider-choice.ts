@@ -6,6 +6,26 @@ import type { ProviderChoice } from "@ask/types";
 export interface ResolveProviderChoiceOpts {
     provider?: string;
     model?: string;
+    /** Configured task default ("provider" or "provider/model", e.g. youtube
+     *  config's `provider.summarize`). Applies only when neither `provider`
+     *  nor `model` was passed explicitly — an explicit request must never be
+     *  silently mixed with a configured spec. */
+    fallbackSpec?: string | null;
+}
+
+/** Splits a "provider" / "provider/model" config spec. The split is on the
+ *  FIRST slash so model ids that themselves contain slashes survive. */
+export function parseProviderSpec(spec: string | null | undefined): { provider?: string; model?: string } {
+    if (!spec) {
+        return {};
+    }
+
+    const idx = spec.indexOf("/");
+    if (idx === -1) {
+        return { provider: spec };
+    }
+
+    return { provider: spec.slice(0, idx), model: spec.slice(idx + 1) };
 }
 
 async function inferDefaultProviderName(): Promise<string | undefined> {
@@ -42,15 +62,20 @@ async function pickDefaultProviderChoice(): Promise<ProviderChoice | null> {
 }
 
 export async function resolveProviderChoice(opts: ResolveProviderChoiceOpts = {}): Promise<ProviderChoice> {
-    if (!opts.provider && !opts.model) {
+    let { provider, model } = opts;
+    if (!provider && !model) {
+        ({ provider, model } = parseProviderSpec(opts.fallbackSpec));
+    }
+
+    if (!provider && !model) {
         const fallback = await pickDefaultProviderChoice();
 
         if (fallback) {
             return fallback;
         }
     } else {
-        const providerName = opts.provider ?? (await inferDefaultProviderName());
-        const selected = await modelSelector.selectModelByName(providerName, opts.model);
+        const providerName = provider ?? (await inferDefaultProviderName());
+        const selected = await modelSelector.selectModelByName(providerName, model);
 
         if (selected) {
             return selected;
@@ -58,7 +83,7 @@ export async function resolveProviderChoice(opts: ResolveProviderChoiceOpts = {}
     }
 
     throw new Error(
-        `Could not resolve provider="${opts.provider ?? "(any)"}" model="${opts.model ?? "(any)"}". ` +
+        `Could not resolve provider="${provider ?? "(any)"}" model="${model ?? "(any)"}". ` +
             "Configure an account in ~/.genesis-tools/ai/config.json or pass --provider/--model explicitly."
     );
 }

@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { LlmConfirmDialog } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
 import { Loading } from "@app/utils/ui/components/youtube/loading";
 import { OUTPUT_LANGS, outputLangLabel } from "@app/utils/ui/components/youtube/output-langs";
+import { scrollIntoPanelView } from "@app/utils/ui/components/youtube/scroll";
 import type { PipelineProgress, RunPipeline } from "@app/utils/ui/components/youtube/tabs";
 import { formatTimecode } from "@app/utils/ui/components/youtube/time";
 import { segmentsToParagraphs, type TranscriptParagraph } from "@app/utils/ui/components/youtube/transcript-paragraphs";
@@ -220,9 +221,10 @@ export function TranscriptTab({
             return;
         }
 
-        scrollRef.current
-            ?.querySelector(`[data-match="${currentMatch}"]`)
-            ?.scrollIntoView({ block: "center", behavior: "smooth" });
+        const el = scrollRef.current?.querySelector(`[data-match="${currentMatch}"]`);
+        if (el) {
+            scrollIntoPanelView(el, { behavior: "smooth" });
+        }
     }, [currentMatch, matches.total]);
 
     function stepMatch(delta: 1 | -1): void {
@@ -255,9 +257,10 @@ export function TranscriptTab({
             return;
         }
 
-        scrollRef.current
-            ?.querySelector(`[data-block="${activeBlockIndex}"]`)
-            ?.scrollIntoView({ block: "center", behavior: "smooth" });
+        const el = scrollRef.current?.querySelector(`[data-block="${activeBlockIndex}"]`);
+        if (el) {
+            scrollIntoPanelView(el, { behavior: "smooth" });
+        }
     }, [activeBlockIndex]);
 
     function labelForSpeaker(idx: number): string {
@@ -297,11 +300,11 @@ export function TranscriptTab({
         const isRunning = (runPipeline?.isPending ?? false) || pipelineProgress != null;
 
         return (
-            <div className="space-y-4 rounded-2xl border border-dashed border-primary/25 p-5">
+            <div className="space-y-3 rounded-xl border border-dashed border-primary/25 p-4">
                 <div className="flex items-start gap-3">
                     <Captions className="mt-0.5 size-5 shrink-0 text-primary" />
                     <div className="space-y-1">
-                        <p className="font-mono text-xs uppercase tracking-[0.28em] text-secondary">No transcript</p>
+                        <p className="text-sm font-semibold">No transcript yet</p>
                         <p className="text-sm text-muted-foreground">
                             We haven't fetched captions for this video yet. Run the captions stage to grab YouTube's
                             captions, falling back to audio + AI transcription if needed.
@@ -344,77 +347,82 @@ export function TranscriptTab({
 
     return (
         <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-                <Select value={String(bucketSec)} onValueChange={(value) => setBucketSec(Number(value))}>
-                    <SelectTrigger className="h-8 w-[110px]">
-                        <SelectValue placeholder="Group by" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        {BUCKET_OPTIONS.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                                {option.label}
-                            </SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
-                <div className="relative flex-1 min-w-[140px]">
-                    <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                        value={query}
-                        onChange={(event) => setQuery(event.target.value)}
-                        onKeyDown={(event) => {
-                            if (event.key !== "Enter") {
-                                return;
-                            }
+            {/* Toolbar: two deliberate rows instead of one flex-wrap free-for-all —
+                in the ~400px panel the old single row wrapped into ragged lines.
+                Row 1: search + match nav + follow. Row 2: grouping + language + counts. */}
+            <div className="space-y-2">
+                <div className="flex items-center gap-1.5">
+                    <div className="relative min-w-0 flex-1">
+                        <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                            value={query}
+                            onChange={(event) => setQuery(event.target.value)}
+                            onKeyDown={(event) => {
+                                if (event.key !== "Enter") {
+                                    return;
+                                }
 
-                            event.preventDefault();
-                            stepMatch(event.shiftKey ? -1 : 1);
-                        }}
-                        placeholder="Search"
-                        className={
-                            needle && matches.total === 0
-                                ? "h-8 flex-1 pl-8 text-sm ring-1 ring-muted-foreground/25"
-                                : "h-8 flex-1 pl-8 text-sm"
-                        }
-                    />
+                                event.preventDefault();
+                                stepMatch(event.shiftKey ? -1 : 1);
+                            }}
+                            placeholder="Search transcript"
+                            className={
+                                needle && matches.total === 0
+                                    ? "h-8 pl-8 text-sm ring-1 ring-muted-foreground/25"
+                                    : "h-8 pl-8 text-sm"
+                            }
+                        />
+                    </div>
+                    {needle ? (
+                        <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                            {matches.total === 0 ? "0/0" : `${currentMatch + 1}/${matches.total}`}
+                        </span>
+                    ) : null}
+                    <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Previous match"
+                        onClick={() => stepMatch(-1)}
+                        disabled={matches.total === 0}
+                    >
+                        <ChevronUp className="size-4" />
+                    </Button>
+                    <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Next match"
+                        onClick={() => stepMatch(1)}
+                        disabled={matches.total === 0}
+                    >
+                        <ChevronDown className="size-4" />
+                    </Button>
+                    <div className="h-4 w-px shrink-0 bg-border" />
+                    <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Follow playback"
+                        title="Follow playback"
+                        aria-pressed={follow}
+                        className={follow ? "rounded-md bg-primary/10 text-primary" : undefined}
+                        onClick={() => setFollow((value) => !value)}
+                    >
+                        <LocateFixed className="size-4" />
+                    </Button>
                 </div>
-                {needle ? (
-                    <span className="font-mono text-[12px] tabular-nums text-muted-foreground">
-                        {matches.total === 0 ? "0/0" : `${currentMatch + 1}/${matches.total}`}
-                    </span>
-                ) : null}
-                <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Previous match"
-                    onClick={() => stepMatch(-1)}
-                    disabled={matches.total === 0}
-                >
-                    <ChevronUp className="size-4" />
-                </Button>
-                <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Next match"
-                    onClick={() => stepMatch(1)}
-                    disabled={matches.total === 0}
-                >
-                    <ChevronDown className="size-4" />
-                </Button>
-                <div className="h-4 w-px bg-border" />
-                <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Follow playback"
-                    aria-pressed={follow}
-                    className={follow ? "rounded-md bg-primary/10 text-primary" : undefined}
-                    onClick={() => setFollow((value) => !value)}
-                >
-                    <LocateFixed className="size-4" />
-                </Button>
-                {useVideo ? (
-                    <>
-                        <div className="h-4 w-px bg-border" />
+                <div className="flex items-center gap-1.5">
+                    <Select value={String(bucketSec)} onValueChange={(value) => setBucketSec(Number(value))}>
+                        <SelectTrigger className="h-8 w-[110px] text-sm">
+                            <SelectValue placeholder="Group by" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {BUCKET_OPTIONS.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                    {useVideo ? (
                         <Select
                             value={selectedLang ?? ORIGINAL_LANG}
                             onValueChange={(value) => {
@@ -429,7 +437,7 @@ export function TranscriptTab({
                             }}
                             disabled={translate?.isPending}
                         >
-                            <SelectTrigger className="h-8 w-[150px] text-sm">
+                            <SelectTrigger className="h-8 w-[140px] text-sm">
                                 {translate?.isPending ? (
                                     <span className="flex items-center gap-1.5">
                                         <Loader2 className="size-3.5 animate-spin" /> Translating…
@@ -444,7 +452,7 @@ export function TranscriptTab({
                                 </SelectItem>
                                 {existingLangs.map((code) => (
                                     <SelectItem key={code} value={code}>
-                                        <span className="font-mono text-[12px] uppercase">{code}</span>{" "}
+                                        <span className="font-mono text-xs uppercase">{code}</span>{" "}
                                         {outputLangLabel(code)}
                                     </SelectItem>
                                 ))}
@@ -457,15 +465,15 @@ export function TranscriptTab({
                                     : null}
                             </SelectContent>
                         </Select>
-                    </>
-                ) : null}
-                <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground/70">
-                    {segments.length.toLocaleString()} segments · {totalParagraphs.toLocaleString()} paragraphs
-                </span>
+                    ) : null}
+                    <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground/70">
+                        {totalParagraphs.toLocaleString()} paragraphs
+                    </span>
+                </div>
             </div>
             <div
                 ref={scrollRef}
-                className="yt-scroll min-w-0 space-y-4 overflow-y-auto"
+                className="min-w-0 space-y-4"
                 onWheel={() => {
                     lastUserScrollAt.current = Date.now();
                 }}
@@ -510,10 +518,12 @@ export function TranscriptTab({
                 <LlmConfirmDialog
                     open={translateTarget !== null}
                     title="Translate transcript?"
-                    description="Sends the transcript to your LLM, chunked with timestamps preserved, and translates it line by line."
-                    payloadSummary={
-                        translateTarget ? `Full transcript · target language ${outputLangLabel(translateTarget)}.` : ""
+                    description={
+                        translateTarget
+                            ? `Translates the whole transcript into ${outputLangLabel(translateTarget)}, keeping every timestamp in place.`
+                            : ""
                     }
+                    payloadSummary="Translated once and saved — switching between languages is instant afterwards."
                     busy={translate.isPending}
                     confirmLabel={`Translate · ${TRANSLATE_COST} 💎`}
                     billingNote={`Cost: ${TRANSLATE_COST} 💎, charged once — cached for every future request.`}

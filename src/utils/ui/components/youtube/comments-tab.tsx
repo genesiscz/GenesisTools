@@ -80,11 +80,11 @@ export function CommentsTab({ videoId, useComments, runPipeline, pipelineProgres
         const isRunning = (runPipeline?.isPending ?? false) || pipelineProgress != null;
 
         return (
-            <div className="space-y-4 rounded-2xl border border-dashed border-primary/25 p-5">
+            <div className="space-y-3 rounded-xl border border-dashed border-primary/25 p-4">
                 <div className="flex items-start gap-3">
                     <MessageCircle className="mt-0.5 size-5 shrink-0 text-primary" />
                     <div className="space-y-1">
-                        <p className="font-mono text-xs uppercase tracking-[0.28em] text-secondary">No comments</p>
+                        <p className="text-sm font-semibold">No comments yet</p>
                         <p className="text-sm text-muted-foreground">
                             We haven't fetched comments for this video yet. Run the comments stage to pull the top
                             comment threads via yt-dlp.
@@ -119,33 +119,29 @@ export function CommentsTab({ videoId, useComments, runPipeline, pipelineProgres
     const hidden = filtered.length - trimmed.length;
 
     return (
-        <div className="space-y-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                    <p className="font-mono text-xs uppercase tracking-[0.28em] text-secondary">Top Comments</p>
-                    <h3 className="mt-2 text-2xl font-bold">Audience signal</h3>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                        {rows.length.toLocaleString()} comment{rows.length === 1 ? "" : "s"} ·{" "}
-                        {threads.length.toLocaleString()} thread{threads.length === 1 ? "" : "s"}
-                    </p>
-                </div>
-                <div className="relative">
-                    <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <div className="space-y-3">
+            <div className="flex items-center gap-2">
+                <div className="relative min-w-0 flex-1">
+                    <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                     <Input
                         value={query}
                         onChange={(event) => setQuery(event.target.value)}
                         placeholder="Search comments"
-                        className="pl-9 sm:w-64"
+                        className="h-8 pl-8 text-sm"
                     />
                 </div>
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">
+                    {rows.length.toLocaleString()} comment{rows.length === 1 ? "" : "s"} ·{" "}
+                    {threads.length.toLocaleString()} thread{threads.length === 1 ? "" : "s"}
+                </span>
             </div>
-            <div className="yt-scroll max-h-[62vh] space-y-3 overflow-auto pr-2">
+            <div className="space-y-3">
                 {trimmed.map((thread) => (
                     <CommentThreadView key={thread.root.commentId} thread={thread} />
                 ))}
             </div>
             {hidden > 0 ? (
-                <div className="flex items-center justify-center gap-3 rounded-2xl border border-dashed border-primary/30 bg-primary/5 p-3 text-sm">
+                <div className="flex items-center justify-center gap-3 rounded-xl border border-dashed border-primary/30 bg-primary/5 p-2 text-xs">
                     <span className="text-muted-foreground">
                         Showing first {DEFAULT_RENDER_LIMIT.toLocaleString()} of {filtered.length.toLocaleString()}{" "}
                         threads.
@@ -163,7 +159,7 @@ function CommentThreadView({ thread }: { thread: CommentThread }) {
     return (
         <article
             data-comment-id={thread.root.commentId}
-            className="rounded-2xl border border-primary/15 bg-black/20 p-4"
+            className="rounded-xl border border-primary/15 bg-black/20 p-3"
         >
             <CommentRow comment={thread.root} />
             {thread.replies.length > 0 ? (

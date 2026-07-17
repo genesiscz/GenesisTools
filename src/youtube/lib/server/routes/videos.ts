@@ -483,7 +483,13 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
             const hasTranscript = yt.db.getTranscript(id) !== null;
             const needsProvider = mode !== "short" || !!provider || !!model;
-            const providerChoice = needsProvider ? await resolveProviderChoice({ provider, model }) : undefined;
+            const providerChoice = needsProvider
+                ? await resolveProviderChoice({
+                      provider,
+                      model,
+                      fallbackSpec: (await yt.config.get("provider")).summarize,
+                  })
+                : undefined;
             // Reserve BEFORE the pipeline work so concurrent requests cannot pass
             // a stale balance check and burn provider cost; released on failure.
             const hold = yt.db.reserveCredits({
@@ -647,6 +653,8 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             const choice = await resolveProviderChoice({
                 provider: url.searchParams.get("provider") ?? undefined,
                 model: url.searchParams.get("model") ?? undefined,
+                // Estimates front the summary dialog, so quote the summarize default.
+                fallbackSpec: (await yt.config.get("provider")).summarize,
             });
             const transcript = yt.db.getTranscript(id);
             const video = yt.videos.show(id);
@@ -778,6 +786,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             const providerChoice = await resolveProviderChoice({
                 provider: typeof body.provider === "string" ? body.provider : undefined,
                 model: typeof body.model === "string" ? body.model : undefined,
+                fallbackSpec: (await yt.config.get("provider")).qa,
             });
             const presetId = typeof body.presetId === "number" ? body.presetId : undefined;
             let presetInstructions: string | undefined;
