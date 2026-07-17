@@ -540,6 +540,12 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 reason: `summary:${mode}`,
                 context: id,
             });
+            // Q2 (frozen): the ASR fallback costs the same as the standalone
+            // transcribe path. Reserved lazily — only if captions actually miss.
+            // Ref container: the reserve happens inside a deeply-nested callback,
+            // and TS's closure-assignment narrowing collapses a plain `let` to
+            // `never` at the later checks — a stable object property does not.
+            const transcribeHold: { current: { holdId: number; credits: number } | null } = { current: null };
             const stages = hasTranscript ? (["summarize"] as const) : (["captions", "summarize"] as const);
             const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: [...stages], userId: user.id });
             yt.pipeline.emitExternal({ type: "job:created", job });
@@ -566,6 +572,14 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     await withJobActivity({ jobId: job.id, stage: "captions", db: yt.db, userId: user.id }, () =>
                         yt.transcripts.transcribe({
                             videoId: id,
+                            beforeAiTranscription: () => {
+                                transcribeHold.current = yt.db.reserveCredits({
+                                    userId: user.id,
+                                    amount: CREDIT_COSTS["transcribe:ai"],
+                                    reason: "transcribe:ai",
+                                    context: id,
+                                });
+                            },
                             onProgress: (info) => {
                                 const stagePct = (info.percent ?? 0) / 100;
                                 const overall = Math.min(0.25, 0.05 + stagePct * 0.2);
@@ -657,6 +671,10 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     videoId: id,
                     creditsSpent: creditCost,
                 });
+                if (transcribeHold.current !== null) {
+                    yt.db.commitHold(transcribeHold.current.holdId);
+                }
+
                 // Last DB action before the response: anything throwing above
                 // still finds the hold "held" and releasable in the catch.
                 yt.db.commitHold(hold.holdId);
@@ -674,13 +692,17 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         cached: false,
                         jobId: job.id,
                         startedAt,
-                        creditsSpent: creditCost,
-                        credits: hold.credits,
+                        creditsSpent: creditCost + (transcribeHold.current !== null ? CREDIT_COSTS["transcribe:ai"] : 0),
+                        credits: transcribeHold.current !== null ? transcribeHold.current.credits : hold.credits,
                     },
                     { headers: CORS_HEADERS }
                 );
             } catch (error) {
                 yt.db.releaseHold(hold.holdId);
+                if (transcribeHold.current !== null) {
+                    yt.db.releaseHold(transcribeHold.current.holdId);
+                }
+
                 const message = error instanceof Error ? error.message : String(error);
                 yt.db.updateJob(job.id, { status: "failed", error: message, completedAt: new Date().toISOString() });
                 const failedJob = yt.db.getJob(job.id) ?? job;
@@ -754,6 +776,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     estUsd,
                     basis,
                     creditCost: reusable ? (hasAccess ? 0 : REUSE_COST) : CREDIT_COSTS[`summary:${mode}`],
+                    transcribeCredits: transcript ? 0 : CREDIT_COSTS["transcribe:ai"],
                     reused,
                 },
                 { headers: CORS_HEADERS }
