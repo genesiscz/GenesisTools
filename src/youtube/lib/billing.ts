@@ -244,40 +244,46 @@ function applyChargeRefunded(db: YoutubeDatabase, charge: Record<string, unknown
         return "skipped";
     }
 
-    const reason = `stripe-refund:${chargeId}` as const;
+    // charge.refunded fires once per refund with a CUMULATIVE amount_refunded,
+    // so a per-charge idempotency key would drop every refund after the first
+    // (10% then 90% → only 10% reversed). Instead compute the TARGET total
+    // reversal for the current refunded amount and debit only what has not been
+    // reversed yet. Missing amount fields (minimal/legacy events) → full pack.
+    const amount = typeof charge.amount === "number" ? charge.amount : null;
+    const amountRefunded = typeof charge.amount_refunded === "number" ? charge.amount_refunded : null;
+    const partial = amount !== null && amount > 0 && amountRefunded !== null && amountRefunded < amount;
+    const targetReversal = partial ? Math.floor((pack.diamonds * (amountRefunded as number)) / (amount as number)) : pack.diamonds;
+
+    // The reason embeds the cumulative refunded amount so each distinct
+    // cumulative state is its own idempotent ledger row — an exact redelivery of
+    // the same event is a no-op via the partial UNIQUE index on (user_id, reason).
+    const reason = `stripe-refund:${chargeId}:${amountRefunded ?? "full"}` as const;
 
     if (db.hasLedgerReason(userId, reason)) {
-        logger.debug({ chargeId, userId }, "youtube billing: charge.refunded already reversed");
+        logger.debug({ chargeId, userId }, "youtube billing: charge.refunded already reversed at this amount");
         return "processed";
     }
 
-    // charge.refunded fires for partial refunds too. The idempotency key is per
-    // charge (stripe-refund:<chargeId>, DB-unique via credit_ledger), so credits
-    // are reversed exactly once per charge — reverse only the refunded share so a
-    // small partial refund cannot wipe the whole pack. Missing amount fields
-    // (minimal/legacy events) fall back to a full reversal.
-    const amount = typeof charge.amount === "number" ? charge.amount : null;
-    const amountRefunded = typeof charge.amount_refunded === "number" ? charge.amount_refunded : null;
-    let reversal = pack.diamonds;
-    let partial = false;
+    const alreadyReversed = db.sumRefundedForCharge(userId, chargeId);
+    const delta = Math.min(targetReversal, pack.diamonds) - alreadyReversed;
 
-    if (amount !== null && amount > 0 && amountRefunded !== null && amountRefunded < amount) {
-        reversal = Math.floor((pack.diamonds * amountRefunded) / amount);
-        partial = true;
+    if (delta <= 0) {
+        logger.debug({ chargeId, userId, alreadyReversed, targetReversal }, "youtube billing: refund already covered");
+        return "processed";
     }
 
-    db.grantCredits(userId, -reversal, reason);
+    db.grantCredits(userId, -delta, reason);
     db.recordPayment({
         userId,
         kind: "refund",
-        stripeRef: `refund:${chargeId}`,
+        stripeRef: `refund:${chargeId}:${amountRefunded ?? "full"}`,
         packId: pack.id,
         amountCents: amountRefunded,
         currency: typeof charge.currency === "string" ? charge.currency : null,
-        credits: -reversal,
+        credits: -delta,
         status: "refunded",
     });
-    logger.info({ chargeId, userId, diamonds: -reversal, partial }, "youtube billing: reversed diamonds from refund");
+    logger.info({ chargeId, userId, diamonds: -delta, partial }, "youtube billing: reversed diamonds from refund");
 
     return "processed";
 }

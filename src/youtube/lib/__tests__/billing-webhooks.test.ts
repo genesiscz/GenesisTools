@@ -267,4 +267,29 @@ describe("charge.refunded partial vs full", () => {
 
         expect(db.getUserCredits(user.id)).toBe(2000 - 667);
     });
+
+    it("sequential partial refunds on one charge reverse the full pack (cumulative delta)", async () => {
+        const user = db.createUser({ email: "r3@example.com", passwordHash: "h", apiToken: "ytu_r3" });
+        db.grantCredits(user.id, 2000, "stripe:cs_r3");
+
+        // charge.refunded fires per refund with a CUMULATIVE amount_refunded.
+        // First 100/1000 → floor(2000 * 100 / 1000) = 200 reversed.
+        await deliver(
+            refundEvent({ userId: user.id, eventId: "evt_r3a", chargeId: "ch_3", amount: 1000, amountRefunded: 100 })
+        );
+        expect(db.getUserCredits(user.id)).toBe(1800);
+
+        // Then the rest: cumulative amount_refunded = full 1000 → total target 2000,
+        // 200 already reversed → debit the remaining 1800.
+        await deliver(
+            refundEvent({ userId: user.id, eventId: "evt_r3b", chargeId: "ch_3", amount: 1000, amountRefunded: 1000 })
+        );
+        expect(db.getUserCredits(user.id)).toBe(0);
+
+        // Duplicate delivery of the second event is a no-op.
+        await deliver(
+            refundEvent({ userId: user.id, eventId: "evt_r3b", chargeId: "ch_3", amount: 1000, amountRefunded: 1000 })
+        );
+        expect(db.getUserCredits(user.id)).toBe(0);
+    });
 });

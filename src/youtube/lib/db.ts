@@ -1902,6 +1902,24 @@ export class YoutubeDatabase extends BaseDatabase {
         return row?.total ?? 0;
     }
 
+    /**
+     * Diamonds already reversed for a Stripe charge (as a positive number),
+     * summing every `stripe-refund:<chargeId>[:<amount>]` debit. GLOB (not LIKE)
+     * so the underscores in charge ids stay literal. Lets partial-refund events
+     * settle cumulatively — each event debits only the not-yet-reversed delta.
+     */
+    sumRefundedForCharge(userId: number, chargeId: string): number {
+        const row = this.db
+            .query<{ total: number | null }, [number, string, string]>(
+                `SELECT COALESCE(SUM(-delta), 0) AS total FROM credit_ledger
+                 WHERE user_id = ? AND delta < 0
+                   AND (reason = ? OR reason GLOB ?)`
+            )
+            .get(userId, `stripe-refund:${chargeId}`, `stripe-refund:${chargeId}:*`);
+
+        return row?.total ?? 0;
+    }
+
     /** True when the user ever completed a Stripe purchase (quota exemption). */
     hasAnyStripeGrant(userId: number): boolean {
         const row = this.db
