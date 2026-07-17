@@ -133,9 +133,14 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             }
 
             const creditCost = CREDIT_COSTS["transcript:translate"];
-            // Debit BEFORE the LLM call so concurrent requests cannot pass a
-            // stale balance check and burn provider cost; refunded on failure.
-            const credits = yt.db.spendCredits(user.id, creditCost, "transcript:translate");
+            // Reserve BEFORE the LLM call so concurrent requests cannot pass a
+            // stale balance check and burn provider cost; released on failure.
+            const hold = yt.db.reserveCredits({
+                userId: user.id,
+                amount: creditCost,
+                reason: "transcript:translate",
+                context: id,
+            });
 
             try {
                 const providerChoice = await resolveProviderChoice({
@@ -143,10 +148,14 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     model: typeof body.model === "string" ? body.model : undefined,
                 });
                 const transcript = await translateTranscript({ db: yt.db, videoId: id, lang, providerChoice });
+                yt.db.commitHold(hold.holdId);
 
-                return Response.json({ transcript, creditsSpent: creditCost, credits }, { headers: CORS_HEADERS });
+                return Response.json(
+                    { transcript, creditsSpent: creditCost, credits: hold.credits },
+                    { headers: CORS_HEADERS }
+                );
             } catch (error) {
-                yt.db.grantCredits(user.id, creditCost, `refund:transcript:translate:${id}`);
+                yt.db.releaseHold(hold.holdId);
                 throw error;
             }
         }
@@ -192,11 +201,13 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             const creditCost = CREDIT_COSTS["tts:summary"];
             let credits = user.credits;
             let charged = 0;
+            let hold: { holdId: number; credits: number } | undefined;
 
             if (!cached) {
-                // Debit BEFORE synthesis so concurrent requests cannot pass a
-                // stale balance check and burn provider cost; refunded on failure.
-                credits = yt.db.spendCredits(user.id, creditCost, `tts:${id}`);
+                // Reserve BEFORE synthesis so concurrent requests cannot pass a
+                // stale balance check and burn provider cost; released on failure.
+                hold = yt.db.reserveCredits({ userId: user.id, amount: creditCost, reason: `tts:${id}` });
+                credits = hold.credits;
                 charged = creditCost;
             }
 
@@ -211,17 +222,19 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     userId: user.id,
                 });
             } catch (error) {
-                if (charged > 0) {
-                    yt.db.grantCredits(user.id, charged, `refund:tts:${id}`);
+                if (hold) {
+                    yt.db.releaseHold(hold.holdId);
                 }
 
                 throw error;
             }
 
-            if (charged > 0 && result.cached) {
+            if (hold && result.cached) {
                 // Lost a synthesis race — another request already produced the file.
-                credits = yt.db.grantCredits(user.id, charged, `refund:tts:${id}`);
+                credits = yt.db.releaseHold(hold.holdId);
                 charged = 0;
+            } else if (hold) {
+                yt.db.commitHold(hold.holdId);
             }
 
             return Response.json(
@@ -443,8 +456,8 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             }
 
             // Courtesy pre-check → early 402 before body/provider work. The
-            // authoritative debit is the atomic spendCredits below, taken
-            // BEFORE the LLM call and refunded on failure.
+            // authoritative debit is the atomic reserveCredits below, taken
+            // BEFORE the LLM call and released on failure.
             if (user.credits < creditCost) {
                 return insufficientDiamonds(user.credits, creditCost);
             }
@@ -471,9 +484,14 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             const hasTranscript = yt.db.getTranscript(id) !== null;
             const needsProvider = mode !== "short" || !!provider || !!model;
             const providerChoice = needsProvider ? await resolveProviderChoice({ provider, model }) : undefined;
-            // Debit BEFORE the pipeline work so concurrent requests cannot pass
-            // a stale balance check and burn provider cost; refunded on failure.
-            const creditsAfterDebit = yt.db.spendCredits(user.id, creditCost, `summary:${mode}`);
+            // Reserve BEFORE the pipeline work so concurrent requests cannot pass
+            // a stale balance check and burn provider cost; released on failure.
+            const hold = yt.db.reserveCredits({
+                userId: user.id,
+                amount: creditCost,
+                reason: `summary:${mode}`,
+                context: id,
+            });
             const stages = hasTranscript ? (["summarize"] as const) : (["captions", "summarize"] as const);
             const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: [...stages] });
             yt.pipeline.emitExternal({ type: "job:created", job });
@@ -589,6 +607,9 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                     videoId: id,
                     creditsSpent: creditCost,
                 });
+                // Last DB action before the response: anything throwing above
+                // still finds the hold "held" and releasable in the catch.
+                yt.db.commitHold(hold.holdId);
 
                 return Response.json(
                     {
@@ -604,12 +625,12 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         jobId: job.id,
                         startedAt,
                         creditsSpent: creditCost,
-                        credits: creditsAfterDebit,
+                        credits: hold.credits,
                     },
                     { headers: CORS_HEADERS }
                 );
             } catch (error) {
-                yt.db.grantCredits(user.id, creditCost, `refund:summary:${mode}:${id}`);
+                yt.db.releaseHold(hold.holdId);
                 const message = error instanceof Error ? error.message : String(error);
                 yt.db.updateJob(job.id, { status: "failed", error: message, completedAt: new Date().toISOString() });
                 const failedJob = yt.db.getJob(job.id) ?? job;
@@ -771,9 +792,14 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 presetInstructions = preset.instructions;
             }
 
-            // Debit BEFORE the retrieval/LLM work so concurrent requests cannot
-            // pass a stale balance check and burn provider cost; refunded on failure.
-            const creditsAfterDebit = yt.db.spendCredits(user.id, askCost, scope === "channel" ? "qa:channel" : "ask");
+            // Reserve BEFORE the retrieval/LLM work so concurrent requests cannot
+            // pass a stale balance check and burn provider cost; released on failure.
+            const hold = yt.db.reserveCredits({
+                userId: user.id,
+                amount: askCost,
+                reason: scope === "channel" ? "qa:channel" : "ask",
+                context: id,
+            });
             const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: ["qa"] });
             yt.pipeline.emitExternal({ type: "job:created", job });
             yt.db.updateJob(job.id, { status: "running", currentStage: "qa" });
@@ -850,6 +876,9 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         ];
                     })
                 );
+                // Last DB action before the response: anything throwing above
+                // still finds the hold "held" and releasable in the catch.
+                yt.db.commitHold(hold.holdId);
 
                 return Response.json(
                     {
@@ -857,14 +886,14 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                         jobId: job.id,
                         lang,
                         creditsSpent: askCost,
-                        credits: creditsAfterDebit,
+                        credits: hold.credits,
                         historyId: historyItem.id,
                         citedVideos,
                     },
                     { headers: CORS_HEADERS }
                 );
             } catch (error) {
-                yt.db.grantCredits(user.id, askCost, `refund:${scope === "channel" ? "qa:channel" : "ask"}:${id}`);
+                yt.db.releaseHold(hold.holdId);
                 const message = error instanceof Error ? error.message : String(error);
                 yt.db.updateJob(job.id, { status: "failed", error: message, completedAt: new Date().toISOString() });
                 const failedJob = yt.db.getJob(job.id) ?? job;

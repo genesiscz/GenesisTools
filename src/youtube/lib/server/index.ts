@@ -40,6 +40,14 @@ const STARTED_AT = Date.now();
 
 export async function startServer(opts: StartServerOptions = {}): Promise<ServerHandle> {
     const youtube = new Youtube({ baseDir: opts.baseDir });
+    // Crash recovery: holds left "held" by a previous process (killed or
+    // redeployed mid-LLM-call) can never be resolved — refund them before
+    // serving. Safe here because no requests are in flight yet.
+    const staleHolds = youtube.db.releaseStaleHolds();
+
+    if (staleHolds > 0) {
+        logger.warn({ staleHolds }, "released orphaned credit holds from a previous run");
+    }
 
     if (opts.startPipeline !== false) {
         await youtube.pipeline.start();
