@@ -855,6 +855,31 @@ function buildPaths(): Record<string, OpenApiPathItem> {
                 },
             },
         },
+        "/api/v1/jobs/queue": {
+            get: {
+                operationId: "getJobsQueue",
+                summary: "Pipeline queue statistics",
+                tags: ["jobs"],
+                responses: {
+                    "200": jsonResponse("Queue stats", {
+                        type: "object",
+                        properties: {
+                            queue: {
+                                type: "object",
+                                properties: {
+                                    queued: { type: "integer" },
+                                    running: { type: "integer" },
+                                    perStage: { type: "object" },
+                                    oldestQueuedAgeSec: { type: ["integer", "null"] },
+                                },
+                                required: ["queued", "running", "perStage", "oldestQueuedAgeSec"],
+                            },
+                        },
+                        required: ["queue"],
+                    }),
+                },
+            },
+        },
         "/api/v1/jobs/{id}": {
             get: {
                 operationId: "getJob",

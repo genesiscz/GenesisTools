@@ -36,6 +36,10 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
             return Response.json({ jobs }, { headers: CORS_HEADERS });
         }
 
+        if (matchRoute(req, "GET", "/api/v1/jobs/queue", url.pathname)) {
+            return Response.json({ queue: yt.db.getQueueStats() }, { headers: CORS_HEADERS });
+        }
+
         const jobOnly = matchRoute(req, "GET", "/api/v1/jobs/:id", url.pathname);
 
         if (jobOnly) {

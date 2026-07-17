@@ -15,6 +15,7 @@ import type {
     ListVideosOpts,
     PruneExpiredBinariesOpts,
     PruneExpiredBinariesResult,
+    QueueStats,
     RecordAiCallInput,
     RecordJobActivityInput,
     RecordVideoLogInput,
@@ -1409,6 +1410,49 @@ export class YoutubeDatabase extends BaseDatabase {
             .all(...params, opts.limit ?? 100);
 
         return rows.map(rowToAiCall);
+    }
+
+    getQueueStats(): QueueStats {
+        const pendingRows = this.db
+            .query<{ stage: string | null; count: number }, []>(
+                `SELECT json_extract(stages, '$[0]') AS stage, COUNT(*) AS count
+                 FROM jobs WHERE status = 'pending' GROUP BY stage`
+            )
+            .all();
+        const runningRows = this.db
+            .query<{ stage: string | null; count: number }, []>(
+                `SELECT COALESCE(current_stage, json_extract(stages, '$[0]')) AS stage, COUNT(*) AS count
+                 FROM jobs WHERE status = 'running' GROUP BY stage`
+            )
+            .all();
+        const oldest = this.db
+            .query<{ created_at: string }, []>(
+                "SELECT created_at FROM jobs WHERE status = 'pending' ORDER BY id ASC LIMIT 1"
+            )
+            .get();
+        const perStage: Record<string, { queued: number; running: number }> = {};
+        let queued = 0;
+        let running = 0;
+
+        for (const row of pendingRows) {
+            const stage = row.stage ?? "unknown";
+            perStage[stage] = perStage[stage] ?? { queued: 0, running: 0 };
+            perStage[stage].queued += row.count;
+            queued += row.count;
+        }
+
+        for (const row of runningRows) {
+            const stage = row.stage ?? "unknown";
+            perStage[stage] = perStage[stage] ?? { queued: 0, running: 0 };
+            perStage[stage].running += row.count;
+            running += row.count;
+        }
+
+        const oldestQueuedAgeSec = oldest
+            ? Math.max(0, Math.round((Date.now() - Date.parse(oldest.created_at)) / 1000))
+            : null;
+
+        return { queued, running, perStage, oldestQueuedAgeSec };
     }
 
     async pruneExpiredBinaries(opts: PruneExpiredBinariesOpts): Promise<PruneExpiredBinariesResult> {
