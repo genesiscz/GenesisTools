@@ -27,6 +27,7 @@ import {
 } from "@ext/api.hooks";
 import { persistUiLang, useT, useUiLang } from "@ext/shared/i18n";
 import type { AccountSection } from "@ext/side-panel/account-view";
+import { LowBalanceNudge, SubscriptionSection } from "@ext/side-panel/subscription-section";
 import {
     CreditCard,
     Gem,
@@ -121,6 +122,10 @@ function SignedInView({
                     <span className="text-xs text-muted-foreground">diamonds</span>
                 </div>
             </div>
+
+            <LowBalanceNudge />
+
+            <SubscriptionSection />
 
             <DiamondPacksSection devMode={devMode} />
 

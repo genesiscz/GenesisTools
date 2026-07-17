@@ -289,3 +289,39 @@ describe("extension background — phase 4a collections/history/watchlist/digest
         expect(calls.at(-1)?.init.method).toBe("POST");
     });
 });
+
+describe("extension background — phase 4b monetization (subscribe/referral)", () => {
+    beforeEach(() => {
+        installEnv({ apiBaseUrl: "http://localhost:9876" });
+    });
+
+    afterEach(() => {
+        globalThis.chrome = originalChrome;
+        globalThis.fetch = originalFetch;
+        (globalThis as { WebSocket?: unknown }).WebSocket = originalWebSocket;
+    });
+
+    it("POSTs the plan id for api:subscribe", async () => {
+        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const handleRequest = await loadHandleRequest();
+
+        await handleRequest({ type: "api:subscribe", planId: "sub-monthly" });
+
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/subscribe");
+        expect(calls.at(-1)?.init.method).toBe("POST");
+        expect((SafeJSON.parse(String(calls.at(-1)?.init.body)) as { planId: string }).planId).toBe("sub-monthly");
+    });
+
+    it("routes referral get and redeem", async () => {
+        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const handleRequest = await loadHandleRequest();
+
+        await handleRequest({ type: "api:getReferral" });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/referral");
+
+        await handleRequest({ type: "api:redeemReferral", code: "ABCD1234" });
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/referral/redeem");
+        expect(calls.at(-1)?.init.method).toBe("POST");
+        expect((SafeJSON.parse(String(calls.at(-1)?.init.body)) as { code: string }).code).toBe("ABCD1234");
+    });
+});

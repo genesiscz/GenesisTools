@@ -318,6 +318,35 @@ export function useCheckout() {
     });
 }
 
+export function useSubscribe() {
+    return useMutation({
+        mutationFn: (vars: { planId: string }) =>
+            send<ExtensionApiMap["api:subscribe"]>({ type: "api:subscribe", ...vars }),
+    });
+}
+
+export function useReferral(enabled = true) {
+    return useQuery({
+        queryKey: ["referral"],
+        queryFn: () => send<ExtensionApiMap["api:getReferral"]>({ type: "api:getReferral" }),
+        retry: false,
+        enabled,
+    });
+}
+
+export function useRedeemReferral() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (vars: { code: string }) =>
+            send<ExtensionApiMap["api:redeemReferral"]>({ type: "api:redeemReferral", ...vars }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["referral"] });
+            queryClient.invalidateQueries({ queryKey: ["me"] });
+        },
+    });
+}
+
 export function useLedger(enabled = true) {
     return useInfiniteQuery({
         queryKey: ["ledger"],

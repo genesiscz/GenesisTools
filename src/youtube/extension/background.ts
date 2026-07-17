@@ -275,6 +275,27 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
             }
             return res;
         }
+        case "api:subscribe": {
+            const res = await apiCall(`${base}/api/v1/users/subscribe`, {
+                method: "POST",
+                body: JSON.stringify({ planId: req.planId }),
+            });
+            // Stripe's hosted subscription page opens in a new tab — never iframed.
+            if (res.ok) {
+                const data = res.data as { url?: string };
+                if (typeof data.url === "string") {
+                    await chrome.tabs.create({ url: data.url });
+                }
+            }
+            return res;
+        }
+        case "api:getReferral":
+            return apiCall(`${base}/api/v1/users/referral`);
+        case "api:redeemReferral":
+            return apiCall(`${base}/api/v1/users/referral/redeem`, {
+                method: "POST",
+                body: JSON.stringify({ code: req.code }),
+            });
         case "api:createShare":
             return apiCall(`${base}/api/v1/shares`, {
                 method: "POST",

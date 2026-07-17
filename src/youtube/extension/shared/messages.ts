@@ -96,6 +96,9 @@ export type ExtensionRequest =
     | { type: "api:topup"; amount?: number }
     | { type: "api:qaHistory"; id?: VideoId; limit?: number }
     | { type: "api:checkout"; packId: string }
+    | { type: "api:subscribe"; planId: string }
+    | { type: "api:getReferral" }
+    | { type: "api:redeemReferral"; code: string }
     | { type: "api:ledger"; before?: number; limit?: number }
     | { type: "api:usageSummary" }
     | {
@@ -216,6 +219,13 @@ export interface ExtensionApiMap {
     "api:topup": { user: YtUser };
     "api:qaHistory": { items: QaHistoryItem[] };
     "api:checkout": { url: string };
+    "api:subscribe": { url: string };
+    "api:getReferral": {
+        code: string;
+        referees: Array<{ email: string; redeemedAt: string; reward: number }>;
+        totalEarned: number;
+    };
+    "api:redeemReferral": { reward: number; credits: number };
     "api:ledger": LedgerPage;
     "api:usageSummary": UsageSummary;
     "api:createShare": { slug: string; url: string };
