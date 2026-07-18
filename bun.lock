@@ -301,20 +301,20 @@
         "zustand": "^5.0.12",
       },
       "peerDependencies": {
+        "@ai-sdk/assemblyai": "*",
+        "@ai-sdk/gladia": "*",
         "ink": "^6.3.1",
         "react": "19.2.5",
         "react-dom": "19.2.5",
       },
       "optionalPeers": [
+        "@ai-sdk/assemblyai",
+        "@ai-sdk/gladia",
         "ink",
         "react",
         "react-dom",
       ],
     },
-  },
-  "patchedDependencies": {
-    "@opentui/solid@0.1.100": "patches/@opentui%2Fsolid@0.1.100.patch",
-    "cli-table3@0.6.5": "patches/cli-table3@0.6.5.patch",
   },
   "packages": {
     "@ai-sdk/anthropic": ["@ai-sdk/anthropic@4.0.12", "", { "dependencies": { "@ai-sdk/provider": "4.0.3", "@ai-sdk/provider-utils": "5.0.7" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-IquWNkGRSF2ulYJ6YIIUqMsNAIDeZFB3/4W92aSOtCxH1TfuVoq3qw4M4TxTxIw4As9cnkeRLe7b9LDMzPDsnA=="],
