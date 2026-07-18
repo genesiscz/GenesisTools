@@ -13,8 +13,8 @@
 
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { logger } from "@app/logger";
-import { runTool } from "@app/utils/cli";
+import { runTool } from "@genesiscz/utils/cli";
+import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { registerDiscoveryCommands } from "./commands/discovery";
 import { registerInteractCommands } from "./commands/interact";

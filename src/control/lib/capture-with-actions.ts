@@ -18,7 +18,7 @@
 
 import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const HELP = `capture-with-actions — declarative peekaboo capture + timed UI actions
 
