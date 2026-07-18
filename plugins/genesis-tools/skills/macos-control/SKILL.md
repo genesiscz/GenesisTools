@@ -96,6 +96,7 @@ For elements below the fold, prefer `press` (buttons) or `focus` + `type` (text 
 - **App-level screenshots capture the wrong window** when an app has multiple windows (e.g. Genesis main + Settings) — apps mark popups/strips as "main". Always pass a window title: `tools control screenshot --app X --window "..."` (peekaboo equivalent: `--window-title`).
 - **Browser elements use AXDescription, not AXTitle** — tab text is in `desc`, not `title`. Use `find --text "YouTube"` (searches all attributes) or `find --desc "YouTube"` specifically.
 - **Browser tabs are `AXRadioButton`**, not `AXButton` — `find --role AXButton` finds bookmark bar items, `find --role AXRadioButton` finds actual tabs.
+- **Two instances of the same app** (e.g. two Brave profiles): name/bundleId resolution fails loud with a candidates list — target one with `--app <pid>` (pids from `tools control apps`). Preflight's `browserTab` carries `pidMatch`/`warning` because AppleScript resolves by name and may answer for the other instance.
 
 ## Output
 

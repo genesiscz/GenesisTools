@@ -4,22 +4,37 @@ import Foundation
 
 // MARK: - AX helpers
 
-func findApp(_ name: String) -> pid_t? {
+// Resolves --app: numeric pid > exact name > case-insensitive name > bundleId
+// substring. Fails loud (with candidates) when 2+ processes match a tier —
+// same-named instances (two Brave profiles) must be targeted by pid, never
+// silently picked. Regular-activation-policy apps win over background helpers.
+func resolveApp(_ name: String) -> pid_t {
     let apps = NSWorkspace.shared.runningApplications
-    if let app = apps.first(where: { $0.localizedName == name }) {
-        return app.processIdentifier
+    if let pidNum = Int32(name) {
+        if apps.contains(where: { $0.processIdentifier == pidNum }) { return pidNum }
+        errorExit("no running process with pid \(name)")
     }
-    if let app = apps.first(where: {
-        $0.localizedName?.lowercased() == name.lowercased()
-    }) {
-        return app.processIdentifier
+    let tiers: [(NSRunningApplication) -> Bool] = [
+        { $0.localizedName == name },
+        { $0.localizedName?.lowercased() == name.lowercased() },
+        { $0.bundleIdentifier?.lowercased().contains(name.lowercased()) == true },
+    ]
+    for tier in tiers {
+        var matches = apps.filter(tier)
+        if matches.count > 1 {
+            let regular = matches.filter { $0.activationPolicy == .regular }
+            if !regular.isEmpty { matches = regular }
+        }
+        if matches.count == 1 { return matches[0].processIdentifier }
+        if matches.count > 1 {
+            jsonOutput(["ok": false,
+                "error": "ambiguous: \(matches.count) processes match '\(name)' — target one with --app <pid>",
+                "candidates": matches.map { ["name": $0.localizedName ?? "?", "pid": $0.processIdentifier,
+                                             "bundleId": $0.bundleIdentifier ?? ""] }])
+            exit(1)
+        }
     }
-    if let app = apps.first(where: {
-        $0.bundleIdentifier?.lowercased().contains(name.lowercased()) == true
-    }) {
-        return app.processIdentifier
-    }
-    return nil
+    errorExit("app not found: \(name)")
 }
 
 func axChildren(_ element: AXUIElement) -> [AXUIElement] {
@@ -491,9 +506,7 @@ func errorExit(_ message: String) -> Never {
 // MARK: - Commands
 
 func cmdSet(appName: String, value: String) {
-    guard let pid = findApp(appName) else {
-        errorExit("app not found: \(appName)")
-    }
+    let pid = resolveApp(appName)
     let app = AXUIElementCreateApplication(pid)
     let element = resolveElement(app, appName)
     let role = axStringAttribute(element, "AXRole") ?? ""
@@ -593,9 +606,7 @@ func cmdSet(appName: String, value: String) {
 }
 
 func cmdPress(appName: String) {
-    guard let pid = findApp(appName) else {
-        errorExit("app not found: \(appName)")
-    }
+    let pid = resolveApp(appName)
     let app = AXUIElementCreateApplication(pid)
     let element = resolveElement(app, appName)
 
@@ -609,9 +620,7 @@ func cmdPress(appName: String) {
 }
 
 func cmdGet(appName: String) {
-    guard let pid = findApp(appName) else {
-        errorExit("app not found: \(appName)")
-    }
+    let pid = resolveApp(appName)
     let app = AXUIElementCreateApplication(pid)
     let element = resolveElement(app, appName)
 
@@ -624,9 +633,7 @@ func cmdGet(appName: String) {
 }
 
 func cmdList(appName: String, maxDepth: Int) {
-    guard let pid = findApp(appName) else {
-        errorExit("app not found: \(appName)")
-    }
+    let pid = resolveApp(appName)
     let app = AXUIElementCreateApplication(pid)
     let windows = axWindows(app)
     if windows.isEmpty {
@@ -662,7 +669,7 @@ func cmdList(appName: String, maxDepth: Int) {
 // MARK: - Extended Commands
 
 func cmdTree(appName: String, maxDepth: Int) {
-    guard let pid = findApp(appName) else { errorExit("app not found: \(appName)") }
+    let pid = resolveApp(appName)
     let app = AXUIElementCreateApplication(pid)
     let windows = axWindows(app)
     if windows.isEmpty { errorExit("no windows for \(appName)") }
@@ -671,7 +678,7 @@ func cmdTree(appName: String, maxDepth: Int) {
 }
 
 func cmdAttrs(appName: String) {
-    guard let pid = findApp(appName) else { errorExit("app not found: \(appName)") }
+    let pid = resolveApp(appName)
     let app = AXUIElementCreateApplication(pid)
     let el = resolveElement(app, appName)
     let names = axAttributeNames(el)
@@ -687,7 +694,7 @@ func cmdAttrs(appName: String) {
 }
 
 func cmdActions(appName: String) {
-    guard let pid = findApp(appName) else { errorExit("app not found: \(appName)") }
+    let pid = resolveApp(appName)
     let app = AXUIElementCreateApplication(pid)
     let el = resolveElement(app, appName)
     let actionList = axActionNames(el)
@@ -705,7 +712,7 @@ func cmdActions(appName: String) {
 }
 
 func cmdPerform(appName: String, action: String) {
-    guard let pid = findApp(appName) else { errorExit("app not found: \(appName)") }
+    let pid = resolveApp(appName)
     let app = AXUIElementCreateApplication(pid)
     let el = resolveElement(app, appName)
     let available = axActionNames(el)
@@ -724,7 +731,7 @@ func cmdPerform(appName: String, action: String) {
 func cmdFind(appName: String, role: String?, title: String?, value: String?,
              desc: String?, subrole: String?, text: String?, searchAll: Bool = false,
              exact: Bool, maxDepth: Int) {
-    guard let pid = findApp(appName) else { errorExit("app not found: \(appName)") }
+    let pid = resolveApp(appName)
     if role == nil && title == nil && value == nil && desc == nil && text == nil && subrole == nil {
         errorExit("at least one of --q, --text, --role, --title, --value, --desc, or --subrole required")
     }
@@ -789,7 +796,7 @@ func resolveWindow(_ app: AXUIElement, _ appName: String) -> AXUIElement {
 }
 
 func cmdWindow(appName: String) {
-    guard let pid = findApp(appName) else { errorExit("app not found: \(appName)") }
+    let pid = resolveApp(appName)
     let app = AXUIElementCreateApplication(pid)
 
     if let action = argValue("--action") {
@@ -864,7 +871,7 @@ func cmdWindow(appName: String) {
 // MARK: - Input Commands (focus, click, type)
 
 func cmdFocus(appName: String) {
-    guard let pid = findApp(appName) else { errorExit("app not found: \(appName)") }
+    let pid = resolveApp(appName)
     let runningApp = NSWorkspace.shared.runningApplications.first {
         $0.processIdentifier == pid
     }
@@ -921,7 +928,7 @@ func postClick(at point: CGPoint, right: Bool, double: Bool) {
 }
 
 func cmdClick(appName: String) {
-    guard let pid = findApp(appName) else { errorExit("app not found: \(appName)") }
+    let pid = resolveApp(appName)
     let right = args.contains("--right")
     let double = args.contains("--double")
 
@@ -1006,7 +1013,7 @@ func tapKey(_ code: UInt16, flags: CGEventFlags = []) {
 }
 
 func cmdTypeText(appName: String, text: String) {
-    guard let pid = findApp(appName) else { errorExit("app not found: \(appName)") }
+    let pid = resolveApp(appName)
     NSWorkspace.shared.runningApplications.first {
         $0.processIdentifier == pid
     }?.activate(options: [.activateIgnoringOtherApps])
@@ -1119,7 +1126,7 @@ func cmdTypeText(appName: String, text: String) {
 // MARK: - Screenshot
 
 func cmdScreenshot(appName: String, path: String) {
-    guard let pid = findApp(appName) else { errorExit("app not found: \(appName)") }
+    let pid = resolveApp(appName)
     let windowScope = argValue("--window")
 
     let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[CFString: Any]] ?? []
@@ -1228,7 +1235,7 @@ func cmdHotkey(keys: String) {
     // Optional --app: activate the target first so the combo lands there
     // instead of whatever happens to have OS keyboard focus.
     if let appTarget = argValue("--app") {
-        guard let pid = findApp(appTarget) else { errorExit("app not found: \(appTarget)") }
+        let pid = resolveApp(appTarget)
         NSWorkspace.shared.runningApplications.first { $0.processIdentifier == pid }?
             .activate(options: [.activateIgnoringOtherApps])
         Thread.sleep(forTimeInterval: 0.15)
@@ -1395,7 +1402,7 @@ func screensInfo() -> [[String: Any]] {
     return infos
 }
 
-func browserTabInfo(_ appName: String) -> [String: Any]? {
+func browserTabInfo(_ appName: String, axWindowTitles: [String]) -> [String: Any]? {
     guard BROWSER_APPLESCRIPT_APPS.contains(appName) else { return nil }
     let urlScript = appName == "Safari"
         ? "tell application \"Safari\" to get URL of front document"
@@ -1406,11 +1413,25 @@ func browserTabInfo(_ appName: String) -> [String: Any]? {
     var tab: [String: Any] = [:]
     if let u = runAppleScript(urlScript) { tab["url"] = u }
     if let t = runAppleScript(titleScript) { tab["title"] = t }
-    return tab.isEmpty ? nil : tab
+    guard !tab.isEmpty else { return nil }
+    // AppleScript addresses the app by NAME — with two same-named instances it
+    // may answer for the OTHER process. Cross-check the tab title against this
+    // pid's AX window titles so a mismatch is visible instead of silently wrong.
+    if let title = tab["title"] as? String, !title.isEmpty {
+        let matches = axWindowTitles.contains { $0.localizedCaseInsensitiveContains(title) }
+        tab["pidMatch"] = matches
+        if !matches {
+            tab["warning"] = "tab title not found in this pid's window titles — likely from ANOTHER instance of \(appName) (AppleScript resolves by name, not pid); do not trust for this process"
+        }
+    }
+    return tab
 }
 
 func cmdPreflight(appName: String, maxDepth: Int) {
-    guard let pid = findApp(appName) else { errorExit("app not found: \(appName)") }
+    let pid = resolveApp(appName)
+    // --app may be a pid — resolve the display name for browser detection etc.
+    let displayName = NSWorkspace.shared.runningApplications
+        .first { $0.processIdentifier == pid }?.localizedName ?? appName
     let app = AXUIElementCreateApplication(pid)
     let windows = axWindows(app)
     if windows.isEmpty { errorExit("no windows for \(appName)") }
@@ -1470,7 +1491,8 @@ func cmdPreflight(appName: String, maxDepth: Int) {
         if !phantomStrips.isEmpty { out["phantomStrips"] = phantomStrips }
     }
 
-    if wanted("browser"), let tab = browserTabInfo(appName) {
+    if wanted("browser"),
+       let tab = browserTabInfo(displayName, axWindowTitles: windows.compactMap { axStringAttribute($0, "AXTitle") }) {
         out["browserTab"] = tab
     }
 
