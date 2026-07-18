@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { logger } from "@app/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { Project, ts } from "ts-morph";
 import { loadCache, saveCache } from "./cache";
 import { extractExports } from "./exportExtractor";

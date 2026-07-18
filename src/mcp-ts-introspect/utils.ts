@@ -1,4 +1,4 @@
-import { logger } from "@app/logger";
+import { logger } from "@genesiscz/utils/logger";
 import type { ExportInfo } from "./types";
 
 export function filterExports(exports: ExportInfo[], searchTerm?: string, limit?: number): ExportInfo[] {

@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -70,7 +70,7 @@ export async function startMcpServer() {
             } catch (error) {
                 if (error instanceof z.ZodError) {
                     throw new Error(
-                        `Invalid arguments: ${error.errors.map((e) => `${e.path}: ${e.message}`).join(", ")}`
+                        `Invalid arguments: ${error.issues.map((e) => `${e.path}: ${e.message}`).join(", ")}`
                     );
                 }
                 throw error;
@@ -98,7 +98,7 @@ export async function startMcpServer() {
             } catch (error) {
                 if (error instanceof z.ZodError) {
                     throw new Error(
-                        `Invalid arguments: ${error.errors.map((e) => `${e.path}: ${e.message}`).join(", ")}`
+                        `Invalid arguments: ${error.issues.map((e) => `${e.path}: ${e.message}`).join(", ")}`
                     );
                 }
                 throw error;
@@ -128,7 +128,7 @@ export async function startMcpServer() {
             } catch (error) {
                 if (error instanceof z.ZodError) {
                     throw new Error(
-                        `Invalid arguments: ${error.errors.map((e) => `${e.path}: ${e.message}`).join(", ")}`
+                        `Invalid arguments: ${error.issues.map((e) => `${e.path}: ${e.message}`).join(", ")}`
                     );
                 }
                 throw error;

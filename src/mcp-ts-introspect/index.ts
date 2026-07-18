@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { ExitPromptError } from "@inquirer/core";
 import { editor, input, select } from "@inquirer/prompts";
 import chalk from "chalk";

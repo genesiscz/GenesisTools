@@ -1,4 +1,4 @@
-import { logger } from "@app/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { type Symbol as MorphSymbol, Node, type SourceFile } from "ts-morph";
 import type { ExportInfo } from "./types";
 

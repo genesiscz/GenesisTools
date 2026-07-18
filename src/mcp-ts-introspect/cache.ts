@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { logger } from "@app/logger";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import type { CacheEntry, ExportInfo } from "./types";
 
 const CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
