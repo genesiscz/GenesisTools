@@ -1,4 +1,4 @@
-import { Storage } from "@app/utils/storage";
+import { Storage } from "@genesiscz/utils/storage";
 
 export type DeviceRole = "server" | "client" | "both";
 

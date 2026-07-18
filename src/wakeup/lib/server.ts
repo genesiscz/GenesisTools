@@ -1,5 +1,5 @@
-import { SafeJSON } from "@app/utils/json";
-import type { Storage } from "@app/utils/storage";
+import { SafeJSON } from "@genesiscz/utils/json";
+import type { Storage } from "@genesiscz/utils/storage";
 import {
     DEFAULT_HTTP_PORT,
     DEFAULT_WOL_PORT,

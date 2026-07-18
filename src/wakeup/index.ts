@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { handleReadmeFlag } from "@app/utils/readme";
-import { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
+import { Storage } from "@genesiscz/utils/storage";
 import { Command } from "commander";
 import { registerConfigCommand, runConfigurationMenu } from "./commands/config";
 import { registerDaemonCommands } from "./commands/daemon";

@@ -1,6 +1,6 @@
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import type { Storage } from "@genesiscz/utils/storage";
 import type { Command } from "commander";
 import { DEFAULT_HTTP_PORT, DEFAULT_WOL_PORT, mergeRole, readWakeupConfig, updateWakeupConfig } from "../config";
 import { runWakeServer } from "../lib/server";

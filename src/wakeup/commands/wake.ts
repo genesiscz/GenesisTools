@@ -1,7 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import type { Storage } from "@genesiscz/utils/storage";
 import type { Command } from "commander";
 import { DEFAULT_HTTP_PORT, mergeRole, readWakeupConfig, updateWakeupConfig } from "../config";
 import { postJson } from "../http";

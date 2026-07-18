@@ -1,8 +1,8 @@
 import { resolve } from "node:path";
 import { getDaemonStatus } from "@app/daemon/lib/launchd";
 import { isTaskRegistered, registerTask, unregisterTask } from "@app/daemon/lib/register";
-import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { Command } from "commander";
 import pc from "picocolors";
 
