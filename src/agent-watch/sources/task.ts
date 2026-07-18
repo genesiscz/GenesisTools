@@ -101,7 +101,11 @@ export async function readTaskSnapshots(opts: ReadTaskOptions): Promise<AgentSna
                 if (meta) {
                     metaExitCode = meta.exitCode;
 
-                    if (typeof meta.pid === "number" && meta.exitCode === undefined) {
+                    if (meta.exitCode !== undefined) {
+                        // Session recorded its exit in the sidecar; even if the
+                        // jsonl lacks a trailing exit line, this run is over.
+                        pidAlive = false;
+                    } else if (typeof meta.pid === "number") {
                         pidAlive = isProcessAlive(meta.pid);
                     }
                 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -297,5 +297,173 @@ describe("decideAndNotify (notify decision against a stub)", () => {
         await decideAndNotify({ snapshots: [running], prevStates: prev, notifier });
 
         expect(calls).toHaveLength(0);
+    });
+});
+
+describe("readClaudeSnapshots (event mapping)", () => {
+    function writeSession(dir: string, name: string, records: object[]): void {
+        writeFileSync(join(dir, "proj", `${name}.jsonl`), `${records.map((o) => SafeJSON.stringify(o)).join("\n")}\n`);
+    }
+
+    function makeClaudeRoot(): string {
+        const root = mkdtempSync(join(tmpdir(), "agent-watch-claude-"));
+        mkdirSync(join(root, "proj"));
+        return root;
+    }
+
+    const iso = (offset: number): string => new Date(T0 + offset).toISOString();
+
+    it("does NOT treat a leading summary (compacted session) as FINISHED", async () => {
+        const root = makeClaudeRoot();
+
+        try {
+            writeSession(root, "compacted", [
+                { type: "summary", summary: "earlier context", leafUuid: "x" },
+                { type: "user", timestamp: iso(10) },
+                { type: "assistant", timestamp: iso(20), message: { stop_reason: "tool_use", content: [] } },
+            ]);
+            const snaps = await readClaudeSnapshots({ root, now: T0 + 1_000, stallTimeoutMs: 120_000 });
+            expect(snaps[0]?.state).toBe("RUNNING");
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("treats only a TRAILING result record as FINISHED", async () => {
+        const root = makeClaudeRoot();
+
+        try {
+            writeSession(root, "done", [
+                { type: "user", timestamp: iso(10) },
+                { type: "result", timestamp: iso(500) },
+            ]);
+            writeSession(root, "mid-result", [
+                { type: "result", timestamp: iso(10) },
+                { type: "assistant", timestamp: iso(500), message: { stop_reason: "tool_use", content: [] } },
+            ]);
+            const snaps = await readClaudeSnapshots({ root, now: T0 + 1_000, stallTimeoutMs: 120_000 });
+            const byName = new Map(snaps.map((s) => [s.name, s]));
+            expect(byName.get("done")?.state).toBe("FINISHED");
+            expect(byName.get("mid-result")?.state).toBe("RUNNING");
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("classifies an ended turn (stop_reason end_turn) as AWAITING-INPUT", async () => {
+        const root = makeClaudeRoot();
+
+        try {
+            writeSession(root, "idle-at-prompt", [
+                { type: "user", timestamp: iso(10) },
+                { type: "assistant", timestamp: iso(400), message: { stop_reason: "end_turn", content: [] } },
+            ]);
+            const snaps = await readClaudeSnapshots({ root, now: T0 + 1_000, stallTimeoutMs: 120_000 });
+            expect(snaps[0]?.state).toBe("AWAITING-INPUT");
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("classifies a trailing AskUserQuestion tool_use as AWAITING-INPUT even mid-turn", async () => {
+        const root = makeClaudeRoot();
+
+        try {
+            writeSession(root, "asking", [
+                { type: "user", timestamp: iso(10) },
+                {
+                    type: "assistant",
+                    timestamp: iso(400),
+                    message: { stop_reason: "tool_use", content: [{ type: "tool_use", name: "AskUserQuestion" }] },
+                },
+            ]);
+            const snaps = await readClaudeSnapshots({ root, now: T0 + 1_000, stallTimeoutMs: 120_000 });
+            expect(snaps[0]?.state).toBe("AWAITING-INPUT");
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("readTaskSnapshots meta sidecar", () => {
+    it("marks a session FINISHED via meta.exitCode even without a jsonl exit line", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "agent-watch-task-meta-"));
+
+        try {
+            const lines = [
+                { type: "meta", session: "crashy", command: "bash x.sh", startedAt: "2026-06-02T01:34:49.745Z" },
+                { type: "line", seq: 1, out: "stdout", level: "info", ts: T0 + 10, text: "boom" },
+            ];
+            writeFileSync(join(dir, "crashy.jsonl"), `${lines.map((o) => SafeJSON.stringify(o)).join("\n")}\n`);
+            writeFileSync(join(dir, "crashy.meta.json"), SafeJSON.stringify({ name: "crashy", pid: 999999, exitCode: 137 }));
+
+            const snaps = await readTaskSnapshots({ dir, now: T0 + 1_000, stallTimeoutMs: 120_000 });
+            expect(snaps[0]?.state).toBe("FINISHED");
+            expect(snaps[0]?.exitCode).toBe(137);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("collectSnapshots active window", () => {
+    it("drops agents whose last activity is outside activeWindowMs", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "agent-watch-window-"));
+
+        try {
+            const old = [{ type: "line", seq: 1, out: "stdout", level: "info", ts: T0 - 10_000_000, text: "ancient" }];
+            const fresh = [{ type: "line", seq: 1, out: "stdout", level: "info", ts: T0 - 1_000, text: "recent" }];
+            writeFileSync(join(dir, "ancient.jsonl"), `${old.map((o) => SafeJSON.stringify(o)).join("\n")}\n`);
+            writeFileSync(join(dir, "recent.jsonl"), `${fresh.map((o) => SafeJSON.stringify(o)).join("\n")}\n`);
+
+            const all = await collectSnapshots({ sources: ["task"], now: T0, stallTimeoutMs: 120_000, roots: { task: dir } });
+            const windowed = await collectSnapshots({
+                sources: ["task"],
+                now: T0,
+                stallTimeoutMs: 120_000,
+                activeWindowMs: 60_000,
+                roots: { task: dir },
+            });
+
+            expect(all.map((s) => s.name).sort()).toEqual(["ancient", "recent"]);
+            expect(windowed.map((s) => s.name)).toEqual(["recent"]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("sweep seed silence (continuous watch baseline)", () => {
+    it("notify:false populates prevStates without calling the notifier; next sweep only fires real transitions", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "agent-watch-seed-"));
+
+        try {
+            const finished = [
+                { type: "line", seq: 1, out: "stdout", level: "info", ts: T0 - 500, text: "done long ago" },
+                { type: "exit", code: 0, durationMs: 10, ts: T0 - 400 },
+            ];
+            writeFileSync(join(dir, "old-done.jsonl"), `${finished.map((o) => SafeJSON.stringify(o)).join("\n")}\n`);
+
+            const calls: string[] = [];
+            const notifier: Notifier = {
+                notify: async ({ message }) => {
+                    calls.push(message);
+                },
+            };
+            const prev = new Map<string, AgentState>();
+
+            // Hermetic: same decide flow the watcher's seed pass runs, silent notifier.
+            const seedSnaps = await collectSnapshots({ sources: ["task"], now: T0, stallTimeoutMs: 120_000, roots: { task: dir } });
+            await decideAndNotify({ snapshots: seedSnaps, prevStates: prev, notifier: { notify: async () => {} } });
+            expect(calls).toHaveLength(0);
+            expect(prev.get("task:old-done")).toBe("FINISHED");
+
+            // Second pass with the REAL notifier: state unchanged → still quiet.
+            const again = await collectSnapshots({ sources: ["task"], now: T0 + 1_000, stallTimeoutMs: 120_000, roots: { task: dir } });
+            await decideAndNotify({ snapshots: again, prevStates: prev, notifier });
+            expect(calls).toHaveLength(0);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });

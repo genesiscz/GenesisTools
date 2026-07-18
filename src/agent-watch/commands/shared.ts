@@ -16,11 +16,14 @@ export function parseSources(raw: string): WatchSourceName[] {
     return sources.length > 0 ? sources : ["task", "claude", "workflows"];
 }
 
-export function parseSharedOptions(opts: { stallTimeout: string; sources: string }): {
+export function parseSharedOptions(opts: { stallTimeout: string; sources: string; active?: string }): {
     stallTimeoutMs: number;
     sources: WatchSourceName[];
+    activeWindowMs: number;
 } {
     const seconds = Number.parseInt(opts.stallTimeout, 10);
     const stallTimeoutMs = (Number.isFinite(seconds) && seconds > 0 ? seconds : 120) * 1000;
-    return { stallTimeoutMs, sources: parseSources(opts.sources) };
+    const activeMinutes = Number.parseInt(opts.active ?? "0", 10);
+    const activeWindowMs = (Number.isFinite(activeMinutes) && activeMinutes > 0 ? activeMinutes : 0) * 60_000;
+    return { stallTimeoutMs, sources: parseSources(opts.sources), activeWindowMs };
 }

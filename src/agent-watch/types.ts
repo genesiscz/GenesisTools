@@ -56,6 +56,11 @@ export interface CollectOptions {
     sources: WatchSourceName[];
     now: number;
     stallTimeoutMs: number;
+    /**
+     * Drop agents whose last activity is older than this (ms). Keeps hundreds
+     * of historical sessions out of watch/status. 0/undefined = no filter.
+     */
+    activeWindowMs?: number;
     /** Optional root overrides — injected by tests for hermeticity. Defaults to homedir-derived paths. */
     roots?: { task?: string; claude?: string; workflow?: string };
 }

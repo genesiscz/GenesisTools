@@ -6,30 +6,74 @@ import { logger } from "@genesiscz/utils/logger";
 import { classifyAgentState } from "../classify";
 import type { AgentEvent, AgentSnapshot } from "../types";
 
+interface ClaudeContentBlock {
+    type?: string;
+    name?: string;
+}
+
 interface ClaudeRecord {
     type?: string;
     timestamp?: string;
     ts?: number | string;
+    message?: {
+        stop_reason?: string | null;
+        content?: ClaudeContentBlock[] | string;
+    };
 }
 
 export function defaultClaudeRoot(): string {
     return join(homedir(), ".claude", "projects");
 }
 
-function recordToEvent(rec: ClaudeRecord): AgentEvent | undefined {
+function recordTs(rec: ClaudeRecord): number | undefined {
     const raw = rec.timestamp ?? rec.ts;
     const ts = typeof raw === "number" ? raw : typeof raw === "string" ? Date.parse(raw) : Number.NaN;
+    return Number.isNaN(ts) ? undefined : ts;
+}
 
-    if (Number.isNaN(ts)) {
-        return undefined;
+function asksUser(rec: ClaudeRecord): boolean {
+    if (rec.type !== "assistant") {
+        return false;
     }
 
-    // A trailing result/summary record looks like a finish; everything else is output.
-    if (rec.type === "result" || rec.type === "summary") {
-        return { kind: "exit", ts };
+    const content = rec.message?.content;
+    if (Array.isArray(content) && content.some((b) => b.type === "tool_use" && b.name === "AskUserQuestion")) {
+        return true;
     }
 
-    return { kind: "output", ts };
+    // A completed turn means the session is idle at the prompt, waiting on the user.
+    return rec.message?.stop_reason === "end_turn";
+}
+
+/**
+ * Convert a transcript into normalized events. Only the TRAILING record may
+ * mark a finish (`result`) or a question — `summary` records sit at the TOP of
+ * compacted/continued sessions and mid-file `result`s belong to subagents, so
+ * treating any of them as terminal would freeze live sessions at FINISHED.
+ */
+function recordsToEvents(records: ClaudeRecord[]): AgentEvent[] {
+    const events: AgentEvent[] = [];
+
+    for (let i = 0; i < records.length; i++) {
+        const rec = records[i];
+        const ts = recordTs(rec);
+
+        if (ts === undefined) {
+            continue;
+        }
+
+        const isLast = i === records.length - 1;
+
+        if (isLast && rec.type === "result") {
+            events.push({ kind: "exit", ts });
+        } else if (isLast && asksUser(rec)) {
+            events.push({ kind: "question", ts });
+        } else {
+            events.push({ kind: "output", ts });
+        }
+    }
+
+    return events;
 }
 
 interface ReadClaudeOptions {
@@ -79,7 +123,7 @@ export async function readClaudeSnapshots(opts: ReadClaudeOptions): Promise<Agen
                 }
 
                 const records = parseJsonl<ClaudeRecord>(buf);
-                const events = records.map(recordToEvent).filter((e): e is AgentEvent => e !== undefined);
+                const events = recordsToEvents(records);
                 const lastModified = statSync(path).mtimeMs;
                 const state = classifyAgentState({
                     events,

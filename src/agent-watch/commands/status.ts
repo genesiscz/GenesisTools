@@ -10,11 +10,12 @@ export function registerStatusCommand(program: Command): void {
         .description("One-shot snapshot table of every tracked agent and its state")
         .option("--stall-timeout <seconds>", "Seconds without output before STALLED", "120")
         .option("--sources <names>", "Comma list: task,claude,workflows", "task,claude,workflows")
+        .option("--active <minutes>", "Only show agents active within this window (0 = all)", "0")
         .option("--json", "Emit a JSON snapshot to stdout", false)
-        .action(async (opts: { stallTimeout: string; sources: string; json: boolean }) => {
-            const { stallTimeoutMs, sources } = parseSharedOptions(opts);
+        .action(async (opts: { stallTimeout: string; sources: string; active: string; json: boolean }) => {
+            const { stallTimeoutMs, sources, activeWindowMs } = parseSharedOptions(opts);
             const now = Date.now();
-            const snapshots = await collectSnapshots({ sources, now, stallTimeoutMs });
+            const snapshots = await collectSnapshots({ sources, now, stallTimeoutMs, activeWindowMs });
 
             if (opts.json) {
                 out.result(toJsonSnapshot(snapshots, now));

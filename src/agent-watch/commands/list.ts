@@ -8,10 +8,16 @@ export function registerListCommand(program: Command): void {
         .command("list")
         .description("List discovered agents (id + source), no state classification")
         .option("--sources <names>", "Comma list: task,claude,workflows", "task,claude,workflows")
+        .option("--active <minutes>", "Only list agents active within this window (0 = all)", "0")
         .option("--json", "Emit JSON to stdout", false)
-        .action(async (opts: { sources: string; json: boolean }) => {
-            const { sources } = parseSharedOptions({ ...opts, stallTimeout: "120" });
-            const snapshots = await collectSnapshots({ sources, now: Date.now(), stallTimeoutMs: 120_000 });
+        .action(async (opts: { sources: string; active: string; json: boolean }) => {
+            const { sources, activeWindowMs } = parseSharedOptions({ ...opts, stallTimeout: "120" });
+            const snapshots = await collectSnapshots({
+                sources,
+                now: Date.now(),
+                stallTimeoutMs: 120_000,
+                activeWindowMs,
+            });
             const rows = snapshots.map((s) => ({ id: s.id, name: s.name, source: s.source }));
 
             if (opts.json) {

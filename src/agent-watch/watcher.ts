@@ -46,6 +46,8 @@ export interface RunWatchOptions {
     pollMs: number;
     notifier: Notifier;
     json: boolean;
+    /** Drop agents inactive longer than this (ms). 0 = no filter. */
+    activeWindowMs?: number;
     /** When set, do a single pass and resolve (cron / --once). */
     once?: boolean;
     /** Injected clock for determinism in any future test; defaults to Date.now. */
@@ -70,10 +72,29 @@ function watchRootsFor(sources: WatchSourceName[]): string[] {
     return roots;
 }
 
-async function sweep(opts: RunWatchOptions, prevStates: Map<string, AgentState>): Promise<void> {
+const SILENT_NOTIFIER: Notifier = { notify: async () => {} };
+
+export async function sweep(
+    opts: RunWatchOptions,
+    prevStates: Map<string, AgentState>,
+    mode: { notify: boolean } = { notify: true }
+): Promise<AgentSnapshot[]> {
     const now = (opts.now ?? Date.now)();
-    const snapshots = await collectSnapshots({ sources: opts.sources, now, stallTimeoutMs: opts.stallTimeoutMs });
-    const fired = await decideAndNotify({ snapshots, prevStates, notifier: opts.notifier });
+    const snapshots = await collectSnapshots({
+        sources: opts.sources,
+        now,
+        stallTimeoutMs: opts.stallTimeoutMs,
+        activeWindowMs: opts.activeWindowMs,
+    });
+    const fired = await decideAndNotify({
+        snapshots,
+        prevStates,
+        notifier: mode.notify ? opts.notifier : SILENT_NOTIFIER,
+    });
+
+    if (!mode.notify) {
+        return [];
+    }
 
     for (const snap of fired) {
         const ts = new Date(now).toTimeString().slice(0, 8);
@@ -83,14 +104,18 @@ async function sweep(opts: RunWatchOptions, prevStates: Map<string, AgentState>)
             out.result({ ts: now, id: snap.id, name: snap.name, source: snap.source, state: snap.state });
         }
     }
+
+    return fired;
 }
 
 export async function runWatch(opts: RunWatchOptions): Promise<void> {
     const prevStates = new Map<string, AgentState>();
 
-    // Baseline pass: seed prevStates. On --once we still want the FIRST notable
-    // states reported, so we run sweep (shouldNotify fires on undefined→notable).
-    await sweep(opts, prevStates);
+    // Baseline pass. On --once (cron) currently-notable states within the active
+    // window SHOULD fire (that's the single-shot's purpose). In continuous mode
+    // the baseline only seeds prevStates — notifying on states that were already
+    // notable before we started would replay history as a notification storm.
+    await sweep(opts, prevStates, { notify: opts.once === true });
 
     if (opts.once) {
         return;
