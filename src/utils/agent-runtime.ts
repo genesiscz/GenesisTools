@@ -1,5 +1,5 @@
 import { basename, resolve } from "node:path";
-import { getSessionMetadataBySessionId } from "@app/claude/lib/history/cache";
+import { getSessionMetadataBySessionId } from "@app/utils/claude/history-cache";
 import { detectCurrentProject } from "@app/utils/claude/projects";
 import { type AgentRuntimeContext, resolveClaudeContext } from "@app/utils/claude/runtime-context";
 import { isCodex, resolveCodexContext } from "@app/utils/codex/runtime-context";

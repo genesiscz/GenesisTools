@@ -42,7 +42,7 @@ import {
     upsertDailyStats,
     upsertFileIndex,
     upsertSessionMetadata,
-} from "./cache";
+} from "@app/utils/claude/history-cache";
 import type {
     AssistantMessage,
     ConversationMessage,
@@ -2334,6 +2334,6 @@ export async function getStatsForDateRange(range: DateRange): Promise<Conversati
     return getConversationStatsWithCache({ dateRange: range });
 }
 
-export type { DailyStats, DateRange, SessionMetadataRecord, TokenUsage } from "./cache";
+export type { DailyStats, DateRange, SessionMetadataRecord, TokenUsage } from "@app/utils/claude/history-cache";
 // Re-export cache functions for external use
-export { getCachedTotals, getCacheStats, invalidateToday } from "./cache";
+export { getCachedTotals, getCacheStats, invalidateToday } from "@app/utils/claude/history-cache";

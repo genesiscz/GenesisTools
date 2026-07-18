@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { getSessionMetadata } from "@app/claude/lib/history/cache";
+import { getSessionMetadata } from "@app/utils/claude/history-cache";
 import {
     getSessionListing,
     rgExtractSnippet,

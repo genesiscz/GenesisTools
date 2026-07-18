@@ -1,5 +1,5 @@
-import type { SessionMetadataRecord } from "@app/claude/lib/history/cache";
-import { getFileIndex } from "@app/claude/lib/history/cache";
+import type { SessionMetadataRecord } from "@app/utils/claude/history-cache";
+import { getFileIndex } from "@app/utils/claude/history-cache";
 import type { getAllConversations } from "@app/claude/lib/history/search";
 import type { ConversationMessage, ToolResultBlock, ToolUseBlock } from "@app/utils/claude/types";
 
