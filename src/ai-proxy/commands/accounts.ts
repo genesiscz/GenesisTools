@@ -2,8 +2,8 @@ import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
 import { loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { type AccountListRow, displayAccountsTable, displayAccountTestResult } from "@app/ai-proxy/lib/display";
 import { createProvider, isProviderImplemented } from "@app/ai-proxy/lib/providers/registry";
-import { out } from "@app/utils/logger";
 import { suggestCommand } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 
 function cmd(replaceCommand: string[]): string {
     return suggestCommand("tools ai-proxy", { replaceCommand });

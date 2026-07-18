@@ -1,9 +1,12 @@
 import { Button } from "@app/utils/ui/components/button";
+import type { LlmEstimate, LockedArtifact, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
+import { CREDIT_COSTS } from "@app/youtube/lib/types";
+import type { TaskDefaultSettings } from "@app/youtube/lib/user-settings";
 import { LlmConfirmDialog, type ModelPreset } from "@app/youtube/ui/components/shared/llm-confirm-dialog";
-import { PanelLoading } from "@app/youtube/ui/components/shared/panel-loading";
 import { errorCodeOf, isLoginRequiredError } from "@app/youtube/ui/components/shared/login-required";
 import { LongSummaryView } from "@app/youtube/ui/components/shared/long-summary-view";
 import { OUTPUT_LANGS } from "@app/youtube/ui/components/shared/output-langs";
+import { PanelLoading } from "@app/youtube/ui/components/shared/panel-loading";
 import { ShareButton } from "@app/youtube/ui/components/shared/share-button";
 import { StyleSelect } from "@app/youtube/ui/components/shared/style-select";
 import { SummaryAudioPlayer } from "@app/youtube/ui/components/shared/summary-audio-player";
@@ -16,9 +19,6 @@ import {
 } from "@app/youtube/ui/components/shared/summary-controls";
 import { toPartialLongSummary } from "@app/youtube/ui/components/shared/summary-partials";
 import type { PipelineProgress, VideoDetailDataSource } from "@app/youtube/ui/components/shared/tabs";
-import type { LlmEstimate, LockedArtifact, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
-import { CREDIT_COSTS } from "@app/youtube/lib/types";
-import type { TaskDefaultSettings } from "@app/youtube/lib/user-settings";
 import { Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 

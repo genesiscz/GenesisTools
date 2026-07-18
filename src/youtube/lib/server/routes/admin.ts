@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { buildBillingContext } from "@app/youtube/lib/billing";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { AdminListAiCallsOpts, AdminListUsersOpts, AdminListWebhookLogsOpts } from "@app/youtube/lib/db.types";

@@ -10,7 +10,6 @@ import {
     openAiChatToAnthropicMessages,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/openai-to-anthropic-messages";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
-import { logger } from "@app/logger";
 import {
     ANTHROPIC_SUB_ALIASES,
     fetchAnthropicSubModels,
@@ -24,6 +23,7 @@ import {
     SUBSCRIPTION_SYSTEM_PREFIX,
 } from "@app/utils/claude/subscription-billing";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { isObject } from "@app/utils/object";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";

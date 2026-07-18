@@ -12,10 +12,10 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { Executor } from "@app/utils/cli";
 import { env } from "@app/utils/env";
 import { getGhCliToken } from "@app/utils/github/octokit";
+import { logger } from "@app/utils/logger";
 
 export interface RestackBranchInput {
     owner: string;

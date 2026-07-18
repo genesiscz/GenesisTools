@@ -1,6 +1,6 @@
-import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import { Command } from "commander";
 import { mergeServers, readConfigSources } from "./lib/discovery";
 import { probeServer } from "./lib/probe";

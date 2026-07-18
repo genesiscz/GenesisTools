@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 
 const PS_BATCH_SIZE = 60;
 

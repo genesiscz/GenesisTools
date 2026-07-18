@@ -1,4 +1,4 @@
-import { logger } from "@app/logger/client";
+import { logger } from "@app/utils/logger/client";
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import type { PresetKind, PromptPreset } from "@app/youtube/lib/types";

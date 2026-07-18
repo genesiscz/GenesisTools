@@ -1,7 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import {
     DIAMOND_PACKS,
     type DiamondPack,

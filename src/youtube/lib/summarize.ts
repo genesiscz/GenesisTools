@@ -1,6 +1,6 @@
-import { logger } from "@app/utils/logger";
 import { type CallLLMStructuredResult, callLLM, callLLMStructured } from "@app/utils/ai/call-llm";
 import { Summarizer } from "@app/utils/ai/tasks/Summarizer";
+import { logger } from "@app/utils/logger";
 import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";

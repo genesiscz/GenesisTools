@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { monthKeyUtc } from "@app/youtube/lib/billing-cycle";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import type { YtUser } from "@app/youtube/lib/users.types";

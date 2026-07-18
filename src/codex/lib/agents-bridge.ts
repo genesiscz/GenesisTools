@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import type { RpcNotification } from "./app-server-client";
 import { type CodexControl, parseControlBody } from "./control";
 

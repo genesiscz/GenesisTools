@@ -1,12 +1,5 @@
 import { SafeJSON } from "@app/utils/json";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@app/utils/ui/components/tabs";
-import { AskTab } from "@app/youtube/ui/components/shared/ask-tab";
-import { CommentsTab } from "@app/youtube/ui/components/shared/comments-tab";
-import { InsightsTab } from "@app/youtube/ui/components/shared/insights-tab";
-import type { ModelPreset } from "@app/youtube/ui/components/shared/llm-confirm-dialog";
-import { scrollIntoPanelView } from "@app/youtube/ui/components/shared/scroll";
-import { SummaryTab } from "@app/youtube/ui/components/shared/summary-tab";
-import { TranscriptTab } from "@app/youtube/ui/components/shared/transcript-tab";
 import type {
     AskCitation,
     JobStage,
@@ -26,6 +19,13 @@ import type {
     VideoLongSummary,
 } from "@app/youtube/lib/types";
 import type { SettingsTaskKind, TaskDefaultSettings } from "@app/youtube/lib/user-settings";
+import { AskTab } from "@app/youtube/ui/components/shared/ask-tab";
+import { CommentsTab } from "@app/youtube/ui/components/shared/comments-tab";
+import { InsightsTab } from "@app/youtube/ui/components/shared/insights-tab";
+import type { ModelPreset } from "@app/youtube/ui/components/shared/llm-confirm-dialog";
+import { scrollIntoPanelView } from "@app/youtube/ui/components/shared/scroll";
+import { SummaryTab } from "@app/youtube/ui/components/shared/summary-tab";
+import { TranscriptTab } from "@app/youtube/ui/components/shared/transcript-tab";
 import { useEffect, useRef, useState } from "react";
 
 export type VideoDetailTab = "insights" | "summary" | "ask" | "comments" | "transcript";

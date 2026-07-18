@@ -1,15 +1,7 @@
-import { logger } from "@app/logger/client";
+import { logger } from "@app/utils/logger/client";
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
-import { LlmConfirmDialog } from "@app/youtube/ui/components/shared/llm-confirm-dialog";
-import { PanelLoading } from "@app/youtube/ui/components/shared/panel-loading";
-import { errorCodeOf } from "@app/youtube/ui/components/shared/login-required";
-import { OUTPUT_LANGS, outputLangLabel } from "@app/youtube/ui/components/shared/output-langs";
-import { scrollIntoPanelView } from "@app/youtube/ui/components/shared/scroll";
-import type { PipelineProgress, RunPipeline } from "@app/youtube/ui/components/shared/tabs";
-import { formatTimecode } from "@app/youtube/ui/components/shared/time";
-import { segmentsToParagraphs, type TranscriptParagraph } from "@app/youtube/ui/components/shared/transcript-paragraphs";
 import {
     CREDIT_COSTS,
     type QueueStats,
@@ -18,6 +10,17 @@ import {
     type Video,
     type VideoId,
 } from "@app/youtube/lib/types";
+import { LlmConfirmDialog } from "@app/youtube/ui/components/shared/llm-confirm-dialog";
+import { errorCodeOf } from "@app/youtube/ui/components/shared/login-required";
+import { OUTPUT_LANGS, outputLangLabel } from "@app/youtube/ui/components/shared/output-langs";
+import { PanelLoading } from "@app/youtube/ui/components/shared/panel-loading";
+import { scrollIntoPanelView } from "@app/youtube/ui/components/shared/scroll";
+import type { PipelineProgress, RunPipeline } from "@app/youtube/ui/components/shared/tabs";
+import { formatTimecode } from "@app/youtube/ui/components/shared/time";
+import {
+    segmentsToParagraphs,
+    type TranscriptParagraph,
+} from "@app/youtube/ui/components/shared/transcript-paragraphs";
 import { Captions, ChevronDown, ChevronUp, Languages, Loader2, LocateFixed, Search, Sparkles } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 

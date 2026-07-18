@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import { callLLM } from "@app/utils/ai/call-llm";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
+import { logger } from "@app/utils/logger";
 import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import type { VideoComment } from "@app/youtube/lib/comments.types";

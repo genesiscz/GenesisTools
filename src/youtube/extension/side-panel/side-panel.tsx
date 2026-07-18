@@ -1,7 +1,7 @@
-import { type PipelineProgress, type VideoDetailTab, VideoDetailTabs } from "@app/youtube/ui/components/shared/tabs";
 import type { PipelineJob } from "@app/youtube/lib/jobs.types";
 import type { JobStage, SummaryMode } from "@app/youtube/lib/types";
 import type { UserSettings } from "@app/youtube/lib/user-settings";
+import { type PipelineProgress, type VideoDetailTab, VideoDetailTabs } from "@app/youtube/ui/components/shared/tabs";
 import { send } from "@ext/api.bridge";
 import {
     buildAudioSrc,

@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import type { ConfigSource, NormalizedServer } from "./types";
 
 interface RawStdioDef {

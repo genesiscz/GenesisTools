@@ -1,5 +1,6 @@
 import { formatBytes, formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@app/utils/table";
 import pc from "picocolors";
 import type { ScanResult } from "./types";

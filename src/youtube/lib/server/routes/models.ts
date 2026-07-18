@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
 import { isPowerRole, roleForEmail } from "@app/youtube/lib/roles";

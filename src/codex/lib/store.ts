@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { parseJsonl } from "@app/utils/jsonl";
 import { JsonlWriter } from "@app/utils/log-session/jsonl-writer";
+import { logger } from "@app/utils/logger";
 import { atomicWriteFileSync } from "@app/utils/storage/storage";
 import { sessionEventsPath, sessionMetaPath, sessionsDir } from "./paths";
 

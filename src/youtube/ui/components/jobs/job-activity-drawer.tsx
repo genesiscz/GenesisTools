@@ -1,9 +1,9 @@
-import { logger } from "@app/logger/client";
 import { formatDuration } from "@app/utils/format";
+import { logger } from "@app/utils/logger/client";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@app/utils/ui/components/sheet";
 import { Skeleton } from "@app/utils/ui/components/skeleton";
-import { copyText } from "@app/youtube/ui/components/shared/share-button";
 import type { JobActivity } from "@app/youtube/lib/types";
+import { copyText } from "@app/youtube/ui/components/shared/share-button";
 import { useJobActivity } from "@app/yt/api.hooks";
 import { parseSqliteDate } from "@app/yt/lib/format";
 import { ChevronRight, Cog, Copy, DollarSign, Hash, Sparkles, Telescope, Workflow, Zap } from "lucide-react";

@@ -10,7 +10,7 @@ import { isLocalAddress, parsePackageName } from "@app/dev-dashboard/lib/ports/e
 import { probeHttp } from "@app/dev-dashboard/lib/ports/probe";
 import { batchCwds, batchProcessMeta } from "@app/dev-dashboard/lib/ports/resolve";
 import type { PortInfo } from "@app/dev-dashboard/lib/ports/types";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 
 // Re-exports for existing tests / callers that import parse helpers from enrich.
 export { dashboardNameForPort } from "@app/dev-dashboard/lib/ports/classify";

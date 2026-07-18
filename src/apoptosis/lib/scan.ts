@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { loadCoverageSet } from "./coverage";
 import { findRepoRoot, getChurnCounts } from "./git";
 import { buildInboundImportCounts } from "./imports";

@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import { estimateLlmCallCostUsd, estimateSpeechTokens } from "@app/utils/ai/llm-cost";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { estimateTokens } from "@app/utils/tokens";
 import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import { grantArtifactAccess, resolveArtifactPrice } from "@app/youtube/lib/artifact-access";

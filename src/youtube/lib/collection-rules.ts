@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { CollectionRecord } from "@app/youtube/lib/db.types";
 

@@ -5,7 +5,7 @@ import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { publishBoardEvent } from "@app/dev-dashboard/lib/boards/events";
 import type { QuestionDto } from "@app/dev-dashboard/lib/boards/types";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { boardsError } from "./boards-errors";
 import { actorFrom } from "./boards-sets";
 

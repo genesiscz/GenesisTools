@@ -1,5 +1,4 @@
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
-import { logger } from "@app/logger";
 import {
     CODEX_AUTH_PATH,
     codexOAuth,
@@ -7,6 +6,7 @@ import {
     readCodexAuthJson,
     resolveCodexAccountToken,
 } from "@app/utils/ai/openai/codex-auth";
+import { logger } from "@app/utils/logger";
 
 export interface OpenAiSubToken {
     token: string;

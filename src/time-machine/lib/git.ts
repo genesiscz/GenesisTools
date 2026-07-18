@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 
 export interface CommitInfo {
     sha: string;

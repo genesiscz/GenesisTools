@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 
 /**
  * Count commits in the last `days` that touched every file under `repoRoot`, via

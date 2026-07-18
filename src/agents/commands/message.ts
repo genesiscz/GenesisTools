@@ -1,5 +1,4 @@
 import { readFileSync } from "node:fs";
-import { logger, out } from "@app/utils/logger";
 import { SafeJSON } from "@app/utils/json";
 import { logger, out } from "@app/utils/logger";
 import type { Command } from "commander";

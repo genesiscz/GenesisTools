@@ -1,4 +1,4 @@
-import { logger } from "@app/logger/client";
+import { logger } from "@app/utils/logger/client";
 import { PortalContainerProvider } from "@app/utils/ui/components/select";
 import { SidePanel } from "@ext/side-panel/side-panel";
 import sidePanelCss from "@ext/side-panel/side-panel.css?inline";

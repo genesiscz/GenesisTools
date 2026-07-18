@@ -1,5 +1,5 @@
-import { logger } from "@app/logger/client";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger/client";
 import type { JobEvent } from "@app/youtube/lib/types";
 import { fetchUiConfig } from "@app/yt/config.client";
 import { useEffect, useMemo, useRef, useState } from "react";

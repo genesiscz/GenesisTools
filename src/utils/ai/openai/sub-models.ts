@@ -1,4 +1,4 @@
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { fetchDirect } from "@app/utils/net/fetch-direct";
 import { WHAM_BASE_URL } from "./codex-auth";
 

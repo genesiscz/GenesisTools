@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import { withTimeout } from "@app/utils/async";
+import { logger } from "@app/utils/logger";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";

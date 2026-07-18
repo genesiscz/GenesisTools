@@ -1,5 +1,5 @@
-import { logger } from "@app/logger/client";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger/client";
 import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import type { YoutubeConfigShape } from "@app/youtube/lib/types";
 

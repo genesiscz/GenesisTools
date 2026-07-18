@@ -1,9 +1,9 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import { Switch } from "@app/utils/ui/components/switch";
-import { OUTPUT_LANGS } from "@app/youtube/ui/components/shared/output-langs";
-import { LENGTH_PHRASES, TONE_PHRASES } from "@app/youtube/ui/components/shared/summary-controls";
 import type { SummaryFormat, SummaryLength, SummaryTone } from "@app/youtube/lib/types";
 import type { SettingsTaskKind, TaskDefaultSettings, UserSettings } from "@app/youtube/lib/user-settings";
+import { OUTPUT_LANGS } from "@app/youtube/ui/components/shared/output-langs";
+import { LENGTH_PHRASES, TONE_PHRASES } from "@app/youtube/ui/components/shared/summary-controls";
 import { useMe, useModels, useSettings, useUpdateSettings } from "@ext/api.hooks";
 import type { ReactNode } from "react";
 

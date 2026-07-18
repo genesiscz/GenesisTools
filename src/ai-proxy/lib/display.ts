@@ -1,8 +1,8 @@
 import { isProviderImplemented } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
-import { out } from "@app/logger";
 import { suggestCommand } from "@app/utils/cli";
 import { formatTokens } from "@app/utils/format";
+import { out } from "@app/utils/logger";
 import {
     createBoxTable,
     formatDotStatus,

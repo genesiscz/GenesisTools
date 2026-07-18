@@ -3,7 +3,6 @@ import { listGrokProxyModels } from "@app/ai-proxy/lib/model-meta";
 import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { prepareGrokUpstreamBody } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
-import { logger } from "@app/utils/logger";
 import {
     formatBillingSummary,
     GrokAuthExpiredError,

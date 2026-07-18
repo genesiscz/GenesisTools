@@ -1,5 +1,6 @@
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { withRequestContext } from "@app/youtube/lib/request-context";
 import {
     extractBearerToken,

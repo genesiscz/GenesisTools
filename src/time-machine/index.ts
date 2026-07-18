@@ -20,8 +20,8 @@
  *   tools time-machine --good v1.2.0 -- ./run-checks.sh
  */
 
-import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
+import { logger, out } from "@app/utils/logger";
 import { Command } from "commander";
 import { findFirstBad } from "./lib/bisect";
 import {

@@ -4,7 +4,6 @@ import { env } from "@app/utils/env";
 import { DynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
 import { providerManager } from "@ask/providers/ProviderManager";
-import type { PricingInfo } from "@app/utils/ask/types/provider";
 import { toLanguageModelUsage } from "@ask/utils/helpers";
 
 describe("DynamicPricingManager", () => {

@@ -1,5 +1,5 @@
-import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
+import { logger, out } from "@app/utils/logger";
 import { Command } from "commander";
 import { runEnvdiff } from "./lib/driver";
 

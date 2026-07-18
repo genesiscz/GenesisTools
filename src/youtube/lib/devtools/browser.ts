@@ -5,7 +5,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { buildExtension } from "@app/youtube/commands/extension";
 
 const DEFAULT_PORT = 9333;

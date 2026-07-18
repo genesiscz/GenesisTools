@@ -1,4 +1,3 @@
-import { logger, out } from "@app/utils/logger";
 import { parseNonNegativeInt } from "@app/utils/cli";
 import { renderUnifiedDiff } from "@app/utils/diff";
 import { logger, out } from "@app/utils/logger";

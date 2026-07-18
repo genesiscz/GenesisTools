@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { handleStripeEvent, WebhookRetryableError } from "@app/youtube/lib/billing";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { matchRoute } from "@app/youtube/lib/server/match-route";

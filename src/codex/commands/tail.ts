@@ -1,5 +1,5 @@
 import { existsSync, statSync } from "node:fs";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import type { Command } from "commander";
 import { sessionEventsPath } from "../lib/paths";
 import { CodexSessionStore } from "../lib/store";

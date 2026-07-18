@@ -1,8 +1,8 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { relative, resolve } from "node:path";
-import { logger, out } from "@app/logger";
 import { createWatcher } from "@app/utils/fs/watcher";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import { toPosixPath } from "@app/utils/paths";
 import { launchDevtoolsBrowser } from "@app/youtube/lib/devtools/browser";
 import { captureFrameGrid } from "@app/youtube/lib/devtools/frame-grid";

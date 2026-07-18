@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
 import { resolve } from "node:path";
-import { out } from "@app/logger";
 import { enhanceHelp, runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import { Command } from "commander";
 import { renderHuman, renderJson, renderKillScript, renderPrBody } from "./lib/render";
 import { canonicalDir, runScan, type ScanOptions } from "./lib/scan";

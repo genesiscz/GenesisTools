@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import type { YtUser } from "@app/youtube/lib/users.types";

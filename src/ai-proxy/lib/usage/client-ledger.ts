@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { estimateCostUsd } from "@app/ai-proxy/lib/billing/pricing";
 import type { ResolvedClient } from "@app/ai-proxy/lib/clients";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { atomicWriteFileSync } from "@app/utils/storage/storage";
 
 export interface ClientMonthUsage {

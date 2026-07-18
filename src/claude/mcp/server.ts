@@ -1,5 +1,5 @@
-import { logger } from "@app/utils/logger";
 import { env } from "@app/utils/env/envVariables";
+import { logger } from "@app/utils/logger";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";

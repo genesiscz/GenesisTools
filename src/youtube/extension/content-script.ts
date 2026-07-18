@@ -1,4 +1,4 @@
-import { logger } from "@app/logger/client";
+import { logger } from "@app/utils/logger/client";
 import { mountSidePanel, unmountSidePanel } from "@ext/content-script-mount";
 import { type ChapterTicksHandle, mountChapterTicks } from "@ext/player-chapters";
 import type { PlayerChaptersMessage, PlayerTimeMessage } from "@ext/shared/messages";

@@ -1,8 +1,17 @@
 import { Button } from "@app/utils/ui/components/button";
+import type {
+    LlmEstimate,
+    LockedArtifact,
+    TimestampedSummaryEntry,
+    VideoId,
+    VideoLongSummary,
+} from "@app/youtube/lib/types";
+import { CREDIT_COSTS } from "@app/youtube/lib/types";
+import type { TaskDefaultSettings } from "@app/youtube/lib/user-settings";
 import { LlmConfirmDialog, type ModelPreset } from "@app/youtube/ui/components/shared/llm-confirm-dialog";
-import { PanelLoading } from "@app/youtube/ui/components/shared/panel-loading";
 import { errorCodeOf } from "@app/youtube/ui/components/shared/login-required";
 import { OUTPUT_LANGS } from "@app/youtube/ui/components/shared/output-langs";
+import { PanelLoading } from "@app/youtube/ui/components/shared/panel-loading";
 import {
     LENGTH_PHRASES,
     SummaryControlsBar,
@@ -13,15 +22,6 @@ import {
 import { toPartialTimestampedEntries } from "@app/youtube/ui/components/shared/summary-partials";
 import type { PipelineProgress } from "@app/youtube/ui/components/shared/tabs";
 import { TimestampedSummaryView } from "@app/youtube/ui/components/shared/timestamped-summary-view";
-import type {
-    LlmEstimate,
-    LockedArtifact,
-    TimestampedSummaryEntry,
-    VideoId,
-    VideoLongSummary,
-} from "@app/youtube/lib/types";
-import { CREDIT_COSTS } from "@app/youtube/lib/types";
-import type { TaskDefaultSettings } from "@app/youtube/lib/user-settings";
 import { Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 

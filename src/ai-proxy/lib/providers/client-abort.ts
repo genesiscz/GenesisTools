@@ -1,4 +1,4 @@
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 
 /**
  * When a proxy client hangs up, the `req.signal` we forward to the upstream

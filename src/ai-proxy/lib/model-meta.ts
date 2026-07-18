@@ -4,7 +4,6 @@ import { resolveOpenAiSubToken } from "@app/ai-proxy/lib/providers/openai-sub-to
 import { providerKey } from "@app/ai-proxy/lib/providers/registry";
 import { resolveXaiApiKey, XAI_API_BASE_URL } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
-import { logger } from "@app/logger";
 import {
     ANTHROPIC_SUB_ALIASES,
     ANTHROPIC_SUB_STATIC_CATALOG,
@@ -22,6 +21,7 @@ import { WHAM_BASE_URL } from "@app/utils/ai/openai/codex-auth";
 import { OPENAI_SUB_STATIC_CATALOG, tryFetchWhamModels, type WhamModelRecord } from "@app/utils/ai/openai/sub-models";
 import { resolveAccountToken } from "@app/utils/claude/subscription-auth";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { fetchDirect } from "@app/utils/net/fetch-direct";
 import { isObject } from "@app/utils/object";
 

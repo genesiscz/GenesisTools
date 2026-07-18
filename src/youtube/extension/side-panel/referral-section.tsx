@@ -1,4 +1,4 @@
-import { logger } from "@app/logger/client";
+import { logger } from "@app/utils/logger/client";
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import { Diamond, formatDiamonds } from "@app/youtube/ui/components/shared/diamond";

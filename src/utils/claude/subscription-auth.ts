@@ -1,10 +1,10 @@
 import { appendFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/utils/logger";
 import { retry } from "@app/utils/async";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import type { OAuthTokens } from "./auth";
 import { claudeOAuth } from "./auth";
 

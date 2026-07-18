@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import { askCollection } from "@app/youtube/lib/collection-ask";
 import { parseCollectionRule, resolveCollectionVideoIds } from "@app/youtube/lib/collection-rules";

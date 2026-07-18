@@ -1,4 +1,3 @@
-import { logger, out } from "@app/utils/logger";
 import { parseNonNegativeInt } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { logger, out } from "@app/utils/logger";

@@ -1,6 +1,5 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import type { AIConfig } from "@app/utils/ai/AIConfig";
 import {
     backupKeychainPayload,
@@ -13,6 +12,7 @@ import {
 } from "@app/utils/claude/keychain";
 import type { AISecondaryLogin } from "@app/utils/config/ai.types";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 
 const CLAUDE_JSON = join(homedir(), ".claude.json");
 

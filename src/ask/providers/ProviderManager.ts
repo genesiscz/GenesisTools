@@ -1,4 +1,3 @@
-import { logger } from "@app/utils/logger";
 import {
     createSubscriptionFetch,
     SUBSCRIPTION_BETAS,

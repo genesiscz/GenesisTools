@@ -1,15 +1,15 @@
-import { logger } from "@app/logger/client";
+import { logger } from "@app/utils/logger/client";
 import { Button } from "@app/utils/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
+import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
+import type { PresetKind, PromptPreset, ShareSummary, YtRole } from "@app/youtube/lib/types";
 import { ActivityGraph } from "@app/youtube/ui/components/shared/activity-graph";
 import { Diamond, formatDiamonds } from "@app/youtube/ui/components/shared/diamond";
 import { isLoginRequiredError } from "@app/youtube/ui/components/shared/login-required";
 import { OUTPUT_LANGS } from "@app/youtube/ui/components/shared/output-langs";
 import { formatRelativeTime } from "@app/youtube/ui/components/shared/time";
-import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
-import type { PresetKind, PromptPreset, ShareSummary, YtRole } from "@app/youtube/lib/types";
 import {
     useCheckout,
     useCreatePreset,
