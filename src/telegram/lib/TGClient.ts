@@ -1,4 +1,4 @@
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import bigInt from "big-integer";
 import { Api, TelegramClient } from "telegram";
 import { NewMessage, type NewMessageEvent } from "telegram/events";

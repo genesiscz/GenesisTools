@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { logDashboardApp } from "@app/debugging-master/lib/log-dashboard-app";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 

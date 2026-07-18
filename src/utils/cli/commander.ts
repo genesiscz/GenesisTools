@@ -1,6 +1,6 @@
 import { basename, dirname } from "node:path";
-import { setBaseBinding, setConsoleLevel } from "@app/logger";
 import { env } from "@app/utils/env";
+import { setBaseBinding, setConsoleLevel } from "@app/utils/logger";
 import { consoleFloorFor } from "@app/utils/logging/tool-policy";
 import { printReadmeAndExit } from "@app/utils/readme";
 import type { Command } from "commander";

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
-import { logger, out } from "@app/logger";
+import { logger, out } from "@app/utils/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import type { Command } from "commander";
 import { deriveRegistry } from "../lib/derived-registry";
 import { FriendlyError, listAvailableNames, runWithFriendlyErrors } from "../lib/errors";

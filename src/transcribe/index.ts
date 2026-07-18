@@ -2,7 +2,6 @@
 
 import { existsSync } from "node:fs";
 import { basename, extname, resolve } from "node:path";
-import { out } from "@app/logger";
 import { AI } from "@app/utils/ai/index.ts";
 import { getAllProviders } from "@app/utils/ai/providers/index.ts";
 import { formatOutput, formatTimestamp, type OutputFormat, toSRT, toVTT } from "@app/utils/ai/transcription-format.ts";
@@ -15,6 +14,7 @@ import { createQuietSpinner } from "@app/utils/cli/quiet-spinner.ts";
 import { copyToClipboard } from "@app/utils/clipboard.ts";
 import { env } from "@app/utils/env";
 import { formatBytes, formatDuration } from "@app/utils/format.ts";
+import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";

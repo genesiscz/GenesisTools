@@ -1,4 +1,4 @@
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 
 export const WAKEFUL_TICK_MS = 2_000;
 export const WAKEFUL_JUMP_THRESHOLD_MS = WAKEFUL_TICK_MS * 5;

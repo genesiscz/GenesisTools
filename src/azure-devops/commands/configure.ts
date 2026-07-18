@@ -8,8 +8,8 @@
 import { exitWithAuthGuide } from "@app/azure-devops/cli.utils";
 import { buildAdoConfig, saveAdoConfig } from "@app/azure-devops/lib/ado-configure";
 import { getLocalConfigDir } from "@app/azure-devops/utils";
-import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import { $ } from "bun";
 import type { Command } from "commander";
 

@@ -1,7 +1,7 @@
 import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
 import { loadConfig } from "@app/ai-proxy/lib/config";
 import { displayModelsTable } from "@app/ai-proxy/lib/display";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 
 export async function runModelsCommand(options: {
     provider?: string;

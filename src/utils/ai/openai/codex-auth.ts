@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 
 // OpenAI Codex OAuth constants (reverse-engineered from Codex CLI)
 const AUTH_URL = "https://auth.openai.com/oauth/authorize";

@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { formatDashboard } from "@app/har-analyzer/core/formatter";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
-import { logger, out } from "@app/logger";
+import { logger, out } from "@app/utils/logger";
 import type { Command } from "commander";
 
 export function registerLoadCommand(program: Command): void {

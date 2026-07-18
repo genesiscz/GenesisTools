@@ -15,13 +15,13 @@
  *   tools tmux presets save|list|restore|delete
  */
 
-import { out } from "@app/logger";
 import { registerAttachCommand } from "@app/tmux/commands/attach";
 import { registerCreateCommand } from "@app/tmux/commands/create";
 import { registerPresetsCommand } from "@app/tmux/commands/presets";
 import { registerSessionCommand } from "@app/tmux/commands/session";
 import { registerSessionsCommand } from "@app/tmux/commands/sessions";
 import { enhanceHelp, runTool } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
 

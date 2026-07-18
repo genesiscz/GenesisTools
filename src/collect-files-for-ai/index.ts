@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises"; // Using fs.promises for async operations - Bun implements this
 import { basename, dirname, join, resolve } from "node:path";
-import { logger } from "@app/logger";
 import { Executor, runTool } from "@app/utils/cli";
+import { logger } from "@app/utils/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
 

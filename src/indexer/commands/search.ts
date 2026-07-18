@@ -1,8 +1,8 @@
 import { isAbsolute, relative } from "node:path";
 import { toToon } from "@app/json/lib/toon";
-import { out } from "@app/logger";
 import { isInteractive } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import type { SearchResult } from "@app/utils/search/types";
 import { truncateText } from "@app/utils/string";
 import * as p from "@clack/prompts";

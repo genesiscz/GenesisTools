@@ -1,7 +1,7 @@
-import { logger, out } from "@app/logger";
 import { isInteractive } from "@app/utils/cli";
 import { watchFileFeed } from "@app/utils/fs/file-feed-watcher";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import type { Command } from "commander";
 import { readCursor, writeCursor } from "../lib/cursor";
 import { deriveRegistry, findById, findByName, nextSubagentId } from "../lib/derived-registry";

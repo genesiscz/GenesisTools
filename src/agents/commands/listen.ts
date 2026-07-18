@@ -1,10 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { logger, out } from "@app/logger";
 import { isInteractive } from "@app/utils/cli";
 import { watchFileFeed } from "@app/utils/fs/file-feed-watcher";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import type { Command } from "commander";
 import { deriveRegistry } from "../lib/derived-registry";
 import { readFeed, readFeedSince } from "../lib/feed";

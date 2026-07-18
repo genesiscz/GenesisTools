@@ -1,5 +1,5 @@
-import { logger, out } from "@app/logger";
 import { isInteractive, runTool, suggestCommand } from "@app/utils/cli";
+import { logger, out } from "@app/utils/logger";
 import { Command, Option } from "commander";
 import { glob } from "glob";
 import { ALGOS, type HashAlgo, isHashAlgo } from "./lib/algorithms";

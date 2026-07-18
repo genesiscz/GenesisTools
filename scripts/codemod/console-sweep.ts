@@ -9,7 +9,7 @@
  *   console.error(...) → out.error(...)
  *   console.debug(...) → logger.debug(...)
  *
- * Inserts missing @app/logger imports (merges into existing if present).
+ * Inserts missing @app/utils/logger imports (merges into existing if present).
  *
  * Safety guards:
  *   - Skips shadowed `console` (local binding in call scope)
@@ -202,10 +202,10 @@ function ensureImport(sf: SourceFile, needsOut: boolean, needsLogger: boolean): 
         return;
     }
 
-    // Find existing @app/logger import
+    // Find existing @app/utils/logger import
     let existing: ImportDeclaration | undefined;
     for (const imp of sf.getImportDeclarations()) {
-        if (imp.getModuleSpecifierValue() === "@app/logger") {
+        if (imp.getModuleSpecifierValue() === "@app/utils/logger") {
             existing = imp;
             break;
         }
@@ -233,7 +233,7 @@ function ensureImport(sf: SourceFile, needsOut: boolean, needsLogger: boolean): 
         }
 
         sf.addImportDeclaration({
-            moduleSpecifier: "@app/logger",
+            moduleSpecifier: "@app/utils/logger",
             namedImports: names,
         });
     }

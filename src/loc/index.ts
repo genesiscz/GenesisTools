@@ -1,7 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
+import { logger, out } from "@app/utils/logger";
 import { Command, Option } from "commander";
 import { buildReport, type GroupBy } from "./lib/aggregate";
 import { renderTable } from "./lib/render";

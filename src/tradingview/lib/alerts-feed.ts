@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import type { Alert, AlertFire, TvSession } from "./types";
 import { tvSocket } from "./ws";
 

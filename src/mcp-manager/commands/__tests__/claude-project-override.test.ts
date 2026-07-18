@@ -16,12 +16,12 @@ const { syncFromProviders } = await import("../sync-from-providers.js");
 const { disableServer: disableCommand } = await import("../disable.js");
 const { enableServer: enableCommand } = await import("../enable.js");
 
-import { logger } from "@app/logger";
 import { setGlobalOptions } from "@app/mcp-manager/utils/config.utils.js";
 import type { ClaudeGenericConfig } from "@app/mcp-manager/utils/providers/claude.types.js";
 import type { UnifiedMCPConfig, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { Storage } from "@app/utils/storage";
 
 /**

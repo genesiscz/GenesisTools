@@ -2,9 +2,9 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { env } from "@app/utils/env";
+import { out } from "@app/utils/logger";
 import { Storage } from "@app/utils/storage/storage.ts";
 import { formatTable } from "@app/utils/table.ts";
 import * as p from "@clack/prompts";

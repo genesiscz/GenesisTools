@@ -7,7 +7,6 @@ import {
     resolveTunnelName,
 } from "@app/ai-proxy/lib/public-url";
 import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
-import { logger } from "@app/logger";
 import { fetchCopilotUserInfo, formatCopilotUsageSummary, readGithubToken } from "@app/utils/ai/github-copilot";
 import { GITHUB_COPILOT_UPSTREAM_ENDPOINTS } from "@app/utils/ai/github-copilot/endpoints";
 import { COPILOT_GHO_TOKEN_SERVICE, githubTokenPath } from "@app/utils/ai/github-copilot/paths";
@@ -17,6 +16,7 @@ import {
     GrokSubscriptionClient,
     getTokenPrefix,
 } from "@app/utils/ai/grok";
+import { logger } from "@app/utils/logger";
 
 export interface IntrospectOptions {
     section?: "accounts" | "endpoints" | "models" | "cursor" | "all";

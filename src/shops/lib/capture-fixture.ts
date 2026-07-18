@@ -1,8 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { ShopRegistry } from "@app/shops/api/ShopRegistry";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { toPosixPath } from "@app/utils/paths";
 import { WebView } from "@app/utils/WebView";
 

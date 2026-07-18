@@ -1,7 +1,7 @@
-import { out } from "@app/logger";
 import type { TimeEntryRecord, TimesheetRecord } from "@app/utils/clarity";
 import { ClarityApi } from "@app/utils/clarity";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import * as clack from "@clack/prompts";
 import Table from "cli-table3";
 import type { Command } from "commander";

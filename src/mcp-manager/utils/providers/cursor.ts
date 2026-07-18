@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { logger } from "@app/logger";
 import { stripMeta } from "@app/mcp-manager/utils/config.utils.js";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import chalk from "chalk";
 import type { CursorGenericConfig, CursorMCPServerConfig } from "./cursor.types.js";
 import type { MCPServerInfo, UnifiedMCPServerConfig } from "./types.js";

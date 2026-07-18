@@ -4,10 +4,10 @@ import { renameTmuxSessionInHub } from "@app/dev-dashboard/lib/tmux/rename";
 import { listTtyd } from "@app/dev-dashboard/lib/ttyd/manager";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
-import { logger } from "@app/logger";
 import { fetchCmuxFullLayout } from "@app/utils/cmux/layout";
 import type { CmuxTmuxSurfaceRef } from "@app/utils/cmux/tmux-bindings";
 import { indexCmuxSurfacesByTmuxSession } from "@app/utils/cmux/tmux-bindings";
+import { logger } from "@app/utils/logger";
 import { listTmuxSessions } from "@app/utils/tmux/sessions";
 
 export function tmuxRoutes(): RouteDef[] {

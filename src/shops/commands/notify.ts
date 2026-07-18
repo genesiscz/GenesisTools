@@ -1,4 +1,3 @@
-import { out } from "@app/logger";
 import {
     ackAllNotifications,
     ackNotification,
@@ -7,6 +6,7 @@ import {
     type RecentNotificationsArgs,
 } from "@app/shops/lib/watchlist-api";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import { formatTable } from "@app/utils/table";
 import type { Command } from "commander";
 

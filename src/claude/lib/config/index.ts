@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import type { OAuthProfileResponse } from "@app/utils/claude/auth";
+import { logger } from "@app/utils/logger";
 import { Storage } from "@app/utils/storage/storage";
 
 /** @deprecated Use AIAccountEntry from @app/utils/config/ai.types instead */

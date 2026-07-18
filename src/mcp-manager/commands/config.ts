@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
-import { logger } from "@app/logger";
 import { BackupManager } from "@app/mcp-manager/utils/backup.js";
 import { getUnifiedConfigPath } from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { isInteractive } from "@app/utils/cli";
 import { env } from "@app/utils/env";
+import { logger } from "@app/utils/logger";
 import { Storage } from "@app/utils/storage";
 
 // Lazy (not a module-level singleton) so it re-reads GENESIS_TOOLS_HOME at

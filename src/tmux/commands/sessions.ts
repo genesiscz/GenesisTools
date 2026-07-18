@@ -1,4 +1,4 @@
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import { renderTree, type TreeNode } from "@app/utils/prompts/p/tree";
 import { listTmuxSessions } from "@app/utils/tmux/sessions";
 import { captureTmuxSnapshot, type TmuxSessionSnapshot } from "@app/utils/tmux/snapshot";

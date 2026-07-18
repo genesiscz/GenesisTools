@@ -1,7 +1,6 @@
 import type { Database as BunDatabase } from "bun:sqlite";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import type { RawProduct } from "@app/shops/api/ShopApiClient.types";
 import { SHOPS_MIGRATIONS } from "@app/shops/db/migrations";
 import type {
@@ -24,6 +23,7 @@ import {
 } from "@app/shops/lib/normalize";
 import { createKyselyClient, type DatabaseClient } from "@app/utils/database/client";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { type Insertable, type Kysely, type Selectable, sql } from "kysely";
 
 export interface StartCrawlRunInput {

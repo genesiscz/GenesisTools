@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { isProcessAlive } from "@app/utils/process-alive";
 
 const DEFAULT_TIMEOUT_MS = 5000;

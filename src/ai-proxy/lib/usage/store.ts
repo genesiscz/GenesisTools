@@ -9,9 +9,9 @@ import type {
     GrokUsageDetails,
     UsageRequestRecord,
 } from "@app/ai-proxy/lib/usage/types";
-import { logger } from "@app/logger";
 import type { GrokBillingConfig, GrokSettings } from "@app/utils/ai/grok";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { atomicWriteFileSync } from "@app/utils/storage/storage";
 
 const BILLING_TTL_MS = 5 * 60 * 1000;

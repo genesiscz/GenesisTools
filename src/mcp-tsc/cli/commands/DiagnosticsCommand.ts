@@ -1,6 +1,6 @@
-import { out } from "@app/logger";
 import type { CliArgs, DiagnosticsResult, TSServer } from "@app/mcp-tsc/core/interfaces.js";
 import { filterByTsconfig, resolveFiles } from "@app/mcp-tsc/utils/FileResolver.js";
+import { out } from "@app/utils/logger";
 
 export class DiagnosticsCommand {
     constructor(

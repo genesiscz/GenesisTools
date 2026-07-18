@@ -1,7 +1,7 @@
-import { out } from "@app/logger";
 import { env } from "@app/utils/env";
 import { formatDuration as _formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import type { Args, CLIOptions, OutputFormat } from "@ask/types";
 import { Command } from "commander";
 

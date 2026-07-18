@@ -17,8 +17,8 @@ import {
 } from "@app/azure-devops/cache";
 import { buildHistoryFromRevisions, buildWorkItemHistory } from "@app/azure-devops/history";
 import { requireConfig } from "@app/azure-devops/utils";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 

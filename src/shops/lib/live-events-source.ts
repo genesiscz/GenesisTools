@@ -1,9 +1,9 @@
-import { logger } from "@app/logger";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { sseBroadcaster } from "@app/shops/lib/sse-broadcaster";
 import type { LiveCrawlProgressEvent, LiveHttpRequestEvent } from "@app/shops/types";
 import { startWakefulInterval } from "@app/utils/async";
+import { logger } from "@app/utils/logger";
 
 const POLL_INTERVAL_MS = 2_000;
 const HTTP_BACKFILL_LIMIT = 100;

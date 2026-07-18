@@ -1,4 +1,3 @@
-import { logger } from "@app/logger";
 import type {
     HlidacGetByUrlResult,
     HsDetailResponse,
@@ -8,6 +7,7 @@ import type {
 import type { HttpRequestEvent, HttpRequestSink } from "@app/shops/lib/http-sink";
 import { ApiClient, type ApiClientResponse } from "@app/utils/api/ApiClient";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 // @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage
 import { fetchDataSet, fetchShopsStats } from "@hlidac-shopu/lib/remoting.mjs";
 // @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage

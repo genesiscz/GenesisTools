@@ -4,7 +4,6 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import type {
     CommentRecord,
     FetchMetadataRecord,
@@ -12,6 +11,7 @@ import type {
     RepoRecord,
     TimelineEventRecord,
 } from "@app/utils/github/types";
+import { logger } from "@app/utils/logger";
 
 const DEFAULT_CACHE_DIR = join(homedir(), ".genesis-tools", "github");
 const DB_NAME = "cache.db";

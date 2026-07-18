@@ -1,7 +1,7 @@
-import { out } from "@app/logger";
 import { enhanceHelp } from "@app/utils/cli";
 import { parseDuration as parseDurationUtil } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import type { AxiosInstance } from "axios";
 import { Command } from "commander";
 import { createClient, type JenkinsAuth, readEnvAuth } from "./lib/client";

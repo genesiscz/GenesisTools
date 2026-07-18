@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";

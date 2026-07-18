@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
-import { out } from "@app/logger";
 import { formatResultsTable } from "@app/macos/lib/mail/format";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
 import { rowToMessage, truncateBody } from "@app/macos/lib/mail/transform";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import type { MailMessage } from "@app/utils/macos/mail/types";
 import * as p from "@clack/prompts";

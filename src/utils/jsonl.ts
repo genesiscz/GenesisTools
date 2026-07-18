@@ -1,5 +1,5 @@
-import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 
 export interface JsonlParseResult<T = unknown> {
     values: T[];

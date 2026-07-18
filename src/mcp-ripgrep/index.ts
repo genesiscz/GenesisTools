@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import nodePath from "node:path";
-import { logger } from "@app/logger";
 import { wrapArray } from "@app/utils/array";
+import { logger } from "@app/utils/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { escapeShellArg, stripAnsi } from "@app/utils/string";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";

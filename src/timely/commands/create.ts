@@ -1,5 +1,4 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { logger, out } from "@app/logger";
 import type { TimelyService } from "@app/timely/api/service";
 import type { OAuth2Tokens, TimelyEntry } from "@app/timely/types";
 import type { CreatePlanV1, PlanIssue } from "@app/timely/types/plan";
@@ -11,6 +10,7 @@ import { applyPlan, validatePlan } from "@app/timely/utils/plan-apply";
 import { buildPlan } from "@app/timely/utils/plan-build";
 import { isInteractive } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
 import chalk from "chalk";

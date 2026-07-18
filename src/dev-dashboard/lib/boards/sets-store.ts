@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import type { DatabaseClient } from "@app/utils/database/client";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { type Selectable, sql } from "kysely";
 import { mimeForPath, putBlob } from "./blobs";
 import type { BoardsDb, SetsTable } from "./db-types";

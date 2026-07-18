@@ -1,6 +1,6 @@
-import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { enhanceHelp } from "@app/utils/cli/executor";
+import { out } from "@app/utils/logger";
 import { registerAnalyzeCommand } from "@app/youtube/commands/analyze";
 import { registerCacheCommand } from "@app/youtube/commands/cache";
 import { registerChannelsCommand } from "@app/youtube/commands/channels";

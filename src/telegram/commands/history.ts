@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
-import { out } from "@app/logger";
 import { parseDate } from "@app/utils/date";
 import { formatNumber } from "@app/utils/format";
+import { out } from "@app/utils/logger";
 import { detectLanguage, embedText } from "@app/utils/macos/nlp";
 import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";

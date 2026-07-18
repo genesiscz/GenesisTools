@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
+import { out } from "@app/utils/logger";
 import { renderColumns } from "@app/youtube/commands/_shared/columns";
 import { confirmDestructive } from "@app/youtube/commands/_shared/confirm";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";

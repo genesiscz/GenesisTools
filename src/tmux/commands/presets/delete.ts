@@ -1,5 +1,5 @@
-import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import { TmuxPresetStore } from "@app/utils/tmux/snapshot-store";
 import * as p from "@clack/prompts";

@@ -1,6 +1,5 @@
 import { homedir } from "node:os";
 import { basename } from "node:path";
-import { logger } from "@app/logger";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { FileMetaCache } from "@app/macos/lib/clones/file-meta-cache";
@@ -9,6 +8,7 @@ import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/ind
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
 import { isInteractive, parseVariadic } from "@app/utils/cli";
 import { formatBytes } from "@app/utils/format";
+import { logger } from "@app/utils/logger";
 import * as p from "@app/utils/prompts/p";
 import { Command, Option } from "commander";
 

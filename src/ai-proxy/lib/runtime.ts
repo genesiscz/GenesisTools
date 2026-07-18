@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { dirname } from "node:path";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { AiProxyRuntimeState } from "@app/ai-proxy/lib/types";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { isProcessAlive } from "@app/utils/process-alive";
 
 function ensureParentDir(filePath: string): void {

@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
-import { logger } from "@app/logger";
 import { debounce } from "@app/utils/async";
+import { logger } from "@app/utils/logger";
 import chokidar from "chokidar";
 
 export interface PreviewServerWatchGlobsOptions {

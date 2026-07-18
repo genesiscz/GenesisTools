@@ -1,4 +1,3 @@
-import { out } from "@app/logger";
 import { printTailStatus } from "@app/task/lib/log-hints";
 import { queryLogs, sliceLogLines } from "@app/task/lib/log-query";
 import { jsonlPath } from "@app/task/lib/paths";
@@ -7,6 +6,7 @@ import { FileTailer } from "@app/utils/fs/file-tailer";
 import { SafeJSON } from "@app/utils/json";
 import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
 import type { JsonlExitRecord, JsonlLineRecord, JsonlRecord } from "@app/utils/log-session/types";
+import { out } from "@app/utils/logger";
 
 function matchesFilters(
     line: JsonlLineRecord,

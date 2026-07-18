@@ -1,8 +1,8 @@
 import { readHistorySince } from "@app/doctor/lib/history";
 import { formatBytes } from "@app/doctor/lib/size";
 import { aggregate } from "@app/doctor/lib/stats";
-import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import pc from "picocolors";
 
 export interface StatsOpts {

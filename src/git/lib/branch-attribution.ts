@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import { concurrentMap } from "@app/utils/async";
 import { Executor } from "@app/utils/cli";
+import { logger } from "@app/utils/logger";
 import { Stopwatch } from "@app/utils/Stopwatch";
 
 export interface BranchAttribution {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import { logger, out } from "@app/logger";
 import { transcriptionManager } from "@app/utils/ai/transcription/TranscriptionManager";
+import { logger, out } from "@app/utils/logger";
 import { input } from "@app/utils/prompts/clack";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { AIChat } from "@ask/AIChat";

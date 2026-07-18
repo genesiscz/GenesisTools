@@ -2,8 +2,8 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseHarFile } from "@app/har-analyzer/core/parser";
 import type { HarSession } from "@app/har-analyzer/types";
-import { out } from "@app/logger";
 import { xxhash } from "@app/utils/hash";
+import { out } from "@app/utils/logger";
 import { Storage } from "@app/utils/storage/storage";
 
 const SESSION_TTL = "1 day";

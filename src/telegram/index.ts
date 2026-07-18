@@ -1,5 +1,5 @@
-import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
 import { registerConfigureCommand } from "./commands/configure";

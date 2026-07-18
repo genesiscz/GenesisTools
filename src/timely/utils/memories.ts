@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import type { TimelyEntry } from "@app/timely/types";
+import { logger } from "@app/utils/logger";
 import type { Storage } from "@app/utils/storage";
 
 const CACHE_TTL = "30 days";

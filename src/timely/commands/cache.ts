@@ -1,5 +1,5 @@
-import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import * as p from "@app/utils/prompts/p";
 import type { Storage } from "@app/utils/storage";
 import chalk from "chalk";

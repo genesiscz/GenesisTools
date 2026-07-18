@@ -10,7 +10,7 @@ import {
     usageStorePaths,
 } from "@app/ai-proxy/lib/usage/store";
 import type { AccountBillingSnapshot, UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import { formatTokens } from "@app/utils/format";
 
 export interface UsageCommandOptions {

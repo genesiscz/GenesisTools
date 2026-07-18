@@ -1,5 +1,5 @@
-import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import WebSocket from "ws";
 
 interface IMessage {

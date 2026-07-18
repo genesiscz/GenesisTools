@@ -5,8 +5,8 @@ import { readRuntimeState, writeRuntimeState } from "@app/ai-proxy/lib/runtime";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import { isTunnelProcessRunning } from "@app/ai-proxy/lib/tunnel/cloudflared";
 import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
-import { logger } from "@app/logger";
 import { spawnDetached } from "@app/utils/DashboardApp/detach";
+import { logger } from "@app/utils/logger";
 import { isProcessAlive } from "@app/utils/process-alive";
 
 export async function ensureCloudflaredExposure(config: AiProxyConfig): Promise<ExposureEnsureResult> {

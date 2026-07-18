@@ -1,5 +1,5 @@
 import { loadConfig } from "@app/claude/lib/config";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { dispatchNotification } from "@app/utils/notifications";
 import type { Storage } from "@app/utils/storage/storage";
 import type { AccountUsage } from "./api";

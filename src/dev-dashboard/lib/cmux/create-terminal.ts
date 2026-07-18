@@ -1,6 +1,5 @@
 import { DEV_DASHBOARD_WORKSPACE } from "@app/dev-dashboard/lib/tmux/constants";
 import { makeCmuxTmuxSessionName } from "@app/dev-dashboard/lib/tmux/naming";
-import { logger } from "@app/logger";
 import { focusCmuxPane } from "@app/utils/cmux/lib/controls";
 import { withFocusedWorkspace } from "@app/utils/cmux/lib/focus-guard";
 import type { AttachTmuxResult } from "@app/utils/cmux/types";
@@ -10,6 +9,7 @@ import {
     renameSurfaceTab,
     sendNewSessionCommand,
 } from "@app/utils/cmux/workspace";
+import { logger } from "@app/utils/logger";
 
 export async function createDevDashboardTerminal(opts: { cwd?: string } = {}): Promise<AttachTmuxResult> {
     const cwd = opts.cwd ?? process.cwd();

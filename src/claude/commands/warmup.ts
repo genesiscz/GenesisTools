@@ -1,6 +1,6 @@
 import { sendWarmupMessage } from "@app/claude/lib/warmup/service";
-import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";

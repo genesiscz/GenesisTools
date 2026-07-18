@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { extname, isAbsolute, join, resolve } from "node:path";
 import { EXT_TO_DYNAMIC_LANG } from "@app/indexer/lib/ast-languages";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { countTokens } from "@app/utils/tokens";
 import { extractSymbols, isBuiltinLanguage, languageForFile } from "./extract";
 import type { ExtractedSymbol, ScannedFile } from "./types";

@@ -1,5 +1,5 @@
-import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import { readInput, writeOutput } from "./io";
 import { restore } from "./restore";
 import { loadLatestSession, loadMapFile } from "./session";

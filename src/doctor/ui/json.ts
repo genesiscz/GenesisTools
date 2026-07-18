@@ -1,8 +1,8 @@
 import type { Analyzer } from "@app/doctor/lib/analyzer";
 import { Engine } from "@app/doctor/lib/engine";
 import type { Finding } from "@app/doctor/lib/types";
-import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 
 export interface JsonRunOpts {
     analyzers: Analyzer[];

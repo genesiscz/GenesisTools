@@ -13,9 +13,9 @@ import {
     detectBase,
     getCurrentBranch,
 } from "@app/git/lib/branch-gc/classify";
-import { logger, out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { BaseNotFoundError, createGit } from "@app/utils/git";
+import { logger, out } from "@app/utils/logger";
 import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";

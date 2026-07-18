@@ -1,6 +1,6 @@
-import { out } from "@app/logger";
 import { runList } from "@app/tmux/commands/sessions";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import * as p from "@app/utils/prompts/p";
 import { resolveSessionQuery } from "@app/utils/tmux/match";
 import { resetSessions, selectResetTargets } from "@app/utils/tmux/reset";

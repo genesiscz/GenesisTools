@@ -1,5 +1,5 @@
-import { out } from "@app/logger";
 import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
+import { out } from "@app/utils/logger";
 import { iMessagesDatabase } from "@app/utils/macos/iMessagesDatabase";
 import type { Command } from "commander";
 

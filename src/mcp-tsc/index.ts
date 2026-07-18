@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { logger, out } from "@app/logger";
 import { CliHandler } from "@app/mcp-tsc/cli/CliHandler.js";
 import { DiagnosticsCommand } from "@app/mcp-tsc/cli/commands/DiagnosticsCommand.js";
 import { HoverCommand } from "@app/mcp-tsc/cli/commands/HoverCommand.js";
@@ -9,6 +8,7 @@ import { McpCommand } from "@app/mcp-tsc/cli/commands/McpCommand.js";
 import type { TSServer } from "@app/mcp-tsc/core/interfaces.js";
 import { getPersistentServer } from "@app/mcp-tsc/utils/ServerManager.js";
 import { env } from "@app/utils/env";
+import { logger, out } from "@app/utils/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 
 // Handle --readme flag early (before Commander parses)

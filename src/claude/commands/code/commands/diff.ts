@@ -1,6 +1,7 @@
-import { logger, out } from "@app/logger";
+import { logger, out } from "@app/utils/logger";
 import { parseNonNegativeInt } from "@app/utils/cli";
 import { renderUnifiedDiff } from "@app/utils/diff";
+import { logger, out } from "@app/utils/logger";
 import { ensureBeautified, ensureBundle, ensureNormalized } from "../lib/bundle";
 import { chunkSetDiff, filterByPatterns, pairChunks, splitChunks } from "../lib/chunks";
 

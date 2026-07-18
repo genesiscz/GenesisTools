@@ -1,5 +1,5 @@
-import { logger, out } from "@app/logger";
 import { runTool, suggestCommand } from "@app/utils/cli";
+import { logger, out } from "@app/utils/logger";
 import { renderQr } from "@app/utils/qr";
 import { Command } from "commander";
 import { buildTextPayload, buildWifiPayload, normalizeSecurity } from "./lib/payload";

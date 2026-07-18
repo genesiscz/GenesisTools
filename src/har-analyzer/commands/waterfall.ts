@@ -2,8 +2,8 @@ import { printFormatted, truncatePath } from "@app/har-analyzer/core/formatter";
 import { filterEntries } from "@app/har-analyzer/core/query-engine";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { EntryFilter, IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
-import { out } from "@app/logger";
 import { formatDuration } from "@app/utils/format";
+import { out } from "@app/utils/logger";
 import type { Command } from "commander";
 
 const BAR_WIDTH = 40;

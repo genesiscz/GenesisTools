@@ -1,8 +1,8 @@
-import { logger } from "@app/logger";
 import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { UserProvidersRepository } from "@app/shops/db/UserProvidersRepository";
 import { syncProvider } from "@app/shops/lib/order-sync";
 import { realAuthClientFactory } from "@app/shops/lib/order-sync-clients";
+import { logger } from "@app/utils/logger";
 import type { Command } from "commander";
 
 const log = logger.child({ component: "shops:orders-sync" });

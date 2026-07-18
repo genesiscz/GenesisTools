@@ -1,5 +1,5 @@
-import { logger, out } from "@app/logger";
 import { Browser } from "@app/utils/browser";
+import { logger, out } from "@app/utils/logger";
 import { getLocalIpv4 } from "@app/utils/network";
 import { type QrOptions, renderQr } from "@app/utils/qr";
 import pc from "picocolors";

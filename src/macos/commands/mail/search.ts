@@ -1,4 +1,3 @@
-import { logger } from "@app/logger";
 import { ALL_COLUMN_KEYS, type MailColumnKey } from "@app/macos/lib/mail/columns";
 import {
     enrichWithBodies,
@@ -11,6 +10,7 @@ import {
 import { resolveMailSearchMode, runMailSearch } from "@app/macos/lib/mail/search-runner";
 import { isQuietOutput } from "@app/utils/cli/output-mode";
 import { createQuietSpinner } from "@app/utils/cli/quiet-spinner";
+import { logger } from "@app/utils/logger";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import type { SearchOptions } from "@app/utils/macos/mail/types";
 import * as p from "@clack/prompts";

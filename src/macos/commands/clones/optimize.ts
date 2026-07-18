@@ -1,4 +1,3 @@
-import { logger } from "@app/logger";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
 import {
     closestProcessIds,
@@ -18,6 +17,7 @@ import type { DuplicateSet, ProcessReport } from "@app/macos/lib/clones/render/t
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
 import { isInteractive, parseVariadic, suggestCommand } from "@app/utils/cli";
 import { formatBytes } from "@app/utils/format";
+import { logger } from "@app/utils/logger";
 import { CloneUnsupportedError } from "@app/utils/macos/apfs";
 import * as p from "@clack/prompts";
 import { Command, Option } from "commander";

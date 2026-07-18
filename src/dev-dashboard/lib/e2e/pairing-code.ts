@@ -2,8 +2,8 @@ import { randomBytes } from "node:crypto";
 import { chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 
 // The managed-tier pairing ADMISSION control. `/api/e2e/pair` stores public keys only, but
 // without this an attacker who can reach the Agent — including the untrusted vendor relay —

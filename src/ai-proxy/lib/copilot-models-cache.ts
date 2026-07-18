@@ -1,8 +1,8 @@
 import { resolveGithubCopilotDataDir } from "@app/ai-proxy/lib/account-config";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
-import { logger } from "@app/logger";
 import { probeCopilotModels } from "@app/utils/ai/github-copilot/probe-models";
 import type { CopilotModelRecord } from "@app/utils/ai/github-copilot/types";
+import { logger } from "@app/utils/logger";
 
 const CACHE_TTL_MS = 5 * 60_000;
 

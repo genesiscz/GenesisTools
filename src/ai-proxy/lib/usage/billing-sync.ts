@@ -3,7 +3,7 @@ import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import type { AiProxyAccountConfig, AiProxyConfig, SubscriptionUsageDetails } from "@app/ai-proxy/lib/types";
 import { billingSnapshotIsStale, readBillingStore, saveBillingSnapshot } from "@app/ai-proxy/lib/usage/store";
 import type { AccountBillingSnapshot } from "@app/ai-proxy/lib/usage/types";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 
 const syncInFlight = new Set<string>();
 

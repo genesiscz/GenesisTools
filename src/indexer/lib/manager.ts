@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { removeRecursive } from "@app/utils/fs";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { ensureExtensionCapableSQLite } from "@app/utils/search/stores/sqlite-vec-loader";
 import type { Storage } from "@app/utils/storage/storage";
 import { CONFIG_FILENAME, ContextArtifactSource, loadContextConfig } from "./context-artifacts";

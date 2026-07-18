@@ -1,5 +1,5 @@
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import { getLocalIpv4 } from "@app/utils/network";
 import { stripAnsi } from "@app/utils/string";
 import pc from "picocolors";

@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
-import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import chalk from "chalk";
 import { detectProject, findSiblingClones } from "../lib/projects";
 import { openStashDb } from "../lib/stash-db";

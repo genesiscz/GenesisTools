@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
+import { logger } from "@app/utils/logger";
 import type { SearchResult, WebSearchOptions } from "@ask/types";
 import { z } from "zod";
 

@@ -1,9 +1,9 @@
-import { out } from "@app/logger";
 import { findProjectRoot } from "@app/todo/lib/context";
 import { formatTodoList } from "@app/todo/lib/format";
 import { TodoStore } from "@app/todo/lib/store";
 import type { OutputFormat, Todo, TodoFilters, TodoPriority, TodoStatus } from "@app/todo/lib/types";
 import { isInteractive, parseVariadic } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import { Command, Option } from "commander";
 
 const ACTIVE_STATUSES: TodoStatus[] = ["todo", "in-progress", "blocked"];

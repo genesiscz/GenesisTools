@@ -6,7 +6,7 @@ import { handleReadmeFlag } from "@app/utils/readme";
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
 
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import chalk from "chalk";
 import { Command } from "commander";
 import { backupManager } from "./backup";

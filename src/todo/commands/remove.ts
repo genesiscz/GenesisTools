@@ -1,7 +1,7 @@
-import { out } from "@app/logger";
 import { findProjectRoot } from "@app/todo/lib/context";
 import { TodoStore } from "@app/todo/lib/store";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 

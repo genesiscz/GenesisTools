@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { basename } from "node:path";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { killWithEscalation } from "@app/utils/process/killWithEscalation";
 
 export function extractRowidFromEmlxPath(emlxPath: string): number | null {

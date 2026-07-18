@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import { resolveAccountToken } from "@app/utils/claude/subscription-auth";
 import type { AIAccountEntry } from "@app/utils/config/ai.types";
+import { logger } from "@app/utils/logger";
 
 export type { AccountInfo, KeychainCredentials } from "@app/utils/claude/auth";
 

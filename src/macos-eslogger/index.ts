@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import * as p from "@app/utils/prompts/p";
 import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import { handleReadmeFlag } from "@app/utils/readme";

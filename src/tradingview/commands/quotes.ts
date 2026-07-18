@@ -1,4 +1,4 @@
-import { logger, out } from "@app/logger";
+import { logger, out } from "@app/utils/logger";
 import pc from "picocolors";
 import { fetchAuthToken, resolveSession } from "../lib/auth";
 import { formatQuoteLine } from "../lib/format";

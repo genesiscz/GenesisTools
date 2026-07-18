@@ -1,4 +1,4 @@
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { Storage } from "@app/utils/storage/storage";
 
 export interface ConfigMigration {

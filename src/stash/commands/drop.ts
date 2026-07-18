@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
-import { logger } from "@app/logger";
 import { isInteractive } from "@app/utils/cli";
+import { logger } from "@app/utils/logger";
 import { openStashDb } from "../lib/stash-db";
 import { StashStorage } from "../lib/storage";
 import { StoreRepo } from "../lib/store-repo";

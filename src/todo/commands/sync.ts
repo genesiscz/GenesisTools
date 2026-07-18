@@ -1,7 +1,7 @@
-import { out } from "@app/logger";
 import { findProjectRoot } from "@app/todo/lib/context";
 import { TodoStore } from "@app/todo/lib/store";
 import { countSynced, describeSyncFailures, type SyncTarget, syncSucceeded, syncTodo } from "@app/todo/lib/sync";
+import { out } from "@app/utils/logger";
 import { Command } from "commander";
 import pc from "picocolors";
 

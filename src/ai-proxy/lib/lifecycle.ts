@@ -13,9 +13,9 @@ import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import { probeUrl } from "@app/ai-proxy/lib/tunnel/cloudflared";
 import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
 import { scheduleBillingSyncForConfig } from "@app/ai-proxy/lib/usage/billing-sync";
-import { logger, out } from "@app/logger";
 import { spawnDetached } from "@app/utils/DashboardApp/detach";
 import { waitForUrlReady } from "@app/utils/DashboardApp/readiness";
+import { logger, out } from "@app/utils/logger";
 import { getPortOwner } from "@app/utils/network";
 import { isProcessAlive } from "@app/utils/process-alive";
 

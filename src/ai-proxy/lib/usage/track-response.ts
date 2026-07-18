@@ -2,7 +2,7 @@ import type { ResolvedRoute } from "@app/ai-proxy/lib/types";
 import { recordClientUsage } from "@app/ai-proxy/lib/usage/client-ledger";
 import { bodyWantsStream, extractLatestUsageFromSse, extractUsageFromJsonBody } from "@app/ai-proxy/lib/usage/extract";
 import { recordUsageRequest } from "@app/ai-proxy/lib/usage/store";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 
 export function trackCompletedRequest(input: {
     route: ResolvedRoute;

@@ -1,10 +1,10 @@
 import { resolve } from "node:path";
-import { logger } from "@app/logger";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
 import { buildMeasureReport, expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
 import { parseVariadic } from "@app/utils/cli";
+import { logger } from "@app/utils/logger";
 import { Command, Option } from "commander";
 
 const log = logger.child({ component: "clones:measure-cmd" });

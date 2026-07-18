@@ -10,9 +10,9 @@
 
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
-import { out } from "@app/logger";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { DISTRICTS, type DistrictInfo } from "./data/districts";

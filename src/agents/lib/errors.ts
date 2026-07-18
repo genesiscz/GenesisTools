@@ -1,4 +1,4 @@
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 
 export class FriendlyError extends Error {
     public readonly hint?: string;

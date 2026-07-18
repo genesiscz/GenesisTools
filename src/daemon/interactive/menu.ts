@@ -1,4 +1,4 @@
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { getDaemonPid, startDaemon } from "../daemon";

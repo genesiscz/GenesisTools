@@ -1,7 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { out } from "@app/logger";
 import { ClaudeSessionFormatter } from "@app/utils/claude/ClaudeSessionFormatter";
 import { IncludeSpec } from "@app/utils/claude/cli/dsl";
 import { ClaudeSession } from "@app/utils/claude/session";
@@ -16,6 +15,7 @@ import type {
 import { suggestCommand } from "@app/utils/cli/executor";
 import { formatRelativeTime } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import { truncateText } from "@app/utils/string";
 import pc from "picocolors";
 

@@ -10,8 +10,8 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { PROFILE_VERSION, type Profile, type ProfileSummary } from "@app/cmux/lib/types";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { Storage } from "@app/utils/storage";
 
 const NAME_PATTERN = /^[A-Za-z0-9._-]+$/;

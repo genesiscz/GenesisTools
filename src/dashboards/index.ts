@@ -2,9 +2,9 @@
 
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
-import { logger, out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { env } from "@app/utils/env";
+import { logger, out } from "@app/utils/logger";
 import { DASHBOARDS, type DashboardKey } from "@app/utils/ui/dashboards";
 import { Command } from "commander";
 

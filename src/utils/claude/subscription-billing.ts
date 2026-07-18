@@ -25,8 +25,8 @@
  * Required system prompt prefix: "You are Claude Code, Anthropic's official CLI for Claude."
  */
 import { createHash } from "node:crypto";
-import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 
 const BILLING_SALT = "59cf53e54c78";
 const CC_VERSION = "2.1.78";

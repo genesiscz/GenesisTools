@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import { startWakefulInterval, type WakefulInterval } from "@app/utils/async";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { collectPulse } from "./collector";
 import { PulseHistoryDb } from "./history-db";
 import type { PulseSeries, PulseSnapshot } from "./types";

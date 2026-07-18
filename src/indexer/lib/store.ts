@@ -1,13 +1,13 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { logger } from "@app/logger";
 import { Embedder } from "@app/utils/ai/tasks/Embedder";
 import { attachReadonly, detachQuietly } from "@app/utils/database/attach";
 import { countActiveEmbeddings, countPairedEmbeddings } from "@app/utils/database/embedding-stats";
 import { getPendingMigrations, runMigrations } from "@app/utils/database/migrations";
 import { acquireLock, type LockHandle } from "@app/utils/fs/lock";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { SearchEngine } from "@app/utils/search/drivers/sqlite-fts5/index";
 import type { QdrantVectorStore } from "@app/utils/search/stores/qdrant-vector-store";
 import {

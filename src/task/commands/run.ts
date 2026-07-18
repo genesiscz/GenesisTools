@@ -1,4 +1,3 @@
-import { logger, out } from "@app/logger";
 import { printRunBanner, printRunExitSummary } from "@app/task/lib/banner";
 import { loadTaskToolConfig } from "@app/task/lib/config";
 import { pollSessionExitCode, shouldSuperviseDetachedRun, spawnDetachedRunWorker } from "@app/task/lib/detached-run";
@@ -9,6 +8,7 @@ import { runTask } from "@app/task/lib/runner";
 import { TaskSessionStore } from "@app/task/lib/session-store";
 import { suggestClearOlderThanSeq, suggestTail } from "@app/task/lib/suggest-flags";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
+import { logger, out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";

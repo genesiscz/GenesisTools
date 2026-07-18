@@ -1,5 +1,5 @@
-import { logger, out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
+import { logger, out } from "@app/utils/logger";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import { sessionExists } from "@app/utils/tmux/sessions";
 import { restoreTmuxSession, type TmuxPreset } from "@app/utils/tmux/snapshot";

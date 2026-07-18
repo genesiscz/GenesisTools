@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import { formatDuration, parseDuration } from "@app/utils/format";
+import { logger } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";

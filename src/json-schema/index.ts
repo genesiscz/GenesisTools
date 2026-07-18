@@ -1,8 +1,8 @@
-import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { SafeJSON } from "@app/utils/json";
 import { formatSchema, type OutputMode } from "@app/utils/json-schema";
+import { out } from "@app/utils/logger";
 import { Command, Option } from "commander";
 
 interface Options {

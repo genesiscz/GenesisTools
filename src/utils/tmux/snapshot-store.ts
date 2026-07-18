@@ -9,8 +9,8 @@ import {
     writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { Storage } from "@app/utils/storage";
 import { SNAPSHOT_VERSION, type TmuxPreset } from "@app/utils/tmux/snapshot";
 

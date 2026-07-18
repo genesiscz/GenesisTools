@@ -1,7 +1,7 @@
-import { out } from "@app/logger";
 import { AIConfig } from "@app/utils/ai/AIConfig";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
+import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";

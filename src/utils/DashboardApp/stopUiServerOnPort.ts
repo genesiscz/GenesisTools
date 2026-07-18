@@ -1,4 +1,4 @@
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { parsePidLines } from "@app/utils/network";
 
 function readPidsOnPort(port: number): number[] {

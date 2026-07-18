@@ -1,6 +1,6 @@
 import { isResponsesShapedBody } from "@app/ai-proxy/lib/translators/formats/openai/detect";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 
 export { isResponsesShapedBody } from "@app/ai-proxy/lib/translators/formats/openai/detect";
 

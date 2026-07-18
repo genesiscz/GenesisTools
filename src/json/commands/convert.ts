@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fromToon as decode, toToon as encode } from "@app/json/lib/toon";
-import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import type { Command } from "commander";
 
 type Format = "json" | "jsonl" | "toon" | "embedded-json" | "unknown";

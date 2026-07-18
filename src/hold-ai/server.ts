@@ -1,5 +1,5 @@
-import { logger as log } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger as log } from "@app/utils/logger";
 import * as p from "@app/utils/prompts/p";
 import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import { handleReadmeFlag } from "@app/utils/readme";

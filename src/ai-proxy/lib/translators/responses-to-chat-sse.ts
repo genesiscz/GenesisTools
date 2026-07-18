@@ -8,8 +8,8 @@ import {
 } from "@app/ai-proxy/lib/translators/responses-stream-translator";
 import type { ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
 import { type PipelineResult, pipelineResult } from "@app/ai-proxy/lib/usage/pipeline-result";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 
 type JsonObject = Record<string, unknown>;
 

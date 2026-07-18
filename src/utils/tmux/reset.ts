@@ -1,4 +1,4 @@
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { ensureTmuxServerPersists } from "@app/utils/tmux/sessions";
 import {
     captureTmuxSnapshot,

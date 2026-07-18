@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import * as p from "@app/utils/prompts/p";
 import type { MCPProvider, UnifiedMCPConfig } from "./providers/types.js";
 

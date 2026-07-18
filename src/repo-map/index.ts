@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
-import { logger, out } from "@app/logger";
 import { runTool, suggestCommand } from "@app/utils/cli";
+import { logger, out } from "@app/utils/logger";
 import clipboardy from "clipboardy";
 import { Command } from "commander";
 import { packByBudget } from "./lib/pack";

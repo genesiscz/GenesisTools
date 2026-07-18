@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { encodeFrame, genSessionId, isHeartbeat, parseFrames } from "./protocol";
 import type { StudyValues } from "./study";
 import { toProSymbol } from "./symbols";

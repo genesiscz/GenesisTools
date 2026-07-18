@@ -1,7 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, resolve, sep } from "node:path";
-import { logger, out } from "@app/logger";
 import { ClaudeSessionFormatter } from "@app/utils/claude/ClaudeSessionFormatter";
 import { ClaudeSessionTailer } from "@app/utils/claude/ClaudeSessionTailer";
 import { INCLUDE_HELP, IncludeSpec } from "@app/utils/claude/cli/dsl";
@@ -11,6 +10,7 @@ import type { TailTarget } from "@app/utils/claude/session.types";
 import { readHeadTailLines } from "@app/utils/claude/session.utils";
 import { suggestCommand } from "@app/utils/cli/executor";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";

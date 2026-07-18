@@ -13,8 +13,8 @@ import { handleWithRouter } from "@app/dev-dashboard/server/adapters/node-connec
 import { defaultSystemCollector } from "@app/dev-dashboard/server/collector/SystemCollector";
 import { createDashboardRouter, startBackgroundServices } from "@app/dev-dashboard/server/registry";
 import { setDashboardBoundPort } from "@app/dev-dashboard/server/routes/net";
-import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
+import { logger } from "@app/utils/logger";
 import type { Connect } from "vite";
 
 // The route handlers + the cmux/pulse pollers now live in the extracted,

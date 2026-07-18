@@ -1,4 +1,4 @@
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { resolveTmuxBin } from "@app/utils/tmux/bin";
 import { buildTmuxSpawnEnv } from "@app/utils/tmux/sessions";
 

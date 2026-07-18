@@ -61,7 +61,7 @@ export function registerShowCommand(program: Command): void {
 }
 
 import type { OutputFormat } from "@app/har-analyzer/types";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 
 async function showDetail(entry: HarEntry, fullUrl: string, format: OutputFormat): Promise<void> {
     const lines: string[] = [];

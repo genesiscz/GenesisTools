@@ -15,8 +15,8 @@ import { registerConfigureAuthorsCommand } from "@app/git/commands/configure-aut
 import { registerConfigureWorkitemPatternsCommand } from "@app/git/commands/configure-workitem-patterns";
 import { registerHealthCommand } from "@app/git/commands/health";
 import { registerMonsterCommand } from "@app/git/commands/monster";
-import { logger, out } from "@app/logger";
 import { enhanceHelp, runTool } from "@app/utils/cli";
+import { logger, out } from "@app/utils/logger";
 import { Storage } from "@app/utils/storage";
 import { Command } from "commander";
 

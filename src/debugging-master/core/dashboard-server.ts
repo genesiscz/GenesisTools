@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { sseBroadcaster } from "@app/debugging-master/core/sse-broadcaster";
 import type { LogEntry } from "@app/debugging-master/types";
-import { SafeJSON } from "@app/utils/json";
 import type { DashboardSession, LogSourceId } from "@app/log-viewer/log-source";
 import { getAllLogSources, getLogSource } from "@app/log-viewer/resolve-log-source";
 import { isLogSourceId } from "@app/log-viewer/session-key";
@@ -10,6 +9,7 @@ import { decodeSessionPathSegment, isSafeLogSessionName } from "@app/log-viewer/
 import { sortSessionsByRecency } from "@app/log-viewer/session-recency";
 import { resolveSessionState } from "@app/log-viewer/session-state";
 import { enrichDashboardTimestamps } from "@app/log-viewer/tail-bridge";
+import { SafeJSON } from "@app/utils/json";
 
 const REF_ID = /^([se])([1-9]\d*)$/;
 

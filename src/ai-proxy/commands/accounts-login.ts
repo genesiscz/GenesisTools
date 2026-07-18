@@ -6,13 +6,13 @@ import {
     saveConfig,
 } from "@app/ai-proxy/lib/config";
 import { clearCopilotModelsCache } from "@app/ai-proxy/lib/copilot-models-cache";
-import { logger, out } from "@app/logger";
 import {
     clearGithubCopilotTokenResolutionCache,
     clearSessionCache,
     fetchGithubUserLogin,
 } from "@app/utils/ai/github-copilot";
 import { copilotDataDir, copilotGhoTokenAuthKey, githubTokenPath } from "@app/utils/ai/github-copilot/paths";
+import { logger, out } from "@app/utils/logger";
 import { runGitHubDeviceLogin } from "@app/utils/oauth";
 import { authStorageBackend, setAuthSecret } from "@app/utils/storage";
 

@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import { ensureBeautified, ensureBundle, ensureNormalized } from "../lib/bundle";
 
 export interface UnpackOptions {

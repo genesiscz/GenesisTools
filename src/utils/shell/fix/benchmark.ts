@@ -6,8 +6,8 @@
  * Usage: bun src/utils/shell/fix/benchmark.ts
  */
 
-import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import chalk from "chalk";
 import { fixShellCommand as fixRegex } from "./impl-regex.js";
 import { testCases } from "./test.data.js";

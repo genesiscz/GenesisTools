@@ -1,10 +1,10 @@
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { findModel } from "@app/utils/ai/ModelRegistry";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import { startWakefulInterval, type WakefulInterval } from "@app/utils/async";
 import type { WatcherSubscription } from "@app/utils/fs/watcher";
+import { logger } from "@app/utils/logger";
 import { Stopwatch } from "@app/utils/Stopwatch";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
 import type { ChunkResult } from "./chunker";

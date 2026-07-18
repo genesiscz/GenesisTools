@@ -1,5 +1,5 @@
-import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import { cachedPackument } from "../lib/bundle";
 import { resolveRange } from "../lib/registry";
 

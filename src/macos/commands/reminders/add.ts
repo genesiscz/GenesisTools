@@ -1,5 +1,5 @@
-import { out } from "@app/logger";
 import { parseDate } from "@app/utils/date";
+import { out } from "@app/utils/logger";
 import { MacReminders, ReminderPriority } from "@app/utils/macos/apple-reminders";
 import { type Command, Option } from "commander";
 import pc from "picocolors";

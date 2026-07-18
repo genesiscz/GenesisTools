@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
-import { logger } from "@app/logger";
 import { runGetProduct } from "@app/shops/lib/get-product";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { formatTable } from "@app/utils/table";
 import clipboardy from "clipboardy";
 import type { Command } from "commander";

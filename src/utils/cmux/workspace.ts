@@ -1,4 +1,3 @@
-import { logger } from "@app/logger";
 import { findWorkspaceByName } from "@app/utils/cmux/layout";
 import { runCmuxJSON, runCmuxOk } from "@app/utils/cmux/lib/cli";
 import { withFocusedWorkspace } from "@app/utils/cmux/lib/focus-guard";
@@ -8,6 +7,7 @@ import {
     type WorkspaceCreateResult,
     workspaceCreate,
 } from "@app/utils/cmux/lib/socket";
+import { logger } from "@app/utils/logger";
 import { localeExportPrefix } from "@app/utils/terminal/locale";
 
 export interface OpenSplitResult {

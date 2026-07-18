@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
-import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
+import { logger } from "@app/utils/logger";
 
 const UTF8_PATTERN = /utf-?8/i;
 

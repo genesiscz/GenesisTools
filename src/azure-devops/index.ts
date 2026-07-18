@@ -15,7 +15,7 @@
 
 import { exitWithAuthGuide, exitWithSslGuide, isAuthError, isSslError } from "@app/azure-devops/cli.utils";
 import { azLoginSuggestionBlock } from "@app/azure-devops/lib/az-cli.utils";
-import { logger, out } from "@app/logger";
+import { logger, out } from "@app/utils/logger";
 import * as p from "@app/utils/prompts/p";
 import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import { handleReadmeFlag } from "@app/utils/readme";

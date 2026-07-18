@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import type { ExecResult } from "@app/utils/cli";
 import { Executor } from "@app/utils/cli";
+import { logger } from "@app/utils/logger";
 import type { BranchInfo, DetailedCommitInfo } from "./types";
 
 export interface GitOptions {

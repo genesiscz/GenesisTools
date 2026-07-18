@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import { out } from "@app/logger";
 import { enhanceHelp, isInteractive, runTool } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
 import { Command } from "commander";

@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
-import { logger } from "@app/logger";
 import { buildOrderedLikePattern, escapeLike } from "@app/utils/database";
 import { attachReadonly, detachQuietly } from "@app/utils/database/attach";
+import { logger } from "@app/utils/logger";
 import { ENVELOPE_INDEX_PATH } from "@app/utils/macos/mail/constants";
 import type { MailDB } from "@app/utils/macos/mail/db-types";
 import type {

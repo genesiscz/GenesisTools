@@ -1,10 +1,10 @@
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { out } from "@app/logger";
 import { discoverTools } from "@app/tools/lib/discovery";
 import { getAgentRuntimeContext } from "@app/utils/agent-runtime";
 import { runTool } from "@app/utils/cli";
 import { env } from "@app/utils/env";
+import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";

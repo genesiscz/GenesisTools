@@ -21,12 +21,12 @@ import {
     rangeBoundsMs,
 } from "@app/git/lib/rebase-classifier";
 import { extractFromMessage, loadWorkitemPatternsAsync } from "@app/git/workitem-patterns";
-import { logger, out } from "@app/logger";
 import { Executor } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { formatDateTime } from "@app/utils/date";
 import type { DetailedCommitInfo } from "@app/utils/git";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import { Stopwatch } from "@app/utils/Stopwatch";
 import { Storage } from "@app/utils/storage";
 import chalk from "chalk";

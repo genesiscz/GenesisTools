@@ -1,4 +1,3 @@
-import { out } from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { formatSummary, runGoldenHarness } from "@app/shops/lib/golden-harness";
 import {
@@ -9,6 +8,7 @@ import {
     resolveProductId,
 } from "@app/shops/lib/match-api";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import type { Command } from "commander";
 
 export function registerMatchCommand(program: Command): void {

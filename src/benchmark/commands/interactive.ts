@@ -1,5 +1,5 @@
-import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
+import { out } from "@app/utils/logger";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
 import pc from "picocolors";

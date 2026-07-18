@@ -11,8 +11,8 @@
  *   tools git configure-authors    # interactive (default)
  */
 
-import { out } from "@app/logger";
 import { Executor } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
 import chalk from "chalk";

@@ -1,6 +1,5 @@
 // Adapted from topmonks/hlidac-shopu (EUPL-1.2) — actors/benu-daily/main.js
 
-import { logger } from "@app/logger";
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import {
@@ -12,6 +11,7 @@ import {
     type BenuRichSnippet,
 } from "@app/shops/api/shops/BenuClient.types";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { parseHTML } from "linkedom";
 
 const BENU_ORIGIN = "benu.cz";

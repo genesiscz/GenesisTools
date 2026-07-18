@@ -1,4 +1,3 @@
-import { out } from "@app/logger";
 import { formatSessionState } from "@app/task/lib/format-session-state";
 import { sessionFilePaths } from "@app/task/lib/paths";
 import { TaskSessionStore } from "@app/task/lib/session-store";
@@ -11,6 +10,7 @@ import {
 } from "@app/task/lib/suggest-flags";
 import { formatBytes } from "@app/utils/format";
 import { filterByStream, filterLineRecords, lastNLines, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
+import { out } from "@app/utils/logger";
 
 export async function getSessionInfo(session: string): Promise<void> {
     const store = new TaskSessionStore();

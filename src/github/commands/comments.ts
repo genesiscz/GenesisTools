@@ -15,7 +15,6 @@ import {
 } from "@app/github/lib/cache";
 import { calculateStats, formatIssue } from "@app/github/lib/output";
 import { findReplyTarget, processQuotes } from "@app/github/lib/quotes";
-import { logger, out } from "@app/logger";
 import { formatLocalDateTimeStamp } from "@app/utils/date";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
@@ -30,6 +29,7 @@ import {
     toCommentRecord,
     verbose,
 } from "@app/utils/github/utils";
+import { logger, out } from "@app/utils/logger";
 import chalk from "chalk";
 import { Command } from "commander";
 

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { sweepStaleLocks } from "@app/utils/storage/stale-lock-sweep";
 import { appendFeed } from "./feed";
 import { assertSafePathSegment } from "./paths";

@@ -1,7 +1,7 @@
 import { createInterface } from "node:readline";
 import { parseAuthCurl } from "@app/clarity/lib/parse-auth-curl";
-import { out } from "@app/logger";
 import { ClarityApi } from "@app/utils/clarity";
+import { out } from "@app/utils/logger";
 import * as clack from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";

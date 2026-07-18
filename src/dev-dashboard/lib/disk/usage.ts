@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
+import { logger } from "@app/utils/logger";
 import type { DiskUsageEntry, DiskUsageResult } from "./types";
 
 /** One `du -sk` row is "<kilobytes>\t<path>"; split on the FIRST whitespace run so paths with

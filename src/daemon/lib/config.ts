@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
+import { logger } from "@app/utils/logger";
 import { Storage } from "@app/utils/storage/storage";
 import { parseInterval } from "./interval";
 import type { DaemonConfig, DaemonTask } from "./types";

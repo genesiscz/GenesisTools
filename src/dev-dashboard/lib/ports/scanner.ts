@@ -1,6 +1,6 @@
 import { classifyPortBatch, enrichPortsMeta } from "@app/dev-dashboard/lib/ports/enrich";
 import type { KillPortResult, PortInfo, PortsResult } from "@app/dev-dashboard/lib/ports/types";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 
 /**
  * Parse `lsof -nP -iTCP -sTCP:LISTEN` output into PortInfo[]. PURE + the unit-tested boundary.

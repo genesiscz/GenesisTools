@@ -3,9 +3,9 @@
 // debounced saved-layout reflow. The pure geometry is testable in isolation; DB writes go through
 // bulkLayout and SSE publishes after the writes commit.
 
-import { logger } from "@app/logger";
 import type { DatabaseClient } from "@app/utils/database/client";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { bulkLayout, toCardDto } from "./boards-store";
 import {
     type ArrangeMode,

@@ -1,4 +1,3 @@
-import { logger } from "@app/logger";
 import { runCmuxJSON } from "@app/utils/cmux/lib/cli";
 import { redactTerminalPreview } from "@app/utils/cmux/lib/live-snapshot";
 import { type WorkspaceEntry, windowList, workspaceList } from "@app/utils/cmux/lib/socket";
@@ -9,6 +8,7 @@ import type {
     CmuxLayoutWindow,
     CmuxLayoutWorkspace,
 } from "@app/utils/cmux/types";
+import { logger } from "@app/utils/logger";
 
 interface PaneListRpc {
     panes?: PaneRpc[];

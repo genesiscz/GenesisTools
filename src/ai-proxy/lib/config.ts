@@ -9,7 +9,6 @@ import {
     suggestedModelFor,
 } from "@app/ai-proxy/lib/detect-report";
 import type { AiProxyAccountConfig, AiProxyConfig } from "@app/ai-proxy/lib/types";
-import { logger } from "@app/logger";
 import {
     fetchCopilotUserInfo,
     fetchGithubUserLogin,
@@ -25,6 +24,7 @@ import {
     readAuthFileAsync,
 } from "@app/utils/ai/grok";
 import { env } from "@app/utils/env";
+import { logger } from "@app/utils/logger";
 import { collapsePath } from "@app/utils/paths";
 
 export { getDefaultConfig, parseConfigJson, redactConfig };

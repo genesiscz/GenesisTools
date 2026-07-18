@@ -1,7 +1,7 @@
-import { logger } from "@app/logger";
 import type { DispatchResult, NotificationChannel, NotificationPayload } from "@app/shops/lib/channels/types";
 import { TelegramBotClient } from "@app/shops/lib/telegram-bot-client";
 import { env as appEnv } from "@app/utils/env";
+import { logger } from "@app/utils/logger";
 
 const log = logger.child({ component: "TelegramBotChannel" });
 

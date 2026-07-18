@@ -3,7 +3,6 @@ import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/typ
 import { rewriteBodyModel } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import { prepareCopilotRequest } from "@app/ai-proxy/lib/translators/providers/github-copilot/prepare-request";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
-import { logger } from "@app/logger";
 import {
     CopilotAuthExpiredError,
     fetchCopilotModels,
@@ -15,6 +14,7 @@ import {
     summarizeCopilotUsage,
     toProxyId,
 } from "@app/utils/ai/github-copilot";
+import { logger } from "@app/utils/logger";
 export class GithubCopilotSubscriptionProvider implements ProxyProvider {
     readonly id = "github-copilot-subscription";
     readonly accountFingerprint: string;

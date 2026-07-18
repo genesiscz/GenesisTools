@@ -1,5 +1,6 @@
 import type { DetectedProvider, ModelInfo } from "@app/utils/ask/types";
 import type { AIProvider } from "@app/utils/config/ai.types";
+import { logger } from "@app/utils/logger";
 import type { AccountResolver } from "./index";
 
 export class OpenAISubResolver implements AccountResolver {

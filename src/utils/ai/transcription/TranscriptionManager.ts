@@ -1,6 +1,6 @@
 import { statSync } from "node:fs";
-import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
+import { logger } from "@app/utils/logger";
 import type { TranscriptionModel } from "ai";
 import { transcribe } from "ai";
 import pc from "picocolors";

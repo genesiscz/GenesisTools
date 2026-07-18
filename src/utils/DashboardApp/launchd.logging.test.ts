@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { kickstartLaunchd } from "./launchd";
 
 describe("launchd swallowed-error logging", () => {

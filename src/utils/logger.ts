@@ -15,7 +15,7 @@ import PinoPretty from "pino-pretty";
 import { makeOut, type Out } from "./logger/out";
 
 // Surface the standalone unscoped `out` through the package entry so callers
-// can `import { out } from "@app/logger"` (the two-layer model's user-facing
+// can `import { out } from "@app/utils/logger"` (the two-layer model's user-facing
 // channel). No new ESM-cycle risk: logger.ts already statically depends on
 // ./logger/out for makeOut — this re-export adds nothing to the cycle graph.
 export { out } from "./logger/out";

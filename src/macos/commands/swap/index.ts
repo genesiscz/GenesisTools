@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import { renderJson, renderResult } from "@app/macos/lib/swap/display";
 import { scan } from "@app/macos/lib/swap/scanner";
+import { logger } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 

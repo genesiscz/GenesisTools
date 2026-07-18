@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import type { BrandAliasesRepository } from "@app/shops/db/BrandAliasesRepository";
 import { normalizeBrand } from "@app/shops/lib/normalize";
+import { logger } from "@app/utils/logger";
 
 export class BrandResolver {
     private readonly log = logger.child({

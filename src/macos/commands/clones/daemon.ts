@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { registerTask, unregisterTask } from "@app/daemon/lib/register";
-import { logger } from "@app/logger";
 import { Executor } from "@app/utils/cli";
+import { logger } from "@app/utils/logger";
 import { escapeShellArg } from "@app/utils/string";
 import { Command } from "commander";
 

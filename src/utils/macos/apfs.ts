@@ -1,5 +1,5 @@
 import { dlopen, FFIType, ptr } from "bun:ffi";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 
 const IS_DARWIN = process.platform === "darwin";
 

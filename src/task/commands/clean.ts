@@ -1,6 +1,6 @@
-import { out } from "@app/logger";
 import { TaskSessionStore } from "@app/task/lib/session-store";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
+import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 

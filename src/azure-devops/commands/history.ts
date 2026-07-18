@@ -10,8 +10,8 @@ import { formatJSON, isHistoryFresh, loadWorkItemCache, updateWorkItemCacheSecti
 import { buildWorkItemHistory, calculateTimeInState, userMatches } from "@app/azure-devops/history";
 import type { AssignmentPeriod, StatePeriod, WorkItemHistorySection } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
-import { logger, out } from "@app/logger";
 import { formatDuration as _formatDuration } from "@app/utils/format";
+import { logger, out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";

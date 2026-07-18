@@ -1,10 +1,10 @@
 import { existsSync, readdirSync, rmdirSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { type AIProviderType, isCloudProvider } from "@app/utils/config/ai.types";
 import { env } from "@app/utils/env";
 import { formatBytes } from "@app/utils/format";
+import { logger } from "@app/utils/logger";
 import { ensurePackage } from "@app/utils/packages";
 import { getModelsByProvider } from "./ModelRegistry";
 import type { ModelEntry } from "./types";

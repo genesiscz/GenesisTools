@@ -1,10 +1,10 @@
-import { logger } from "@app/logger";
 import { jsonlPath, sessionFilePaths, stderrLogPath, stdoutLogPath, uiJsonlPath } from "@app/task/lib/paths";
 import { TaskSessionStore } from "@app/task/lib/session-store";
 import type { ResolvedRunSession, RunTaskOptions, RunTaskResult } from "@app/task/types";
 import { env } from "@app/utils/env";
 import { JsonlWriter } from "@app/utils/log-session/jsonl-writer";
 import { OrderedCaptureWriter } from "@app/utils/log-session/ordered-capture-writer";
+import { logger } from "@app/utils/logger";
 
 const log = logger.child({ component: "task:runner" });
 

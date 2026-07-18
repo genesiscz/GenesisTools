@@ -1,8 +1,8 @@
-import { logger } from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { MasterDetail } from "@app/shops/types";
 import { apiHandler } from "@app/shops/ui/server/api-utils";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { createFileRoute } from "@tanstack/react-router";
 import { sql } from "kysely";
 

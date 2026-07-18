@@ -1,5 +1,5 @@
-import { out } from "@app/logger";
 import { formatLocalDateTimeStamp } from "@app/utils/date";
+import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { getLogsBaseDir } from "../lib/config";

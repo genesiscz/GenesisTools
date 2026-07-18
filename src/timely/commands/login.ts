@@ -1,7 +1,7 @@
-import { logger } from "@app/logger";
 import type { TimelyApiClient } from "@app/timely/api/client";
 import type { OAuthApplication } from "@app/timely/types";
 import { Browser } from "@app/utils/browser";
+import { logger } from "@app/utils/logger";
 import * as p from "@app/utils/prompts/p";
 import type { Storage } from "@app/utils/storage";
 import chalk from "chalk";

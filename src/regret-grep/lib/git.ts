@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import { createGit } from "@app/utils/git";
+import { logger } from "@app/utils/logger";
 import { isBugFixSubject } from "./tokenize";
 import type { RawCommit } from "./types";
 

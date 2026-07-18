@@ -1,8 +1,8 @@
 import { buildPlan, type RestoreOptions, restoreProfile } from "@app/cmux/lib/restore";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
 import type { Profile } from "@app/cmux/lib/types";
-import { logger, out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
+import { logger, out } from "@app/utils/logger";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";

@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import { startWakefulInterval, type WakefulInterval } from "@app/utils/async";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const encoder = new TextEncoder();

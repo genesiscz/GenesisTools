@@ -1,7 +1,7 @@
 import * as path from "node:path";
-import { logger } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { env } from "@app/utils/env";
+import { logger } from "@app/utils/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { spawn } from "bun";
 import chalk from "chalk";

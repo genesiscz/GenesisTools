@@ -11,9 +11,9 @@ import {
     suggestAlias,
     updateLevel,
 } from "@app/aliases/lib/core";
-import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { Storage } from "@app/utils/storage/storage";
 
 const DAY_MS = 24 * 60 * 60 * 1000;

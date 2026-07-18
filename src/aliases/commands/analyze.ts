@@ -6,8 +6,8 @@ import {
     resolveHistoryFile,
     runAnalysis,
 } from "@app/aliases/lib/analysis";
-import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import type { Command } from "commander";
 
 async function analyzeAction(flags: AnalyzeFlags): Promise<void> {

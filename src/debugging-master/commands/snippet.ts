@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { ConfigManager } from "@app/debugging-master/core/config-manager";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import type { Command } from "commander";
 
 const SNIPPET_TYPES = ["dump", "info", "warn", "error", "timer", "checkpoint", "assert", "snapshot", "trace"] as const;

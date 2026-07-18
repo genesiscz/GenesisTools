@@ -69,7 +69,7 @@ const config = defineConfig({
                 replacement: fileURLToPath(new URL("../../packages/shared/src/index.ts", import.meta.url)),
             },
             {
-                find: "@app/logger/client",
+                find: "@app/utils/logger/client",
                 replacement: fileURLToPath(new URL("../../../logger/client.ts", import.meta.url)),
             },
             { find: "@app/utils/json", replacement: fileURLToPath(new URL("../../../utils/json.ts", import.meta.url)) },

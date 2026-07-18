@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { formatSchema, type OutputMode } from "@app/utils/json-schema";
+import { logger } from "@app/utils/logger";
 
 export type OutputFormat = OutputMode; // "schema" | "skeleton" | "typescript"
 

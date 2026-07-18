@@ -1,10 +1,10 @@
 import { hostname } from "node:os";
 import type { ListenerDto, WaitResultDto } from "@app/dev-dashboard/contract/dto";
 import { paths, type WorkListRes } from "@app/dev-dashboard/contract/endpoints";
-import { logger } from "@app/logger";
 import { printLn } from "@app/utils/cli";
 import { writeStderr } from "@app/utils/cli/stderr";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { wakefulSleep } from "@app/utils/wakeful";
 import type { Command } from "commander";
 import { computeAnnouncements, type SeenMap } from "../lib/announce";

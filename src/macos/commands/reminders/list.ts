@@ -1,5 +1,5 @@
-import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import { MacReminders } from "@app/utils/macos/apple-reminders";
 import { type Command, Option } from "commander";
 import { formatRemindersTable } from "./format";

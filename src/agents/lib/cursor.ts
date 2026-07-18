@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { atomicWriteFileSync } from "@app/utils/storage/storage";
 import { assertSafePathSegment } from "./paths";
 import type { SessionPaths } from "./types";

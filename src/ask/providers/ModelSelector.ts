@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import type { TranscriptionCapableProvider } from "@app/utils/ai/types";
 import { env } from "@app/utils/env";
+import { logger } from "@app/utils/logger";
 import type { SearchItem } from "@app/utils/prompts/clack";
 import { searchSelect, searchSelectCancelSymbol } from "@app/utils/prompts/clack";
 import { providerManager } from "@ask/providers/ProviderManager";

@@ -1,9 +1,9 @@
-import { logger } from "@app/logger";
 import { KosikAuthClient } from "@app/shops/api/shops/KosikAuthClient";
 import { RohlikAuthClient } from "@app/shops/api/shops/RohlikAuthClient";
 import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { UserProvidersRepository } from "@app/shops/db/UserProvidersRepository";
 import { isInteractive } from "@app/utils/cli";
+import { logger } from "@app/utils/logger";
 import { password, text } from "@clack/prompts";
 import type { Command } from "commander";
 

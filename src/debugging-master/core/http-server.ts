@@ -4,9 +4,8 @@ import { SESSIONS_DIR, sessionFilePath } from "@app/debugging-master/core/paths"
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import { sseBroadcaster } from "@app/debugging-master/core/sse-broadcaster";
 import type { LogEntry } from "@app/debugging-master/types";
-
-import { SafeJSON } from "@app/utils/json";
 import { decodeSessionPathSegment, isSafeLogSessionName } from "@app/log-viewer/session-name";
+import { SafeJSON } from "@app/utils/json";
 
 function ensureDir(): void {
     if (!existsSync(SESSIONS_DIR)) {

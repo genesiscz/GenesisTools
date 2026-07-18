@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { type Dirent, existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { ENVELOPE_INDEX_PATH } from "@app/utils/macos/mail/constants";
 import { htmlToMarkdown } from "@app/utils/markdown/html-to-md";
 import { extractRowidFromEmlxPath } from "./spotlight";

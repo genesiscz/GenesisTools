@@ -2,8 +2,8 @@
 
 // src/timely/index.ts
 
-import { logger, out } from "@app/logger";
 import { enhanceHelp, runTool } from "@app/utils/cli";
+import { logger, out } from "@app/utils/logger";
 import * as p from "@app/utils/prompts/p";
 import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import { Storage } from "@app/utils/storage";

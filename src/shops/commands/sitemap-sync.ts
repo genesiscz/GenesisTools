@@ -1,7 +1,7 @@
-import { logger } from "@app/logger";
 import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { parsePositiveInt } from "@app/shops/lib/cli-validators";
 import { listSitemapShops, type SitemapSyncResult, syncShopSitemap } from "@app/shops/lib/sitemap-sync";
+import { logger } from "@app/utils/logger";
 import type { Command } from "commander";
 
 interface SitemapSyncCliOpts {

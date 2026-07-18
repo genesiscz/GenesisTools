@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { grokModelsCachePath } from "./paths";
 import type { GrokModelRecord, GrokModelSpeed, GrokModelThinking, GrokModelVisibility } from "./types";
 

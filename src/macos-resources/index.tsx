@@ -2,7 +2,7 @@
 
 import { exec } from "node:child_process";
 import { parseArgs, promisify } from "node:util";
-import { logger, out } from "@app/logger";
+import { logger, out } from "@app/utils/logger";
 import { Box, render, Text, useApp, useInput } from "ink";
 import React, { useCallback, useEffect, useState } from "react";
 import Table from "./Table";

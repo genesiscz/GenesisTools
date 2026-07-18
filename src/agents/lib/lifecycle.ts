@@ -1,4 +1,4 @@
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 
 const log = logger.child({ component: "agents:lifecycle" });
 

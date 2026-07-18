@@ -1,9 +1,9 @@
-import { out } from "@app/logger";
 import { isStructuredFormat, printStructured } from "@app/macos/lib/mail/command-helpers";
 import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
 import { rowToMessage, truncateBody } from "@app/macos/lib/mail/transform";
 import { printLn } from "@app/utils/cli";
 import { formatBytes } from "@app/utils/format";
+import { out } from "@app/utils/logger";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import chalk from "chalk";
 import type { Command } from "commander";

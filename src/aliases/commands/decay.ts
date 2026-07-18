@@ -7,8 +7,8 @@ import {
     storage,
 } from "@app/aliases/lib/analysis";
 import { updateLevel } from "@app/aliases/lib/core";
-import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import type { Command } from "commander";
 
 async function decayAction(flags: DecayFlags): Promise<void> {

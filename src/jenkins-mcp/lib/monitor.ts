@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import type { AxiosInstance } from "axios";
 import { type ErrorBlock, extractErrors } from "./errors";
 import { formatDuration, stageNotifyBody, stageNotifyStatus, statusBody } from "./format";

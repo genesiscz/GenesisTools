@@ -18,8 +18,8 @@ import {
     validatePattern,
     type WorkitemPattern,
 } from "@app/git/workitem-patterns";
-import { out } from "@app/logger";
 import { createGit } from "@app/utils/git";
+import { out } from "@app/utils/logger";
 import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
 import chalk from "chalk";

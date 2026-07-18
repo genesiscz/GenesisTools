@@ -1,8 +1,8 @@
 import { ensureResponsesInput } from "@app/ai-proxy/lib/chat-to-responses-body";
 import { stripCursorThinkingBlocks } from "@app/ai-proxy/lib/thinking-folded";
-import { logger } from "@app/logger";
 import { inferModelThinking } from "@app/utils/ai/grok/models";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { isObject } from "@app/utils/object";
 
 type JsonObject = Record<string, unknown>;

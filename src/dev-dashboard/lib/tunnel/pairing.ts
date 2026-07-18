@@ -1,8 +1,8 @@
 import { chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 
 // Agent-side pairing: re-export the PURE codec from the contract (the source of truth
 // for the `devdashboard://pair?…` wire shape) and add ONLY the disk-touching persistence

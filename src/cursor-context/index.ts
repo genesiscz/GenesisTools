@@ -2,9 +2,9 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { logger } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
+import { logger } from "@app/utils/logger";
 import * as p from "@app/utils/prompts/p";
 import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 

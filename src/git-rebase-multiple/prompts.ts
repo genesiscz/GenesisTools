@@ -1,4 +1,4 @@
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import * as p from "@app/utils/prompts/p";
 import chalk from "chalk";
 import { git } from "./git";

@@ -1,8 +1,8 @@
 import { TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
-import { out } from "@app/logger";
 import { ClarityApi } from "@app/utils/clarity";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import * as clack from "@clack/prompts";
 import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";

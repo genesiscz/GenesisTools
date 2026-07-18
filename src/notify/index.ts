@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import { logger, out } from "@app/logger";
 import { isInteractive, runTool, suggestCommand } from "@app/utils/cli";
+import { logger, out } from "@app/utils/logger";
 import type { ChannelConfigs } from "@app/utils/notifications";
 import { dispatchNotification, notificationsConfig } from "@app/utils/notifications";
 import { withCancel } from "@app/utils/prompts/clack/helpers";

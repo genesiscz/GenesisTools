@@ -1,5 +1,5 @@
 import path from "node:path";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import { glob } from "glob";
 import ts from "typescript";
 

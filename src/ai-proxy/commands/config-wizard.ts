@@ -14,8 +14,8 @@ import {
     writeCloudflaredConfig,
 } from "@app/ai-proxy/lib/tunnel/cloudflared";
 import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
-import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import { cancel, confirm, intro, isCancel, log, note, outro, select, spinner, text } from "@clack/prompts";
 
 async function ensureConfigInitialized(): Promise<AiProxyConfig> {

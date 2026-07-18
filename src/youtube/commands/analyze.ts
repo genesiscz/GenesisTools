@@ -1,5 +1,5 @@
-import { out } from "@app/logger";
 import { isInteractive } from "@app/utils/cli/executor";
+import { out } from "@app/utils/logger";
 import { loadAskProviderChoice } from "@app/youtube/commands/_shared/ask-provider";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";

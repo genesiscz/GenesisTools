@@ -1,6 +1,6 @@
 import type { TokenUsage } from "@app/ai-proxy/lib/usage/types";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { isObject } from "@app/utils/object";
 
 type JsonObject = Record<string, unknown>;

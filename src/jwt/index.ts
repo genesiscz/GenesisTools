@@ -1,7 +1,7 @@
-import { logger, out } from "@app/logger";
 import { isInteractive, runTool, suggestCommand } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { decodeJwt, describeClaimTime, type JwtObject, type TimeClaim } from "@app/utils/jwt";
+import { logger, out } from "@app/utils/logger";
 import { Command } from "commander";
 
 const TIME_CLAIMS: TimeClaim[] = ["exp", "iat", "nbf"];

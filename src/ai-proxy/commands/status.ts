@@ -1,5 +1,5 @@
 import { runAiProxyStatus } from "@app/ai-proxy/lib/lifecycle";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 
 export async function runStatusCommand(options: { json?: boolean }): Promise<void> {
     const status = await runAiProxyStatus();

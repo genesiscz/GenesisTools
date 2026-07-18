@@ -10,9 +10,9 @@ setupStorageSandbox();
 
 const { openConfig } = await import("@app/mcp-manager/commands/config.js");
 
-import { logger } from "@app/logger";
 import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
 import { env } from "@app/utils/env";
+import { logger } from "@app/utils/logger";
 import { Storage } from "@app/utils/storage";
 
 describe("openConfig", () => {

@@ -1,4 +1,4 @@
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import pc from "picocolors";
 import { formatScanTable } from "../lib/format";
 import { scan } from "../lib/scanner";

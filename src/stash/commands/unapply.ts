@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { logger } from "@app/logger";
 import { isInteractive } from "@app/utils/cli";
+import { logger } from "@app/utils/logger";
 import { detectProject } from "../lib/projects";
 import { openStashDb } from "../lib/stash-db";
 import { StashStorage } from "../lib/storage";

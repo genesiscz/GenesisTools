@@ -2,7 +2,6 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { logger, out } from "@app/logger";
 import { AI } from "@app/utils/ai/index.ts";
 import { getModelsForTask } from "@app/utils/ai/ModelManager";
 import { getProvidersForTask } from "@app/utils/ai/providers";
@@ -12,6 +11,7 @@ import { runTool } from "@app/utils/cli";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
 import { parseVariadic } from "@app/utils/cli/variadic";
 import { env } from "@app/utils/env";
+import { logger, out } from "@app/utils/logger";
 import {
     DEFAULT_APP_NAME,
     isSettableField,

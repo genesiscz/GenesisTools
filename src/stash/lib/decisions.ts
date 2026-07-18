@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { parseMarkers } from "./markers";
 import type { Decision } from "./unapply-session";
 

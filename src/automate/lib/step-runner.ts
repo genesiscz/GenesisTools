@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import { execTool } from "@app/utils/cli/tools";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { executeBuiltin, isBuiltinAction } from "./builtins.ts";
 import { resolveExpression, resolveParams } from "./expressions.ts";
 import type { StepContext } from "./registry.ts";

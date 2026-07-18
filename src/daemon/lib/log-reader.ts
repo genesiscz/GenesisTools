@@ -1,7 +1,7 @@
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import type { LogEntry, RunSummary } from "./types";
 
 const VALID_LOG_TYPES = new Set<string>(["meta", "stdout", "stderr", "exit"]);

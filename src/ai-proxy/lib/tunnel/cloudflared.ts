@@ -3,7 +3,7 @@ import { normalizeBasePath } from "@app/ai-proxy/lib/path-prefix";
 import { resolveCloudflaredConfigPath } from "@app/ai-proxy/lib/public-url";
 import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
 import { detectCloudflared, installCloudflared } from "@app/dev-dashboard/lib/tunnel/cloudflared";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 
 export { detectCloudflared, installCloudflared };
 

@@ -1,8 +1,8 @@
-import { logger } from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { bestWeekday } from "@app/shops/lib/analytics/best-time";
 import type { PriceHistoryPoint, PriceHistoryResponse } from "@app/shops/types";
 import { apiHandler, intParam } from "@app/shops/ui/server/api-utils";
+import { logger } from "@app/utils/logger";
 import { createFileRoute } from "@tanstack/react-router";
 import { sql } from "kysely";
 

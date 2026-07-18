@@ -13,7 +13,7 @@
  * does this on `restart` after 30s — see plan §Decisions).
  */
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { isPortInUse } from "@app/utils/network";
 import { stripAnsi } from "@app/utils/string";
 import type { ReadinessProbe } from "./types";

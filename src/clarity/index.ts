@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { buildViteDevCmd, defineDashboardApp } from "@app/utils/DashboardApp";
+import { out } from "@app/utils/logger";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import { Command } from "commander";
 import { registerConfigureCommand } from "./commands/configure.js";

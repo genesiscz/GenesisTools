@@ -1,7 +1,7 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { resolve } from "node:path";
-import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import { isProcessAlive as canonicalIsProcessAlive } from "@app/utils/process-alive";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import { Storage } from "@app/utils/storage/storage";

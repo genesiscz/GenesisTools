@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { shutdownManager } from "./mcp/shared";

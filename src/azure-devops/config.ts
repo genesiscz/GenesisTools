@@ -5,10 +5,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { AzureConfig, AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
-import { out } from "@app/logger";
 import { env } from "@app/utils/env";
 import { formatRelativeTime } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 
 export function getRelativeTime(date: Date): string {
     return formatRelativeTime(date, { rounding: "round" });

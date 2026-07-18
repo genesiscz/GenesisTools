@@ -1,5 +1,5 @@
-import { out } from "@app/logger";
 import { parseDate } from "@app/utils/date";
+import { out } from "@app/utils/logger";
 import { MacCalendar } from "@app/utils/macos/apple-calendar";
 import type { Command } from "commander";
 import { formatEventsTable, normalizeEndOfDay } from "./format";

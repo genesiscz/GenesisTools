@@ -1,6 +1,6 @@
-import { out } from "@app/logger";
 import { isStructuredFormat, printStructured } from "@app/macos/lib/mail/command-helpers";
 import { isQuietOutput } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";

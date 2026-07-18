@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 
 // PURE cloudflared CLI helpers + thin `Bun.spawn` wrappers. The pure arg/config
 // builders (buildCreateArgs/buildRouteDnsArgs/buildRunArgs/buildConfigYaml/parseTunnelId)

@@ -8,11 +8,11 @@ import { createReadStream, readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, sep } from "node:path";
 import { createInterface } from "node:readline";
-import { logger, out } from "@app/logger";
 import { discoverSessionFiles, discoverSessionFilesInDir } from "@app/utils/claude/discovery";
 import { extractProjectName, PROJECTS_DIR, resolveProjectDir } from "@app/utils/claude/projects";
 import { Executor } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import { Stopwatch } from "@app/utils/Stopwatch";
 import { glob } from "glob";
 import {

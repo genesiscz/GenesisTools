@@ -1,8 +1,8 @@
 import { basename } from "node:path";
 import { ACTIVE_THRESHOLD_MS, SessionManager } from "@app/debugging-master/core/session-manager";
-import { out } from "@app/logger";
 import { suggestCommand } from "@app/utils/cli/executor";
 import { formatDuration, formatRelativeTime } from "@app/utils/format";
+import { out } from "@app/utils/logger";
 import { formatTable } from "@app/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";

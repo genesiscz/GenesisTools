@@ -1,5 +1,5 @@
 import { type AliasState, emptyState, STATE_FILE, storage } from "@app/aliases/lib/analysis";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import type { Command } from "commander";
 
 async function resetAction(): Promise<void> {

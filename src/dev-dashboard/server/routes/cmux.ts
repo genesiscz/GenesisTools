@@ -7,10 +7,10 @@ import { sendTmuxSessionToCmux } from "@app/dev-dashboard/lib/cmux/send-session"
 import { listTtyd, renameTtyd } from "@app/dev-dashboard/lib/ttyd/manager";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
-import { logger } from "@app/logger";
 import { fetchCmuxFullLayout } from "@app/utils/cmux/layout";
 import { focusCmuxPane, renameCmuxSurface, renameCmuxWorkspace } from "@app/utils/cmux/lib/controls";
 import type { DashboardSendTarget } from "@app/utils/cmux/types";
+import { logger } from "@app/utils/logger";
 
 export function cmuxRoutes(): RouteDef[] {
     return [

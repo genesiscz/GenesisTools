@@ -1,6 +1,6 @@
-import { logger, out } from "@app/logger";
 import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import chalk from "chalk";
 
 /**

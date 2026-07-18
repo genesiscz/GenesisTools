@@ -12,7 +12,7 @@
  *  - **foreign** — port is held by someone else. Caller errors with the owning
  *    PID + cmdline; in TTY can offer kill+up; non-TTY suggests `--force`.
  */
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { getPortOwner, type PortOwner } from "@app/utils/network";
 import { isProcessAlive } from "@app/utils/process-alive";
 import { defaultPlistLabel, isLaunchdInstalled } from "./launchd";

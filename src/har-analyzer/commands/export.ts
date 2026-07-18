@@ -3,8 +3,8 @@ import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { filterEntries } from "@app/har-analyzer/core/query-engine";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { EntryFilter, HarEntry, HarFile, OutputOptions } from "@app/har-analyzer/types";
-import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import type { Command } from "commander";
 
 const SENSITIVE_HEADER_NAMES = new Set([

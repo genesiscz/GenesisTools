@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
-import { logger, out } from "@app/logger";
 import { env } from "@app/utils/env";
+import { logger, out } from "@app/utils/logger";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import type { RolldownWatcher } from "rolldown";
 import type { InlineConfig } from "vite";

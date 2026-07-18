@@ -1,10 +1,10 @@
 import { basename } from "node:path";
-import { logger } from "@app/logger";
 import { newProcessId, writeMeta } from "@app/macos/lib/clones/audit";
 import { cachePlan } from "@app/macos/lib/clones/cache";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
 import { formatBytes } from "@app/utils/format";
+import { logger } from "@app/utils/logger";
 import { sendNotification } from "@app/utils/macos/notifications";
 
 function shouldEnterByDefault(dir: string): boolean {

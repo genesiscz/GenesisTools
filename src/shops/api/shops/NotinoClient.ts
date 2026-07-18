@@ -1,6 +1,5 @@
 // Adapted from topmonks/hlidac-shopu (EUPL-1.2) — actors/notino-daily/main.js
 
-import { logger } from "@app/logger";
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import type {
@@ -10,6 +9,7 @@ import type {
     NotinoPricePair,
 } from "@app/shops/api/shops/NotinoClient.types";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { parseHTML } from "linkedom";
 
 const NOTINO_ORIGIN = "notino.cz";

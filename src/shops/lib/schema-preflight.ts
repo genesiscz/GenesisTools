@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
+import { logger } from "@app/utils/logger";
 
 const log = logger.child({ component: "shops:schema-preflight" });
 

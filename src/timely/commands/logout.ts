@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import type { TimelyConfig } from "@app/timely/types";
+import { logger } from "@app/utils/logger";
 import type { Storage } from "@app/utils/storage";
 import chalk from "chalk";
 import type { Command } from "commander";

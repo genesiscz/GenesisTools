@@ -18,11 +18,11 @@ import {
     fetchPRReviewThreads,
     parseThreads,
 } from "@app/github/lib/review-threads";
-import { logger, out } from "@app/logger";
 import { formatRelativeTime } from "@app/utils/format";
 import type { ReviewCommandOptions, ReviewData, ReviewSessionData } from "@app/utils/github/types";
 import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser";
 import { setGlobalVerbose } from "@app/utils/github/utils";
+import { logger, out } from "@app/utils/logger";
 import chalk from "chalk";
 import { Command } from "commander";
 

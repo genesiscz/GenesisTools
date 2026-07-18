@@ -39,7 +39,6 @@
  *   tools macos contacts search
  */
 
-import { logger, out } from "@app/logger";
 import { registerCalendarCommand } from "@app/macos/commands/calendar/index";
 import { registerClonesCommand } from "@app/macos/commands/clones/index";
 import { registerMailCommand } from "@app/macos/commands/mail/index";
@@ -49,6 +48,7 @@ import { registerSleepCommand } from "@app/macos/commands/sleep/index";
 import { registerSwapCommand } from "@app/macos/commands/swap/index";
 import { registerVoiceMemosCommand } from "@app/macos/commands/voice-memos/index";
 import { runTool } from "@app/utils/cli";
+import { logger, out } from "@app/utils/logger";
 import { closeDarwinKit } from "@app/utils/macos/darwinkit";
 import { Command } from "commander";
 

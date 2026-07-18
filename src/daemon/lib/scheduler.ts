@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import { wakefulSleep, withTimeout } from "@app/utils/async";
+import { logger } from "@app/utils/logger";
 import { dispatchNotification } from "@app/utils/notifications";
 import { loadConfig } from "./config";
 import { computeNextRunAt, parseInterval } from "./interval";

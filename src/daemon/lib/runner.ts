@@ -1,8 +1,8 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { formatLocalFileTimestamp } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import type { DaemonTask, RunResult } from "./types";
 
 const DEFAULT_TASK_TIMEOUT_MS = 10 * 60 * 1000;

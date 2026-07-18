@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { isProcessAlive } from "@app/utils/process-alive";
 
 const log = logger.child({ component: "storage:stale-lock-sweep" });

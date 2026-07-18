@@ -12,9 +12,9 @@ import { updateWorkItemEffort } from "@app/azure-devops/timelog-effort";
 import type { TimeLogImportFile } from "@app/azure-devops/types";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import { precheckWorkItem } from "@app/azure-devops/workitem-precheck";
-import { logger, out } from "@app/logger";
 import { concurrentMap } from "@app/utils/async";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 

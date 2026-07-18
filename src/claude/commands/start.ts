@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { type LaunchableModel, modelFamilyOf, resolveModelSpec } from "@app/claude/lib/models";
 import { type ScoredAccount, scoreAccounts } from "@app/claude/lib/usage/account-picker";
 import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
-import { logger, out } from "@app/logger";
+import { logger, out } from "@app/utils/logger";
 import { AIConfig } from "@app/utils/ai/AIConfig";
 import { findClaudeCommand } from "@app/utils/claude";
 import { isInteractive, suggestCommand } from "@app/utils/cli";

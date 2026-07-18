@@ -1,7 +1,7 @@
 // src/utils/macos/_smoke-test.ts
 // Run with: bun run src/utils/macos/_smoke-test.ts
 
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import {
     analyzeSentiment,
     batchSentiment,

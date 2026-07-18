@@ -1,5 +1,5 @@
-import { out } from "@app/logger";
 import { formatDuration } from "@app/utils/format";
+import { out } from "@app/utils/logger";
 import { renderColumns } from "@app/youtube/commands/_shared/columns";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";

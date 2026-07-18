@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 
 // Canonical HTTP client for the dev-dashboard boards API — a thin fetch wrapper.
 // `src/claude/mcp/tools/boards/http.ts` is a deliberately separate client with a different

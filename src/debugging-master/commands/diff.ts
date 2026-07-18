@@ -1,10 +1,10 @@
 import { computeTimerPairs, filterByLevel, indexEntries } from "@app/debugging-master/core/log-parser";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import type { IndexedLogEntry, LogLevel } from "@app/debugging-master/types";
-import { out } from "@app/logger";
 import { formatDateTime } from "@app/utils/date";
 import { formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import type { Command } from "commander";
 
 const COMPARABLE_LEVELS: LogLevel[] = ["checkpoint", "dump", "snapshot", "trace", "assert"];

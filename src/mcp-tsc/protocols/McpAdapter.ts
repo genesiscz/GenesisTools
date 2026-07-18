@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { out } from "@app/logger";
 import type { DiagnosticsResult, TSServer } from "@app/mcp-tsc/core/interfaces.js";
 import type { GetTsDiagnosticsArgs, GetTsHoverArgs, GetTsHoverResponse } from "@app/mcp-tsc/types/mcp.js";
 import { filterByTsconfig, resolveFiles } from "@app/mcp-tsc/utils/FileResolver.js";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import { normalizeFilePaths } from "@app/utils.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";

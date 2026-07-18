@@ -1,10 +1,10 @@
-import { logger } from "@app/logger";
 import { parseCommandString, parseEnvString, parseHeaderString } from "@app/mcp-manager/utils/command.utils.js";
 import { readUnifiedConfig, stripMeta, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import * as p from "@app/utils/prompts/p";
 import chalk from "chalk";
 

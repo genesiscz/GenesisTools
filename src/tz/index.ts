@@ -1,5 +1,5 @@
-import { logger, out } from "@app/logger";
 import { parseVariadic, runTool } from "@app/utils/cli";
+import { logger, out } from "@app/utils/logger";
 import { Command } from "commander";
 import { convert, formatZoneLine } from "./lib/convert";
 

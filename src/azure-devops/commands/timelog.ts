@@ -1,4 +1,4 @@
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import type { Command } from "commander";
 import { registerAddSubcommand } from "./timelog/add";
 import { registerConfigureSubcommand } from "./timelog/configure";

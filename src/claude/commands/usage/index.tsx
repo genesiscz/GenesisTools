@@ -1,6 +1,6 @@
-import { logger, out } from "@app/logger";
 import { renderFullScreen } from "@app/utils/ink";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import type { Command } from "commander";
 import { App } from "./app";
 

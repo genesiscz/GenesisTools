@@ -1,6 +1,6 @@
-import { out } from "@app/logger";
 import { ModelManager } from "@app/utils/ai/ModelManager";
 import type { ModelEntry } from "@app/utils/ai/types";
+import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";

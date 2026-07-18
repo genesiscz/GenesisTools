@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
-import { logger } from "@app/logger";
 import { registerScanCommand } from "@app/secrets/commands/scan";
 import { enhanceHelp, runTool } from "@app/utils/cli";
+import { logger } from "@app/utils/logger";
 import { Command } from "commander";
 
 const program = new Command();

@@ -1,7 +1,7 @@
 import { deletePreset, listPresets, restorePreset, savePreset } from "@app/dev-dashboard/lib/tmux/presets";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 
 export function tmuxPresetsRoutes(): RouteDef[] {
     return [

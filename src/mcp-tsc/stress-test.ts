@@ -13,7 +13,7 @@
 
 import { writeFileSync } from "node:fs";
 import path from "node:path";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 

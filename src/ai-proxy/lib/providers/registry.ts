@@ -5,7 +5,7 @@ import { OpenAiSubscriptionProvider } from "@app/ai-proxy/lib/providers/openai-s
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { XaiApiKeyProvider } from "@app/ai-proxy/lib/providers/xai-api-key";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 
 export function providerKey(account: { name: string; providerSlug: string }): string {
     return `${account.name}/${account.providerSlug}`;

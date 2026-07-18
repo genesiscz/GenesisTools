@@ -1,7 +1,7 @@
 import { lstatSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { logger, out } from "@app/logger";
 import { Executor, runTool } from "@app/utils/cli";
+import { logger, out } from "@app/utils/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { formatDateTime } from "@genesiscz/utils/date";
 import { formatRelativeTime as _formatRelativeTime } from "@genesiscz/utils/format";

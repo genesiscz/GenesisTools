@@ -1,5 +1,5 @@
-import { configureLogger, logger } from "@app/logger";
 import { enhanceHelp, isInteractive } from "@app/utils/cli";
+import { configureLogger, logger } from "@app/utils/logger";
 import * as p from "@app/utils/prompts/p";
 import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
 import { handleReadmeFlag } from "@app/utils/readme";

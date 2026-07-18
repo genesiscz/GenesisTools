@@ -1,4 +1,4 @@
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { isObject } from "@app/utils/object";
 
 export function isStreamAbortError(err: unknown): boolean {

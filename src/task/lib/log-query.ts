@@ -1,4 +1,3 @@
-import { out } from "@app/logger";
 import { printLogNavigationHints } from "@app/task/lib/log-hints";
 import { jsonlPath } from "@app/task/lib/paths";
 import type { LogQueryOpts } from "@app/task/types";
@@ -11,6 +10,7 @@ import {
     readJsonlFile,
 } from "@app/utils/log-session/jsonl-reader";
 import type { JsonlLineRecord } from "@app/utils/log-session/types";
+import { out } from "@app/utils/logger";
 
 export interface SliceResult<T> {
     lines: T[];

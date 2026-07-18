@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import { type MarkdownRenderOptions, renderMarkdownToCli } from "@app/utils/markdown/index.js";
 import chokidar from "chokidar";
 import { Command, Option } from "commander";

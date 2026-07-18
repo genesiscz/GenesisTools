@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import type { NotificationEvent, WebhookChannelConfig } from "../types";
 
 export async function dispatchWebhook(event: NotificationEvent, config: WebhookChannelConfig): Promise<void> {

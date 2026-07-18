@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import { ApiClient } from "@app/utils/api/ApiClient";
 import { env as appEnv } from "@app/utils/env";
+import { logger } from "@app/utils/logger";
 
 export interface TelegramBotClientConfig {
     token: string;

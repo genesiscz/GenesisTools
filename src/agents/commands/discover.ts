@@ -1,5 +1,5 @@
-import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { readCursor } from "../lib/cursor";

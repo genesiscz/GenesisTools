@@ -1,9 +1,9 @@
 import type { WatchEventType, WatchOptions } from "node:fs";
 import fs from "node:fs";
 import path from "node:path";
-import { logger } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { expandTilde } from "@app/utils/paths";
 import { handleReadmeFlag } from "@app/utils/readme";
 import chalk from "chalk";

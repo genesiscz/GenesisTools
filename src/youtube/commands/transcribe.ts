@@ -1,6 +1,6 @@
-import { out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import { extractVideoId, formatTimestamp } from "@app/youtube/commands/_shared/utils";

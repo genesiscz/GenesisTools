@@ -1,5 +1,5 @@
 import { runAiProxyDown } from "@app/ai-proxy/lib/lifecycle";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 
 export async function runDownCommand(): Promise<void> {
     const result = await runAiProxyDown();

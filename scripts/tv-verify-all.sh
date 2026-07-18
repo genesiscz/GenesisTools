@@ -62,7 +62,7 @@ if tsgo --noEmit 2>&1 | rg "src/tradingview" >/dev/null 2>&1; then
 else record V1.2 "$CMD_LABEL" PASS ""; fi
 
 CMD_LABEL="lib purity"
-if rg -n "import \{[^}]*\bout\b[^}]*\} from \"@app/logger\"" src/tradingview/lib/ >/dev/null 2>&1 || rg -n "\bout\.|console\.|process\.exit" src/tradingview/lib/ >/dev/null 2>&1; then
+if rg -n "import \{[^}]*\bout\b[^}]*\} from \"@app/utils/logger\"" src/tradingview/lib/ >/dev/null 2>&1 || rg -n "\bout\.|console\.|process\.exit" src/tradingview/lib/ >/dev/null 2>&1; then
   record V1.3 "$CMD_LABEL" FAIL ""
 else record V1.3 "$CMD_LABEL" PASS ""; fi
 

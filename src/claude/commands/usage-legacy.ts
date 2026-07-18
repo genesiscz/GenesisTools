@@ -3,9 +3,9 @@ import { fetchUsage } from "@app/claude/lib/usage/api";
 import { renderAccountUsage, renderAllAccounts } from "@app/claude/lib/usage/display";
 import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
 import { watchUsage } from "@app/claude/lib/usage/watch";
-import { out } from "@app/logger";
 import { AIConfig } from "@app/utils/ai/AIConfig";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 

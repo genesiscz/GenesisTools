@@ -1,4 +1,4 @@
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import { MacCalendar } from "@app/utils/macos/apple-calendar";
 import type { Command } from "commander";
 import pc from "picocolors";

@@ -1,11 +1,11 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { out } from "@app/logger";
 import { ClaudeSessionFormatter } from "@app/utils/claude/ClaudeSessionFormatter";
 import { IncludeSpec } from "@app/utils/claude/cli/dsl";
 import { parseJsonlTranscript } from "@app/utils/claude/index";
 import { PROJECTS_DIR } from "@app/utils/claude/projects";
 import type { ConversationMessage } from "@app/utils/claude/types";
+import { out } from "@app/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 

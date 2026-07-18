@@ -1,7 +1,7 @@
 import { printFormatted, truncatePath } from "@app/har-analyzer/core/formatter";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import type { Command } from "commander";
 
 function urlMatches(fullUrl: string, target: string): boolean {

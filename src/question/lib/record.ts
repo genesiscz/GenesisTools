@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { logger } from "@app/logger";
 import { type AgentRuntimeContext, getAgentRuntimeContext } from "@app/utils/agent-runtime";
+import { logger } from "@app/utils/logger";
 import { loadConfig, type QuestionConfig } from "./config";
 import { appendEntry } from "./log-store";
 import { runFanOut } from "./sinks/registry";

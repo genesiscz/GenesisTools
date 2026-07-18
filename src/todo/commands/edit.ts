@@ -1,4 +1,3 @@
-import { out } from "@app/logger";
 import { findProjectRoot } from "@app/todo/lib/context";
 import { formatTodo } from "@app/todo/lib/format";
 import { parseLink } from "@app/todo/lib/links";
@@ -7,6 +6,7 @@ import { TodoStore } from "@app/todo/lib/store";
 import { countSynced, describeSyncFailures, type SyncTarget, syncSucceeded, syncTodo } from "@app/todo/lib/sync";
 import type { OutputFormat, Todo, TodoPriority } from "@app/todo/lib/types";
 import { isInteractive, parseVariadic } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import { Command, Option } from "commander";
 import pc from "picocolors";
 

@@ -1,5 +1,5 @@
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import { formatTable } from "@app/utils/table";
 import type { Command } from "commander";
 

@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { logger } from "@app/logger";
 import {
     type ResolvedGithubCopilotGhoToken,
     type ResolveGithubCopilotGhoTokenOptions,
@@ -16,6 +15,7 @@ import {
 } from "@app/utils/ai/github-copilot/paths";
 import type { CopilotSessionCache, CopilotTokenResponse } from "@app/utils/ai/github-copilot/types";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { readTokenFile } from "@app/utils/oauth/storage";
 import { getAuthSecret, migrateFileToAuthStorage } from "@app/utils/storage";
 

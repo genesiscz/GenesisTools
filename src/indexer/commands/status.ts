@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
-import { out } from "@app/logger";
 import { formatBytes, formatDuration, formatRelativeTime } from "@app/utils/format";
+import { out } from "@app/utils/logger";
 import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";

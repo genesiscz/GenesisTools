@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { logger, out } from "@app/logger";
 import { copilotGhoTokenAuthKey, githubTokenPath } from "@app/utils/ai/github-copilot/paths";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import { dispatchNotification } from "@app/utils/notifications";
 import { readTokenFile } from "@app/utils/oauth/storage";
 import { getAuthSecret, migrateFileToAuthStorage } from "@app/utils/storage";

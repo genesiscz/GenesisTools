@@ -1,8 +1,8 @@
-import { out } from "@app/logger";
 import { sessionFilePaths } from "@app/task/lib/paths";
 import { waitForSession } from "@app/task/lib/wait-for-session";
 import { withResolvedSession } from "@app/task/lib/with-resolved-session";
 import { filterLineRecords, lastNLines, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
+import { out } from "@app/utils/logger";
 import type { Command } from "commander";
 
 export function registerWaitCommand(program: Command): void {

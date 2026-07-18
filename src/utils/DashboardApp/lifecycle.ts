@@ -7,9 +7,9 @@
  * functions; the imperative `DashboardApp` API on `types.ts` does the same.
  */
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
-import { logger, out } from "@app/logger";
 import { Browser } from "@app/utils/browser";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
+import { logger, out } from "@app/utils/logger";
 import { getPortOwner } from "@app/utils/network";
 import { spawnDashboard } from "@app/utils/process/spawnDashboard";
 import { isProcessAlive } from "@app/utils/process-alive";

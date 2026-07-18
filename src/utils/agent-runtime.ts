@@ -1,11 +1,11 @@
 import { basename, resolve } from "node:path";
 import { getSessionMetadataBySessionId } from "@app/claude/lib/history/cache";
-import { logger } from "@app/logger";
 import { detectCurrentProject } from "@app/utils/claude/projects";
 import { type AgentRuntimeContext, resolveClaudeContext } from "@app/utils/claude/runtime-context";
 import { isCodex, resolveCodexContext } from "@app/utils/codex/runtime-context";
 import { env as appEnv } from "@app/utils/env";
 import { getMainRepoRootSync } from "@app/utils/git/worktree";
+import { logger } from "@app/utils/logger";
 
 export type { AgentRuntimeContext } from "@app/utils/claude/runtime-context";
 

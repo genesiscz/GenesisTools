@@ -1,6 +1,5 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { out } from "@app/logger";
 import {
     confirmLanguage as promptLanguage,
     selectAction,
@@ -19,6 +18,7 @@ import { copyToClipboard } from "@app/utils/clipboard.ts";
 import { isCloudProvider } from "@app/utils/config/ai.types";
 import { formatDateTime } from "@app/utils/date.ts";
 import { formatDuration } from "@app/utils/format.ts";
+import { out } from "@app/utils/logger";
 import {
     extractTranscript,
     getMemo,

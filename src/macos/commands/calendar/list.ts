@@ -1,6 +1,6 @@
-import { out } from "@app/logger";
 import { parseDate } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import type { CalendarEventInfo } from "@app/utils/macos/apple-calendar";
 import { MacCalendar } from "@app/utils/macos/apple-calendar";
 import { type Command, Option } from "commander";

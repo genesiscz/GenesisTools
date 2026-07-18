@@ -1,8 +1,8 @@
 import { createWriteStream, type WriteStream } from "node:fs";
-import { out } from "@app/logger";
 import { formatToolDiff, formatToolSignature } from "@app/utils/agents/formatters/tool-formatter";
 import { formatDateTime } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import { stripAnsi, truncateText } from "@app/utils/string";
 import pc from "picocolors";
 import type { IncludeSpec } from "./cli/dsl";

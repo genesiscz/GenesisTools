@@ -1,8 +1,8 @@
 import { indexEntries } from "@app/debugging-master/core/log-parser";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
-import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { formatSchema } from "@app/utils/json-schema";
+import { out } from "@app/utils/logger";
 import { search } from "@jmespath-community/jmespath";
 import type { Command } from "commander";
 

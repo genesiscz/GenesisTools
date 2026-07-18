@@ -9,8 +9,8 @@ import {
 } from "@app/debugging-master/core/log-parser";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import type { IndexedLogEntry, OutputFormat } from "@app/debugging-master/types";
-import { out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import { REF_THRESHOLD } from "@app/utils/references";
 import type { Command } from "commander";
 

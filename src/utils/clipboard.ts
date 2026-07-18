@@ -1,4 +1,4 @@
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import clipboardy from "clipboardy";
 import pc from "picocolors";
 

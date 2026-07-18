@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { logger } from "@app/logger";
 import { isInteractive } from "@app/utils/cli";
+import { logger } from "@app/utils/logger";
 import { Storage } from "@app/utils/storage/storage";
 import * as p from "@clack/prompts";
 

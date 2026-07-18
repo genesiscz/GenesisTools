@@ -1,5 +1,5 @@
-import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import { Command } from "commander";
 import { isGitRepo, readStagedDiff, readWorkingDiff, repoToplevel } from "./lib/git";
 import { scoreQuery } from "./lib/similarity";

@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 
-import { out } from "@app/logger";
 import { createAddCommand } from "@app/todo/commands/add";
 import { createEditCommand } from "@app/todo/commands/edit";
 import { createExportCommand, createImportCommand } from "@app/todo/commands/import-export";
@@ -16,6 +15,7 @@ import {
 } from "@app/todo/commands/status";
 import { createSyncCommand } from "@app/todo/commands/sync";
 import { enhanceHelp, runTool } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import { Command } from "commander";
 
 const program = new Command();

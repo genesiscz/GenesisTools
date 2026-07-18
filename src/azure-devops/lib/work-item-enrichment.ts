@@ -19,7 +19,7 @@ async function createApi(config: import("@app/azure-devops/types").AzureConfig) 
 import { parseRelations } from "@app/azure-devops/relations";
 import type { AzureConfig, WorkItemCache, WorkItemFull, WorkItemTypeDefinition } from "@app/azure-devops/types";
 import { WORKITEM_CACHE_VERSION } from "@app/azure-devops/types";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 
 // ============= Types =============
 

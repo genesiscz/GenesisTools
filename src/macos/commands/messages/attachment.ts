@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import { out } from "@app/logger";
 import { formatBytes } from "@app/utils/format";
+import { out } from "@app/utils/logger";
 import { iMessagesDatabase } from "@app/utils/macos/iMessagesDatabase";
 import chalk from "chalk";
 import type { Command } from "commander";

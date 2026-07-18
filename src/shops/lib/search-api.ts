@@ -1,7 +1,7 @@
-import { logger } from "@app/logger";
 import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { CurrentOffersView, ProductsTable } from "@app/shops/db/types";
 import type { ProductDTO } from "@app/shops/lib/product-api";
+import { logger } from "@app/utils/logger";
 import type { Selectable } from "kysely";
 
 const log = logger.child({ component: "shops:search-api" });

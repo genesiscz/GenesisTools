@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { scanContent } from "./scan-content";
 import { defaultScanConfig, type Finding, type ScanResult, type ScanResultFileSkip } from "./types";
 import { walkFiles } from "./walk";

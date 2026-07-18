@@ -3,7 +3,7 @@ import { listGrokProxyModels } from "@app/ai-proxy/lib/model-meta";
 import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { prepareGrokUpstreamBody } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import {
     formatBillingSummary,
     GrokAuthExpiredError,
@@ -12,6 +12,7 @@ import {
 } from "@app/utils/ai/grok";
 import { GROK_CLI_CHAT_PROXY_BASE_URL } from "@app/utils/ai/grok/paths";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 
 export class GrokSubscriptionProvider implements ProxyProvider {
     readonly id = "grok-subscription";

@@ -1,7 +1,7 @@
-import { out } from "@app/logger";
 import type { TimelyApiClient } from "@app/timely/api/client";
 import type { TimelyConfig } from "@app/timely/types";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import type { Storage } from "@app/utils/storage";
 import chalk from "chalk";
 import type { Command } from "commander";

@@ -24,10 +24,10 @@ handleReadmeFlag(import.meta.url);
 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { logger, out } from "@app/logger";
 import { isVerbose, runTool } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 
 // Resolve babel-plugin-react-compiler from GenesisTools installation
 const __filename = fileURLToPath(import.meta.url);

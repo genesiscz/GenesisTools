@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { logger } from "@app/logger";
 import { taskConfigPath } from "@app/task/lib/paths";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 
 export interface TaskToolConfig {
     sessionRetentionDays: number;

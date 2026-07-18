@@ -1,5 +1,5 @@
-import { logger, out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
+import { logger, out } from "@app/utils/logger";
 import { captureTmuxSnapshot, SNAPSHOT_VERSION, type TmuxPreset } from "@app/utils/tmux/snapshot";
 import { PresetExistsError, TmuxPresetStore } from "@app/utils/tmux/snapshot-store";
 import type { Command } from "commander";

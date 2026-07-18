@@ -1,6 +1,5 @@
 // Adapted from topmonks/hlidac-shopu (EUPL-1.2) — actors/dm-daily/main.js
 
-import { logger } from "@app/logger";
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import type {
@@ -12,6 +11,7 @@ import type {
 } from "@app/shops/api/shops/DmClient.types";
 import { ApiClientError } from "@app/utils/api/ApiClient";
 import { abortableSleep } from "@app/utils/async";
+import { logger } from "@app/utils/logger";
 
 export type DmCountry = "CZ" | "SK";
 

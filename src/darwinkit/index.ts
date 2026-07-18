@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
-import { out } from "@app/logger";
 import { parseVariadic, runTool } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
+import { out } from "@app/utils/logger";
 import { closeDarwinKit } from "@app/utils/macos";
 import { handleReadmeFlag } from "@app/utils/readme";
 import * as p from "@clack/prompts";

@@ -1,5 +1,5 @@
-import { out } from "@app/logger";
 import { env } from "@app/utils/env";
+import { out } from "@app/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 

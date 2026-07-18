@@ -1,4 +1,4 @@
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import { closeDarwinKit } from "@app/utils/macos";
 import { handleCancel, isCancelled, withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";

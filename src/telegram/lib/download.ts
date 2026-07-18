@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import { formatNumber } from "@app/utils/format";
+import { logger } from "@app/utils/logger";
 import { detectLanguage, embedText } from "@app/utils/macos/nlp";
 import type { EmbedResult } from "@app/utils/macos/types";
 import * as p from "@clack/prompts";

@@ -1,8 +1,8 @@
 import { createFoldedStreamState, foldedAnswerPrefix, foldedReasoningPrefix } from "@app/ai-proxy/lib/thinking-folded";
 import { buildReasoningItem, serializeReasoningItems } from "@app/ai-proxy/lib/translators/reasoning";
 import type { ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { isObject } from "@app/utils/object";
 import { safeStreamControllerError } from "./safe-stream-controller";
 

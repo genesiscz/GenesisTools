@@ -17,7 +17,6 @@ import {
 } from "@app/github/lib/cache";
 import { calculateStats, formatIssue } from "@app/github/lib/output";
 import { detectCrossReferences, findReplyTarget, processQuotes } from "@app/github/lib/quotes";
-import { logger, out } from "@app/logger";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
 import type {
@@ -43,6 +42,7 @@ import {
     verbose,
 } from "@app/utils/github/utils";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import chalk from "chalk";
 import { Command } from "commander";
 

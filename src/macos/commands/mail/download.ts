@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import { exportMessages, parseMailIds } from "@app/macos/lib/mail/export";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
+import { logger } from "@app/utils/logger";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";

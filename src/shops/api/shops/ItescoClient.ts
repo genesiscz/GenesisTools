@@ -1,6 +1,5 @@
 // Adapted from topmonks/hlidac-shopu (EUPL-1.2) — actors/itesco-daily/main.js
 
-import { type Logger, logger } from "@app/logger";
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import {
@@ -19,6 +18,7 @@ import {
 } from "@app/shops/api/shops/ItescoClient.types";
 import { isAkamaiBlock } from "@app/shops/lib/akamai-detect";
 import { SafeJSON } from "@app/utils/json";
+import { type Logger, logger } from "@app/utils/logger";
 import { parseHTML } from "linkedom";
 
 const ITESCO_ORIGIN = "itesco.cz";

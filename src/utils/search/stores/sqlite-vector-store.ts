@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import { cosineDistance } from "@app/utils/math";
 import type { VectorSearchHit, VectorStore } from "./vector-store";
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-import { logger } from "@app/logger";
 import { runTool } from "@app/utils/cli";
+import { logger } from "@app/utils/logger";
 import { Command } from "commander";
 import { registerAddCommand } from "./commands/add";
 import { registerBoardFromSetCommand } from "./commands/board-from-set";

@@ -1,4 +1,4 @@
-import { logger, out } from "@app/logger";
+import { logger, out } from "@app/utils/logger";
 
 // Fixture: before console.* codemod sweep
 // This file exercises all console.* call patterns the codemod must handle.

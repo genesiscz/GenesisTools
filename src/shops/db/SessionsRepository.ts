@@ -1,7 +1,7 @@
-import { logger } from "@app/logger";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { Session } from "@app/shops/db/types";
 import { randomToken } from "@app/shops/lib/auth";
+import { logger } from "@app/utils/logger";
 import { nowUtcIso } from "@app/utils/sql-time";
 
 const log = logger.child({ component: "SessionsRepository" });

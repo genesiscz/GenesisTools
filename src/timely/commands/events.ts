@@ -1,4 +1,3 @@
-import { logger, out } from "@app/logger";
 import type { TimelyService } from "@app/timely/api/service";
 import type { OAuth2Tokens, TimelyEntry, TimelyEvent, TimelyEventSlim } from "@app/timely/types";
 import { formatDuration } from "@app/timely/utils/date";
@@ -6,6 +5,7 @@ import { buildSubEntryMap, fetchMemoriesForDates } from "@app/timely/utils/memor
 import type { FuzzyMatchResult } from "@app/utils/fuzzy-match";
 import { fuzzyMatchBest } from "@app/utils/fuzzy-match";
 import { SafeJSON } from "@app/utils/json";
+import { logger, out } from "@app/utils/logger";
 import type { Storage } from "@app/utils/storage";
 import chalk from "chalk";
 import { type Command, Option } from "commander";

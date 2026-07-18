@@ -58,7 +58,7 @@ function isMigratedTestFile(file: string): boolean {
 const TOOL_IMPORT_RE = /@app\/([a-zA-Z0-9._-]+)(?:\/|"|')/;
 
 /** A src/ subtree that is shared infra, not a tool (so @app/utils/* is never a "tool" import). */
-const SHARED_SRC_PREFIXES = ["utils", "logger", "ask"];
+const SHARED_SRC_PREFIXES = ["utils", "ask"];
 
 interface ImportHit {
     file: string;
@@ -133,10 +133,9 @@ for (const hit of srcHits) {
     }
 
     const fromUtils = hit.file.startsWith("src/utils/");
-    const fromLogger = hit.file === "src/logger.ts" || hit.file.startsWith("src/logger/");
 
     // Rule 2 (WARN): src/utils/* (shared infra) importing a tool — the §0.3 backlog.
-    if ((fromUtils || fromLogger) && !SHARED_SRC_PREFIXES.includes(appTarget)) {
+    if (fromUtils && !SHARED_SRC_PREFIXES.includes(appTarget)) {
         warnings.push(
             `${hit.file}:${hit.line}  shared src/utils -> tool @app/${appTarget}/* (§0.3 backlog): ${hit.spec}`
         );

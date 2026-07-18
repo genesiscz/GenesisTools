@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { untarGz } from "@app/utils/fs";
 import { verifySriIntegrity } from "@app/utils/hash";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { assertSafePathSegment } from "@app/utils/paths";
 import { Storage } from "@app/utils/storage/storage";
 import { beautify } from "./beautify";

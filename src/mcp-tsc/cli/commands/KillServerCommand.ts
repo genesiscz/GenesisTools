@@ -1,6 +1,6 @@
-import { out } from "@app/logger";
 import type { CliArgs } from "@app/mcp-tsc/core/interfaces.js";
 import { killAllServers, killServerForDir } from "@app/mcp-tsc/utils/ServerManager.js";
+import { out } from "@app/utils/logger";
 
 export class KillServerCommand {
     constructor(private cwd: string) {}

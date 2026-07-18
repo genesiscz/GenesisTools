@@ -80,7 +80,7 @@ function applyTransform(source: string): string {
 
     // Insert import
     if (needsOut || needsLogger) {
-        const existing = sf.getImportDeclarations().find((i) => i.getModuleSpecifierValue() === "@app/logger");
+        const existing = sf.getImportDeclarations().find((i) => i.getModuleSpecifierValue() === "@app/utils/logger");
         if (existing) {
             const namedImports = existing.getNamedImports().map((n) => n.getName());
             if (needsOut && !namedImports.includes("out")) {
@@ -101,7 +101,7 @@ function applyTransform(source: string): string {
             }
 
             sf.addImportDeclaration({
-                moduleSpecifier: "@app/logger",
+                moduleSpecifier: "@app/utils/logger",
                 namedImports: names,
             });
         }
@@ -147,18 +147,18 @@ describe("console-sweep codemod snapshot", () => {
         expect(result).not.toContain("console.debug");
     });
 
-    it("inserts import { logger, out } from '@app/logger' when both are needed", () => {
+    it("inserts import { logger, out } from '@app/utils/logger' when both are needed", () => {
         const source = `function f(): void { console.log("a"); console.debug("b"); }\n`;
         const result = applyTransform(source);
-        expect(result).toContain('"@app/logger"');
+        expect(result).toContain('"@app/utils/logger"');
         expect(result).toContain("logger");
         expect(result).toContain("out");
     });
 
-    it("merges into existing @app/logger import", () => {
-        const source = `import { something } from "@app/logger";\nfunction f(): void { console.log("a"); }\n`;
+    it("merges into existing @app/utils/logger import", () => {
+        const source = `import { something } from "@app/utils/logger";\nfunction f(): void { console.log("a"); }\n`;
         const result = applyTransform(source);
-        // Should have one @app/logger import with both something and out
+        // Should have one @app/utils/logger import with both something and out
         const matches = result.match(/@app\/logger/g);
         expect(matches?.length).toBe(1);
         expect(result).toContain("out");

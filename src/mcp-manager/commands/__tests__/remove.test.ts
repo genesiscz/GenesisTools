@@ -15,10 +15,10 @@ const { GeminiProvider } = await import("@app/mcp-manager/utils/providers/gemini
 const { CodexProvider } = await import("@app/mcp-manager/utils/providers/codex.js");
 const { removeServers } = await import("../remove.js");
 
-import { logger } from "@app/logger";
 import { setGlobalOptions } from "@app/mcp-manager/utils/config.utils.js";
 import { env } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { Storage } from "@app/utils/storage";
 import * as TOML from "@iarna/toml";
 

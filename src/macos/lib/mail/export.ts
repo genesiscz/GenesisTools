@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { logger } from "@app/logger";
 import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
 import {
     generateAttachmentName,
@@ -10,6 +9,7 @@ import {
 } from "@app/macos/lib/mail/format";
 import { saveAttachment } from "@app/macos/lib/mail/jxa";
 import { truncateBody } from "@app/macos/lib/mail/transform";
+import { logger } from "@app/utils/logger";
 import type { MailDatabase } from "@app/utils/macos/MailDatabase";
 import type { MailMessage } from "@app/utils/macos/mail/types";
 import * as p from "@clack/prompts";

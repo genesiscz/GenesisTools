@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
 import { env as appEnv } from "@app/utils/env";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import type { SignalEvent } from "./types";
 
 export interface NotifyOpts {

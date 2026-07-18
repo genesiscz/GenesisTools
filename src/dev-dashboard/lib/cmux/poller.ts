@@ -1,7 +1,7 @@
 import { fetchSnapshot } from "@app/dev-dashboard/lib/cmux/client";
 import type { CmuxSnapshot } from "@app/dev-dashboard/lib/cmux/types";
-import { logger } from "@app/logger";
 import { startWakefulInterval, type WakefulInterval } from "@app/utils/async";
+import { logger } from "@app/utils/logger";
 
 const IDLE_THRESHOLD_MS = 60_000;
 

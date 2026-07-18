@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { grokVersionPath } from "./paths";
 
 const DEFAULT_GROK_CLIENT_VERSION = "0.2.60";

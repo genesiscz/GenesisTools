@@ -1,7 +1,7 @@
-import { logger } from "@app/logger";
 import { toFloat32Audio } from "@app/utils/audio/converter";
 import { env } from "@app/utils/env";
 import { formatBytes } from "@app/utils/format";
+import { logger } from "@app/utils/logger";
 import { Stopwatch } from "@app/utils/Stopwatch";
 import { resolveDevice } from "../device";
 import { ensureHuggingFaceTransformers } from "../ensure-hf";

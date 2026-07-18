@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { isInteractive } from "@app/utils/cli";
 import { formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { ensureExtensionCapableSQLite, loadSqliteVec } from "@app/utils/search/stores/sqlite-vec-loader";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";

@@ -101,7 +101,7 @@ export interface LoggerFacade {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function promptUnavailable(): never {
-    throw new Error("@app/logger/client: prompts are not available in browser contexts");
+    throw new Error("@app/utils/logger/client: prompts are not available in browser contexts");
 }
 
 function noopSpinner() {

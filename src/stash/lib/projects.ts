@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { logger } from "@app/logger";
 import { concurrentMap } from "@app/utils/async";
+import { logger } from "@app/utils/logger";
 import { runGitIn } from "./patch";
 import { computeTreeHashSimilarity, DEFAULT_TREE_HASH_THRESHOLD, listTopFilePaths } from "./sibling-clone-tree-hash";
 

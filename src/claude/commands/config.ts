@@ -6,11 +6,11 @@ import {
     updateConfig,
 } from "@app/claude/lib/config";
 import { fetchUsage } from "@app/claude/lib/usage/api";
-import { out } from "@app/logger";
 import { AIConfig } from "@app/utils/ai/AIConfig";
 import { claudeOAuth, fetchOAuthProfile, getClaudeJsonAccount } from "@app/utils/claude/auth";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { formatLocalDate } from "@app/utils/date";
+import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";

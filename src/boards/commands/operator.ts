@@ -1,6 +1,6 @@
 import { paths } from "@app/dev-dashboard/contract/endpoints";
-import { logger } from "@app/logger";
 import { printLn } from "@app/utils/cli";
+import { logger } from "@app/utils/logger";
 import type { Command } from "commander";
 import { getJson, postJson, resolveBaseUrl } from "../lib/client";
 import { readLocalOperator, sanitizeOperator, writeLocalOperator } from "../lib/operator";

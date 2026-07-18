@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { copyFile } from "node:fs/promises";
 import path from "node:path";
-import { logger } from "@app/logger";
 import { DiffUtil } from "@app/utils/diff";
 import { env } from "@app/utils/env";
+import { logger } from "@app/utils/logger";
 import * as p from "@app/utils/prompts/p";
 import chalk from "chalk";
 import { getGlobalOptions } from "./config.utils.js";

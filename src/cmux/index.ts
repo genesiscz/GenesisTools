@@ -14,8 +14,8 @@
  */
 
 import { registerProfilesCommand } from "@app/cmux/commands/profiles";
-import { out } from "@app/logger";
 import { enhanceHelp, runTool } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
 

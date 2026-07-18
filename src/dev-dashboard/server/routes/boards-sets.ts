@@ -15,8 +15,8 @@ import {
 } from "@app/dev-dashboard/lib/boards/sets-store";
 import { untarGz } from "@app/dev-dashboard/lib/boards/tar";
 import type { RouteContext, RouteDef } from "@app/dev-dashboard/server/types";
-import { logger } from "@app/logger";
 import { escapeLike } from "@app/utils/database/predicates";
+import { logger } from "@app/utils/logger";
 import { type SqlBool, sql } from "kysely";
 import { boardsError } from "./boards-errors";
 

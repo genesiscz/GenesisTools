@@ -1,6 +1,5 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
-import { logger } from "@app/logger";
 import {
     addWatchedDirs,
     loadClonesConfig,
@@ -10,6 +9,7 @@ import {
 } from "@app/macos/lib/clones/store";
 import { isInteractive, parseVariadic } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";

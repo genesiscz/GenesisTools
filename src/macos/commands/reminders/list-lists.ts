@@ -1,4 +1,4 @@
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import { MacReminders } from "@app/utils/macos/apple-reminders";
 import { formatTable } from "@app/utils/table";
 import chalk from "chalk";

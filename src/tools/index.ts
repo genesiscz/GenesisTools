@@ -2,8 +2,8 @@
 
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
-import { out } from "@app/logger";
 import { copyToClipboard } from "@app/utils/clipboard";
+import { out } from "@app/utils/logger";
 import { renderMarkdownToCli } from "@app/utils/markdown/index.js";
 import { searchSelect, searchSelectCancelSymbol } from "@app/utils/prompts/clack/search-select.js";
 import * as p from "@clack/prompts";

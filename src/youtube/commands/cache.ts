@@ -1,6 +1,6 @@
 import { existsSync, statSync, unlinkSync } from "node:fs";
-import { out } from "@app/logger";
 import { formatBytes } from "@app/utils/format";
+import { out } from "@app/utils/logger";
 import { renderColumns } from "@app/youtube/commands/_shared/columns";
 import { confirmDestructive } from "@app/youtube/commands/_shared/confirm";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";

@@ -8,9 +8,8 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
-import { logger } from "@app/logger";
-
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 
 const DEFAULT_CACHE_DIR = join(homedir(), ".genesis-tools", "claude-history");
 const DB_NAME = "index.db";

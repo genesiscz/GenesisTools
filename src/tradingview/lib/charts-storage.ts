@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import type { TvSession } from "./types";
 import { TV_ORIGIN } from "./ws";
 

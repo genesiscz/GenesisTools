@@ -5,8 +5,8 @@ import { registerApplyCommand } from "@app/aliases/commands/apply";
 import { registerDecayCommand } from "@app/aliases/commands/decay";
 import { registerResetCommand } from "@app/aliases/commands/reset";
 import { registerStatusCommand } from "@app/aliases/commands/status";
-import { out } from "@app/logger";
 import { runTool } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import { Command } from "commander";
 import pc from "picocolors";
 

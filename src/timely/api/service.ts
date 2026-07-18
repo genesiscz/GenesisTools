@@ -1,4 +1,3 @@
-import { logger } from "@app/logger";
 import type {
     CreateEventInput,
     TimelyAccount,
@@ -7,6 +6,7 @@ import type {
     TimelyProject,
     TimelyUser,
 } from "@app/timely/types";
+import { logger } from "@app/utils/logger";
 import type { Storage } from "@app/utils/storage";
 import type { TimelyApiClient } from "./client";
 

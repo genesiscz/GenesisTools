@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { existsSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 
 const root = resolve(import.meta.dir, "../../..");
 

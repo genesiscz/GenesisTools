@@ -1,4 +1,3 @@
-import { logger } from "@app/logger";
 import type {
     AITask,
     AITranscriptionProvider,
@@ -11,6 +10,7 @@ import { convertToWhisperWav } from "@app/utils/audio/converter";
 import { detectAudioFormat } from "@app/utils/audio/detect-format";
 import type { AIProviderType } from "@app/utils/config/ai.types";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { XAIClient } from "./XAIClient";
 
 interface XAITranscriptionWord {

@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { out } from "@app/logger";
 import { Executor } from "@app/utils/cli";
+import { out } from "@app/utils/logger";
 import pc from "picocolors";
 
 // =============================================================================

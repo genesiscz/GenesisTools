@@ -6,7 +6,7 @@ import {
 } from "@app/azure-devops/lib/work-item-enrichment";
 import type { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { AzureConfig } from "@app/azure-devops/types";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 
 export interface TimelogWorkItemGroup {
     id: number;

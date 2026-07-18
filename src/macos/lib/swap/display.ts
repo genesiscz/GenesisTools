@@ -1,4 +1,3 @@
-import { out } from "@app/logger";
 import { formatBytes, formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@app/utils/table";

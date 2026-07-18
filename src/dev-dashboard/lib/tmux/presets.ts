@@ -1,4 +1,4 @@
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { captureTmuxSnapshot, restoreTmuxSession, SNAPSHOT_VERSION, type TmuxPreset } from "@app/utils/tmux/snapshot";
 import { TmuxPresetStore, type TmuxPresetSummary } from "@app/utils/tmux/snapshot-store";
 

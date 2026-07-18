@@ -11,8 +11,8 @@ import {
     writeConfig,
 } from "@app/dev-dashboard/lib/tunnel/cloudflared";
 import { buildPairingPayload, persistPairing } from "@app/dev-dashboard/lib/tunnel/pairing";
-import { logger, out } from "@app/logger";
 import { isInteractive, suggestCommand } from "@app/utils/cli";
+import { logger, out } from "@app/utils/logger";
 import { renderQr } from "@app/utils/qr";
 import { cancel, confirm, intro, isCancel, log, note, outro, select, spinner, text } from "@clack/prompts";
 

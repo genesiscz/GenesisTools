@@ -1,4 +1,4 @@
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { epochFromWallClockInZone, resolveZone } from "@app/utils/timezone";
 import * as chrono from "chrono-node";
 import type { ParseResult } from "./types";

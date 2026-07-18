@@ -1,4 +1,3 @@
-import { logger } from "@app/logger";
 import type {
     AIAccountEntry,
     AIConfigData,
@@ -8,6 +7,7 @@ import type {
     TaskConfig,
 } from "@app/utils/config/ai.types";
 import type { ConfigMigration } from "@app/utils/config/migration";
+import { logger } from "@app/utils/logger";
 import { Storage } from "@app/utils/storage/storage";
 
 const VALID_PROVIDERS = new Set<string>([

@@ -1,6 +1,6 @@
 import { deleteCredential, listCredentials, loadCredential, saveCredential } from "@app/automate/lib/credentials";
 import type { CredentialType, StoredCredential } from "@app/automate/lib/types";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";

@@ -4,9 +4,9 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { logger } from "@app/logger";
 import { runTool } from "@app/utils/cli";
 import { defineDashboardApp } from "@app/utils/DashboardApp";
+import { logger } from "@app/utils/logger";
 import { Command } from "commander";
 import pc from "picocolors";
 

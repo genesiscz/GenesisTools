@@ -2,7 +2,6 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, relative, resolve } from "node:path";
-import { logger } from "@app/logger";
 import { formatBytes } from "@app/utils/format";
 import {
     type DiskUsage,
@@ -12,6 +11,7 @@ import {
     type WalkError,
     walkFiles,
 } from "@app/utils/fs/disk-usage";
+import { logger } from "@app/utils/logger";
 import { Stopwatch } from "@app/utils/Stopwatch";
 import { passesGlobs } from "./filters";
 import type { CloneAnalysis, DirNode, MeasureReport } from "./render/types";

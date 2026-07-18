@@ -6,7 +6,7 @@ import {
 import { fetchAndAnalyze } from "@app/Internal/commands/reas/lib/analysis-service";
 import { buildDashboardExport } from "@app/Internal/commands/reas/lib/api-export";
 import { buildConfig, resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
-import { out } from "@app/logger";
+import { out } from "@app/utils/logger";
 
 const DEFAULT_PORT = 3456;
 

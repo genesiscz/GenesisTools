@@ -1,5 +1,4 @@
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { logger } from "@app/logger";
 import {
     getTaskSessionsDir,
     jsonlPath,
@@ -22,6 +21,7 @@ import { SafeJSON } from "@app/utils/json";
 import { fuzzyResolveSession } from "@app/utils/log-session/fuzzy-resolver";
 import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
 import type { JsonlExitRecord, JsonlLineRecord, JsonlMetaRecord } from "@app/utils/log-session/types";
+import { logger } from "@app/utils/logger";
 import { atomicWriteFileSync, Storage } from "@app/utils/storage/storage";
 
 export type { ResolvedRunSession } from "@app/task/types";

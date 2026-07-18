@@ -1,4 +1,3 @@
-import { logger } from "@app/logger";
 import { runCmuxJSON } from "@app/utils/cmux/lib/cli";
 import { focusCmuxPane } from "@app/utils/cmux/lib/controls";
 import { withFocusedWorkspace } from "@app/utils/cmux/lib/focus-guard";
@@ -11,6 +10,7 @@ import {
     renameSurfaceTab,
     sendAttachCommand,
 } from "@app/utils/cmux/workspace";
+import { logger } from "@app/utils/logger";
 import { sessionExists } from "@app/utils/tmux/sessions";
 
 export interface AttachTmuxToCmuxOptions {

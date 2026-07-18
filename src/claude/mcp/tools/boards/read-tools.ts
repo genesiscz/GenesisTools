@@ -1,7 +1,7 @@
 import type { AnnotationDto, SetDetailDto } from "@app/dev-dashboard/contract/dto";
 import type { BoardsRes, BoardsSetsRes, WorkListRes } from "@app/dev-dashboard/contract/endpoints";
 import { paths } from "@app/dev-dashboard/contract/endpoints";
-import { logger } from "@app/logger";
+import { logger } from "@app/utils/logger";
 import { boardsBaseUrl, boardsFetch, compact } from "./http";
 
 const log = logger.child({ component: "claude:mcp:boards" });

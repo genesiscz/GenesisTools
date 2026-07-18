@@ -1,9 +1,9 @@
-import { logger } from "@app/logger";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { UserOrdersRepository } from "@app/shops/db/UserOrdersRepository";
 import { UserProvidersRepository } from "@app/shops/db/UserProvidersRepository";
 import { addFavoriteByMaster } from "@app/shops/lib/watchlist-api";
 import { SafeJSON } from "@app/utils/json";
+import { logger } from "@app/utils/logger";
 import { nowUtcIso } from "@app/utils/sql-time";
 
 const log = logger.child({ component: "shops:order-sync" });
