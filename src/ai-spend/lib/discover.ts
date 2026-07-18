@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { logger } from "@app/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { parseTranscriptLine } from "./parse";
 import type { UsageEvent } from "./types";
 

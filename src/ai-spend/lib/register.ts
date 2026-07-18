@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
-import { out } from "@app/logger";
-import { Storage } from "@app/utils/storage/storage";
+import { out } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import type { Command } from "commander";
 import { aggregate } from "./aggregate";
 import { loadPricing } from "./config";

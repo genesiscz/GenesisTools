@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
-import type { Storage } from "@app/utils/storage/storage";
+import { logger } from "@genesiscz/utils/logger";
+import type { Storage } from "@genesiscz/utils/storage/storage";
 import { DEFAULT_PRICING } from "./pricing";
 import type { PricingTable } from "./types";
 

@@ -1,5 +1,5 @@
-import { formatCost, formatTokens } from "@app/utils/format";
-import { formatTable } from "@app/utils/table";
+import { formatCost, formatTokens } from "@genesiscz/utils/format";
+import { formatTable } from "@genesiscz/utils/table";
 import asciichart from "asciichart";
 import pc from "picocolors";
 import type { Report } from "./types";

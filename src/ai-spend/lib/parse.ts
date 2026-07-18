@@ -1,5 +1,5 @@
-import { logger } from "@app/logger";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import type { UsageEvent } from "./types";
 
 interface RawUsage {
