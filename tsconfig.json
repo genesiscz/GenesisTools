@@ -37,8 +37,8 @@
 
         // Path aliases
         "paths": {
-            "@genesiscz/utils": ["./packages/core/src/index.ts"],
-            "@genesiscz/utils/*": ["./packages/core/src/*"],
+            "@genesiscz/utils": ["./src/utils/index.ts"],
+            "@genesiscz/utils/*": ["./src/utils/*"],
             "@app/*": ["./src/*"],
             "@ask/*": ["./src/ask/*"],
             "@ui/*": ["./src/utils/ui/*"],

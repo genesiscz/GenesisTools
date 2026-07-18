@@ -4,7 +4,7 @@
     "module": "index.ts",
     "type": "module",
     "workspaces": [
-        "packages/*"
+        "src/utils"
     ],
     "scripts": {
         "prepare": "git config core.hooksPath .githooks",

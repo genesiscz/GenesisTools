@@ -1,51 +1,58 @@
 #!/usr/bin/env bun
 /**
- * Package-boundary guard for the @gt/* monorepo (MONOREPO-SPEC.md §1.4).
+ * Package-boundary guard for @genesiscz/utils + @genesiscz/tools (flat design,
+ * supersedes the layered @gt/* catalog from MONOREPO-SPEC.md).
  *
- * This repo enforces conventions with bespoke Bun CI scripts
- * (logging-guard.sh, check-ui-palette.ts); boundary enforcement follows the
- * same idiom. It is the mechanism that makes "enforced boundaries" real — the
- * layered dependency direction (SPEC §2.1) cannot erode silently.
+ * @genesiscz/utils is a single Bun workspace package living physically at
+ * src/utils/ (package.json + tsconfig.json + exports there), alongside ~30
+ * still-unmigrated legacy domains (ai/, macos/, cmux/, ui/, ...) that keep
+ * importing tool internals — that's the known §0.3 backlog, unaffected by
+ * this guard's rule 1.
  *
- * RULES (foundation = warn-mode for the backlog; rules flip to FAIL per phase):
- *  1. FAIL — @genesiscz/utils purity: a file in packages/core/** may import only
- *     @genesiscz/utils (sibling subpaths / the package itself) or third-party
- *     node_modules. ANY @app/* or @gt/<other> import is a hard error. This is
- *     fail-from-day-one because @genesiscz/utils is the genuinely import-closed leaf.
- *  2. FAIL — layer back-edges: a packages/<A> file may import @gt/<B> only when
- *     B is at the same-or-lower layer than A (toward L0). A back-edge (toward a
- *     higher layer) is a hard error. Only @genesiscz/utils exists today, so this rule
- *     is vacuously green now and tightens as packages land.
- *  3. FAIL — package -> tool: a packages/** file must never import @app/<tool>/*
- *     (a package may not depend on a tool). EXCEPT the §0.3 backlog under
- *     src/utils/* — those still live in src/, not packages/, so they are caught
- *     by rule 4 in WARN mode until their extraction phase moves + fixes them.
- *  4. WARN — known reverse-dep backlog (SPEC §0.3): src/utils/* importing
- *     @app/<tool>/* (log-viewer -> task/debugging-master, ui/components/youtube
- *     -> youtube, cmux <-> cmux, github -> github, notifications -> telegram-bot,
- *     ai/tasks -> tools). These are real violations; each flips to FAIL in the
- *     phase that breaks its cycle. Warns do NOT fail the build.
- *  5. WARN — tool -> tool: src/<tool> importing another tool's internals
+ * RULES:
+ *  1. FAIL — @genesiscz/utils purity: a MIGRATED file (see UTILS_MIGRATED_FILES
+ *     below) may import only sibling utils modules or third-party node_modules.
+ *     ANY @app/* import is a hard error. Only migrated files are checked —
+ *     unmigrated legacy domains under src/utils/** are covered by rule 4 (warn)
+ *     instead, same as any other src/ file, until they're added to the list.
+ *  2. WARN — known reverse-dep backlog (SPEC §0.3): src/utils/* (including
+ *     unmigrated domains) importing @app/<tool>/* (log-viewer -> task/
+ *     debugging-master, ui/components/youtube -> youtube, cmux <-> cmux,
+ *     github -> github, notifications -> telegram-bot, ai/tasks -> tools).
+ *     Each flips to FAIL as its file is added to UTILS_MIGRATED_FILES.
+ *  3. WARN — tool -> tool: src/<tool> importing another tool's internals
  *     (@app/<otherTool>/*). Flips to FAIL in the cutover phase.
  *
  * Run: `bun scripts/ci/check-package-boundaries.ts`
  */
 import { $ } from "bun";
 
-type Layer = number;
-
 /**
- * Layer order: lower number = lower layer (toward the pure leaf). A package may
- * depend only on packages at the SAME or a LOWER layer. As packages are
- * extracted in follow-up phases, add them here with their layer per SPEC §2.1.
+ * Files physically in src/utils/ that are part of the @genesiscz/utils
+ * package contract today (i.e. listed in src/utils/package.json#exports, plus
+ * their colocated *.test.ts). Purity (rule 1) applies ONLY to these — add a
+ * path here the same commit you add it to package.json#exports.
  */
-const PACKAGE_LAYER: Record<string, Layer> = {
-    core: 0,
-    // L1: "cli-core": 1, logger: 1, prompts: 1, storage: 1, fs: 1, process: 1,
-    // L2: database: 2, net: 2, search: 2,
-    // L3: ai: 3, macos: 3, github: 3, claude: 3, agents: 3, markdown: 3, audio: 3, notifications: 3,
-    // L4: ui: 4, tui: 4, cmux: 4, tmux: 4,
-};
+const UTILS_MIGRATED_FILES = new Set([
+    "src/utils/index.ts",
+    "src/utils/json.ts",
+    "src/utils/date.ts",
+    "src/utils/date-locale.ts",
+    "src/utils/format.ts",
+    "src/utils/string.ts",
+    "src/utils/array.ts",
+    "src/utils/object.ts",
+    "src/utils/math.ts",
+    "src/utils/hash.ts",
+    "src/utils/tokens.ts",
+    "src/utils/Stopwatch.ts",
+]);
+
+/** A migrated file's colocated test (e.g. src/utils/json.ts -> src/utils/json.test.ts). */
+function isMigratedTestFile(file: string): boolean {
+    const m = file.match(/^(.*)\.test\.tsx?$/);
+    return m !== null && UTILS_MIGRATED_FILES.has(`${m[1]}.ts`);
+}
 
 /** Tool dirs/files under src/ that are NOT shared packages (for tool->tool detection). */
 const TOOL_IMPORT_RE = /@app\/([a-zA-Z0-9._-]+)(?:\/|"|')/;
@@ -96,18 +103,6 @@ async function collectImports(scope: string): Promise<ImportHit[]> {
     return hits;
 }
 
-/** Which package does a packages/** file belong to? `packages/core/src/x.ts` -> "core". */
-function packageOf(file: string): string | null {
-    const m = file.match(/^packages\/([^/]+)\//);
-    return m ? m[1] : null;
-}
-
-/** A `@gt/<name>` import resolves to package `<name>`. */
-function gtPackageOf(spec: string): string | null {
-    const m = spec.match(/^@gt\/([^/]+)/);
-    return m ? m[1] : null;
-}
-
 /** A `@app/<seg>` import — returns the first segment (tool name or shared prefix). */
 function appSegmentOf(spec: string): string | null {
     const m = spec.match(TOOL_IMPORT_RE);
@@ -117,62 +112,20 @@ function appSegmentOf(spec: string): string | null {
 const hardErrors: string[] = [];
 const warnings: string[] = [];
 
-// ---- packages/** rules (1, 2, 3) ----
-const pkgHits = await collectImports("packages");
-for (const hit of pkgHits) {
-    const pkg = packageOf(hit.file);
-    if (pkg === null) {
+// ---- rule 1 (FAIL): @genesiscz/utils purity, migrated files only ----
+const srcHits = await collectImports("src");
+for (const hit of srcHits) {
+    const isMigrated = UTILS_MIGRATED_FILES.has(hit.file) || isMigratedTestFile(hit.file);
+    if (!isMigrated) {
         continue;
     }
 
-    const gtTarget = gtPackageOf(hit.spec);
-    const appTarget = appSegmentOf(hit.spec);
-
-    const isTest = /\.test\.tsx?$/.test(hit.file);
-
-    // Rule 1: @genesiscz/utils purity — may import only @genesiscz/utils or node_modules.
-    if (pkg === "core") {
-        // Colocated *.test.ts files are dev-only and not part of the package's
-        // `exports` closure, so they may use shared test infra (e.g.
-        // @app/utils/test/skip — itself a clean leaf). The purity contract is
-        // about what CONSUMERS import, i.e. the source modules.
-        if (hit.spec.startsWith("@app/") && !isTest) {
-            hardErrors.push(`${hit.file}:${hit.line}  @genesiscz/utils must not import @app/* (impurity): ${hit.spec}`);
-            continue;
-        }
-
-        if (gtTarget !== null && gtTarget !== "core") {
-            hardErrors.push(
-                `${hit.file}:${hit.line}  @genesiscz/utils must not import @gt/${gtTarget} (leaf must stay closed): ${hit.spec}`
-            );
-            continue;
-        }
-
-        continue;
-    }
-
-    // Rule 3: package -> tool is forbidden (a package may never depend on a tool).
-    if (appTarget !== null && !SHARED_SRC_PREFIXES.includes(appTarget)) {
-        hardErrors.push(
-            `${hit.file}:${hit.line}  package @gt/${pkg} must not import tool @app/${appTarget}/*: ${hit.spec}`
-        );
-        continue;
-    }
-
-    // Rule 2: layer back-edges.
-    if (gtTarget !== null && gtTarget !== pkg) {
-        const from = PACKAGE_LAYER[pkg];
-        const to = PACKAGE_LAYER[gtTarget];
-        if (from !== undefined && to !== undefined && to > from) {
-            hardErrors.push(
-                `${hit.file}:${hit.line}  layer back-edge: @gt/${pkg} (L${from}) may not import @gt/${gtTarget} (L${to}): ${hit.spec}`
-            );
-        }
+    if (hit.spec.startsWith("@app/") && hit.spec !== "@app/utils/test/skip") {
+        hardErrors.push(`${hit.file}:${hit.line}  @genesiscz/utils must not import @app/* (impurity): ${hit.spec}`);
     }
 }
 
-// ---- src/** rules (4 warn, 5 warn) ----
-const srcHits = await collectImports("src");
+// ---- rules 2, 3 (WARN) ----
 for (const hit of srcHits) {
     const appTarget = appSegmentOf(hit.spec);
     if (appTarget === null) {
@@ -182,7 +135,7 @@ for (const hit of srcHits) {
     const fromUtils = hit.file.startsWith("src/utils/");
     const fromLogger = hit.file === "src/logger.ts" || hit.file.startsWith("src/logger/");
 
-    // Rule 4 (WARN): src/utils/* (shared infra) importing a tool — the §0.3 backlog.
+    // Rule 2 (WARN): src/utils/* (shared infra) importing a tool — the §0.3 backlog.
     if ((fromUtils || fromLogger) && !SHARED_SRC_PREFIXES.includes(appTarget)) {
         warnings.push(
             `${hit.file}:${hit.line}  shared src/utils -> tool @app/${appTarget}/* (§0.3 backlog): ${hit.spec}`
@@ -190,7 +143,7 @@ for (const hit of srcHits) {
         continue;
     }
 
-    // Rule 5 (WARN): tool -> another tool's internals.
+    // Rule 3 (WARN): tool -> another tool's internals.
     const fromToolMatch = hit.file.match(/^src\/([^/]+)\//);
     const fromTool = fromToolMatch ? fromToolMatch[1] : null;
     const fromIsShared = fromTool !== null && SHARED_SRC_PREFIXES.includes(fromTool);
@@ -216,9 +169,7 @@ if (warnings.length > 0) {
 }
 
 if (hardErrors.length > 0) {
-    console.error(
-        `✖ ${hardErrors.length} HARD boundary violations (layer back-edge / package-impurity / package->tool):`
-    );
+    console.error(`✖ ${hardErrors.length} HARD boundary violations (@genesiscz/utils impurity):`);
     for (const e of hardErrors) {
         console.error(`  ${e}`);
     }
@@ -226,6 +177,4 @@ if (hardErrors.length > 0) {
     process.exit(1);
 }
 
-console.log(
-    `✓ package boundaries clean (@genesiscz/utils pure, no back-edges, no package->tool); ${warnings.length} known-backlog warnings`
-);
+console.log(`✓ package boundaries clean (@genesiscz/utils pure); ${warnings.length} known-backlog warnings`);
