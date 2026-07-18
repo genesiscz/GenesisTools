@@ -1,4 +1,4 @@
-import type { DashboardSession } from "@app/utils/log-viewer/log-source";
+import type { DashboardSession } from "@app/log-viewer/log-source";
 import { collapsePathForDisplay, toPosixPath } from "@app/utils/paths.client";
 
 export interface SessionHeaderParts {

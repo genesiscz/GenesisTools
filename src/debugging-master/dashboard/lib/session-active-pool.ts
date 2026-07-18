@@ -1,4 +1,4 @@
-import type { DashboardSession } from "@app/utils/log-viewer/log-source";
+import type { DashboardSession } from "@app/log-viewer/log-source";
 import { activeSessionRetentionMs, DEFAULT_SESSION_POOL_SETTINGS } from "@/lib/session-pool-settings";
 
 /** Default retention (1 hour) — matches task/debugging-master ACTIVE_THRESHOLD_MS. */

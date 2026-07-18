@@ -1,4 +1,4 @@
-import type { DashboardSession } from "@app/utils/log-viewer/log-source";
+import type { DashboardSession } from "@app/log-viewer/log-source";
 import { useNowTick } from "@app/utils/ui/hooks/useNowTick";
 import type { ReactElement } from "react";
 import { resolveSessionLiveStatusDisplay } from "./session-live-status";

@@ -1,6 +1,6 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
 import { SafeJSON } from "@app/utils/json";
-import type { LogSourceId } from "@app/utils/log-viewer/log-source";
+import type { LogSourceId } from "@app/log-viewer/log-source";
 import { sessionRoute } from "./api";
 
 export type ConnectionStatus = "connecting" | "live" | "reconnecting" | "down";

@@ -1,4 +1,4 @@
-import type { DashboardSession } from "@app/utils/log-viewer/log-source";
+import type { DashboardSession } from "@app/log-viewer/log-source";
 import type { ReactElement, ReactNode } from "react";
 import { useSessionDeleteConfirm } from "@/lib/ui/SessionDeleteConfirm";
 import { SessionLiveStatus } from "@/lib/ui/SessionLiveStatus";

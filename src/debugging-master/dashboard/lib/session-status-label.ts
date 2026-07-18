@@ -1,5 +1,5 @@
 import { formatLastMessageAgo } from "@app/utils/format";
-import type { DashboardSession } from "@app/utils/log-viewer/log-source";
+import type { DashboardSession } from "@app/log-viewer/log-source";
 
 export function formatDashboardSessionStatusLabel({
     session,

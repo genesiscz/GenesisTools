@@ -3,13 +3,13 @@ import { join, resolve } from "node:path";
 import { sseBroadcaster } from "@app/debugging-master/core/sse-broadcaster";
 import type { LogEntry } from "@app/debugging-master/types";
 import { SafeJSON } from "@app/utils/json";
-import type { DashboardSession, LogSourceId } from "@app/utils/log-viewer/log-source";
-import { getAllLogSources, getLogSource } from "@app/utils/log-viewer/resolve-log-source";
-import { isLogSourceId } from "@app/utils/log-viewer/session-key";
-import { decodeSessionPathSegment, isSafeLogSessionName } from "@app/utils/log-viewer/session-name";
-import { sortSessionsByRecency } from "@app/utils/log-viewer/session-recency";
-import { resolveSessionState } from "@app/utils/log-viewer/session-state";
-import { enrichDashboardTimestamps } from "@app/utils/log-viewer/tail-bridge";
+import type { DashboardSession, LogSourceId } from "@app/log-viewer/log-source";
+import { getAllLogSources, getLogSource } from "@app/log-viewer/resolve-log-source";
+import { isLogSourceId } from "@app/log-viewer/session-key";
+import { decodeSessionPathSegment, isSafeLogSessionName } from "@app/log-viewer/session-name";
+import { sortSessionsByRecency } from "@app/log-viewer/session-recency";
+import { resolveSessionState } from "@app/log-viewer/session-state";
+import { enrichDashboardTimestamps } from "@app/log-viewer/tail-bridge";
 
 const REF_ID = /^([se])([1-9]\d*)$/;
 

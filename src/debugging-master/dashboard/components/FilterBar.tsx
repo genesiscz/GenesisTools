@@ -1,6 +1,6 @@
 import type { LogLevel } from "@app/debugging-master/types";
-import type { DashboardSession } from "@app/utils/log-viewer/log-source";
-import { sessionKey } from "@app/utils/log-viewer/session-key";
+import type { DashboardSession } from "@app/log-viewer/log-source";
+import { sessionKey } from "@app/log-viewer/session-key";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import type { FilterState } from "@/lib/filters";
 import { FILTER_ORDER, LEVEL_META } from "@/lib/levels";

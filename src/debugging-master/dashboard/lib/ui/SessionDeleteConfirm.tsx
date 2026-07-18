@@ -1,4 +1,4 @@
-import type { LogSourceId } from "@app/utils/log-viewer/log-source";
+import type { LogSourceId } from "@app/log-viewer/log-source";
 import {
     AlertDialog,
     AlertDialogAction,

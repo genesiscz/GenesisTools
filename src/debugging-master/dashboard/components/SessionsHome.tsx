@@ -1,7 +1,7 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
-import type { DashboardSession, LogSourceId } from "@app/utils/log-viewer/log-source";
-import { sessionKey } from "@app/utils/log-viewer/session-key";
-import { sortSessionsByRecency } from "@app/utils/log-viewer/session-recency";
+import type { DashboardSession, LogSourceId } from "@app/log-viewer/log-source";
+import { sessionKey } from "@app/log-viewer/session-key";
+import { sortSessionsByRecency } from "@app/log-viewer/session-recency";
 import { shortenPathWithPrefix } from "@app/utils/paths.client";
 import { buildBalancedMosaicLayout, reconcileMosaicLayout } from "@app/utils/ui/helpers/mosaic-layout";
 import { useAutoScroll } from "@app/utils/ui/hooks/useAutoScroll";

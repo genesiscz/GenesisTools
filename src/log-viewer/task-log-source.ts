@@ -4,7 +4,7 @@ import { TaskSessionStore } from "@app/task/lib/session-store";
 import { countJsonlLineRecords } from "@app/utils/log-session/count-line-records";
 import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
 import { readUiLineMap } from "@app/utils/log-session/ui-jsonl";
-import { resolveTaskSessionListingMeta } from "@app/utils/log-viewer/task-session-listing-meta";
+import { resolveTaskSessionListingMeta } from "@app/log-viewer/task-session-listing-meta";
 import type { LogSource, LogSourceSession } from "./log-source";
 import { taskRecordToLogEntry } from "./log-source";
 

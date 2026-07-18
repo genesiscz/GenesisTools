@@ -1,5 +1,6 @@
 import { Badge } from "@app/utils/ui/components/badge";
 import { Card, CardContent } from "@app/utils/ui/components/card";
+import type { JobStage, VideoId } from "@app/youtube/lib/types";
 import {
     type RunPipeline,
     type VideoDetailDataSource,
@@ -7,7 +8,6 @@ import {
     VideoDetailTabs,
     YouTubeIframe,
 } from "@app/youtube/ui/components/shared";
-import type { JobStage, VideoId } from "@app/youtube/lib/types";
 import {
     useAskVideo,
     useComments,

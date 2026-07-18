@@ -1,6 +1,6 @@
 import { Button } from "@app/utils/ui/components/button";
-import { formatTimecode } from "@app/youtube/ui/components/shared/time";
 import type { TimestampedSummaryEntry } from "@app/youtube/lib/types";
+import { formatTimecode } from "@app/youtube/ui/components/shared/time";
 
 export function InsightsSectionCard({
     entry,

@@ -1,4 +1,3 @@
-import type { VideoDetailDataSource } from "@app/youtube/ui/components/shared/tabs";
 import type {
     Channel,
     ChannelHandle,
@@ -17,6 +16,7 @@ import type {
     VideoLongSummary,
 } from "@app/youtube/lib/types";
 import { mergeUserSettings, type UserSettings } from "@app/youtube/lib/user-settings";
+import type { VideoDetailDataSource } from "@app/youtube/ui/components/shared/tabs";
 import { send } from "@ext/api.bridge";
 import type { ExtensionApiMap } from "@ext/shared/messages";
 import type { ExtensionConfig } from "@ext/shared/types";

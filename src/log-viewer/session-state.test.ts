@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { resolveSessionState } from "@app/utils/log-viewer/session-state";
+import { resolveSessionState } from "@app/log-viewer/session-state";
 
 describe("resolveSessionState", () => {
     it("returns unknown for missing task session meta", async () => {

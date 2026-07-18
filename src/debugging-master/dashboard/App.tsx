@@ -1,7 +1,7 @@
 import type { IndexedLogEntry, LogLevel } from "@app/debugging-master/types";
-import type { DashboardSession, LogSourceId } from "@app/utils/log-viewer/log-source";
-import { isLogSourceId, sessionKey } from "@app/utils/log-viewer/session-key";
-import { sortSessionsByRecency } from "@app/utils/log-viewer/session-recency";
+import type { DashboardSession, LogSourceId } from "@app/log-viewer/log-source";
+import { isLogSourceId, sessionKey } from "@app/log-viewer/session-key";
+import { sortSessionsByRecency } from "@app/log-viewer/session-recency";
 import { DirPathPrefixProvider } from "@ui/components/DirPath";
 import { IconTooltipProvider } from "@ui/components/icon-button";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";

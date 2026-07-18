@@ -2,10 +2,10 @@ import type { LogEntry } from "@app/debugging-master/types";
 import { logger } from "@app/logger";
 import { startWakefulInterval, type WakefulInterval } from "@app/utils/async";
 import { SafeJSON } from "@app/utils/json";
-import type { LogSourceId } from "@app/utils/log-viewer/log-source";
-import { parseSessionKey } from "@app/utils/log-viewer/session-key";
-import { createSourceTailer, sessionKey } from "@app/utils/log-viewer/tail-bridge";
-import { resetTaskUiTailer, stopTaskUiTailer } from "@app/utils/log-viewer/task-ui-lines";
+import type { LogSourceId } from "@app/log-viewer/log-source";
+import { parseSessionKey } from "@app/log-viewer/session-key";
+import { createSourceTailer, sessionKey } from "@app/log-viewer/tail-bridge";
+import { resetTaskUiTailer, stopTaskUiTailer } from "@app/log-viewer/task-ui-lines";
 
 interface Subscriber {
     id: number;

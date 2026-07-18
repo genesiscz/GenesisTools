@@ -1,4 +1,4 @@
-import type { DashboardSession } from "@app/utils/log-viewer/log-source";
+import type { DashboardSession } from "@app/log-viewer/log-source";
 import type { ReactElement } from "react";
 import type { MultiplexLogEntry } from "@/lib/sse";
 import { AutoscrollToggle } from "./AutoscrollToggle";

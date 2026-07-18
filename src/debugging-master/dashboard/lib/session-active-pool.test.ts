@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { DashboardSession } from "@app/utils/log-viewer/log-source";
+import type { DashboardSession } from "@app/log-viewer/log-source";
 import { isSessionInActivePool, SESSION_ACTIVE_RETENTION_MS } from "./session-active-pool";
 
 describe("session-active-pool", () => {
