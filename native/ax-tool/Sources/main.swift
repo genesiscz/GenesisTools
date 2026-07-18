@@ -513,17 +513,33 @@ func errorExit(_ message: String) -> Never {
     exit(1)
 }
 
+/// WindowServer-truth frontmost pid. NSWorkspace.frontmostApplication caches
+/// and lags in a runloop-less CLI — the AX system-wide focused application
+/// reflects activation immediately (round-7 regression: scroll aborted right
+/// as its own activation landed).
+func frontmostPid() -> pid_t? {
+    let sys = AXUIElementCreateSystemWide()
+    var v: CFTypeRef?
+    if AXUIElementCopyAttributeValue(sys, "AXFocusedApplication" as CFString, &v) == .success, let appRef = v {
+        let appEl = appRef as! AXUIElement
+        var pid: pid_t = 0
+        if AXUIElementGetPid(appEl, &pid) == .success { return pid }
+    }
+    return NSWorkspace.shared.frontmostApplication?.processIdentifier
+}
+
 /// Activate an app and poll until it is actually frontmost. One activate()
 /// call + fixed sleep races when another activation is still in flight —
-/// re-request each poll (up to ~1.5s).
+/// re-request each poll (up to ~3s), pumping the runloop so NSWorkspace
+/// state can update too.
 func bringFrontmost(_ pid: pid_t) -> Bool {
     let runningApp = NSWorkspace.shared.runningApplications.first { $0.processIdentifier == pid }
-    for _ in 0..<15 {
-        if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { return true }
+    for _ in 0..<30 {
+        if frontmostPid() == pid { return true }
         runningApp?.activate(options: [.activateIgnoringOtherApps])
-        Thread.sleep(forTimeInterval: 0.1)
+        CFRunLoopRunInMode(.defaultMode, 0.1, false)
     }
-    return NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+    return frontmostPid() == pid
 }
 
 // MARK: - Commands
@@ -1336,15 +1352,37 @@ func captureWindowCGImageFull(_ appName: String) -> (CGImage, String, pid_t, CGR
         return width * height
     }
 
+    // AX window titles keyed by frame — CG titles can be shorter than AX
+    // titles (Brave drops the " - Brave - Main" suffix in CGWindowName), so a
+    // substring copied from `window` output must still match here.
+    let axApp = AXUIElementCreateApplication(pid)
+    let axTitlesByFrame: [(frame: CGRect, title: String)] = axWindows(axApp).compactMap { w in
+        guard let pos = axPointValue(w, "AXPosition"), let size = axSizeValue(w, "AXSize"),
+              let t = axStringAttribute(w, "AXTitle"), !t.isEmpty else { return nil }
+        return (CGRect(x: pos.x, y: pos.y, width: size.width, height: size.height), t)
+    }
+    let axTitleFor = { (w: [CFString: Any]) -> String? in
+        guard let b = w[kCGWindowBounds] as? [String: Any],
+              let x = b["X"] as? Double, let y = b["Y"] as? Double,
+              let width = b["Width"] as? Double, let height = b["Height"] as? Double else { return nil }
+        return axTitlesByFrame.first {
+            abs($0.frame.origin.x - x) < 6 && abs($0.frame.origin.y - y) < 6 &&
+            abs($0.frame.width - width) < 6 && abs($0.frame.height - height) < 6
+        }?.title
+    }
+
     var targetWindow: [CFString: Any]? = nil
     if let ws = windowScope {
         // Fail loud on 0 or >1 matches — a substring miss must never silently
         // capture a different window (the "Find in page popup as Brave-Main" bug).
-        let matches = appWindows.filter { windowName($0).localizedCaseInsensitiveContains(ws) }
+        let matches = appWindows.filter { w in
+            windowName(w).localizedCaseInsensitiveContains(ws) ||
+            (axTitleFor(w)?.localizedCaseInsensitiveContains(ws) ?? false)
+        }
         if matches.isEmpty {
             jsonOutput(["ok": false,
                 "error": "no window matching '\(ws)' in \(appName)",
-                "candidates": appWindows.map { windowName($0) }])
+                "candidates": appWindows.map { axTitleFor($0) ?? windowName($0) }])
             exit(1)
         }
         if matches.count > 1 {
@@ -1532,8 +1570,14 @@ func annotateImage(_ image: CGImage, appName: String, pid: pid_t, windowTitle: S
         ctx.textPosition = CGPoint(x: bgRect.minX + pad, y: bgRect.minY + pad)
         CTLineDraw(line, ctx)
 
+        // Legend reports the VISIBLE portion — a box crossing the image edge
+        // must not claim pixels the PNG doesn't have.
         var entry: [String: Any] = ["n": n, "role": fe.role,
-            "px": ["x": Int(rx), "y": Int(ryTop), "w": Int(rw), "h": Int(rh)]]
+            "px": ["x": Int(visible.origin.x), "y": Int(visible.origin.y),
+                   "w": Int(visible.width), "h": Int(visible.height)]]
+        if visible.width < rw - 1 || visible.height < rh - 1 {
+            entry["clipped"] = true
+        }
         entry.merge(elementInfo(fe.el)) { _, new in new }
         legend.append(entry)
     }

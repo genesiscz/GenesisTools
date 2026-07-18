@@ -381,8 +381,10 @@ export function registerRecordPlanCommand(program: Command): void {
         .description(`Record a plan instead of writing one — capture what happens, emit runnable plan JSON.
 
   Modes (--record):
-    commands  log every subsequent \`tools control\` action command (press/click/
-              set/type/hotkey/scroll/...) from ANY terminal until stop
+    commands  log every subsequent \`tools control\` ACTION command (press/click/
+              set/type/hotkey/scroll/perform/screenshot/window/focus) from ANY
+              terminal until stop — read-only commands (get/find/attrs/preflight)
+              are intentionally NOT recorded
     activity  record the USER's real clicks/keys/scrolls via a CGEvent tap,
               clicks resolved to AX elements (id/desc/role) for replayability
     all       both, deduped (default)
