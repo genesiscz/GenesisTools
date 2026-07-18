@@ -283,10 +283,7 @@ export class CodexSessionRuntime {
         return this.meta.threadId;
     }
 
-    private async steer(
-        body: string,
-        force: boolean
-    ): Promise<{ turnId?: string; queued: boolean; merged?: boolean }> {
+    private async steer(body: string, force: boolean): Promise<{ turnId?: string; queued: boolean; merged?: boolean }> {
         // codex 0.144.5 accepts turn/start during an active turn and MERGES the
         // input into it (verified live): the returned turn id never runs as a
         // separate turn, so keep the original active id in meta instead of the

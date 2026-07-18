@@ -395,7 +395,10 @@ describe("readTaskSnapshots meta sidecar", () => {
                 { type: "line", seq: 1, out: "stdout", level: "info", ts: T0 + 10, text: "boom" },
             ];
             writeFileSync(join(dir, "crashy.jsonl"), `${lines.map((o) => SafeJSON.stringify(o)).join("\n")}\n`);
-            writeFileSync(join(dir, "crashy.meta.json"), SafeJSON.stringify({ name: "crashy", pid: 999999, exitCode: 137 }));
+            writeFileSync(
+                join(dir, "crashy.meta.json"),
+                SafeJSON.stringify({ name: "crashy", pid: 999999, exitCode: 137 })
+            );
 
             const snaps = await readTaskSnapshots({ dir, now: T0 + 1_000, stallTimeoutMs: 120_000 });
             expect(snaps[0]?.state).toBe("FINISHED");
@@ -419,7 +422,12 @@ describe("collectSnapshots active window", () => {
             utimesSync(join(dir, "ancient.jsonl"), (T0 - 10_000_000) / 1000, (T0 - 10_000_000) / 1000);
             utimesSync(join(dir, "recent.jsonl"), (T0 - 1_000) / 1000, (T0 - 1_000) / 1000);
 
-            const all = await collectSnapshots({ sources: ["task"], now: T0, stallTimeoutMs: 120_000, roots: { task: dir } });
+            const all = await collectSnapshots({
+                sources: ["task"],
+                now: T0,
+                stallTimeoutMs: 120_000,
+                roots: { task: dir },
+            });
             const windowed = await collectSnapshots({
                 sources: ["task"],
                 now: T0,
@@ -456,13 +464,23 @@ describe("sweep seed silence (continuous watch baseline)", () => {
             const prev = new Map<string, AgentState>();
 
             // Hermetic: same decide flow the watcher's seed pass runs, silent notifier.
-            const seedSnaps = await collectSnapshots({ sources: ["task"], now: T0, stallTimeoutMs: 120_000, roots: { task: dir } });
+            const seedSnaps = await collectSnapshots({
+                sources: ["task"],
+                now: T0,
+                stallTimeoutMs: 120_000,
+                roots: { task: dir },
+            });
             await decideAndNotify({ snapshots: seedSnaps, prevStates: prev, notifier: { notify: async () => {} } });
             expect(calls).toHaveLength(0);
             expect(prev.get("task:old-done")).toBe("FINISHED");
 
             // Second pass with the REAL notifier: state unchanged → still quiet.
-            const again = await collectSnapshots({ sources: ["task"], now: T0 + 1_000, stallTimeoutMs: 120_000, roots: { task: dir } });
+            const again = await collectSnapshots({
+                sources: ["task"],
+                now: T0 + 1_000,
+                stallTimeoutMs: 120_000,
+                roots: { task: dir },
+            });
             await decideAndNotify({ snapshots: again, prevStates: prev, notifier });
             expect(calls).toHaveLength(0);
         } finally {
