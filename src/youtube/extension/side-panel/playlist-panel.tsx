@@ -1,7 +1,7 @@
 import { Button } from "@app/utils/ui/components/button";
 import { Markdown } from "@app/utils/ui/components/markdown";
-import { LlmConfirmDialog } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
-import { errorCodeOf } from "@app/utils/ui/components/youtube/login-required";
+import { LlmConfirmDialog } from "@app/youtube/ui/components/shared/llm-confirm-dialog";
+import { errorCodeOf } from "@app/youtube/ui/components/shared/login-required";
 import type { VideoReport } from "@app/youtube/lib/types";
 import { useCreateReport, useReport, useReportEstimate } from "@ext/api.hooks";
 import type { ReportMemberMeta } from "@ext/shared/messages";

@@ -3,11 +3,11 @@ import { Button } from "@app/utils/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
-import { ActivityGraph } from "@app/utils/ui/components/youtube/activity-graph";
-import { Diamond, formatDiamonds } from "@app/utils/ui/components/youtube/diamond";
-import { isLoginRequiredError } from "@app/utils/ui/components/youtube/login-required";
-import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
-import { formatRelativeTime } from "@app/utils/ui/components/youtube/time";
+import { ActivityGraph } from "@app/youtube/ui/components/shared/activity-graph";
+import { Diamond, formatDiamonds } from "@app/youtube/ui/components/shared/diamond";
+import { isLoginRequiredError } from "@app/youtube/ui/components/shared/login-required";
+import { OUTPUT_LANGS } from "@app/youtube/ui/components/shared/output-langs";
+import { formatRelativeTime } from "@app/youtube/ui/components/shared/time";
 import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
 import type { PresetKind, PromptPreset, ShareSummary, YtRole } from "@app/youtube/lib/types";
 import {

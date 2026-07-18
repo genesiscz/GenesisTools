@@ -1,6 +1,6 @@
-import { ActivityGraph } from "@app/utils/ui/components/youtube/activity-graph";
-import { formatLedgerReason } from "@app/utils/ui/components/youtube/ledger-copy";
-import { formatRelativeTime } from "@app/utils/ui/components/youtube/time";
+import { ActivityGraph } from "@app/youtube/ui/components/shared/activity-graph";
+import { formatLedgerReason } from "@app/youtube/ui/components/shared/ledger-copy";
+import { formatRelativeTime } from "@app/youtube/ui/components/shared/time";
 import { type LedgerRowData, ledgerReasonGroup } from "@app/youtube/lib/types";
 import { useLedger, useUsageSummary } from "@ext/api.hooks";
 import { ArrowLeft, Gem, Loader2 } from "lucide-react";

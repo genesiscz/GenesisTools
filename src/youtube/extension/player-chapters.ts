@@ -1,5 +1,5 @@
 import { logger } from "@app/logger/client";
-import { activeChapterIndex } from "@app/utils/ui/components/youtube/chapters";
+import { activeChapterIndex } from "@app/youtube/ui/components/shared/chapters";
 
 export interface ChapterTick {
     title: string;

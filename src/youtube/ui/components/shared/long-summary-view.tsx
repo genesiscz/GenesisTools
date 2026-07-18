@@ -1,6 +1,6 @@
-import { activeChapterIndex } from "@app/utils/ui/components/youtube/chapters";
-import type { PartialLongSummary } from "@app/utils/ui/components/youtube/summary-partials";
-import { formatTimecode } from "@app/utils/ui/components/youtube/time";
+import { activeChapterIndex } from "@app/youtube/ui/components/shared/chapters";
+import type { PartialLongSummary } from "@app/youtube/ui/components/shared/summary-partials";
+import { formatTimecode } from "@app/youtube/ui/components/shared/time";
 import { CheckCircle2, ChevronDown } from "lucide-react";
 import { useState } from "react";
 

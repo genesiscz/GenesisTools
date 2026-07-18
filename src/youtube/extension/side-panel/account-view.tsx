@@ -1,5 +1,5 @@
 import { Button } from "@app/utils/ui/components/button";
-import { HistoryView } from "@app/utils/ui/components/youtube/history-view";
+import { HistoryView } from "@app/youtube/ui/components/shared/history-view";
 import { useMe, useUserHistory } from "@ext/api.hooks";
 import { CollectionsSection } from "@ext/side-panel/account-collections";
 import { DigestSection } from "@ext/side-panel/account-digest";

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatDiamonds } from "@app/utils/ui/components/youtube/diamond";
+import { formatDiamonds } from "@app/youtube/ui/components/shared/diamond";
 
 describe("formatDiamonds", () => {
     test("thin-space separates thousands", () => {

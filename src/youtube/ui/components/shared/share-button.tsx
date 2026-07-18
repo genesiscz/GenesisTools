@@ -1,5 +1,5 @@
 import { logger } from "@app/logger/client";
-import { isLoginRequiredError } from "@app/utils/ui/components/youtube/login-required";
+import { isLoginRequiredError } from "@app/youtube/ui/components/shared/login-required";
 import { Check, Loader2, Share2 } from "lucide-react";
 import { useState } from "react";
 

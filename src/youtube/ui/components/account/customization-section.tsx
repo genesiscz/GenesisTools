@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/componen
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import { Switch } from "@app/utils/ui/components/switch";
-import { LENGTH_PHRASES, TONE_PHRASES } from "@app/utils/ui/components/youtube/summary-controls";
+import { LENGTH_PHRASES, TONE_PHRASES } from "@app/youtube/ui/components/shared/summary-controls";
 import { OUTPUT_LANGS } from "@app/youtube/lib/languages";
 import type { SummaryFormat, SummaryLength, SummaryTone } from "@app/youtube/lib/types";
 import type { SettingsTaskKind, TaskDefaultSettings, UserSettings } from "@app/youtube/lib/user-settings";

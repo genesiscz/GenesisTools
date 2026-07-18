@@ -1,9 +1,9 @@
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@app/utils/ui/components/dialog";
 import { Input } from "@app/utils/ui/components/input";
-import { computeCreditBuckets } from "@app/utils/ui/components/youtube/billing-ui";
-import { formatDiamonds } from "@app/utils/ui/components/youtube/diamond";
-import { formatLedgerReason } from "@app/utils/ui/components/youtube/ledger-copy";
-import { formatRelativeTime } from "@app/utils/ui/components/youtube/time";
+import { computeCreditBuckets } from "@app/youtube/ui/components/shared/billing-ui";
+import { formatDiamonds } from "@app/youtube/ui/components/shared/diamond";
+import { formatLedgerReason } from "@app/youtube/ui/components/shared/ledger-copy";
+import { formatRelativeTime } from "@app/youtube/ui/components/shared/time";
 import {
     useAdminAiCalls,
     useAdminJobs,

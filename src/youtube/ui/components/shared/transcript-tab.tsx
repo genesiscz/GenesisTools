@@ -2,14 +2,14 @@ import { logger } from "@app/logger/client";
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
-import { LlmConfirmDialog } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
-import { PanelLoading } from "@app/utils/ui/components/youtube/loading";
-import { errorCodeOf } from "@app/utils/ui/components/youtube/login-required";
-import { OUTPUT_LANGS, outputLangLabel } from "@app/utils/ui/components/youtube/output-langs";
-import { scrollIntoPanelView } from "@app/utils/ui/components/youtube/scroll";
-import type { PipelineProgress, RunPipeline } from "@app/utils/ui/components/youtube/tabs";
-import { formatTimecode } from "@app/utils/ui/components/youtube/time";
-import { segmentsToParagraphs, type TranscriptParagraph } from "@app/utils/ui/components/youtube/transcript-paragraphs";
+import { LlmConfirmDialog } from "@app/youtube/ui/components/shared/llm-confirm-dialog";
+import { PanelLoading } from "@app/youtube/ui/components/shared/panel-loading";
+import { errorCodeOf } from "@app/youtube/ui/components/shared/login-required";
+import { OUTPUT_LANGS, outputLangLabel } from "@app/youtube/ui/components/shared/output-langs";
+import { scrollIntoPanelView } from "@app/youtube/ui/components/shared/scroll";
+import type { PipelineProgress, RunPipeline } from "@app/youtube/ui/components/shared/tabs";
+import { formatTimecode } from "@app/youtube/ui/components/shared/time";
+import { segmentsToParagraphs, type TranscriptParagraph } from "@app/youtube/ui/components/shared/transcript-paragraphs";
 import {
     CREDIT_COSTS,
     type QueueStats,

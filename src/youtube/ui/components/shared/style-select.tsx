@@ -6,7 +6,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@app/utils/ui/components/select";
-import { PresetEditor } from "@app/utils/ui/components/youtube/preset-editor";
+import { PresetEditor } from "@app/youtube/ui/components/shared/preset-editor";
 import type { PresetKind, PromptPreset } from "@app/youtube/lib/types";
 import { Plus } from "lucide-react";
 import { useState } from "react";

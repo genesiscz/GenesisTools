@@ -2,8 +2,8 @@ import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
-import { CollectionAskPanel } from "@app/utils/ui/components/youtube/collection-ask-panel";
-import { optimisticUserMessage, ruleSummary } from "@app/utils/ui/components/youtube/collection-ui";
+import { CollectionAskPanel } from "@app/youtube/ui/components/shared/collection-ask-panel";
+import { optimisticUserMessage, ruleSummary } from "@app/youtube/ui/components/shared/collection-ui";
 import {
     useAskCollection,
     useCollection,

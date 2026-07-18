@@ -1,21 +1,21 @@
 import { Button } from "@app/utils/ui/components/button";
-import { LlmConfirmDialog, type ModelPreset } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
-import { PanelLoading } from "@app/utils/ui/components/youtube/loading";
-import { errorCodeOf, isLoginRequiredError } from "@app/utils/ui/components/youtube/login-required";
-import { LongSummaryView } from "@app/utils/ui/components/youtube/long-summary-view";
-import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
-import { ShareButton } from "@app/utils/ui/components/youtube/share-button";
-import { StyleSelect } from "@app/utils/ui/components/youtube/style-select";
-import { SummaryAudioPlayer } from "@app/utils/ui/components/youtube/summary-audio-player";
+import { LlmConfirmDialog, type ModelPreset } from "@app/youtube/ui/components/shared/llm-confirm-dialog";
+import { PanelLoading } from "@app/youtube/ui/components/shared/panel-loading";
+import { errorCodeOf, isLoginRequiredError } from "@app/youtube/ui/components/shared/login-required";
+import { LongSummaryView } from "@app/youtube/ui/components/shared/long-summary-view";
+import { OUTPUT_LANGS } from "@app/youtube/ui/components/shared/output-langs";
+import { ShareButton } from "@app/youtube/ui/components/shared/share-button";
+import { StyleSelect } from "@app/youtube/ui/components/shared/style-select";
+import { SummaryAudioPlayer } from "@app/youtube/ui/components/shared/summary-audio-player";
 import {
     LENGTH_PHRASES,
     SummaryControlsBar,
     type SummaryControlsState,
     seedControlsFromTaskDefault,
     TONE_PHRASES,
-} from "@app/utils/ui/components/youtube/summary-controls";
-import { toPartialLongSummary } from "@app/utils/ui/components/youtube/summary-partials";
-import type { PipelineProgress, VideoDetailDataSource } from "@app/utils/ui/components/youtube/tabs";
+} from "@app/youtube/ui/components/shared/summary-controls";
+import { toPartialLongSummary } from "@app/youtube/ui/components/shared/summary-partials";
+import type { PipelineProgress, VideoDetailDataSource } from "@app/youtube/ui/components/shared/tabs";
 import type { LlmEstimate, LockedArtifact, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
 import { CREDIT_COSTS } from "@app/youtube/lib/types";
 import type { TaskDefaultSettings } from "@app/youtube/lib/user-settings";

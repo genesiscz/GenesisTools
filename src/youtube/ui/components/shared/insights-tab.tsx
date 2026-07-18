@@ -1,18 +1,18 @@
 import { Button } from "@app/utils/ui/components/button";
-import { LlmConfirmDialog, type ModelPreset } from "@app/utils/ui/components/youtube/llm-confirm-dialog";
-import { PanelLoading } from "@app/utils/ui/components/youtube/loading";
-import { errorCodeOf } from "@app/utils/ui/components/youtube/login-required";
-import { OUTPUT_LANGS } from "@app/utils/ui/components/youtube/output-langs";
+import { LlmConfirmDialog, type ModelPreset } from "@app/youtube/ui/components/shared/llm-confirm-dialog";
+import { PanelLoading } from "@app/youtube/ui/components/shared/panel-loading";
+import { errorCodeOf } from "@app/youtube/ui/components/shared/login-required";
+import { OUTPUT_LANGS } from "@app/youtube/ui/components/shared/output-langs";
 import {
     LENGTH_PHRASES,
     SummaryControlsBar,
     type SummaryControlsState,
     seedControlsFromTaskDefault,
     TONE_PHRASES,
-} from "@app/utils/ui/components/youtube/summary-controls";
-import { toPartialTimestampedEntries } from "@app/utils/ui/components/youtube/summary-partials";
-import type { PipelineProgress } from "@app/utils/ui/components/youtube/tabs";
-import { TimestampedSummaryView } from "@app/utils/ui/components/youtube/timestamped-summary-view";
+} from "@app/youtube/ui/components/shared/summary-controls";
+import { toPartialTimestampedEntries } from "@app/youtube/ui/components/shared/summary-partials";
+import type { PipelineProgress } from "@app/youtube/ui/components/shared/tabs";
+import { TimestampedSummaryView } from "@app/youtube/ui/components/shared/timestamped-summary-view";
 import type {
     LlmEstimate,
     LockedArtifact,

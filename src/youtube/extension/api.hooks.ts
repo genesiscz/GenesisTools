@@ -1,4 +1,4 @@
-import type { VideoDetailDataSource } from "@app/utils/ui/components/youtube/tabs";
+import type { VideoDetailDataSource } from "@app/youtube/ui/components/shared/tabs";
 import type {
     Channel,
     ChannelHandle,

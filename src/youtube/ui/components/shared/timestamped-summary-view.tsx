@@ -1,4 +1,4 @@
-import { InsightsSectionCard } from "@app/utils/ui/components/youtube/insights-section-card";
+import { InsightsSectionCard } from "@app/youtube/ui/components/shared/insights-section-card";
 import type { TimestampedSummaryEntry } from "@app/youtube/lib/types";
 
 export interface TimestampedSummaryViewProps {

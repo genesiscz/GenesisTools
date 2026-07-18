@@ -1,7 +1,7 @@
 import { logger } from "@app/logger/client";
 import { Button } from "@app/utils/ui/components/button";
-import { computeCreditBuckets, subscriptionRenewalCopy } from "@app/utils/ui/components/youtube/billing-ui";
-import { Diamond, formatDiamonds } from "@app/utils/ui/components/youtube/diamond";
+import { computeCreditBuckets, subscriptionRenewalCopy } from "@app/youtube/ui/components/shared/billing-ui";
+import { Diamond, formatDiamonds } from "@app/youtube/ui/components/shared/diamond";
 import { SUBSCRIPTION_PLANS } from "@app/youtube/lib/billing.types";
 import type { MeBillingContext, YtUser } from "@app/youtube/lib/types";
 import { useMe, useSubscribe } from "@ext/api.hooks";

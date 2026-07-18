@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatLedgerReason } from "@app/utils/ui/components/youtube/ledger-copy";
+import { formatLedgerReason } from "@app/youtube/ui/components/shared/ledger-copy";
 
 describe("formatLedgerReason", () => {
     test("exact reasons get friendly labels", () => {

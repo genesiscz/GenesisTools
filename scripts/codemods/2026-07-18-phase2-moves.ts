@@ -27,7 +27,8 @@ import { applyMove, type Move } from "./lib/codemod";
 const MOVES: Move[] = [
     {
         id: "telegram",
-        description: "telegram-bot lib/{api,formatting,types} (dynamic-imported by utils/notifications/channels/telegram)",
+        description:
+            "telegram-bot lib/{api,formatting,types} (dynamic-imported by utils/notifications/channels/telegram)",
         gitMoves: [
             { from: "src/telegram-bot/lib/api.ts", to: "src/utils/telegram-bot/lib/api.ts" },
             { from: "src/telegram-bot/lib/formatting.ts", to: "src/utils/telegram-bot/lib/formatting.ts" },
@@ -46,13 +47,12 @@ const MOVES: Move[] = [
         id: "youtube-ui",
         description: "youtube feature components OUT of shared utils/ui into src/youtube/ui/components/shared",
         gitMoves: [{ from: "src/utils/ui/components/youtube", to: "src/youtube/ui/components/shared" }],
-        specRewrites: [
-            { from: "@app/utils/ui/components/youtube", to: "@app/youtube/ui/components/shared" },
-        ],
+        specRewrites: [{ from: "@app/youtube/ui/components/shared", to: "@app/youtube/ui/components/shared" }],
     },
     {
         id: "log-viewer",
-        description: "log-viewer OUT of utils to src/log-viewer (tool-adjacent: needs task + debugging-master internals)",
+        description:
+            "log-viewer OUT of utils to src/log-viewer (tool-adjacent: needs task + debugging-master internals)",
         gitMoves: [{ from: "src/utils/log-viewer", to: "src/log-viewer" }],
         specRewrites: [{ from: "@app/utils/log-viewer", to: "@app/log-viewer" }],
     },

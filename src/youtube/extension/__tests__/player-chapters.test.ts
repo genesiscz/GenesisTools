@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { activeChapterIndex } from "@app/utils/ui/components/youtube/chapters";
+import { activeChapterIndex } from "@app/youtube/ui/components/shared/chapters";
 import { tickPositionPct } from "@ext/player-chapters";
 
 describe("tickPositionPct", () => {

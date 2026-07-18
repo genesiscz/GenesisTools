@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { computeCreditBuckets, subscriptionRenewalCopy } from "@app/utils/ui/components/youtube/billing-ui";
+import { computeCreditBuckets, subscriptionRenewalCopy } from "@app/youtube/ui/components/shared/billing-ui";
 
 const activeSub = {
     planId: "sub-monthly",

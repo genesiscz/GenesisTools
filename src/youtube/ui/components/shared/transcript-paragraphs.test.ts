@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { segmentsToParagraphs } from "@app/utils/ui/components/youtube/transcript-paragraphs";
+import { segmentsToParagraphs } from "@app/youtube/ui/components/shared/transcript-paragraphs";
 
 describe("segmentsToParagraphs speaker boundaries", () => {
     test("caption segments (no speakers) group exactly as before", () => {

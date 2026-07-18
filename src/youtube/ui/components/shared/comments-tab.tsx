@@ -1,8 +1,8 @@
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
-import { PanelLoading } from "@app/utils/ui/components/youtube/loading";
-import type { PipelineProgress, RunPipeline } from "@app/utils/ui/components/youtube/tabs";
-import { formatRelativeTime } from "@app/utils/ui/components/youtube/time";
+import { PanelLoading } from "@app/youtube/ui/components/shared/panel-loading";
+import type { PipelineProgress, RunPipeline } from "@app/youtube/ui/components/shared/tabs";
+import { formatRelativeTime } from "@app/youtube/ui/components/shared/time";
 import type { VideoComment, VideoId } from "@app/youtube/lib/types";
 import { Loader2, MessageCircle, Search, ThumbsUp } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";

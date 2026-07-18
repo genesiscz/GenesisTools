@@ -1,4 +1,4 @@
-import { HistoryView } from "@app/utils/ui/components/youtube/history-view";
+import { HistoryView } from "@app/youtube/ui/components/shared/history-view";
 import { useHistory, useMe } from "@app/yt/api.hooks";
 import { SignInRequired } from "@app/yt/components/shared/sign-in-required";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";

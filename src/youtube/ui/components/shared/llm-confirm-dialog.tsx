@@ -2,7 +2,7 @@ import { logger } from "@app/logger/client";
 import { Button } from "@app/utils/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
-import type { OutputLang } from "@app/utils/ui/components/youtube/output-langs";
+import type { OutputLang } from "@app/youtube/ui/components/shared/output-langs";
 import type { LlmEstimate } from "@app/youtube/lib/types";
 import { AlertTriangle, Sparkles } from "lucide-react";
 import { type ReactNode, useState } from "react";

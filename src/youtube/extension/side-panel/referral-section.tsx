@@ -1,9 +1,9 @@
 import { logger } from "@app/logger/client";
 import { Button } from "@app/utils/ui/components/button";
 import { Input } from "@app/utils/ui/components/input";
-import { Diamond, formatDiamonds } from "@app/utils/ui/components/youtube/diamond";
-import { copyText } from "@app/utils/ui/components/youtube/share-button";
-import { formatRelativeTime } from "@app/utils/ui/components/youtube/time";
+import { Diamond, formatDiamonds } from "@app/youtube/ui/components/shared/diamond";
+import { copyText } from "@app/youtube/ui/components/shared/share-button";
+import { formatRelativeTime } from "@app/youtube/ui/components/shared/time";
 import { ApiError } from "@ext/api.bridge";
 import { useRedeemReferral, useReferral } from "@ext/api.hooks";
 import { Check, Copy, Gift, Loader2, Users } from "lucide-react";

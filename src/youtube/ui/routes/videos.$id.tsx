@@ -6,7 +6,7 @@ import {
     type VideoDetailTab,
     VideoDetailTabs,
     YouTubeIframe,
-} from "@app/utils/ui/components/youtube";
+} from "@app/youtube/ui/components/shared";
 import type { JobStage, VideoId } from "@app/youtube/lib/types";
 import {
     useAskVideo,

@@ -2,7 +2,7 @@ import { logger } from "@app/logger/client";
 import { formatDuration } from "@app/utils/format";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@app/utils/ui/components/sheet";
 import { Skeleton } from "@app/utils/ui/components/skeleton";
-import { copyText } from "@app/utils/ui/components/youtube/share-button";
+import { copyText } from "@app/youtube/ui/components/shared/share-button";
 import type { JobActivity } from "@app/youtube/lib/types";
 import { useJobActivity } from "@app/yt/api.hooks";
 import { parseSqliteDate } from "@app/yt/lib/format";

@@ -1,8 +1,8 @@
 import { Badge } from "@app/utils/ui/components/badge";
 import { Button } from "@app/utils/ui/components/button";
 import { Card, CardContent } from "@app/utils/ui/components/card";
-import { CollectionAskPanel } from "@app/utils/ui/components/youtube/collection-ask-panel";
-import { optimisticUserMessage, ruleSummary } from "@app/utils/ui/components/youtube/collection-ui";
+import { CollectionAskPanel } from "@app/youtube/ui/components/shared/collection-ask-panel";
+import { optimisticUserMessage, ruleSummary } from "@app/youtube/ui/components/shared/collection-ui";
 import { useAskCollection, useCollection, useRemoveCollectionVideo, useThread, useThreads } from "@app/yt/api.hooks";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
