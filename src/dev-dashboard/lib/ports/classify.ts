@@ -4,7 +4,7 @@ import {
     registryEntryForPort,
     registryNameForPort,
     registryNameForProcess,
-} from "@app/utils/ui/dashboards";
+} from "@genesiscz/utils/ui/dashboards";
 
 /** Ephemeral / dynamic port range — IDE extension hosts love these. */
 const EPHEMERAL_PORT_MIN = 49152;

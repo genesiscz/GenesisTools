@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { configureLogger, logger } from "@app/utils/logger";
+import { configureLogger, logger } from "@genesiscz/utils/logger";
 import { getLogsBaseDir, getPidFile } from "./lib/config";
 import { runSchedulerLoop } from "./lib/scheduler";
 

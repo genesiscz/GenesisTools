@@ -1,6 +1,6 @@
 import { getDbInfo, listMigrations, vacuumDb } from "@app/shops/lib/db-admin";
-import { formatBytes } from "@app/utils/format";
-import { formatTable } from "@app/utils/table";
+import { formatBytes } from "@genesiscz/utils/format";
+import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 
 export function registerDbCommand(program: Command): void {

@@ -1,4 +1,4 @@
-import { formatBytes, formatDuration, formatRelativeTime } from "@app/utils/format";
+import { formatBytes, formatDuration, formatRelativeTime } from "@genesiscz/utils/format";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { formatError, getManager, registerTool } from "../shared";

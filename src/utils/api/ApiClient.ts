@@ -1,6 +1,6 @@
-import { SafeJSON } from "@app/utils/json";
-import type { Logger } from "@app/utils/logger";
-import { getLogger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import type { Logger } from "@genesiscz/utils/logger";
+import { getLogger } from "@genesiscz/utils/logger";
 import { type FetchError, ofetch, type ResponseType } from "ofetch";
 
 const DEFAULT_TIMEOUT_MS = 30_000;

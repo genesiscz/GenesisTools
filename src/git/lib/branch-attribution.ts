@@ -1,7 +1,7 @@
-import { concurrentMap } from "@app/utils/async";
-import { Executor } from "@app/utils/cli";
-import { logger } from "@app/utils/logger";
-import { Stopwatch } from "@app/utils/Stopwatch";
+import { concurrentMap } from "@genesiscz/utils/async";
+import { Executor } from "@genesiscz/utils/cli";
+import { logger } from "@genesiscz/utils/logger";
+import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 
 export interface BranchAttribution {
     branch: string;

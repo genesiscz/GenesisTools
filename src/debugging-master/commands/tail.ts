@@ -3,8 +3,8 @@ import { formatEntryLine } from "@app/debugging-master/core/formatter";
 import { filterByLevel, indexEntries } from "@app/debugging-master/core/log-parser";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import type { IndexedLogEntry, LogEntry } from "@app/debugging-master/types";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 export function registerTailCommand(program: Command): void {

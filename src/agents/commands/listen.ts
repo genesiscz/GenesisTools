@@ -1,10 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { isInteractive } from "@app/utils/cli";
-import { watchFileFeed } from "@app/utils/fs/file-feed-watcher";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
+import { isInteractive } from "@genesiscz/utils/cli";
+import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { deriveRegistry } from "../lib/derived-registry";
 import { readFeed, readFeedSince } from "../lib/feed";
@@ -132,7 +132,7 @@ async function pickSession(opts: ListenOpts): Promise<string | null> {
         return null;
     }
 
-    const { select } = await import("@app/utils/prompts/clack");
+    const { select } = await import("@genesiscz/utils/prompts/clack");
     const choices = filtered.map((s) => ({
         label: `${s.session.slice(0, 12)} — ${s.mainName ?? "(no main)"} — ${s.agentCount} agents — ${s.lastEventAgo}`,
         value: s.session,

@@ -1,4 +1,4 @@
-import { FileTailer } from "@app/utils/fs/file-tailer";
+import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { formatQaEntry } from "../lib/format";

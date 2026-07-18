@@ -5,8 +5,8 @@
  * (`null` typically) and use `suggestCommand` to print the equivalent verb
  * invocation instead. Lifecycle wiring is in lifecycle.ts.
  */
-import { isInteractive } from "@app/utils/cli";
-import * as p from "@app/utils/prompts/p";
+import { isInteractive } from "@genesiscz/utils/cli";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { PortConflict } from "./portConflict";
 
 export type MineMenuChoice = "restart" | "down" | "attach" | "status" | "open" | "abort";

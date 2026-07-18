@@ -3,7 +3,7 @@ import { buildPublicBaseUrl, buildPublicHealthUrl } from "@app/ai-proxy/lib/publ
 import { createRuntime, startAiProxyServer } from "@app/ai-proxy/lib/server";
 import { resolveTranslationMode } from "@app/ai-proxy/lib/translation-config";
 import type { CursorTranslationMode, ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
-import { logger, out } from "@app/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 
 export async function runServeCommand(options: {
     port?: number;

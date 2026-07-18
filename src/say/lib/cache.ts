@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 export interface SayCacheParams {
     text: string;

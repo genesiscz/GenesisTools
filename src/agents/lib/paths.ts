@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import { FriendlyError } from "./errors";
 import type { SessionPaths } from "./types";
 

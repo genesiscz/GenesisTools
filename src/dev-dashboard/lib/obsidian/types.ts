@@ -1,4 +1,4 @@
-export type { VaultEntry } from "@app/utils/obsidian/vault-tree";
+export type { VaultEntry } from "@genesiscz/utils/obsidian/vault-tree";
 
 export interface RenderedNote {
     source: string;

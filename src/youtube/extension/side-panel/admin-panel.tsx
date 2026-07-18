@@ -1,5 +1,3 @@
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@app/utils/ui/components/dialog";
-import { Input } from "@app/utils/ui/components/input";
 import { computeCreditBuckets } from "@app/youtube/ui/components/shared/billing-ui";
 import { formatDiamonds } from "@app/youtube/ui/components/shared/diamond";
 import { formatLedgerReason } from "@app/youtube/ui/components/shared/ledger-copy";
@@ -12,6 +10,8 @@ import {
     useAdminUsers,
     useAdminWebhookLogs,
 } from "@ext/api.hooks";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@genesiscz/utils/ui/components/dialog";
+import { Input } from "@genesiscz/utils/ui/components/input";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 

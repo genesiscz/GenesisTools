@@ -1,4 +1,4 @@
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 
 /**
  * Factory for creating scoped verbose loggers.

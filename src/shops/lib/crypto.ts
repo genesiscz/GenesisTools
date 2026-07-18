@@ -2,7 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 const ALGO = "aes-256-gcm";
 const KEY_BYTES = 32;

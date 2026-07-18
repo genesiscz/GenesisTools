@@ -1,6 +1,6 @@
-import { formatAudioLibrary, parseSoundSpec } from "@app/utils/audio/library";
-import { SafeJSON } from "@app/utils/json";
-import { setVaultRoot } from "@app/utils/obsidian/config";
+import { formatAudioLibrary, parseSoundSpec } from "@genesiscz/utils/audio/library";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { setVaultRoot } from "@genesiscz/utils/obsidian/config";
 import type { Command } from "commander";
 import { loadConfig, type QuestionConfig, saveConfig } from "../lib/config";
 

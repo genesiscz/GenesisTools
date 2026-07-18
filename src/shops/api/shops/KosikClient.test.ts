@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { KosikClient } from "@app/shops/api/shops/KosikClient";
 import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 function readFixture<T>(relPath: string): T {
     const full = join(import.meta.dir, "__fixtures__/kosik", relPath);

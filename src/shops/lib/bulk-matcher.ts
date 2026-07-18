@@ -5,8 +5,8 @@ import { MatchExecutor } from "@app/shops/lib/match-executor";
 import { Matcher, type MatcherInput } from "@app/shops/lib/matcher";
 import { MATCHER_CONFIG } from "@app/shops/lib/matcher-config";
 import { compatPackCount } from "@app/shops/lib/multipack-guard";
-import { similarityScore } from "@app/utils/fuzzy-match";
-import { logger } from "@app/utils/logger";
+import { similarityScore } from "@genesiscz/utils/fuzzy-match";
+import { logger } from "@genesiscz/utils/logger";
 import { sql } from "kysely";
 
 export interface BulkMatcherArgs {

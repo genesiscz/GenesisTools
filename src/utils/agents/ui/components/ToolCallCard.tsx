@@ -1,4 +1,4 @@
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { Badge } from "@ui/components/badge";
 import { cn } from "@ui/lib/utils";
 import { Minus, Plus, Wrench, XCircle } from "lucide-react";

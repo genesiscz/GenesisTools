@@ -1,4 +1,4 @@
-import { runTool } from "@app/utils/cli";
+import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
 import { runAlerts } from "./commands/alerts";
 import { type ChartsOpts, runCharts } from "./commands/charts";

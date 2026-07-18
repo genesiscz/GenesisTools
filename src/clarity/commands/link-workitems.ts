@@ -1,9 +1,9 @@
 import { TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
-import { ClarityApi } from "@app/utils/clarity";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
 import * as clack from "@clack/prompts";
+import { ClarityApi } from "@genesiscz/utils/clarity";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
 import type { ClarityMapping } from "../config.js";

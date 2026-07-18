@@ -1,6 +1,6 @@
-import { out } from "@app/utils/logger";
-import { MacReminders } from "@app/utils/macos/apple-reminders";
-import { formatTable } from "@app/utils/table";
+import { out } from "@genesiscz/utils/logger";
+import { MacReminders } from "@genesiscz/utils/macos/apple-reminders";
+import { formatTable } from "@genesiscz/utils/table";
 import chalk from "chalk";
 import type { Command } from "commander";
 

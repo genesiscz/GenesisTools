@@ -1,16 +1,16 @@
 import { printLogNavigationHints } from "@app/task/lib/log-hints";
 import { jsonlPath } from "@app/task/lib/paths";
 import type { LogQueryOpts } from "@app/task/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import {
     filterByStream,
     filterFromSeq,
     filterLineRecords,
     filterToSeq,
     readJsonlFile,
-} from "@app/utils/log-session/jsonl-reader";
-import type { JsonlLineRecord } from "@app/utils/log-session/types";
-import { out } from "@app/utils/logger";
+} from "@genesiscz/utils/log-session/jsonl-reader";
+import type { JsonlLineRecord } from "@genesiscz/utils/log-session/types";
+import { out } from "@genesiscz/utils/logger";
 
 export interface SliceResult<T> {
     lines: T[];

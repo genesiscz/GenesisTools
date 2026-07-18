@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { skip } from "@app/utils/test/skip";
+import { skip } from "@genesiscz/utils/test/skip";
 import { encodedProjectDir, PROJECTS_DIR } from "./projects";
 
 describe.skipIf(skip.claudeData)("discovery.ts — discoverSessionFiles", () => {

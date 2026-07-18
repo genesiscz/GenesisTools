@@ -70,7 +70,8 @@ function pinNodeModules(dashboardRoot: string): Plugin {
                 source.startsWith("#") ||
                 source.includes(":") ||
                 source.startsWith("@ui") ||
-                source.startsWith("@app")
+                source.startsWith("@app") ||
+                source.startsWith("@genesiscz")
             ) {
                 return null;
             }
@@ -226,7 +227,11 @@ export function createDashboardViteConfig({
     watchDirs: extraWatchDirs = [],
 }: DashboardViteConfig): UserConfig {
     const { plugins: _ignored, resolve: _resolveIgnored, optimizeDeps: overrideOptimizeDeps, ...rest } = overrides;
-    const allAliases: Record<string, string> = { "@app": resolve(root, "src"), ...aliases };
+    const allAliases: Record<string, string> = {
+        "@app": resolve(root, "src"),
+        "@genesiscz/utils": resolve(root, "src/utils"),
+        ...aliases,
+    };
     const appDir = allAliases["@app"];
     const aliasArray = Object.entries(allAliases)
         .sort(([a], [b]) => b.length - a.length)

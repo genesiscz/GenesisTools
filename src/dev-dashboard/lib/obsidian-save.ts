@@ -1,6 +1,6 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
-import { normalizeObsidianBaseName } from "@app/utils/obsidian/filename";
+import { normalizeObsidianBaseName } from "@genesiscz/utils/obsidian/filename";
 
 function resolveUnderVault(vaultRoot: string, ...segments: string[]): string {
     const root = resolve(vaultRoot);

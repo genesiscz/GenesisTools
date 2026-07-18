@@ -1,5 +1,5 @@
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 const log = logger.child({ component: "shops:analytics:recurring" });
 

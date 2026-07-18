@@ -1,9 +1,9 @@
-import { formatToolResult, formatToolSignature } from "@app/utils/agents/formatters/tool-formatter";
-import type { FormattedBlock } from "@app/utils/agents/formatters/types";
-import { TerminalRenderer } from "@app/utils/agents/renderers/TerminalRenderer";
-import { renderMarkdown } from "@app/utils/claude/terminal-markdown";
-import { SafeJSON } from "@app/utils/json";
 import type { ChatEvent } from "@ask/lib/ChatEvent";
+import { formatToolResult, formatToolSignature } from "@genesiscz/utils/agents/formatters/tool-formatter";
+import type { FormattedBlock } from "@genesiscz/utils/agents/formatters/types";
+import { TerminalRenderer } from "@genesiscz/utils/agents/renderers/TerminalRenderer";
+import { renderMarkdown } from "@genesiscz/utils/claude/terminal-markdown";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export interface AskStreamRendererOptions {
     /** Write text deltas to this stream. Default: process.stdout */

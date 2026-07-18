@@ -1,4 +1,4 @@
-import { isInteractive } from "@app/utils/cli";
+import { isInteractive } from "@genesiscz/utils/cli";
 import { JsonRenderer } from "./json";
 import { TableRenderer } from "./table";
 import type { CloneRenderer, Format } from "./types";

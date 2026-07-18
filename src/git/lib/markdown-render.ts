@@ -3,7 +3,7 @@ import { formatBranchTag } from "@app/git/lib/branch-attribution";
 import { showItems } from "@app/git/lib/format";
 import type { RebaseCluster } from "@app/git/lib/rebase-classifier";
 import { formatClusterTimestamp, formatYmd } from "@app/git/lib/rebase-classifier";
-import { formatDateTime } from "@app/utils/date";
+import { formatDateTime } from "@genesiscz/utils/date";
 
 export interface MarkdownCommit {
     hash: string;

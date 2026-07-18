@@ -1,6 +1,6 @@
 import type { AccountUsage } from "@app/claude/lib/usage/api";
 import { normalizeLimits } from "@app/claude/lib/usage/limits";
-import { formatRelativeTime } from "@app/utils/format";
+import { formatRelativeTime } from "@genesiscz/utils/format";
 import { formatAccountTitle } from "./account-title";
 import { BucketBar } from "./BucketBar";
 

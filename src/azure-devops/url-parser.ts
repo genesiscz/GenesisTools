@@ -3,7 +3,7 @@
  */
 
 import type { ParsedUrl, QueryInfo } from "@app/azure-devops/types";
-import { similarityScore } from "@app/utils/fuzzy-match";
+import { similarityScore } from "@genesiscz/utils/fuzzy-match";
 
 /**
  * Check if input looks like a GUID or URL (not a query name)

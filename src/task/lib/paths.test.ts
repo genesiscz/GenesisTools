@@ -8,7 +8,7 @@ import {
     jsonlPath,
     sessionNameFromJsonlFilename,
 } from "@app/task/lib/paths";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 describe("task paths", () => {
     const originalHome = env.get("GENESIS_TOOLS_HOME");

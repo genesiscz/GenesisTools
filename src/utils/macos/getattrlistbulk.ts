@@ -30,7 +30,7 @@
  */
 
 import { dlopen, FFIType, ptr, read } from "bun:ffi";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 const IS_DARWIN = process.platform === "darwin";
 const log = logger.child({ component: "macos:getattrlistbulk" });

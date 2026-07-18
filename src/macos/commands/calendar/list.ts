@@ -1,8 +1,8 @@
-import { parseDate } from "@app/utils/date";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
-import type { CalendarEventInfo } from "@app/utils/macos/apple-calendar";
-import { MacCalendar } from "@app/utils/macos/apple-calendar";
+import { parseDate } from "@genesiscz/utils/date";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
+import type { CalendarEventInfo } from "@genesiscz/utils/macos/apple-calendar";
+import { MacCalendar } from "@genesiscz/utils/macos/apple-calendar";
 import { type Command, Option } from "commander";
 import { formatDateTime, formatEventsTable, normalizeEndOfDay } from "./format";
 

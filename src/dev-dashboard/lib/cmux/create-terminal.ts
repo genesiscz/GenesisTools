@@ -1,15 +1,15 @@
 import { DEV_DASHBOARD_WORKSPACE } from "@app/dev-dashboard/lib/tmux/constants";
 import { makeCmuxTmuxSessionName } from "@app/dev-dashboard/lib/tmux/naming";
-import { focusCmuxPane } from "@app/utils/cmux/lib/controls";
-import { withFocusedWorkspace } from "@app/utils/cmux/lib/focus-guard";
-import type { AttachTmuxResult } from "@app/utils/cmux/types";
+import { focusCmuxPane } from "@genesiscz/utils/cmux/lib/controls";
+import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
+import type { AttachTmuxResult } from "@genesiscz/utils/cmux/types";
 import {
     ensureWorkspaceByName,
     openSplitInWorkspace,
     renameSurfaceTab,
     sendNewSessionCommand,
-} from "@app/utils/cmux/workspace";
-import { logger } from "@app/utils/logger";
+} from "@genesiscz/utils/cmux/workspace";
+import { logger } from "@genesiscz/utils/logger";
 
 export async function createDevDashboardTerminal(opts: { cwd?: string } = {}): Promise<AttachTmuxResult> {
     const cwd = opts.cwd ?? process.cwd();

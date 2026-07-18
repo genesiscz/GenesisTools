@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
-import { renderUnifiedDiff } from "@app/utils/diff";
-import { logger } from "@app/utils/logger";
+import { renderUnifiedDiff } from "@genesiscz/utils/diff";
+import { logger } from "@genesiscz/utils/logger";
 import type { ApplicationRow, StashRow, VersionRow } from "../types";
 import { extractRegionContentByHunk } from "./regions";
 import type { StashStorage } from "./storage";

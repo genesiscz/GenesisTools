@@ -9,10 +9,10 @@ import {
     writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage";
-import { SNAPSHOT_VERSION, type TmuxPreset } from "@app/utils/tmux/snapshot";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage";
+import { SNAPSHOT_VERSION, type TmuxPreset } from "@genesiscz/utils/tmux/snapshot";
 
 const NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 

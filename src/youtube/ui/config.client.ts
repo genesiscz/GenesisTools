@@ -1,7 +1,7 @@
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger/client";
 import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import type { YoutubeConfigShape } from "@app/youtube/lib/types";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger/client";
 
 export interface UiConfigResponse {
     config: YoutubeConfigShape;

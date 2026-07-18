@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { fetchCmuxFullLayout, findWorkspaceByName, formatDualPreview } from "@app/utils/cmux/layout";
-import * as cli from "@app/utils/cmux/lib/cli";
-import * as socket from "@app/utils/cmux/lib/socket";
+import { fetchCmuxFullLayout, findWorkspaceByName, formatDualPreview } from "@genesiscz/utils/cmux/layout";
+import * as cli from "@genesiscz/utils/cmux/lib/cli";
+import * as socket from "@genesiscz/utils/cmux/lib/socket";
 
 describe("formatDualPreview", () => {
     test("passes through short output unchanged", () => {

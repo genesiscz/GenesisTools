@@ -1,4 +1,4 @@
-import { splitTextByHighlights } from "@app/utils/highlight-text-spans";
+import { splitTextByHighlights } from "@genesiscz/utils/highlight-text-spans";
 import { cn } from "@ui/lib/utils";
 import { type ReactElement, useMemo } from "react";
 

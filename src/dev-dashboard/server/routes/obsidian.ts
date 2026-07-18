@@ -4,7 +4,7 @@ import { listPublished, publishNote, unpublishNote } from "@app/dev-dashboard/li
 import { listVault, mkdirInVault, readNote } from "@app/dev-dashboard/lib/obsidian/reader";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
-import { resolveWikilinkToVaultPath } from "@app/utils/obsidian/wikilink-resolve";
+import { resolveWikilinkToVaultPath } from "@genesiscz/utils/obsidian/wikilink-resolve";
 
 export function obsidianRoutes(): RouteDef[] {
     return [

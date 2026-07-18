@@ -1,4 +1,4 @@
-import { toFloat32Audio } from "@app/utils/audio/converter";
+import { toFloat32Audio } from "@genesiscz/utils/audio/converter";
 import { ensureHuggingFaceTransformers } from "./ensure-hf";
 
 // ============================================
@@ -367,7 +367,7 @@ export class DarwinKitTextDriver implements TextLanguageDetectionDriver {
     }
 
     async detectFromText(text: string): Promise<LanguageDetectionResult> {
-        const { detectLanguage } = await import("@app/utils/macos/nlp");
+        const { detectLanguage } = await import("@genesiscz/utils/macos/nlp");
         const result = await detectLanguage(text);
         return { language: result.language, confidence: result.confidence, driver: this.name };
     }

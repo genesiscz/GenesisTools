@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { parseWritePolicy, schemaDriftWarning, spawnCodexSession } from "../lib/spawn";
 import type { CodexWritePolicy } from "../lib/store";

@@ -6,7 +6,7 @@ import {
     listXaiProxyModels,
 } from "@app/ai-proxy/lib/model-meta";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
-import { GROK_CLI_CHAT_PROXY_BASE_URL } from "@app/utils/ai/grok";
+import { GROK_CLI_CHAT_PROXY_BASE_URL } from "@genesiscz/utils/ai/grok";
 
 export { catalogFilePath, loadCatalogFile, type ModelsCatalogFile } from "@app/ai-proxy/lib/catalog-file";
 

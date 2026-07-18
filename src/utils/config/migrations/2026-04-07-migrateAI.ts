@@ -5,10 +5,10 @@ import type {
     AppConfig,
     ProviderConfig,
     TaskConfig,
-} from "@app/utils/config/ai.types";
-import type { ConfigMigration } from "@app/utils/config/migration";
-import { logger } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage/storage";
+} from "@genesiscz/utils/config/ai.types";
+import type { ConfigMigration } from "@genesiscz/utils/config/migration";
+import { logger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage/storage";
 
 const VALID_PROVIDERS = new Set<string>([
     "anthropic",

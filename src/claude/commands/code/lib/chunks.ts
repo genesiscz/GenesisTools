@@ -1,4 +1,4 @@
-import { xxhash } from "@app/utils/hash";
+import { xxhash } from "@genesiscz/utils/hash";
 
 export interface Chunk {
     hash: string;

@@ -1,6 +1,6 @@
 import type { BoardSummaryDto, CardDto, EdgeDto } from "@app/dev-dashboard/contract/dto";
 import { paths } from "@app/dev-dashboard/contract/endpoints";
-import { printLn } from "@app/utils/cli";
+import { printLn } from "@genesiscz/utils/cli";
 import type { Command } from "commander";
 import { BoardsHttpError, postJson, resolveBaseUrl } from "../lib/client";
 import { captureRoot, readSetConfig, slugifyBranch } from "../lib/config";

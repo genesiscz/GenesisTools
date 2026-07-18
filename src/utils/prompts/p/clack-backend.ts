@@ -1,11 +1,11 @@
 import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handleCancel, isCancelled } from "@app/utils/prompts/clack/helpers";
-import { multilineText } from "@app/utils/prompts/clack/multiline";
-import { searchSelect } from "@app/utils/prompts/clack/search-select";
 import type { TextOptions } from "@clack/prompts";
 import * as clack from "@clack/prompts";
+import { handleCancel, isCancelled } from "@genesiscz/utils/prompts/clack/helpers";
+import { multilineText } from "@genesiscz/utils/prompts/clack/multiline";
+import { searchSelect } from "@genesiscz/utils/prompts/clack/search-select";
 import pc from "picocolors";
 
 // stdout is reserved for machine results (out.result/print). Route clack's
@@ -18,7 +18,7 @@ import pc from "picocolors";
 // they stay on the TTY.
 const STDERR: { output: typeof process.stderr } = { output: process.stderr };
 
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import type { PromptBackend } from "./backend";
 import type {
     EditorOpts,

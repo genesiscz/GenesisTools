@@ -3,7 +3,7 @@ import { readUnifiedConfig, stripMeta, writeUnifiedConfig } from "@app/mcp-manag
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import type { MCPProviderName, PerProjectEnabledState } from "@app/mcp-manager/utils/types.js";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 export interface ToggleOptions {
     provider?: string; // Provider name(s) for non-interactive mode ("all" or comma-separated)

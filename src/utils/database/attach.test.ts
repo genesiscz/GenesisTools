@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { removeRecursive } from "@app/utils/fs";
-import { makeTempDir } from "@app/utils/paths";
-import { skip } from "@app/utils/test/skip";
+import { removeRecursive } from "@genesiscz/utils/fs";
+import { makeTempDir } from "@genesiscz/utils/paths";
+import { skip } from "@genesiscz/utils/test/skip";
 import { attachReadonly, detachQuietly } from "./attach";
 
 let dir: string;

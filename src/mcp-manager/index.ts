@@ -1,8 +1,8 @@
-import { enhanceHelp, isInteractive } from "@app/utils/cli";
-import { configureLogger, logger } from "@app/utils/logger";
-import * as p from "@app/utils/prompts/p";
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
-import { handleReadmeFlag } from "@app/utils/readme";
+import { enhanceHelp, isInteractive } from "@genesiscz/utils/cli";
+import { configureLogger, logger } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
+import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
 
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
@@ -18,7 +18,7 @@ import type { MCPProvider } from "./utils/providers/types.js";
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
 
-import { runTool } from "@app/utils/cli";
+import { runTool } from "@genesiscz/utils/cli";
 import {
     backupAllConfigs,
     configJson,

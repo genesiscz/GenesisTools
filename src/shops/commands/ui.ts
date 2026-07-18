@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { buildViteDevCmd, defineDashboardApp } from "@app/utils/DashboardApp";
-import { PROJECT_ROOT } from "@app/utils/paths";
+import { buildViteDevCmd, defineDashboardApp } from "@genesiscz/utils/DashboardApp";
+import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 import type { Command } from "commander";
 
 const UI_DIR = resolve(import.meta.dirname, "..", "ui");

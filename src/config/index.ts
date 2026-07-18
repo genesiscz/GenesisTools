@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
-import { runTool } from "@app/utils/cli";
-import { out } from "@app/utils/logger";
-import { clearRejectedPackages, listRejectedPackages, removeRejectedPackage } from "@app/utils/packages";
 import * as p from "@clack/prompts";
+import { runTool } from "@genesiscz/utils/cli";
+import { out } from "@genesiscz/utils/logger";
+import { clearRejectedPackages, listRejectedPackages, removeRejectedPackage } from "@genesiscz/utils/packages";
 import chalk from "chalk";
 import { Command } from "commander";
 

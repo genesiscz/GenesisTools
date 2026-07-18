@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
 import { startServer } from "@app/youtube/lib/server";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { apiUrl } from "./test-helpers";
 
 describe("youtube server ledger + usage-summary routes", () => {

@@ -1,6 +1,6 @@
-import type { DatabaseClient } from "@app/utils/database/client";
-import { escapeLike } from "@app/utils/database/predicates";
-import { SafeJSON } from "@app/utils/json";
+import type { DatabaseClient } from "@genesiscz/utils/database/client";
+import { escapeLike } from "@genesiscz/utils/database/predicates";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { type Kysely, type Selectable, type SqlBool, sql } from "kysely";
 import { getBoardAnnotations } from "./annotations-store";
 import type { NormalizedOption } from "./compose-validate";

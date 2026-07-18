@@ -1,14 +1,14 @@
 #!/usr/bin/env node
-import { handleReadmeFlag } from "@app/utils/readme";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import chalk from "chalk";
 import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
 
-import { runTool } from "@app/utils/cli";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
+import { runTool } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";

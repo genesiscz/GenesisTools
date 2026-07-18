@@ -1,7 +1,7 @@
 import { getConfig, saveConfig } from "@app/dev-dashboard/config";
 import { formatHostsList, parseHostsList } from "@app/dev-dashboard/lib/allowed-hosts";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
 import * as p from "@clack/prompts";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 
 async function promptAllowedHosts(current: string[]): Promise<string[] | null> {
     const input = await p.text({

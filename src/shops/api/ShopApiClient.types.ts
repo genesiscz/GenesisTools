@@ -1,4 +1,4 @@
-import type { ApiClientConfig } from "@app/utils/api/ApiClient";
+import type { ApiClientConfig } from "@genesiscz/utils/api/ApiClient";
 
 export type ShopOrigin = string;
 

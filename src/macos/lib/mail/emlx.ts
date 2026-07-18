@@ -2,9 +2,9 @@ import { Database } from "bun:sqlite";
 import { type Dirent, existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/utils/logger";
-import { ENVELOPE_INDEX_PATH } from "@app/utils/macos/mail/constants";
-import { htmlToMarkdown } from "@app/utils/markdown/html-to-md";
+import { logger } from "@genesiscz/utils/logger";
+import { ENVELOPE_INDEX_PATH } from "@genesiscz/utils/macos/mail/constants";
+import { htmlToMarkdown } from "@genesiscz/utils/markdown/html-to-md";
 import { extractRowidFromEmlxPath } from "./spotlight";
 
 const MAIL_V10_DIR = join(homedir(), "Library/Mail/V10");

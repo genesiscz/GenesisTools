@@ -1,4 +1,4 @@
-import { Storage } from "@app/utils/storage/storage";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import type { BenchmarkSuite } from "./types";
 
 const storage = new Storage("benchmark");

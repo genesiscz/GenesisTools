@@ -1,4 +1,4 @@
-import type { Embedder } from "@app/utils/ai/tasks/Embedder";
+import type { Embedder } from "@genesiscz/utils/ai/tasks/Embedder";
 
 export interface SearchEngine<TDoc extends Record<string, unknown> = Record<string, unknown>> {
     insert(doc: TDoc): Promise<void>;

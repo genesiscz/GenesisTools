@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { homedir } from "node:os";
 import { analysisDirFor, cacheFilePath, DOCTOR_DIR, makeRunId } from "@app/doctor/lib/paths";
-import { toPosixPath } from "@app/utils/paths";
+import { toPosixPath } from "@genesiscz/utils/paths";
 
 const HOME = toPosixPath(homedir());
 

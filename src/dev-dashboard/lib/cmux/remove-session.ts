@@ -1,6 +1,6 @@
-import { fetchCmuxFullLayout } from "@app/utils/cmux/layout";
-import { runCmuxOk } from "@app/utils/cmux/lib/cli";
-import { findCmuxSurfacesForTmuxSession } from "@app/utils/cmux/tmux-bindings";
+import { fetchCmuxFullLayout } from "@genesiscz/utils/cmux/layout";
+import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { findCmuxSurfacesForTmuxSession } from "@genesiscz/utils/cmux/tmux-bindings";
 
 export async function removeTmuxSessionFromCmux(tmuxSessionName: string): Promise<number> {
     const layout = await fetchCmuxFullLayout();

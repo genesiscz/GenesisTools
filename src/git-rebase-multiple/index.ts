@@ -1,12 +1,12 @@
-import { runTool } from "@app/utils/cli";
-import * as p from "@app/utils/prompts/p";
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
-import { handleReadmeFlag } from "@app/utils/readme";
+import { runTool } from "@genesiscz/utils/cli";
+import * as p from "@genesiscz/utils/prompts/p";
+import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
 
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
 
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
 import { Command } from "commander";
 import { backupManager } from "./backup";

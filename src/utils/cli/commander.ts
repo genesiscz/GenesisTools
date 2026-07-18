@@ -1,8 +1,8 @@
 import { basename, dirname } from "node:path";
-import { env } from "@app/utils/env";
-import { setBaseBinding, setConsoleLevel } from "@app/utils/logger";
-import { consoleFloorFor } from "@app/utils/logging/tool-policy";
-import { printReadmeAndExit } from "@app/utils/readme";
+import { env } from "@genesiscz/utils/env";
+import { setBaseBinding, setConsoleLevel } from "@genesiscz/utils/logger";
+import { consoleFloorFor } from "@genesiscz/utils/logging/tool-policy";
+import { printReadmeAndExit } from "@genesiscz/utils/readme";
 import type { Command } from "commander";
 import { enhanceHelp } from "./executor";
 // `logger` itself is intentionally NOT imported here — runTool only drives the

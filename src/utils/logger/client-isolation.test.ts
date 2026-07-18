@@ -55,7 +55,7 @@ function isServerOrTooling(rel: string): boolean {
 // Carve-out: @app/logger/client is the browser-safe facade and IS allowed
 // in client trees (negative lookahead (?!\/client) excludes it).
 const VALUE_LOGGER_IMPORT =
-    /(?:import\s+(?!type\b)[^;]*?from\s+["']@app\/utils\/logger(?:\/out)?(?!\/client)["']|import\s+["']@app\/utils\/logger(?:\/out)?(?!\/client)["']|import\s*\(\s*["']@app\/utils\/logger(?:\/out)?(?!\/client)["']\s*\))/g;
+    /(?:import\s+(?!type\b)[^;]*?from\s+["']@(?:app|genesiscz)\/utils\/logger(?:\/out)?(?!\/client)["']|import\s+["']@(?:app|genesiscz)\/utils\/logger(?:\/out)?(?!\/client)["']|import\s*\(\s*["']@(?:app|genesiscz)\/utils\/logger(?:\/out)?(?!\/client)["']\s*\))/g;
 
 function walk(dir: string, acc: string[]): void {
     for (const name of readdirSync(dir)) {
@@ -79,9 +79,9 @@ function walk(dir: string, acc: string[]): void {
 describe("VALUE_LOGGER_IMPORT regex carve-outs", () => {
     it("allows @app/logger/client imports (browser-safe facade)", () => {
         const allowedImports = [
-            'import { logger } from "@app/utils/logger/client"',
-            'import { out } from "@app/utils/logger/client"',
-            'import { logger, out } from "@app/utils/logger/client"',
+            'import { logger } from "@genesiscz/utils/logger/client"',
+            'import { out } from "@genesiscz/utils/logger/client"',
+            'import { logger, out } from "@genesiscz/utils/logger/client"',
         ];
         for (const line of allowedImports) {
             const matches = [...line.matchAll(VALUE_LOGGER_IMPORT)];
@@ -91,9 +91,9 @@ describe("VALUE_LOGGER_IMPORT regex carve-outs", () => {
 
     it("still blocks @app/logger and @app/logger/out imports", () => {
         const blockedImports = [
-            'import { logger } from "@app/utils/logger"',
-            'import { out } from "@app/utils/logger/out"',
-            'import "@app/utils/logger"',
+            'import { logger } from "@genesiscz/utils/logger"',
+            'import { out } from "@genesiscz/utils/logger/out"',
+            'import "@genesiscz/utils/logger"',
         ];
         for (const line of blockedImports) {
             const matches = [...line.matchAll(VALUE_LOGGER_IMPORT)];

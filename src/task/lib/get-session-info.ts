@@ -8,9 +8,14 @@ import {
     suggestLogsFollow,
     suggestTail,
 } from "@app/task/lib/suggest-flags";
-import { formatBytes } from "@app/utils/format";
-import { filterByStream, filterLineRecords, lastNLines, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
-import { out } from "@app/utils/logger";
+import { formatBytes } from "@genesiscz/utils/format";
+import {
+    filterByStream,
+    filterLineRecords,
+    lastNLines,
+    readJsonlFile,
+} from "@genesiscz/utils/log-session/jsonl-reader";
+import { out } from "@genesiscz/utils/logger";
 
 export async function getSessionInfo(session: string): Promise<void> {
     const store = new TaskSessionStore();

@@ -14,18 +14,18 @@ import {
     fetchGithubUserLogin,
     formatCopilotUsageSummary,
     resolveGithubCopilotGhoToken,
-} from "@app/utils/ai/github-copilot";
-import { copilotDataDir, githubTokenPath } from "@app/utils/ai/github-copilot/paths";
+} from "@genesiscz/utils/ai/github-copilot";
+import { copilotDataDir, githubTokenPath } from "@genesiscz/utils/ai/github-copilot/paths";
 import {
     formatBillingSummary,
     GrokSubscriptionClient,
     getActiveAuthEntry,
     grokAuthPath,
     readAuthFileAsync,
-} from "@app/utils/ai/grok";
-import { env } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
-import { collapsePath } from "@app/utils/paths";
+} from "@genesiscz/utils/ai/grok";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
+import { collapsePath } from "@genesiscz/utils/paths";
 
 export { getDefaultConfig, parseConfigJson, redactConfig };
 

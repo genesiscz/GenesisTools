@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import { out } from "@app/utils/logger";
-import { handleReadmeFlag } from "@app/utils/readme";
+import { out } from "@genesiscz/utils/logger";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import pc from "picocolors";
 import { streamCursorAgent } from "./lib/stream-agent";
 

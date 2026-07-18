@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readTaskJsonl, runTaskCapture, runTaskCli } from "@app/task/lib/test-harness";
-import { SafeJSON } from "@app/utils/json";
-import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { filterLineRecords, readJsonlFile } from "@genesiscz/utils/log-session/jsonl-reader";
 
 const dirs: string[] = [];
 

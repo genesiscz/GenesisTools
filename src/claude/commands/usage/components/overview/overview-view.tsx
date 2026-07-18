@@ -1,7 +1,7 @@
 import type { PollResult } from "@app/claude/commands/usage/types";
 import type { AccountUsage } from "@app/claude/lib/usage/api";
 import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
-import { useTerminalSize } from "@app/utils/ink/hooks/use-terminal-size";
+import { useTerminalSize } from "@genesiscz/utils/ink/hooks/use-terminal-size";
 import { Box, Text } from "ink";
 import { useEffect, useState } from "react";
 import { AccountSection, estimateAccountHeight, MIN_ACCOUNT_COLUMN_WIDTH } from "./account-section";

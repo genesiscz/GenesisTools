@@ -8,10 +8,10 @@ import {
     GrokAuthExpiredError,
     GrokSubscriptionClient,
     resolveGrokSubToken,
-} from "@app/utils/ai/grok";
-import { GROK_CLI_CHAT_PROXY_BASE_URL } from "@app/utils/ai/grok/paths";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+} from "@genesiscz/utils/ai/grok";
+import { GROK_CLI_CHAT_PROXY_BASE_URL } from "@genesiscz/utils/ai/grok/paths";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 export class GrokSubscriptionProvider implements ProxyProvider {
     readonly id = "grok-subscription";

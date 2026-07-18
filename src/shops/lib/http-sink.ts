@@ -1,6 +1,6 @@
 import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 const RESPONSE_EXCERPT_MAX = 2048;
 const REQUEST_EXCERPT_MAX = 1024;

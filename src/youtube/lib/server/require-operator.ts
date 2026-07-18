@@ -1,9 +1,9 @@
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
 import { isPowerRole, roleForEmail } from "@app/youtube/lib/roles";
 import { resolveUser } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import type { Youtube } from "@app/youtube/lib/youtube";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 /**
  * Operator gate for operator-only routes (server config, cache maintenance).

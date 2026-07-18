@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { handleQuestionAnswer } from "./question-answer";
 
 describe("question_answer handler", () => {

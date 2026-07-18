@@ -1,8 +1,8 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { readJsonlFile } from "@app/utils/log-session/jsonl-reader";
-import { withFileLock } from "@app/utils/storage";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { readJsonlFile } from "@genesiscz/utils/log-session/jsonl-reader";
+import { withFileLock } from "@genesiscz/utils/storage";
 import type { FeedEvent, MessageEvent, SessionPaths } from "./types";
 
 const FEED_LOCK_TIMEOUT_MS = 10_000;

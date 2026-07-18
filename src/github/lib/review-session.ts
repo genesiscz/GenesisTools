@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import type { ParsedReviewThread, ReviewSessionData, ReviewSessionMeta } from "@app/utils/github/types";
-import { Storage } from "@app/utils/storage/storage";
+import type { ParsedReviewThread, ReviewSessionData, ReviewSessionMeta } from "@genesiscz/utils/github/types";
+import { Storage } from "@genesiscz/utils/storage/storage";
 
 const SESSIONS_DIR = "reviews";
 const SESSION_TTL = "7 days";

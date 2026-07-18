@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { playBuffer } from "@app/utils/audio/playback";
+import { playBuffer } from "@genesiscz/utils/audio/playback";
 import { type BundledSound, bundledPath } from "./assets/manifest";
 import { renderPresetWav } from "./ding-presets";
 

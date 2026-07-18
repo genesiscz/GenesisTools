@@ -3,7 +3,7 @@
 import type { StepContext } from "@app/automate/lib/registry";
 import { registerStepCatalog, registerStepHandler } from "@app/automate/lib/registry";
 import type { ArrayStepParams, JsonStepParams, PresetStep, StepResult, TextStepParams } from "@app/automate/lib/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { makeResult } from "./helpers";
 
 // jsonpath has no TypeScript declarations

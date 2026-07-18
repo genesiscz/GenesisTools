@@ -1,5 +1,5 @@
-import type { AIProviderType } from "@app/utils/config/ai.types";
-import { listVoicesStructured, renderToBuffer } from "@app/utils/macos/tts";
+import type { AIProviderType } from "@genesiscz/utils/config/ai.types";
+import { listVoicesStructured, renderToBuffer } from "@genesiscz/utils/macos/tts";
 import type { AITask, AITextToSpeechProvider, TTSOptions, TTSResult, TTSVoice } from "../types";
 
 /**

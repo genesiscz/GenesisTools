@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import { classifyBranches, detectBase, getCurrentBranch } from "./classify";
 
 const SECONDS_PER_DAY = 86_400;

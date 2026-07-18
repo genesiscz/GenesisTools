@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { CACHE_DIR, cacheFilePath } from "./paths";
 import type { AnalyzerResult } from "./types";
 

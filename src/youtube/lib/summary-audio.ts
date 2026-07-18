@@ -2,14 +2,14 @@ import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import { join } from "node:path";
-import { getTextToSpeechProvider } from "@app/utils/ai/providers";
-import type { AITextToSpeechProvider } from "@app/utils/ai/types";
-import { logger } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage/storage";
 import { deleteIfExists, ensureBinaryDir } from "@app/youtube/lib/cache";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import { recordYoutubeUsage } from "@app/youtube/lib/usage";
 import type { SummaryMode, VideoId, VideoLongSummary } from "@app/youtube/lib/video.types";
+import { getTextToSpeechProvider } from "@genesiscz/utils/ai/providers";
+import type { AITextToSpeechProvider } from "@genesiscz/utils/ai/types";
+import { logger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage/storage";
 
 export class NoSummaryError extends Error {
     constructor(videoId: VideoId) {

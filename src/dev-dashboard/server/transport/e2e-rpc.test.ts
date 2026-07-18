@@ -7,7 +7,7 @@ import type { PulseSnapshot } from "@app/dev-dashboard/lib/system/types";
 import type { SystemCollector } from "@app/dev-dashboard/server/collector/SystemCollector";
 import { Router } from "@app/dev-dashboard/server/router";
 import { type E2eRpcDeps, handleE2eRpc } from "@app/dev-dashboard/server/transport/e2e-rpc";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const fakeCollector: SystemCollector = {
     platform: "macos",

@@ -1,4 +1,4 @@
-import { logger, setConsoleLevel } from "@app/utils/logger";
+import { logger, setConsoleLevel } from "@genesiscz/utils/logger";
 import { type RenderOptions, render } from "ink";
 import type { ReactNode } from "react";
 

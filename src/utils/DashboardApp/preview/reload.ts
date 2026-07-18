@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import type { Connect } from "vite";
 
 const RELOAD_PATH = "/__preview_reload";

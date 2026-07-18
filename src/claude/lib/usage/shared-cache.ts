@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { processExtraUsageNotifications } from "@app/claude/lib/usage/extra-usage-notify";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { getClaudeUsageStorage } from "@app/claude/lib/usage/storage";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import type { AccountUsage } from "./api";
 import { fetchAllAccountsUsage } from "./api";
 import { normalizeLimits, normalizeSpend } from "./limits";

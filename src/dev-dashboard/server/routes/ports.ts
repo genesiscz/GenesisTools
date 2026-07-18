@@ -2,7 +2,7 @@ import { classifyListeningPorts, killPort, listListeningPorts } from "@app/dev-d
 import type { PortInfo, PortsClassifyEvent } from "@app/dev-dashboard/lib/ports/types";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 interface KillBody {
     pid?: number;

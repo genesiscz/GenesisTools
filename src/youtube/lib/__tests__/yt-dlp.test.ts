@@ -3,7 +3,6 @@ import { writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
 import {
     checkYtDlp,
     downloadAudio,
@@ -12,6 +11,7 @@ import {
     fetchComments,
     listChannelVideos,
 } from "@app/youtube/lib/yt-dlp";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const encoder = new TextEncoder();
 

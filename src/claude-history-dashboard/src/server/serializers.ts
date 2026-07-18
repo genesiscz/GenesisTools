@@ -1,9 +1,9 @@
-import type { SessionMetadataRecord } from "@app/utils/claude/history-cache";
-import { getFileIndex } from "@app/utils/claude/history-cache";
+import type { SessionMetadataRecord } from "@genesiscz/utils/claude/history-cache";
+import { getFileIndex } from "@genesiscz/utils/claude/history-cache";
 import type { getAllConversations } from "@app/claude/lib/history/search";
-import type { ConversationMessage, ToolResultBlock, ToolUseBlock } from "@app/utils/claude/types";
+import type { ConversationMessage, ToolResultBlock, ToolUseBlock } from "@genesiscz/utils/claude/types";
 
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 // Serializable types for client/server communication
 export interface SerializableConversation {

@@ -8,7 +8,7 @@ import {
     splitVisibility,
 } from "@app/dev-dashboard/lib/ports/classify";
 import type { PortInfo, PortsResult } from "@app/dev-dashboard/lib/ports/types";
-import { fuzzySearchByHaystack } from "@app/utils/fuzzy-search";
+import { fuzzySearchByHaystack } from "@genesiscz/utils/fuzzy-search";
 import { useState } from "react";
 import { PortFilters } from "@/components/ports/PortFilters";
 import { PortKindBadge } from "@/components/ports/PortKindBadge";

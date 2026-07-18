@@ -1,4 +1,4 @@
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import { sessionEncryption } from "@workos/authkit-session";
 import { describe, expect, test } from "vitest";
 import { encryptSession, type Session } from "../../auth-server";

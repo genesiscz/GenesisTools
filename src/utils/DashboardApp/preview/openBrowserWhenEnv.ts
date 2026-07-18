@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { env } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
 import { waitForUrlReady } from "../readiness";
 
 /** Opens `url` when lifecycle set `DASHBOARD_OPEN_BROWSER=1`. */

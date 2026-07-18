@@ -24,4 +24,4 @@ export function formatAuthRecoveryHint(authPath?: string): string {
     ].join("\n");
 }
 
-export { isAuthHttpStatus } from "@app/utils/ai/http-auth";
+export { isAuthHttpStatus } from "@genesiscz/utils/ai/http-auth";

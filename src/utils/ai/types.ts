@@ -1,4 +1,4 @@
-import type { AIProviderType, AITask, TaskConfig } from "@app/utils/config/ai.types";
+import type { AIProviderType, AITask, TaskConfig } from "@genesiscz/utils/config/ai.types";
 
 // Re-export canonical types from unified config
 export type { AIProviderType, AITask, TaskConfig };

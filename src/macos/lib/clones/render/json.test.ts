@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { JsonRenderer } from "@app/macos/lib/clones/render/json";
 import { CLONES_GLOSSARY, type MeasureReport, type ProcessReport } from "@app/macos/lib/clones/render/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const measure: MeasureReport = {
     roots: ["/r"],

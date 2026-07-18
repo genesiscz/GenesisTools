@@ -1,5 +1,5 @@
-import type { TranscriptionSegment } from "@app/utils/ai/types";
-import { logger } from "@app/utils/logger";
+import type { TranscriptionSegment } from "@genesiscz/utils/ai/types";
+import { logger } from "@genesiscz/utils/logger";
 
 const SINGLE_TOKEN_MIN_RUN = 5;
 const PHRASE_MIN_RUN = 3;

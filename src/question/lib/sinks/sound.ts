@@ -1,4 +1,4 @@
-import { playDing, type SoundChoice } from "@app/utils/audio/runner.server";
+import { playDing, type SoundChoice } from "@genesiscz/utils/audio/runner.server";
 import { registerSink, type Sink } from "./registry-exports";
 
 export const soundSink: Sink = {

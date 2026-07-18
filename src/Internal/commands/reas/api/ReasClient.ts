@@ -1,8 +1,8 @@
 import { cacheKey, getCached, REAS_TTL, setCache } from "@app/Internal/commands/reas/cache/index";
 import { matchesRequestedDistrict } from "@app/Internal/commands/reas/lib/district-matching";
 import type { AnalysisFilters, CacheEntry, DateRange, ReasListing } from "@app/Internal/commands/reas/types";
-import { ApiClient } from "@app/utils/api/ApiClient";
-import { SafeJSON } from "@app/utils/json";
+import { ApiClient } from "@genesiscz/utils/api/ApiClient";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { CountResponse, ListingsResponse, PointersAndClustersResponse } from "./ReasClient.types";
 
 const BASE_URL = "https://catalog.reas.cz/catalog";

@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { expandPath } from "@app/utils/paths";
+import { expandPath } from "@genesiscz/utils/paths";
 
 /**
  * The filePathInput function is interactive (readline + raw mode), so we can't

@@ -1,4 +1,4 @@
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import axios from "axios";
 import { type EngineName, getEngine } from "./engines/index.js";
 import { limitToTokens } from "./utils/tokens.js";

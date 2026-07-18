@@ -1,6 +1,6 @@
-import { CursorStreamAdapter } from "@app/utils/agents/adapters/cursor";
-import { TerminalRenderer } from "@app/utils/agents/renderers/TerminalRenderer";
-import { killWithEscalation } from "@app/utils/process/killWithEscalation";
+import { CursorStreamAdapter } from "@genesiscz/utils/agents/adapters/cursor";
+import { TerminalRenderer } from "@genesiscz/utils/agents/renderers/TerminalRenderer";
+import { killWithEscalation } from "@genesiscz/utils/process/killWithEscalation";
 import type { Subprocess } from "bun";
 
 export interface StreamCursorAgentOptions {

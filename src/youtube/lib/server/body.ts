@@ -1,5 +1,5 @@
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 /**
  * Parses a JSON object body; `null` for missing/non-JSON/non-object bodies.

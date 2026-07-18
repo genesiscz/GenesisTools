@@ -1,4 +1,4 @@
-import { Executor } from "@app/utils/cli";
+import { Executor } from "@genesiscz/utils/cli";
 import { git } from "./git";
 import type { ForkPointInfo } from "./types";
 

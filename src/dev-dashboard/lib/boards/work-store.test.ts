@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { createKyselyClient, type DatabaseClient } from "@app/utils/database/client";
-import { SafeJSON } from "@app/utils/json";
+import { createKyselyClient, type DatabaseClient } from "@genesiscz/utils/database/client";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { createAnnotation, patchAnnotation } from "./annotations-store";
 import { answerQuestion, createBoard, createCard, createQuestion } from "./boards-store";
 import { BOOTSTRAP_DDL } from "./db";

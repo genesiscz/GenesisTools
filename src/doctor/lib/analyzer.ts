@@ -1,4 +1,4 @@
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { readCache, writeCache } from "./cache";
 import { writeAnalysisLog } from "./history";
 import type { AnalyzerCategory, AnalyzerContext, AnalyzerResult, Finding } from "./types";

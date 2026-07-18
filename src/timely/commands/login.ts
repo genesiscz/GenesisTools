@@ -1,9 +1,9 @@
 import type { TimelyApiClient } from "@app/timely/api/client";
 import type { OAuthApplication } from "@app/timely/types";
-import { Browser } from "@app/utils/browser";
-import { logger } from "@app/utils/logger";
-import * as p from "@app/utils/prompts/p";
-import type { Storage } from "@app/utils/storage";
+import { Browser } from "@genesiscz/utils/browser";
+import { logger } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
+import type { Storage } from "@genesiscz/utils/storage";
 import chalk from "chalk";
 import type { Command } from "commander";
 

@@ -1,8 +1,8 @@
-import { toFloat32Audio } from "@app/utils/audio/converter";
-import { env } from "@app/utils/env";
-import { formatBytes } from "@app/utils/format";
-import { logger } from "@app/utils/logger";
-import { Stopwatch } from "@app/utils/Stopwatch";
+import { toFloat32Audio } from "@genesiscz/utils/audio/converter";
+import { env } from "@genesiscz/utils/env";
+import { formatBytes } from "@genesiscz/utils/format";
+import { logger } from "@genesiscz/utils/logger";
+import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { resolveDevice } from "../device";
 import { ensureHuggingFaceTransformers } from "../ensure-hf";
 import { createLanguageDetector, type LanguageDetector } from "../LanguageDetector";
@@ -509,7 +509,7 @@ export class AILocalProvider
      * Opens the token page in the browser, saves the token to AIConfig, and sets env.hf.getKey().
      */
     private async promptForHfToken(model: string): Promise<string | null> {
-        const { isInteractive } = await import("@app/utils/cli");
+        const { isInteractive } = await import("@genesiscz/utils/cli");
 
         if (!isInteractive()) {
             return null;
@@ -534,7 +534,7 @@ export class AILocalProvider
         });
 
         if (!p.isCancel(openBrowser) && openBrowser) {
-            const { Browser } = await import("@app/utils/browser");
+            const { Browser } = await import("@genesiscz/utils/browser");
             await Browser.open(HF_TOKEN_URL);
         }
 

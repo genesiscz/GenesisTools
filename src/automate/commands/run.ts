@@ -4,8 +4,8 @@ import { runPreset } from "@app/automate/lib/engine.ts";
 import { createRunLogger } from "@app/automate/lib/run-logger.ts";
 import { loadPreset } from "@app/automate/lib/storage.ts";
 import type { Preset } from "@app/automate/lib/types.ts";
-import { formatDuration } from "@app/utils/format.ts";
 import * as p from "@clack/prompts";
+import { formatDuration } from "@genesiscz/utils/format.ts";
 import type { Command } from "commander";
 import pc from "picocolors";
 

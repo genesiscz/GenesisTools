@@ -1,6 +1,6 @@
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
-import { MacReminders } from "@app/utils/macos/apple-reminders";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
+import { MacReminders } from "@genesiscz/utils/macos/apple-reminders";
 import { type Command, Option } from "commander";
 import { formatRemindersTable } from "./format";
 

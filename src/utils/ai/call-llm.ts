@@ -1,8 +1,8 @@
-import type { ProviderChoice } from "@app/utils/ask/types";
-import { getLanguageModel } from "@app/utils/ask/types/provider";
-import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import type { ProviderChoice } from "@genesiscz/utils/ask/types";
+import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
+import { applySystemPromptPrefix } from "@genesiscz/utils/claude/subscription-billing";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import type { LanguageModelUsage } from "ai";
 import { generateObject, generateText, streamObject, streamText } from "ai";
 import type { z } from "zod";

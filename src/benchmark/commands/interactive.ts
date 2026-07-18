@@ -1,7 +1,7 @@
-import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
-import { out } from "@app/utils/logger";
-import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
+import { out } from "@genesiscz/utils/logger";
+import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import pc from "picocolors";
 import { displayComparison, displayResults } from "../lib/display";
 import { getLastResult } from "../lib/results";

@@ -1,6 +1,6 @@
-import { logger } from "@app/utils/logger/client";
-import { Button } from "@app/utils/ui/components/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
+import { logger } from "@genesiscz/utils/logger/client";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@genesiscz/utils/ui/components/card";
 import { AlertTriangle } from "lucide-react";
 import { Component, type ErrorInfo, type ReactNode } from "react";
 

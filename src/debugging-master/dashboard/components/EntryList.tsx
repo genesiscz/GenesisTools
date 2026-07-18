@@ -1,5 +1,5 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
-import { useAutoScroll } from "@app/utils/ui/hooks/useAutoScroll";
+import { useAutoScroll } from "@genesiscz/utils/ui/hooks/useAutoScroll";
 import { memo, useEffect, useImperativeHandle, useMemo } from "react";
 import { DEFAULT_LOG_SEARCH, type LogSearchState } from "@/components/LogSearchPopover";
 import { filterDisplayLogLines, shouldShowLogTimestamp } from "@/lib/log-line-display";

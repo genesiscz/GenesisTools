@@ -1,7 +1,7 @@
-import { Badge } from "@app/utils/ui/components/badge";
-import { Button } from "@app/utils/ui/components/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
-import { Switch } from "@app/utils/ui/components/switch";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@genesiscz/utils/ui/components/card";
+import { Switch } from "@genesiscz/utils/ui/components/switch";
 import type { ReactNode } from "react";
 
 export interface ProviderCardData {

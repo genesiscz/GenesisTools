@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
-import { skip } from "@app/utils/test/skip";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { skip } from "@genesiscz/utils/test/skip";
 import { AIGoogleProvider } from "./AIGoogleProvider";
 
 /** Stub globalThis.fetch without TS complaining about the `preconnect` property Bun adds. */

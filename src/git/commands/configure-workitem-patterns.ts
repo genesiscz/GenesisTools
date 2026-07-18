@@ -18,10 +18,10 @@ import {
     validatePattern,
     type WorkitemPattern,
 } from "@app/git/workitem-patterns";
-import { createGit } from "@app/utils/git";
-import { out } from "@app/utils/logger";
-import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
+import { createGit } from "@genesiscz/utils/git";
+import { out } from "@genesiscz/utils/logger";
+import type { Storage } from "@genesiscz/utils/storage";
 import chalk from "chalk";
 import type { Command } from "commander";
 

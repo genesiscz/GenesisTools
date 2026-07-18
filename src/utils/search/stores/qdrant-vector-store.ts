@@ -1,5 +1,5 @@
-import { AsyncOpQueue } from "@app/utils/async";
-import { ensurePackage } from "@app/utils/packages";
+import { AsyncOpQueue } from "@genesiscz/utils/async";
+import { ensurePackage } from "@genesiscz/utils/packages";
 import { bruteForceVectorSearch, type VectorSearchHit, type VectorStore } from "./vector-store";
 
 export interface QdrantClientLike {
@@ -96,7 +96,7 @@ export class QdrantVectorStore implements VectorStore {
             let url = this.config.url;
 
             if (!url || url.includes("localhost") || url.includes("127.0.0.1")) {
-                const { ensureQdrantReady, getQdrantUrl } = await import("@app/utils/docker/qdrant");
+                const { ensureQdrantReady, getQdrantUrl } = await import("@genesiscz/utils/docker/qdrant");
                 await ensureQdrantReady();
                 url = url ?? getQdrantUrl();
             }

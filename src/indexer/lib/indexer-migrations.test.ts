@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { runMigrations } from "@app/utils/database/migrations";
+import { runMigrations } from "@genesiscz/utils/database/migrations";
 import { INDEXER_MIGRATIONS } from "./indexer-migrations";
 
 describe("INDEXER_MIGRATIONS list", () => {

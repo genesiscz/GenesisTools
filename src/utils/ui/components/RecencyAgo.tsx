@@ -1,5 +1,5 @@
-import { resolveQaRecency } from "@app/utils/ui/helpers/qa-recency";
-import { useNowTick } from "@app/utils/ui/hooks/useNowTick";
+import { resolveQaRecency } from "@genesiscz/utils/ui/helpers/qa-recency";
+import { useNowTick } from "@genesiscz/utils/ui/hooks/useNowTick";
 import type { ReactElement } from "react";
 
 interface Props {

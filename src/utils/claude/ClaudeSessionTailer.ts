@@ -1,6 +1,6 @@
 import { closeSync, openSync, readSync, statSync } from "node:fs";
-import { parseJsonl, parseJsonlChunk } from "@app/utils/jsonl";
-import { FileWatcher } from "@app/utils/storage/fs";
+import { parseJsonl, parseJsonlChunk } from "@genesiscz/utils/jsonl";
+import { FileWatcher } from "@genesiscz/utils/storage/fs";
 import type { IncludeSpec } from "./cli/dsl";
 import { isAssistantEndTurn } from "./session-helpers";
 import type { ConversationMessage, ProgressMessage } from "./types";

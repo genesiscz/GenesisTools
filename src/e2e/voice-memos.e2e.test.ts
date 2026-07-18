@@ -1,9 +1,9 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { execTool, getOutput } from "@app/utils/e2e/helpers";
-import { tmpPath } from "@app/utils/paths";
-import { skip } from "@app/utils/test/skip";
+import { execTool, getOutput } from "@genesiscz/utils/e2e/helpers";
+import { tmpPath } from "@genesiscz/utils/paths";
+import { skip } from "@genesiscz/utils/test/skip";
 
 const EXPORT_DIR = tmpPath("vm-e2e-export");
 

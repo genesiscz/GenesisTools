@@ -1,8 +1,8 @@
-import { logger } from "@app/utils/logger/client";
 import { mountSidePanel, unmountSidePanel } from "@ext/content-script-mount";
 import { type ChapterTicksHandle, mountChapterTicks } from "@ext/player-chapters";
 import type { PlayerChaptersMessage, PlayerTimeMessage } from "@ext/shared/messages";
 import type { PanelTarget } from "@ext/side-panel/target";
+import { logger } from "@genesiscz/utils/logger/client";
 
 declare global {
     interface Window {

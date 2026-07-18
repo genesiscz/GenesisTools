@@ -21,7 +21,7 @@
 import { appendFileSync, openSync, closeSync, readSync, statSync, readdirSync, type Dirent } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { sha256File } from "@app/utils/fs/disk-usage";
+import { sha256File } from "@genesiscz/utils/fs/disk-usage";
 
 interface Args {
     root: string;

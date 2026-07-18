@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { runTool } from "@app/utils/cli";
+import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
 
 const program = new Command();

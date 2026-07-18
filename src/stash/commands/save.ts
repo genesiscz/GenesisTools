@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { renderUnifiedDiff } from "@app/utils/diff";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { renderUnifiedDiff } from "@genesiscz/utils/diff";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { newStashId, shortId } from "../lib/ids";
 import { parseMarkers } from "../lib/markers";
 import { parseRegionsFromPatch } from "../lib/parse-regions";

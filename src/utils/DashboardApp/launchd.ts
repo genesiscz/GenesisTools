@@ -13,7 +13,7 @@
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 const LAUNCH_AGENTS_DIR = join(homedir(), "Library", "LaunchAgents");
 

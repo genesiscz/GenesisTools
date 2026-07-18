@@ -1,6 +1,6 @@
 import { type Dirent, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import ignore, { type Ignore } from "ignore";
 
 const ALWAYS_SKIP_DIRS = new Set([".git", "node_modules"]);

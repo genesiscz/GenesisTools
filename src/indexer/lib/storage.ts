@@ -1,8 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { countActiveEmbeddings, countPairedEmbeddings } from "@app/utils/database/embedding-stats";
-import { Storage } from "@app/utils/storage/storage";
+import { countActiveEmbeddings, countPairedEmbeddings } from "@genesiscz/utils/database/embedding-stats";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import type { IndexStats } from "./types";
 
 const TOOL_NAME = "indexer";

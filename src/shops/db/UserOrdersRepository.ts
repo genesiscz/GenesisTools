@@ -1,7 +1,7 @@
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { NewUserOrder, UserOrder, UserOrderItem } from "@app/shops/db/types";
-import { logger } from "@app/utils/logger";
-import { nowUtcIso } from "@app/utils/sql-time";
+import { logger } from "@genesiscz/utils/logger";
+import { nowUtcIso } from "@genesiscz/utils/sql-time";
 
 const log = logger.child({ component: "UserOrdersRepository" });
 

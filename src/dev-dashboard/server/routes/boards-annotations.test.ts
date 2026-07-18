@@ -6,7 +6,7 @@ import { subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
 import { getSet, syncSet } from "@app/dev-dashboard/lib/boards/sets-store";
 import { dispatchBoard } from "@app/dev-dashboard/lib/boards/work-store";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { boardsAnnotationsRoutes } from "./boards-annotations";
 import { setupBoardsTestEnv } from "./boards-route-test-utils";
 import { boardsSetsRoutes } from "./boards-sets";

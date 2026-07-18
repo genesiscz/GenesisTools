@@ -1,5 +1,5 @@
-import { logger } from "@app/utils/logger";
-import { fetchDirect } from "@app/utils/net/fetch-direct";
+import { logger } from "@genesiscz/utils/logger";
+import { fetchDirect } from "@genesiscz/utils/net/fetch-direct";
 import { WHAM_BASE_URL } from "./codex-auth";
 
 export interface WhamModelRecord {

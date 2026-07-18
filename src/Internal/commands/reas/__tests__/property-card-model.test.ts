@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { SavedPropertyRow } from "@app/Internal/commands/reas/lib/store";
 import type { FullAnalysis } from "@app/Internal/commands/reas/types";
 import { buildPropertyCardModel } from "@app/Internal/commands/reas/ui/src/components/watchlist/property-card-model";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 function makeAnalysis(): FullAnalysis {
     return {

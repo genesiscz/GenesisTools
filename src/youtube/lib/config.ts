@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { withFileLock } from "@app/utils/storage";
 import type { YoutubeConfigInit, YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import type { YoutubeConfigShape } from "@app/youtube/lib/config.types";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { withFileLock } from "@genesiscz/utils/storage";
 
 export const DEFAULT_BASE_DIR = join(homedir(), ".genesis-tools", "youtube");
 export const CONFIG_FILENAME = "server.json";

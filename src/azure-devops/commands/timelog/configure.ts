@@ -4,9 +4,9 @@ import { extractOrgName } from "@app/azure-devops/config";
 import { fetchTimeLogFunctionsKey } from "@app/azure-devops/lib/timelog-configure";
 import type { AzureConfigWithTimeLog, IdentityRef, TimeLogConfig } from "@app/azure-devops/types";
 import { findConfigPath, loadConfig } from "@app/azure-devops/utils";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 

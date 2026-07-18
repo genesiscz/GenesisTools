@@ -1,4 +1,4 @@
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { useEffect, useRef } from "react";
 
 export interface SseFrame<TName extends string = string> {

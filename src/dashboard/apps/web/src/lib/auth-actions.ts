@@ -1,4 +1,4 @@
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { establishAuthSession } from "./auth/session";

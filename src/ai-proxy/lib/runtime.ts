@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { dirname } from "node:path";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { AiProxyRuntimeState } from "@app/ai-proxy/lib/types";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { isProcessAlive } from "@app/utils/process-alive";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 
 function ensureParentDir(filePath: string): void {
     const dir = dirname(filePath);

@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { ApplySession } from "../lib/apply-session";
 import { newStashId, shortId } from "../lib/ids";
 import { commentSyntaxForFile } from "../lib/languages";

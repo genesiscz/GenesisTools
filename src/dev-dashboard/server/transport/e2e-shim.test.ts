@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { fromBase64, naclBoxCipher, toBase64 } from "@app/dev-dashboard/lib/e2e/box";
 import { encodeEnvelope } from "@app/dev-dashboard/lib/e2e/envelope";
 import { createE2eShim } from "@app/dev-dashboard/server/transport/e2e-shim";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const encode = (s: string): Uint8Array => new TextEncoder().encode(s);
 const decode = (b: Uint8Array): string => new TextDecoder().decode(b);

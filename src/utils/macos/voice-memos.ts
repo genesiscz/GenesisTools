@@ -2,8 +2,8 @@ import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { detectTerminalApp } from "@app/utils/terminal";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { detectTerminalApp } from "@genesiscz/utils/terminal";
 import { MacOS } from "./MacOS";
 
 // Apple Core Data epoch offset: 2001-01-01 vs 1970-01-01

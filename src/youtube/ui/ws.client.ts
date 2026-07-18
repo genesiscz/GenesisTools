@@ -1,7 +1,7 @@
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger/client";
 import type { JobEvent } from "@app/youtube/lib/types";
 import { fetchUiConfig } from "@app/yt/config.client";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger/client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { reportBackendReachable, reportBackendUnreachable } from "./backend-status";
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { stripAnsi } from "@app/utils/string";
+import { stripAnsi } from "@genesiscz/utils/string";
 import { createColors } from "picocolors";
 import { highlightQueryWords, parseQueryWords } from "./highlight";
 

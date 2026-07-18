@@ -1,8 +1,8 @@
 import type { TimelyService } from "@app/timely/api/service";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
-import * as p from "@app/utils/prompts/p";
-import type { Storage } from "@app/utils/storage";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
+import type { Storage } from "@genesiscz/utils/storage";
 import chalk from "chalk";
 import type { Command } from "commander";
 

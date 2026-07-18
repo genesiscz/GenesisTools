@@ -1,22 +1,22 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { ClaudeSessionFormatter } from "@app/utils/claude/ClaudeSessionFormatter";
-import { IncludeSpec } from "@app/utils/claude/cli/dsl";
-import { ClaudeSession } from "@app/utils/claude/session";
-import type { SessionInfo } from "@app/utils/claude/session.types";
-import { extractUserText, readHeadTailLines } from "@app/utils/claude/session.utils";
+import { ClaudeSessionFormatter } from "@genesiscz/utils/claude/ClaudeSessionFormatter";
+import { IncludeSpec } from "@genesiscz/utils/claude/cli/dsl";
+import { ClaudeSession } from "@genesiscz/utils/claude/session";
+import type { SessionInfo } from "@genesiscz/utils/claude/session.types";
+import { extractUserText, readHeadTailLines } from "@genesiscz/utils/claude/session.utils";
 import type {
     AssistantMessage,
     AssistantMessageContent,
     ConversationMessage,
     UserMessage,
-} from "@app/utils/claude/types";
-import { suggestCommand } from "@app/utils/cli/executor";
-import { formatRelativeTime } from "@app/utils/format";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
-import { truncateText } from "@app/utils/string";
+} from "@genesiscz/utils/claude/types";
+import { suggestCommand } from "@genesiscz/utils/cli/executor";
+import { formatRelativeTime } from "@genesiscz/utils/format";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
+import { truncateText } from "@genesiscz/utils/string";
 import pc from "picocolors";
 
 const STATUSLINE_DIR = resolve(homedir(), ".claude", "statusline");

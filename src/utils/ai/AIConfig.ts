@@ -8,9 +8,9 @@ import type {
     AppDefaults,
     ProviderConfig,
     TaskConfig,
-} from "@app/utils/config/ai.types";
-import { env } from "@app/utils/env";
-import { Storage } from "@app/utils/storage/storage";
+} from "@genesiscz/utils/config/ai.types";
+import { env } from "@genesiscz/utils/env";
+import { Storage } from "@genesiscz/utils/storage/storage";
 
 const DEFAULT_TASKS: Record<string, TaskConfig> = {
     transcribe: { provider: "local-hf" },
@@ -59,8 +59,8 @@ export class AIConfig {
             return AIConfig.instance;
         }
 
-        const { runMigrations } = await import("@app/utils/config/migration");
-        const { migrateAI } = await import("@app/utils/config/migrations/2026-04-07-migrateAI");
+        const { runMigrations } = await import("@genesiscz/utils/config/migration");
+        const { migrateAI } = await import("@genesiscz/utils/config/migrations/2026-04-07-migrateAI");
         await runMigrations([migrateAI]);
 
         const storage = new Storage("ai");

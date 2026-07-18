@@ -4,7 +4,7 @@ import { createBoard, createCard } from "@app/dev-dashboard/lib/boards/boards-st
 import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { claimOrRenewLease, dispatchBoard } from "@app/dev-dashboard/lib/boards/work-store";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { setupBoardsTestEnv } from "./boards-route-test-utils";
 import { boardsWorkRoutes } from "./boards-work";
 

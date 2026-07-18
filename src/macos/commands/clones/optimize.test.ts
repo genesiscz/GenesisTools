@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createOptimizeCommand } from "@app/macos/commands/clones/optimize";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 describe("createOptimizeCommand (dry-run default)", () => {
     it("declares apply/rollback/list/log/process/no-cache/yes flags", () => {

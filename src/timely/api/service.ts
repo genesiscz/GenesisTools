@@ -6,8 +6,8 @@ import type {
     TimelyProject,
     TimelyUser,
 } from "@app/timely/types";
-import { logger } from "@app/utils/logger";
-import type { Storage } from "@app/utils/storage";
+import { logger } from "@genesiscz/utils/logger";
+import type { Storage } from "@genesiscz/utils/storage";
 import type { TimelyApiClient } from "./client";
 
 export interface GetEventsParams {

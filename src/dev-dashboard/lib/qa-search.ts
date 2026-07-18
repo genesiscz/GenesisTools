@@ -1,4 +1,4 @@
-import { fuzzySearchByHaystack } from "@app/utils/fuzzy-search";
+import { fuzzySearchByHaystack } from "@genesiscz/utils/fuzzy-search";
 import type { QaRow } from "./qa-types";
 
 export interface SearchResult {

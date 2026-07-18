@@ -1,6 +1,6 @@
 import { formatBytes } from "@app/doctor/lib/size";
 import type { Action, Finding } from "@app/doctor/lib/types";
-import * as p from "@app/utils/prompts/p";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 
 export interface SelectedAction {

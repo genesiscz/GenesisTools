@@ -3,7 +3,7 @@ import { createCard, createBoard as storeCreateBoard } from "@app/dev-dashboard/
 import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { boardsQuestionsRoutes } from "./boards-questions";
 import { setupBoardsTestEnv } from "./boards-route-test-utils";
 

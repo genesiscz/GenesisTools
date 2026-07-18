@@ -1,4 +1,4 @@
-import { getLogger } from "@app/utils/logger";
+import { getLogger } from "@genesiscz/utils/logger";
 import type { Logger } from "pino";
 import { WebViewError } from "./errors";
 import type { WebViewOptions } from "./types";

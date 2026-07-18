@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { env } from "@app/utils/env";
-import { env as clientEnv } from "@app/utils/env.client";
+import { env } from "@genesiscz/utils/env";
+import { env as clientEnv } from "@genesiscz/utils/env.client";
 
 describe("env.client", () => {
     it("reads values through the shared env-core", async () => {

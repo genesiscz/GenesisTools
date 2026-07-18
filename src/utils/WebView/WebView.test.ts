@@ -1,8 +1,8 @@
 // biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ or /Users/ string literals — production plugins do not apply to test code
 import { describe, expect, it } from "bun:test";
 import { statSync } from "node:fs";
-import { detectBunCapabilities } from "@app/utils/bun";
-import { skip } from "@app/utils/test/skip";
+import { detectBunCapabilities } from "@genesiscz/utils/bun";
+import { skip } from "@genesiscz/utils/test/skip";
 import { WebViewError, WebViewEvaluateError, WebViewNavigationError, WebViewTimeoutError } from "./errors";
 import { WebView } from "./WebView";
 import { WebViewPool } from "./WebViewPool";

@@ -2,10 +2,10 @@ import { existsSync } from "node:fs";
 import { BackupManager } from "@app/mcp-manager/utils/backup.js";
 import { getUnifiedConfigPath } from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
-import { isInteractive } from "@app/utils/cli";
-import { env } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage";
+import { isInteractive } from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage";
 
 // Lazy (not a module-level singleton) so it re-reads GENESIS_TOOLS_HOME at
 // use time — production identical, lets the test suite sandbox the path.

@@ -1,9 +1,9 @@
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { LogEntry, SessionMeta } from "@app/debugging-master/types";
-import { suggestCommand } from "@app/utils/cli/executor";
-import { SafeJSON } from "@app/utils/json";
-import { fuzzyResolveSession } from "@app/utils/log-session/fuzzy-resolver";
+import { suggestCommand } from "@genesiscz/utils/cli/executor";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { fuzzyResolveSession } from "@genesiscz/utils/log-session/fuzzy-resolver";
 import { ConfigManager } from "./config-manager";
 
 export interface CreateSessionResult {

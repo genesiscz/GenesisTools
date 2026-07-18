@@ -1,5 +1,5 @@
 import { runAiProxyUp } from "@app/ai-proxy/lib/lifecycle";
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 
 export async function runUpCommand(): Promise<void> {
     const result = await runAiProxyUp();

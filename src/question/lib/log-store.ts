@@ -1,8 +1,8 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { QaEntry } from "./types";
 
 export function logDir(base?: string): string {

@@ -4,7 +4,7 @@ import { routerToResponse } from "@app/dev-dashboard/server/adapters/bun-serve";
 import type { Router } from "@app/dev-dashboard/server/router";
 import { createE2eShim } from "@app/dev-dashboard/server/transport/e2e-shim";
 import type { RouteServices } from "@app/dev-dashboard/server/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 // The managed-tier `POST /api/e2e/rpc` handler, extracted as a PURE function so it is
 // unit-testable without binding a real port. serve.ts just calls it with live deps.

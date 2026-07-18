@@ -1,5 +1,5 @@
-import { SafeJSON } from "@app/utils/json";
 import type { AskMessageRecord } from "@app/youtube/lib/types";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 /** Human-readable summary of a dynamic collection's stored rule JSON. */
 export function ruleSummary(ruleJson: string | null): string {

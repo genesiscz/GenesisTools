@@ -32,7 +32,7 @@ import { tmuxPresetsRoutes } from "@app/dev-dashboard/server/routes/tmux-presets
 import { todosRoutes } from "@app/dev-dashboard/server/routes/todos";
 import { ttydRoutes } from "@app/dev-dashboard/server/routes/ttyd";
 import { weatherRoutes } from "@app/dev-dashboard/server/routes/weather";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 /** Assemble every feature registrar into one transport-neutral Router. */
 export function createDashboardRouter(): Router {

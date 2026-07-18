@@ -6,7 +6,7 @@ import {
 } from "@app/Internal/commands/reas/api/BezrealitkyClient";
 import { parseBezrealitkyNextData } from "@app/Internal/commands/reas/api/bezrealitky-client";
 import type { AnalysisFilters } from "@app/Internal/commands/reas/types";
-import { ApiClient, type ApiClientRequestOptions } from "@app/utils/api/ApiClient";
+import { ApiClient, type ApiClientRequestOptions } from "@genesiscz/utils/api/ApiClient";
 
 class FakeGraphqlClient extends ApiClient {
     readonly requests: Array<BodyInit | Record<string, unknown> | unknown[] | null | undefined> = [];

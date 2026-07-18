@@ -1,4 +1,4 @@
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import type { AxiosInstance } from "axios";
 import type { PipelineSnapshot, Stage } from "./pipeline";
 

@@ -1,11 +1,11 @@
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type {
     DeviceCodeResponse,
     DeviceFlowCallbacks,
     DeviceFlowConfig,
     DeviceTokenError,
     DeviceTokenSuccess,
-} from "@app/utils/oauth/types";
+} from "@genesiscz/utils/oauth/types";
 
 const INITIAL_POLL_MULTIPLIER = 1.2;
 const SLOW_DOWN_POLL_MULTIPLIER = 1.4;
@@ -180,7 +180,7 @@ export async function pollDeviceToken(args: {
 }
 
 export async function runGitHubDeviceLogin(callbacks: DeviceFlowCallbacks, signal?: AbortSignal): Promise<string> {
-    const { GITHUB_COPILOT_OAUTH } = await import("@app/utils/oauth/github-device");
+    const { GITHUB_COPILOT_OAUTH } = await import("@genesiscz/utils/oauth/github-device");
     const config: DeviceFlowConfig = {
         clientId: GITHUB_COPILOT_OAUTH.clientId,
         scope: GITHUB_COPILOT_OAUTH.scope,

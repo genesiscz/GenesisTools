@@ -1,10 +1,10 @@
 import { randomBytes } from "node:crypto";
-import { SafeJSON } from "@app/utils/json";
 import type { ShareRow, YoutubeDatabase } from "@app/youtube/lib/db";
 import type { AskCitation } from "@app/youtube/lib/qa.types";
 import type { ShareKind, ShareSummary } from "@app/youtube/lib/shares.types";
 import type { YtUser } from "@app/youtube/lib/users.types";
 import type { TimestampedSummaryEntry, VideoLongSummary } from "@app/youtube/lib/video.types";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { Marked, type Tokens } from "marked";
 
 export const SHARE_SLUG_LENGTH = 12;

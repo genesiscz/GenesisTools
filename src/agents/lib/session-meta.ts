@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { withFileLock } from "@app/utils/storage";
-import { atomicWriteFileSync } from "@app/utils/storage/storage";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { withFileLock } from "@genesiscz/utils/storage";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import type { SessionPaths } from "./types";
 
 const META_LOCK_TIMEOUT_MS = 10_000;

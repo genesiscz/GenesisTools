@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { env } from "@app/utils/env";
-import { buildTerminalSpawnEnv, resolveUtf8Locale } from "@app/utils/terminal/locale";
+import { env } from "@genesiscz/utils/env";
+import { buildTerminalSpawnEnv, resolveUtf8Locale } from "@genesiscz/utils/terminal/locale";
 
 describe("terminal locale", () => {
     test("resolveUtf8Locale keeps an existing UTF-8 LANG", () => {

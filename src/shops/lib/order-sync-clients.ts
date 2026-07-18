@@ -2,7 +2,7 @@ import { KosikAuthClient } from "@app/shops/api/shops/KosikAuthClient";
 import { RohlikAuthClient } from "@app/shops/api/shops/RohlikAuthClient";
 import type { ProviderCredentials } from "@app/shops/db/UserProvidersRepository";
 import type { AuthClientFactory, SyncAuthClient } from "@app/shops/lib/order-sync";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export const realAuthClientFactory: AuthClientFactory = async ({ shopOrigin, credentials }) => {
     const creds = credentials as ProviderCredentials;

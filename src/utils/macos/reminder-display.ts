@@ -1,6 +1,6 @@
-import { formatClock } from "@app/utils/format";
-import { formatReminderPriority } from "@app/utils/macos/reminder-priority";
 import type { ReminderAlarmInfo, ReminderInfo } from "@genesiscz/darwinkit";
+import { formatClock } from "@genesiscz/utils/format";
+import { formatReminderPriority } from "@genesiscz/utils/macos/reminder-priority";
 
 export function notesPreview(notes?: string, maxLen = 120): string | null {
     if (!notes) {

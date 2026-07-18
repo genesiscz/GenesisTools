@@ -1,5 +1,5 @@
 import { runAiProxyStatus } from "@app/ai-proxy/lib/lifecycle";
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 
 export async function runStatusCommand(options: { json?: boolean }): Promise<void> {
     const status = await runAiProxyStatus();

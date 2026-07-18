@@ -1,4 +1,6 @@
-import { Button } from "@app/utils/ui/components/button";
+import type { CollectionRecord } from "@app/youtube/lib/db.types";
+import { useAddCollectionVideo, useCollections, useMe } from "@app/yt/api.hooks";
+import { Button } from "@genesiscz/utils/ui/components/button";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -6,9 +8,7 @@ import {
     DropdownMenuLabel,
     DropdownMenuSeparator,
     DropdownMenuTrigger,
-} from "@app/utils/ui/components/dropdown-menu";
-import type { CollectionRecord } from "@app/youtube/lib/db.types";
-import { useAddCollectionVideo, useCollections, useMe } from "@app/yt/api.hooks";
+} from "@genesiscz/utils/ui/components/dropdown-menu";
 import { Link } from "@tanstack/react-router";
 import { FolderPlus } from "lucide-react";
 import { toast } from "sonner";

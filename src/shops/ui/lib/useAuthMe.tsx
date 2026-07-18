@@ -1,4 +1,4 @@
-import { Skeleton } from "@app/utils/ui/components/skeleton";
+import { Skeleton } from "@genesiscz/utils/ui/components/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { redirect, useNavigate } from "@tanstack/react-router";
 import type { ReactNode } from "react";

@@ -1,4 +1,4 @@
-import { formatClock } from "@app/utils/format";
+import { formatClock } from "@genesiscz/utils/format";
 import { useId } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 

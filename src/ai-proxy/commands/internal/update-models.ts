@@ -1,17 +1,17 @@
 import { resolveGithubCopilotDataDir, resolveGrokAuthPath } from "@app/ai-proxy/lib/account-config";
 import { catalogFilePath, loadCatalogFile } from "@app/ai-proxy/lib/catalog-file";
 import { loadConfig } from "@app/ai-proxy/lib/config";
-import { fetchCopilotModels, GithubCopilotApi, readGithubToken } from "@app/utils/ai/github-copilot";
-import { GITHUB_COPILOT_UPSTREAM_ENDPOINTS } from "@app/utils/ai/github-copilot/endpoints";
-import { COPILOT_INDIVIDUAL_API } from "@app/utils/ai/github-copilot/paths";
+import { fetchCopilotModels, GithubCopilotApi, readGithubToken } from "@genesiscz/utils/ai/github-copilot";
+import { GITHUB_COPILOT_UPSTREAM_ENDPOINTS } from "@genesiscz/utils/ai/github-copilot/endpoints";
+import { COPILOT_INDIVIDUAL_API } from "@genesiscz/utils/ai/github-copilot/paths";
 import {
     buildGrokModelCatalog,
     GROK_UPSTREAM_ENDPOINTS,
     GrokSubscriptionClient,
     readGrokClientVersion,
-} from "@app/utils/ai/grok";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
+} from "@genesiscz/utils/ai/grok";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 
 type CatalogAccountEntry = {
     accountName: string;

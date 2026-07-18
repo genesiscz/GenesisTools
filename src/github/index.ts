@@ -11,12 +11,12 @@ import { createPRCommand, prCommand } from "@app/github/commands/pr";
 import { createReviewCommand, reviewCommand } from "@app/github/commands/review";
 import { createSearchCommand, searchCommand } from "@app/github/commands/search";
 import { closeDatabase, getCacheStats } from "@app/github/lib/cache";
-import { enhanceHelp, runTool } from "@app/utils/cli";
-import { checkAuth, getRateLimit } from "@app/utils/github/octokit";
-import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser";
-import { logger, out } from "@app/utils/logger";
-import * as p from "@app/utils/prompts/p";
-import { inquirerBackend as _inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
+import { checkAuth, getRateLimit } from "@genesiscz/utils/github/octokit";
+import { detectRepoFromGit, parseGitHubUrl } from "@genesiscz/utils/github/url-parser";
+import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
+import { inquirerBackend as _inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
 
 // Use inquirer backend for this tool
 p.setBackend(_inquirerBackend);

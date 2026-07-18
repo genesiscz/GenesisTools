@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { DashboardSession } from "@app/log-viewer/log-source";
-import { formatLastMessageAgo } from "@app/utils/format";
+import { formatLastMessageAgo } from "@genesiscz/utils/format";
 import { formatDashboardSessionStatusLabel } from "./session-status-label";
 
 describe("formatLastMessageAgo", () => {

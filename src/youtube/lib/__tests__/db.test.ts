@@ -2,9 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { removeRecursive } from "@app/utils/fs";
-import { makeTempDir } from "@app/utils/paths";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
+import { removeRecursive } from "@genesiscz/utils/fs";
+import { makeTempDir } from "@genesiscz/utils/paths";
 
 let db: YoutubeDatabase;
 let tempDirs: string[] = [];

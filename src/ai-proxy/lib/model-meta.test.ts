@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { listAnthropicSubProxyModels, listOpenAiSubProxyModels } from "@app/ai-proxy/lib/model-meta";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
-import { ANTHROPIC_SUB_ALIASES } from "@app/utils/ai/anthropic/models";
+import { ANTHROPIC_SUB_ALIASES } from "@genesiscz/utils/ai/anthropic/models";
 
 const account: AiProxyAccountConfig = {
     name: "martin",

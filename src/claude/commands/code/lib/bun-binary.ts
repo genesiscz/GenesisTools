@@ -1,4 +1,4 @@
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 const TRAILER = Buffer.from("\n---- Bun! ----\n", "latin1");
 const SIZEOF_OFFSETS = 32;

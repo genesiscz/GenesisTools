@@ -1,4 +1,3 @@
-import { Button } from "@app/utils/ui/components/button";
 import type {
     LlmEstimate,
     LockedArtifact,
@@ -22,6 +21,7 @@ import {
 import { toPartialTimestampedEntries } from "@app/youtube/ui/components/shared/summary-partials";
 import type { PipelineProgress } from "@app/youtube/ui/components/shared/tabs";
 import { TimestampedSummaryView } from "@app/youtube/ui/components/shared/timestamped-summary-view";
+import { Button } from "@genesiscz/utils/ui/components/button";
 import { Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 

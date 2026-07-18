@@ -16,12 +16,16 @@ import {
     writeSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
-import { formatBytes } from "@app/utils/format";
-import { sha256FilesParallel } from "@app/utils/fs/parallel-sha256";
-import { logger } from "@app/utils/logger";
-import { CloneUnsupportedError, cloneFile, getCloneId, getFsType, getPrivateSize } from "@app/utils/macos/apfs";
-import { GetattrlistbulkUnsupportedError, isGetattrlistbulkSupported, iterDir } from "@app/utils/macos/getattrlistbulk";
-import { Stopwatch } from "@app/utils/Stopwatch";
+import { formatBytes } from "@genesiscz/utils/format";
+import { sha256FilesParallel } from "@genesiscz/utils/fs/parallel-sha256";
+import { logger } from "@genesiscz/utils/logger";
+import { CloneUnsupportedError, cloneFile, getCloneId, getFsType, getPrivateSize } from "@genesiscz/utils/macos/apfs";
+import {
+    GetattrlistbulkUnsupportedError,
+    isGetattrlistbulkSupported,
+    iterDir,
+} from "@genesiscz/utils/macos/getattrlistbulk";
+import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 
 export interface WalkEntry {
     path: string;

@@ -1,4 +1,4 @@
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 const { log } = logger.scoped("stash:patch");
 

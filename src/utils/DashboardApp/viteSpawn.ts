@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { PROJECT_ROOT } from "@app/utils/paths";
+import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 import type { DashboardBindHost } from "./types";
 
 export const DEFAULT_BIND_HOST: DashboardBindHost = "127.0.0.1";

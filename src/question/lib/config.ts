@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { SoundChoice } from "@app/utils/audio/runner.server";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
+import type { SoundChoice } from "@genesiscz/utils/audio/runner.server";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export interface QuestionConfig {
     sinks: { obsidian: boolean; sound: boolean; notify: boolean };

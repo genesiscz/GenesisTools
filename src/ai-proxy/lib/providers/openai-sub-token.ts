@@ -5,8 +5,8 @@ import {
     extractAccountId,
     readCodexAuthJson,
     resolveCodexAccountToken,
-} from "@app/utils/ai/openai/codex-auth";
-import { logger } from "@app/utils/logger";
+} from "@genesiscz/utils/ai/openai/codex-auth";
+import { logger } from "@genesiscz/utils/logger";
 
 export interface OpenAiSubToken {
     token: string;

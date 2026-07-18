@@ -3,9 +3,9 @@ import { newProcessId, writeMeta } from "@app/macos/lib/clones/audit";
 import { cachePlan } from "@app/macos/lib/clones/cache";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
-import { formatBytes } from "@app/utils/format";
-import { logger } from "@app/utils/logger";
-import { sendNotification } from "@app/utils/macos/notifications";
+import { formatBytes } from "@genesiscz/utils/format";
+import { logger } from "@genesiscz/utils/logger";
+import { sendNotification } from "@genesiscz/utils/macos/notifications";
 
 function shouldEnterByDefault(dir: string): boolean {
     return basename(dir) !== ".git";

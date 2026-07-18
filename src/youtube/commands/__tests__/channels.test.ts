@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { ChannelHandle } from "@app/youtube/lib/types";
 import { Command } from "commander";
 
-mock.module("@app/utils/cli/executor", () => ({
+mock.module("@genesiscz/utils/cli/executor", () => ({
     isInteractive: () => false,
     suggestCommand: (toolName: string, mods: { add?: string[] } = {}) => `${toolName} ${(mods.add ?? []).join(" ")}`,
     enhanceHelp: () => undefined,

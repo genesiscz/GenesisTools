@@ -1,5 +1,3 @@
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
 import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
 import { isPowerRole, roleForEmail } from "@app/youtube/lib/roles";
@@ -8,6 +6,8 @@ import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import type { Youtube } from "@app/youtube/lib/youtube";
 import { providerManager } from "@ask/providers/ProviderManager";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 export interface ModelPreset {
     label: string;

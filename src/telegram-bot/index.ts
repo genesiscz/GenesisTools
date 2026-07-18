@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import { runTool } from "@app/utils/cli";
-import { handleReadmeFlag } from "@app/utils/readme";
+import { runTool } from "@genesiscz/utils/cli";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
 import { registerConfigureCommand } from "./commands/configure";
 import { registerSendCommand } from "./commands/send";

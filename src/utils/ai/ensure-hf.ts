@@ -1,4 +1,4 @@
-import { ensurePackage } from "@app/utils/packages";
+import { ensurePackage } from "@genesiscz/utils/packages";
 
 export async function ensureHuggingFaceTransformers(): Promise<boolean> {
     try {

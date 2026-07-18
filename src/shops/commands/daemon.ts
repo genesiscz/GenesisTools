@@ -1,6 +1,6 @@
 import { type RegisterTaskOptions, registerTask, unregisterTask } from "@app/daemon/lib/register";
-import { Executor } from "@app/utils/cli";
-import { logger, out } from "@app/utils/logger";
+import { Executor } from "@genesiscz/utils/cli";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 const log = logger.child({ component: "shops:daemon-cmd" });

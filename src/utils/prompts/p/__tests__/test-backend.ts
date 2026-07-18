@@ -1,4 +1,4 @@
-import type { PromptBackend, SelectValue } from "@app/utils/prompts/p";
+import type { PromptBackend, SelectValue } from "@genesiscz/utils/prompts/p";
 
 /**
  * A simple test backend that returns pre-canned answers for each prompt type.

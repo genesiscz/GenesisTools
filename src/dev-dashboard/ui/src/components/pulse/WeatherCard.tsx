@@ -1,4 +1,4 @@
-import { formatClock } from "@app/utils/format";
+import { formatClock } from "@genesiscz/utils/format";
 
 interface WeatherCardProps {
     tempC: number | null;

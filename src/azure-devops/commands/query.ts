@@ -25,8 +25,8 @@ import {
     isQueryIdOrUrl,
     requireConfig,
 } from "@app/azure-devops/utils";
-import { formatLocalDateTimeStamp } from "@app/utils/date";
-import { logger, out } from "@app/utils/logger";
+import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 // Silent mode for JSON output - suppresses progress messages

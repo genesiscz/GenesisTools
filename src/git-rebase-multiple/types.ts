@@ -83,8 +83,8 @@ export interface CLIOptions {
 }
 
 // Shared types re-exported for backward compatibility
-export type { ExecResult as GitCommandResult } from "@app/utils/cli";
-export type { BranchInfo } from "@app/utils/git";
+export type { ExecResult as GitCommandResult } from "@genesiscz/utils/cli";
+export type { BranchInfo } from "@genesiscz/utils/git";
 
 /**
  * Execution plan step

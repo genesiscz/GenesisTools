@@ -1,7 +1,7 @@
 import type { ShopApiClient } from "@app/shops/api/ShopApiClient";
 import { ShopRegistry } from "@app/shops/api/ShopRegistry";
 import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 const log = logger.child({ component: "sync-shops-from-registry" });
 

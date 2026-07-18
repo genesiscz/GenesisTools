@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { runMigrations } from "@app/utils/database/migrations";
+import { runMigrations } from "@genesiscz/utils/database/migrations";
 import { STASH_MIGRATIONS } from "./stash-migrations";
 
 export function openStashDb(db: Database): Database {

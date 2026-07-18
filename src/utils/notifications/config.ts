@@ -1,4 +1,4 @@
-import { Storage } from "@app/utils/storage/storage";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import type { AppChannelOverrides, ChannelConfigs, ChannelName, NotifyGlobalConfig, ResolvedChannels } from "./types";
 
 const DEFAULT_CHANNELS: ChannelConfigs = {

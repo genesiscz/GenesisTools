@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
-import { BunSqliteDialect } from "@app/utils/database";
-import { type Migration, Migrator } from "@app/utils/database/migrations";
-import { logger } from "@app/utils/logger";
-import { MacOS } from "@app/utils/macos/MacOS";
-import { detectTerminalApp } from "@app/utils/terminal";
+import { BunSqliteDialect } from "@genesiscz/utils/database";
+import { type Migration, Migrator } from "@genesiscz/utils/database/migrations";
+import { logger } from "@genesiscz/utils/logger";
+import { MacOS } from "@genesiscz/utils/macos/MacOS";
+import { detectTerminalApp } from "@genesiscz/utils/terminal";
 import { Kysely } from "kysely";
 
 /**

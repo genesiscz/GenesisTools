@@ -1,6 +1,6 @@
 import type { TimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
 import type { ClarityTask } from "@app/clarity/lib/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";

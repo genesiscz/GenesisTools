@@ -7,7 +7,7 @@
  *    import.meta.env when `process` is absent — VITE_-prefixed vars only);
  *  - import RELATIVELY from vite.config.ts / drizzle.config.ts. Config
  *    bundlers inline relative imports but externalize bare ones, so a bare
- *    "@app/utils/env" import is unresolvable at config-load time in isolated
+ *    "@genesiscz/utils/env" import is unresolvable at config-load time in isolated
  *    workspaces (this exact failure kept src/dashboard/apps/web from booting).
  *
  * Server-only accessors (API keys, homedir-based paths, process-env

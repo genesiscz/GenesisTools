@@ -1,5 +1,4 @@
 import { EventEmitter } from "node:events";
-import { logger } from "@app/utils/logger";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import { withJobActivity } from "@app/youtube/lib/job-activity";
@@ -11,6 +10,7 @@ import type {
     PipelineDeps,
     StageHandlerCtx,
 } from "@app/youtube/lib/pipeline.types";
+import { logger } from "@genesiscz/utils/logger";
 
 const DEFAULT_POLL_MS = 250;
 

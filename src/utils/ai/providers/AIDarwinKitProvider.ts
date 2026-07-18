@@ -5,12 +5,12 @@ const SUPPORTED_TASKS: AITask[] = ["classify", "embed", "sentiment"];
 export class AIDarwinKitProvider implements AIProvider, AIEmbeddingProvider {
     readonly type = "darwinkit" as const;
     readonly dimensions = 512;
-    private nlpModule: typeof import("@app/utils/macos/nlp") | null = null;
-    private dkModule: typeof import("@app/utils/macos/darwinkit") | null = null;
+    private nlpModule: typeof import("@genesiscz/utils/macos/nlp") | null = null;
+    private dkModule: typeof import("@genesiscz/utils/macos/darwinkit") | null = null;
 
     private async getNlp() {
         if (!this.nlpModule) {
-            this.nlpModule = await import("@app/utils/macos/nlp");
+            this.nlpModule = await import("@genesiscz/utils/macos/nlp");
         }
 
         return this.nlpModule;
@@ -18,7 +18,7 @@ export class AIDarwinKitProvider implements AIProvider, AIEmbeddingProvider {
 
     private async getDk() {
         if (!this.dkModule) {
-            this.dkModule = await import("@app/utils/macos/darwinkit");
+            this.dkModule = await import("@genesiscz/utils/macos/darwinkit");
         }
 
         return this.dkModule;

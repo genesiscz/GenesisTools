@@ -11,19 +11,23 @@ import {
     inferAnthropicContextWindow,
     resolveAnthropicSubModel,
     tryFetchAnthropicSubModels,
-} from "@app/utils/ai/anthropic/models";
-import { toProxyId as toCopilotProxyId } from "@app/utils/ai/github-copilot/models";
-import { COPILOT_INDIVIDUAL_API } from "@app/utils/ai/github-copilot/paths";
-import type { CopilotModelRecord } from "@app/utils/ai/github-copilot/types";
-import type { GrokModelRecord } from "@app/utils/ai/grok";
-import { GROK_STATIC_CATALOG, inferModelSpeed, inferModelThinking, toProxyId } from "@app/utils/ai/grok";
-import { WHAM_BASE_URL } from "@app/utils/ai/openai/codex-auth";
-import { OPENAI_SUB_STATIC_CATALOG, tryFetchWhamModels, type WhamModelRecord } from "@app/utils/ai/openai/sub-models";
-import { resolveAccountToken } from "@app/utils/claude/subscription-auth";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { fetchDirect } from "@app/utils/net/fetch-direct";
-import { isObject } from "@app/utils/object";
+} from "@genesiscz/utils/ai/anthropic/models";
+import { toProxyId as toCopilotProxyId } from "@genesiscz/utils/ai/github-copilot/models";
+import { COPILOT_INDIVIDUAL_API } from "@genesiscz/utils/ai/github-copilot/paths";
+import type { CopilotModelRecord } from "@genesiscz/utils/ai/github-copilot/types";
+import type { GrokModelRecord } from "@genesiscz/utils/ai/grok";
+import { GROK_STATIC_CATALOG, inferModelSpeed, inferModelThinking, toProxyId } from "@genesiscz/utils/ai/grok";
+import { WHAM_BASE_URL } from "@genesiscz/utils/ai/openai/codex-auth";
+import {
+    OPENAI_SUB_STATIC_CATALOG,
+    tryFetchWhamModels,
+    type WhamModelRecord,
+} from "@genesiscz/utils/ai/openai/sub-models";
+import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { fetchDirect } from "@genesiscz/utils/net/fetch-direct";
+import { isObject } from "@genesiscz/utils/object";
 
 export function buildGrokModelDescription(meta: {
     visibility: string;

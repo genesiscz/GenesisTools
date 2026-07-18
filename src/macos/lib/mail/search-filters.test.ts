@@ -129,7 +129,7 @@ describe("buildMailFilterPredicate", () => {
     });
 });
 
-import { resolveMailboxRowids } from "@app/utils/macos/mail-sql";
+import { resolveMailboxRowids } from "@genesiscz/utils/macos/mail-sql";
 
 describe("resolveMailboxRowids", () => {
     function freshDb(): Database {

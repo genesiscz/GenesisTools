@@ -1,6 +1,6 @@
-import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
 import { formatDuration } from "@genesiscz/utils/format";
+import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { displayComparison } from "../lib/display";

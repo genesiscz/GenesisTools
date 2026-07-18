@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runMigrations } from "@app/utils/database/migrations";
+import { runMigrations } from "@genesiscz/utils/database/migrations";
 import { runDoctor } from "./doctor";
 import { STASH_MIGRATIONS } from "./stash-migrations";
 import { StashStorage } from "./storage";

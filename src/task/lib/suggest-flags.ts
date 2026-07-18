@@ -1,4 +1,4 @@
-import { suggestCommand } from "@app/utils/cli/executor";
+import { suggestCommand } from "@genesiscz/utils/cli/executor";
 
 export function suggestTail(session: string): string {
     return suggestCommand("tools task", {

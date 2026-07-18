@@ -1,4 +1,4 @@
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import type { NotificationEvent, TelegramChannelConfig } from "../types";
 
 export async function dispatchTelegram(event: NotificationEvent, config: TelegramChannelConfig): Promise<void> {
@@ -7,8 +7,8 @@ export async function dispatchTelegram(event: NotificationEvent, config: Telegra
     }
 
     try {
-        const { createApi, sendMessage } = await import("@app/utils/telegram-bot/lib/api");
-        const { escapeMarkdownV2 } = await import("@app/utils/telegram-bot/lib/formatting");
+        const { createApi, sendMessage } = await import("@genesiscz/utils/telegram-bot/lib/api");
+        const { escapeMarkdownV2 } = await import("@genesiscz/utils/telegram-bot/lib/formatting");
         const api = createApi(config.botToken);
 
         const title = event.title ? `*${escapeMarkdownV2(event.title)}*` : "";

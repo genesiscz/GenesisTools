@@ -1,8 +1,8 @@
-import { resolveAccountToken } from "@app/utils/claude/subscription-auth";
-import type { AIAccountEntry } from "@app/utils/config/ai.types";
-import { logger } from "@app/utils/logger";
+import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
+import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
+import { logger } from "@genesiscz/utils/logger";
 
-export type { AccountInfo, KeychainCredentials } from "@app/utils/claude/auth";
+export type { AccountInfo, KeychainCredentials } from "@genesiscz/utils/claude/auth";
 
 export class RetryableApiError extends Error {
     readonly statusCode: number;
@@ -151,7 +151,7 @@ export async function fetchAllAccountsUsage(
     accountFilter?: string | string[],
     signal?: AbortSignal
 ): Promise<AccountUsage[]> {
-    const { AIConfig } = await import("@app/utils/ai/AIConfig");
+    const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
     const config = await AIConfig.load();
     let accounts = config.getAccountsByProvider("anthropic-sub");
 

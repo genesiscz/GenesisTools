@@ -1,7 +1,7 @@
 import { renderJson, renderResult } from "@app/macos/lib/swap/display";
 import { scan } from "@app/macos/lib/swap/scanner";
-import { logger } from "@app/utils/logger";
 import * as p from "@clack/prompts";
+import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
 interface SwapOptions {

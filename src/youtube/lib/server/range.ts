@@ -1,5 +1,5 @@
-import { SafeJSON } from "@app/utils/json";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
  * Serves a file with HTTP Range support (206 partial content), the way

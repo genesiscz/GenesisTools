@@ -1,4 +1,4 @@
-import { Skeleton } from "@app/utils/ui/components/skeleton";
+import { Skeleton } from "@genesiscz/utils/ui/components/skeleton";
 
 export function Loading({ label = "Loading signal" }: { label?: string }) {
     return (

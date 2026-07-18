@@ -1,10 +1,10 @@
 import { captureProfile, getCmuxVersion, type SnapshotOptions } from "@app/cmux/lib/snapshot";
 import { ProfileExistsError, ProfileStore } from "@app/cmux/lib/store";
 import type { ProfileScope, Window } from "@app/cmux/lib/types";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { logger, out } from "@app/utils/logger";
-import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { logger, out } from "@genesiscz/utils/logger";
+import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import type { Command } from "commander";
 import pc from "picocolors";
 

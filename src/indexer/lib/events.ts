@@ -1,4 +1,4 @@
-import type { SearchResult } from "@app/utils/search/types";
+import type { SearchResult } from "@genesiscz/utils/search/types";
 
 // ─── Base timestamp (epoch ms, injected by emit) ────────────────
 type Ts = { ts: number };

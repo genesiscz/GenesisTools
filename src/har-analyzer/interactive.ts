@@ -4,10 +4,10 @@ import { RefStoreManager } from "@app/har-analyzer/core/ref-store";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { HarFile, HarSession, IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
-import { formatBytes, formatDuration } from "@app/utils/format";
-import { out } from "@app/utils/logger";
-import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
+import { formatBytes, formatDuration } from "@genesiscz/utils/format";
+import { out } from "@genesiscz/utils/logger";
+import { formatTable } from "@genesiscz/utils/table";
 import pc from "picocolors";
 
 export async function runInteractive(parentOpts: OutputOptions): Promise<void> {

@@ -16,8 +16,8 @@ import { registerSitemapCrawlCommand } from "@app/shops/commands/sitemap-crawl";
 import { registerSitemapSyncCommand } from "@app/shops/commands/sitemap-sync";
 import { registerUiCommand } from "@app/shops/commands/ui";
 import { registerWatchCommand } from "@app/shops/commands/watch";
-import { runTool } from "@app/utils/cli";
-import { handleReadmeFlag } from "@app/utils/readme";
+import { runTool } from "@genesiscz/utils/cli";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
 
 handleReadmeFlag(import.meta.url);

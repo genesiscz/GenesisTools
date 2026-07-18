@@ -13,7 +13,7 @@ import {
     migrateFileToAuthStorage,
     setAuthSecret,
     setAuthStorageBackend,
-} from "@app/utils/storage/AuthStorage";
+} from "@genesiscz/utils/storage/AuthStorage";
 
 let tempRoots: string[] = [];
 

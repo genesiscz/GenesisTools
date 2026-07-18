@@ -1,12 +1,12 @@
 // Activity command implementation
 
 import { formatActivity } from "@app/github/lib/output";
-import { getOctokit } from "@app/utils/github/octokit";
-import { withRetry } from "@app/utils/github/rate-limit";
-import type { ActivityCommandOptions, ActivityItem, GitHubEvent } from "@app/utils/github/types";
-import { parseDate } from "@app/utils/github/url-parser";
-import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
-import { logger, out } from "@app/utils/logger";
+import { getOctokit } from "@genesiscz/utils/github/octokit";
+import { withRetry } from "@genesiscz/utils/github/rate-limit";
+import type { ActivityCommandOptions, ActivityItem, GitHubEvent } from "@genesiscz/utils/github/types";
+import { parseDate } from "@genesiscz/utils/github/url-parser";
+import { setGlobalVerbose, verbose } from "@genesiscz/utils/github/utils";
+import { logger, out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
 import { Command } from "commander";
 

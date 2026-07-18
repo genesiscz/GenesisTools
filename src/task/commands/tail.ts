@@ -3,7 +3,7 @@ import { applyGrepImpliesAll, applyLogWindowDefaults } from "@app/task/lib/log-w
 import { waitForSession } from "@app/task/lib/wait-for-session";
 import { withResolvedSession } from "@app/task/lib/with-resolved-session";
 import type { LogCliOpts } from "@app/task/types";
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 export function registerTailCommand(program: Command): void {

@@ -1,7 +1,7 @@
 import type { SettingsPayload } from "@app/shops/types";
 import { SettingsForm } from "@app/shops/ui/components/SettingsForm";
 import { RequireAuth, requireAuthBeforeLoad } from "@app/shops/ui/lib/useAuthMe";
-import { Skeleton } from "@app/utils/ui/components/skeleton";
+import { Skeleton } from "@genesiscz/utils/ui/components/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 

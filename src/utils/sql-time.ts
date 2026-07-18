@@ -12,7 +12,7 @@
  *
  * Example:
  * ```ts
- * import { SQL_NOW_UTC } from "@app/utils/sql-time";
+ * import { SQL_NOW_UTC } from "@genesiscz/utils/sql-time";
  * db.exec(`CREATE TABLE foo (created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}))`);
  * db.run(`UPDATE foo SET updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [id]);
  * ```

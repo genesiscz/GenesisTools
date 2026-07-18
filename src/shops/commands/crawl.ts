@@ -5,7 +5,7 @@ import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { parsePositiveInt } from "@app/shops/lib/cli-validators";
 import { createCrawlerForShop } from "@app/shops/lib/crawler-factory";
 import { DbHttpRequestSink, type HttpRequestSink } from "@app/shops/lib/http-sink";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 export interface RunCrawlInput {

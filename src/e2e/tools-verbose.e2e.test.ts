@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { skip } from "@app/utils/test/skip";
+import { skip } from "@genesiscz/utils/test/skip";
 
 const TOOLS_BIN = join(import.meta.dir, "../../tools");
 

@@ -4,7 +4,7 @@ import { OfferDetailTabs } from "@app/shops/ui/components/OfferDetailTabs";
 import { PriceHistoryChart } from "@app/shops/ui/components/PriceHistoryChart";
 import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
 import { StarWatchButton } from "@app/shops/ui/components/StarWatchButton";
-import { Skeleton } from "@app/utils/ui/components/skeleton";
+import { Skeleton } from "@genesiscz/utils/ui/components/skeleton";
 import { ImageOff } from "lucide-react";
 
 interface MasterDetailProps {

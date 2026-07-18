@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { backupStamp, sanitize, selectResetTargets } from "@app/utils/tmux/reset";
-import type { TmuxSessionSnapshot } from "@app/utils/tmux/snapshot";
+import { backupStamp, sanitize, selectResetTargets } from "@genesiscz/utils/tmux/reset";
+import type { TmuxSessionSnapshot } from "@genesiscz/utils/tmux/snapshot";
 
 function snap(name: string, attached = false): TmuxSessionSnapshot {
     return { name, cwd: "/tmp", attached, windows: [] };

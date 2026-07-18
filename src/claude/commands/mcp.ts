@@ -1,5 +1,5 @@
 import { startMcpServer } from "@app/claude/mcp/server";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { registerMcpInstallCommand } from "./mcp-install";
 

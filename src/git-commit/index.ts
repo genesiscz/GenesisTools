@@ -1,13 +1,13 @@
-import { Executor, runTool } from "@app/utils/cli";
-import { logger } from "@app/utils/logger";
-import * as p from "@app/utils/prompts/p";
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
-import { handleReadmeFlag } from "@app/utils/readme";
+import { Executor, runTool } from "@genesiscz/utils/cli";
+import { logger } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
+import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
 
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
 
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateObject } from "ai";
 import { Command } from "commander";

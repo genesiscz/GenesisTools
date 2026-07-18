@@ -18,11 +18,11 @@ import {
     fetchPRReviewThreads,
     parseThreads,
 } from "@app/github/lib/review-threads";
-import { formatRelativeTime } from "@app/utils/format";
-import type { ReviewCommandOptions, ReviewData, ReviewSessionData } from "@app/utils/github/types";
-import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser";
-import { setGlobalVerbose } from "@app/utils/github/utils";
-import { logger, out } from "@app/utils/logger";
+import { formatRelativeTime } from "@genesiscz/utils/format";
+import type { ReviewCommandOptions, ReviewData, ReviewSessionData } from "@genesiscz/utils/github/types";
+import { detectRepoFromGit, parseGitHubUrl } from "@genesiscz/utils/github/url-parser";
+import { setGlobalVerbose } from "@genesiscz/utils/github/utils";
+import { logger, out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -151,7 +151,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
 
     // Handle worktree switching
     if (options.worktree && prInfo.headRefName) {
-        const { handleWorktreeOption } = await import("@app/utils/git/worktree");
+        const { handleWorktreeOption } = await import("@genesiscz/utils/git/worktree");
         await handleWorktreeOption({ worktree: options.worktree, branch: prInfo.headRefName, prNumber });
     }
 

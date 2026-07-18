@@ -1,7 +1,7 @@
-import { out } from "@app/utils/logger";
-import { closeDarwinKit } from "@app/utils/macos";
-import { handleCancel, isCancelled, withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
+import { out } from "@genesiscz/utils/logger";
+import { closeDarwinKit } from "@genesiscz/utils/macos";
+import { handleCancel, isCancelled, withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import pc from "picocolors";
 import { type CommandDef, commands, GROUP_LABELS, GROUP_ORDER, getCommandsByGroup, type ParamDef } from "./commands";
 import { defaultFormat, formatOutput, type OutputFormat } from "./format";

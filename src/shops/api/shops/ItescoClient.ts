@@ -17,8 +17,8 @@ import {
     type ItescoPageInfo,
 } from "@app/shops/api/shops/ItescoClient.types";
 import { isAkamaiBlock } from "@app/shops/lib/akamai-detect";
-import { SafeJSON } from "@app/utils/json";
-import { type Logger, logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { type Logger, logger } from "@genesiscz/utils/logger";
 import { parseHTML } from "linkedom";
 
 const ITESCO_ORIGIN = "itesco.cz";

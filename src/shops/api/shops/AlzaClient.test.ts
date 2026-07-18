@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { AlzaClient } from "@app/shops/api/shops/AlzaClient";
 import type { AlzaCategoryListing, AlzaPageData } from "@app/shops/api/shops/AlzaClient.types";
 import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
-import { SafeJSON } from "@app/utils/json";
-import { type WebView, WebViewPool } from "@app/utils/WebView";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { type WebView, WebViewPool } from "@genesiscz/utils/WebView";
 
 function readFixture<T>(rel: string): T {
     return SafeJSON.parse(readFileSync(join(import.meta.dir, "__fixtures__/alza", rel), "utf8")) as T;

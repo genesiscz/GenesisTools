@@ -1,4 +1,4 @@
-import type { ModelInfo, ProviderConfig } from "@app/utils/ask/types";
+import type { ModelInfo, ProviderConfig } from "@genesiscz/utils/ask/types";
 
 interface ResolvedModels {
     models: ModelInfo[];

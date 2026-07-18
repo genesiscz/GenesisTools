@@ -1,1 +1,1 @@
-export * from "@app/utils/ui/helpers/qa-recency";
+export * from "@genesiscz/utils/ui/helpers/qa-recency";

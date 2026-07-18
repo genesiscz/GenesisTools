@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { out } from "@app/utils/logger";
-import { cosineDistance } from "@app/utils/math";
+import { out } from "@genesiscz/utils/logger";
+import { cosineDistance } from "@genesiscz/utils/math";
 import type { VectorSearchHit, VectorStore } from "./vector-store";
 
 export interface SqliteVectorStoreConfig {

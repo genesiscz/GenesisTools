@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createHmac } from "node:crypto";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
 import { handleStripeEvent } from "@app/youtube/lib/billing";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const SECRET = "whsec_p2_tests";
 let db: YoutubeDatabase;

@@ -1,4 +1,3 @@
-import { Button } from "@app/utils/ui/components/button";
 import type { LlmEstimate, LockedArtifact, VideoId, VideoLongSummary } from "@app/youtube/lib/types";
 import { CREDIT_COSTS } from "@app/youtube/lib/types";
 import type { TaskDefaultSettings } from "@app/youtube/lib/user-settings";
@@ -19,6 +18,7 @@ import {
 } from "@app/youtube/ui/components/shared/summary-controls";
 import { toPartialLongSummary } from "@app/youtube/ui/components/shared/summary-partials";
 import type { PipelineProgress, VideoDetailDataSource } from "@app/youtube/ui/components/shared/tabs";
+import { Button } from "@genesiscz/utils/ui/components/button";
 import { Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 

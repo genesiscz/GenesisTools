@@ -47,9 +47,9 @@ import { registerRemindersCommand } from "@app/macos/commands/reminders/index";
 import { registerSleepCommand } from "@app/macos/commands/sleep/index";
 import { registerSwapCommand } from "@app/macos/commands/swap/index";
 import { registerVoiceMemosCommand } from "@app/macos/commands/voice-memos/index";
-import { runTool } from "@app/utils/cli";
-import { logger, out } from "@app/utils/logger";
-import { closeDarwinKit } from "@app/utils/macos/darwinkit";
+import { runTool } from "@genesiscz/utils/cli";
+import { logger, out } from "@genesiscz/utils/logger";
+import { closeDarwinKit } from "@genesiscz/utils/macos/darwinkit";
 import { Command } from "commander";
 
 const program = new Command();

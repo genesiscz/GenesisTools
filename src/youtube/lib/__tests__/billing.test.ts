@@ -1,7 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createHmac } from "node:crypto";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
 import {
     createCheckoutSession,
     createSubscriptionCheckoutSession,
@@ -9,6 +7,8 @@ import {
     verifyStripeSignature,
 } from "@app/youtube/lib/billing";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 // Golden vector — recomputed via:
 //   bun -e 'const c=require("node:crypto");const s="whsec_test_golden_secret";

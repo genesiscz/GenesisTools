@@ -2,8 +2,8 @@ import { spawn } from "node:child_process";
 import { unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import chalk from "chalk";
 import { createPatch } from "diff";
 

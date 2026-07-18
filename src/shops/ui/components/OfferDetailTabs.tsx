@@ -1,9 +1,9 @@
 import type { MasterOfferRow } from "@app/shops/types";
 import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
-import { SafeJSON } from "@app/utils/json";
-import { Badge } from "@app/utils/ui/components/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@app/utils/ui/components/tabs";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@app/utils/ui/components/tooltip";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@genesiscz/utils/ui/components/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@genesiscz/utils/ui/components/tooltip";
 import { ChevronDown, ExternalLink, ImageOff } from "lucide-react";
 import { useMemo, useState } from "react";
 

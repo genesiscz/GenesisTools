@@ -15,9 +15,9 @@ import { registerConfigureAuthorsCommand } from "@app/git/commands/configure-aut
 import { registerConfigureWorkitemPatternsCommand } from "@app/git/commands/configure-workitem-patterns";
 import { registerHealthCommand } from "@app/git/commands/health";
 import { registerMonsterCommand } from "@app/git/commands/monster";
-import { enhanceHelp, runTool } from "@app/utils/cli";
-import { logger, out } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage";
+import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
+import { logger, out } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage";
 import { Command } from "commander";
 
 const storage = new Storage("git");

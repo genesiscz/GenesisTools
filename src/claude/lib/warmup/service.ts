@@ -1,6 +1,6 @@
 import type { AccountUsage, UsageResponse } from "@app/claude/lib/usage/api";
-import { formatLocalDate } from "@app/utils/date";
-import { logger } from "@app/utils/logger";
+import { formatLocalDate } from "@genesiscz/utils/date";
+import { logger } from "@genesiscz/utils/logger";
 
 function currentHour(): number {
     return new Date().getHours();
@@ -46,9 +46,9 @@ function shouldWarmWeekly(usage: UsageResponse): boolean {
 
 export async function sendWarmupMessage(accountName: string): Promise<boolean> {
     try {
-        const { AIAccount } = await import("@app/utils/ai/AIAccount");
+        const { AIAccount } = await import("@genesiscz/utils/ai/AIAccount");
         const { ChatEngine } = await import("@ask/chat/ChatEngine");
-        const { AnthropicModelCategory } = await import("@app/utils/ask/providers/ModelResolver");
+        const { AnthropicModelCategory } = await import("@genesiscz/utils/ask/providers/ModelResolver");
 
         const account = AIAccount.chooseClaude(accountName);
         await ChatEngine.oneShot({
@@ -114,7 +114,7 @@ export async function processWarmupRules(usageResults: AccountUsage[]): Promise<
                     const shouldNotify = !warmup.session.notifyOnlyIfUnused || wasUnused;
 
                     if (shouldNotify) {
-                        const { dispatchNotification } = await import("@app/utils/notifications");
+                        const { dispatchNotification } = await import("@genesiscz/utils/notifications");
                         await dispatchNotification({
                             app: "claude",
                             title: "Claude Warmup",
@@ -148,7 +148,7 @@ export async function processWarmupRules(usageResults: AccountUsage[]): Promise<
                 configChanged = true;
 
                 if (success && warmup.weekly.notify) {
-                    const { dispatchNotification } = await import("@app/utils/notifications");
+                    const { dispatchNotification } = await import("@genesiscz/utils/notifications");
                     await dispatchNotification({
                         app: "claude",
                         title: "Claude Warmup",

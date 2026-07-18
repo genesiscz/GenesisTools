@@ -1,6 +1,6 @@
 import { reasoningItemsFromMessage, reasoningItemToInput } from "@app/ai-proxy/lib/translators/reasoning";
-import { SafeJSON } from "@app/utils/json";
-import { isObject } from "@app/utils/object";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { isObject } from "@genesiscz/utils/object";
 
 type JsonObject = Record<string, unknown>;
 

@@ -13,8 +13,8 @@
 import { describe, expect, it } from "bun:test";
 import { __resetInitState, initShopRegistry } from "@app/shops/api/registry-init";
 import { ShopRegistry } from "@app/shops/api/ShopRegistry";
-import { env } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
 
 const log = logger.child({ component: "live-smoke-phase2" });
 const RUN = env.test.shouldRunLiveSmoke();

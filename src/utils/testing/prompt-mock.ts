@@ -1,7 +1,7 @@
 import { mock } from "bun:test";
-import * as cliUtils from "@app/utils/cli";
-import type { PromptBackend } from "@app/utils/prompts/p";
-import { setBackend } from "@app/utils/prompts/p";
+import * as cliUtils from "@genesiscz/utils/cli";
+import type { PromptBackend } from "@genesiscz/utils/prompts/p";
+import { setBackend } from "@genesiscz/utils/prompts/p";
 
 /**
  * Shared test helpers for prompt-using code paths.
@@ -13,7 +13,7 @@ import { setBackend } from "@app/utils/prompts/p";
  * returns true so the command's TTY-gated branches actually run.
  *
  * The HISTORICAL pattern (per-tool `inquirer-mock.ts` files using
- * `mock.module("@app/utils/prompts/p", () => ({...}))`) works but suffers
+ * `mock.module("@genesiscz/utils/prompts/p", () => ({...}))`) works but suffers
  * cross-file pollution under bun:test's worker-pool reuse — a mock.module
  * call in one test file leaks into another. The setBackend approach below
  * is per-process state we explicitly own, with no module-cache effects.
@@ -22,8 +22,8 @@ import { setBackend } from "@app/utils/prompts/p";
  * ----------------
  *
  *   // top of your test file
- *   import { installPromptMock } from "@app/utils/testing/prompt-mock";
- *   import { makeTestBackend } from "@app/utils/prompts/p/__tests__/test-backend";
+ *   import { installPromptMock } from "@genesiscz/utils/testing/prompt-mock";
+ *   import { makeTestBackend } from "@genesiscz/utils/prompts/p/__tests__/test-backend";
  *
  *   installPromptMock(makeTestBackend({ text: "answer", confirm: true }));
  *
@@ -45,7 +45,7 @@ export function installPromptMock(backend: PromptBackend): void {
     // Re-export the real @app/utils/cli surface so suggestCommand/Executor/etc.
     // keep working; only isInteractive is stubbed. Idempotent — bun's
     // mock.module replaces any prior mock for the same specifier.
-    mock.module("@app/utils/cli", () => ({
+    mock.module("@genesiscz/utils/cli", () => ({
         ...cliUtils,
         isInteractive: () => true,
     }));

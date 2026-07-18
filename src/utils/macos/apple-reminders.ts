@@ -1,10 +1,10 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
 import type { DarwinKit, ReminderInfo, ReminderListInfo } from "@genesiscz/darwinkit";
 import { DarwinKitError, ReminderPriority } from "@genesiscz/darwinkit";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
 import { closeDarwinKit, getDarwinKit } from "./darwinkit";
 
 export type { ReminderInfo, ReminderListInfo };

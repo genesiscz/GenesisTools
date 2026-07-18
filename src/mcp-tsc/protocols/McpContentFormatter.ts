@@ -1,4 +1,4 @@
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 /**
  * Utility for formatting MCP response content consistently
  */

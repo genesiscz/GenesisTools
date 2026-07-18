@@ -1,5 +1,5 @@
 import type { ProviderLink, RentalListing, SaleListing } from "@app/Internal/commands/reas/types";
-import type { ApiClient } from "@app/utils/api/ApiClient";
+import type { ApiClient } from "@genesiscz/utils/api/ApiClient";
 
 export type BezrealitkyAutocompleteFeature = {
     properties?: {

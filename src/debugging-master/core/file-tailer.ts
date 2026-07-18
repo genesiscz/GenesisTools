@@ -1,8 +1,8 @@
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { LogEntry } from "@app/debugging-master/types";
-import { parseJsonlChunk } from "@app/utils/jsonl";
-import { FileWatcher } from "@app/utils/storage/fs";
+import { parseJsonlChunk } from "@genesiscz/utils/jsonl";
+import { FileWatcher } from "@genesiscz/utils/storage/fs";
 
 export interface TailerHandlers {
     onEntry: (entry: LogEntry, index: number) => void;

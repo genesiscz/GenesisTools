@@ -1,14 +1,14 @@
 // Shared review thread library - GraphQL queries, fetching, parsing, mutations
 // Extracted from src/github-pr/index.ts, adapted to use shared octokit
 
-import { getGhCliToken, getOctokit } from "@app/utils/github/octokit";
+import { getGhCliToken, getOctokit } from "@genesiscz/utils/github/octokit";
 import type {
     ParsedReviewThread,
     PRLevelComment,
     ReviewThread,
     ReviewThreadComment,
     ReviewThreadStats,
-} from "@app/utils/github/types";
+} from "@genesiscz/utils/github/types";
 import { Octokit } from "octokit";
 
 // =============================================================================

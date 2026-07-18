@@ -1,4 +1,4 @@
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 export interface KillableProcess {
     kill(signal?: NodeJS.Signals | number): void;

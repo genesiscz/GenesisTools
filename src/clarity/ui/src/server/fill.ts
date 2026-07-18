@@ -11,9 +11,9 @@ import {
     type FillEntryResult,
 } from "@app/clarity/lib/fill-utils";
 import { getTimesheetWeeks } from "@app/clarity/lib/timesheet-weeks";
-import type { ApiDebugInfo, TimeEntryRecord, TimeSeriesValue } from "@app/utils/clarity";
-import { ClarityApi } from "@app/utils/clarity";
-import { addDay } from "@app/utils/date";
+import type { ApiDebugInfo, TimeEntryRecord, TimeSeriesValue } from "@genesiscz/utils/clarity";
+import { ClarityApi } from "@genesiscz/utils/clarity";
+import { addDay } from "@genesiscz/utils/date";
 
 interface WeekPreviewTimelogEntry {
     workItemId: number;

@@ -1,11 +1,11 @@
-import { logger } from "@app/utils/logger/client";
-import { Button } from "@app/utils/ui/components/button";
-import { Input } from "@app/utils/ui/components/input";
 import { Diamond, formatDiamonds } from "@app/youtube/ui/components/shared/diamond";
 import { copyText } from "@app/youtube/ui/components/shared/share-button";
 import { formatRelativeTime } from "@app/youtube/ui/components/shared/time";
 import { ApiError } from "@ext/api.bridge";
 import { useRedeemReferral, useReferral } from "@ext/api.hooks";
+import { logger } from "@genesiscz/utils/logger/client";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Input } from "@genesiscz/utils/ui/components/input";
 import { Check, Copy, Gift, Loader2, Users } from "lucide-react";
 import { useState } from "react";
 

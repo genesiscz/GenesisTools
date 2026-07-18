@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { readClientLedger, setClientLedgerDirForTests } from "@app/ai-proxy/lib/usage/client-ledger";
 import type { UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const recordUsageRequest = mock((_record: UsageRequestRecord) => {});
 

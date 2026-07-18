@@ -9,7 +9,7 @@ import { decodeSessionPathSegment, isSafeLogSessionName } from "@app/log-viewer/
 import { sortSessionsByRecency } from "@app/log-viewer/session-recency";
 import { resolveSessionState } from "@app/log-viewer/session-state";
 import { enrichDashboardTimestamps } from "@app/log-viewer/tail-bridge";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const REF_ID = /^([se])([1-9]\d*)$/;
 

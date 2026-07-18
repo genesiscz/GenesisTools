@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
-import { SUBSCRIPTION_BETAS } from "@app/utils/claude/subscription-billing";
-import { SafeJSON } from "@app/utils/json";
+import { SUBSCRIPTION_BETAS } from "@genesiscz/utils/claude/subscription-billing";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const TEST_TOKEN = "sk-ant-oat01-TESTTOKEN";
 
-mock.module("@app/utils/claude/subscription-auth", () => ({
+mock.module("@genesiscz/utils/claude/subscription-auth", () => ({
     resolveAccountToken: async () => ({
         token: TEST_TOKEN,
         account: { name: "foltyn", accessToken: TEST_TOKEN },

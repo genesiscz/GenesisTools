@@ -1,5 +1,5 @@
-import { formatNumber } from "@app/utils/format";
-import { formatTable } from "@app/utils/table";
+import { formatNumber } from "@genesiscz/utils/format";
+import { formatTable } from "@genesiscz/utils/table";
 import type { Report } from "./aggregate";
 
 export function renderTable(report: Report): string {

@@ -1,7 +1,7 @@
 import { chmodSync } from "node:fs";
-import { logger } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage/storage";
-import type { TelegramBotConfig } from "@app/utils/telegram-bot/lib/types";
+import { logger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage/storage";
+import type { TelegramBotConfig } from "@genesiscz/utils/telegram-bot/lib/types";
 
 const storage = new Storage("telegram-bot");
 

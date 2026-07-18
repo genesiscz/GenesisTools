@@ -1,6 +1,6 @@
-import { formatLocalDateTimeStamp } from "@app/utils/date";
-import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
+import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
+import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 import { getLogsBaseDir } from "../lib/config";
 import { listRunsForTask, listTasksWithLogs, parseLogFile } from "../lib/log-reader";

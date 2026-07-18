@@ -8,4 +8,4 @@ export class CopilotAuthExpiredError extends Error {
     }
 }
 
-export { isAuthHttpStatus } from "@app/utils/ai/http-auth";
+export { isAuthHttpStatus } from "@genesiscz/utils/ai/http-auth";

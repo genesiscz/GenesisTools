@@ -1,4 +1,4 @@
-import { logger, out } from "@app/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 import { AlertsFeed } from "../lib/alerts-feed";
 import { listAlerts } from "../lib/alerts-rest";

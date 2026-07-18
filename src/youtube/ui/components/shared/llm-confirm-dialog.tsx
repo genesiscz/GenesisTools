@@ -1,9 +1,15 @@
-import { logger } from "@app/utils/logger/client";
-import { Button } from "@app/utils/ui/components/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import type { LlmEstimate } from "@app/youtube/lib/types";
 import type { OutputLang } from "@app/youtube/ui/components/shared/output-langs";
+import { logger } from "@genesiscz/utils/logger/client";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+} from "@genesiscz/utils/ui/components/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@genesiscz/utils/ui/components/select";
 import { AlertTriangle, Sparkles } from "lucide-react";
 import { type ReactNode, useState } from "react";
 

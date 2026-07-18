@@ -13,7 +13,7 @@ import { loadConfig as loadAdoConfig } from "@app/azure-devops/config";
 import { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
 import { type ClarityConfig, getConfig as getClarityConfig } from "@app/clarity/config";
-import { ClarityApi } from "@app/utils/clarity";
+import { ClarityApi } from "@genesiscz/utils/clarity";
 
 export type AuthStatus = "ok" | "expired" | "error" | "unknown";
 

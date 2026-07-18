@@ -1,5 +1,5 @@
-import { playDingInBrowser } from "@app/utils/audio/runner.client";
-import { SafeJSON } from "@app/utils/json";
+import { playDingInBrowser } from "@genesiscz/utils/audio/runner.client";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
 import { IconPopover } from "@ui/components/icon-button";

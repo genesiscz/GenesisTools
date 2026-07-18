@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 // Default-on, opt-out via explicit "0" — route through the env facade (dynamic-key
 // lookup, same helper used for ask ProviderConfig.envKey) so env.testing

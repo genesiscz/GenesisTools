@@ -1,5 +1,4 @@
 import { basename } from "node:path";
-import { getSessionMetadata } from "@app/utils/claude/history-cache";
 import {
     getSessionListing,
     rgExtractSnippet,
@@ -7,10 +6,11 @@ import {
     type SessionMetadataRecord,
     searchConversations,
 } from "@app/claude/lib/history/search";
-import { findClaudeCommand, resolveProjectFilter } from "@app/utils/claude";
-import { formatDateTime } from "@app/utils/date";
-import { env } from "@app/utils/env";
 import * as p from "@clack/prompts";
+import { findClaudeCommand, resolveProjectFilter } from "@genesiscz/utils/claude";
+import { getSessionMetadata } from "@genesiscz/utils/claude/history-cache";
+import { formatDateTime } from "@genesiscz/utils/date";
+import { env } from "@genesiscz/utils/env";
 import type { Command } from "commander";
 import pc from "picocolors";
 

@@ -1,5 +1,5 @@
-import { logger } from "@app/utils/logger";
 import type { FetchCaptionsOpts, FetchCaptionsResult } from "@app/youtube/lib/captions.types";
+import { logger } from "@genesiscz/utils/logger";
 import { type TranscriptResponse, YoutubeTranscript } from "youtube-transcript";
 
 interface TranscriptResponseWithLang extends TranscriptResponse {

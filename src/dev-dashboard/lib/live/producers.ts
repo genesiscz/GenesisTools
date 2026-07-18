@@ -7,8 +7,8 @@ import { classifyListeningPorts, listListeningPorts } from "@app/dev-dashboard/l
 import { enrichQaEntry } from "@app/dev-dashboard/lib/qa-render";
 import { createQaStream, todayLogFile } from "@app/dev-dashboard/lib/qa-sse";
 import { getCachedPulse, markPulseClientSeen } from "@app/dev-dashboard/lib/system/poller";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 const PORTS_INTERVAL_MS = 10_000;
 const PULSE_INTERVAL_MS = 5_000;

@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
-import { logger } from "@app/utils/logger";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { YtUser } from "@app/youtube/lib/users.types";
 import { STARTING_CREDITS } from "@app/youtube/lib/users.types";
+import { logger } from "@genesiscz/utils/logger";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD_LENGTH = 8;

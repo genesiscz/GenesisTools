@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
 import { appendFileSync, readFileSync } from "node:fs";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { AgentsBridge } from "./lib/agents-bridge";
 import { AppServerClient, type RpcNotification, spawnAppServer } from "./lib/app-server-client";
 import { readControlRequests, respondToControl } from "./lib/control-channel";

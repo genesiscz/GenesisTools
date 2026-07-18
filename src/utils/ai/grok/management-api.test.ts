@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { GrokManagementClient } from "./management-api";
 
 describe("grok management-api", () => {

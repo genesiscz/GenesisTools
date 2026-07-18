@@ -1,4 +1,4 @@
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const FRAME_RE = /~m~(\d+)~m~/g;
 

@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import {
     BLOCK_END,
     BLOCK_START,
@@ -266,7 +266,7 @@ describe("integration (hermetic state + rc round-trips)", () => {
     }
 
     test("analyze persists levels; a second hot run raises level; decay lowers and prunes", async () => {
-        const { Storage } = await import("@app/utils/storage/storage");
+        const { Storage } = await import("@genesiscz/utils/storage/storage");
         const { extractHotPaths: extract } = await import("./core");
         const { updateLevel: update } = await import("./core");
 

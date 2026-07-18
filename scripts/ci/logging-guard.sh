@@ -13,16 +13,16 @@ set -euo pipefail
 fail=0
 
 # 1. No DEFAULT import of the logger module anywhere (the named
-#    `import { logger } from "@app/utils/logger"` is the only sanctioned form).
-#    Matches: `import X from "@app/utils/logger"`, `"@app/utils/logger.ts"`,
+#    `import { logger } from "@genesiscz/utils/logger"` is the only sanctioned form).
+#    Matches: `import X from "@genesiscz/utils/logger"` (and legacy @app/utils/logger), `.ts` variants,
 #    relative `../logger` / `./logger(.ts)`, and `import X, { … } from …`.
 #    Does NOT match `import { … }` (named) or `import type` or `import * as`.
-default_re='^\s*import\s+[A-Za-z_$][A-Za-z0-9_$]*\s*(,\s*\{[^}]*\})?\s+from\s+["'"'"'](@app/utils/logger(\.ts)?|(\.{1,2}/)+([^"'"'"']*/)?logger(\.ts)?)["'"'"']'
+default_re='^\s*import\s+[A-Za-z_$][A-Za-z0-9_$]*\s*(,\s*\{[^}]*\})?\s+from\s+["'"'"']((@app|@genesiscz)/utils/logger(\.ts)?|(\.{1,2}/)+([^"'"'"']*/)?logger(\.ts)?)["'"'"']'
 if rg -n --glob '!node_modules' --glob '!**/*.md' \
         --glob '!scripts/codemod/**' --glob '!scripts/ci/logging-guard.sh' \
         --glob '!src/utils/logger.ts' --glob '!src/utils/logger.test.ts' \
         "$default_re" . ; then
-    echo "::error:: default import of the logger module reintroduced — use \`import { logger } from \"@app/utils/logger\"\` (named). Includes the @app/utils/logger.ts and relative ../logger variants; the root ./tools dispatcher counts."
+    echo "::error:: default import of the logger module reintroduced — use \`import { logger } from \"@genesiscz/utils/logger\"\` (named). Includes the @genesiscz/utils/logger.ts, legacy @app/utils/logger, and relative ../logger variants; the root ./tools dispatcher counts."
     fail=1
 fi
 

@@ -1,7 +1,7 @@
-import { env } from "@app/utils/env";
-import { out } from "@app/utils/logger";
-import { makeStandaloneTmuxSessionName } from "@app/utils/tmux/naming";
-import { attachTmuxSession, createTmuxSession, sessionExists } from "@app/utils/tmux/sessions";
+import { env } from "@genesiscz/utils/env";
+import { out } from "@genesiscz/utils/logger";
+import { makeStandaloneTmuxSessionName } from "@genesiscz/utils/tmux/naming";
+import { attachTmuxSession, createTmuxSession, sessionExists } from "@genesiscz/utils/tmux/sessions";
 import type { Command } from "commander";
 
 interface CreateFlags {

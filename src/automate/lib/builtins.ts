@@ -1,8 +1,8 @@
 // src/automate/lib/builtins.ts
 
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { resolveExpression, resolveParams } from "./expressions.ts";
 import type { ExecutionContext, PresetStep, StepHandlerResult } from "./types.ts";
 

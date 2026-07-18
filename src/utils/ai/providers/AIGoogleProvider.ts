@@ -1,5 +1,5 @@
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { AIEmbeddingProvider, AIProvider, AITask, EmbeddingResult, EmbedOptions } from "../types";
 
 const SUPPORTED_TASKS: AITask[] = ["embed"];

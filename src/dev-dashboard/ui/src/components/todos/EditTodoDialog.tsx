@@ -1,6 +1,6 @@
 import type { TodoPriority } from "@app/dev-dashboard/lib/todos/types";
-import { reminderPriorityToTodo } from "@app/utils/macos/reminder-priority";
 import type { ReminderInfo } from "@genesiscz/darwinkit";
+import { reminderPriorityToTodo } from "@genesiscz/utils/macos/reminder-priority";
 import { Button } from "@ui/components/button";
 import {
     Dialog,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { inferModelThinking } from "@app/utils/ai/grok/models";
+import { inferModelThinking } from "@genesiscz/utils/ai/grok/models";
 
 describe("inferModelThinking", () => {
     it("returns none for non-reasoning model ids instead of matching the broader reasoning regex", () => {

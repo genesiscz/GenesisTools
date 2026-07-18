@@ -1,4 +1,4 @@
-import { Badge } from "@app/utils/ui/components/badge";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
 
 export function ApiStatus({ status }: { status: "unknown" | "ok" | "down" }) {
     if (status === "ok") {

@@ -15,8 +15,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, dirname, resolve, sep } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { estimateTokens } from "@app/utils/tokens";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { estimateTokens } from "@genesiscz/utils/tokens";
 import { discoverSessionFiles } from "./discovery";
 import { parseJsonlTranscript } from "./index";
 import { encodedProjectDir, extractProjectName, PROJECTS_DIR } from "./projects";

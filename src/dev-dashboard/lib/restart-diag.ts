@@ -1,6 +1,6 @@
-import { logger } from "@app/utils/logger";
-import { resolveTmuxBin } from "@app/utils/tmux/bin";
-import { buildTmuxSpawnEnv } from "@app/utils/tmux/sessions";
+import { logger } from "@genesiscz/utils/logger";
+import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
+import { buildTmuxSpawnEnv } from "@genesiscz/utils/tmux/sessions";
 
 /**
  * Snapshot ttyd + tmux state for restart diagnostics, logged at dev-dashboard

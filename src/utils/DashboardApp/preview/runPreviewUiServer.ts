@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
-import { env } from "@app/utils/env";
-import { logger, out } from "@app/utils/logger";
-import { PROJECT_ROOT } from "@app/utils/paths";
+import { env } from "@genesiscz/utils/env";
+import { logger, out } from "@genesiscz/utils/logger";
+import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 import type { RolldownWatcher } from "rolldown";
 import type { InlineConfig } from "vite";
 import { build, loadConfigFromFile, mergeConfig, preview } from "vite";

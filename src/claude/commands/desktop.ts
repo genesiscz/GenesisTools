@@ -6,8 +6,8 @@ import {
     readManifest,
     writeManifest,
 } from "@app/claude/lib/desktop";
-import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
+import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import type { Command } from "commander";
 import pc from "picocolors";
 

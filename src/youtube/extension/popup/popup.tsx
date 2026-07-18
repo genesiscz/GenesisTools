@@ -1,8 +1,8 @@
-import { Button } from "@app/utils/ui/components/button";
-import { Input } from "@app/utils/ui/components/input";
 import { send } from "@ext/api.bridge";
 import { ApiStatus } from "@ext/popup/components/api-status";
 import { QuickActions } from "@ext/popup/components/quick-actions";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Input } from "@genesiscz/utils/ui/components/input";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";

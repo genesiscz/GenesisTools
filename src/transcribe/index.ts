@@ -2,20 +2,26 @@
 
 import { existsSync } from "node:fs";
 import { basename, extname, resolve } from "node:path";
-import { AI } from "@app/utils/ai/index.ts";
-import { getAllProviders } from "@app/utils/ai/providers/index.ts";
-import { formatOutput, formatTimestamp, type OutputFormat, toSRT, toVTT } from "@app/utils/ai/transcription-format.ts";
-import type { AIProviderType } from "@app/utils/ai/types.ts";
-import { audioProcessor } from "@app/utils/ask/audio/AudioProcessor.ts";
-import { runTool } from "@app/utils/cli";
-import { isInteractive, suggestCommand } from "@app/utils/cli/executor.ts";
-import { isQuietOutput } from "@app/utils/cli/output-mode.ts";
-import { createQuietSpinner } from "@app/utils/cli/quiet-spinner.ts";
-import { copyToClipboard } from "@app/utils/clipboard.ts";
-import { env } from "@app/utils/env";
-import { formatBytes, formatDuration } from "@app/utils/format.ts";
-import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
+import { AI } from "@genesiscz/utils/ai/index.ts";
+import { getAllProviders } from "@genesiscz/utils/ai/providers/index.ts";
+import {
+    formatOutput,
+    formatTimestamp,
+    type OutputFormat,
+    toSRT,
+    toVTT,
+} from "@genesiscz/utils/ai/transcription-format.ts";
+import type { AIProviderType } from "@genesiscz/utils/ai/types.ts";
+import { audioProcessor } from "@genesiscz/utils/ask/audio/AudioProcessor.ts";
+import { runTool } from "@genesiscz/utils/cli";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor.ts";
+import { isQuietOutput } from "@genesiscz/utils/cli/output-mode.ts";
+import { createQuietSpinner } from "@genesiscz/utils/cli/quiet-spinner.ts";
+import { copyToClipboard } from "@genesiscz/utils/clipboard.ts";
+import { env } from "@genesiscz/utils/env";
+import { formatBytes, formatDuration } from "@genesiscz/utils/format.ts";
+import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import pc from "picocolors";
 

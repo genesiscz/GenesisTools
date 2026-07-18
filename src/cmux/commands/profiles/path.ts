@@ -1,5 +1,5 @@
 import { ProfileStore } from "@app/cmux/lib/store";
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 export function registerPathCommand(parent: Command): void {

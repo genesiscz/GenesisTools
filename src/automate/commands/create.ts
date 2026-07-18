@@ -1,7 +1,7 @@
 import { savePreset } from "@app/automate/lib/storage.ts";
 import type { Preset, PresetStep } from "@app/automate/lib/types.ts";
-import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { Command } from "commander";
 import pc from "picocolors";
 

@@ -1,4 +1,4 @@
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import {
     createBoxTable,
     formatDotStatus,
@@ -6,11 +6,11 @@ import {
     renderCliKeyRow,
     renderCliSection,
     truncateDisplay,
-} from "@app/utils/table";
+} from "@genesiscz/utils/table";
 import pc from "picocolors";
 import type { KillResult, PortSnapshot, ProcessSnapshot } from "./types";
 
-/** @deprecated Prefer `renderCliHeader` from `@app/utils/table` — kept for callers. */
+/** @deprecated Prefer `renderCliHeader` from `@genesiscz/utils/table` — kept for callers. */
 export const renderHeader = renderCliHeader;
 
 function formatFramework(framework: string | null): string {

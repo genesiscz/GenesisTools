@@ -1,6 +1,6 @@
 import { loadTelegramConfig } from "@app/telegram-bot/lib/config";
-import type { ParseMode } from "@app/utils/telegram-bot/lib/types";
 import * as p from "@clack/prompts";
+import type { ParseMode } from "@genesiscz/utils/telegram-bot/lib/types";
 import type { Command } from "commander";
 import { Api } from "grammy";
 

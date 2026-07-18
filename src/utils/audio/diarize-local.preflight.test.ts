@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
-import { skip } from "@app/utils/test/skip";
+import { skip } from "@genesiscz/utils/test/skip";
 
 describe.skipIf(skip.localModels)("sherpa-onnx preflight", () => {
     it("darwin-arm64 prebuilt native addon is present (no source build)", () => {

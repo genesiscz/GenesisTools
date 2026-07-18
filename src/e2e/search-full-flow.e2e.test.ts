@@ -75,7 +75,7 @@ describe("Search Full Flow E2E", () => {
 
     describe("FTS5 fulltext-only flow", () => {
         it("indexes dataset and searches with BM25 ranking", async () => {
-            const { SearchEngine } = await import("@app/utils/search");
+            const { SearchEngine } = await import("@genesiscz/utils/search");
 
             tmpDir = mkdtempSync(join(tmpdir(), "search-flow-"));
             const dbPath = join(tmpDir, "articles.db");
@@ -136,7 +136,7 @@ describe("Search Full Flow E2E", () => {
         });
 
         it("persists data across engine instances", async () => {
-            const { SearchEngine } = await import("@app/utils/search");
+            const { SearchEngine } = await import("@genesiscz/utils/search");
 
             tmpDir = mkdtempSync(join(tmpdir(), "search-persist-"));
             const dbPath = join(tmpDir, "persist.db");
@@ -168,8 +168,8 @@ describe("Search Full Flow E2E", () => {
 
     describe.skipIf(!isDarwin)("FTS5 with DarwinKit embeddings (vector + hybrid)", () => {
         it("full flow: dataset → embeddings → vector search → hybrid search", async () => {
-            const { SearchEngine } = await import("@app/utils/search");
-            const { Embedder } = await import("@app/utils/ai");
+            const { SearchEngine } = await import("@genesiscz/utils/search");
+            const { Embedder } = await import("@genesiscz/utils/ai");
 
             tmpDir = mkdtempSync(join(tmpdir(), "search-vector-"));
             const dbPath = join(tmpDir, "vector.db");
@@ -253,7 +253,7 @@ describe("Search Full Flow E2E", () => {
         }, 30_000);
 
         it("embedder generates consistent dimensions", async () => {
-            const { Embedder } = await import("@app/utils/ai");
+            const { Embedder } = await import("@genesiscz/utils/ai");
             const embedder = await Embedder.create();
 
             try {
@@ -290,7 +290,7 @@ describe("Search Full Flow E2E", () => {
 
     describe("Orama full flow", () => {
         it("indexes dataset and searches with fulltext", async () => {
-            const { OramaSearchEngine } = await import("@app/utils/search");
+            const { OramaSearchEngine } = await import("@genesiscz/utils/search");
 
             const engine = new OramaSearchEngine<Article>({
                 schema: {
@@ -327,7 +327,7 @@ describe("Search Full Flow E2E", () => {
         });
 
         it("persists to file and restores", async () => {
-            const { OramaSearchEngine } = await import("@app/utils/search");
+            const { OramaSearchEngine } = await import("@genesiscz/utils/search");
 
             tmpDir = mkdtempSync(join(tmpdir(), "orama-persist-"));
             const persistPath = join(tmpDir, "index.json");

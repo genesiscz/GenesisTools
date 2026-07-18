@@ -1,5 +1,5 @@
-import { normalizeMailboxName, parseMailboxUrl } from "@app/utils/macos/mail/constants";
-import type { MailMessage, MailMessageRow } from "@app/utils/macos/mail/types";
+import { normalizeMailboxName, parseMailboxUrl } from "@genesiscz/utils/macos/mail/constants";
+import type { MailMessage, MailMessageRow } from "@genesiscz/utils/macos/mail/types";
 
 /** Truncate text to maxChars with a suffix. Returns the original if within limit. */
 export function truncateBody(text: string, maxChars: number, suffix = "... [truncated]"): string {

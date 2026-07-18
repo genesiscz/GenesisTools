@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { RegionClass } from "./classify";
 
 export type Decision = "update" | "discard" | "skip" | "auto-remove" | null;

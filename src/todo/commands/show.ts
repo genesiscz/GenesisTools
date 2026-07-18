@@ -2,8 +2,8 @@ import { findProjectRoot } from "@app/todo/lib/context";
 import { formatTodo } from "@app/todo/lib/format";
 import { TodoStore } from "@app/todo/lib/store";
 import type { OutputFormat } from "@app/todo/lib/types";
-import { isInteractive } from "@app/utils/cli";
-import { out } from "@app/utils/logger";
+import { isInteractive } from "@genesiscz/utils/cli";
+import { out } from "@genesiscz/utils/logger";
 import { Command, Option } from "commander";
 
 function resolveFormat(format: string | undefined): OutputFormat {

@@ -9,16 +9,17 @@ import {
     selectOutput,
     selectProvider,
 } from "@app/macos/lib/voice-memos/prompts.ts";
-import { AI } from "@app/utils/ai/index.ts";
-import { getAllProviders } from "@app/utils/ai/providers/index.ts";
-import { formatOutput, type OutputFormat } from "@app/utils/ai/transcription-format.ts";
-import type { AIProviderType } from "@app/utils/ai/types.ts";
-import { isInteractive, suggestCommand } from "@app/utils/cli/executor.ts";
-import { copyToClipboard } from "@app/utils/clipboard.ts";
-import { isCloudProvider } from "@app/utils/config/ai.types";
-import { formatDateTime } from "@app/utils/date.ts";
-import { formatDuration } from "@app/utils/format.ts";
-import { out } from "@app/utils/logger";
+import * as p from "@clack/prompts";
+import { AI } from "@genesiscz/utils/ai/index.ts";
+import { getAllProviders } from "@genesiscz/utils/ai/providers/index.ts";
+import { formatOutput, type OutputFormat } from "@genesiscz/utils/ai/transcription-format.ts";
+import type { AIProviderType } from "@genesiscz/utils/ai/types.ts";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor.ts";
+import { copyToClipboard } from "@genesiscz/utils/clipboard.ts";
+import { isCloudProvider } from "@genesiscz/utils/config/ai.types";
+import { formatDateTime } from "@genesiscz/utils/date.ts";
+import { formatDuration } from "@genesiscz/utils/format.ts";
+import { out } from "@genesiscz/utils/logger";
 import {
     extractTranscript,
     getMemo,
@@ -26,10 +27,9 @@ import {
     searchMemos,
     type VoiceMemo,
     VoiceMemosError,
-} from "@app/utils/macos/voice-memos.ts";
-import { printSettingsSummary } from "@app/utils/prompts/clack/settings-summary.ts";
-import { formatTable } from "@app/utils/table.ts";
-import * as p from "@clack/prompts";
+} from "@genesiscz/utils/macos/voice-memos.ts";
+import { printSettingsSummary } from "@genesiscz/utils/prompts/clack/settings-summary.ts";
+import { formatTable } from "@genesiscz/utils/table.ts";
 import { Command } from "commander";
 import pc from "picocolors";
 
@@ -482,7 +482,7 @@ async function transcribeOne(opts: {
         onProgress: (info: { message: string }) => void;
         onSegment: (seg: { start: number; text: string }) => void;
         confirmLanguage?: (
-            detected: import("@app/utils/ai/LanguageDetector.ts").LanguageDetectionResult
+            detected: import("@genesiscz/utils/ai/LanguageDetector.ts").LanguageDetectionResult
         ) => Promise<string>;
         thresholds?: {
             noSpeechThreshold: number;
@@ -527,7 +527,7 @@ async function transcribeOne(opts: {
         persist: true,
     });
 
-    let result: import("@app/utils/ai/types.ts").TranscriptionResult;
+    let result: import("@genesiscz/utils/ai/types.ts").TranscriptionResult;
 
     try {
         result = await transcriber.transcribe(memo.path, transcribeOpts);

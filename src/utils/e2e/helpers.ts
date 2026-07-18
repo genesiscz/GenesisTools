@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 const TOOLS_PATH = resolve(import.meta.dir, "..", "..", "..", "tools");
 

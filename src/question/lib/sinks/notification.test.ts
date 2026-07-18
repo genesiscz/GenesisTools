@@ -2,7 +2,7 @@ import { describe, expect, it, mock } from "bun:test";
 
 const dispatched: { app: string; title?: string; message: string; open?: string }[] = [];
 
-mock.module("@app/utils/notifications", () => ({
+mock.module("@genesiscz/utils/notifications", () => ({
     dispatchNotification: async (e: { app: string; title?: string; message: string; open?: string }) => {
         dispatched.push(e);
     },

@@ -1,4 +1,4 @@
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 /**
  * Detect the name of the current terminal application.
  * Checks CMUX_BUNDLE_ID first (cmux sets TERM_PROGRAM="" but has its own env),

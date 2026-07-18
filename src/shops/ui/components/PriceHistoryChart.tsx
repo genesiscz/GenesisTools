@@ -1,7 +1,7 @@
 import type { PriceHistoryResponse } from "@app/shops/types";
 import { ChartBox } from "@app/shops/ui/components/ChartBox";
-import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
-import { chartColors, chartSeriesPalette } from "@app/utils/ui/graphs/colors";
+import { Card, CardContent, CardHeader, CardTitle } from "@genesiscz/utils/ui/components/card";
+import { chartColors, chartSeriesPalette } from "@genesiscz/utils/ui/graphs/colors";
 import { Area, AreaChart, CartesianGrid, Legend, ReferenceLine, Tooltip, XAxis, YAxis } from "recharts";
 
 interface PriceHistoryChartProps {

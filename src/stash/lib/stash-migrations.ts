@@ -1,5 +1,5 @@
-import type { Migration } from "@app/utils/database/migrations";
-import { logger } from "@app/utils/logger";
+import type { Migration } from "@genesiscz/utils/database/migrations";
+import { logger } from "@genesiscz/utils/logger";
 import { newStashId } from "./ids";
 import { parseRegionsFromPatch } from "./parse-regions";
 import { StashStorage } from "./storage";

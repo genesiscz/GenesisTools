@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { applySourceMetadataSchema, backfillMetadataColumns } from "./metadata-schema";
 import type { IndexerSource, MetadataPopulateOpts, MetadataResult } from "./sources/source";
 import type { MetadataColumnSpec } from "./types";

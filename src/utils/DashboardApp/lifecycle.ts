@@ -7,15 +7,15 @@
  * functions; the imperative `DashboardApp` API on `types.ts` does the same.
  */
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
-import { Browser } from "@app/utils/browser";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { logger, out } from "@app/utils/logger";
-import { getPortOwner } from "@app/utils/network";
-import { spawnDashboard } from "@app/utils/process/spawnDashboard";
-import { isProcessAlive } from "@app/utils/process-alive";
-import { stripAnsi } from "@app/utils/string";
-import { terminalLocaleEnvRecord } from "@app/utils/terminal/locale";
 import * as p from "@clack/prompts";
+import { Browser } from "@genesiscz/utils/browser";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { logger, out } from "@genesiscz/utils/logger";
+import { getPortOwner } from "@genesiscz/utils/network";
+import { spawnDashboard } from "@genesiscz/utils/process/spawnDashboard";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { stripAnsi } from "@genesiscz/utils/string";
+import { terminalLocaleEnvRecord } from "@genesiscz/utils/terminal/locale";
 import pc from "picocolors";
 import {
     DashboardNotReadyError,

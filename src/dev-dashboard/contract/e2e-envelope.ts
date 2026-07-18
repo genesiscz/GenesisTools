@@ -1,4 +1,4 @@
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 // The E2E wire envelope the vendor relay forwards OPAQUELY (managed tier). The relay
 // terminates TLS, so confidentiality lives here, above the transport. `SafeJSON` is

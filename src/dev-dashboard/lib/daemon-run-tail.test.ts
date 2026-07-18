@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { appendFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { assertLogFileContained, createRunLogTail } from "./daemon-run-tail";
 
 describe("assertLogFileContained", () => {

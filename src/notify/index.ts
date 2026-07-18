@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 
-import { isInteractive, runTool, suggestCommand } from "@app/utils/cli";
-import { logger, out } from "@app/utils/logger";
-import type { ChannelConfigs } from "@app/utils/notifications";
-import { dispatchNotification, notificationsConfig } from "@app/utils/notifications";
-import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
+import { isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
+import { logger, out } from "@genesiscz/utils/logger";
+import type { ChannelConfigs } from "@genesiscz/utils/notifications";
+import { dispatchNotification, notificationsConfig } from "@genesiscz/utils/notifications";
+import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import { Command } from "commander";
 import pc from "picocolors";
 
@@ -323,7 +323,7 @@ async function main(): Promise<void> {
         // both processes. Defense in depth alongside the SDK's unref() +
         // exit reaper.
         try {
-            const { closeDarwinKit, hasDarwinKit } = await import("@app/utils/macos");
+            const { closeDarwinKit, hasDarwinKit } = await import("@genesiscz/utils/macos");
             if (hasDarwinKit()) {
                 closeDarwinKit();
             }

@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { ClaudeDatabase } from "@app/utils/claude/database";
+import { ClaudeDatabase } from "@genesiscz/utils/claude/database";
 
 const schemaEnsured = new WeakSet<Database>();
 

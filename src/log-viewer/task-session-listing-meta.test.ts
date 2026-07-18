@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskSessionStore } from "@app/task/lib/session-store";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { resolveTaskSessionListingMeta } from "./task-session-listing-meta";
 
 describe("resolveTaskSessionListingMeta", () => {

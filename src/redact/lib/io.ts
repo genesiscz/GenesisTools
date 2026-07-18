@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { copyToClipboard, readFromClipboard } from "@app/utils/clipboard";
+import { copyToClipboard, readFromClipboard } from "@genesiscz/utils/clipboard";
 
 export function resolveHomeDir(): string {
     return homedir();

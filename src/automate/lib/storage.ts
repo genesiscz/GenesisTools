@@ -2,8 +2,8 @@
 
 import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { atomicWriteFileSync, Storage } from "@app/utils/storage/storage.ts";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage.ts";
 import { validatePreset, validateStepGraph } from "./schema.ts";
 import type { Preset, PresetMeta } from "./types.ts";
 

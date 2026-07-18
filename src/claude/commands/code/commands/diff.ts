@@ -1,6 +1,6 @@
-import { parseNonNegativeInt } from "@app/utils/cli";
-import { renderUnifiedDiff } from "@app/utils/diff";
-import { logger, out } from "@app/utils/logger";
+import { parseNonNegativeInt } from "@genesiscz/utils/cli";
+import { renderUnifiedDiff } from "@genesiscz/utils/diff";
+import { logger, out } from "@genesiscz/utils/logger";
 import { ensureBeautified, ensureBundle, ensureNormalized } from "../lib/bundle";
 import { chunkSetDiff, filterByPatterns, pairChunks, splitChunks } from "../lib/chunks";
 

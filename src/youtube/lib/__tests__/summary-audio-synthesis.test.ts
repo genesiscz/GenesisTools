@@ -2,14 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 const synthesizeCalls: unknown[] = [];
 let xaiAvailable = true;
 let openaiAvailable = false;
 let synthesizeResponses: Array<{ audio: Buffer; contentType: string }> = [];
 
-mock.module("@app/utils/ai/providers", () => ({
+mock.module("@genesiscz/utils/ai/providers", () => ({
     getTextToSpeechProvider: (type: "xai" | "openai") => {
         if (type === "xai") {
             return {

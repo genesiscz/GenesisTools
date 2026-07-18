@@ -1,6 +1,6 @@
 /* Ported from _Playgrounds/copilot-for-cursor/anthropic-transforms.ts (inspiration only) */
 
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 type JsonRecord = Record<string, unknown>;
 

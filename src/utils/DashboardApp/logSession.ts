@@ -1,7 +1,7 @@
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
-import { out } from "@app/utils/logger";
-import { getLocalIpv4 } from "@app/utils/network";
-import { stripAnsi } from "@app/utils/string";
+import { out } from "@genesiscz/utils/logger";
+import { getLocalIpv4 } from "@genesiscz/utils/network";
+import { stripAnsi } from "@genesiscz/utils/string";
 import pc from "picocolors";
 import { ensureLogFile } from "./pidFile";
 import type { DashboardBindHost } from "./types";

@@ -1,4 +1,4 @@
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import Bonjour from "bonjour-service";
 
 // Advertises the Agent as `_devdashboard._tcp` over Bonjour/mDNS so the mobile LAN

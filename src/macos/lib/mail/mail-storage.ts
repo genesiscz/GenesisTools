@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { Storage } from "@app/utils/storage/storage";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import { SeenStore } from "./seen-store";
 
 /**

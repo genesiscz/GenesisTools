@@ -1,11 +1,11 @@
-import { isQuietOutput } from "@app/utils/cli/output-mode";
-import { createQuietSpinner } from "@app/utils/cli/quiet-spinner";
-import { asResult } from "@app/utils/cli/result";
-import { writeStderr } from "@app/utils/cli/stderr";
-import { writeStdout } from "@app/utils/cli/stdout";
-import type { SelectValue } from "@app/utils/prompts/p";
-import * as p from "@app/utils/prompts/p";
 import { isCancel } from "@clack/prompts";
+import { isQuietOutput } from "@genesiscz/utils/cli/output-mode";
+import { createQuietSpinner } from "@genesiscz/utils/cli/quiet-spinner";
+import { asResult } from "@genesiscz/utils/cli/result";
+import { writeStderr } from "@genesiscz/utils/cli/stderr";
+import { writeStdout } from "@genesiscz/utils/cli/stdout";
+import type { SelectValue } from "@genesiscz/utils/prompts/p";
+import * as p from "@genesiscz/utils/prompts/p";
 import { type Logger, logger } from "../logger";
 
 /**

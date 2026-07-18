@@ -1,4 +1,4 @@
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 
 export class FriendlyError extends Error {
     public readonly hint?: string;

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { _setGetProjectDirsTestHooks, getProjectDirs } from "./tail";
 
 describe("tail session discovery logging", () => {

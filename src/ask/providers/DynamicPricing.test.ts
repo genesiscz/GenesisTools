@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import type { PricingInfo } from "@app/utils/ask/types/provider";
-import { env } from "@app/utils/env";
 import { DynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
 import { providerManager } from "@ask/providers/ProviderManager";
 import { toLanguageModelUsage } from "@ask/utils/helpers";
+import type { PricingInfo } from "@genesiscz/utils/ask/types/provider";
+import { env } from "@genesiscz/utils/env";
 
 describe("DynamicPricingManager", () => {
     let pricingManager: DynamicPricingManager;

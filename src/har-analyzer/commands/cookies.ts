@@ -2,7 +2,7 @@ import { printFormatted, truncatePath } from "@app/har-analyzer/core/formatter";
 import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { HarEntry, OutputOptions } from "@app/har-analyzer/types";
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 interface CookieInfo {

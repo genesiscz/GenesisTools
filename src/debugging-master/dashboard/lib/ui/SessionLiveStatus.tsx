@@ -1,5 +1,5 @@
 import type { DashboardSession } from "@app/log-viewer/log-source";
-import { useNowTick } from "@app/utils/ui/hooks/useNowTick";
+import { useNowTick } from "@genesiscz/utils/ui/hooks/useNowTick";
 import type { ReactElement } from "react";
 import { resolveSessionLiveStatusDisplay } from "./session-live-status";
 

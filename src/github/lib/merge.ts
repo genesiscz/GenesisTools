@@ -19,8 +19,8 @@ import {
     type RestackBranchResult,
     type StackRestackOps,
 } from "@app/github/lib/stack-restack";
-import { getOctokitForWrite } from "@app/utils/github/octokit";
-import { withRetry } from "@app/utils/github/rate-limit";
+import { getOctokitForWrite } from "@genesiscz/utils/github/octokit";
+import { withRetry } from "@genesiscz/utils/github/rate-limit";
 
 /** GitHub API merge methods plus local-ref fast-forward. */
 export type MergeMethod = "merge" | "rebase" | "squash" | "ff-only";

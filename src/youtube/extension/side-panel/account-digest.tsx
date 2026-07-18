@@ -1,6 +1,6 @@
-import { Badge } from "@app/utils/ui/components/badge";
-import { Button } from "@app/utils/ui/components/button";
 import { useDigest, useDigestSync } from "@ext/api.hooks";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
+import { Button } from "@genesiscz/utils/ui/components/button";
 import { Loader2, RefreshCw } from "lucide-react";
 import { useState } from "react";
 

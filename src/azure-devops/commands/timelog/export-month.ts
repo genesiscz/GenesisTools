@@ -1,8 +1,8 @@
 import { exportMonth } from "@app/azure-devops/lib/timelog/export";
 import { formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import Table from "cli-table3";
 import type { Command } from "commander";
 import pc from "picocolors";

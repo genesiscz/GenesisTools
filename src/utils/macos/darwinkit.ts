@@ -1,6 +1,6 @@
-import { logger } from "@app/utils/logger";
 import type { DarwinKitOptions } from "@genesiscz/darwinkit";
 import { DarwinKit } from "@genesiscz/darwinkit";
+import { logger } from "@genesiscz/utils/logger";
 
 export type { DarwinKitOptions } from "@genesiscz/darwinkit";
 export { DarwinKit, DarwinKitError } from "@genesiscz/darwinkit";

@@ -1,4 +1,4 @@
-import { suggestCommand } from "@app/utils/cli";
+import { suggestCommand } from "@genesiscz/utils/cli";
 
 export interface ResolveInputOptions {
     /** The positional argument: a file path, "-" for stdin, or undefined. */

@@ -1,13 +1,13 @@
-import { env } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
-import { resolveTmuxBin } from "@app/utils/tmux/bin";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
+import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import {
     createTmuxSession,
     killTmuxSession,
     sessionExists,
     setTmuxSpawnSyncForTests,
     type TmuxSpawnSync,
-} from "@app/utils/tmux/sessions";
+} from "@genesiscz/utils/tmux/sessions";
 
 export const SNAPSHOT_VERSION = 1 as const;
 

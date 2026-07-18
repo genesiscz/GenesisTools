@@ -1,7 +1,7 @@
-import { Badge } from "@app/utils/ui/components/badge";
-import { Button } from "@app/utils/ui/components/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
 import { useDigest, useDigestSync } from "@app/yt/api.hooks";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@genesiscz/utils/ui/components/card";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { RefreshCw } from "lucide-react";
 import { useState } from "react";

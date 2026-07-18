@@ -2,9 +2,9 @@ import { formatSessionState } from "@app/task/lib/format-session-state";
 import { formatSessionsJson } from "@app/task/lib/format-sessions-json";
 import { sessionFilePaths } from "@app/task/lib/paths";
 import { TaskSessionStore } from "@app/task/lib/session-store";
-import { formatBytes } from "@app/utils/format";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
+import { formatBytes } from "@genesiscz/utils/format";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 export function registerSessionsCommand(program: Command): void {

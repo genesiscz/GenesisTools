@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 let xaiAvailable = true;
 let synthesizeFails = false;
@@ -12,9 +12,9 @@ const synthesizeCalls: unknown[] = [];
 // Resolved BEFORE mock.module registers the override below, so this import
 // still returns the real module (a self-import after registration would
 // recurse into the mock).
-const realProviders = await import("@app/utils/ai/providers");
+const realProviders = await import("@genesiscz/utils/ai/providers");
 
-mock.module("@app/utils/ai/providers", () => ({
+mock.module("@genesiscz/utils/ai/providers", () => ({
     ...realProviders,
     getTextToSpeechProvider: (type: "xai" | "openai") => ({
         isAvailable: async () => (type === "xai" ? xaiAvailable : false),

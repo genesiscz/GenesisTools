@@ -1,6 +1,6 @@
 import { POLL_INTERVALS, type PollInterval } from "@app/claude/lib/usage/constants";
 import { loadDashboardConfig, type UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
-import { useTerminalSize } from "@app/utils/ink/hooks/use-terminal-size";
+import { useTerminalSize } from "@genesiscz/utils/ink/hooks/use-terminal-size";
 import { Box } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertBanner } from "./components/alert-banner";

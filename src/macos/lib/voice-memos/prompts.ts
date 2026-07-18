@@ -3,16 +3,16 @@
  * DRY: used by both interactive mode and the transcribe subcommand.
  */
 
-import type { LanguageDetectionResult } from "@app/utils/ai/LanguageDetector.ts";
-import { getModelsForTask, ModelManager } from "@app/utils/ai/ModelManager.ts";
-import type { OutputFormat } from "@app/utils/ai/transcription-format.ts";
-import type { AIProviderType } from "@app/utils/ai/types.ts";
-import { isCloudProvider } from "@app/utils/config/ai.types";
-import { formatDateTime } from "@app/utils/date.ts";
-import { formatDuration } from "@app/utils/format.ts";
-import type { VoiceMemo } from "@app/utils/macos/voice-memos.ts";
-import { filePathCancelSymbol, filePathInput } from "@app/utils/prompts/clack/file-path.ts";
 import * as p from "@clack/prompts";
+import type { LanguageDetectionResult } from "@genesiscz/utils/ai/LanguageDetector.ts";
+import { getModelsForTask, ModelManager } from "@genesiscz/utils/ai/ModelManager.ts";
+import type { OutputFormat } from "@genesiscz/utils/ai/transcription-format.ts";
+import type { AIProviderType } from "@genesiscz/utils/ai/types.ts";
+import { isCloudProvider } from "@genesiscz/utils/config/ai.types";
+import { formatDateTime } from "@genesiscz/utils/date.ts";
+import { formatDuration } from "@genesiscz/utils/format.ts";
+import type { VoiceMemo } from "@genesiscz/utils/macos/voice-memos.ts";
+import { filePathCancelSymbol, filePathInput } from "@genesiscz/utils/prompts/clack/file-path.ts";
 import pc from "picocolors";
 
 // ============================================
@@ -273,7 +273,7 @@ export async function confirmLanguage(detected: LanguageDetectionResult): Promis
  * Only shows providers that support transcription.
  */
 export async function selectProvider(): Promise<AIProviderType> {
-    const { getAllProviders } = await import("@app/utils/ai/providers/index.ts");
+    const { getAllProviders } = await import("@genesiscz/utils/ai/providers/index.ts");
     const providers = getAllProviders();
     const available: Array<{ value: AIProviderType; label: string; hint: string }> = [];
 

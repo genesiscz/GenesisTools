@@ -12,7 +12,7 @@
  * excluded entrypoint. The glob-add makes coverage tsconfig-independent.
  */
 import { basename, dirname } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { Project } from "ts-morph";
 
 const project = new Project({ tsConfigFilePath: "tsconfig.json" });
@@ -31,7 +31,7 @@ for (const sf of project.getSourceFiles("src/*/index.{ts,tsx}")) {
     }
 
     const tool = basename(dirname(sf.getFilePath()));
-    sf.addImportDeclaration({ moduleSpecifier: "@app/utils/cli", namedImports: ["runTool"] });
+    sf.addImportDeclaration({ moduleSpecifier: "@genesiscz/utils/cli", namedImports: ["runTool"] });
     sf.addStatements(
         `\n// CODEMOD-4b: review & fold existing parse/readme/verbose into this\nawait runTool(program, { tool: ${SafeJSON.stringify(tool)} });\n`
     );

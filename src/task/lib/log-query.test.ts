@@ -1,10 +1,10 @@
-import { setupStorageSandbox } from "@app/utils/storage/test-sandbox";
+import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 
 setupStorageSandbox();
 
 import { describe, expect, it } from "bun:test";
 import { jsonlPath } from "@app/task/lib/paths";
-import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
+import { filterLineRecords, readJsonlFile } from "@genesiscz/utils/log-session/jsonl-reader";
 
 describe("queryLogs", () => {
     it("filters stderr stream only", async () => {

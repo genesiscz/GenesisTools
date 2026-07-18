@@ -10,7 +10,7 @@ import {
     buildBalancedMosaicLayout,
     flattenMosaicLeaves,
     reconcileMosaicLayout,
-} from "@app/utils/ui/helpers/mosaic-layout";
+} from "@genesiscz/utils/ui/helpers/mosaic-layout";
 import { BlinkingBox } from "@ui/components/BlinkingBox";
 import { Button } from "@ui/components/button";
 import { IconButton } from "@ui/components/icon-button";

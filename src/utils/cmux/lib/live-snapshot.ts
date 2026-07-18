@@ -1,5 +1,5 @@
-import { type CmuxRunResult, runCmux, runCmuxJSON } from "@app/utils/cmux/lib/cli";
-import { logger } from "@app/utils/logger";
+import { type CmuxRunResult, runCmux, runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
+import { logger } from "@genesiscz/utils/logger";
 
 export interface CmuxLiveWorkspace {
     id: string;

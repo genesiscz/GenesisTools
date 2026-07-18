@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { verifyAndConsumePairingCode } from "@app/dev-dashboard/lib/e2e/pairing-code";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 // The managed-tier pairing store. Holds device PUBLIC keys ONLY (0600 file) — there is
 // nothing here the vendor relay could misuse even if it logged the pairing POST, because

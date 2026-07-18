@@ -3,7 +3,7 @@
  * Consolidates retry, debounce, throttle, and withTimeout.
  */
 
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 // ============= Retry =============
 

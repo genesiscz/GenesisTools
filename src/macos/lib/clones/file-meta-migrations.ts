@@ -1,4 +1,4 @@
-import type { Migration } from "@app/utils/database/migrations";
+import type { Migration } from "@genesiscz/utils/database/migrations";
 
 /** Pinned migration-context tableName. The default deriveScope is path-based,
  *  so a worktree-relative DB path would invalidate history on move. Always

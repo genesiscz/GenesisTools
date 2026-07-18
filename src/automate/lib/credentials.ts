@@ -3,8 +3,8 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import type { StoredCredential } from "./types";
 
 const CREDENTIALS_DIR = join(homedir(), ".genesis-tools", "automate", "credentials");

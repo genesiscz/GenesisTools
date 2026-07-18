@@ -13,14 +13,14 @@ describe("Search module (E2E)", () => {
     });
 
     it("SearchEngine and OramaSearchEngine can be imported from the search index", async () => {
-        const searchModule = await import("@app/utils/search");
+        const searchModule = await import("@genesiscz/utils/search");
         expect(searchModule.SearchEngine).toBeDefined();
         expect(searchModule.FTS5SearchEngine).toBeDefined(); // backward compat alias
         expect(searchModule.OramaSearchEngine).toBeDefined();
     });
 
     it("SearchEngine works end-to-end with a temp database", async () => {
-        const { SearchEngine } = await import("@app/utils/search");
+        const { SearchEngine } = await import("@genesiscz/utils/search");
 
         tmpDir = mkdtempSync(join(tmpdir(), "search-e2e-"));
         const dbPath = join(tmpDir, "e2e.db");

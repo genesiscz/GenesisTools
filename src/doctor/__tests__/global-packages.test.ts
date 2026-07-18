@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { parseBunList, parseNpmJson, parseYarnJson, reinstallCommand } from "@app/doctor/lib/global-packages";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 describe("parseBunList", () => {
     it("parses bun pm ls -g output", () => {

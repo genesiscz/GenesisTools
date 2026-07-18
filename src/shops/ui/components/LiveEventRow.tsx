@@ -1,7 +1,7 @@
 import type { LiveEvent, LiveHttpRequestEvent } from "@app/shops/types";
 import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
-import { Badge } from "@app/utils/ui/components/badge";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@app/utils/ui/components/tooltip";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@genesiscz/utils/ui/components/tooltip";
 import { useState } from "react";
 
 interface LiveEventRowProps {

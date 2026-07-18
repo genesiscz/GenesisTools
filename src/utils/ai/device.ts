@@ -1,4 +1,4 @@
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 /**
  * Supported ONNX Runtime execution providers, ordered by preference per platform.

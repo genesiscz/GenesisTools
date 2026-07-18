@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import { getBoardsDb, resetBoardsDb } from "./db";
 import { nowIso } from "./time";
 

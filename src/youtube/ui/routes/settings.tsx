@@ -1,3 +1,9 @@
+import type { YoutubeConfigShape } from "@app/youtube/lib/types";
+import { useCacheStats, useClearCache, usePatchServerConfig, usePruneCache, useServerConfig } from "@app/yt/api.hooks";
+import { AccountSection } from "@app/yt/components/account/account-section";
+import { CustomizationSection } from "@app/yt/components/account/customization-section";
+import { Loading } from "@app/yt/components/shared/loading";
+import { formatBytes } from "@app/yt/lib/format";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -8,18 +14,12 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
     AlertDialogTrigger,
-} from "@app/utils/ui/components/alert-dialog";
-import { Button } from "@app/utils/ui/components/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
-import { Input } from "@app/utils/ui/components/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
-import { Switch } from "@app/utils/ui/components/switch";
-import type { YoutubeConfigShape } from "@app/youtube/lib/types";
-import { useCacheStats, useClearCache, usePatchServerConfig, usePruneCache, useServerConfig } from "@app/yt/api.hooks";
-import { AccountSection } from "@app/yt/components/account/account-section";
-import { CustomizationSection } from "@app/yt/components/account/customization-section";
-import { Loading } from "@app/yt/components/shared/loading";
-import { formatBytes } from "@app/yt/lib/format";
+} from "@genesiscz/utils/ui/components/alert-dialog";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@genesiscz/utils/ui/components/card";
+import { Input } from "@genesiscz/utils/ui/components/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@genesiscz/utils/ui/components/select";
+import { Switch } from "@genesiscz/utils/ui/components/switch";
 import { createFileRoute } from "@tanstack/react-router";
 import { CheckCircle2, DatabaseZap, RotateCcw, Save, Server, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";

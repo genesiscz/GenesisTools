@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { logger } from "@app/utils/logger";
-import * as p from "@app/utils/prompts/p";
+import { logger } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 
 export interface StageItem {
     id: string;

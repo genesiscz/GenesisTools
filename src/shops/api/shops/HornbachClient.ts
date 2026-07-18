@@ -12,7 +12,7 @@ import {
     type HornbachApolloProduct,
     type HornbachApolloState,
 } from "@app/shops/api/shops/HornbachClient.types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { parseHTML } from "linkedom";
 
 const HORNBACH_ORIGIN = "hornbach.cz";

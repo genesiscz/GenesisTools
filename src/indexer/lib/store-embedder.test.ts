@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { skip } from "@app/utils/test/skip";
+import { skip } from "@genesiscz/utils/test/skip";
 import { Indexer } from "./indexer";
 import { IndexerManager } from "./manager";
 import { getIndexerStorage } from "./storage";

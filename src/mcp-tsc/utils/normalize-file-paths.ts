@@ -1,21 +1,4 @@
-import os from "node:os";
-
-import { SafeJSON } from "@app/utils/json";
-
-/**
- * Replaces the home directory with a tilde.
- * @param path - The path to tildeify.
- * @returns The tildeified path.
- */
-export function tildeifyPath(path: string): string {
-    const homeDir = os.homedir();
-    if (path.startsWith(homeDir)) {
-        return path.replace(homeDir, "~");
-    }
-    return path;
-}
-
-export { expandTilde as resolvePathWithTilde } from "@app/utils/paths";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
  * Normalizes file path(s) from various formats that MCP tools might receive.

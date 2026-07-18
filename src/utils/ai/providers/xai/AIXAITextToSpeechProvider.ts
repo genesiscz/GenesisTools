@@ -1,8 +1,8 @@
-import type { AITask, AITextToSpeechProvider, TTSOptions, TTSResult, TTSVoice } from "@app/utils/ai/types";
-import { rateLimitAwareDelay, retry } from "@app/utils/async";
-import type { AIProviderType } from "@app/utils/config/ai.types";
-import { SafeJSON } from "@app/utils/json";
-import { Storage } from "@app/utils/storage/storage";
+import type { AITask, AITextToSpeechProvider, TTSOptions, TTSResult, TTSVoice } from "@genesiscz/utils/ai/types";
+import { rateLimitAwareDelay, retry } from "@genesiscz/utils/async";
+import type { AIProviderType } from "@genesiscz/utils/config/ai.types";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import { XAIClient } from "./XAIClient";
 
 const MAX_TTS_DELTA_CHARS = 15_000;

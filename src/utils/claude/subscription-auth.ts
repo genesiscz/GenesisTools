@@ -1,10 +1,10 @@
 import { appendFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { retry } from "@app/utils/async";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { retry } from "@genesiscz/utils/async";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import type { OAuthTokens } from "./auth";
 import { claudeOAuth } from "./auth";
 
@@ -103,7 +103,7 @@ function journalTokenRotation(account: string, oldTokens: Partial<OAuthTokens>, 
  * Returns empty array if no accounts configured.
  */
 export async function listAvailableAccounts(): Promise<SubscriptionAccount[]> {
-    const { AIConfig } = await import("@app/utils/ai/AIConfig");
+    const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
     const config = await AIConfig.load();
     return config.getAccountsByProvider("anthropic-sub").map((acc) => ({
         name: acc.name,
@@ -132,7 +132,7 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
     const forceRefresh = options?.forceRefresh ?? false;
     const lockTimeout = options?.lockTimeout ?? 60_000;
 
-    const { AIConfig } = await import("@app/utils/ai/AIConfig");
+    const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
     const aiConfig = await AIConfig.load();
     const name = accountName ?? aiConfig.getDefaultAccount("ask")?.name;
 

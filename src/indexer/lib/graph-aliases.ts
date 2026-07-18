@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { toPosixPath } from "@app/utils/paths";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { toPosixPath } from "@genesiscz/utils/paths";
 
 export interface PathAliases {
     /** Map of alias prefix -> target directories (relative to project root) */

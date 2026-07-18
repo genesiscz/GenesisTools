@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { detectCursorRequest, isResponsesShapedBody } from "@app/ai-proxy/lib/translators/detect-request";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 describe("detect-request", () => {
     it("detects responses-shaped body on chat path", () => {

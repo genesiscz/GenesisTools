@@ -3,8 +3,8 @@ import { BUCKET_LABELS, BUCKET_PERIODS_MS, colorForPct } from "@app/claude/lib/u
 import { formatSpendBalance } from "@app/claude/lib/usage/display";
 import type { NormalizedLimit, NormalizedSpend, Severity } from "@app/claude/lib/usage/limits";
 import { normalizeLimits, normalizeSpend } from "@app/claude/lib/usage/limits";
-import { formatRelativeTime } from "@app/utils/format";
-import { useTerminalSize } from "@app/utils/ink/hooks/use-terminal-size";
+import { formatRelativeTime } from "@genesiscz/utils/format";
+import { useTerminalSize } from "@genesiscz/utils/ink/hooks/use-terminal-size";
 import { Box, Text } from "ink";
 import { UsageBar } from "./usage-bar";
 

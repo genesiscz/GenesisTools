@@ -1,4 +1,4 @@
-import type { Migration } from "@app/utils/database/migrations";
+import type { Migration } from "@genesiscz/utils/database/migrations";
 
 /**
  * Add per-offer description fields so /master/$id can render the rich detail

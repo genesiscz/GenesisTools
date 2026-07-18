@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { removeRecursive } from "@app/utils/fs";
-import { ensureExtensionCapableSQLite } from "@app/utils/search/stores/sqlite-vec-loader";
+import { removeRecursive } from "@genesiscz/utils/fs";
+import { ensureExtensionCapableSQLite } from "@genesiscz/utils/search/stores/sqlite-vec-loader";
 import type { IndexerSource, MetadataPopulateOpts, MetadataResult } from "./sources/source";
 import { getIndexerStorage } from "./storage";
 import { createIndexStore, searchIndexReadonly } from "./store";

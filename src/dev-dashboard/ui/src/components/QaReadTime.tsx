@@ -1,4 +1,4 @@
-import { formatElapsedDhM } from "@app/utils/format";
+import { formatElapsedDhM } from "@genesiscz/utils/format";
 import { memo } from "react";
 import { useQaClock } from "@/components/QaClockProvider";
 

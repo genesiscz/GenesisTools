@@ -1,7 +1,7 @@
 import type { ClarityMapping } from "@app/clarity/config";
 import { getMappingForWorkItem } from "@app/clarity/config";
-import type { ApiDebugInfo, TimeSegment } from "@app/utils/clarity";
-import { buildDailyValues, minutesToSeconds } from "@app/utils/date";
+import type { ApiDebugInfo, TimeSegment } from "@genesiscz/utils/clarity";
+import { buildDailyValues, minutesToSeconds } from "@genesiscz/utils/date";
 
 // -- Shared types --
 

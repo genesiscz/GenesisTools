@@ -1,8 +1,8 @@
 import type { Pane, Profile, Surface, Workspace } from "@app/cmux/lib/types";
-import { runCmuxJSON, runCmuxOk } from "@app/utils/cmux/lib/cli";
-import { withFocusedWorkspace } from "@app/utils/cmux/lib/focus-guard";
-import { paneList, type SurfaceSplitResult, workspaceCreate } from "@app/utils/cmux/lib/socket";
-import { logger } from "@app/utils/logger";
+import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
+import { paneList, type SurfaceSplitResult, workspaceCreate } from "@genesiscz/utils/cmux/lib/socket";
+import { logger } from "@genesiscz/utils/logger";
 
 const EDGE_TOLERANCE_PX = 2;
 

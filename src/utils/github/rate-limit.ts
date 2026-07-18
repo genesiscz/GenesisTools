@@ -1,7 +1,7 @@
 // Rate limit handling with exponential backoff
 
-import { verboseLog } from "@app/utils/github/utils";
-import { logger } from "@app/utils/logger";
+import { verboseLog } from "@genesiscz/utils/github/utils";
+import { logger } from "@genesiscz/utils/logger";
 
 const MAX_RETRIES = 5;
 const INITIAL_DELAY_MS = 1000;

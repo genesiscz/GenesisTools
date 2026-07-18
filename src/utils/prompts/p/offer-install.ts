@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { isInteractive } from "@app/utils/cli";
+import { isInteractive } from "@genesiscz/utils/cli";
 import pc from "picocolors";
 import { getBackend } from "./backend";
 

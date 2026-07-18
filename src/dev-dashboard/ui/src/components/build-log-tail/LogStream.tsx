@@ -1,7 +1,7 @@
 import type { ClassifiedLogEntry, LogEntry, LogLineClass } from "@app/dev-dashboard/contract/dto";
 import { paths } from "@app/dev-dashboard/contract/endpoints";
 import { classifyLogLine } from "@app/dev-dashboard/lib/daemon-view/classify";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LiveSseIndicator } from "@/components/LiveSseIndicator";

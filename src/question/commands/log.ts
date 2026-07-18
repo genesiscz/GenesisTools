@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { formatQaEntry } from "../lib/format";

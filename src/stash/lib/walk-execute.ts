@@ -1,8 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { suggestCommand } from "@app/utils/cli";
-import { logger } from "@app/utils/logger";
+import { suggestCommand } from "@genesiscz/utils/cli";
+import { logger } from "@genesiscz/utils/logger";
 import type { ApplicationRow, StashRow, VersionRow } from "../types";
 import { classifyRegion } from "./classify";
 import { applyDecisionToCode } from "./decisions";

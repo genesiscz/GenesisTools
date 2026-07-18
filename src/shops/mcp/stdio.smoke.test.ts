@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 interface JsonRpcResponse {
     jsonrpc: "2.0";

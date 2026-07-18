@@ -5,7 +5,7 @@
  * into the agent-agnostic AgentMessage model for rendering.
  */
 
-import { extractProjectName } from "@app/utils/claude/projects";
+import { extractProjectName } from "@genesiscz/utils/claude/projects";
 import type {
     AssistantMessage,
     ContentBlock,
@@ -17,7 +17,7 @@ import type {
     ToolResultBlock,
     Usage,
     UserMessage,
-} from "@app/utils/claude/types";
+} from "@genesiscz/utils/claude/types";
 
 import type {
     AgentContentBlock,
@@ -335,7 +335,7 @@ function convertSubagentMessage(msg: SubagentMessage): AgentMessage | null {
     };
 
     if (msg.message.role === "assistant") {
-        const assistantContent = msg.message as import("@app/utils/claude/types").AssistantMessageContent;
+        const assistantContent = msg.message as import("@genesiscz/utils/claude/types").AssistantMessageContent;
         agentMsg.model = assistantContent.model;
         agentMsg.usage = mapUsage(assistantContent.usage);
     }

@@ -1,6 +1,6 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
-import { skip } from "@app/utils/test/skip";
+import { skip } from "@genesiscz/utils/test/skip";
 import { printLn } from "./stdout";
 
 const FIXTURE = join(import.meta.dir, "__fixtures__/stdout-fixture.ts");

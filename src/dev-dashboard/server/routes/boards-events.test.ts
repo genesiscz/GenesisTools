@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { publishBoardEvent, resetEventHub } from "@app/dev-dashboard/lib/boards/events";
 import type { RouteContext, RouteDef, SseEmitter } from "@app/dev-dashboard/server/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { boardsRoutes } from "./boards";
 
 function findRoute(method: string, pattern: string): RouteDef {

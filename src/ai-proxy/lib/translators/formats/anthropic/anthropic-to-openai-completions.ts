@@ -1,6 +1,6 @@
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { isObject } from "@app/utils/object";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 
 /**
  * Maps Anthropic `/v1/messages` responses back into the OpenAI

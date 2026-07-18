@@ -1,8 +1,8 @@
 import type { CoverageRow } from "@app/shops/types";
 import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
-import { Badge } from "@app/utils/ui/components/badge";
-import { Card, CardContent } from "@app/utils/ui/components/card";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@app/utils/ui/components/tooltip";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
+import { Card, CardContent } from "@genesiscz/utils/ui/components/card";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@genesiscz/utils/ui/components/tooltip";
 
 interface CoverageShopCardProps {
     row: CoverageRow;

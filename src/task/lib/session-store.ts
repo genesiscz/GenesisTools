@@ -16,13 +16,13 @@ import type {
     TaskConfig,
     TaskSessionMeta,
 } from "@app/task/types";
-import { suggestCommand } from "@app/utils/cli/executor";
-import { SafeJSON } from "@app/utils/json";
-import { fuzzyResolveSession } from "@app/utils/log-session/fuzzy-resolver";
-import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
-import type { JsonlExitRecord, JsonlLineRecord, JsonlMetaRecord } from "@app/utils/log-session/types";
-import { logger } from "@app/utils/logger";
-import { atomicWriteFileSync, Storage } from "@app/utils/storage/storage";
+import { suggestCommand } from "@genesiscz/utils/cli/executor";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { fuzzyResolveSession } from "@genesiscz/utils/log-session/fuzzy-resolver";
+import { filterLineRecords, readJsonlFile } from "@genesiscz/utils/log-session/jsonl-reader";
+import type { JsonlExitRecord, JsonlLineRecord, JsonlMetaRecord } from "@genesiscz/utils/log-session/types";
+import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
 
 export type { ResolvedRunSession } from "@app/task/types";
 

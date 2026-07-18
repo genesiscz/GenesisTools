@@ -3,9 +3,9 @@ import path from "node:path";
 import type { ServerInfo } from "@app/mcp-tsc/core/interfaces.js";
 import { LspServer } from "@app/mcp-tsc/providers/LspServer.js";
 import { ensureServersDir, getServerInfoPath, SERVERS_DIR } from "@app/mcp-tsc/utils/helpers.js";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { atomicWriteFileSync } from "@app/utils/storage/storage";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 // Global map to store persistent LSP servers
 const persistentServers = new Map<string, LspServer>();

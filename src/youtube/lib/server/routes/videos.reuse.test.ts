@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
 import { grantArtifactAccess } from "@app/youtube/lib/artifact-access";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
@@ -10,6 +9,7 @@ import { handleVideosRoute } from "@app/youtube/lib/server/routes/videos";
 import { CREDIT_COSTS, REUSE_COST } from "@app/youtube/lib/users.types";
 import type { VideoId } from "@app/youtube/lib/video.types";
 import { Youtube } from "@app/youtube/lib/youtube";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const HANDLE = "@chan" as ChannelHandle;
 const VIDEO = "vidreuse0001" as VideoId;

@@ -1,4 +1,4 @@
-import { stripAnsi } from "@app/utils/string";
+import { stripAnsi } from "@genesiscz/utils/string";
 import type { TimestampMode } from "./display-settings";
 import { formatTime } from "./format";
 

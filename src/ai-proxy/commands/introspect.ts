@@ -1,6 +1,6 @@
 import { loadConfig } from "@app/ai-proxy/lib/config";
 import { buildIntrospectText } from "@app/ai-proxy/lib/introspect";
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import clipboardy from "clipboardy";
 
 export async function runIntrospectCommand(options: {

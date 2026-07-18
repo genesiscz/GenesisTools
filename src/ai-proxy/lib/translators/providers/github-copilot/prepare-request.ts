@@ -4,7 +4,7 @@ import {
     type CopilotUpstreamRoute,
     resolveCopilotUpstreamRoute,
 } from "@app/ai-proxy/lib/translators/providers/github-copilot/upstream-route";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export interface PreparedCopilotRequest {
     route: CopilotUpstreamRoute;

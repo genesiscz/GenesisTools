@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
-import { env as appEnv } from "@app/utils/env";
+import { env as appEnv } from "@genesiscz/utils/env";
 import { setupTaskIntegrationHome, withTaskSession } from "./task-integration-env";
 
 const taskEnv = setupTaskIntegrationHome();

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:te
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setupStorageSandbox } from "@app/utils/storage/test-sandbox";
+import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { setupInquirerMock } from "./inquirer-mock.js";
 
 // Setup prompt mock + storage sandbox BEFORE importing modules under test
@@ -20,10 +20,10 @@ import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
 import { setGlobalOptions } from "@app/mcp-manager/utils/config.utils.js";
 import type { ClaudeGenericConfig } from "@app/mcp-manager/utils/providers/claude.types.js";
 import type { UnifiedMCPConfig, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage";
 
 /**
  * Fixture tests for the TRUE global-disable scheme of the Claude provider.

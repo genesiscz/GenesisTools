@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
 import { openStashDb } from "../lib/stash-db";
 import { StashStorage } from "../lib/storage";
 import { StoreRepo } from "../lib/store-repo";

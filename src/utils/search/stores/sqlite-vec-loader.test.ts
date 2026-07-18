@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { ensureExtensionCapableSQLite, resetSqliteVecState } from "./sqlite-vec-loader";
 
 const HOMEBREW_DYLIB = "/opt/homebrew/opt/sqlite3/lib/libsqlite3.dylib";

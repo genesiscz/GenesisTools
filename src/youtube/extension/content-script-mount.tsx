@@ -1,8 +1,8 @@
-import { logger } from "@app/utils/logger/client";
-import { PortalContainerProvider } from "@app/utils/ui/components/select";
 import { SidePanel } from "@ext/side-panel/side-panel";
 import sidePanelCss from "@ext/side-panel/side-panel.css?inline";
 import type { PanelTarget } from "@ext/side-panel/target";
+import { logger } from "@genesiscz/utils/logger/client";
+import { PortalContainerProvider } from "@genesiscz/utils/ui/components/select";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";

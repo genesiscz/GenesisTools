@@ -2,10 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { skip } from "@app/utils/test/skip";
 import { startServer } from "@app/youtube/lib/server";
 import type { SummarizeOpts, SummarizeResult } from "@app/youtube/lib/summarize.types";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { skip } from "@genesiscz/utils/test/skip";
 import { apiUrl } from "./test-helpers";
 
 describe("youtube server foundation", () => {

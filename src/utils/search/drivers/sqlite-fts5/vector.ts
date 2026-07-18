@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { cosineDistance } from "@app/utils/math";
+import { cosineDistance } from "@genesiscz/utils/math";
 
 export function storeEmbedding(db: Database, table: string, docId: string, vector: Float32Array): void {
     const embTable = `${table}_embeddings`;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyTerminalPreview } from "@app/utils/terminal/line-classify";
+import { classifyTerminalPreview } from "@genesiscz/utils/terminal/line-classify";
 
 describe("classifyTerminalPreview", () => {
     test("classifies common terminal output lines for semantic coloring", () => {

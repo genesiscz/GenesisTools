@@ -1,4 +1,4 @@
-import { isObject } from "@app/utils/object";
+import { isObject } from "@genesiscz/utils/object";
 
 type JsonObject = Record<string, unknown>;
 

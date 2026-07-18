@@ -1,5 +1,5 @@
-import type { Embedder } from "@app/utils/ai/tasks/Embedder";
-import type { SearchEngine, SearchOptions, SearchResult } from "@app/utils/search/types";
+import type { Embedder } from "@genesiscz/utils/ai/tasks/Embedder";
+import type { SearchEngine, SearchOptions, SearchResult } from "@genesiscz/utils/search/types";
 import type { AnyOrama, AnySchema, SearchParams } from "@orama/orama";
 import {
     count,

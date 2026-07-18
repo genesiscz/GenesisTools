@@ -1,7 +1,7 @@
 import { BezrealitkyClient, mapBezrealitkyDisposition } from "@app/Internal/commands/reas/api/BezrealitkyClient";
 import type { BezrealitkyAdvertDetail } from "@app/Internal/commands/reas/api/BezrealitkyClient.types";
 import type { AnalysisFilters, RentalListing, SaleListing } from "@app/Internal/commands/reas/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const client = new BezrealitkyClient();
 

@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { createKyselyClient, type DatabaseClient } from "@app/utils/database";
+import { createKyselyClient, type DatabaseClient } from "@genesiscz/utils/database";
 import type { AskDB } from "./db-types";
 
 const BOOTSTRAP: string[] = [

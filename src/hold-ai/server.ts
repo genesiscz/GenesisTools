@@ -1,8 +1,8 @@
-import { SafeJSON } from "@app/utils/json";
-import { logger as log } from "@app/utils/logger";
-import * as p from "@app/utils/prompts/p";
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
-import { handleReadmeFlag } from "@app/utils/readme";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger as log } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
+import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
 
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);

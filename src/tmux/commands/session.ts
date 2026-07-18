@@ -1,11 +1,11 @@
 import { runList } from "@app/tmux/commands/sessions";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { out } from "@app/utils/logger";
-import * as p from "@app/utils/prompts/p";
-import { resolveSessionQuery } from "@app/utils/tmux/match";
-import { resetSessions, selectResetTargets } from "@app/utils/tmux/reset";
-import { attachTmuxSession, listTmuxSessions } from "@app/utils/tmux/sessions";
-import type { TmuxSessionInfo } from "@app/utils/tmux/types";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
+import { resolveSessionQuery } from "@genesiscz/utils/tmux/match";
+import { resetSessions, selectResetTargets } from "@genesiscz/utils/tmux/reset";
+import { attachTmuxSession, listTmuxSessions } from "@genesiscz/utils/tmux/sessions";
+import type { TmuxSessionInfo } from "@genesiscz/utils/tmux/types";
 import type { Command } from "commander";
 import pc from "picocolors";
 

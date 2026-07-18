@@ -1,4 +1,4 @@
-import { partsInZone, resolveZone } from "@app/utils/timezone";
+import { partsInZone, resolveZone } from "@genesiscz/utils/timezone";
 import { parseExpression } from "./parse";
 import type { ConvertInput, ConvertResult, ZoneLine } from "./types";
 

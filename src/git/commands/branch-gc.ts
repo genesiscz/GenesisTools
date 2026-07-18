@@ -13,11 +13,11 @@ import {
     detectBase,
     getCurrentBranch,
 } from "@app/git/lib/branch-gc/classify";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { BaseNotFoundError, createGit } from "@app/utils/git";
-import { logger, out } from "@app/utils/logger";
-import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { BaseNotFoundError, createGit } from "@genesiscz/utils/git";
+import { logger, out } from "@genesiscz/utils/logger";
+import type { Storage } from "@genesiscz/utils/storage";
 import type { Command } from "commander";
 import pc from "picocolors";
 

@@ -2,7 +2,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, write
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export const CLAUDE_CODE_SKILLS = join(homedir(), ".claude", "skills");
 export const CLAUDE_DESKTOP_BASE = join(

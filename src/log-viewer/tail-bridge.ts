@@ -1,7 +1,7 @@
 import { statSync } from "node:fs";
 import { FileTailer } from "@app/debugging-master/core/file-tailer";
 import type { LogEntry } from "@app/debugging-master/types";
-import type { JsonlLineRecord } from "@app/utils/log-session/types";
+import type { JsonlLineRecord } from "@genesiscz/utils/log-session/types";
 import type { LogSourceId } from "./log-source";
 import { taskRecordToLogEntry } from "./log-source";
 import { getLogSource } from "./resolve-log-source";

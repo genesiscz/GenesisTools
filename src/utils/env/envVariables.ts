@@ -12,9 +12,9 @@ import {
     isFlag,
     isNonEmpty,
     parseIntEnv,
-} from "@app/utils/env/env-core";
-import { restoreEnv, setEnv, snapshotEnv, unsetEnv, withEnvOverrides } from "@app/utils/env/env-testing";
-import { env as envClient } from "@app/utils/env.client";
+} from "@genesiscz/utils/env/env-core";
+import { restoreEnv, setEnv, snapshotEnv, unsetEnv, withEnvOverrides } from "@genesiscz/utils/env/env-testing";
+import { env as envClient } from "@genesiscz/utils/env.client";
 
 const XAI_API_KEYS = ["XAI_API_KEY", "X_AI_API_KEY"] as const;
 // HuggingFace local inference accepts either name depending on the library version.

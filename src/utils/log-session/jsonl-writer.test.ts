@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { JsonlWriter } from "./jsonl-writer";
 
 const dirs: string[] = [];

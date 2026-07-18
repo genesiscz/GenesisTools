@@ -1,7 +1,7 @@
 import type { FavoriteWithState } from "@app/shops/db/FavoritesRepository";
 import type { Notification } from "@app/shops/db/NotificationsRepository";
 import { WatchlistRow } from "@app/shops/ui/components/WatchlistRow";
-import { Table, TableBody, TableHead, TableHeader, TableRow } from "@app/utils/ui/components/table";
+import { Table, TableBody, TableHead, TableHeader, TableRow } from "@genesiscz/utils/ui/components/table";
 
 interface Props {
     rows: FavoriteWithState[];

@@ -1,4 +1,4 @@
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -27,7 +27,7 @@ export function registerBenchVectorsCommand(program: Command): void {
             const { join } = await import("node:path");
 
             // Must be called before any Database instance is created
-            const { ensureExtensionCapableSQLite } = await import("@app/utils/search/stores/sqlite-vec-loader");
+            const { ensureExtensionCapableSQLite } = await import("@genesiscz/utils/search/stores/sqlite-vec-loader");
             ensureExtensionCapableSQLite();
 
             const { Database } = await import("bun:sqlite");
@@ -161,21 +161,21 @@ interface CreateStoreOptions {
 
 async function createStore(
     opts: CreateStoreOptions
-): Promise<import("@app/utils/search/stores/vector-store").VectorStore> {
+): Promise<import("@genesiscz/utils/search/stores/vector-store").VectorStore> {
     const { backend, tmpDir, dimensions, DatabaseClass } = opts;
     const { join } = await import("node:path");
     const dbPath = join(tmpDir, "bench.db");
 
     switch (backend) {
         case "sqlite-brute": {
-            const { SqliteVectorStore } = await import("@app/utils/search/stores/sqlite-vector-store");
+            const { SqliteVectorStore } = await import("@genesiscz/utils/search/stores/sqlite-vector-store");
             const db = new DatabaseClass(dbPath);
             db.run("PRAGMA journal_mode = WAL");
             return new SqliteVectorStore(db, { tableName: "bench", dimensions });
         }
 
         case "sqlite-vec": {
-            const { loadSqliteVec } = await import("@app/utils/search/stores/sqlite-vec-loader");
+            const { loadSqliteVec } = await import("@genesiscz/utils/search/stores/sqlite-vec-loader");
             const db = new DatabaseClass(dbPath);
             const loaded = loadSqliteVec(db);
 
@@ -186,7 +186,7 @@ async function createStore(
             }
 
             db.run("PRAGMA journal_mode = WAL");
-            const { SqliteVecVectorStore } = await import("@app/utils/search/stores/sqlite-vec-store");
+            const { SqliteVecVectorStore } = await import("@genesiscz/utils/search/stores/sqlite-vec-store");
             return new SqliteVecVectorStore(db, { tableName: "bench", dimensions });
         }
 

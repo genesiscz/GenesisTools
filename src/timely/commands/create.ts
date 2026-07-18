@@ -8,11 +8,11 @@ import { buildPayloadFromFlat, flattenMemories } from "@app/timely/utils/flatten
 import { fetchMemoriesForDates } from "@app/timely/utils/memories";
 import { applyPlan, validatePlan } from "@app/timely/utils/plan-apply";
 import { buildPlan } from "@app/timely/utils/plan-build";
-import { isInteractive } from "@app/utils/cli";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
-import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
+import { isInteractive } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
+import type { Storage } from "@genesiscz/utils/storage";
 import chalk from "chalk";
 import type { Command } from "commander";
 

@@ -1,4 +1,4 @@
-import { normalizeVaultPath } from "@app/utils/obsidian/paths";
+import { normalizeVaultPath } from "@genesiscz/utils/obsidian/paths";
 
 export type ObsidianSearch = {
     note?: string;

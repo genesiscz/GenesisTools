@@ -9,7 +9,7 @@ import {
     type DrmaxJsonLdProduct,
     type DrmaxParsedTile,
 } from "@app/shops/api/shops/DrmaxClient.types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { parseHTML } from "linkedom";
 
 const DRMAX_ORIGIN = "drmax.cz";

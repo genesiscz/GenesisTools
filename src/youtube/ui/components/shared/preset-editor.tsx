@@ -1,7 +1,7 @@
-import { logger } from "@app/utils/logger/client";
-import { Button } from "@app/utils/ui/components/button";
-import { Input } from "@app/utils/ui/components/input";
 import type { PresetKind, PromptPreset } from "@app/youtube/lib/types";
+import { logger } from "@genesiscz/utils/logger/client";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Input } from "@genesiscz/utils/ui/components/input";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { useState } from "react";
 

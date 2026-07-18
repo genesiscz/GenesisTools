@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 
-import { parseVariadic, runTool } from "@app/utils/cli";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
-import { closeDarwinKit } from "@app/utils/macos";
-import { handleReadmeFlag } from "@app/utils/readme";
 import * as p from "@clack/prompts";
+import { parseVariadic, runTool } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
+import { closeDarwinKit } from "@genesiscz/utils/macos";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
 import pc from "picocolors";
 import { type CommandDef, commands, GROUP_LABELS, GROUP_ORDER, getCommandsByGroup } from "./lib/commands";

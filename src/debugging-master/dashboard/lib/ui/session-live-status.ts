@@ -1,6 +1,6 @@
 import type { DashboardSession } from "@app/log-viewer/log-source";
-import { formatLastMessageAgo } from "@app/utils/format";
-import { resolveQaRecency } from "@app/utils/ui/helpers/qa-recency";
+import { formatLastMessageAgo } from "@genesiscz/utils/format";
+import { resolveQaRecency } from "@genesiscz/utils/ui/helpers/qa-recency";
 
 export type SessionLiveStatusPhase = "running" | "killed" | "exited" | "fallback";
 

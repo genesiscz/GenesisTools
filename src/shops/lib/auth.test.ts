@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { getSessionUser, parseCookies, randomToken, SESSION_COOKIE_NAME } from "@app/shops/lib/auth";
-import { nowUtcIso } from "@app/utils/sql-time";
+import { nowUtcIso } from "@genesiscz/utils/sql-time";
 
 function freshDb(): ShopsDatabase {
     const dir = mkdtempSync(join(tmpdir(), "shops-auth-"));

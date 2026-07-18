@@ -1,7 +1,7 @@
 import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
-import { out } from "@app/utils/logger";
-import { iMessagesDatabase } from "@app/utils/macos/iMessagesDatabase";
-import { MacContactsDatabase } from "@app/utils/macos/MacContactsDatabase";
+import { out } from "@genesiscz/utils/logger";
+import { iMessagesDatabase } from "@genesiscz/utils/macos/iMessagesDatabase";
+import { MacContactsDatabase } from "@genesiscz/utils/macos/MacContactsDatabase";
 import chalk from "chalk";
 import type { Command } from "commander";
 

@@ -1,9 +1,9 @@
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { UserProvider } from "@app/shops/db/types";
 import { decryptCredentials, encryptCredentials } from "@app/shops/lib/crypto";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { nowUtcIso } from "@app/utils/sql-time";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { nowUtcIso } from "@genesiscz/utils/sql-time";
 
 const log = logger.child({ component: "UserProvidersRepository" });
 

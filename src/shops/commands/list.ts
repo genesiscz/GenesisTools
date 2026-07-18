@@ -1,7 +1,7 @@
 import type { ListedProduct, ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { ShopsDatabase as ShopsDatabaseClass } from "@app/shops/db/ShopsDatabase";
 import { parsePositiveInt } from "@app/shops/lib/cli-validators";
-import { formatTable } from "@app/utils/table";
+import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 
 export interface RunListInput {

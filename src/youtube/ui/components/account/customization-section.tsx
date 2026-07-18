@@ -1,12 +1,12 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
-import { Input } from "@app/utils/ui/components/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
-import { Switch } from "@app/utils/ui/components/switch";
 import { OUTPUT_LANGS } from "@app/youtube/lib/languages";
 import type { SummaryFormat, SummaryLength, SummaryTone } from "@app/youtube/lib/types";
 import type { SettingsTaskKind, TaskDefaultSettings, UserSettings } from "@app/youtube/lib/user-settings";
 import { LENGTH_PHRASES, TONE_PHRASES } from "@app/youtube/ui/components/shared/summary-controls";
 import { useMe, useUpdateUserSettings, useUserSettings } from "@app/yt/api.hooks";
+import { Card, CardContent, CardHeader, CardTitle } from "@genesiscz/utils/ui/components/card";
+import { Input } from "@genesiscz/utils/ui/components/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@genesiscz/utils/ui/components/select";
+import { Switch } from "@genesiscz/utils/ui/components/switch";
 import { Palette, PanelRightOpen, SlidersHorizontal } from "lucide-react";
 
 const TASK_KINDS: Array<{ kind: SettingsTaskKind; label: string }> = [

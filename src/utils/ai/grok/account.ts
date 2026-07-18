@@ -1,5 +1,5 @@
-import { AIConfig } from "@app/utils/ai/AIConfig";
-import type { AIAccountEntry } from "@app/utils/config/ai.types";
+import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { decodeJwtClaims, getActiveAuthEntry, isTokenExpired, readAuthFileAsync } from "./auth";
 import { GrokAuthExpiredError } from "./auth-errors";
 import { grokAuthPath } from "./paths";

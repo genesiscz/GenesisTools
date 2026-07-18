@@ -1,4 +1,4 @@
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import type { AIEmbeddingProvider, AIProvider, AITask, EmbeddingResult, EmbedOptions } from "../types";
 
 const SUPPORTED_TASKS: AITask[] = ["embed"];
@@ -156,7 +156,7 @@ export class AICoreMLProvider implements AIProvider, AIEmbeddingProvider {
     }
 
     private async loadModel(): Promise<DarwinKitWithCoreML> {
-        const { getDarwinKit } = await import("@app/utils/macos/darwinkit");
+        const { getDarwinKit } = await import("@genesiscz/utils/macos/darwinkit");
         this.darwinkit = getDarwinKit() as unknown as DarwinKitWithCoreML;
 
         if (this.options.contextual) {

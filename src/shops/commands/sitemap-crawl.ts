@@ -3,7 +3,7 @@ import { parsePositiveInt } from "@app/shops/lib/cli-validators";
 import { DbHttpRequestSink } from "@app/shops/lib/http-sink";
 import { crawlFromSitemap } from "@app/shops/lib/sitemap-crawl";
 import { listSitemapShops } from "@app/shops/lib/sitemap-sync";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 interface SitemapCrawlCliOpts {

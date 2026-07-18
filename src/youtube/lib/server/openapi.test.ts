@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { SafeJSON } from "@app/utils/json";
 import { buildOpenApiDocument, type OpenApiOperation } from "@app/youtube/lib/server/openapi";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const HTTP_METHODS = ["get", "post", "patch", "delete", "put"] as const;
 

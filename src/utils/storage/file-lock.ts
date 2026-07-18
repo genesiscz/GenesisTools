@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { logger } from "@app/utils/logger";
-import { isProcessAlive } from "@app/utils/process-alive";
+import { logger } from "@genesiscz/utils/logger";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const POLL_INTERVAL_MS = 50;

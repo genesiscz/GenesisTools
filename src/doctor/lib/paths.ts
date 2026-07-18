@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { toPosixPath } from "@app/utils/paths";
+import { toPosixPath } from "@genesiscz/utils/paths";
 
 export const DOCTOR_DIR = toPosixPath(join(homedir(), ".genesis-tools", "doctor"));
 export const ANALYSIS_DIR = toPosixPath(join(DOCTOR_DIR, "analysis"));

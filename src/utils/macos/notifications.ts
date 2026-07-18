@@ -1,11 +1,11 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/utils/logger";
-import type { DarwinKit } from "@app/utils/macos/darwinkit";
-import { getDarwinKit } from "@app/utils/macos/darwinkit";
-import { escapeJxa } from "@app/utils/macos/jxa";
-import { Storage } from "@app/utils/storage/storage";
+import { logger } from "@genesiscz/utils/logger";
+import type { DarwinKit } from "@genesiscz/utils/macos/darwinkit";
+import { getDarwinKit } from "@genesiscz/utils/macos/darwinkit";
+import { escapeJxa } from "@genesiscz/utils/macos/jxa";
+import { Storage } from "@genesiscz/utils/storage/storage";
 
 export interface NotificationOptions {
     title?: string;

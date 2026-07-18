@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { parseJsonl } from "@app/utils/jsonl";
+import { parseJsonl } from "@genesiscz/utils/jsonl";
 import type { JsonlLineRecord, JsonlRecord } from "./types";
 
 export async function readJsonlFile(path: string): Promise<JsonlRecord[]> {

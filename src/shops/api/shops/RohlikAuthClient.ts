@@ -1,5 +1,5 @@
 import { RohlikClient } from "@app/shops/api/shops/RohlikClient";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export interface RohlikOrderListEntry {
     id: number;

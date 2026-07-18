@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { ProcessSwap, ScanOptions, ScanResult, SystemSwap } from "./types";
 
 const UNIT_MULT: Record<string, number> = {

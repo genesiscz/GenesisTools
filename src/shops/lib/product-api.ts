@@ -1,6 +1,6 @@
 import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 // @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage
 import { parseItemDetails } from "@hlidac-shopu/lib/shops.mjs";
 

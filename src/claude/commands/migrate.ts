@@ -13,8 +13,8 @@ import {
     summarizeExecution,
     summarizePlan,
 } from "@app/claude/lib/migrate-to-codex";
-import { DiffUtil } from "@app/utils/diff";
 import * as p from "@clack/prompts";
+import { DiffUtil } from "@genesiscz/utils/diff";
 import type { Command } from "commander";
 import pc from "picocolors";
 

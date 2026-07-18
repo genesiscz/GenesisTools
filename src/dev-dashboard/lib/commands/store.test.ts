@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import { addCommand, deleteCommand, listCommands, validateCommandInput } from "./store";
 
 let prevHome: string | undefined;

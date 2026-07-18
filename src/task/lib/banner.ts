@@ -1,8 +1,8 @@
 import { sessionFilePaths } from "@app/task/lib/paths";
 import { suggestDashboard, suggestGet, suggestLogs, suggestLogsFollow, suggestTail } from "@app/task/lib/suggest-flags";
 import type { RunBannerInput, RunExitSummaryInput } from "@app/task/types";
-import { out } from "@app/utils/logger";
-import { escapeShellArg } from "@app/utils/string";
+import { out } from "@genesiscz/utils/logger";
+import { escapeShellArg } from "@genesiscz/utils/string";
 
 export function formatCommandDisplay(command: string[]): string {
     return command.map((part) => escapeShellArg(part)).join(" ");

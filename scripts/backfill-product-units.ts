@@ -12,7 +12,7 @@
 import { Database } from "bun:sqlite";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { refreshMasterDenorm } from "../src/shops/lib/master-denorm";
 import { extractFlavorKey, extractPackCount, extractSize, parseUnit, type Unit } from "../src/shops/lib/normalize";
 

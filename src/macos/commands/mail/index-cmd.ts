@@ -3,16 +3,16 @@ import { createProgressCallbacks } from "@app/indexer/lib/progress";
 import { MailSource } from "@app/indexer/lib/sources/mail-source";
 import type { IndexConfig } from "@app/indexer/lib/types";
 import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
+import * as p from "@clack/prompts";
 import {
     getDefaultModel,
     logProviderChoice,
     selectEmbeddingModel,
     selectEmbeddingProvider,
-} from "@app/utils/ai/embedding-selection";
-import { findModel, getEmbeddingProviderTypes } from "@app/utils/ai/ModelRegistry";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { formatBytes, formatDuration } from "@app/utils/format";
-import * as p from "@clack/prompts";
+} from "@genesiscz/utils/ai/embedding-selection";
+import { findModel, getEmbeddingProviderTypes } from "@genesiscz/utils/ai/ModelRegistry";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { formatBytes, formatDuration } from "@genesiscz/utils/format";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -72,7 +72,7 @@ export function registerIndexCommand(program: Command): void {
 
                 // Fall back to stored defaults from previous run
                 if (!resolvedProvider && !opts.provider) {
-                    const { AIConfig } = await import("@app/utils/ai/AIConfig");
+                    const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
                     const aiConfig = await AIConfig.load();
                     const stored = aiConfig.getAppDefaults("mail");
 
@@ -218,7 +218,7 @@ export function registerIndexCommand(program: Command): void {
                     }
                     // Persist chosen provider/model for next run
                     if (resolvedProvider) {
-                        const { AIConfig } = await import("@app/utils/ai/AIConfig");
+                        const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
                         const aiConfig = await AIConfig.load();
                         await aiConfig.setAppDefaults("mail", {
                             embeddingProvider: resolvedProvider,

@@ -1,4 +1,4 @@
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 /** Canonical machine-result serialization. The ONLY stringifier for stdout
  *  result payloads — used by out.result() and any pre-migration. */

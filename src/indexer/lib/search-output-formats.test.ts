@@ -7,7 +7,7 @@ mock.module("picocolors", () => {
     return { default: forced, createColors };
 });
 
-import { stripAnsi } from "@app/utils/string";
+import { stripAnsi } from "@genesiscz/utils/string";
 import { type FormattedSearchResult, formatSearchResults, renderCodeBlock, toDisplayPath } from "./search-output";
 
 function makeResult(overrides: Partial<FormattedSearchResult> = {}): FormattedSearchResult {

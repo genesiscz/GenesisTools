@@ -1,13 +1,13 @@
 import { basename, resolve } from "node:path";
-import { getSessionMetadataBySessionId } from "@app/utils/claude/history-cache";
-import { detectCurrentProject } from "@app/utils/claude/projects";
-import { type AgentRuntimeContext, resolveClaudeContext } from "@app/utils/claude/runtime-context";
-import { isCodex, resolveCodexContext } from "@app/utils/codex/runtime-context";
-import { env as appEnv } from "@app/utils/env";
-import { getMainRepoRootSync } from "@app/utils/git/worktree";
-import { logger } from "@app/utils/logger";
+import { getSessionMetadataBySessionId } from "@genesiscz/utils/claude/history-cache";
+import { detectCurrentProject } from "@genesiscz/utils/claude/projects";
+import { type AgentRuntimeContext, resolveClaudeContext } from "@genesiscz/utils/claude/runtime-context";
+import { isCodex, resolveCodexContext } from "@genesiscz/utils/codex/runtime-context";
+import { env as appEnv } from "@genesiscz/utils/env";
+import { getMainRepoRootSync } from "@genesiscz/utils/git/worktree";
+import { logger } from "@genesiscz/utils/logger";
 
-export type { AgentRuntimeContext } from "@app/utils/claude/runtime-context";
+export type { AgentRuntimeContext } from "@genesiscz/utils/claude/runtime-context";
 
 function gitSync(args: string[], cwd: string): string | null {
     const r = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "ignore" });

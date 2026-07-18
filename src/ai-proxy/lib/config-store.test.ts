@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getAiProxyConfigStore, parseConfigJson, resetAiProxyConfigStore } from "@app/ai-proxy/lib/config-store";
 import { getAiProxyStorage, resetAiProxyStorage } from "@app/ai-proxy/lib/storage";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const originalHome = env.get("GENESIS_TOOLS_HOME");
 

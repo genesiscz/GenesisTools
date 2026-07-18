@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { sendRequest } from "../lib/request";
 import { resolveSession } from "../lib/session-resolve";

@@ -5,12 +5,12 @@ import type {
     TranscribeOptions,
     TranscriptionResult,
     TranscriptionSegment,
-} from "@app/utils/ai/types";
-import { convertToWhisperWav } from "@app/utils/audio/converter";
-import { detectAudioFormat } from "@app/utils/audio/detect-format";
-import type { AIProviderType } from "@app/utils/config/ai.types";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+} from "@genesiscz/utils/ai/types";
+import { convertToWhisperWav } from "@genesiscz/utils/audio/converter";
+import { detectAudioFormat } from "@genesiscz/utils/audio/detect-format";
+import type { AIProviderType } from "@genesiscz/utils/config/ai.types";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { XAIClient } from "./XAIClient";
 
 interface XAITranscriptionWord {

@@ -1,4 +1,4 @@
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import { defineConfig } from "@playwright/test";
 
 /** Boards UI test suite. Requires a running dev-dashboard server (default http://localhost:3042);

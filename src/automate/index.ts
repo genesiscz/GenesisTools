@@ -10,10 +10,10 @@ import { registerShowCommand } from "@app/automate/commands/show.ts";
 import { registerStepCommands } from "@app/automate/commands/steps.ts";
 import { registerTaskCommand } from "@app/automate/commands/task.ts";
 import { ensureStorage } from "@app/automate/lib/storage.ts";
-import { runTool } from "@app/utils/cli";
-import { logger } from "@app/utils/logger";
-import { handleReadmeFlag } from "@app/utils/readme.ts";
 import * as p from "@clack/prompts";
+import { runTool } from "@genesiscz/utils/cli";
+import { logger } from "@genesiscz/utils/logger";
+import { handleReadmeFlag } from "@genesiscz/utils/readme.ts";
 import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)

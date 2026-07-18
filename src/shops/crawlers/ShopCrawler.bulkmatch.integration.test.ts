@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { RohlikClient } from "@app/shops/api/shops/RohlikClient";
 import { RohlikRestCrawler } from "@app/shops/crawlers/RohlikRestCrawler";
 import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 interface FixtureProduct {
     id: number;

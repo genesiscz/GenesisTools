@@ -1,7 +1,7 @@
-import { isInteractive } from "@app/utils/cli";
-import { watchFileFeed } from "@app/utils/fs/file-feed-watcher";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
+import { isInteractive } from "@genesiscz/utils/cli";
+import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { readCursor, writeCursor } from "../lib/cursor";
 import { deriveRegistry, findById, findByName, nextSubagentId } from "../lib/derived-registry";
@@ -62,7 +62,7 @@ async function pickAgent(records: AgentRecord[]): Promise<AgentRecord | null> {
         return null;
     }
 
-    const { select } = await import("@app/utils/prompts/clack");
+    const { select } = await import("@genesiscz/utils/prompts/clack");
     const choices = records.map((r) => ({
         label: `${r.agent_name} (${r.agent_id || "awaiting login"})${r.is_main ? " — main" : ""}`,
         value: r.agent_id || r.agent_name,

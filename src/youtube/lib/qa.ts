@@ -1,6 +1,3 @@
-import { callLLM } from "@app/utils/ai/call-llm";
-import { Embedder } from "@app/utils/ai/tasks/Embedder";
-import { logger } from "@app/utils/logger";
 import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import type { VideoComment } from "@app/youtube/lib/comments.types";
@@ -23,6 +20,9 @@ import type {
 } from "@app/youtube/lib/qa.types";
 import { identifyProviderChoice, recordYoutubeUsage } from "@app/youtube/lib/usage";
 import type { VideoId } from "@app/youtube/lib/video.types";
+import { callLLM } from "@genesiscz/utils/ai/call-llm";
+import { Embedder } from "@genesiscz/utils/ai/tasks/Embedder";
+import { logger } from "@genesiscz/utils/logger";
 
 const TARGET_TOKENS_PER_CHUNK = 1500;
 const TARGET_CHARS = TARGET_TOKENS_PER_CHUNK * 4;

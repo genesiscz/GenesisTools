@@ -1,6 +1,6 @@
 import type { RenderResult } from "@app/dev-dashboard/lib/obsidian/markdown";
-import { SafeJSON } from "@app/utils/json";
-import { escapeHtml } from "@app/utils/string";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { escapeHtml } from "@genesiscz/utils/string";
 
 interface ShareTemplateOptions {
     title: string;

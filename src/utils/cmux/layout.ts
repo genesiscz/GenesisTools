@@ -1,14 +1,14 @@
-import { runCmuxJSON } from "@app/utils/cmux/lib/cli";
-import { redactTerminalPreview } from "@app/utils/cmux/lib/live-snapshot";
-import { type WorkspaceEntry, windowList, workspaceList } from "@app/utils/cmux/lib/socket";
+import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
+import { redactTerminalPreview } from "@genesiscz/utils/cmux/lib/live-snapshot";
+import { type WorkspaceEntry, windowList, workspaceList } from "@genesiscz/utils/cmux/lib/socket";
 import type {
     CmuxLayoutPane,
     CmuxLayoutSurface,
     CmuxLayoutTree,
     CmuxLayoutWindow,
     CmuxLayoutWorkspace,
-} from "@app/utils/cmux/types";
-import { logger } from "@app/utils/logger";
+} from "@genesiscz/utils/cmux/types";
+import { logger } from "@genesiscz/utils/logger";
 
 interface PaneListRpc {
     panes?: PaneRpc[];
@@ -80,7 +80,7 @@ export function formatDualPreview(text: string, maxLines = PREVIEW_LINE_BUDGET):
 
 async function readSelectedSurfacePreview(workspaceId: string, surfaceId: string): Promise<string | undefined> {
     try {
-        const { runCmux } = await import("@app/utils/cmux/lib/cli");
+        const { runCmux } = await import("@genesiscz/utils/cmux/lib/cli");
         const response = await runCmux([
             "capture-pane",
             "--workspace",

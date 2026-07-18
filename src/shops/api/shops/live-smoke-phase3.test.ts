@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { BenuClient } from "@app/shops/api/shops/BenuClient";
 import { DrmaxClient } from "@app/shops/api/shops/DrmaxClient";
 import { ItescoClient } from "@app/shops/api/shops/ItescoClient";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 const RUN_BASE = env.test.shouldRunLiveSmoke();
 const RUN_ITESCO = env.test.shouldRunShopsLiveItesco();

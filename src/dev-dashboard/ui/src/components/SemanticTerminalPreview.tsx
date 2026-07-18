@@ -1,4 +1,4 @@
-import { classifyTerminalPreview } from "@app/utils/terminal/line-classify";
+import { classifyTerminalPreview } from "@genesiscz/utils/terminal/line-classify";
 
 interface Props {
     preview: string;

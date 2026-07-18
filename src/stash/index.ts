@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { runTool } from "@app/utils/cli";
+import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
 import { applyCommand } from "./commands/apply";
 import { diffCommand } from "./commands/diff";

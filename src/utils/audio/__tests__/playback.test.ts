@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { isFfplayAvailable, playBuffer, playStream } from "@app/utils/audio/playback";
-import { skip } from "@app/utils/test/skip";
+import { isFfplayAvailable, playBuffer, playStream } from "@genesiscz/utils/audio/playback";
+import { skip } from "@genesiscz/utils/test/skip";
 
 describe.skipIf(skip.audioDevice)("playback", () => {
     test("isFfplayAvailable returns boolean", () => {

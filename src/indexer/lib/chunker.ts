@@ -1,9 +1,9 @@
 import { extname } from "node:path";
-import { xxhash } from "@app/utils/hash";
-import { SafeJSON } from "@app/utils/json";
-import { estimateTokens } from "@app/utils/tokens";
 import type { SgNode } from "@ast-grep/napi";
 import { type Lang, parse } from "@ast-grep/napi";
+import { xxhash } from "@genesiscz/utils/hash";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { estimateTokens } from "@genesiscz/utils/tokens";
 import { EXT_TO_DYNAMIC_LANG, EXT_TO_LANG, EXT_TO_LANGUAGE_NAME, ensureDynamicLanguages } from "./ast-languages";
 import type { ChunkRecord } from "./types";
 

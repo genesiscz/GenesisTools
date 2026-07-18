@@ -1,10 +1,10 @@
-import { logger } from "@app/utils/logger/client";
-import { Button } from "@app/utils/ui/components/button";
 import { SUBSCRIPTION_PLANS } from "@app/youtube/lib/billing.types";
 import type { MeBillingContext, YtUser } from "@app/youtube/lib/types";
 import { computeCreditBuckets, subscriptionRenewalCopy } from "@app/youtube/ui/components/shared/billing-ui";
 import { Diamond, formatDiamonds } from "@app/youtube/ui/components/shared/diamond";
 import { useMe, useSubscribe } from "@ext/api.hooks";
+import { logger } from "@genesiscz/utils/logger/client";
+import { Button } from "@genesiscz/utils/ui/components/button";
 import { Loader2, RefreshCw, Sparkles } from "lucide-react";
 import { useState } from "react";
 

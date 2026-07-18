@@ -1,5 +1,5 @@
 import { startMcpServer } from "@app/shops/mcp/server";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 const log = logger.child({ component: "shops:mcp-cmd" });

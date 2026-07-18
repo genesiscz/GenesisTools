@@ -1,5 +1,5 @@
-import { logger } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage/storage";
+import { logger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage/storage";
 
 export interface ConfigMigration {
     /** Unique ID -- format: "YYYY-MM-DD-description" */

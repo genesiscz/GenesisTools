@@ -1,4 +1,4 @@
-import { stripAnsi } from "@app/utils/string";
+import { stripAnsi } from "@genesiscz/utils/string";
 import type { JsonlLineLevel, StreamOut } from "./types";
 
 const ERROR_LINE =

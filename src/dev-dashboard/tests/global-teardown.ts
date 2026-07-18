@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 /** Archive every board THIS run created (tracked via freshBoard() in boards-test-api.ts into the
  *  PW_RUN_SLUGS_FILE set up by global-setup.ts) so concurrent spec runs sharing the strict-port

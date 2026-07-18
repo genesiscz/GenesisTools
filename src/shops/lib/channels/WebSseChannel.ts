@@ -1,6 +1,6 @@
 import type { DispatchResult, NotificationChannel, NotificationPayload } from "@app/shops/lib/channels/types";
 import { type SseBroadcaster, sseBroadcaster } from "@app/shops/lib/sse-broadcaster";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 const log = logger.child({ component: "WebSseChannel" });
 

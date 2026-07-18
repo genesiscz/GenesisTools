@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
 import { FriendlyError } from "./errors";
 import { agentsRoot } from "./paths";
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const INDEX_DB = join(homedir(), ".genesis-tools/indexer/macos-mail/index.db");
 const TOOLS_BIN = join(import.meta.dir, "../../../../tools");

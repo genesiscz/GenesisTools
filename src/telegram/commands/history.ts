@@ -1,10 +1,10 @@
 import { resolve } from "node:path";
-import { parseDate } from "@app/utils/date";
-import { formatNumber } from "@app/utils/format";
-import { out } from "@app/utils/logger";
-import { detectLanguage, embedText } from "@app/utils/macos/nlp";
-import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
+import { parseDate } from "@genesiscz/utils/date";
+import { formatNumber } from "@genesiscz/utils/format";
+import { out } from "@genesiscz/utils/logger";
+import { detectLanguage, embedText } from "@genesiscz/utils/macos/nlp";
+import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { AttachmentDownloader } from "../lib/AttachmentDownloader";

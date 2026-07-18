@@ -2,8 +2,8 @@ import { chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { BoxCipher, KeyPair } from "@app/dev-dashboard/contract/box-types";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import nacl from "tweetnacl";
 import naclUtil from "tweetnacl-util";
 

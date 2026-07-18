@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { removeRecursive } from "@app/utils/fs";
-import { makeTempDir } from "@app/utils/paths";
-import { ensureExtensionCapableSQLite } from "@app/utils/search/stores/sqlite-vec-loader";
+import { removeRecursive } from "@genesiscz/utils/fs";
+import { makeTempDir } from "@genesiscz/utils/paths";
+import { ensureExtensionCapableSQLite } from "@genesiscz/utils/search/stores/sqlite-vec-loader";
 import { getIndexerStorage } from "./storage";
 import { createIndexStore, searchIndexReadonly } from "./store";
 

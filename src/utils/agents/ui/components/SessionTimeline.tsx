@@ -1,4 +1,4 @@
-import type { AgentMessage } from "@app/utils/agents/types";
+import type { AgentMessage } from "@genesiscz/utils/agents/types";
 import { useMemo } from "react";
 import type { SessionTimelineProps } from "../types";
 import { MessageCard } from "./MessageCard";

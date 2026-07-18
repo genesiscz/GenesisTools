@@ -1,6 +1,6 @@
 import type { TimelyEntry } from "@app/timely/types/api";
 import type { CorpusEntry } from "@app/timely/utils/event-corpus";
-import { timeOverlapRatio, wordSimilarity } from "@app/utils/fuzzy-match";
+import { timeOverlapRatio, wordSimilarity } from "@genesiscz/utils/fuzzy-match";
 
 export interface CategorySuggestion {
     projectId: number;

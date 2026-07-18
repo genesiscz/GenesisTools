@@ -1,5 +1,5 @@
-import { SafeJSON } from "@app/utils/json";
-import { truncateText } from "@app/utils/string";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { truncateText } from "@genesiscz/utils/string";
 import type { ConversationMessage, TextBlock, ToolResultBlock, ToolUseBlock } from "./types";
 
 /** Shorthand "A" variant that some JSONL sessions use for assistant messages. */

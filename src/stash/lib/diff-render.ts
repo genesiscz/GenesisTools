@@ -1,4 +1,4 @@
-import { renderUnifiedDiff } from "@app/utils/diff";
+import { renderUnifiedDiff } from "@genesiscz/utils/diff";
 
 export interface RenderDiffArgs {
     before: string;
@@ -8,7 +8,7 @@ export interface RenderDiffArgs {
 
 /**
  * Render a unified diff between two text blocks. Stash-tool wrapper over
- * `@app/utils/diff`'s renderUnifiedDiff — used by unapply / update walks to show per-region
+ * `@genesiscz/utils/diff`'s renderUnifiedDiff — used by unapply / update walks to show per-region
  * before-vs-after, and by `tools stash diff` for the per-region inventory.
  *
  * v1.1: switched from shell-out (`spawnSync("diff", ...)` + temp files) to the pure-JS

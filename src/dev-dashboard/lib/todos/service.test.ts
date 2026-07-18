@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ReminderPriority } from "@app/utils/macos/apple-reminders";
+import { ReminderPriority } from "@genesiscz/utils/macos/apple-reminders";
 import { dedupeReminderLists, mapPriority } from "./service";
 
 describe("dedupeReminderLists", () => {

@@ -1,7 +1,7 @@
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { logger, out } from "@app/utils/logger";
-import { captureTmuxSnapshot, SNAPSHOT_VERSION, type TmuxPreset } from "@app/utils/tmux/snapshot";
-import { PresetExistsError, TmuxPresetStore } from "@app/utils/tmux/snapshot-store";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { logger, out } from "@genesiscz/utils/logger";
+import { captureTmuxSnapshot, SNAPSHOT_VERSION, type TmuxPreset } from "@genesiscz/utils/tmux/snapshot";
+import { PresetExistsError, TmuxPresetStore } from "@genesiscz/utils/tmux/snapshot-store";
 import type { Command } from "commander";
 import pc from "picocolors";
 

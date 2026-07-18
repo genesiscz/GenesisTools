@@ -1,11 +1,11 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { removeRecursive } from "@app/utils/fs";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { ensureExtensionCapableSQLite } from "@app/utils/search/stores/sqlite-vec-loader";
-import type { Storage } from "@app/utils/storage/storage";
+import { removeRecursive } from "@genesiscz/utils/fs";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { ensureExtensionCapableSQLite } from "@genesiscz/utils/search/stores/sqlite-vec-loader";
+import type { Storage } from "@genesiscz/utils/storage/storage";
 import { CONFIG_FILENAME, ContextArtifactSource, loadContextConfig } from "./context-artifacts";
 import type { IndexerCallbacks, SyncStats } from "./events";
 import { Indexer } from "./indexer";
@@ -294,7 +294,7 @@ export class IndexerManager {
         name: string,
         query: string,
         opts?: { mode?: "fulltext" | "hybrid" | "vector" | "auto"; limit?: number }
-    ): Promise<import("@app/utils/search/types").SearchResult<import("./types").ChunkRecord>[]> {
+    ): Promise<import("@genesiscz/utils/search/types").SearchResult<import("./types").ChunkRecord>[]> {
         if (!this.getIndexNames().includes(name)) {
             throw new Error(`Index "${name}" not found`);
         }

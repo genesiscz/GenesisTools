@@ -1,5 +1,5 @@
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 export const XAI_API_BASE_URL = "https://api.x.ai/v1";
 

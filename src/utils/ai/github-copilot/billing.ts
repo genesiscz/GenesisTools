@@ -1,7 +1,7 @@
-import { githubApi } from "@app/utils/ai/github-copilot/github-api";
-import { buildCopilotRequestHeaders } from "@app/utils/ai/github-copilot/headers";
-import { COPILOT_USER_URL } from "@app/utils/ai/github-copilot/paths";
-import type { CopilotUsageSummary } from "@app/utils/ai/github-copilot/types";
+import { githubApi } from "@genesiscz/utils/ai/github-copilot/github-api";
+import { buildCopilotRequestHeaders } from "@genesiscz/utils/ai/github-copilot/headers";
+import { COPILOT_USER_URL } from "@genesiscz/utils/ai/github-copilot/paths";
+import type { CopilotUsageSummary } from "@genesiscz/utils/ai/github-copilot/types";
 
 export async function fetchCopilotUserInfo(ghoToken: string): Promise<Record<string, unknown>> {
     return githubApi.get<Record<string, unknown>>(COPILOT_USER_URL, {

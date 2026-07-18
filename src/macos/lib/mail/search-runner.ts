@@ -13,11 +13,11 @@ import {
 } from "@app/macos/lib/mail/search-label";
 import { mdfindMailRowids } from "@app/macos/lib/mail/spotlight";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
-import { logger } from "@app/utils/logger";
-import { closeDarwinKit, rankBySimilarity } from "@app/utils/macos";
-import type { MailDatabase } from "@app/utils/macos/MailDatabase";
-import { ENVELOPE_INDEX_PATH } from "@app/utils/macos/mail/constants";
-import type { MailMessage, MailMessageRow, SearchOptions } from "@app/utils/macos/mail/types";
+import { logger } from "@genesiscz/utils/logger";
+import { closeDarwinKit, rankBySimilarity } from "@genesiscz/utils/macos";
+import type { MailDatabase } from "@genesiscz/utils/macos/MailDatabase";
+import { ENVELOPE_INDEX_PATH } from "@genesiscz/utils/macos/mail/constants";
+import type { MailMessage, MailMessageRow, SearchOptions } from "@genesiscz/utils/macos/mail/types";
 
 export type MailSearchMode = "auto" | "fulltext" | "hybrid" | "vector";
 

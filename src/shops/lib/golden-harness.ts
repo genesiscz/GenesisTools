@@ -13,7 +13,7 @@ import {
     normalizeBrand,
     normalizeName,
 } from "@app/shops/lib/normalize";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 interface FixtureProduct {
     shop_origin: string;

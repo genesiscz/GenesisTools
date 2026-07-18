@@ -2,16 +2,17 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { AI } from "@app/utils/ai/index.ts";
-import { getModelsForTask } from "@app/utils/ai/ModelManager";
-import { getProvidersForTask } from "@app/utils/ai/providers";
-import type { AIProviderType } from "@app/utils/ai/types.ts";
-import { playBuffer } from "@app/utils/audio/playback";
-import { runTool } from "@app/utils/cli";
-import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
-import { parseVariadic } from "@app/utils/cli/variadic";
-import { env } from "@app/utils/env";
-import { logger, out } from "@app/utils/logger";
+import * as p from "@clack/prompts";
+import { AI } from "@genesiscz/utils/ai/index.ts";
+import { getModelsForTask } from "@genesiscz/utils/ai/ModelManager";
+import { getProvidersForTask } from "@genesiscz/utils/ai/providers";
+import type { AIProviderType } from "@genesiscz/utils/ai/types.ts";
+import { playBuffer } from "@genesiscz/utils/audio/playback";
+import { runTool } from "@genesiscz/utils/cli";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
+import { parseVariadic } from "@genesiscz/utils/cli/variadic";
+import { env } from "@genesiscz/utils/env";
+import { logger, out } from "@genesiscz/utils/logger";
 import {
     DEFAULT_APP_NAME,
     isSettableField,
@@ -20,10 +21,9 @@ import {
     type SayProvider,
     SETTABLE_FIELDS,
     type SettableField,
-} from "@app/utils/macos/SayConfigManager.ts";
-import { normalizeVolume } from "@app/utils/macos/tts.ts";
-import { formatTable } from "@app/utils/table.ts";
-import * as p from "@clack/prompts";
+} from "@genesiscz/utils/macos/SayConfigManager.ts";
+import { normalizeVolume } from "@genesiscz/utils/macos/tts.ts";
+import { formatTable } from "@genesiscz/utils/table.ts";
 import { Command } from "commander";
 import pc from "picocolors";
 import { SayAudioCache } from "./lib/cache";

@@ -1,5 +1,5 @@
-import type { DetectedProvider } from "@app/utils/ask/types";
-import type { AIProvider } from "@app/utils/config/ai.types";
+import type { DetectedProvider } from "@genesiscz/utils/ask/types";
+import type { AIProvider } from "@genesiscz/utils/config/ai.types";
 
 /**
  * Knows how to resolve an account of a specific provider type

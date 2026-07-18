@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { type Dirent, readdirSync } from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
-import { emptyFindDuplicatesStats, type FileMetaCacheLike, findDuplicateFiles } from "@app/utils/fs/disk-usage";
-import { logger } from "@app/utils/logger";
-import { Stopwatch } from "@app/utils/Stopwatch";
+import { emptyFindDuplicatesStats, type FileMetaCacheLike, findDuplicateFiles } from "@genesiscz/utils/fs/disk-usage";
+import { logger } from "@genesiscz/utils/logger";
+import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { passesGlobs } from "./filters";
 import type { DuplicateSet, DuplicatesReport } from "./render/types";
 

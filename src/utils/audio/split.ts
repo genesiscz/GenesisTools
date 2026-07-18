@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join, parse } from "node:path";
-import { MONO_MP3_BITRATE_KBPS } from "@app/utils/audio/converter";
-import { getAudioInfo } from "@app/utils/audio/probe";
-import { logger } from "@app/utils/logger";
+import { MONO_MP3_BITRATE_KBPS } from "@genesiscz/utils/audio/converter";
+import { getAudioInfo } from "@genesiscz/utils/audio/probe";
+import { logger } from "@genesiscz/utils/logger";
 import { spawn } from "bun";
 
 /** 24 MB chunks — under the 25 MB cloud upload limit. */

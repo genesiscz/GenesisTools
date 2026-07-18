@@ -1,9 +1,9 @@
 import { isStructuredFormat, printStructured } from "@app/macos/lib/mail/command-helpers";
-import { isQuietOutput } from "@app/utils/cli";
-import { out } from "@app/utils/logger";
-import { MailDatabase } from "@app/utils/macos/MailDatabase";
-import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
+import { isQuietOutput } from "@genesiscz/utils/cli";
+import { out } from "@genesiscz/utils/logger";
+import { MailDatabase } from "@genesiscz/utils/macos/MailDatabase";
+import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 
 export function registerAccountsCommand(program: Command): void {

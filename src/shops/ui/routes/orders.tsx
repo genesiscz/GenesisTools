@@ -1,7 +1,7 @@
 import { BulkAddOrdersTable, type ProviderOrders } from "@app/shops/ui/components/BulkAddOrdersTable";
 import { type SpendInsights, SpendSummary } from "@app/shops/ui/components/SpendSummary";
 import { RequireAuth, requireAuthBeforeLoad } from "@app/shops/ui/lib/useAuthMe";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";

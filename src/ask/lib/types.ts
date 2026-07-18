@@ -1,4 +1,4 @@
-import type { AIAccount } from "@app/utils/ai/AIAccount";
+import type { AIAccount } from "@genesiscz/utils/ai/AIAccount";
 import type { LanguageModelUsage } from "ai";
 
 // Re-export relevant existing types

@@ -3,8 +3,8 @@ import { applyLogLevel } from "@app/macos/commands/clones/log-level";
 import { buildMeasureReport, expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
-import { parseVariadic } from "@app/utils/cli";
-import { logger } from "@app/utils/logger";
+import { parseVariadic } from "@genesiscz/utils/cli";
+import { logger } from "@genesiscz/utils/logger";
 import { Command, Option } from "commander";
 
 const log = logger.child({ component: "clones:measure-cmd" });

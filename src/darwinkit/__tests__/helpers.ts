@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const DARWINKIT_PATH = resolve(import.meta.dir, "../index.ts");
 

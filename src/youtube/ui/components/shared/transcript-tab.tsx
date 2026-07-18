@@ -1,7 +1,3 @@
-import { logger } from "@app/utils/logger/client";
-import { Button } from "@app/utils/ui/components/button";
-import { Input } from "@app/utils/ui/components/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import {
     CREDIT_COSTS,
     type QueueStats,
@@ -21,6 +17,10 @@ import {
     segmentsToParagraphs,
     type TranscriptParagraph,
 } from "@app/youtube/ui/components/shared/transcript-paragraphs";
+import { logger } from "@genesiscz/utils/logger/client";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Input } from "@genesiscz/utils/ui/components/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@genesiscz/utils/ui/components/select";
 import { Captions, ChevronDown, ChevronUp, Languages, Loader2, LocateFixed, Search, Sparkles } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 

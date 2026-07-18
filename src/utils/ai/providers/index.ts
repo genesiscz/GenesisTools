@@ -179,7 +179,7 @@ export function disposeAll(): void {
     providers.clear();
 }
 
-import { CLOUD_PROVIDER_TYPES } from "@app/utils/config/ai.types";
+import { CLOUD_PROVIDER_TYPES } from "@genesiscz/utils/config/ai.types";
 import type {
     AIEmbeddingProvider,
     AISummarizationProvider,

@@ -1,6 +1,6 @@
-import { Button } from "@app/utils/ui/components/button";
-import { Input } from "@app/utils/ui/components/input";
-import { AuthLayout } from "@app/utils/ui/layouts/AuthLayout";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Input } from "@genesiscz/utils/ui/components/input";
+import { AuthLayout } from "@genesiscz/utils/ui/layouts/AuthLayout";
 import { ShoppingBasket } from "lucide-react";
 import { useState } from "react";
 

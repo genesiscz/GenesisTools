@@ -2,11 +2,11 @@ import { printTailStatus } from "@app/task/lib/log-hints";
 import { queryLogs, sliceLogLines } from "@app/task/lib/log-query";
 import { jsonlPath } from "@app/task/lib/paths";
 import type { LogQueryOpts } from "@app/task/types";
-import { FileTailer } from "@app/utils/fs/file-tailer";
-import { SafeJSON } from "@app/utils/json";
-import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
-import type { JsonlExitRecord, JsonlLineRecord, JsonlRecord } from "@app/utils/log-session/types";
-import { out } from "@app/utils/logger";
+import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { filterLineRecords, readJsonlFile } from "@genesiscz/utils/log-session/jsonl-reader";
+import type { JsonlExitRecord, JsonlLineRecord, JsonlRecord } from "@genesiscz/utils/log-session/types";
+import { out } from "@genesiscz/utils/logger";
 
 function matchesFilters(
     line: JsonlLineRecord,

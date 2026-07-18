@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
 import { AIChat } from "@ask/AIChat";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import type { ActionHandler } from "../types";
 
 /** Cache of AIChat instances per contact */

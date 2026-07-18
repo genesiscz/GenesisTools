@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decryptCredentials, encryptCredentials, resetCryptoForTest } from "@app/shops/lib/crypto";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 function freshKeyDir(): string {
     const dir = mkdtempSync(join(tmpdir(), "shops-crypto-"));

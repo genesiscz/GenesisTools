@@ -13,9 +13,9 @@
  * does this on `restart` after 30s — see plan §Decisions).
  */
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
-import { logger } from "@app/utils/logger";
-import { isPortInUse } from "@app/utils/network";
-import { stripAnsi } from "@app/utils/string";
+import { logger } from "@genesiscz/utils/logger";
+import { isPortInUse } from "@genesiscz/utils/network";
+import { stripAnsi } from "@genesiscz/utils/string";
 import type { ReadinessProbe } from "./types";
 
 const DEFAULT_TIMEOUT_MS = 30_000;

@@ -1,5 +1,7 @@
-import { logger } from "@app/utils/logger/client";
-import { Button } from "@app/utils/ui/components/button";
+import type { ChannelHandle } from "@app/youtube/lib/types";
+import { useAddChannels, useSyncChannel } from "@app/yt/api.hooks";
+import { logger } from "@genesiscz/utils/logger/client";
+import { Button } from "@genesiscz/utils/ui/components/button";
 import {
     Dialog,
     DialogContent,
@@ -7,10 +9,8 @@ import {
     DialogFooter,
     DialogHeader,
     DialogTitle,
-} from "@app/utils/ui/components/dialog";
-import { Textarea } from "@app/utils/ui/components/textarea";
-import type { ChannelHandle } from "@app/youtube/lib/types";
-import { useAddChannels, useSyncChannel } from "@app/yt/api.hooks";
+} from "@genesiscz/utils/ui/components/dialog";
+import { Textarea } from "@genesiscz/utils/ui/components/textarea";
 import { FileUp, Plus } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";

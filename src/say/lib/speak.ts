@@ -1,6 +1,6 @@
-import { AI } from "@app/utils/ai/index";
-import { SayConfigManager } from "@app/utils/macos/SayConfigManager";
-import { normalizeVolume } from "@app/utils/macos/tts";
+import { AI } from "@genesiscz/utils/ai/index";
+import { SayConfigManager } from "@genesiscz/utils/macos/SayConfigManager";
+import { normalizeVolume } from "@genesiscz/utils/macos/tts";
 
 export interface SpeakWithProfileOptions {
     text: string;

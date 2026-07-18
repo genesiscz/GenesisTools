@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { removeDbFile } from "@app/utils/fs";
-import { tmpdir } from "@app/utils/paths";
+import { removeDbFile } from "@genesiscz/utils/fs";
+import { tmpdir } from "@genesiscz/utils/paths";
 import { TelegramHistoryStore } from "../TelegramHistoryStore";
 
 function tmpDbPath() {

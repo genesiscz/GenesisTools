@@ -3,9 +3,9 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deletePreset, listPresets, savePreset } from "@app/dev-dashboard/lib/tmux/presets";
-import { setTmuxBinForTests } from "@app/utils/tmux/bin";
-import { setTmuxSnapshotSpawnForTests, type TmuxPreset } from "@app/utils/tmux/snapshot";
-import { TmuxPresetStore } from "@app/utils/tmux/snapshot-store";
+import { setTmuxBinForTests } from "@genesiscz/utils/tmux/bin";
+import { setTmuxSnapshotSpawnForTests, type TmuxPreset } from "@genesiscz/utils/tmux/snapshot";
+import { TmuxPresetStore } from "@genesiscz/utils/tmux/snapshot-store";
 
 // Two sessions: "alpha" has 1 window with 2 panes, "beta" has 2 windows with 1 pane each.
 // Columns (PANE_LIST_FORMAT order): session window_idx window_name pane_idx cwd cmd session_path attached

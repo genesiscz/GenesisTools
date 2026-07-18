@@ -1,6 +1,6 @@
 // GraphQL helpers for GitHub API
 
-import { getOctokit } from "@app/utils/github/octokit";
+import { getOctokit } from "@genesiscz/utils/github/octokit";
 
 interface CommentReactionInfo {
     issueNumber: number;

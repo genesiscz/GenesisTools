@@ -1,4 +1,4 @@
-import type { CmuxLayoutTree } from "@app/utils/cmux/types";
+import type { CmuxLayoutTree } from "@genesiscz/utils/cmux/types";
 
 export interface CmuxTmuxSurfaceRef {
     workspaceId: string;

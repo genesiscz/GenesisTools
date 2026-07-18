@@ -1,6 +1,6 @@
-import { Button } from "@app/utils/ui/components/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
-import { Input } from "@app/utils/ui/components/input";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@genesiscz/utils/ui/components/dialog";
+import { Input } from "@genesiscz/utils/ui/components/input";
 import { useState } from "react";
 
 interface Props {

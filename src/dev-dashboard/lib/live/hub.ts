@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { LiveChannel, LiveFrame } from "@app/dev-dashboard/lib/live/types";
 import type { SseEmitter } from "@app/dev-dashboard/server/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 interface Conn {
     id: string;

@@ -1,11 +1,11 @@
-import { AppShell, AppSidebar, type SidebarNavItem } from "@app/utils/ui/custom";
-import { cn } from "@app/utils/ui/lib/utils";
 import { useUserSettings } from "@app/yt/api.hooks";
 import { ErrorBoundary } from "@app/yt/components/shared/error-boundary";
 import { fetchUiConfig } from "@app/yt/config.client";
 import { applyAppearance } from "@app/yt/lib/appearance";
 import { pageTitleFromPath } from "@app/yt/lib/theme";
 import { useEventStream } from "@app/yt/ws.client";
+import { AppShell, AppSidebar, type SidebarNavItem } from "@genesiscz/utils/ui/custom";
+import { cn } from "@genesiscz/utils/ui/lib/utils";
 import type { QueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, Link, Outlet, redirect, useRouterState } from "@tanstack/react-router";
 import { BriefcaseBusiness, History, Library, Newspaper, PlaySquare, Settings, Youtube } from "lucide-react";

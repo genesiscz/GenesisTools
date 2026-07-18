@@ -1,13 +1,13 @@
-import { formatDuration } from "@app/utils/format";
-import { Button } from "@app/utils/ui/components/button";
-import { Progress } from "@app/utils/ui/components/progress";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@app/utils/ui/components/table";
 import type { PipelineJob } from "@app/youtube/lib/types";
 import { useCancelJob } from "@app/yt/api.hooks";
 import { JobActivityDrawer } from "@app/yt/components/jobs/job-activity-drawer";
 import { JobStatusBadge } from "@app/yt/components/jobs/job-status-badge";
 import { EmptyState } from "@app/yt/components/shared/empty-state";
 import { parseSqliteDate } from "@app/yt/lib/format";
+import { formatDuration } from "@genesiscz/utils/format";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Progress } from "@genesiscz/utils/ui/components/progress";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@genesiscz/utils/ui/components/table";
 import { Activity, Ban, ChevronRight, PlayCircle } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";

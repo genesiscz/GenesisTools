@@ -13,9 +13,9 @@ import {
     openReadModel,
     queryEntries,
 } from "@app/question/lib/read-model";
-import { getAudioLibrary } from "@app/utils/audio/library";
-import { resolveSoundBuffer } from "@app/utils/audio/runner.server";
-import { SafeJSON } from "@app/utils/json";
+import { getAudioLibrary } from "@genesiscz/utils/audio/library";
+import { resolveSoundBuffer } from "@genesiscz/utils/audio/runner.server";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export function qaRoutes(): RouteDef[] {
     return [

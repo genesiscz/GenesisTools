@@ -10,11 +10,11 @@ import {
     clearGithubCopilotTokenResolutionCache,
     clearSessionCache,
     fetchGithubUserLogin,
-} from "@app/utils/ai/github-copilot";
-import { copilotDataDir, copilotGhoTokenAuthKey, githubTokenPath } from "@app/utils/ai/github-copilot/paths";
-import { logger, out } from "@app/utils/logger";
-import { runGitHubDeviceLogin } from "@app/utils/oauth";
-import { authStorageBackend, setAuthSecret } from "@app/utils/storage";
+} from "@genesiscz/utils/ai/github-copilot";
+import { copilotDataDir, copilotGhoTokenAuthKey, githubTokenPath } from "@genesiscz/utils/ai/github-copilot/paths";
+import { logger, out } from "@genesiscz/utils/logger";
+import { runGitHubDeviceLogin } from "@genesiscz/utils/oauth";
+import { authStorageBackend, setAuthSecret } from "@genesiscz/utils/storage";
 
 export async function runAccountsLogin(provider: string, options?: { dataDir?: string }): Promise<void> {
     if (provider !== "github-copilot") {

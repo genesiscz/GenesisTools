@@ -1,6 +1,6 @@
-import { out } from "@app/utils/logger";
-import { MacCalendar } from "@app/utils/macos/apple-calendar";
-import { formatTable } from "@app/utils/table";
+import { out } from "@genesiscz/utils/logger";
+import { MacCalendar } from "@genesiscz/utils/macos/apple-calendar";
+import { formatTable } from "@genesiscz/utils/table";
 import chalk from "chalk";
 import type { Command } from "commander";
 

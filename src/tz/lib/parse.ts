@@ -1,5 +1,5 @@
-import { logger } from "@app/utils/logger";
-import { epochFromWallClockInZone, resolveZone } from "@app/utils/timezone";
+import { logger } from "@genesiscz/utils/logger";
+import { epochFromWallClockInZone, resolveZone } from "@genesiscz/utils/timezone";
 import * as chrono from "chrono-node";
 import type { ParseResult } from "./types";
 

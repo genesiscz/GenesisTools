@@ -1,4 +1,4 @@
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { GROK_MANAGEMENT_API_BASE_URL } from "./paths";
 
 export interface ManagementUsageRequest {

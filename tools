@@ -3,7 +3,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 // --- Configuration ---
 const SRC_DIR_NAME = "src";
@@ -134,7 +134,7 @@ async function executeTool(scriptId, scriptArgs) {
         }
 
         if (!targetScript) {
-            const { searchSelect, searchSelectCancelSymbol } = await import("@app/utils/prompts/clack/search-select");
+            const { searchSelect, searchSelectCancelSymbol } = await import("@genesiscz/utils/prompts/clack/search-select");
             const chalk = (await import("chalk")).default;
             // Fuzzy match: find tools that contain the input or share segments
             const availableTools = await getAvailableTools(srcDir);

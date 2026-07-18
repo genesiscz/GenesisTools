@@ -1,5 +1,5 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
-import { AnsiLogText } from "@app/utils/ansi/render-ansi.client";
+import { AnsiLogText } from "@genesiscz/utils/ansi/render-ansi.client";
 import type { ReactElement } from "react";
 
 interface Props {

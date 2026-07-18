@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
-import { SafeJSON } from "@app/utils/json";
-import { parseJsonl } from "@app/utils/jsonl";
-import { JsonlWriter } from "@app/utils/log-session/jsonl-writer";
-import { logger } from "@app/utils/logger";
-import { atomicWriteFileSync } from "@app/utils/storage/storage";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { parseJsonl } from "@genesiscz/utils/jsonl";
+import { JsonlWriter } from "@genesiscz/utils/log-session/jsonl-writer";
+import { logger } from "@genesiscz/utils/logger";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { sessionEventsPath, sessionMetaPath, sessionsDir } from "./paths";
 
 const log = logger.child({ component: "codex:store" });

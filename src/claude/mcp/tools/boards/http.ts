@@ -1,6 +1,6 @@
 import { getConfig } from "@app/dev-dashboard/config";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 let cachedBase: string | null = null;
 

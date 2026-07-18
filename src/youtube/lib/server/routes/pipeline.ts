@@ -1,10 +1,10 @@
-import { SafeJSON } from "@app/utils/json";
 import { resolveUser } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
 import type { JobStage, JobStatus, JobTargetKind } from "@app/youtube/lib/types";
 import type { Youtube } from "@app/youtube/lib/youtube";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 interface EnqueueBody {
     target: string;

@@ -1,4 +1,4 @@
-import { formatTable } from "@app/utils/table";
+import { formatTable } from "@genesiscz/utils/table";
 import type { ScanResult } from "./types";
 
 /** Plain, JSON-serializable view of a scan result (stable shape for `--json`). */

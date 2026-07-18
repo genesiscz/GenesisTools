@@ -31,7 +31,7 @@
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { type CallExpression, type ImportDeclaration, Node, Project, type SourceFile, SyntaxKind } from "ts-morph";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -205,7 +205,7 @@ function ensureImport(sf: SourceFile, needsOut: boolean, needsLogger: boolean): 
     // Find existing @app/utils/logger import
     let existing: ImportDeclaration | undefined;
     for (const imp of sf.getImportDeclarations()) {
-        if (imp.getModuleSpecifierValue() === "@app/utils/logger") {
+        if (imp.getModuleSpecifierValue() === "@genesiscz/utils/logger") {
             existing = imp;
             break;
         }
@@ -233,7 +233,7 @@ function ensureImport(sf: SourceFile, needsOut: boolean, needsLogger: boolean): 
         }
 
         sf.addImportDeclaration({
-            moduleSpecifier: "@app/utils/logger",
+            moduleSpecifier: "@genesiscz/utils/logger",
             namedImports: names,
         });
     }

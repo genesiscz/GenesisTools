@@ -5,9 +5,9 @@ import type {
     HsPriceHistoryS3,
 } from "@app/shops/api/HlidacShopuClient.types";
 import type { HttpRequestEvent, HttpRequestSink } from "@app/shops/lib/http-sink";
-import { ApiClient, type ApiClientResponse } from "@app/utils/api/ApiClient";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { ApiClient, type ApiClientResponse } from "@genesiscz/utils/api/ApiClient";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 // @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage
 import { fetchDataSet, fetchShopsStats } from "@hlidac-shopu/lib/remoting.mjs";
 // @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage

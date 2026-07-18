@@ -1,4 +1,4 @@
-import { sendNotification } from "@app/utils/macos/notifications";
+import { sendNotification } from "@genesiscz/utils/macos/notifications";
 import type { NotificationEvent, SystemChannelConfig } from "../types";
 
 export async function dispatchSystem(event: NotificationEvent, config: SystemChannelConfig): Promise<void> {

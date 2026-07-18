@@ -1,7 +1,7 @@
 import { loadConfig } from "@app/claude/lib/config";
-import { logger } from "@app/utils/logger";
-import { dispatchNotification } from "@app/utils/notifications";
-import type { Storage } from "@app/utils/storage/storage";
+import { logger } from "@genesiscz/utils/logger";
+import { dispatchNotification } from "@genesiscz/utils/notifications";
+import type { Storage } from "@genesiscz/utils/storage/storage";
 import type { AccountUsage } from "./api";
 import {
     EXTRA_USAGE_BUCKET,

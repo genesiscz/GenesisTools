@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { BaseDatabase } from "@app/utils/database";
+import { BaseDatabase } from "@genesiscz/utils/database";
 
 const CLAUDE_DB_PATH = join(homedir(), ".genesis-tools", "claude-history", "index.db");
 

@@ -1,6 +1,6 @@
 import { parseHtmlTitle } from "@app/dev-dashboard/lib/ports/enrich-parse";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 export type HttpContentClass = "html" | "json" | "text" | "other" | "none";
 

@@ -8,7 +8,7 @@ import type {
     LidlCategoryNode,
     LidlCategoryType,
 } from "@app/shops/api/shops/LidlClient.types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { parseHTML } from "linkedom";
 
 const LIDL_ORIGIN = "lidl.cz";

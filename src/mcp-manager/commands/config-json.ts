@@ -1,8 +1,8 @@
 import { readUnifiedConfig, stripMetaFromServers } from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
-import { copyToClipboard } from "@app/utils/clipboard";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
+import { copyToClipboard } from "@genesiscz/utils/clipboard";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
 
 export interface ConfigJsonOptions {
     client?: "standard" | "cursor" | "claude";

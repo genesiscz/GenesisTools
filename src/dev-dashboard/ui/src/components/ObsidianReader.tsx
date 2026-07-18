@@ -1,4 +1,4 @@
-import { expandedDirsForNote, parseOpenDirs, serializeOpenDirs } from "@app/utils/obsidian/expanded-dirs";
+import { expandedDirsForNote, parseOpenDirs, serializeOpenDirs } from "@genesiscz/utils/obsidian/expanded-dirs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Button } from "@ui/components/button";

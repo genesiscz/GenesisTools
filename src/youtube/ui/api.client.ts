@@ -1,4 +1,3 @@
-import { SafeJSON } from "@app/utils/json";
 import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import type {
     ActionHistoryGroup,
@@ -28,6 +27,7 @@ import type {
 } from "@app/youtube/lib/types";
 import type { UserSettings } from "@app/youtube/lib/user-settings";
 import { fetchUiConfig } from "@app/yt/config.client";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { reportBackendReachable, reportBackendUnreachable } from "./backend-status";
 
 export interface AskVideoResponse {

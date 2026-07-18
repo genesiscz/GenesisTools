@@ -3,7 +3,7 @@
 import type { StepContext } from "@app/automate/lib/registry";
 import { registerStepCatalog, registerStepHandler, resolveStepHandler } from "@app/automate/lib/registry";
 import type { ForEachStepParams, PresetStep, StepResult, WhileStepParams } from "@app/automate/lib/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { makeResult } from "./helpers";
 
 // --- forEach ---

@@ -1,6 +1,6 @@
-import { parseDate } from "@app/utils/date";
-import { out } from "@app/utils/logger";
-import { MacReminders, ReminderPriority } from "@app/utils/macos/apple-reminders";
+import { parseDate } from "@genesiscz/utils/date";
+import { out } from "@genesiscz/utils/logger";
+import { MacReminders, ReminderPriority } from "@genesiscz/utils/macos/apple-reminders";
 import { type Command, Option } from "commander";
 import pc from "picocolors";
 

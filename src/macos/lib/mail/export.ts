@@ -9,10 +9,10 @@ import {
 } from "@app/macos/lib/mail/format";
 import { saveAttachment } from "@app/macos/lib/mail/jxa";
 import { truncateBody } from "@app/macos/lib/mail/transform";
-import { logger } from "@app/utils/logger";
-import type { MailDatabase } from "@app/utils/macos/MailDatabase";
-import type { MailMessage } from "@app/utils/macos/mail/types";
 import * as p from "@clack/prompts";
+import { logger } from "@genesiscz/utils/logger";
+import type { MailDatabase } from "@genesiscz/utils/macos/MailDatabase";
+import type { MailMessage } from "@genesiscz/utils/macos/mail/types";
 
 export interface ExportOptions {
     messages: MailMessage[];

@@ -1,8 +1,8 @@
-import { logger, out } from "@app/utils/logger";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import type { OutputConfig, OutputFormat, ProviderChoice } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
 import * as p from "@clack/prompts";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { LanguageModel } from "ai";
 import pc from "picocolors";
 

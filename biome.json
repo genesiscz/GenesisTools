@@ -36,7 +36,7 @@
                     "level": "error",
                     "options": {
                         "deniedGlobals": {
-                            "JSON": "Use `import { SafeJSON } from \"@app/utils/json\"` instead"
+                            "JSON": "Use `import { SafeJSON } from \"@genesiscz/utils/json\"` instead"
                         }
                     }
                 }

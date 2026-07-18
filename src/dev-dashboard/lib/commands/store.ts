@@ -2,8 +2,8 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { SavedCommand, SavedCommandInput } from "@app/dev-dashboard/lib/commands/types";
 import { getDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 function commandsFilePath(): string {
     return join(getDevDashboardStorage().getBaseDir(), "commands.json");

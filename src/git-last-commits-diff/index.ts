@@ -1,10 +1,10 @@
 import { resolve } from "node:path";
-import { Executor, runTool } from "@app/utils/cli";
-import { copyToClipboard } from "@app/utils/clipboard";
-import { logger } from "@app/utils/logger";
-import * as p from "@app/utils/prompts/p";
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
-import { handleReadmeFlag } from "@app/utils/readme";
+import { Executor, runTool } from "@genesiscz/utils/cli";
+import { copyToClipboard } from "@genesiscz/utils/clipboard";
+import { logger } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
+import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
 
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);

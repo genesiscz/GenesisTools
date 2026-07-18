@@ -2,7 +2,7 @@ import { getServerNames } from "@app/mcp-manager/utils/command.utils.js";
 import { readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import chalk from "chalk";
 
 export interface RemoveOptions {

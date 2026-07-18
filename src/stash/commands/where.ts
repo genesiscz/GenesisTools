@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { logger, out } from "@app/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
 import { openStashDb } from "../lib/stash-db";
 import { StashStorage } from "../lib/storage";

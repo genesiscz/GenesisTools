@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { processesRoutes } from "@app/dev-dashboard/server/routes/processes";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 function findRoute(method: string, pattern: string): RouteDef {
     const def = processesRoutes().find((d) => d.method === method && d.pattern === pattern);

@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { resolveVaultRoot } from "@app/utils/obsidian/config";
+import { resolveVaultRoot } from "@genesiscz/utils/obsidian/config";
 import type { QuestionConfig } from "../config";
 import type { QaEntry } from "../types";
 import { registerSink, type Sink, SinkError } from "./registry-exports";

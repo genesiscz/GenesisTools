@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { tmpdir } from "@app/utils/paths";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { tmpdir } from "@genesiscz/utils/paths";
 import { diffEnv, isFailing } from "./lib/diff";
 import { runEnvdiff } from "./lib/driver";
 import { maskValue } from "./lib/mask";

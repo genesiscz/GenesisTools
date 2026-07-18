@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { Storage } from "@app/utils/storage/storage.ts";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { Storage } from "@genesiscz/utils/storage/storage.ts";
 
 export type SayProvider = "macos" | "xai" | "openai";
 

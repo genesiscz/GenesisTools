@@ -1,5 +1,5 @@
-import type { CalendarEventInfo } from "@app/utils/macos/apple-calendar";
-import { formatTable } from "@app/utils/table";
+import type { CalendarEventInfo } from "@genesiscz/utils/macos/apple-calendar";
+import { formatTable } from "@genesiscz/utils/table";
 import { Option } from "commander";
 
 export function formatDateTime(iso: string): string {

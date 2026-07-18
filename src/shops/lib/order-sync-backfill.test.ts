@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ShopsDatabase, setShopsDatabaseSingletonForTest } from "@app/shops/db/ShopsDatabase";
 import { backfillWatchlist } from "@app/shops/lib/order-sync-backfill";
-import { nowUtcIso } from "@app/utils/sql-time";
+import { nowUtcIso } from "@genesiscz/utils/sql-time";
 
 afterEach(() => {
     setShopsDatabaseSingletonForTest(null);

@@ -1,9 +1,9 @@
 import type { IndexedLogEntry, OutputFormat, SessionStats } from "@app/debugging-master/types";
-import { suggestCommand } from "@app/utils/cli/executor";
-import { formatDateTime } from "@app/utils/date";
-import { formatBytes, formatDuration } from "@app/utils/format";
-import { SafeJSON } from "@app/utils/json";
-import { stripAnsi } from "@app/utils/string";
+import { suggestCommand } from "@genesiscz/utils/cli/executor";
+import { formatDateTime } from "@genesiscz/utils/date";
+import { formatBytes, formatDuration } from "@genesiscz/utils/format";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { stripAnsi } from "@genesiscz/utils/string";
 import chalk from "chalk";
 
 const TOOL = "tools debugging-master";

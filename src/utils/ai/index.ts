@@ -1,4 +1,4 @@
-export type { AIConfigData, AppConfig, AppDefaults, ProviderConfig } from "@app/utils/config/ai.types";
+export type { AIConfigData, AppConfig, AppDefaults, ProviderConfig } from "@genesiscz/utils/config/ai.types";
 export { AIAccount } from "./AIAccount";
 export type { AIAccountEntry, AIAccountTokens, AIProvider } from "./account-types";
 export type { AccountResolver } from "./resolvers";

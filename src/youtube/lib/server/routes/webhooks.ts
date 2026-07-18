@@ -1,9 +1,9 @@
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
 import { handleStripeEvent, WebhookRetryableError } from "@app/youtube/lib/billing";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
 import type { Youtube } from "@app/youtube/lib/youtube";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 /** Stripe events are small JSON documents — anything past this is abuse. */
 const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;

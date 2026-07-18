@@ -1,4 +1,4 @@
-import { normalizeVaultPath } from "@app/utils/obsidian/paths";
+import { normalizeVaultPath } from "@genesiscz/utils/obsidian/paths";
 
 /** Parent directory paths required to reveal `relativePath` (file or folder). */
 export function ancestorDirs(relativePath: string): string[] {

@@ -1,4 +1,4 @@
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { createContext, use, useCallback, useEffect, useState } from "react";
 
 interface AppState {

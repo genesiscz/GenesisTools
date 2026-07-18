@@ -1,9 +1,9 @@
 // Safe PR merge command — retargets stack dependents before optional branch delete.
 
 import { resolveMergeMethod, type SafeMergeResult, safeMergePull } from "@app/github/lib/merge";
-import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
+import { detectRepoFromGit, parseGitHubUrl } from "@genesiscz/utils/github/url-parser";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
 import { Command } from "commander";
 

@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 const SAFE_ALIAS_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 

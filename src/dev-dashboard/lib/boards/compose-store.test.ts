@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { createKyselyClient, type DatabaseClient } from "@app/utils/database/client";
+import { createKyselyClient, type DatabaseClient } from "@genesiscz/utils/database/client";
 import { createBoard, createCard, getBoardDoc } from "./boards-store";
 import { composeBoard } from "./compose-store";
 import { BOOTSTRAP_DDL } from "./db";

@@ -1,5 +1,5 @@
 import type { QaRow } from "@app/dev-dashboard/lib/qa-types";
-import { resolveQaRecency } from "@app/utils/ui/helpers/qa-recency";
+import { resolveQaRecency } from "@genesiscz/utils/ui/helpers/qa-recency";
 import { ScrollArea } from "@ui/components/scroll-area";
 
 const TAG_DOT: Record<string, string> = {

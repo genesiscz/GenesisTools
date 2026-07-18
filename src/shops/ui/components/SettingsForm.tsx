@@ -1,10 +1,10 @@
 import type { SettingsPayload } from "@app/shops/types";
-import { SafeJSON } from "@app/utils/json";
-import { Button } from "@app/utils/ui/components/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
-import { Input } from "@app/utils/ui/components/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
-import { Switch } from "@app/utils/ui/components/switch";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@genesiscz/utils/ui/components/card";
+import { Input } from "@genesiscz/utils/ui/components/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@genesiscz/utils/ui/components/select";
+import { Switch } from "@genesiscz/utils/ui/components/switch";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";

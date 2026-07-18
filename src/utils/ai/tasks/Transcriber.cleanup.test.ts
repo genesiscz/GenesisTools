@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { cleanRepetitions } from "@app/utils/ai/transcription/repetition-cleanup";
+import { cleanRepetitions } from "@genesiscz/utils/ai/transcription/repetition-cleanup";
 
 describe("two-level cleanup idempotency", () => {
     it("manager-clean then stitched-clean equals single clean (no double-collapse drift)", () => {

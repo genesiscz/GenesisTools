@@ -1,4 +1,4 @@
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 import { formatScanTable } from "../lib/format";
 import { scan } from "../lib/scanner";

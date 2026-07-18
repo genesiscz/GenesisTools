@@ -1,5 +1,5 @@
 import { chmod } from "node:fs/promises";
-import { Storage } from "@app/utils/storage/storage";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import { z } from "zod";
 
 const MappingSchema = z.object({

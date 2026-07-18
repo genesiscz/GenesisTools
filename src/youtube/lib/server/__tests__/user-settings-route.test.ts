@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
 import { handleUsersRoute } from "@app/youtube/lib/server/routes/users";
 import { Youtube } from "@app/youtube/lib/youtube";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 let dir: string;
 let db: YoutubeDatabase;

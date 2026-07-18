@@ -1,5 +1,5 @@
 import { buildObsidianNoteHref } from "@app/dev-dashboard/lib/obsidian/note-href";
-import { escapeHtml } from "@app/utils/string";
+import { escapeHtml } from "@genesiscz/utils/string";
 import hljs from "highlight.js";
 import type { MarkedExtension, Tokens } from "marked";
 import { Marked } from "marked";

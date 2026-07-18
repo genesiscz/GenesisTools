@@ -1,6 +1,6 @@
 import type { IndexedLogEntry, LogEntry } from "@app/debugging-master/types";
-import { inferLineLevel } from "@app/utils/log-session/infer-line-level";
-import type { JsonlLineRecord } from "@app/utils/log-session/types";
+import { inferLineLevel } from "@genesiscz/utils/log-session/infer-line-level";
+import type { JsonlLineRecord } from "@genesiscz/utils/log-session/types";
 
 export type LogSourceId = "debugging-master" | "task";
 

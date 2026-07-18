@@ -1,9 +1,9 @@
 import { createWriteStream, type WriteStream } from "node:fs";
-import { formatToolDiff, formatToolSignature } from "@app/utils/agents/formatters/tool-formatter";
-import { formatDateTime } from "@app/utils/date";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
-import { stripAnsi, truncateText } from "@app/utils/string";
+import { formatToolDiff, formatToolSignature } from "@genesiscz/utils/agents/formatters/tool-formatter";
+import { formatDateTime } from "@genesiscz/utils/date";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
+import { stripAnsi, truncateText } from "@genesiscz/utils/string";
 import pc from "picocolors";
 import type { IncludeSpec } from "./cli/dsl";
 import type { TailTarget } from "./session.types";

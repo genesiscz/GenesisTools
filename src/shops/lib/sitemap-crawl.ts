@@ -8,7 +8,7 @@ import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { createBulkMatcher } from "@app/shops/lib/bulk-matcher";
 import type { HttpRequestSink } from "@app/shops/lib/http-sink";
 import { walkSitemap } from "@app/shops/lib/sitemap-fetcher";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 const log = logger.child({ component: "sitemap-crawl" });
 

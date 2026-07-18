@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -65,7 +65,7 @@ function makeSessionJsonl(sessionId: string, opts: { sizeBytes?: number } = {}):
 
 describe("project detection for nested project dirs", () => {
     it("resolveProjectFilter returns encoded dir or leaf basename, never parent org", () => {
-        const { resolveProjectFilter } = require("@app/utils/claude");
+        const { resolveProjectFilter } = require("@genesiscz/utils/claude");
 
         // For real cwd, should return an encoded dir (starting with "-") or a leaf name
         const result = resolveProjectFilter(process.cwd());
@@ -189,7 +189,7 @@ describe("readTailBytes — line boundary detection", () => {
     });
 
     it("preserves first line when slice starts on newline boundary", async () => {
-        const { readTailBytes } = await import("@app/utils/claude/session.utils");
+        const { readTailBytes } = await import("@genesiscz/utils/claude/session.utils");
 
         const line1 = '{"id":"first-line-aaaaaa"}';
         const line2 = '{"id":"second"}';
@@ -205,7 +205,7 @@ describe("readTailBytes — line boundary detection", () => {
     });
 
     it("drops partial first line when slicing mid-line", async () => {
-        const { readTailBytes } = await import("@app/utils/claude/session.utils");
+        const { readTailBytes } = await import("@genesiscz/utils/claude/session.utils");
 
         const line1 = '{"id":"aaaaaaaaaaaaaaaaa"}';
         const line2 = '{"id":"bbb"}';

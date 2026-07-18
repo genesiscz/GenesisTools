@@ -1,5 +1,3 @@
-import { Badge } from "@app/utils/ui/components/badge";
-import { Card, CardContent } from "@app/utils/ui/components/card";
 import type { JobStage, VideoId } from "@app/youtube/lib/types";
 import {
     type RunPipeline,
@@ -23,6 +21,8 @@ import { ProgressBar } from "@app/yt/components/pipeline/progress-bar";
 import { Loading } from "@app/yt/components/shared/loading";
 import { formatDate, formatDuration, formatNumber } from "@app/yt/lib/format";
 import { useEventStream } from "@app/yt/ws.client";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
+import { Card, CardContent } from "@genesiscz/utils/ui/components/card";
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Captions, Eye, Radio } from "lucide-react";

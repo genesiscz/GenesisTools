@@ -2,7 +2,7 @@ import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { createLogger } from "@app/utils/logger";
+import { createLogger } from "@genesiscz/utils/logger";
 import { closeDb, getDb } from "./db";
 import { runSchedulerLoop } from "./scheduler";
 

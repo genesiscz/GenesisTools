@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { loadSqliteVec } from "./sqlite-vec-loader";
 import { SqliteVecVectorStore } from "./sqlite-vec-store";
 

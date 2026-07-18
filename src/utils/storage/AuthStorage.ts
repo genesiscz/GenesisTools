@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 export interface AuthStorageKey {
     /** Logical namespace; on macOS Keychain this becomes the entry's "service". */

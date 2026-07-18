@@ -1,6 +1,6 @@
-import { SafeJSON } from "@app/utils/json";
-import { formatSchema, type OutputMode } from "@app/utils/json-schema";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { formatSchema, type OutputMode } from "@genesiscz/utils/json-schema";
+import { logger } from "@genesiscz/utils/logger";
 
 export type OutputFormat = OutputMode; // "schema" | "skeleton" | "typescript"
 

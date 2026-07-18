@@ -1,6 +1,6 @@
 import type { Pane, Profile, ProfileSummary, Surface } from "@app/cmux/lib/types";
-import { formatBytes } from "@app/utils/format";
-import { stripAnsi } from "@app/utils/string";
+import { formatBytes } from "@genesiscz/utils/format";
+import { stripAnsi } from "@genesiscz/utils/string";
 import pc from "picocolors";
 
 const TREE_VERTICAL = pc.dim("│");

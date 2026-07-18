@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { execTool } from "@app/utils/e2e/helpers";
+import { execTool } from "@genesiscz/utils/e2e/helpers";
 
 describe("tools ai", () => {
     describe("help", () => {

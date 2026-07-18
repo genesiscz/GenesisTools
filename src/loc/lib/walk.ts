@@ -1,8 +1,8 @@
 import { type Dirent, existsSync, readFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
-import { concurrentMap } from "@app/utils/async";
-import { logger } from "@app/utils/logger";
+import { concurrentMap } from "@genesiscz/utils/async";
+import { logger } from "@genesiscz/utils/logger";
 import ignore, { type Ignore } from "ignore";
 import type { FileResult } from "./aggregate";
 import { classifyFile } from "./classify";

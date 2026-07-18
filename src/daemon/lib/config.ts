@@ -1,8 +1,8 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage/storage";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import { parseInterval } from "./interval";
 import type { DaemonConfig, DaemonTask } from "./types";
 

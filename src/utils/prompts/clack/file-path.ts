@@ -7,7 +7,7 @@ import { readdirSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import * as readline from "node:readline";
 import { Writable } from "node:stream";
-import { endsWithSep, expandPath, lastSepIndex, sep } from "@app/utils/paths";
+import { endsWithSep, expandPath, lastSepIndex, sep } from "@genesiscz/utils/paths";
 import pc from "picocolors";
 
 // Silent writable stream to prevent readline from echoing input

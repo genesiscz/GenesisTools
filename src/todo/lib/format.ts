@@ -1,7 +1,7 @@
-import { isInteractive } from "@app/utils/cli";
-import { SafeJSON } from "@app/utils/json";
-import { renderMarkdownToCli } from "@app/utils/markdown/index.js";
-import { formatTable } from "@app/utils/table";
+import { isInteractive } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { renderMarkdownToCli } from "@genesiscz/utils/markdown/index.js";
+import { formatTable } from "@genesiscz/utils/table";
 import type { OutputFormat, Todo, TodoLink, TodoReminder } from "./types";
 
 function formatLinkCompact(link: TodoLink): string {

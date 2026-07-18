@@ -1,6 +1,6 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
 import type { LogSourceId } from "@app/log-viewer/log-source";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { sessionRoute } from "./api";
 
 export type ConnectionStatus = "connecting" | "live" | "reconnecting" | "down";

@@ -1,6 +1,6 @@
-import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
-import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
+import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 
 export async function confirmDestructive(opts: {

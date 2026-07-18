@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { TelegramBotClient } from "@app/shops/lib/telegram-bot-client";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 describe("TelegramBotClient", () => {
     const originalFetch = globalThis.fetch;

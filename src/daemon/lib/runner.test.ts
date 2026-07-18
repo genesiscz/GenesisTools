@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { skip } from "@app/utils/test/skip";
+import { skip } from "@genesiscz/utils/test/skip";
 import { runTask } from "./runner";
 import type { DaemonTask } from "./types";
 

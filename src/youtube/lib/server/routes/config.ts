@@ -1,9 +1,9 @@
-import { SafeJSON } from "@app/utils/json";
 import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { requireOperator } from "@app/youtube/lib/server/require-operator";
 import type { Youtube } from "@app/youtube/lib/youtube";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export async function handleConfigRoute(req: Request, url: URL, yt: Youtube): Promise<Response> {
     try {

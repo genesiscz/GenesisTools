@@ -1,5 +1,5 @@
 import { parseSwapUsage } from "@app/macos/lib/swap/scanner";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { parseProcessRows } from "./processes";
 import type { PulseSnapshot, TopProcess } from "./types";
 

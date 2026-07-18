@@ -1,5 +1,5 @@
 import type { ClarityMapping } from "@app/clarity/config";
-import type { ClarityApi } from "@app/utils/clarity";
+import type { ClarityApi } from "@genesiscz/utils/clarity";
 
 export interface TimesheetWeek {
     timesheetId: number;

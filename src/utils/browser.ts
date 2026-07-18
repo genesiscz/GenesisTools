@@ -1,5 +1,5 @@
-import { logger } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage";
+import { logger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage";
 
 export type BrowserName = "brave" | "safari" | "chrome" | "firefox" | "edge" | "arc";
 

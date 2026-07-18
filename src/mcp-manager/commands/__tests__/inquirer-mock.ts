@@ -1,5 +1,5 @@
-import type { PromptBackend, SelectValue } from "@app/utils/prompts/p";
-import { installPromptMock, setPromptBackend } from "@app/utils/testing/prompt-mock";
+import type { PromptBackend, SelectValue } from "@genesiscz/utils/prompts/p";
+import { installPromptMock, setPromptBackend } from "@genesiscz/utils/testing/prompt-mock";
 
 /**
  * mcp-manager-specific test backend.
@@ -7,9 +7,9 @@ import { installPromptMock, setPromptBackend } from "@app/utils/testing/prompt-m
  * mcp-manager's commands use named response keys (selectedProvider,
  * inputServerName, selectedOldName, etc.) rather than positional dispatch
  * by prompt-method name. This file owns that key vocabulary; the rest of
- * the prompt-mock machinery is the shared `@app/utils/testing/prompt-mock`.
+ * the prompt-mock machinery is the shared `@genesiscz/utils/testing/prompt-mock`.
  *
- * Migration note: this file used to do `mock.module("@app/utils/prompts/p")`
+ * Migration note: this file used to do `mock.module("@genesiscz/utils/prompts/p")`
  * directly, which leaked across test files via bun:test's worker-pool
  * reuse. It now drives the canonical `p.setBackend()` path through a
  * fake PromptBackend, which is per-process state with no module-cache

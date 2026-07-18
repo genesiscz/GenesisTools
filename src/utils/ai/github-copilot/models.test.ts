@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { formatCopilotUsageSummary, toProxyId } from "@app/utils/ai/github-copilot/models";
+import { formatCopilotUsageSummary, toProxyId } from "@genesiscz/utils/ai/github-copilot/models";
 
 describe("github-copilot models", () => {
     it("builds proxy model ids", () => {

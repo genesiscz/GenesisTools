@@ -9,9 +9,9 @@ import type {
     DmProductListingResponse,
     DmRawProduct,
 } from "@app/shops/api/shops/DmClient.types";
-import { ApiClientError } from "@app/utils/api/ApiClient";
-import { abortableSleep } from "@app/utils/async";
-import { logger } from "@app/utils/logger";
+import { ApiClientError } from "@genesiscz/utils/api/ApiClient";
+import { abortableSleep } from "@genesiscz/utils/async";
+import { logger } from "@genesiscz/utils/logger";
 
 export type DmCountry = "CZ" | "SK";
 

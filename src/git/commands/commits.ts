@@ -21,14 +21,14 @@ import {
     rangeBoundsMs,
 } from "@app/git/lib/rebase-classifier";
 import { extractFromMessage, loadWorkitemPatternsAsync } from "@app/git/workitem-patterns";
-import { Executor } from "@app/utils/cli";
-import { copyToClipboard } from "@app/utils/clipboard";
-import { formatDateTime } from "@app/utils/date";
-import type { DetailedCommitInfo } from "@app/utils/git";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
-import { Stopwatch } from "@app/utils/Stopwatch";
-import { Storage } from "@app/utils/storage";
+import { Executor } from "@genesiscz/utils/cli";
+import { copyToClipboard } from "@genesiscz/utils/clipboard";
+import { formatDateTime } from "@genesiscz/utils/date";
+import type { DetailedCommitInfo } from "@genesiscz/utils/git";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
+import { Stopwatch } from "@genesiscz/utils/Stopwatch";
+import { Storage } from "@genesiscz/utils/storage";
 import chalk from "chalk";
 import type { Command } from "commander";
 

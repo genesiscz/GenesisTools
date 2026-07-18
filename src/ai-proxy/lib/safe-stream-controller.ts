@@ -1,5 +1,5 @@
-import { logger } from "@app/utils/logger";
-import { isObject } from "@app/utils/object";
+import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 
 export function isStreamAbortError(err: unknown): boolean {
     if (err instanceof DOMException && err.name === "AbortError") {

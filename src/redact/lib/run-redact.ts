@@ -1,6 +1,6 @@
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
 import { readInput, resolveHomeDir, writeOutput } from "./io";
 import { redact } from "./redact";
 import { buildSession, saveSession } from "./session";

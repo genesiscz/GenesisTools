@@ -8,7 +8,7 @@
 import { CACHE_TTL, storage } from "@app/azure-devops/cache";
 import type { WorkItemCache } from "@app/azure-devops/types";
 import { findTaskFile, getRelativeTime } from "@app/azure-devops/utils";
-import { logger, out } from "@app/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 /**

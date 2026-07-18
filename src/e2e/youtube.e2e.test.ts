@@ -1,8 +1,8 @@
 // biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ or /Users/ string literals — production plugins do not apply to test code
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { execTool, extractJson } from "@app/utils/e2e/helpers";
-import { env } from "@app/utils/env";
+import { execTool, extractJson } from "@genesiscz/utils/e2e/helpers";
+import { env } from "@genesiscz/utils/env";
 
 const OUTPUT_FILE = "/tmp/yt-e2e-test.txt";
 

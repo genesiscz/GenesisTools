@@ -1,7 +1,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import { getLogsBaseDir } from "@app/daemon/lib/config";
 import type { LogEntry } from "@app/daemon/lib/types";
-import { FileTailer } from "@app/utils/fs/file-tailer";
+import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
 
 /**
  * Contain `logFile` to the daemon logs dir so a crafted `?logFile=` can't read arbitrary files.

@@ -1,5 +1,5 @@
-import { Storage } from "@app/utils/storage/storage";
 import type { AskConfig } from "@ask/types/config";
+import { Storage } from "@genesiscz/utils/storage/storage";
 
 const storage = new Storage("ask");
 

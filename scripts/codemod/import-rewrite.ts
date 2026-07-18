@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Codemod 4a — rewrite `import logger from "@app/utils/logger"` (default) to the
+ * Codemod 4a — rewrite `import logger from "@genesiscz/utils/logger"` (default) to the
  * named `import { logger }`. Type-only default imports become
  * `import type { Logger as <local> }`. Purely mechanical; collisions
  * (typeof logger, consoleLog aliasing, D11 bespoke -v) are fixed by hand in
@@ -23,7 +23,7 @@ for (const sf of project.getSourceFiles("src/**/*.{ts,tsx}")) {
     let fileChanged = false;
 
     for (const imp of sf.getImportDeclarations()) {
-        if (imp.getModuleSpecifierValue() !== "@app/utils/logger") {
+        if (imp.getModuleSpecifierValue() !== "@genesiscz/utils/logger") {
             continue;
         }
 

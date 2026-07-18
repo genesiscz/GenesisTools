@@ -1,6 +1,6 @@
-import { runTool } from "@app/utils/cli";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
+import { runTool } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { mergeServers, readConfigSources } from "./lib/discovery";
 import { probeServer } from "./lib/probe";

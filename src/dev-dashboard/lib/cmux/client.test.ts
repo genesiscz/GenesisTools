@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { fetchSnapshot } from "@app/dev-dashboard/lib/cmux/client";
-import type { CmuxRunResult } from "@app/utils/cmux/lib/cli";
-import { redactTerminalPreview } from "@app/utils/cmux/lib/live-snapshot";
+import type { CmuxRunResult } from "@genesiscz/utils/cmux/lib/cli";
+import { redactTerminalPreview } from "@genesiscz/utils/cmux/lib/live-snapshot";
 
 describe("cmux client", () => {
     test("fetchSnapshot returns available=false when cmux CLI throws", async () => {

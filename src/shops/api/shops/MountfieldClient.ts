@@ -2,7 +2,7 @@
 
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { parseHTML } from "linkedom";
 
 const MOUNTFIELD_ORIGIN = "mountfield.cz";

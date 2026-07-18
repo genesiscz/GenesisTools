@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import nodePath from "node:path";
-import { wrapArray } from "@app/utils/array";
-import { logger } from "@app/utils/logger";
-import { handleReadmeFlag } from "@app/utils/readme";
-import { escapeShellArg, stripAnsi } from "@app/utils/string";
+import { wrapArray } from "@genesiscz/utils/array";
+import { logger } from "@genesiscz/utils/logger";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
+import { escapeShellArg, stripAnsi } from "@genesiscz/utils/string";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";

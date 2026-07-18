@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
-import { setupStorageSandbox } from "@app/utils/storage/test-sandbox";
+import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { setupInquirerMock } from "./inquirer-mock.js";
 
 // openConfig() gates spawning the editor behind isInteractive(); setupInquirerMock
@@ -11,9 +11,9 @@ setupStorageSandbox();
 const { openConfig } = await import("@app/mcp-manager/commands/config.js");
 
 import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
-import { env } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage";
 
 describe("openConfig", () => {
     // spyOn(Bun,'spawn'/Storage/...) is process-global in bun and not

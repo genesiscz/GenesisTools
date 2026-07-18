@@ -1,4 +1,4 @@
-import { stripAnsi } from "@app/utils/string.js";
+import { stripAnsi } from "@genesiscz/utils/string.js";
 import { alert } from "@mdit/plugin-alert";
 import chalk, { type ChalkInstance } from "chalk";
 import cliHtml from "cli-html";

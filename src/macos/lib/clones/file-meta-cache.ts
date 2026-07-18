@@ -1,9 +1,9 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { createKyselyClient, type DatabaseClient } from "@app/utils/database/client";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { Stopwatch } from "@app/utils/Stopwatch";
+import { createKyselyClient, type DatabaseClient } from "@genesiscz/utils/database/client";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { FILE_META_MIGRATION_CONTEXT, FILE_META_MIGRATIONS } from "./file-meta-migrations";
 import type { FileMetaDB } from "./file-meta-schema";
 

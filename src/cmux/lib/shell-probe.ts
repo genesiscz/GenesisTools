@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { CommandSource, ScreenSnapshot } from "@app/cmux/lib/types";
-import { runCmux } from "@app/utils/cmux/lib/cli";
-import { logger } from "@app/utils/logger";
+import { runCmux } from "@genesiscz/utils/cmux/lib/cli";
+import { logger } from "@genesiscz/utils/logger";
 
 /**
  * cmux exposes no PID/tty for surfaces, but it does set tab titles from OSC-7 cwd escapes.

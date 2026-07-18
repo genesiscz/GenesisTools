@@ -1,7 +1,7 @@
-import { Button } from "@app/utils/ui/components/button";
 import type { ChannelHandle } from "@app/youtube/lib/types";
 import { useToggleWatchlist, useWatchlist } from "@app/yt/api.hooks";
 import { VideoList } from "@app/yt/components/videos/video-list";
+import { Button } from "@genesiscz/utils/ui/components/button";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/channels/$handle")({

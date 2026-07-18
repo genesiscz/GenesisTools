@@ -1,7 +1,7 @@
 import { renderProfileTree } from "@app/cmux/lib/format";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 export function registerViewCommand(parent: Command): void {

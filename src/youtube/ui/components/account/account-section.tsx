@@ -1,8 +1,8 @@
-import { Badge } from "@app/utils/ui/components/badge";
-import { Button } from "@app/utils/ui/components/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
-import { Input } from "@app/utils/ui/components/input";
 import { useLogin, useLogout, useMe, useRegister } from "@app/yt/api.hooks";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@genesiscz/utils/ui/components/card";
+import { Input } from "@genesiscz/utils/ui/components/input";
 import { useState } from "react";
 
 export function AccountSection() {

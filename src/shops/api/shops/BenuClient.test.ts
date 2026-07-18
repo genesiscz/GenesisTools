@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { BenuClient } from "@app/shops/api/shops/BenuClient";
 import type { BenuApiProduct } from "@app/shops/api/shops/BenuClient.types";
 import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 function readFixture(rel: string): string {
     return readFileSync(join(import.meta.dir, "__fixtures__/benu", rel), "utf8");

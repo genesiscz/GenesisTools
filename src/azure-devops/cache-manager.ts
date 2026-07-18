@@ -7,7 +7,7 @@
  */
 
 import type { TimeLogEntry } from "@app/azure-devops/types";
-import { Storage } from "@app/utils/storage";
+import { Storage } from "@genesiscz/utils/storage";
 
 type CacheDomain = "workitem" | "timelog" | "timetypes" | "teamMembers" | "history";
 

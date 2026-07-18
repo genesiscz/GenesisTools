@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { convertMessagesToInput, ensureResponsesInput } from "@app/ai-proxy/lib/chat-to-responses-body";
 import { prepareGrokUpstreamBody } from "@app/ai-proxy/lib/rewrite-upstream-body";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 describe("chat-to-responses-body", () => {
     it("converts simple user messages to responses input", () => {

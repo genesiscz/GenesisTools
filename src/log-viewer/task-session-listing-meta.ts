@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import type { TaskSessionStore } from "@app/task/lib/session-store";
-import { SafeJSON } from "@app/utils/json";
-import { readJsonlFile } from "@app/utils/log-session/jsonl-reader";
-import type { JsonlMetaRecord, JsonlRecord } from "@app/utils/log-session/types";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { readJsonlFile } from "@genesiscz/utils/log-session/jsonl-reader";
+import type { JsonlMetaRecord, JsonlRecord } from "@genesiscz/utils/log-session/types";
 
 export interface TaskSessionListingMeta {
     command?: string;

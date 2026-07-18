@@ -13,7 +13,7 @@ import {
 } from "@app/shops/db/NotificationsRepository";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { ingestFromHlidacResult } from "@app/shops/lib/ingest";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 // @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage
 import { shopOrigin as deriveShopOrigin } from "@hlidac-shopu/lib/shops.mjs";
 

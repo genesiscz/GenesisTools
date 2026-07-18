@@ -1,4 +1,4 @@
-import { Storage } from "@app/utils/storage/storage";
+import { Storage } from "@genesiscz/utils/storage/storage";
 
 const TOOL_NAME = "dev-dashboard";
 

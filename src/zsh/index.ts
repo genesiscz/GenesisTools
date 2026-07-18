@@ -2,12 +2,12 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { runTool } from "@app/utils/cli";
-import { env } from "@app/utils/env";
-import { out } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage/storage.ts";
-import { formatTable } from "@app/utils/table.ts";
 import * as p from "@clack/prompts";
+import { runTool } from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
+import { out } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage/storage.ts";
+import { formatTable } from "@genesiscz/utils/table.ts";
 import { Command } from "commander";
 import pc from "picocolors";
 import { ALL_FEATURES, getFeature, getFeatureNames } from "./features/index.ts";

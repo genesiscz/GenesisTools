@@ -11,10 +11,10 @@ import {
     writeConfig,
 } from "@app/dev-dashboard/lib/tunnel/cloudflared";
 import { buildPairingPayload, persistPairing } from "@app/dev-dashboard/lib/tunnel/pairing";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { logger, out } from "@app/utils/logger";
-import { renderQr } from "@app/utils/qr";
 import { cancel, confirm, intro, isCancel, log, note, outro, select, spinner, text } from "@clack/prompts";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { logger, out } from "@genesiscz/utils/logger";
+import { renderQr } from "@genesiscz/utils/qr";
 
 const TUNNEL_NAME = "devdashboard";
 

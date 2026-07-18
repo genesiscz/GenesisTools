@@ -1,4 +1,4 @@
-import { setupStorageSandbox } from "@app/utils/storage/test-sandbox";
+import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 
 setupStorageSandbox();
 
@@ -9,8 +9,8 @@ import { handleDashboardRequest } from "@app/debugging-master/core/dashboard-ser
 import { startServer } from "@app/debugging-master/core/http-server";
 import { sseBroadcaster } from "@app/debugging-master/core/sse-broadcaster";
 import { jsonlPath, metaPath, uiJsonlPath } from "@app/task/lib/paths";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 let port = 0;
 let server: ReturnType<typeof startServer>["server"];

@@ -1,4 +1,4 @@
-import { escapeHtml } from "@app/utils/string";
+import { escapeHtml } from "@genesiscz/utils/string";
 import hljs from "highlight.js";
 
 import { marked as markedRaw } from "marked";

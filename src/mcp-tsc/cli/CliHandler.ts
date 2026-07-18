@@ -1,8 +1,8 @@
 import type { CliArgs, CommandType, TSServer } from "@app/mcp-tsc/core/interfaces.js";
 import { LspServer } from "@app/mcp-tsc/providers/LspServer.js";
 import { TscServer } from "@app/mcp-tsc/providers/TscServer.js";
-import { env } from "@app/utils/env";
-import { out } from "@app/utils/logger";
+import { env } from "@genesiscz/utils/env";
+import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
 /**

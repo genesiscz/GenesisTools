@@ -4,7 +4,7 @@ import {
     flattenMosaicLeaves,
     pruneMosaicLeaves,
     reconcileMosaicLayout,
-} from "@app/utils/ui/helpers/mosaic-layout";
+} from "@genesiscz/utils/ui/helpers/mosaic-layout";
 
 describe("mosaic layout helpers", () => {
     test("balances ttyd panes into stable rows", () => {

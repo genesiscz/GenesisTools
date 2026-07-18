@@ -12,7 +12,7 @@ import { type ArrangeBody, runArrange } from "@app/dev-dashboard/lib/boards/layo
 import { scrapeBoard } from "@app/dev-dashboard/lib/boards/scrape";
 import { boardPageUrl } from "@app/dev-dashboard/lib/public-base";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { boardsError } from "./boards-errors";
 import { getOperator } from "./boards-sets";
 

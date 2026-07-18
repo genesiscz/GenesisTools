@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { TableRenderer } from "@app/macos/lib/clones/render/table";
 import type { DuplicatesReport, MeasureReport, ProcessReport } from "@app/macos/lib/clones/render/types";
-import { stripAnsi } from "@app/utils/string";
+import { stripAnsi } from "@genesiscz/utils/string";
 
 const measure: MeasureReport = {
     roots: ["/projects"],

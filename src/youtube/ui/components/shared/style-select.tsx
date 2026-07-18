@@ -1,3 +1,5 @@
+import type { PresetKind, PromptPreset } from "@app/youtube/lib/types";
+import { PresetEditor } from "@app/youtube/ui/components/shared/preset-editor";
 import {
     Select,
     SelectContent,
@@ -5,9 +7,7 @@ import {
     SelectSeparator,
     SelectTrigger,
     SelectValue,
-} from "@app/utils/ui/components/select";
-import type { PresetKind, PromptPreset } from "@app/youtube/lib/types";
-import { PresetEditor } from "@app/youtube/ui/components/shared/preset-editor";
+} from "@genesiscz/utils/ui/components/select";
 import { Plus } from "lucide-react";
 import { useState } from "react";
 

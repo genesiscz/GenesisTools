@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { encodedProjectDir } from "@app/utils/claude";
+import { encodedProjectDir } from "@genesiscz/utils/claude";
 
 /** Absolute path to the project-scoped MEMORY.md (creates no directories). */
 export function getMemoryPath(cwd?: string): string {

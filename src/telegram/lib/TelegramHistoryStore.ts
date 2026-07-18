@@ -2,9 +2,9 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { logger } from "@app/utils/logger";
-import { SearchEngine } from "@app/utils/search";
-import { vectorSearch } from "@app/utils/search/drivers/sqlite-fts5/vector";
+import { logger } from "@genesiscz/utils/logger";
+import { SearchEngine } from "@genesiscz/utils/search";
+import { vectorSearch } from "@genesiscz/utils/search/drivers/sqlite-fts5/vector";
 import type { SerializedMessage } from "./TelegramMessage";
 import type {
     AttachmentRow,

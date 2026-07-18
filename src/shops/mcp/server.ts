@@ -1,7 +1,7 @@
 import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { buildRegistry, getAdvertisedTools, getHandler, type ToolEntry } from "@app/shops/mcp/registry";
 import { listResources, readResource } from "@app/shops/mcp/resources";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {

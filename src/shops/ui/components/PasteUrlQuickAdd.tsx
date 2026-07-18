@@ -1,6 +1,6 @@
-import { SafeJSON } from "@app/utils/json";
-import { Button } from "@app/utils/ui/components/button";
-import { Input } from "@app/utils/ui/components/input";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Input } from "@genesiscz/utils/ui/components/input";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { useState } from "react";

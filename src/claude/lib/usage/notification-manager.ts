@@ -1,5 +1,5 @@
-import { dispatchNotification } from "@app/utils/notifications";
-import type { Storage } from "@app/utils/storage/storage";
+import { dispatchNotification } from "@genesiscz/utils/notifications";
+import type { Storage } from "@genesiscz/utils/storage/storage";
 import { BUCKET_LABELS, BUCKET_THRESHOLD_MAP } from "./constants";
 import type { UsageDashboardConfig } from "./dashboard-config";
 import type { ExtraUsageTrackerState } from "./extra-usage-tracker";

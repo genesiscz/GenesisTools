@@ -9,7 +9,7 @@ import {
     unpublishNote,
 } from "@app/dev-dashboard/lib/obsidian/publish";
 import { getDevDashboardStorage, resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 describe("obsidian publish registry", () => {
     let dir = "";

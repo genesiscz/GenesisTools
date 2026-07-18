@@ -3,7 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { migration001 } from "@app/shops/db/migrations/001-initial";
 import { migration002 } from "@app/shops/db/migrations/002-descriptions";
 import { migration003 } from "@app/shops/db/migrations/003-providers";
-import { runMigrations } from "@app/utils/database/migrations";
+import { runMigrations } from "@genesiscz/utils/database/migrations";
 
 describe("migration003-providers", () => {
     it("creates users, user_providers, user_orders, user_order_items + seeds default user", () => {

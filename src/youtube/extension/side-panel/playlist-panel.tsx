@@ -1,11 +1,11 @@
-import { Button } from "@app/utils/ui/components/button";
-import { Markdown } from "@app/utils/ui/components/markdown";
 import type { VideoReport } from "@app/youtube/lib/types";
 import { LlmConfirmDialog } from "@app/youtube/ui/components/shared/llm-confirm-dialog";
 import { errorCodeOf } from "@app/youtube/ui/components/shared/login-required";
 import { useCreateReport, useReport, useReportEstimate } from "@ext/api.hooks";
 import type { ReportMemberMeta } from "@ext/shared/messages";
 import { Header } from "@ext/side-panel/header";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Markdown } from "@genesiscz/utils/ui/components/markdown";
 import { ChevronLeft, FileText, ListVideo, Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 

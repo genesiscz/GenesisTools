@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ShopsDatabase, setShopsDatabaseSingletonForTest } from "@app/shops/db/ShopsDatabase";
 import { authedApiHandler, clearSessionCookie, setSessionCookie } from "@app/shops/ui/server/auth-handler";
-import { nowUtcIso } from "@app/utils/sql-time";
+import { nowUtcIso } from "@genesiscz/utils/sql-time";
 
 function fixture(): ShopsDatabase {
     const dir = mkdtempSync(join(tmpdir(), "shops-auth-h-"));

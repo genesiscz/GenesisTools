@@ -1,6 +1,6 @@
-import { Button } from "@app/utils/ui/components/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
-import { Checkbox } from "@app/utils/ui/components/checkbox";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@genesiscz/utils/ui/components/card";
+import { Checkbox } from "@genesiscz/utils/ui/components/checkbox";
 import { type ReactNode, useState } from "react";
 
 export interface OrderRow {

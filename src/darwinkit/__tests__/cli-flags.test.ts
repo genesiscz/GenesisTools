@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { SafeJSON } from "@app/utils/json";
-import { skip } from "@app/utils/test/skip";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { skip } from "@genesiscz/utils/test/skip";
 import { runDarwinKitRaw } from "./helpers";
 
 describe.skipIf(skip.darwinkit)("darwinkit CLI flags", () => {

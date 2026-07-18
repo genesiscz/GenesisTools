@@ -1,10 +1,10 @@
-import { Badge } from "@app/utils/ui/components/badge";
-import { Button } from "@app/utils/ui/components/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
-import { Input } from "@app/utils/ui/components/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import { useCollections, useCreateCollection, useDeleteCollection, useMe } from "@app/yt/api.hooks";
 import { SignInRequired } from "@app/yt/components/shared/sign-in-required";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@genesiscz/utils/ui/components/card";
+import { Input } from "@genesiscz/utils/ui/components/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@genesiscz/utils/ui/components/select";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Trash2 } from "lucide-react";
 import { useState } from "react";

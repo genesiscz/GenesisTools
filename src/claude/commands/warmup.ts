@@ -1,7 +1,7 @@
 import { sendWarmupMessage } from "@app/claude/lib/warmup/service";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -11,7 +11,7 @@ export function registerWarmupCommand(program: Command): void {
     warmup.argument("[account]", "Warm up a specific account (skip selection)").action(async (accountArg?: string) => {
         p.intro(pc.bgCyan(pc.black(" claude warmup ")));
 
-        const { AIConfig } = await import("@app/utils/ai/AIConfig");
+        const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
         const aiConfig = await AIConfig.load();
         const allAccounts = aiConfig.getAccountsByProvider("anthropic-sub");
         const accountNames = allAccounts.map((a) => a.name);
@@ -102,7 +102,7 @@ export function registerWarmupCommand(program: Command): void {
         .command("all")
         .description("Warm up all configured accounts (non-interactive)")
         .action(async () => {
-            const { AIConfig } = await import("@app/utils/ai/AIConfig");
+            const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
             const aiConfig = await AIConfig.load();
             const accountNames = aiConfig.getAccountsByProvider("anthropic-sub").map((a) => a.name);
 

@@ -1,4 +1,4 @@
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { appendHistory } from "./history";
 import type { Action, ActionResult, ExecutorContext, Finding } from "./types";
 

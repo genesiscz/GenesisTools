@@ -1,4 +1,4 @@
-import { useScrollProgress } from "@app/utils/ui/hooks/useScrollProgress.client";
+import { useScrollProgress } from "@genesiscz/utils/ui/hooks/useScrollProgress.client";
 import type { ReactNode } from "react";
 import { LiveSseIndicator } from "./LiveSseIndicator";
 import { QaSoundWrench } from "./QaSoundWrench";

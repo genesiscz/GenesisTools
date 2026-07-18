@@ -71,7 +71,7 @@ export function projectTimeToLimit(currentPct: number, ratePerMinute: number): n
     return Math.round((100 - currentPct) / ratePerMinute);
 }
 
-import { formatDuration as formatDurationShared } from "@app/utils/format";
+import { formatDuration as formatDurationShared } from "@genesiscz/utils/format";
 
 /** Format minutes as approximate duration: ~1h 30m */
 export function formatDuration(minutes: number): string {

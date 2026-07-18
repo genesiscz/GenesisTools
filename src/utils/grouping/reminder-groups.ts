@@ -1,5 +1,5 @@
-import { formatReminderPriority } from "@app/utils/macos/reminder-priority";
 import type { ReminderInfo } from "@genesiscz/darwinkit";
+import { formatReminderPriority } from "@genesiscz/utils/macos/reminder-priority";
 
 export type ReminderGroupBy = "date" | "date-priority" | "priority" | "bucket";
 

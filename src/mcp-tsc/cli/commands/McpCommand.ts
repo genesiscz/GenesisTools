@@ -2,7 +2,7 @@ import path from "node:path";
 import type { CliArgs } from "@app/mcp-tsc/core/interfaces.js";
 import { McpAdapter } from "@app/mcp-tsc/protocols/McpAdapter.js";
 import { LspServer } from "@app/mcp-tsc/providers/LspServer.js";
-import { logger, out } from "@app/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 
 export class McpCommand {
     async execute(argv: CliArgs): Promise<void> {

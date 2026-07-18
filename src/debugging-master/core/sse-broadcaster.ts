@@ -3,9 +3,9 @@ import type { LogSourceId } from "@app/log-viewer/log-source";
 import { parseSessionKey } from "@app/log-viewer/session-key";
 import { createSourceTailer, sessionKey } from "@app/log-viewer/tail-bridge";
 import { resetTaskUiTailer, stopTaskUiTailer } from "@app/log-viewer/task-ui-lines";
-import { startWakefulInterval, type WakefulInterval } from "@app/utils/async";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { startWakefulInterval, type WakefulInterval } from "@genesiscz/utils/async";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 interface Subscriber {
     id: number;

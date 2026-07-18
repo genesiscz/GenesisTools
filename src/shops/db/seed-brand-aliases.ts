@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { BrandAliasesRepository } from "@app/shops/db/BrandAliasesRepository";
 import { normalizeBrand } from "@app/shops/lib/normalize";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 const log = logger.child({ component: "seed-brand-aliases" });
 

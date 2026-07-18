@@ -1,4 +1,4 @@
-import { formatTokens } from "@app/utils/format";
+import { formatTokens } from "@genesiscz/utils/format";
 import type { ScannedFile } from "./types";
 
 export interface IncludedFile {

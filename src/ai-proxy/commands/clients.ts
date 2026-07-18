@@ -3,8 +3,8 @@ import { validateClients } from "@app/ai-proxy/lib/clients";
 import { loadConfigFresh, saveConfig } from "@app/ai-proxy/lib/config";
 import type { AiProxyClientConfig, AiProxyProviderType } from "@app/ai-proxy/lib/types";
 import { readClientLedger } from "@app/ai-proxy/lib/usage/client-ledger";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
 
 export async function clientsList(): Promise<void> {
     const config = await loadConfigFresh();

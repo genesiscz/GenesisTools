@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { extractSymbols } from "./lib/extract";
 import { packByBudget } from "./lib/pack";
 import { rankFiles } from "./lib/rank";

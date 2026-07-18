@@ -3,8 +3,8 @@ import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { Product } from "@app/shops/db/types";
 import { createMatchExecutor } from "@app/shops/lib/bulk-matcher";
 import { refreshMasterDenorm } from "@app/shops/lib/master-denorm";
-import { logger } from "@app/utils/logger";
-import { removeDiacritics } from "@app/utils/string";
+import { logger } from "@genesiscz/utils/logger";
+import { removeDiacritics } from "@genesiscz/utils/string";
 
 export interface IngestArgs {
     db: ShopsDatabase;

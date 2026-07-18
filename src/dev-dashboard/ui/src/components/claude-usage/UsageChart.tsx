@@ -1,5 +1,5 @@
 import type { BucketSeries } from "@app/dev-dashboard/lib/claude-usage/types";
-import { formatClock } from "@app/utils/format";
+import { formatClock } from "@genesiscz/utils/format";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { formatBucketLabel } from "./bucket-label";
 

@@ -1,7 +1,7 @@
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { parsePositiveInt } from "@app/shops/lib/cli-validators";
 import { runDbPruneHttp } from "@app/shops/lib/db-prune";
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 export function registerDbPruneCommand(program: Command): void {

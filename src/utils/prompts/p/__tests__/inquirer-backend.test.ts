@@ -47,7 +47,7 @@ mock.module("@inquirer/prompts", () => ({
 }));
 
 // Also mock @app/utils/cli for isInteractive
-mock.module("@app/utils/cli", () => ({
+mock.module("@genesiscz/utils/cli", () => ({
     isInteractive: () => true,
     suggestCommand: (cmd: string) => cmd,
 }));

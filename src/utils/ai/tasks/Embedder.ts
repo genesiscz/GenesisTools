@@ -1,4 +1,4 @@
-import { rateLimitAwareDelay, retry } from "@app/utils/async";
+import { rateLimitAwareDelay, retry } from "@genesiscz/utils/async";
 import { AIConfig } from "../AIConfig";
 import { findModel } from "../ModelRegistry";
 import { getProviderForTask } from "../providers";

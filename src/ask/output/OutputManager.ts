@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { copyToClipboard } from "@app/utils/clipboard";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
 import type { OutputConfig, OutputFormat } from "@ask/types";
+import { copyToClipboard } from "@genesiscz/utils/clipboard";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
 import { write } from "bun";
 import pc from "picocolors";
 

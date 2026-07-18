@@ -1,4 +1,4 @@
-import { formatDuration } from "@app/utils/format";
+import { formatDuration } from "@genesiscz/utils/format";
 import type { ExtraUsageBucket } from "./api";
 
 export type { ExtraUsageBucket };

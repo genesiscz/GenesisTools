@@ -1,4 +1,4 @@
-import { NotificationBackend, sendNotification } from "@app/utils/macos/notifications";
+import { NotificationBackend, sendNotification } from "@genesiscz/utils/macos/notifications";
 
 export interface SendOpts {
     title: string;
@@ -12,7 +12,7 @@ export interface SendOpts {
 }
 
 /**
- * Routes through `@app/utils/macos/notifications.sendNotification` with
+ * Routes through `@genesiscz/utils/macos/notifications.sendNotification` with
  * `preferred: NotificationBackend.TerminalNotifier` — bakes the click
  * action into the notification at OS level so clicks fire reliably even
  * after the monitor process exits.

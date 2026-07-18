@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { resolve, sep } from "node:path";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 function genesisToolsRoot(): string {
     return env.tools.getHome() || homedir();

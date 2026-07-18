@@ -1,5 +1,5 @@
-import { COPILOT_STATIC_HEADERS } from "@app/utils/ai/github-copilot/headers";
-import { ApiClient } from "@app/utils/api/ApiClient";
+import { COPILOT_STATIC_HEADERS } from "@genesiscz/utils/ai/github-copilot/headers";
+import { ApiClient } from "@genesiscz/utils/api/ApiClient";
 
 const GITHUB_API_BASE = "https://api.github.com";
 

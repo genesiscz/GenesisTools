@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { routerToResponse } from "@app/dev-dashboard/server/adapters/bun-serve";
 import { Router } from "@app/dev-dashboard/server/router";
 import type { RouteDef, RouteServices } from "@app/dev-dashboard/server/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const services = { collector: { collect: () => Promise.reject(new Error("unused")) } } as unknown as RouteServices;
 

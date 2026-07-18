@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { setupTaskIntegrationHome, withTaskSession } from "./task-integration-env";
 
 const env = setupTaskIntegrationHome();

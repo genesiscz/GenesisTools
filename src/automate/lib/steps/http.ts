@@ -4,7 +4,7 @@ import { loadCredential, resolveCredentialHeaders } from "@app/automate/lib/cred
 import type { StepContext } from "@app/automate/lib/registry";
 import { registerStepCatalog, registerStepHandler } from "@app/automate/lib/registry";
 import type { HttpStepParams, PresetStep, StepResult } from "@app/automate/lib/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { makeResult } from "./helpers";
 
 async function httpHandler(step: PresetStep, ctx: StepContext): Promise<StepResult> {

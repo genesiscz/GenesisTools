@@ -1,7 +1,7 @@
 import { SITEMAP_STRATEGIES, type SitemapStrategy } from "@app/shops/api/sitemap-strategies";
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { walkSitemap } from "@app/shops/lib/sitemap-fetcher";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 const log = logger.child({ component: "sitemap-sync" });
 

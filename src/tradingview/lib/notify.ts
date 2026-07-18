@@ -1,6 +1,6 @@
-import { env as appEnv } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { env as appEnv } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import type { SignalEvent } from "./types";
 
 export interface NotifyOpts {

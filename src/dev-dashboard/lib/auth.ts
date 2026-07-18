@@ -1,7 +1,7 @@
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { makeBasicAuthHeader, parseBasicAuthHeader } from "@app/dev-dashboard/contract/auth-header";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 // The pure base64 Basic-Auth codec moved into the RN-safe contract (plan 02 Task 0);
 // re-exported here so the Agent's existing import paths keep working unchanged.

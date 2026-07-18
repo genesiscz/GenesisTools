@@ -1,6 +1,6 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
-import { printLn } from "@app/utils/cli";
+import { printLn } from "@genesiscz/utils/cli";
 import type { Command } from "commander";
 import { captureRoot, readSetConfig } from "../lib/config";
 import { appendShot, readManifest, uniqueDestName, writeManifest } from "../lib/manifest";

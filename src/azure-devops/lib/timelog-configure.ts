@@ -1,6 +1,6 @@
 import { AZURE_DEVOPS_RESOURCE_ID } from "@app/azure-devops/api";
-import { SafeJSON } from "@app/utils/json";
-import { buildUrl } from "@app/utils/url";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { buildUrl } from "@genesiscz/utils/url";
 import { $ } from "bun";
 
 /**

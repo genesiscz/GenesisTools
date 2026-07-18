@@ -44,7 +44,7 @@ import {
     ShopsWatchRemoveInput,
     ShopsWatchRemoveInputJsonSchema,
 } from "@app/shops/mcp/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export interface HandlerContext {
     shopsDb: ShopsDatabase;

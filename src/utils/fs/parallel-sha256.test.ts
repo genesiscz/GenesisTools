@@ -20,7 +20,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sha256FilesParallel } from "@app/utils/fs/parallel-sha256";
+import { sha256FilesParallel } from "@genesiscz/utils/fs/parallel-sha256";
 
 function canonicalSha256(content: Buffer): string {
     return createHash("sha256").update(content).digest("hex");

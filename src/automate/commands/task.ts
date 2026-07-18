@@ -3,11 +3,11 @@ import { runPreset } from "@app/automate/lib/engine";
 import { computeNextRunAt, parseInterval } from "@app/automate/lib/interval-parser";
 import { createRunLogger } from "@app/automate/lib/run-logger";
 import { listPresets, loadPreset } from "@app/automate/lib/storage";
-import { formatDuration } from "@app/utils/format";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
-import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
+import { formatDuration } from "@genesiscz/utils/format";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
+import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
 

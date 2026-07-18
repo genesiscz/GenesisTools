@@ -14,10 +14,10 @@ import type { AiProxyConfig, ResolvedRoute, ThinkingPresentationMode } from "@ap
 import { scheduleBillingSync } from "@app/ai-proxy/lib/usage/billing-sync";
 import { checkClientQuota } from "@app/ai-proxy/lib/usage/client-ledger";
 import { scheduleUsageTracking } from "@app/ai-proxy/lib/usage/track-response";
-import { CopilotAuthExpiredError } from "@app/utils/ai/github-copilot";
-import { GrokAuthExpiredError } from "@app/utils/ai/grok";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { CopilotAuthExpiredError } from "@genesiscz/utils/ai/github-copilot";
+import { GrokAuthExpiredError } from "@genesiscz/utils/ai/grok";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 

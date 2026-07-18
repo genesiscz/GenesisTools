@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 export function resolveGrokHome(): string {
     return env.grok.getHome() ?? join(homedir(), ".grok");

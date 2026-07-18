@@ -1,5 +1,3 @@
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
 import { requireUser } from "@app/youtube/lib/server/auth";
 import { safeJsonBody } from "@app/youtube/lib/server/body";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
@@ -7,6 +5,8 @@ import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
 import { createShare, listShares, revokeShare, ShareAccessError } from "@app/youtube/lib/shares";
 import type { Youtube } from "@app/youtube/lib/youtube";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 export async function handleSharesRoute(req: Request, url: URL, yt: Youtube): Promise<Response> {
     try {

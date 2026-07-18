@@ -3,7 +3,7 @@ import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { filterEntries } from "@app/har-analyzer/core/query-engine";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { EntryFilter, HarFile, IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 type SearchScope = "url" | "body" | "header" | "all";

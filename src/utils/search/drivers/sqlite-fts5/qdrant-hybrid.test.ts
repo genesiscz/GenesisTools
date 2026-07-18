@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { join } from "node:path";
-import type { Embedder } from "@app/utils/ai/tasks/Embedder";
-import { removeRecursive } from "@app/utils/fs";
-import { makeTempDir } from "@app/utils/paths";
+import type { Embedder } from "@genesiscz/utils/ai/tasks/Embedder";
+import { removeRecursive } from "@genesiscz/utils/fs";
+import { makeTempDir } from "@genesiscz/utils/paths";
 import { SearchEngine } from "./index";
 
 describe("SearchEngine with QdrantVectorStore hybrid path", () => {

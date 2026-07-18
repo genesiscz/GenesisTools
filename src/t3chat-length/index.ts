@@ -2,8 +2,8 @@
  * This tool is internal and probably not useful to you.
  */
 
-import { asResult } from "@app/utils/cli/result";
-import { writeStdout } from "@app/utils/cli/stdout";
+import { asResult } from "@genesiscz/utils/cli/result";
+import { writeStdout } from "@genesiscz/utils/cli/stdout";
 
 interface Message {
     content: string;

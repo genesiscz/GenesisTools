@@ -1,7 +1,7 @@
 import { suggestObsidianFilename } from "@app/dev-dashboard/lib/qa-clipboard";
 import type { QaRow } from "@app/dev-dashboard/lib/qa-types";
-import { SafeJSON } from "@app/utils/json";
-import { buildObsidianNoteRelativePath } from "@app/utils/obsidian/filename";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { buildObsidianNoteRelativePath } from "@genesiscz/utils/obsidian/filename";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
 import { Checkbox } from "@ui/components/checkbox";

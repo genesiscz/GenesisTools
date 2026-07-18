@@ -15,7 +15,7 @@ import { ReasClient } from "@app/Internal/commands/reas/api/ReasClient";
 import { SrealityClient } from "@app/Internal/commands/reas/api/SrealityClient";
 import { getDistrict } from "@app/Internal/commands/reas/data/districts";
 import type { AnalysisFilters, DateRange } from "@app/Internal/commands/reas/types";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 const SKIP = !env.test.shouldRunE2E();
 

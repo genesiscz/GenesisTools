@@ -1,6 +1,6 @@
-import { Executor, runTool } from "@app/utils/cli";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
+import { Executor, runTool } from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { Command } from "commander";
 
 function showHelp() {

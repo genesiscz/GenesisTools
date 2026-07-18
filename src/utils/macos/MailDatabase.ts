@@ -1,9 +1,9 @@
 import type { Database } from "bun:sqlite";
-import { buildOrderedLikePattern, escapeLike } from "@app/utils/database";
-import { attachReadonly, detachQuietly } from "@app/utils/database/attach";
-import { logger } from "@app/utils/logger";
-import { ENVELOPE_INDEX_PATH } from "@app/utils/macos/mail/constants";
-import type { MailDB } from "@app/utils/macos/mail/db-types";
+import { buildOrderedLikePattern, escapeLike } from "@genesiscz/utils/database";
+import { attachReadonly, detachQuietly } from "@genesiscz/utils/database/attach";
+import { logger } from "@genesiscz/utils/logger";
+import { ENVELOPE_INDEX_PATH } from "@genesiscz/utils/macos/mail/constants";
+import type { MailDB } from "@genesiscz/utils/macos/mail/db-types";
 import type {
     AccountInfo,
     MailAttachment,
@@ -11,7 +11,7 @@ import type {
     MailRecipient,
     ReceiverInfo,
     SearchOptions,
-} from "@app/utils/macos/mail/types";
+} from "@genesiscz/utils/macos/mail/types";
 import { type Expression, type SqlBool, sql } from "kysely";
 import { MacDatabase } from "./MacDatabase";
 import { type MailFilterOptions, resolveMailboxRowids, SQL_BIND_BATCH } from "./mail-sql";

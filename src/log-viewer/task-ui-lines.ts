@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { FileTailer } from "@app/debugging-master/core/file-tailer";
 import { uiJsonlPath } from "@app/task/lib/paths";
-import type { JsonlUiLineRecord } from "@app/utils/log-session/types";
-import { readUiLineMap } from "@app/utils/log-session/ui-jsonl";
+import type { JsonlUiLineRecord } from "@genesiscz/utils/log-session/types";
+import { readUiLineMap } from "@genesiscz/utils/log-session/ui-jsonl";
 import { sessionKey } from "./session-key";
 
 const uiLineMaps = new Map<string, Map<number, string>>();

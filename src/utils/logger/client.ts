@@ -16,7 +16,7 @@
  * throws a clear error. Spinners are no-ops. result()/print() write to
  * console.log (DevTools console = stdout equivalent in browsers).
  */
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 // ─── Types (mirrored from @app/logger, without pino) ──────────────────────────
 
@@ -101,7 +101,7 @@ export interface LoggerFacade {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function promptUnavailable(): never {
-    throw new Error("@app/utils/logger/client: prompts are not available in browser contexts");
+    throw new Error("@genesiscz/utils/logger/client: prompts are not available in browser contexts");
 }
 
 function noopSpinner() {

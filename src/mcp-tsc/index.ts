@@ -7,9 +7,9 @@ import { KillServerCommand } from "@app/mcp-tsc/cli/commands/KillServerCommand.j
 import { McpCommand } from "@app/mcp-tsc/cli/commands/McpCommand.js";
 import type { TSServer } from "@app/mcp-tsc/core/interfaces.js";
 import { getPersistentServer } from "@app/mcp-tsc/utils/ServerManager.js";
-import { env } from "@app/utils/env";
-import { logger, out } from "@app/utils/logger";
-import { handleReadmeFlag } from "@app/utils/readme";
+import { env } from "@genesiscz/utils/env";
+import { logger, out } from "@genesiscz/utils/logger";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);

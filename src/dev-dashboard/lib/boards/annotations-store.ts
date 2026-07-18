@@ -1,5 +1,5 @@
-import type { DatabaseClient } from "@app/utils/database/client";
-import { SafeJSON } from "@app/utils/json";
+import type { DatabaseClient } from "@genesiscz/utils/database/client";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { Kysely, Selectable } from "kysely";
 import type { BoardCardsTable, BoardsDb } from "./db-types";
 import { NotFoundError } from "./sets-store";

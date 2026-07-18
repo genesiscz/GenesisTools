@@ -1,7 +1,7 @@
 import { type Dirent, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { createGit } from "@app/utils/git";
-import { logger } from "@app/utils/logger";
+import { createGit } from "@genesiscz/utils/git";
+import { logger } from "@genesiscz/utils/logger";
 import { parseImports } from "./imports";
 import { roar } from "./roar";
 import { scariness } from "./score";

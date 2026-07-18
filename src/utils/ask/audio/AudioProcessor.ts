@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
-import { convertAudioFormat as convertAudioFormatUtil } from "@app/utils/audio/converter";
-import { getAudioInfo, validateAudioFile } from "@app/utils/audio/probe";
-import { CHUNK_SIZE, splitAudioBySize, splitAudioFile } from "@app/utils/audio/split";
-import { logger } from "@app/utils/logger";
+import { convertAudioFormat as convertAudioFormatUtil } from "@genesiscz/utils/audio/converter";
+import { getAudioInfo, validateAudioFile } from "@genesiscz/utils/audio/probe";
+import { CHUNK_SIZE, splitAudioBySize, splitAudioFile } from "@genesiscz/utils/audio/split";
+import { logger } from "@genesiscz/utils/logger";
 import { spawn } from "bun";
 
 export type FFProbeResult = {

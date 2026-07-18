@@ -1,6 +1,6 @@
-import { formatBytes } from "@app/utils/format";
-import { escapeShellArg } from "@app/utils/string";
-import { formatTable } from "@app/utils/table";
+import { formatBytes } from "@genesiscz/utils/format";
+import { escapeShellArg } from "@genesiscz/utils/string";
+import { formatTable } from "@genesiscz/utils/table";
 import pc from "picocolors";
 import {
     CLONES_GLOSSARY,

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import type { DispatchResult, NotificationChannel, NotificationPayload } from "@app/shops/lib/channels/types";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 const log = logger.child({ component: "MacOsChannel" });
 

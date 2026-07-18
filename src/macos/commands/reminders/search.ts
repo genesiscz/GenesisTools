@@ -1,5 +1,5 @@
-import { out } from "@app/utils/logger";
-import { MacReminders } from "@app/utils/macos/apple-reminders";
+import { out } from "@genesiscz/utils/logger";
+import { MacReminders } from "@genesiscz/utils/macos/apple-reminders";
 import type { Command } from "commander";
 import { formatRemindersTable } from "./format";
 

@@ -7,7 +7,7 @@ import {
 import { InvalidInputError, SlugConflictError } from "@app/dev-dashboard/lib/boards/boards-store";
 import { NameConflictError, NotFoundError } from "@app/dev-dashboard/lib/boards/sets-store";
 import type { RouteResult } from "@app/dev-dashboard/server/types";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { errorResult } from "./error";
 
 /** Every boards route funnels its catch through here — the one place that sees ALL failures. */

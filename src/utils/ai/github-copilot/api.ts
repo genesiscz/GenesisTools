@@ -1,11 +1,15 @@
-import { CopilotAuthExpiredError, isAuthHttpStatus } from "@app/utils/ai/github-copilot/auth-errors";
-import { buildCopilotRequestHeaders, COPILOT_STATIC_HEADERS } from "@app/utils/ai/github-copilot/headers";
-import { copilotDataDir } from "@app/utils/ai/github-copilot/paths";
-import { clearSessionCache, getCopilotSession, resolveGithubCopilotGhoToken } from "@app/utils/ai/github-copilot/token";
-import type { CopilotSessionCache } from "@app/utils/ai/github-copilot/types";
-import { ApiClient, ApiClientError, resolveUrl } from "@app/utils/api/ApiClient";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { CopilotAuthExpiredError, isAuthHttpStatus } from "@genesiscz/utils/ai/github-copilot/auth-errors";
+import { buildCopilotRequestHeaders, COPILOT_STATIC_HEADERS } from "@genesiscz/utils/ai/github-copilot/headers";
+import { copilotDataDir } from "@genesiscz/utils/ai/github-copilot/paths";
+import {
+    clearSessionCache,
+    getCopilotSession,
+    resolveGithubCopilotGhoToken,
+} from "@genesiscz/utils/ai/github-copilot/token";
+import type { CopilotSessionCache } from "@genesiscz/utils/ai/github-copilot/types";
+import { ApiClient, ApiClientError, resolveUrl } from "@genesiscz/utils/api/ApiClient";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 export interface GithubCopilotApiOptions {
     dataDir?: string;

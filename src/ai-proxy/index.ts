@@ -15,7 +15,7 @@ import { runUpCommand } from "@app/ai-proxy/commands/up";
 import { runUsageCommand } from "@app/ai-proxy/commands/usage";
 import { isValidThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import type { AiProxyProviderType, CursorTranslationMode, ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
-import { runTool } from "@app/utils/cli";
+import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
 
 const program = new Command()

@@ -7,8 +7,8 @@ import {
     installLaunchd,
     uninstallLaunchd,
 } from "@app/automate/lib/launchd";
-import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 

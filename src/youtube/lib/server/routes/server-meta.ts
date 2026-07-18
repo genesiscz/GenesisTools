@@ -1,7 +1,7 @@
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { buildOpenApiDocument } from "@app/youtube/lib/server/openapi";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export interface MetaRouteOptions {
     startedAt: number;

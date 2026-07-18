@@ -1,8 +1,8 @@
 import { resolve } from "node:path";
 import { runGetProduct } from "@app/shops/lib/get-product";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { formatTable } from "@app/utils/table";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { formatTable } from "@genesiscz/utils/table";
 import clipboardy from "clipboardy";
 import type { Command } from "commander";
 

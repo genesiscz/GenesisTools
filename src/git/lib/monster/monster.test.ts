@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { env as appEnv } from "@app/utils/env";
+import { env as appEnv } from "@genesiscz/utils/env";
 import { analyze } from "./analyze";
 import { parseImports } from "./imports";
 import { render, renderHealth } from "./render";

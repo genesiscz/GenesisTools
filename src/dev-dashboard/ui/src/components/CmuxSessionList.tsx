@@ -1,5 +1,5 @@
 import type { CmuxSnapshot } from "@app/dev-dashboard/lib/cmux/types";
-import { formatClock } from "@app/utils/format";
+import { formatClock } from "@genesiscz/utils/format";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
@@ -12,7 +12,7 @@ import {
     flattenMosaicLeaves,
     pruneMosaicLeaves,
     reconcileMosaicLayout,
-} from "@app/utils/ui/helpers/mosaic-layout";
+} from "@genesiscz/utils/ui/helpers/mosaic-layout";
 import { CmuxSendTargetDialog } from "@/components/CmuxSendTargetDialog";
 import { SemanticTerminalPreview } from "@/components/SemanticTerminalPreview";
 import { TmuxSessionsPanel } from "@/components/TmuxSessionsPanel";

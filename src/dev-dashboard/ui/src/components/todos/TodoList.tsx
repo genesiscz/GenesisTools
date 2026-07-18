@@ -1,13 +1,13 @@
 import type { TodoGroupBy, TodoStatusFilter } from "@app/dev-dashboard/lib/todos/types";
-import { groupReminders } from "@app/utils/grouping/reminder-groups";
+import type { ReminderInfo } from "@genesiscz/darwinkit";
+import { groupReminders } from "@genesiscz/utils/grouping/reminder-groups";
 import {
     formatReminderDue,
     isReminderOverdue,
     notesPreview,
     priorityLabel,
     reminderDetailFields,
-} from "@app/utils/macos/reminder-display";
-import type { ReminderInfo } from "@genesiscz/darwinkit";
+} from "@genesiscz/utils/macos/reminder-display";
 import { IconButton } from "@ui/components/icon-button";
 import { useState } from "react";
 

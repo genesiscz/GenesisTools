@@ -1,7 +1,7 @@
 import { paths } from "@app/dev-dashboard/contract/endpoints";
 import type { LiveChannel, LiveFrame } from "@app/dev-dashboard/lib/live/types";
 import type { PortInfo, PortsResult } from "@app/dev-dashboard/lib/ports/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 

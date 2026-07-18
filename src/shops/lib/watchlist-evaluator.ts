@@ -4,7 +4,7 @@ import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { NotificationPayload } from "@app/shops/lib/channels/types";
 import type { NotificationDispatcher } from "@app/shops/lib/notification-dispatcher";
 import { assertSchemaCompatible } from "@app/shops/lib/schema-preflight";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 const log = logger.child({ component: "WatchlistEvaluator" });
 

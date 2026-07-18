@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { skip } from "@app/utils/test/skip";
+import { skip } from "@genesiscz/utils/test/skip";
 import { runDarwinKit, runDarwinKitRaw } from "./helpers";
 
 describe.skipIf(skip.darwinkit)("darwinkit iCloud commands", () => {

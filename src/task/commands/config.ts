@@ -1,6 +1,6 @@
 import { loadTaskToolConfig, saveTaskToolConfig } from "@app/task/lib/config";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 export function registerConfigCommand(program: Command): void {

@@ -5,8 +5,8 @@
 import { existsSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { Api } from "@app/azure-devops/api";
-import { concurrentMap } from "@app/utils/async";
-import { logger } from "@app/utils/logger";
+import { concurrentMap } from "@genesiscz/utils/async";
+import { logger } from "@genesiscz/utils/logger";
 
 /** Parsed inline image reference from HTML */
 export interface InlineImageRef {

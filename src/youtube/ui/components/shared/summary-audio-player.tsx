@@ -1,6 +1,6 @@
-import { logger } from "@app/utils/logger/client";
-import { Button } from "@app/utils/ui/components/button";
 import { formatTimecode } from "@app/youtube/ui/components/shared/time";
+import { logger } from "@genesiscz/utils/logger/client";
+import { Button } from "@genesiscz/utils/ui/components/button";
 import { Loader2, Pause, Play } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 

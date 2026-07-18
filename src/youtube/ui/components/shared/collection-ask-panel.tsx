@@ -1,7 +1,7 @@
-import { Button } from "@app/utils/ui/components/button";
-import { Card, CardContent } from "@app/utils/ui/components/card";
-import { Input } from "@app/utils/ui/components/input";
 import type { AskMessageRecord } from "@app/youtube/lib/types";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Card, CardContent } from "@genesiscz/utils/ui/components/card";
+import { Input } from "@genesiscz/utils/ui/components/input";
 import { useState } from "react";
 
 export interface CollectionAskPanelProps {

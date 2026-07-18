@@ -7,8 +7,8 @@ import {
     PaginationItem,
     PaginationNext,
     PaginationPrevious,
-} from "@app/utils/ui/components/pagination";
-import { Skeleton } from "@app/utils/ui/components/skeleton";
+} from "@genesiscz/utils/ui/components/pagination";
+import { Skeleton } from "@genesiscz/utils/ui/components/skeleton";
 import { LayoutGrid } from "lucide-react";
 
 interface BrowseGridProps {

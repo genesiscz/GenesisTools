@@ -1,4 +1,4 @@
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 import { resolveSession } from "../lib/auth";
 import { fetchStandardList } from "../lib/indicator-aliases";

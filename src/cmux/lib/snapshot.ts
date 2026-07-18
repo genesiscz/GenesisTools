@@ -1,8 +1,8 @@
 import { captureSurfaceState, cwdFromTitle } from "@app/cmux/lib/shell-probe";
 import type { Pane, Profile, ProfileScope, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
-import { runCmux, runCmuxJSON } from "@app/utils/cmux/lib/cli";
-import { withFocusedWorkspace } from "@app/utils/cmux/lib/focus-guard";
+import { runCmux, runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
+import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
 import {
     browserUrl,
     paneList,
@@ -10,8 +10,8 @@ import {
     type WorkspaceEntry,
     windowList,
     workspaceList,
-} from "@app/utils/cmux/lib/socket";
-import { logger } from "@app/utils/logger";
+} from "@genesiscz/utils/cmux/lib/socket";
+import { logger } from "@genesiscz/utils/logger";
 
 interface SurfaceListEntry {
     ref: string;

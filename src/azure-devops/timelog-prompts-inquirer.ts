@@ -4,8 +4,8 @@
 
 import { convertToMinutes, formatMinutes, getTodayDate, TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
-import { out } from "@app/utils/logger";
-import * as p from "@app/utils/prompts/p";
+import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 
 export async function runInteractiveAddInquirer(
     config: AzureConfigWithTimeLog,

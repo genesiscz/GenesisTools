@@ -1,11 +1,11 @@
 import { readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import type { MCPProviderName, PerProjectEnabledState, ProviderEnabledState } from "@app/mcp-manager/utils/types.js";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { DiffUtil } from "@app/utils/diff";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import * as p from "@app/utils/prompts/p";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { DiffUtil } from "@genesiscz/utils/diff";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import chalk from "chalk";
 
 export interface SyncFromOptions {

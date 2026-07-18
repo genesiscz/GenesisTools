@@ -1,6 +1,6 @@
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { refreshMasterDenorm } from "@app/shops/lib/master-denorm";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 const log = logger.child({
     component: "MasterMerger",

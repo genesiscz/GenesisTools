@@ -13,7 +13,7 @@ import {
     type SavedPropertyRow,
 } from "@app/Internal/commands/reas/lib/store";
 import type { FullAnalysis } from "@app/Internal/commands/reas/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export interface PropertyDetail {
     property: SavedPropertyRow;

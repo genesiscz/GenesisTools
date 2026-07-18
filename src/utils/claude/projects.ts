@@ -8,7 +8,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, resolve, sep } from "node:path";
-import { getMainRepoRootSync } from "@app/utils/git/worktree";
+import { getMainRepoRootSync } from "@genesiscz/utils/git/worktree";
 
 export const CLAUDE_DIR = resolve(homedir(), ".claude");
 export const PROJECTS_DIR = resolve(CLAUDE_DIR, "projects");

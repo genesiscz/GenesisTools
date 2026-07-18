@@ -1,6 +1,6 @@
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { authedApiHandler, jsonBody } from "@app/shops/ui/server/api-utils";
-import { nowUtcIso } from "@app/utils/sql-time";
+import { nowUtcIso } from "@genesiscz/utils/sql-time";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/api/match/my-unmatched/attach")({

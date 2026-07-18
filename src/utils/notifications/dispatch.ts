@@ -1,4 +1,4 @@
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { dispatchSystem } from "./channels/system";
 import { dispatchTelegram } from "./channels/telegram";
 import { dispatchWebhook } from "./channels/webhook";

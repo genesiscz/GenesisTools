@@ -1,4 +1,4 @@
-import type { EnvKey } from "@app/utils/env/env-core";
+import type { EnvKey } from "@genesiscz/utils/env/env-core";
 
 export type EnvSnapshot = Record<EnvKey, string | undefined>;
 

@@ -1,4 +1,4 @@
-import { setupStorageSandbox } from "@app/utils/storage/test-sandbox";
+import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 
 setupStorageSandbox();
 

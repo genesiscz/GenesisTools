@@ -1,6 +1,6 @@
-import { renderFullScreen } from "@app/utils/ink";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
+import { renderFullScreen } from "@genesiscz/utils/ink";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { App } from "./app";
 
@@ -38,7 +38,7 @@ export function registerUsageCommand(program: Command): void {
 
                 // Validate account filter against AIConfig
                 if (accountFilter) {
-                    const { AIConfig } = await import("@app/utils/ai/AIConfig");
+                    const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
                     const aiConfig = await AIConfig.load();
                     const exists = aiConfig
                         .getAccountsByProvider("anthropic-sub")

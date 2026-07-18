@@ -4,8 +4,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildMeasureReport, expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
-import { SafeJSON } from "@app/utils/json";
-import { skip } from "@app/utils/test/skip";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { skip } from "@genesiscz/utils/test/skip";
 
 describe("resolveRoots", () => {
     it("explicit roots win; absolute-resolved; falls back to cwd", () => {

@@ -1,10 +1,10 @@
+import type { ReminderListInfo } from "@genesiscz/darwinkit";
 import {
     MacReminders,
     ReminderPriority,
     type RemindersAuthResult,
     RemindersPermissionError,
-} from "@app/utils/macos/apple-reminders";
-import type { ReminderListInfo } from "@genesiscz/darwinkit";
+} from "@genesiscz/utils/macos/apple-reminders";
 import type { TodoPriority, TodosResult } from "./types";
 
 export { RemindersPermissionError };

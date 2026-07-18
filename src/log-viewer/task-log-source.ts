@@ -2,9 +2,9 @@ import type { IndexedLogEntry, LogEntry } from "@app/debugging-master/types";
 import { resolveTaskSessionListingMeta } from "@app/log-viewer/task-session-listing-meta";
 import { jsonlPath, metaPath, uiJsonlPath } from "@app/task/lib/paths";
 import { TaskSessionStore } from "@app/task/lib/session-store";
-import { countJsonlLineRecords } from "@app/utils/log-session/count-line-records";
-import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
-import { readUiLineMap } from "@app/utils/log-session/ui-jsonl";
+import { countJsonlLineRecords } from "@genesiscz/utils/log-session/count-line-records";
+import { filterLineRecords, readJsonlFile } from "@genesiscz/utils/log-session/jsonl-reader";
+import { readUiLineMap } from "@genesiscz/utils/log-session/ui-jsonl";
 import type { LogSource, LogSourceSession } from "./log-source";
 import { taskRecordToLogEntry } from "./log-source";
 

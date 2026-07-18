@@ -1,8 +1,8 @@
 // biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ or /Users/ string literals — production plugins do not apply to test code
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
-import { skip } from "@app/utils/test/skip";
+import { env } from "@genesiscz/utils/env";
+import { skip } from "@genesiscz/utils/test/skip";
 
 // We need to test with platform overrides, so we import the module fresh per test group.
 // For Windows tests, we mock process.platform before importing.

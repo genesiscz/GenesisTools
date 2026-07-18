@@ -1,4 +1,4 @@
-import { formatPathForDisplay, resolveDirPathDisplayPrefix } from "@app/utils/paths.client";
+import { formatPathForDisplay, resolveDirPathDisplayPrefix } from "@genesiscz/utils/paths.client";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@ui/components/tooltip";
 import { createContext, type ReactElement, type ReactNode, useContext, useMemo } from "react";
 

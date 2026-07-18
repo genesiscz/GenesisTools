@@ -4,12 +4,12 @@ import { ensureDashboardBuilt } from "@app/debugging-master/commands/dashboard";
 import { startServer } from "@app/debugging-master/core/http-server";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import type { ProjectConfig } from "@app/debugging-master/types";
-import { suggestCommand } from "@app/utils/cli/executor";
-import { formatRelativeTime } from "@app/utils/format";
-import { out } from "@app/utils/logger";
-import { getLocalIpv4 } from "@app/utils/network";
-import { renderQr } from "@app/utils/qr";
 import * as p from "@clack/prompts";
+import { suggestCommand } from "@genesiscz/utils/cli/executor";
+import { formatRelativeTime } from "@genesiscz/utils/format";
+import { out } from "@genesiscz/utils/logger";
+import { getLocalIpv4 } from "@genesiscz/utils/network";
+import { renderQr } from "@genesiscz/utils/qr";
 import type { Command } from "commander";
 import pc from "picocolors";
 

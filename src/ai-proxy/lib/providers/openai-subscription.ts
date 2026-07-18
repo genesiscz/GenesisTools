@@ -5,11 +5,11 @@ import { resolveOpenAiSubToken } from "@app/ai-proxy/lib/providers/openai-sub-to
 import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { responsesToChat } from "@app/ai-proxy/lib/translators/responses-to-chat";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
-import { WHAM_BASE_URL } from "@app/utils/ai/openai/codex-auth";
-import { fetchWhamModels, resolveOpenAiSubModel } from "@app/utils/ai/openai/sub-models";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { isObject } from "@app/utils/object";
+import { WHAM_BASE_URL } from "@genesiscz/utils/ai/openai/codex-auth";
+import { fetchWhamModels, resolveOpenAiSubModel } from "@genesiscz/utils/ai/openai/sub-models";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 
 const WHAM_RESPONSES_URL = `${WHAM_BASE_URL}/responses`;
 

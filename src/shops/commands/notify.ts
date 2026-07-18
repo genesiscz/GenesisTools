@@ -5,9 +5,9 @@ import {
     getRecentNotifications,
     type RecentNotificationsArgs,
 } from "@app/shops/lib/watchlist-api";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
-import { formatTable } from "@app/utils/table";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
+import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 
 // CLI runs as the seeded local user (migration 003 inserts user id=1).

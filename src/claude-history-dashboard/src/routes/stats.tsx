@@ -1,4 +1,4 @@
-import { logger } from "@app/utils/logger/client";
+import { logger } from "@genesiscz/utils/logger/client";
 import { Await, createFileRoute, defer, Link } from "@tanstack/react-router";
 import {
 	Activity,

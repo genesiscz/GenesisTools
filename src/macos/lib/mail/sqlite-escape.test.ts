@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ATTACHMENT_JOIN, MESSAGE_SELECT } from "@app/utils/macos/mail-sql";
+import { ATTACHMENT_JOIN, MESSAGE_SELECT } from "@genesiscz/utils/macos/mail-sql";
 
 /**
  * Regression guard for the ESCAPE-clause bug.

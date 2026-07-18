@@ -22,6 +22,8 @@
 		"paths": {
 			"@/*": ["./*"],
 			"@app/*": ["../../*"],
+			"@genesiscz/utils": ["../../utils/index.ts"],
+			"@genesiscz/utils/*": ["../../utils/*"],
 			"@ui/*": ["../../utils/ui/*"],
 			"@ui": ["../../utils/ui/index.ts"]
 		}

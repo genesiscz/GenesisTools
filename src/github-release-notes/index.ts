@@ -1,9 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { runTool } from "@app/utils/cli";
-import { env } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
-import { handleReadmeFlag } from "@app/utils/readme";
+import { runTool } from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import axios from "axios";
 import { Command } from "commander";
 

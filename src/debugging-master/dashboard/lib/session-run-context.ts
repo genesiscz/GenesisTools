@@ -1,5 +1,5 @@
 import type { DashboardSession } from "@app/log-viewer/log-source";
-import { collapsePathForDisplay, toPosixPath } from "@app/utils/paths.client";
+import { collapsePathForDisplay, toPosixPath } from "@genesiscz/utils/paths.client";
 
 export interface SessionHeaderParts {
     badge: string;

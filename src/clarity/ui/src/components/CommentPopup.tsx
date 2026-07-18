@@ -1,5 +1,5 @@
 import { buildWeekComment } from "@app/clarity/lib/comment-builder";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { useMutation } from "@tanstack/react-query";
 import { Alert, AlertDescription } from "@ui/components/alert";
 import { Badge } from "@ui/components/badge";

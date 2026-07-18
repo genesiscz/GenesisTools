@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
-import { debounce } from "@app/utils/async";
-import { logger } from "@app/utils/logger";
+import { debounce } from "@genesiscz/utils/async";
+import { logger } from "@genesiscz/utils/logger";
 import chokidar from "chokidar";
 
 export interface PreviewServerWatchGlobsOptions {

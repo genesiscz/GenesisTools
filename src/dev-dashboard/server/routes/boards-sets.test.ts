@@ -5,7 +5,7 @@ import { subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
 import { getSet } from "@app/dev-dashboard/lib/boards/sets-store";
 import { tarGz } from "@app/dev-dashboard/lib/boards/tar";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { setupBoardsTestEnv } from "./boards-route-test-utils";
 import { boardsSetsRoutes } from "./boards-sets";
 

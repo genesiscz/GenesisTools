@@ -1,5 +1,5 @@
-import { SafeJSON } from "@app/utils/json";
-import { removeDiacritics } from "@app/utils/string";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { removeDiacritics } from "@genesiscz/utils/string";
 
 export type Unit = "g" | "kg" | "ml" | "l" | "ks" | "m" | "m2";
 

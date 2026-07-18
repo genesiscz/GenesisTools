@@ -3,7 +3,7 @@ import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { User } from "@app/shops/db/types";
 import { UsersRepository } from "@app/shops/db/UsersRepository";
 import { apiHandler, jsonBody, setSessionCookie } from "@app/shops/ui/server/api-utils";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/api/auth/register")({

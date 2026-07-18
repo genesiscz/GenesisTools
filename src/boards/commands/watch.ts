@@ -1,11 +1,11 @@
 import { hostname } from "node:os";
 import type { ListenerDto, WaitResultDto } from "@app/dev-dashboard/contract/dto";
 import { paths, type WorkListRes } from "@app/dev-dashboard/contract/endpoints";
-import { printLn } from "@app/utils/cli";
-import { writeStderr } from "@app/utils/cli/stderr";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { wakefulSleep } from "@app/utils/wakeful";
+import { printLn } from "@genesiscz/utils/cli";
+import { writeStderr } from "@genesiscz/utils/cli/stderr";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { wakefulSleep } from "@genesiscz/utils/wakeful";
 import type { Command } from "commander";
 import { computeAnnouncements, type SeenMap } from "../lib/announce";
 import { getJson, postJson, rawRequest, resolveBaseUrl } from "../lib/client";

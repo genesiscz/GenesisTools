@@ -1,5 +1,5 @@
 import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import type { AxiosInstance } from "axios";
 import { slugifyJobPath } from "./format";
 import { getJenkinsMcpStorage } from "./storage";

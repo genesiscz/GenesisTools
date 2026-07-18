@@ -5,9 +5,9 @@ import { RefStoreManager } from "@app/har-analyzer/core/ref-store";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { HarEntry, HarHeader, OutputOptions } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
-import { formatBytes, formatDuration } from "@app/utils/format";
-import { parseJSON } from "@app/utils/json";
-import { formatSchema } from "@app/utils/json-schema";
+import { formatBytes, formatDuration } from "@genesiscz/utils/format";
+import { parseJSON } from "@genesiscz/utils/json";
+import { formatSchema } from "@genesiscz/utils/json-schema";
 import type { Command } from "commander";
 
 function formatHeaders(headers: HarHeader[]): string {
@@ -61,7 +61,7 @@ export function registerShowCommand(program: Command): void {
 }
 
 import type { OutputFormat } from "@app/har-analyzer/types";
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 
 async function showDetail(entry: HarEntry, fullUrl: string, format: OutputFormat): Promise<void> {
     const lines: string[] = [];

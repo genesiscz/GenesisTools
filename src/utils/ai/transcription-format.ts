@@ -1,4 +1,4 @@
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { normalizeSpeakerLabel } from "./transcription/speaker-label";
 import type { TranscriptionResult, TranscriptionSegment } from "./types";
 

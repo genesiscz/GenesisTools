@@ -1,8 +1,8 @@
 import { readHistorySince } from "@app/doctor/lib/history";
 import { formatBytes } from "@app/doctor/lib/size";
-import { formatLocalDate, formatLocalDateTimeStamp } from "@app/utils/date";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
+import { formatLocalDate, formatLocalDateTimeStamp } from "@genesiscz/utils/date";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 
 export interface LogOpts {

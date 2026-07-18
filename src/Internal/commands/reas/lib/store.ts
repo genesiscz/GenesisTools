@@ -2,8 +2,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { getListingPersistenceDistrict } from "@app/Internal/commands/reas/lib/district-matching";
 import type { FullAnalysis } from "@app/Internal/commands/reas/types";
-import { BaseDatabase } from "@app/utils/database";
-import { SafeJSON } from "@app/utils/json";
+import { BaseDatabase } from "@genesiscz/utils/database";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const DEFAULT_DB_PATH = join(homedir(), ".genesis-tools", "internal", "reas", "reas.sqlite");
 

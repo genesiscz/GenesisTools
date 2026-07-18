@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import type { AliasConfig } from "./types";
 
 const SPECIFIER_RE =

@@ -1,5 +1,5 @@
 import type { AnalysisFilters, CacheEntry, SaleListing, SrealityRental } from "@app/Internal/commands/reas/types";
-import type { ApiClient } from "@app/utils/api/ApiClient";
+import type { ApiClient } from "@genesiscz/utils/api/ApiClient";
 import { SOURCE_CONTRACTS } from "./source-contracts";
 
 export const SREALITY_V2_SOURCE_CONTRACT = SOURCE_CONTRACTS.SREALITY_V2;

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { setupStorageSandbox } from "@app/utils/storage/test-sandbox";
+import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { setMockResponses, setupInquirerMock } from "./inquirer-mock.js";
 
 // Setup @inquirer/prompts mock BEFORE importing command modules
@@ -10,7 +10,7 @@ setupStorageSandbox();
 const { syncServers } = await import("../sync.js");
 
 import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { createMockUnifiedConfig, MockMCPProvider } from "./test-utils.js";
 
 describe("syncServers", () => {

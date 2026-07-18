@@ -6,7 +6,7 @@ import { resetBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { resetEventHub } from "@app/dev-dashboard/lib/boards/events";
 import { __resetLayoutDebounce } from "@app/dev-dashboard/lib/boards/layout-engine";
 import { resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 /** Shared per-test board DB fixture (mkdtemp'd home + in-memory db, reset on both ends). */
 export function setupBoardsTestEnv(prefix: string): void {

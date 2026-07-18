@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { ShopsDatabase, setShopsDatabaseSingletonForTest } from "@app/shops/db/ShopsDatabase";
 import * as watchlistRoute from "@app/shops/ui/routes/api/watchlist";
 import * as watchlistAddRoute from "@app/shops/ui/routes/api/watchlist.add";
-import { nowUtcIso } from "@app/utils/sql-time";
+import { nowUtcIso } from "@genesiscz/utils/sql-time";
 
 function tmpDb(): ShopsDatabase {
     const db = new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-api-")), "test.db"));

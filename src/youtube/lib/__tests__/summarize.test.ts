@@ -2,10 +2,10 @@ import { beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
 import { YoutubeConfig } from "@app/youtube/lib/config";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
 import { bucketSegments, pickSectionCount, SummaryService } from "@app/youtube/lib/summarize";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { z } from "zod";
 
 const summarizerCreateCalls: unknown[] = [];

@@ -1,5 +1,5 @@
-import { formatDuration } from "@app/utils/format";
-import { formatTable } from "@app/utils/table";
+import { formatDuration } from "@genesiscz/utils/format";
+import { formatTable } from "@genesiscz/utils/table";
 import { detectDuplicateTools, type ServerTools } from "./duplicates";
 import type { DoctorReport, NormalizedServer, ProbeResult, Status } from "./types";
 

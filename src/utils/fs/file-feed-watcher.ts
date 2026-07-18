@@ -1,5 +1,5 @@
 import { existsSync, type FSWatcher, watch } from "node:fs";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 const log = logger.child({ component: "fs:file-feed-watcher" });
 

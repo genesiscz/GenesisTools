@@ -2,10 +2,10 @@
 
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
-import { runTool } from "@app/utils/cli";
-import { env } from "@app/utils/env";
-import { logger, out } from "@app/utils/logger";
-import { DASHBOARDS, type DashboardKey } from "@app/utils/ui/dashboards";
+import { runTool } from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
+import { logger, out } from "@genesiscz/utils/logger";
+import { DASHBOARDS, type DashboardKey } from "@genesiscz/utils/ui/dashboards";
 import { Command } from "commander";
 
 const ROOT = resolve(import.meta.dirname, "../..");

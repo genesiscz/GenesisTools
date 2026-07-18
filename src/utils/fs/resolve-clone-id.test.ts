@@ -16,7 +16,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveCloneIdHex } from "@app/utils/fs/disk-usage";
+import { resolveCloneIdHex } from "@genesiscz/utils/fs/disk-usage";
 
 const isDarwin = platform() === "darwin";
 

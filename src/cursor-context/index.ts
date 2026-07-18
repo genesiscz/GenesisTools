@@ -2,11 +2,11 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { runTool } from "@app/utils/cli";
-import { copyToClipboard } from "@app/utils/clipboard";
-import { logger } from "@app/utils/logger";
-import * as p from "@app/utils/prompts/p";
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
+import { runTool } from "@genesiscz/utils/cli";
+import { copyToClipboard } from "@genesiscz/utils/clipboard";
+import { logger } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
+import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
 
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);

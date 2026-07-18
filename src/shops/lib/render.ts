@@ -1,5 +1,5 @@
 import type { ShopRegistry } from "@app/shops/api/ShopRegistry";
-import { formatTable } from "@app/utils/table";
+import { formatTable } from "@genesiscz/utils/table";
 
 function boolMark(b: boolean): string {
     return b ? "yes" : "no";

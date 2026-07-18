@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { findCmuxSurfacesForTmuxSession, indexCmuxSurfacesByTmuxSession } from "@app/utils/cmux/tmux-bindings";
-import type { CmuxLayoutTree } from "@app/utils/cmux/types";
+import { findCmuxSurfacesForTmuxSession, indexCmuxSurfacesByTmuxSession } from "@genesiscz/utils/cmux/tmux-bindings";
+import type { CmuxLayoutTree } from "@genesiscz/utils/cmux/types";
 
 const layout: CmuxLayoutTree = {
     fetchedAt: "now",

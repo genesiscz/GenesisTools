@@ -1,4 +1,4 @@
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import pLimit from "p-limit";
 import type { GrokSubscriptionClient } from "./client";
 import {

@@ -14,8 +14,8 @@ import {
     createStartCommand,
 } from "@app/todo/commands/status";
 import { createSyncCommand } from "@app/todo/commands/sync";
-import { enhanceHelp, runTool } from "@app/utils/cli";
-import { out } from "@app/utils/logger";
+import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
+import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
 const program = new Command();

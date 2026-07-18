@@ -1,4 +1,4 @@
-import type { ModelInfo } from "@app/utils/ask/types";
+import type { ModelInfo } from "@genesiscz/utils/ask/types";
 
 export enum AnthropicModelCategory {
     Haiku = "haiku",

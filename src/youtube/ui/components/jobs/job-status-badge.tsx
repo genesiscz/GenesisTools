@@ -1,5 +1,5 @@
-import { Badge } from "@app/utils/ui/components/badge";
 import type { JobStatus } from "@app/youtube/lib/types";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
 import { CheckCircle2, Clock3, Loader2, OctagonAlert, PauseCircle, XCircle } from "lucide-react";
 
 const statusTone: Record<JobStatus, { label: string; className: string; icon: typeof Clock3 }> = {

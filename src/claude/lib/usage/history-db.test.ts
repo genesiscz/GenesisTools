@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { ClaudeDatabase } from "@app/utils/claude/database";
-import { removeDbFile } from "@app/utils/fs";
-import { tmpdir } from "@app/utils/paths";
+import { ClaudeDatabase } from "@genesiscz/utils/claude/database";
+import { removeDbFile } from "@genesiscz/utils/fs";
+import { tmpdir } from "@genesiscz/utils/paths";
 import { UsageHistoryDb } from "./history-db";
 
 let testCounter = 0;

@@ -13,8 +13,8 @@ import {
     resolveGithubCopilotGhoToken,
     summarizeCopilotUsage,
     toProxyId,
-} from "@app/utils/ai/github-copilot";
-import { logger } from "@app/utils/logger";
+} from "@genesiscz/utils/ai/github-copilot";
+import { logger } from "@genesiscz/utils/logger";
 export class GithubCopilotSubscriptionProvider implements ProxyProvider {
     readonly id = "github-copilot-subscription";
     readonly accountFingerprint: string;

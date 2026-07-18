@@ -1,8 +1,8 @@
 import type { Dirent } from "node:fs";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
-import { concurrentMap } from "@app/utils/async";
-import { toPosixPath } from "@app/utils/paths";
+import { concurrentMap } from "@genesiscz/utils/async";
+import { toPosixPath } from "@genesiscz/utils/paths";
 import ignore, { type Ignore } from "ignore";
 import {
     type DetectChangesOptions,

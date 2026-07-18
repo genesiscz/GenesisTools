@@ -1,6 +1,6 @@
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 export interface ErrorPayload {
     error: string;

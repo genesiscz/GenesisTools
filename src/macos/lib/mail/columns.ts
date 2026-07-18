@@ -1,5 +1,5 @@
-import { formatBytes, formatRelativeTime } from "@app/utils/format";
-import type { MailMessage } from "@app/utils/macos/mail/types";
+import { formatBytes, formatRelativeTime } from "@genesiscz/utils/format";
+import type { MailMessage } from "@genesiscz/utils/macos/mail/types";
 
 export type JsonColumnValue = string | number | boolean | null | string[];
 

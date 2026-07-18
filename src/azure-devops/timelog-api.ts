@@ -14,10 +14,10 @@ import type {
     TimeLogUser,
     TimeType,
 } from "@app/azure-devops/types";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import type { QueryParams } from "@app/utils/url";
-import { buildUrl } from "@app/utils/url";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import type { QueryParams } from "@genesiscz/utils/url";
+import { buildUrl } from "@genesiscz/utils/url";
 
 export class TimeLogApi {
     private projectId: string;

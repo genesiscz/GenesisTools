@@ -3,7 +3,7 @@ import {
     expandedDirsForNote,
     parseOpenDirs,
     serializeOpenDirs,
-} from "@app/utils/obsidian/expanded-dirs";
+} from "@genesiscz/utils/obsidian/expanded-dirs";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { IconButton } from "@ui/components/icon-button";

@@ -5,8 +5,8 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { WorkItem, WorkItemFull, WorkItemTemplate, WorkItemType } from "@app/azure-devops/types";
-import { SafeJSON } from "@app/utils/json";
-import { htmlToMarkdown } from "@app/utils/markdown/html-to-md";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { htmlToMarkdown } from "@genesiscz/utils/markdown/html-to-md";
 import { extractUsedValues } from "./field-schema";
 import { parseRelations } from "./relations";
 

@@ -21,8 +21,8 @@ import type {
     RentalListing,
     SaleListing,
 } from "@app/Internal/commands/reas/types";
-import { ApiClient } from "@app/utils/api/ApiClient";
-import { SafeJSON } from "@app/utils/json";
+import { ApiClient } from "@genesiscz/utils/api/ApiClient";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const GRAPHQL_URL = "https://api.bezrealitky.cz/graphql/";
 const AUTOCOMPLETE_URL = "https://autocomplete.bezrealitky.cz";

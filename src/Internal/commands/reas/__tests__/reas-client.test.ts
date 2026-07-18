@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ReasClient } from "@app/Internal/commands/reas/api/ReasClient";
-import type { ApiClientRequestOptions } from "@app/utils/api/ApiClient";
-import { SafeJSON } from "@app/utils/json";
+import type { ApiClientRequestOptions } from "@genesiscz/utils/api/ApiClient";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 describe("ReasClient", () => {
     test("filters obvious off-ward Prague sold comps before returning cached results", async () => {

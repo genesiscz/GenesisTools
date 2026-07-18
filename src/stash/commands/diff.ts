@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { logger, out } from "@app/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
 import { diffApplied } from "../lib/diff-applied";
 import { detectProject } from "../lib/projects";

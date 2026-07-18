@@ -1,4 +1,4 @@
-import { escapeLike, LIKE_ESCAPE_CLAUSE } from "@app/utils/macos/mail-sql";
+import { escapeLike, LIKE_ESCAPE_CLAUSE } from "@genesiscz/utils/macos/mail-sql";
 
 export interface MailFilterOpts {
     from?: Date;

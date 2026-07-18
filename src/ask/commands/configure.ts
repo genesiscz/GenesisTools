@@ -1,11 +1,11 @@
-import { AIConfig } from "@app/utils/ai/AIConfig";
-import type { AIAccountEntry, AIProvider } from "@app/utils/config/ai.types";
-import { out } from "@app/utils/logger";
 import { loadAskConfig, saveAskConfig } from "@ask/config";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { AskConfig } from "@ask/types/config";
 import * as p from "@clack/prompts";
+import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import type { AIAccountEntry, AIProvider } from "@genesiscz/utils/config/ai.types";
+import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 
 export async function runConfigureWizard(): Promise<void> {
@@ -228,7 +228,7 @@ async function addAnthropicAccount(): Promise<void> {
 }
 
 async function addFromClaudeAccount(): Promise<void> {
-    const { listAvailableAccounts } = await import("@app/utils/claude/subscription-auth");
+    const { listAvailableAccounts } = await import("@genesiscz/utils/claude/subscription-auth");
     const accounts = await listAvailableAccounts();
 
     if (accounts.length === 0) {
@@ -290,7 +290,7 @@ async function addFromClaudeAccount(): Promise<void> {
 }
 
 async function addViaOAuthFlow(): Promise<void> {
-    const { claudeOAuth, fetchOAuthProfile } = await import("@app/utils/claude/auth");
+    const { claudeOAuth, fetchOAuthProfile } = await import("@genesiscz/utils/claude/auth");
 
     const spinner = p.spinner();
     spinner.start("Generating authorization URL...");
@@ -322,7 +322,7 @@ async function addViaOAuthFlow(): Promise<void> {
     }
 
     if (openBrowser) {
-        const { Browser } = await import("@app/utils/browser");
+        const { Browser } = await import("@genesiscz/utils/browser");
         await Browser.open(authUrl);
     }
 
@@ -545,7 +545,7 @@ async function addOpenAIAccount(): Promise<void> {
 
 async function importFromCodexCli(): Promise<void> {
     const { readCodexAuthJson, extractEmail, extractPlanType, CODEX_AUTH_PATH } = await import(
-        "@app/utils/ai/openai/codex-auth"
+        "@genesiscz/utils/ai/openai/codex-auth"
     );
 
     const spinner = p.spinner();
@@ -597,7 +597,7 @@ async function importFromCodexCli(): Promise<void> {
 }
 
 async function addViaCodexOAuth(): Promise<void> {
-    const { codexOAuth, extractEmail, extractPlanType } = await import("@app/utils/ai/openai/codex-auth");
+    const { codexOAuth, extractEmail, extractPlanType } = await import("@genesiscz/utils/ai/openai/codex-auth");
 
     const spinner = p.spinner();
     spinner.start("Generating authorization URL...");
@@ -628,7 +628,7 @@ async function addViaCodexOAuth(): Promise<void> {
     }
 
     if (openBrowser) {
-        const { Browser } = await import("@app/utils/browser");
+        const { Browser } = await import("@genesiscz/utils/browser");
         await Browser.open(authUrl);
     }
 

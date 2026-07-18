@@ -1,8 +1,8 @@
 import { useAuthMe } from "@app/shops/ui/lib/useAuthMe";
 import appCss from "@app/shops/ui/styles.css?url";
-import { Badge } from "@app/utils/ui/components/badge";
-import { Button } from "@app/utils/ui/components/button";
-import { DashboardLayout } from "@app/utils/ui/layouts/DashboardLayout";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { DashboardLayout } from "@genesiscz/utils/ui/layouts/DashboardLayout";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRootRoute, HeadContent, Link, Outlet, Scripts, useRouter, useRouterState } from "@tanstack/react-router";
 import {

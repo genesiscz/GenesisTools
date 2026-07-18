@@ -10,8 +10,8 @@ import { runLog } from "@app/doctor/ui/log";
 import { runPlain } from "@app/doctor/ui/plain";
 import { runStats } from "@app/doctor/ui/stats";
 import { runTui } from "@app/doctor/ui/tui";
-import { enhanceHelp, isInteractive, runTool } from "@app/utils/cli";
-import { logger, out } from "@app/utils/logger";
+import { enhanceHelp, isInteractive, runTool } from "@genesiscz/utils/cli";
+import { logger, out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
 interface RootOpts {

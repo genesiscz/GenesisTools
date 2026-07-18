@@ -3,10 +3,10 @@ import { fetchUsage } from "@app/claude/lib/usage/api";
 import { renderAccountUsage, renderAllAccounts } from "@app/claude/lib/usage/display";
 import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
 import { watchUsage } from "@app/claude/lib/usage/watch";
-import { AIConfig } from "@app/utils/ai/AIConfig";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
+import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 export function registerUsageLegacyCommand(program: Command): void {

@@ -15,11 +15,11 @@ import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestra
 import { JsonRenderer, resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import type { DuplicateSet, ProcessReport } from "@app/macos/lib/clones/render/types";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
-import { isInteractive, parseVariadic, suggestCommand } from "@app/utils/cli";
-import { formatBytes } from "@app/utils/format";
-import { logger } from "@app/utils/logger";
-import { CloneUnsupportedError } from "@app/utils/macos/apfs";
 import * as p from "@clack/prompts";
+import { isInteractive, parseVariadic, suggestCommand } from "@genesiscz/utils/cli";
+import { formatBytes } from "@genesiscz/utils/format";
+import { logger } from "@genesiscz/utils/logger";
+import { CloneUnsupportedError } from "@genesiscz/utils/macos/apfs";
 import { Command, Option } from "commander";
 import pc from "picocolors";
 

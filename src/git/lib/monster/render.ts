@@ -1,4 +1,4 @@
-import { formatTable } from "@app/utils/table";
+import { formatTable } from "@genesiscz/utils/table";
 import { withThousands } from "./roar";
 import { faceForTier } from "./tier";
 import type { MonsterReport } from "./types";

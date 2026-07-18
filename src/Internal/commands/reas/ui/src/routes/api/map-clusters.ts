@@ -1,6 +1,6 @@
 import { fetchMapClusters } from "@app/Internal/commands/reas/lib/map-service";
 import { apiHandler } from "@app/Internal/commands/reas/ui/src/server/api-utils";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/api/map-clusters")({

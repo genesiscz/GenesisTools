@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import type { AsyncSubscription, Event } from "@parcel/watcher";
 
 export interface WatcherEvent {

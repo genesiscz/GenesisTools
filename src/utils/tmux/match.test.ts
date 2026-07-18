@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { resolveSessionQuery } from "@app/utils/tmux/match";
-import type { TmuxSessionInfo } from "@app/utils/tmux/types";
+import { resolveSessionQuery } from "@genesiscz/utils/tmux/match";
+import type { TmuxSessionInfo } from "@genesiscz/utils/tmux/types";
 
 function info(name: string, attached = 0): TmuxSessionInfo {
     return { name, attached, windows: 1 };

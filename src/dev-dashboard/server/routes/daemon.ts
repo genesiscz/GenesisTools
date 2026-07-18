@@ -8,7 +8,7 @@ import {
 import { classifyLogLine } from "@app/dev-dashboard/lib/daemon-view/classify";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export function daemonRoutes(): RouteDef[] {
     return [

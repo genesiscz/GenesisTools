@@ -4,22 +4,22 @@ import {
     type ResolvedGithubCopilotGhoToken,
     type ResolveGithubCopilotGhoTokenOptions,
     resolveGithubCopilotGhoToken,
-} from "@app/utils/ai/github-copilot/copilot-cli-auth";
-import { githubApi } from "@app/utils/ai/github-copilot/github-api";
-import { buildCopilotRequestHeaders } from "@app/utils/ai/github-copilot/headers";
+} from "@genesiscz/utils/ai/github-copilot/copilot-cli-auth";
+import { githubApi } from "@genesiscz/utils/ai/github-copilot/github-api";
+import { buildCopilotRequestHeaders } from "@genesiscz/utils/ai/github-copilot/headers";
 import {
     COPILOT_INDIVIDUAL_API,
     copilotGhoTokenAuthKey,
     copilotSessionCachePath,
     githubTokenPath,
-} from "@app/utils/ai/github-copilot/paths";
-import type { CopilotSessionCache, CopilotTokenResponse } from "@app/utils/ai/github-copilot/types";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { readTokenFile } from "@app/utils/oauth/storage";
-import { getAuthSecret, migrateFileToAuthStorage } from "@app/utils/storage";
+} from "@genesiscz/utils/ai/github-copilot/paths";
+import type { CopilotSessionCache, CopilotTokenResponse } from "@genesiscz/utils/ai/github-copilot/types";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { readTokenFile } from "@genesiscz/utils/oauth/storage";
+import { getAuthSecret, migrateFileToAuthStorage } from "@genesiscz/utils/storage";
 
-export { resolveGithubCopilotGhoToken } from "@app/utils/ai/github-copilot/copilot-cli-auth";
+export { resolveGithubCopilotGhoToken } from "@genesiscz/utils/ai/github-copilot/copilot-cli-auth";
 export type { ResolvedGithubCopilotGhoToken, ResolveGithubCopilotGhoTokenOptions };
 
 const REFRESH_BUFFER_MS = 60_000;

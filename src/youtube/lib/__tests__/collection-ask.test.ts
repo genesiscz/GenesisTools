@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { SafeJSON } from "@app/utils/json";
 import { askCollection, MAX_TOOL_CALLS } from "@app/youtube/lib/collection-ask";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { ProviderChoice } from "@ask/types";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 let db: YoutubeDatabase;
 const providerChoice = {

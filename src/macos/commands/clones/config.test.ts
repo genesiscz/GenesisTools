@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createConfigCommand } from "@app/macos/commands/clones/config";
 import { type ClonesConfig, loadClonesConfig, storage } from "@app/macos/lib/clones/store";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 let configSnapshot: ClonesConfig | null;
 

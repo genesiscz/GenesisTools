@@ -28,8 +28,8 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
-import { getCloneId, getPrivateSize } from "@app/utils/macos/apfs";
-import { iterDir } from "@app/utils/macos/getattrlistbulk";
+import { getCloneId, getPrivateSize } from "@genesiscz/utils/macos/apfs";
+import { iterDir } from "@genesiscz/utils/macos/getattrlistbulk";
 
 const isDarwin = platform() === "darwin";
 

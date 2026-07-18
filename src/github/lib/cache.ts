@@ -10,8 +10,8 @@ import type {
     IssueRecord,
     RepoRecord,
     TimelineEventRecord,
-} from "@app/utils/github/types";
-import { logger } from "@app/utils/logger";
+} from "@genesiscz/utils/github/types";
+import { logger } from "@genesiscz/utils/logger";
 
 const DEFAULT_CACHE_DIR = join(homedir(), ".genesis-tools", "github");
 const DB_NAME = "cache.db";

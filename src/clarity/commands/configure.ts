@@ -1,8 +1,8 @@
 import { createInterface } from "node:readline";
 import { parseAuthCurl } from "@app/clarity/lib/parse-auth-curl";
-import { ClarityApi } from "@app/utils/clarity";
-import { out } from "@app/utils/logger";
 import * as clack from "@clack/prompts";
+import { ClarityApi } from "@genesiscz/utils/clarity";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 import type { ClarityConfig } from "../config.js";

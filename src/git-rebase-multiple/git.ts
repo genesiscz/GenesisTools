@@ -1,4 +1,4 @@
-import { createGit } from "@app/utils/git";
+import { createGit } from "@genesiscz/utils/git";
 
 const instance = createGit({ verbose: true });
 

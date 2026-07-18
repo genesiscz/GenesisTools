@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { getTaskSessionsDir } from "@app/task/lib/paths";
 import { isProcessAlive } from "@app/task/lib/process-alive";
 import { TaskSessionStore } from "@app/task/lib/session-store";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 export async function runSessionGc(opts: { retentionDays: number }): Promise<{ removed: number }> {
     const cutoffMs = Date.now() - opts.retentionDays * 24 * 3600 * 1000;

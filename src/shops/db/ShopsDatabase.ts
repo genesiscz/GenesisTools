@@ -21,9 +21,9 @@ import {
     parseUnit,
     type Unit,
 } from "@app/shops/lib/normalize";
-import { createKyselyClient, type DatabaseClient } from "@app/utils/database/client";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { createKyselyClient, type DatabaseClient } from "@genesiscz/utils/database/client";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { type Insertable, type Kysely, type Selectable, sql } from "kysely";
 
 export interface StartCrawlRunInput {

@@ -3,7 +3,7 @@
  * Shows a formatted list of settings before execution.
  */
 
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 
 const S_STEP_SUBMIT = pc.green("\u25C7");

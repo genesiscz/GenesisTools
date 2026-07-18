@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { createKyselyClient, type DatabaseClient } from "@app/utils/database";
-import { logger } from "@app/utils/logger";
+import { createKyselyClient, type DatabaseClient } from "@genesiscz/utils/database";
+import { logger } from "@genesiscz/utils/logger";
 import { sql } from "kysely";
 import type { AutomateDB, RunLogRow, RunRow, ScheduleRow } from "./db-types";
 

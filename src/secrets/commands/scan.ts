@@ -2,9 +2,9 @@ import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { formatHuman, toJsonResult } from "@app/secrets/lib/report";
 import { scanDirectory } from "@app/secrets/lib/scan-dir";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 interface ScanOptions {

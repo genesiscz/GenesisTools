@@ -1,4 +1,4 @@
-import { Button } from "@app/utils/ui/components/button";
+import { Button } from "@genesiscz/utils/ui/components/button";
 
 export function QuickActions({
     onOpenDashboard,

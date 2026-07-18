@@ -1,6 +1,6 @@
 import { suggestGet, suggestLogs, suggestTail } from "@app/task/lib/suggest-flags";
-import type { JsonlLineRecord } from "@app/utils/log-session/types";
-import { out } from "@app/utils/logger";
+import type { JsonlLineRecord } from "@genesiscz/utils/log-session/types";
+import { out } from "@genesiscz/utils/logger";
 
 export function printLogNavigationHints(opts: {
     session: string;

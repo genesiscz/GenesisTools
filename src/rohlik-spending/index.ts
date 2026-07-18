@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
-import { runTool } from "@app/utils/cli";
-import { isMultilineCancel, multilineText } from "@app/utils/prompts/clack";
-import { Storage } from "@app/utils/storage/storage";
 import * as p from "@clack/prompts";
+import { runTool } from "@genesiscz/utils/cli";
+import { isMultilineCancel, multilineText } from "@genesiscz/utils/prompts/clack";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import { Command } from "commander";
 import pc from "picocolors";
 

@@ -1,5 +1,5 @@
-import { copyToClipboard } from "@app/utils/clipboard";
-import { SafeJSON } from "@app/utils/json";
+import { copyToClipboard } from "@genesiscz/utils/clipboard";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export interface RenderFlags {
     json?: boolean;

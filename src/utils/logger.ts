@@ -2,9 +2,9 @@ import fs from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
-import { formatLocalDate } from "@app/utils/date";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
+import { formatLocalDate } from "@genesiscz/utils/date";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import chalk from "chalk";
 import pino from "pino";
 import PinoPretty from "pino-pretty";
@@ -15,7 +15,7 @@ import PinoPretty from "pino-pretty";
 import { makeOut, type Out } from "./logger/out";
 
 // Surface the standalone unscoped `out` through the package entry so callers
-// can `import { out } from "@app/utils/logger"` (the two-layer model's user-facing
+// can `import { out } from "@genesiscz/utils/logger"` (the two-layer model's user-facing
 // channel). No new ESM-cycle risk: logger.ts already statically depends on
 // ./logger/out for makeOut — this re-export adds nothing to the cycle graph.
 export { out } from "./logger/out";

@@ -13,14 +13,14 @@ import {
     type ToolUseBlock,
     type UserMessage,
 } from "@app/claude/lib/history/search";
-import { getAgentRuntimeContext } from "@app/utils/agent-runtime";
-import { resolveProjectFilter } from "@app/utils/claude";
-import { isInteractive } from "@app/utils/cli";
-import { buildViteDevCmd, defineDashboardApp } from "@app/utils/DashboardApp";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
-import { PROJECT_ROOT } from "@app/utils/paths";
-import * as p from "@app/utils/prompts/p";
+import { getAgentRuntimeContext } from "@genesiscz/utils/agent-runtime";
+import { resolveProjectFilter } from "@genesiscz/utils/claude";
+import { isInteractive } from "@genesiscz/utils/cli";
+import { buildViteDevCmd, defineDashboardApp } from "@genesiscz/utils/DashboardApp";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
+import { PROJECT_ROOT } from "@genesiscz/utils/paths";
+import * as p from "@genesiscz/utils/prompts/p";
 import { spawn } from "bun";
 import chalk from "chalk";
 import type { Command } from "commander";

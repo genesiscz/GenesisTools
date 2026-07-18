@@ -2,7 +2,7 @@
 // sections/questions) — mirrors read-tools.ts/work-tools.ts's pattern. Handlers return the JSON
 // response raw (compact) so agents consume the same shape the HTTP API returns.
 import { paths } from "@app/dev-dashboard/contract/endpoints";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { BoardsHttpError, boardsBaseUrl, boardsFetch, compact } from "./http";
 import type { ArrangeMode } from "./schemas";
 

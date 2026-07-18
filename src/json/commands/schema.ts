@@ -1,6 +1,6 @@
 import { resolveInput } from "@app/json/lib/schema/read-input";
 import { type OutputFormat, renderSchema } from "@app/json/lib/schema/render";
-import { logger, out } from "@app/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import clipboardy from "clipboardy";
 import { type Command, Option } from "commander";
 

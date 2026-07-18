@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { RouteMatch, Router } from "@app/dev-dashboard/server/router";
 import type { RouteContext, RouteResult, RouteServices, SseEmitter } from "@app/dev-dashboard/server/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 async function readRawBytes(req: IncomingMessage): Promise<Uint8Array> {
     const chunks: Buffer[] = [];

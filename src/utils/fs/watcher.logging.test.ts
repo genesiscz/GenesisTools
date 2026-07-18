@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 describe("swallowed-error logging — HIGH priority sites", () => {
     test("watcher.ts circuit-breaker shutdown logs unsubscribe failures", async () => {

@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveOpenAiSubToken } from "@app/ai-proxy/lib/providers/openai-sub-token";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
-import { AIConfig } from "@app/utils/ai/AIConfig";
-import { codexOAuth } from "@app/utils/ai/openai/codex-auth";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
+import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { codexOAuth } from "@genesiscz/utils/ai/openai/codex-auth";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const ORIGINAL_HOME = env.get("GENESIS_TOOLS_HOME");
 

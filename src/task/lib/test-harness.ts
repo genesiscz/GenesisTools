@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { env } from "@app/utils/env";
-import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
+import { env } from "@genesiscz/utils/env";
+import { filterLineRecords, readJsonlFile } from "@genesiscz/utils/log-session/jsonl-reader";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 

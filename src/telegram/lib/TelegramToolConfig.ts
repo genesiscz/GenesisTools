@@ -1,5 +1,5 @@
 import { chmodSync } from "node:fs";
-import { Storage } from "@app/utils/storage/storage";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import type { ContactConfig, TelegramConfigData, TelegramConfigDataV2, TelegramContactV2 } from "./types";
 import { DEFAULT_MODE_CONFIG, DEFAULT_STYLE_PROFILE, DEFAULT_WATCH_CONFIG, DEFAULTS } from "./types";
 

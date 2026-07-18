@@ -1,14 +1,14 @@
-import { findWorkspaceByName } from "@app/utils/cmux/layout";
-import { runCmuxJSON, runCmuxOk } from "@app/utils/cmux/lib/cli";
-import { withFocusedWorkspace } from "@app/utils/cmux/lib/focus-guard";
+import { findWorkspaceByName } from "@genesiscz/utils/cmux/layout";
+import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
 import {
     paneList,
     type SurfaceSplitResult,
     type WorkspaceCreateResult,
     workspaceCreate,
-} from "@app/utils/cmux/lib/socket";
-import { logger } from "@app/utils/logger";
-import { localeExportPrefix } from "@app/utils/terminal/locale";
+} from "@genesiscz/utils/cmux/lib/socket";
+import { logger } from "@genesiscz/utils/logger";
+import { localeExportPrefix } from "@genesiscz/utils/terminal/locale";
 
 export interface OpenSplitResult {
     paneId: string;

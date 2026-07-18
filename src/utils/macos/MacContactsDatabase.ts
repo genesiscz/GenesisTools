@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 export interface ContactInfo {
     firstName: string | null;

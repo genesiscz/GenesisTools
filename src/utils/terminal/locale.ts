@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
-import { env } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
 
 const UTF8_PATTERN = /utf-?8/i;
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
-import { runTool } from "@app/utils/cli";
-import { handleReadmeFlag } from "@app/utils/readme";
 import * as p from "@clack/prompts";
+import { runTool } from "@genesiscz/utils/cli";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
 import pc from "picocolors";
 import { registerConfigCommand } from "./commands/config";

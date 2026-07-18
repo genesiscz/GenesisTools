@@ -23,12 +23,12 @@ import {
 } from "@app/Internal/commands/reas/lib/config-builder";
 import { reasUiApp } from "@app/Internal/commands/reas/lib/ui-app";
 import type { AnalysisFilters, FullAnalysis, TargetProperty } from "@app/Internal/commands/reas/types";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
-import * as p from "@app/utils/prompts/p";
-import { stripAnsi } from "@app/utils/string";
-import { formatTable } from "@app/utils/table";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
+import { stripAnsi } from "@genesiscz/utils/string";
+import { formatTable } from "@genesiscz/utils/table";
 import { Command } from "commander";
 import pc from "picocolors";
 

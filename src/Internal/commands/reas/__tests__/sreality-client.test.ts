@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { SrealityClient } from "@app/Internal/commands/reas/api/SrealityClient";
 import { parseSrealityName } from "@app/Internal/commands/reas/api/sreality-client";
-import type { ApiClientRequestOptions } from "@app/utils/api/ApiClient";
+import type { ApiClientRequestOptions } from "@genesiscz/utils/api/ApiClient";
 
 const TEST_FILTERS = {
     estateType: "flat",

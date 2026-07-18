@@ -1,5 +1,5 @@
 import { dirname, extname, join } from "node:path";
-import { toPosixPath } from "@app/utils/paths";
+import { toPosixPath } from "@genesiscz/utils/paths";
 import { getLanguageForExt, LANGUAGE_EXTENSIONS } from "./ast-languages";
 import { loadPathAliases, type PathAliases } from "./graph-aliases";
 import { extractImports } from "./graph-imports";

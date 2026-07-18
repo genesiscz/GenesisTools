@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { parseJsonlChunk } from "@app/utils/jsonl";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { parseJsonlChunk } from "@genesiscz/utils/jsonl";
+import { logger } from "@genesiscz/utils/logger";
 import { logDir } from "./log-store";
 import type { QaAgent, QaEntry } from "./types";
 

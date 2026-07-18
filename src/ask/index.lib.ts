@@ -1,6 +1,10 @@
-export { AIAccount } from "@app/utils/ai/AIAccount";
-export type { ModelSelection } from "@app/utils/ask/providers/ModelResolver";
-export { AnthropicModelCategory, OpenAIModelCategory, resolveModel } from "@app/utils/ask/providers/ModelResolver";
+export { AIAccount } from "@genesiscz/utils/ai/AIAccount";
+export type { ModelSelection } from "@genesiscz/utils/ask/providers/ModelResolver";
+export {
+    AnthropicModelCategory,
+    OpenAIModelCategory,
+    resolveModel,
+} from "@genesiscz/utils/ask/providers/ModelResolver";
 export { AIChat } from "./AIChat";
 export type { OneShotOptions } from "./chat/ChatEngine";
 export { ChatEngine } from "./chat/ChatEngine";

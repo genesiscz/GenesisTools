@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { resolveXaiApiKey } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 const account: AiProxyAccountConfig = {
     name: "work",

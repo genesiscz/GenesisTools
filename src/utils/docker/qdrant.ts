@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import { DockerContainer, type DockerProgressCallback } from "./docker-container";
 
 const QDRANT_IMAGE = "qdrant/qdrant:v1.17.0";

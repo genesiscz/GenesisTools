@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { env } from "@app/utils/env/envVariables";
+import { env } from "@genesiscz/utils/env/envVariables";
 
 const TRACKED_KEYS = [
     "XAI_API_KEY",

@@ -1,5 +1,5 @@
 import type { EngineEvent, Finding } from "@app/doctor/lib/types";
-import type { StageItem } from "@app/utils/prompts/clack/trash-staging";
+import type { StageItem } from "@genesiscz/utils/prompts/clack/trash-staging";
 import { createStore } from "zustand/vanilla";
 
 export type EnginePhase = "scanning" | "done" | "acting" | "exiting";

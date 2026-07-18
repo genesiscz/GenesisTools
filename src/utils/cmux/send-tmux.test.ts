@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import * as controls from "@app/utils/cmux/lib/controls";
-import { attachTmuxToCmux } from "@app/utils/cmux/send-tmux";
-import * as workspace from "@app/utils/cmux/workspace";
-import { resetTmuxBinCache, setTmuxBinForTests } from "@app/utils/tmux/bin";
-import { setTmuxSpawnSyncForTests } from "@app/utils/tmux/sessions";
+import * as controls from "@genesiscz/utils/cmux/lib/controls";
+import { attachTmuxToCmux } from "@genesiscz/utils/cmux/send-tmux";
+import * as workspace from "@genesiscz/utils/cmux/workspace";
+import { resetTmuxBinCache, setTmuxBinForTests } from "@genesiscz/utils/tmux/bin";
+import { setTmuxSpawnSyncForTests } from "@genesiscz/utils/tmux/sessions";
 
 describe("attachTmuxToCmux", () => {
     afterEach(() => {

@@ -1,10 +1,10 @@
 import { Database as BunDatabase } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { logger } from "@app/utils/logger";
-import { nowUtcIso, parseSqliteOrIsoDate } from "@app/utils/sql-time";
+import { logger } from "@genesiscz/utils/logger";
+import { nowUtcIso, parseSqliteOrIsoDate } from "@genesiscz/utils/sql-time";
 
-export { nowUtcIso, parseSqliteOrIsoDate, SQL_NOW_UTC } from "@app/utils/sql-time";
+export { nowUtcIso, parseSqliteOrIsoDate, SQL_NOW_UTC } from "@genesiscz/utils/sql-time";
 
 const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 

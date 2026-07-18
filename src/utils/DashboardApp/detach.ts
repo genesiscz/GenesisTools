@@ -15,7 +15,7 @@
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 export interface DetachOptions {
     cmd: readonly string[];

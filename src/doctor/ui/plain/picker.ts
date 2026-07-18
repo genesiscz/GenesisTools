@@ -1,5 +1,5 @@
 import type { Analyzer } from "@app/doctor/lib/analyzer";
-import * as p from "@app/utils/prompts/p";
+import * as p from "@genesiscz/utils/prompts/p";
 
 export interface PickerOpts {
     available: Analyzer[];

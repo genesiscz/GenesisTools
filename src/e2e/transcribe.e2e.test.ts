@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
-import { execTool, getOutput } from "@app/utils/e2e/helpers";
-import { tmpPath } from "@app/utils/paths";
+import { execTool, getOutput } from "@genesiscz/utils/e2e/helpers";
+import { tmpPath } from "@genesiscz/utils/paths";
 
 const ZERO_BYTE_MP3 = tmpPath("e2e-empty.mp3");
 const UNSUPPORTED_FILE = tmpPath("e2e-test.xyz");

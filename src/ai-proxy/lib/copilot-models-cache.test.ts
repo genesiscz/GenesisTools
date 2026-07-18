@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
-import type { CopilotModelRecord } from "@app/utils/ai/github-copilot/types";
+import type { CopilotModelRecord } from "@genesiscz/utils/ai/github-copilot/types";
 
 const probeCopilotModels = mock(
     async (): Promise<CopilotModelRecord[]> => [
@@ -9,7 +9,7 @@ const probeCopilotModels = mock(
     ]
 );
 
-mock.module("@app/utils/ai/github-copilot/probe-models", () => ({
+mock.module("@genesiscz/utils/ai/github-copilot/probe-models", () => ({
     probeCopilotModels,
 }));
 

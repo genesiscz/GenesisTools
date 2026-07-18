@@ -1,9 +1,9 @@
 import { readUnifiedConfig, stripMeta } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { logger } from "@app/utils/logger";
-import * as p from "@app/utils/prompts/p";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { logger } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 
 export interface SyncOptions {
     provider?: string; // Provider name(s), comma-separated for non-interactive mode

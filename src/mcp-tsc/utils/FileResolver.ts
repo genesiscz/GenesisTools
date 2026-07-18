@@ -1,5 +1,5 @@
 import path from "node:path";
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import { glob } from "glob";
 import ts from "typescript";
 

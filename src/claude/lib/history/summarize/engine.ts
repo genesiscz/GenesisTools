@@ -7,15 +7,15 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { type CallLLMResult, callLLM as sharedCallLLM } from "@app/utils/ai/call-llm";
-import type { ClaudeSession, PreparedContent } from "@app/utils/claude/session";
-import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";
-import { copyToClipboard } from "@app/utils/clipboard";
-import { estimateTokens } from "@app/utils/tokens";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { ProviderChoice } from "@ask/types";
+import { type CallLLMResult, callLLM as sharedCallLLM } from "@genesiscz/utils/ai/call-llm";
+import type { ClaudeSession, PreparedContent } from "@genesiscz/utils/claude/session";
+import { applySystemPromptPrefix } from "@genesiscz/utils/claude/subscription-billing";
+import { copyToClipboard } from "@genesiscz/utils/clipboard";
+import { estimateTokens } from "@genesiscz/utils/tokens";
 import type { LanguageModelUsage } from "ai";
 import type { PromptTemplate, TemplateContext } from "./templates/index.ts";
 import { getTemplate, listTemplates } from "./templates/index.ts";
@@ -213,7 +213,7 @@ export class SummarizeEngine {
 
         // Save to Apple Notes
         if (this.options.appleNotes && this.options.appleNotesFolderId) {
-            const { createAppleNote } = await import("@app/utils/macos/apple-notes");
+            const { createAppleNote } = await import("@genesiscz/utils/macos/apple-notes");
             const sessionTitle = this.options.session.title ?? this.options.session.summary ?? "Claude Summary";
             const dateStr = this.options.session.startDate?.toISOString().split("T")[0] ?? "unknown";
             const noteTitle = `${sessionTitle} (${dateStr})`;

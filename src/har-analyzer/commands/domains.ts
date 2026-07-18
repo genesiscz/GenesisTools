@@ -5,9 +5,9 @@ import { RefStoreManager } from "@app/har-analyzer/core/ref-store";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { EntryFilter, OutputOptions } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
-import { formatBytes, formatDuration } from "@app/utils/format";
-import { out } from "@app/utils/logger";
-import { formatTable } from "@app/utils/table";
+import { formatBytes, formatDuration } from "@genesiscz/utils/format";
+import { out } from "@genesiscz/utils/logger";
+import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 
 export function registerDomainsCommand(program: Command): void {

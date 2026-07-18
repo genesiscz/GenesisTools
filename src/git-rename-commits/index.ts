@@ -1,18 +1,18 @@
 import { existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { Executor, runTool } from "@app/utils/cli";
-import { SafeJSON } from "@app/utils/json";
-import { isPromptCancelled } from "@app/utils/prompt-helpers.js";
-import * as p from "@app/utils/prompts/p";
-import { inquirerBackend } from "@app/utils/prompts/p/inquirer-backend";
-import { handleReadmeFlag } from "@app/utils/readme";
+import { Executor, runTool } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { isPromptCancelled } from "@genesiscz/utils/prompt-helpers.js";
+import * as p from "@genesiscz/utils/prompts/p";
+import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
 
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
 
-import { env } from "@app/utils/env";
-import { out } from "@app/utils/logger";
+import { env } from "@genesiscz/utils/env";
+import { out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
 import { Command } from "commander";
 

@@ -3,8 +3,8 @@ import { resolve } from "node:path";
 import { findProjectRoot } from "@app/todo/lib/context";
 import { TodoStore } from "@app/todo/lib/store";
 import type { Todo } from "@app/todo/lib/types";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
 // Must match required fields in Todo (src/todo/lib/types.ts)

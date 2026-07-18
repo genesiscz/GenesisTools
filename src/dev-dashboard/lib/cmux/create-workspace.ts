@@ -1,4 +1,4 @@
-import { createWorkspaceWithName } from "@app/utils/cmux/workspace";
+import { createWorkspaceWithName } from "@genesiscz/utils/cmux/workspace";
 
 export async function createCmuxWorkspace(opts: {
     windowId: string;

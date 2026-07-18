@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { runTool } from "@app/utils/cli";
-import { buildViteDevCmd, defineDashboardApp } from "@app/utils/DashboardApp";
-import { out } from "@app/utils/logger";
-import { PROJECT_ROOT } from "@app/utils/paths";
+import { runTool } from "@genesiscz/utils/cli";
+import { buildViteDevCmd, defineDashboardApp } from "@genesiscz/utils/DashboardApp";
+import { out } from "@genesiscz/utils/logger";
+import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 import { Command } from "commander";
 import { registerConfigureCommand } from "./commands/configure.js";
 import { registerFillCommand } from "./commands/fill.js";

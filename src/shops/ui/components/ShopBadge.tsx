@@ -1,6 +1,6 @@
 import type { ShopOrigin } from "@app/shops/api/ShopApiClient.types";
-import { Badge } from "@app/utils/ui/components/badge";
-import { cn } from "@app/utils/ui/lib/utils";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
+import { cn } from "@genesiscz/utils/ui/lib/utils";
 
 const PALETTE = [
     "border-cyan-400/40 text-cyan-300",

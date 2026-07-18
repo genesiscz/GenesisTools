@@ -1,11 +1,11 @@
-import { formatDuration } from "@app/utils/format";
-import { logger } from "@app/utils/logger/client";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@app/utils/ui/components/sheet";
-import { Skeleton } from "@app/utils/ui/components/skeleton";
 import type { JobActivity } from "@app/youtube/lib/types";
 import { copyText } from "@app/youtube/ui/components/shared/share-button";
 import { useJobActivity } from "@app/yt/api.hooks";
 import { parseSqliteDate } from "@app/yt/lib/format";
+import { formatDuration } from "@genesiscz/utils/format";
+import { logger } from "@genesiscz/utils/logger/client";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@genesiscz/utils/ui/components/sheet";
+import { Skeleton } from "@genesiscz/utils/ui/components/skeleton";
 import { ChevronRight, Cog, Copy, DollarSign, Hash, Sparkles, Telescope, Workflow, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";

@@ -1,9 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { getDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
-import { createKyselyClient, type DatabaseClient } from "@app/utils/database/client";
-import type { Migration } from "@app/utils/database/migrations";
-import { env } from "@app/utils/env";
+import { createKyselyClient, type DatabaseClient } from "@genesiscz/utils/database/client";
+import type { Migration } from "@genesiscz/utils/database/migrations";
+import { env } from "@genesiscz/utils/env";
 import type { BoardsDb } from "./db-types";
 
 function columnExists(db: Database, table: string, column: string): boolean {

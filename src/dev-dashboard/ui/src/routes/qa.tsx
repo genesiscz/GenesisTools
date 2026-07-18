@@ -1,10 +1,10 @@
 import { isQaAnswerTruncated } from "@app/dev-dashboard/lib/qa-preview";
 import { searchQa } from "@app/dev-dashboard/lib/qa-search";
 import type { QaRow } from "@app/dev-dashboard/lib/qa-types";
-import { SafeJSON } from "@app/utils/json";
-import { highlightMatchesInHtml } from "@app/utils/ui/helpers/highlight-matches.client";
-import { useScrollProgress } from "@app/utils/ui/hooks/useScrollProgress.client";
-import { hasNonEmptySelection } from "@app/utils/ui/hooks/useSelectionAware.client";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { highlightMatchesInHtml } from "@genesiscz/utils/ui/helpers/highlight-matches.client";
+import { useScrollProgress } from "@genesiscz/utils/ui/hooks/useScrollProgress.client";
+import { hasNonEmptySelection } from "@genesiscz/utils/ui/hooks/useSelectionAware.client";
 import { useQuery } from "@tanstack/react-query";
 import { BlinkingBox } from "@ui/components/BlinkingBox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";

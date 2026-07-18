@@ -1,8 +1,8 @@
-import { env } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
-import { buildTerminalSpawnEnv } from "@app/utils/terminal/locale";
-import { resolveTmuxBin } from "@app/utils/tmux/bin";
-import type { TmuxSessionInfo } from "@app/utils/tmux/types";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
+import { buildTerminalSpawnEnv } from "@genesiscz/utils/terminal/locale";
+import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
+import type { TmuxSessionInfo } from "@genesiscz/utils/tmux/types";
 
 export type TmuxSpawnSync = (
     cmd: string[],

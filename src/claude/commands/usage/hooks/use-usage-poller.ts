@@ -5,8 +5,8 @@ import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-confi
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
 import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
-import { logger } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage/storage";
+import { logger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PollResult } from "../types";
 
@@ -148,7 +148,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
 
             try {
                 // Resolve which accounts to poll from AIConfig
-                const { AIConfig } = await import("@app/utils/ai/AIConfig");
+                const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
                 const aiConfig = await AIConfig.load();
                 let allAccounts = aiConfig.getAccountsByProvider("anthropic-sub");
 

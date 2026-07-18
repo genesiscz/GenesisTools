@@ -1,5 +1,5 @@
-import { AsyncOpQueue } from "@app/utils/async";
-import { ensurePackage } from "@app/utils/packages";
+import { AsyncOpQueue } from "@genesiscz/utils/async";
+import { ensurePackage } from "@genesiscz/utils/packages";
 import { bruteForceVectorSearch, type VectorSearchHit, type VectorStore } from "./vector-store";
 
 interface ArrowVector {

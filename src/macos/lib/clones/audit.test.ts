@@ -115,7 +115,7 @@ import { tmpdir } from "node:os";
 import { join as j } from "node:path";
 import { runOptimize } from "@app/macos/lib/clones/audit";
 import type { DuplicateSet } from "@app/macos/lib/clones/render/types";
-import { skip } from "@app/utils/test/skip";
+import { skip } from "@genesiscz/utils/test/skip";
 
 describe.skipIf(skip.unlessMac)("runOptimize apply round-trip", () => {
     it("clones replace files, captures sha-before/after, writes JSONL", () => {
@@ -162,7 +162,7 @@ describe.skipIf(skip.unlessMac)("runOptimize apply round-trip", () => {
 
 import { mkdirSync, statSync as statS } from "node:fs";
 import { rollbackProcess } from "@app/macos/lib/clones/audit";
-import { getCloneId } from "@app/utils/macos/apfs";
+import { getCloneId } from "@genesiscz/utils/macos/apfs";
 
 describe.skipIf(skip.unlessMac)("runOptimize DirSet expansion", () => {
     it("dir-kind DuplicateSet: walks both members, clones each matching file pair", () => {

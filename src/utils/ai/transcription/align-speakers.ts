@@ -1,4 +1,4 @@
-import type { TranscriptionSegment } from "@app/utils/ai/types";
+import type { TranscriptionSegment } from "@genesiscz/utils/ai/types";
 import { normalizeSpeakerLabel } from "./speaker-label";
 
 export interface DiarTurn {

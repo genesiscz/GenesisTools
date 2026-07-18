@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { TranscriptionResult } from "@app/utils/ai/types";
+import type { TranscriptionResult } from "@genesiscz/utils/ai/types";
 import { formatOutput, formatTimestamp, toSRT, toVTT } from "./index";
 
 describe("formatTimestamp", () => {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { skip } from "@app/utils/test/skip";
+import { skip } from "@genesiscz/utils/test/skip";
 import { AIAccount } from "../AIAccount";
 import type { AccountResolver } from "../resolvers";
 import { ensureResolversInitialized, getResolver, registerResolver, resetResolvers } from "../resolvers";

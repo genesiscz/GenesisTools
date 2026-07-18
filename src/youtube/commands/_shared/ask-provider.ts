@@ -1,7 +1,7 @@
-import { isInteractive } from "@app/utils/cli/executor";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import type { ProviderChoice } from "@ask/types";
+import { isInteractive } from "@genesiscz/utils/cli/executor";
 
 export interface AskProviderOpts {
     provider?: string;

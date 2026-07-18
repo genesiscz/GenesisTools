@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
-import type { AuthStorageKey } from "@app/utils/storage";
+import { env } from "@genesiscz/utils/env";
+import type { AuthStorageKey } from "@genesiscz/utils/storage";
 
 export const COPILOT_DEFAULT_DATA_DIR = join(homedir(), ".local", "share", "copilot-api");
 export const COPILOT_INDIVIDUAL_API = "https://api.githubcopilot.com";

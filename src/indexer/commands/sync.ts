@@ -1,6 +1,6 @@
 import { basename, resolve } from "node:path";
-import { formatDuration } from "@app/utils/format";
 import * as p from "@clack/prompts";
+import { formatDuration } from "@genesiscz/utils/format";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { IndexerManager } from "../lib/manager";

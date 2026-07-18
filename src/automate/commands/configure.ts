@@ -1,6 +1,6 @@
 import { loadTelegramConfig } from "@app/telegram-bot/lib/config";
-import { execToolInteractive } from "@app/utils/cli/tools";
 import * as p from "@clack/prompts";
+import { execToolInteractive } from "@genesiscz/utils/cli/tools";
 import type { Command } from "commander";
 
 export function registerConfigureCommand(program: Command): Command {

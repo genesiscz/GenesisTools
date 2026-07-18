@@ -8,9 +8,9 @@ import {
 } from "@app/ai-proxy/lib/translators/reasoning";
 import type { ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
 import { type PipelineResult, pipelineResult } from "@app/ai-proxy/lib/usage/pipeline-result";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { isObject } from "@app/utils/object";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 
 type JsonObject = Record<string, unknown>;
 

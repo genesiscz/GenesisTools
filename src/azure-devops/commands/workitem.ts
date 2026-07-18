@@ -34,9 +34,9 @@ import {
     parseRelations,
     requireConfig,
 } from "@app/azure-devops/utils";
-import { suggestCommand } from "@app/utils/cli";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
+import { suggestCommand } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 // Silent mode for JSON output - suppresses progress messages

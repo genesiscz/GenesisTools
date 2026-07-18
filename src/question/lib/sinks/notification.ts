@@ -1,5 +1,5 @@
 import { buildQaDeepLink } from "@app/dev-dashboard/lib/qa-deep-link";
-import { dispatchNotification } from "@app/utils/notifications";
+import { dispatchNotification } from "@genesiscz/utils/notifications";
 import type { QaEntry } from "../types";
 import { registerSink, type Sink } from "./registry-exports";
 

@@ -1,5 +1,5 @@
-import { MacCalendar } from "@app/utils/macos/apple-calendar";
-import { MacReminders, todoPriorityToApple } from "@app/utils/macos/apple-reminders";
+import { MacCalendar } from "@genesiscz/utils/macos/apple-calendar";
+import { MacReminders, todoPriorityToApple } from "@genesiscz/utils/macos/apple-reminders";
 import type { TodoStore } from "./store";
 import type { Todo, TodoLink, TodoReminder } from "./types";
 

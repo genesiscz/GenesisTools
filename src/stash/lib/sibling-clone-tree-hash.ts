@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 const { log } = logger.scoped("stash:tree-hash");
 

@@ -4,7 +4,7 @@ import { migration001 } from "@app/shops/db/migrations/001-initial";
 import { migration002 } from "@app/shops/db/migrations/002-descriptions";
 import { migration003 } from "@app/shops/db/migrations/003-providers";
 import { migration004 } from "@app/shops/db/migrations/004-auth";
-import { runMigrations } from "@app/utils/database/migrations";
+import { runMigrations } from "@genesiscz/utils/database/migrations";
 
 const ALL = [migration001, migration002, migration003, migration004];
 

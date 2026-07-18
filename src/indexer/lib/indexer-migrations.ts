@@ -1,4 +1,4 @@
-import type { Migration } from "@app/utils/database/migrations";
+import type { Migration } from "@genesiscz/utils/database/migrations";
 
 const sourceIdIndex: Migration = {
     id: "2026-04-source-id-index",

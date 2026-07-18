@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { AIConfig } from "@app/utils/ai/AIConfig";
+import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import {
     backupKeychainPayload,
     deleteKeychainEntry,
@@ -9,10 +9,10 @@ import {
     secondaryToKeychainPayload,
     syncKeychainToConfig,
     writeKeychainPayload,
-} from "@app/utils/claude/keychain";
-import type { AISecondaryLogin } from "@app/utils/config/ai.types";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+} from "@genesiscz/utils/claude/keychain";
+import type { AISecondaryLogin } from "@genesiscz/utils/config/ai.types";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 const CLAUDE_JSON = join(homedir(), ".claude.json");
 

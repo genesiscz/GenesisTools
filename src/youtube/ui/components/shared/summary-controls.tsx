@@ -1,6 +1,6 @@
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import type { SummaryFormat, SummaryLength, SummaryTone } from "@app/youtube/lib/types";
 import type { TaskDefaultSettings } from "@app/youtube/lib/user-settings";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@genesiscz/utils/ui/components/select";
 
 export interface SummaryControlsState {
     tone: SummaryTone;

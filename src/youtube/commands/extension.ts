@@ -1,13 +1,13 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { relative, resolve } from "node:path";
-import { createWatcher } from "@app/utils/fs/watcher";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
-import { toPosixPath } from "@app/utils/paths";
 import { launchDevtoolsBrowser } from "@app/youtube/lib/devtools/browser";
 import { captureFrameGrid } from "@app/youtube/lib/devtools/frame-grid";
 import { withDevtoolsClient } from "@app/youtube/lib/devtools/mcp-client";
 import * as p from "@clack/prompts";
+import { createWatcher } from "@genesiscz/utils/fs/watcher";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
+import { toPosixPath } from "@genesiscz/utils/paths";
 import type { Command } from "commander";
 import pc from "picocolors";
 

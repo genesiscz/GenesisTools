@@ -1,4 +1,4 @@
-import { formatDateTime } from "@app/utils/date";
+import { formatDateTime } from "@genesiscz/utils/date";
 import pc from "picocolors";
 import type { FormattedBlock } from "../formatters/types";
 

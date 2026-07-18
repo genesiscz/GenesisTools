@@ -1,4 +1,4 @@
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 /**
  * Centralized test skip gates.
@@ -7,7 +7,7 @@ import { env } from "@app/utils/env";
  * in every file, import a named gate here and pass it straight to bun's
  * `describe.skipIf(...)` / `it.skipIf(...)` (they take a boolean).
  *
- *   import { skip } from "@app/utils/test/skip";
+ *   import { skip } from "@genesiscz/utils/test/skip";
  *
  *   describe.skipIf(skip.unlessMac)("Apple Mail indexer", () => { … });
  *   describe.skipIf(skip.network)("live crawl", () => { … });

@@ -3,7 +3,7 @@
  * Handles pasted multiline content (like cURL commands)
  */
 
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 
 export interface MultilineOptions {

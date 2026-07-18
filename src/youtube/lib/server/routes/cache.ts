@@ -1,9 +1,9 @@
 import { existsSync, statSync, unlinkSync } from "node:fs";
-import { SafeJSON } from "@app/utils/json";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { requireOperator } from "@app/youtube/lib/server/require-operator";
 import type { Youtube } from "@app/youtube/lib/youtube";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 interface ClearCacheBody {
     audio?: boolean;

@@ -1,5 +1,5 @@
-import { SafeJSON } from "@app/utils/json";
-import { isObject } from "@app/utils/object";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { isObject } from "@genesiscz/utils/object";
 
 /**
  * Maps an OpenAI chat-completions request body into an Anthropic

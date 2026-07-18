@@ -2,8 +2,8 @@ import { afterAll, describe, expect, mock, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { listRunsForTask } from "./log-reader";
 
 const baseDir = mkdtempSync(join(tmpdir(), "log-reader-test-"));

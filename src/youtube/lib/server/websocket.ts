@@ -1,6 +1,6 @@
-import { SafeJSON } from "@app/utils/json";
 import type { JobEvent } from "@app/youtube/lib/jobs.types";
 import type { Youtube } from "@app/youtube/lib/youtube";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { ServerWebSocket, WebSocketHandler } from "bun";
 
 export interface WebsocketState {

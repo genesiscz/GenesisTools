@@ -1,5 +1,5 @@
-import type { AIProvider } from "@app/utils/config/ai.types";
 import type { DetectedProvider, ModelInfo } from "@ask/types";
+import type { AIProvider } from "@genesiscz/utils/config/ai.types";
 import type { AccountResolver } from "./index";
 
 /**

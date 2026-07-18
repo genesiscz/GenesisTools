@@ -124,7 +124,7 @@ function walkReaddirStat(root: string): { dirs: number; files: number } {
 }
 
 async function walkGetattrlistbulk(root: string): Promise<{ dirs: number; files: number }> {
-    const mod = await import("@app/utils/macos/getattrlistbulk");
+    const mod = await import("@genesiscz/utils/macos/getattrlistbulk");
     return mod.walkGetattrlistbulk(root);
 }
 

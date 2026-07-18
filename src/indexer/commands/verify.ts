@@ -1,5 +1,5 @@
-import { formatBytes } from "@app/utils/format";
 import * as p from "@clack/prompts";
+import { formatBytes } from "@genesiscz/utils/format";
 import type { Command } from "commander";
 import pc from "picocolors";
 

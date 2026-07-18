@@ -1,10 +1,10 @@
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { logger, out } from "@app/utils/logger";
-import { withCancel } from "@app/utils/prompts/clack/helpers";
-import { sessionExists } from "@app/utils/tmux/sessions";
-import { restoreTmuxSession, type TmuxPreset } from "@app/utils/tmux/snapshot";
-import { PresetNotFoundError, TmuxPresetStore } from "@app/utils/tmux/snapshot-store";
 import * as p from "@clack/prompts";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { logger, out } from "@genesiscz/utils/logger";
+import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
+import { sessionExists } from "@genesiscz/utils/tmux/sessions";
+import { restoreTmuxSession, type TmuxPreset } from "@genesiscz/utils/tmux/snapshot";
+import { PresetNotFoundError, TmuxPresetStore } from "@genesiscz/utils/tmux/snapshot-store";
 import type { Command } from "commander";
 import pc from "picocolors";
 

@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { discoverEmbeddingProviders } from "@app/utils/ai/embedding-selection";
-import { Embedder } from "@app/utils/ai/tasks/Embedder";
-import { formatBytes, formatDuration } from "@app/utils/format";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
-import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
+import { discoverEmbeddingProviders } from "@genesiscz/utils/ai/embedding-selection";
+import { Embedder } from "@genesiscz/utils/ai/tasks/Embedder";
+import { formatBytes, formatDuration } from "@genesiscz/utils/format";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
+import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { Indexer } from "../lib/indexer";

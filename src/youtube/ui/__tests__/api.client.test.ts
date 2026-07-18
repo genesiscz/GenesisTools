@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { SafeJSON } from "@app/utils/json";
 import type { JobStage } from "@app/youtube/lib/types";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const fetchCalls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
 const originalFetch = globalThis.fetch;

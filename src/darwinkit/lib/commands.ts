@@ -1,4 +1,4 @@
-import type { EmbedType, NlpScheme, OcrLevel } from "@app/utils/macos";
+import type { EmbedType, NlpScheme, OcrLevel } from "@genesiscz/utils/macos";
 import {
     analyzeSentiment,
     areSimilar,
@@ -36,8 +36,8 @@ import {
     scoreRelevance,
     tagText,
     textDistance,
-} from "@app/utils/macos";
-import { speak } from "@app/utils/macos/tts";
+} from "@genesiscz/utils/macos";
+import { speak } from "@genesiscz/utils/macos/tts";
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 

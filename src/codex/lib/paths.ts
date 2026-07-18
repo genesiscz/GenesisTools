@@ -1,5 +1,5 @@
 import { join, resolve, sep } from "node:path";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 export function codexRoot(): string {
     return join(env.tools.getHome(), ".genesis-tools", "codex");

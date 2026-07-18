@@ -16,9 +16,9 @@ import type {
     WorkItemSettings,
 } from "@app/azure-devops/types";
 import { filterAttachments, getTaskFilePath } from "@app/azure-devops/utils";
-import { concurrentMap } from "@app/utils/async";
-import { logger } from "@app/utils/logger";
-import { withQueryParams } from "@app/utils/url";
+import { concurrentMap } from "@genesiscz/utils/async";
+import { logger } from "@genesiscz/utils/logger";
+import { withQueryParams } from "@genesiscz/utils/url";
 
 /** Extract attachment GUID from Azure DevOps attachment URL */
 function extractAttachmentId(url: string): string {

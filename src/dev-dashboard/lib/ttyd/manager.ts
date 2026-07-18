@@ -3,12 +3,12 @@ import { existsSync } from "node:fs";
 import { getConfig, saveTtydSessions } from "@app/dev-dashboard/config";
 import { makeTtydTmuxSessionName } from "@app/dev-dashboard/lib/tmux/naming";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
-import { env } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
-import { findFreePort } from "@app/utils/net/free-port";
-import { killWithEscalation } from "@app/utils/process/killWithEscalation";
-import { buildTerminalSpawnEnv } from "@app/utils/terminal/locale";
-import { resolveTmuxBin } from "@app/utils/tmux/bin";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
+import { findFreePort } from "@genesiscz/utils/net/free-port";
+import { killWithEscalation } from "@genesiscz/utils/process/killWithEscalation";
+import { buildTerminalSpawnEnv } from "@genesiscz/utils/terminal/locale";
+import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import {
     createTmuxSession,
     ensureTmuxServerPersists,
@@ -16,7 +16,7 @@ import {
     killTmuxSession,
     listTmuxSessionCommands,
     sessionExists,
-} from "@app/utils/tmux/sessions";
+} from "@genesiscz/utils/tmux/sessions";
 import type { Subprocess } from "bun";
 
 export { ttydLabel } from "@app/dev-dashboard/lib/ttyd/label";

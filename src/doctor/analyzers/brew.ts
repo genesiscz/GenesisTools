@@ -1,7 +1,7 @@
 import { Analyzer } from "@app/doctor/lib/analyzer";
 import { isCommandAvailable, run, runInherit } from "@app/doctor/lib/run";
 import type { AnalyzerCategory, AnalyzerContext, ExecutorContext, Finding } from "@app/doctor/lib/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export interface OutdatedPackage {
     name: string;

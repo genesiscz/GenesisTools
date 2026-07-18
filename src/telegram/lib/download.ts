@@ -1,8 +1,8 @@
-import { formatNumber } from "@app/utils/format";
-import { logger } from "@app/utils/logger";
-import { detectLanguage, embedText } from "@app/utils/macos/nlp";
-import type { EmbedResult } from "@app/utils/macos/types";
 import * as p from "@clack/prompts";
+import { formatNumber } from "@genesiscz/utils/format";
+import { logger } from "@genesiscz/utils/logger";
+import { detectLanguage, embedText } from "@genesiscz/utils/macos/nlp";
+import type { EmbedResult } from "@genesiscz/utils/macos/types";
 import pc from "picocolors";
 import { ConversationSyncService, type SyncResult } from "./ConversationSyncService";
 import type { TelegramHistoryStore } from "./TelegramHistoryStore";

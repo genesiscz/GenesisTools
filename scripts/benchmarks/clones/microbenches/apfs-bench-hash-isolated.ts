@@ -118,7 +118,7 @@ function sha256Bun(path: string): string {
 
 async function blake3Hash(path: string): Promise<string> {
     try {
-        const mod = await import("@app/utils/fs/hash");
+        const mod = await import("@genesiscz/utils/fs/hash");
         if (typeof mod.blake3File === "function") {
             return mod.blake3File(path);
         }

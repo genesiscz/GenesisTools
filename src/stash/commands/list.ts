@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
 import { detectProject, findSiblingClones } from "../lib/projects";
 import { openStashDb } from "../lib/stash-db";

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import { mapIndicatorList, mapTranslateResponse, parseScriptSpec, resolvePubScriptRef } from "./pine-facade";
 import { SignalDetector } from "./signals";
 

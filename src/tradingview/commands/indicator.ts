@@ -1,5 +1,5 @@
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 import { fetchAuthToken, resolveSession } from "../lib/auth";
 import { ChartClient } from "../lib/chart-client";

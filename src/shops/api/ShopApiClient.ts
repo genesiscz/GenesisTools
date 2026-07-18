@@ -9,9 +9,9 @@ import type {
     ShopOrigin,
 } from "@app/shops/api/ShopApiClient.types";
 import type { HttpRequestSink } from "@app/shops/lib/http-sink";
-import { ApiClient, type ApiClientResponse, resolveUrl } from "@app/utils/api/ApiClient";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { ApiClient, type ApiClientResponse, resolveUrl } from "@genesiscz/utils/api/ApiClient";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 // @ts-expect-error -- @hlidac-shopu/lib ships ESM with no .d.ts coverage
 import { parseItemDetails } from "@hlidac-shopu/lib/shops.mjs";
 

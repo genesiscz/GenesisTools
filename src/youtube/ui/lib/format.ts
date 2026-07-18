@@ -1,6 +1,6 @@
-import { parseSqliteOrIsoDate } from "@app/utils/sql-time";
+import { parseSqliteOrIsoDate } from "@genesiscz/utils/sql-time";
 
-export { parseSqliteOrIsoDate as parseSqliteDate } from "@app/utils/sql-time";
+export { parseSqliteOrIsoDate as parseSqliteDate } from "@genesiscz/utils/sql-time";
 
 export function formatNumber(value: number | null | undefined): string {
     if (value === null || value === undefined) {

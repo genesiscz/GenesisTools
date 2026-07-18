@@ -1,6 +1,3 @@
-import { runTool } from "@app/utils/cli";
-import { enhanceHelp } from "@app/utils/cli/executor";
-import { out } from "@app/utils/logger";
 import { registerAnalyzeCommand } from "@app/youtube/commands/analyze";
 import { registerCacheCommand } from "@app/youtube/commands/cache";
 import { registerChannelsCommand } from "@app/youtube/commands/channels";
@@ -11,6 +8,9 @@ import { registerServerCommand } from "@app/youtube/commands/server";
 import { registerTranscribeCommand } from "@app/youtube/commands/transcribe";
 import { registerUiCommand } from "@app/youtube/commands/ui";
 import { registerVideosCommand } from "@app/youtube/commands/videos";
+import { runTool } from "@genesiscz/utils/cli";
+import { enhanceHelp } from "@genesiscz/utils/cli/executor";
+import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
 export function buildYoutubeProgram(): Command {

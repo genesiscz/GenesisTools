@@ -1,6 +1,6 @@
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
-import { out } from "@app/utils/logger";
-import { formatTable } from "@app/utils/table";
+import { out } from "@genesiscz/utils/logger";
+import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 
 export function registerSessionsCommand(program: Command): void {

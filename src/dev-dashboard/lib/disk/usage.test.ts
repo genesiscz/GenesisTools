@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import { DEFAULT_DU_TIMEOUT_MS, duTimeoutMs, parseDuOutput, shortLabel } from "./usage";
 
 // `du -sk` prints one row per path: "<kilobytes>\t<path>". macOS du uses a tab; we tolerate any whitespace run.

@@ -1,11 +1,11 @@
 import type { WatchEventType, WatchOptions } from "node:fs";
 import fs from "node:fs";
 import path from "node:path";
-import { runTool } from "@app/utils/cli";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { expandTilde } from "@app/utils/paths";
-import { handleReadmeFlag } from "@app/utils/readme";
+import { runTool } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { expandTilde } from "@genesiscz/utils/paths";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import chalk from "chalk";
 import chokidar from "chokidar";
 import { Command } from "commander";

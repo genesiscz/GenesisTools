@@ -1,4 +1,4 @@
-import { cosineDistance } from "@app/utils/math";
+import { cosineDistance } from "@genesiscz/utils/math";
 
 export interface VectorSearchHit {
     docId: string;

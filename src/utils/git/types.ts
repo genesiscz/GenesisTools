@@ -1,4 +1,4 @@
-export type { ExecResult as GitCommandResult } from "@app/utils/cli";
+export type { ExecResult as GitCommandResult } from "@genesiscz/utils/cli";
 
 export interface BranchInfo {
     name: string;

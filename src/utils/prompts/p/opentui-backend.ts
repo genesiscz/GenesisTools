@@ -1,4 +1,4 @@
-import type { PromptBackend } from "@app/utils/prompts/p/backend";
+import type { PromptBackend } from "@genesiscz/utils/prompts/p/backend";
 import type {
     ConfirmOpts,
     Log,
@@ -9,9 +9,9 @@ import type {
     Spinner,
     TextOpts,
     TypedConfirmOpts,
-} from "@app/utils/prompts/p/types";
-import type { PromptTask, PromptTaskValue } from "@app/utils/tui/prompt-store";
-import { usePromptStore } from "@app/utils/tui/prompt-store";
+} from "@genesiscz/utils/prompts/p/types";
+import type { PromptTask, PromptTaskValue } from "@genesiscz/utils/tui/prompt-store";
+import { usePromptStore } from "@genesiscz/utils/tui/prompt-store";
 import type { CliRenderer } from "@opentui/core";
 
 export interface LogEntry {

@@ -1,4 +1,4 @@
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import { ensureDashboardBuilt } from "../commands/dashboard";
 import { startServer } from "../core/http-server";
 

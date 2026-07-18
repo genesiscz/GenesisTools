@@ -1,4 +1,4 @@
-import { findTokenMatches } from "@app/utils/fuzzy-tokens";
+import { findTokenMatches } from "@genesiscz/utils/fuzzy-tokens";
 
 const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "PRE", "CODE"]);
 

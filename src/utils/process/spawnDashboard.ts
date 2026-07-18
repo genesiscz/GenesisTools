@@ -17,8 +17,8 @@
  * — we deliberately do NOT call `process.exit` here so callers can run cleanup.
  */
 
-import { env as appEnv } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
+import { env as appEnv } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
 
 export interface SpawnDashboardOptions {
     /** Argv. First element is the executable. */

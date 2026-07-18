@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { runMigrations } from "@app/utils/database/migrations";
+import { runMigrations } from "@genesiscz/utils/database/migrations";
 import { FILE_META_MIGRATION_CONTEXT, FILE_META_MIGRATIONS } from "./file-meta-migrations";
 
 describe("file-meta-migrations", () => {

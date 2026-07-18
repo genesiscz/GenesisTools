@@ -1,7 +1,7 @@
 import type { DashboardSession } from "@app/log-viewer/log-source";
 import { isLogSourceId, parseSessionKey, sessionKey } from "@app/log-viewer/session-key";
 import { sessionRecencyTs, sortSessionsByRecency } from "@app/log-viewer/session-recency";
-import { shortenPathWithPrefix } from "@app/utils/paths.client";
+import { shortenPathWithPrefix } from "@genesiscz/utils/paths.client";
 import { useDirPathPrefix } from "@ui/components/DirPath";
 import { IconTooltip } from "@ui/components/icon-button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@ui/components/select";

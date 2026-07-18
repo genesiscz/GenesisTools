@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { FileTailer } from "./file-tailer";
 
 describe("FileTailer<T>", () => {

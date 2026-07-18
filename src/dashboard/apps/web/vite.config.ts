@@ -9,7 +9,7 @@ import { nitro } from "nitro/vite";
 import { defineConfig } from "vite";
 import viteTsConfigPaths from "vite-tsconfig-paths";
 // Relative import on purpose: vite's config bundler inlines relative imports but
-// externalizes bare ones, and "@app/utils/env" is not a resolvable package from
+// externalizes bare ones, and "@genesiscz/utils/env" is not a resolvable package from
 // this isolated workspace — the bare import kept the dev server from booting.
 import { env } from "../../../utils/env.client";
 
@@ -69,20 +69,23 @@ const config = defineConfig({
                 replacement: fileURLToPath(new URL("../../packages/shared/src/index.ts", import.meta.url)),
             },
             {
-                find: "@app/utils/logger/client",
-                replacement: fileURLToPath(new URL("../../../logger/client.ts", import.meta.url)),
+                find: "@genesiscz/utils/logger/client",
+                replacement: fileURLToPath(new URL("../../../utils/logger/client.ts", import.meta.url)),
             },
-            { find: "@app/utils/json", replacement: fileURLToPath(new URL("../../../utils/json.ts", import.meta.url)) },
             {
-                find: "@app/utils/env.client",
+                find: "@genesiscz/utils/json",
+                replacement: fileURLToPath(new URL("../../../utils/json.ts", import.meta.url)),
+            },
+            {
+                find: "@genesiscz/utils/env.client",
                 replacement: fileURLToPath(new URL("../../../utils/env.client.ts", import.meta.url)),
             },
             {
-                find: /^@app\/utils\/env\/(.+)$/,
+                find: /^@genesiscz\/utils\/env\/(.+)$/,
                 replacement: `${fileURLToPath(new URL("../../../utils/env", import.meta.url))}/$1`,
             },
             {
-                find: /^@app\/utils\/env$/,
+                find: /^@genesiscz\/utils\/env$/,
                 replacement: fileURLToPath(new URL("../../../utils/env/index.ts", import.meta.url)),
             },
             { find: "@radix-ui/react-avatar", replacement: dashboardDependency("@radix-ui/react-avatar") },

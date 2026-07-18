@@ -2,7 +2,7 @@
  * Example of a MCP client that lists the contents of the user's home directory.
  */
 
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 

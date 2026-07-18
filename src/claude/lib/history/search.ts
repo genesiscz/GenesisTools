@@ -8,13 +8,7 @@ import { createReadStream, readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, sep } from "node:path";
 import { createInterface } from "node:readline";
-import { discoverSessionFiles, discoverSessionFilesInDir } from "@app/utils/claude/discovery";
-import { extractProjectName, PROJECTS_DIR, resolveProjectDir } from "@app/utils/claude/projects";
-import { Executor } from "@app/utils/cli";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
-import { Stopwatch } from "@app/utils/Stopwatch";
-import { glob } from "glob";
+import { discoverSessionFiles, discoverSessionFilesInDir } from "@genesiscz/utils/claude/discovery";
 import {
     invalidateToday as _invalidateToday,
     aggregateDailyStats,
@@ -42,7 +36,13 @@ import {
     upsertDailyStats,
     upsertFileIndex,
     upsertSessionMetadata,
-} from "@app/utils/claude/history-cache";
+} from "@genesiscz/utils/claude/history-cache";
+import { extractProjectName, PROJECTS_DIR, resolveProjectDir } from "@genesiscz/utils/claude/projects";
+import { Executor } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
+import { Stopwatch } from "@genesiscz/utils/Stopwatch";
+import { glob } from "glob";
 import type {
     AssistantMessage,
     ConversationMessage,
@@ -80,7 +80,7 @@ function getMetadataVersion(): string {
 const METADATA_VERSION = getMetadataVersion();
 
 // Re-export for backward compatibility (constants now live in @app/utils/claude/projects)
-export { CLAUDE_DIR, PROJECTS_DIR } from "@app/utils/claude/projects";
+export { CLAUDE_DIR, PROJECTS_DIR } from "@genesiscz/utils/claude/projects";
 
 // =============================================================================
 // File Discovery
@@ -123,7 +123,7 @@ export async function findConversationFiles(filters: SearchFilters): Promise<str
 
 // extractProjectName and resolveProjectNameFromEncoded are now in @app/utils/claude/projects
 // Re-export for backward compatibility
-export { extractProjectName } from "@app/utils/claude/projects";
+export { extractProjectName } from "@genesiscz/utils/claude/projects";
 
 // =============================================================================
 // JSONL Parsing
@@ -2334,6 +2334,6 @@ export async function getStatsForDateRange(range: DateRange): Promise<Conversati
     return getConversationStatsWithCache({ dateRange: range });
 }
 
-export type { DailyStats, DateRange, SessionMetadataRecord, TokenUsage } from "@app/utils/claude/history-cache";
+export type { DailyStats, DateRange, SessionMetadataRecord, TokenUsage } from "@genesiscz/utils/claude/history-cache";
 // Re-export cache functions for external use
-export { getCachedTotals, getCacheStats, invalidateToday } from "@app/utils/claude/history-cache";
+export { getCachedTotals, getCacheStats, invalidateToday } from "@genesiscz/utils/claude/history-cache";

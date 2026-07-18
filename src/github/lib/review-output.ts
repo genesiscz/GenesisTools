@@ -4,9 +4,9 @@
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve as pathResolve } from "node:path";
-import { formatRelativeTime } from "@app/utils/format";
-import type { ParsedReviewThread, PRLevelComment, ReviewData } from "@app/utils/github/types";
-import { SafeJSON } from "@app/utils/json";
+import { formatRelativeTime } from "@genesiscz/utils/format";
+import type { ParsedReviewThread, PRLevelComment, ReviewData } from "@genesiscz/utils/github/types";
+import { SafeJSON } from "@genesiscz/utils/json";
 import chalk from "chalk";
 
 // =============================================================================

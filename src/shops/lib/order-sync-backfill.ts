@@ -1,8 +1,8 @@
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { UserProvidersRepository } from "@app/shops/db/UserProvidersRepository";
 import { addFavoriteByMaster } from "@app/shops/lib/watchlist-api";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 const log = logger.child({ component: "shops:order-sync-backfill" });
 

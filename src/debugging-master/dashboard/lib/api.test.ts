@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const originalFetch = globalThis.fetch;
 

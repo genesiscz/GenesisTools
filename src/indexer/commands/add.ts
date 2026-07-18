@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import { parseVariadic } from "@app/utils/cli/variadic";
 import * as p from "@clack/prompts";
+import { parseVariadic } from "@genesiscz/utils/cli/variadic";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { EmbeddingSetupError } from "../lib/indexer";
@@ -36,7 +36,7 @@ function autoDetectType(absPath: string): "code" | "files" {
 /** Check if an Ollama model is pulled, prompt to download if not. Returns false if user cancels or Ollama unavailable. */
 async function ensureOllamaModel(model: string): Promise<boolean> {
     try {
-        const { AIOllamaProvider } = await import("@app/utils/ai/providers/AIOllamaProvider");
+        const { AIOllamaProvider } = await import("@genesiscz/utils/ai/providers/AIOllamaProvider");
         const ollama = new AIOllamaProvider({ defaultModel: model });
 
         if (!(await ollama.isAvailable())) {

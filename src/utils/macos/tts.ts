@@ -1,7 +1,7 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Storage } from "@app/utils/storage/storage.ts";
+import { Storage } from "@genesiscz/utils/storage/storage.ts";
 import { detectLanguage } from "./nlp";
 
 const storage = new Storage("say");
@@ -107,7 +107,7 @@ export async function getVoiceMap(): Promise<Map<string, VoiceInfo>> {
  */
 export async function speak(text: string, options?: SpeakOptions): Promise<void> {
     const volume = options?.volume != null ? normalizeVolume(options.volume) : undefined;
-    const { AI } = await import("@app/utils/ai/index");
+    const { AI } = await import("@genesiscz/utils/ai/index");
     await AI.speak(text, {
         provider: "local",
         voice: options?.voice,

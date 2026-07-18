@@ -1,9 +1,9 @@
 import type { MasterListResponse } from "@app/shops/types";
 import { BrowseGrid } from "@app/shops/ui/components/BrowseGrid";
 import { useDebouncedValue } from "@app/shops/ui/hooks/useDebouncedValue";
-import { IconButton } from "@app/utils/ui/components/icon-button";
-import { Input } from "@app/utils/ui/components/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
+import { IconButton } from "@genesiscz/utils/ui/components/icon-button";
+import { Input } from "@genesiscz/utils/ui/components/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@genesiscz/utils/ui/components/select";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Search, X } from "lucide-react";

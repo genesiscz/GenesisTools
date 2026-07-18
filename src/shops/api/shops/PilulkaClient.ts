@@ -3,8 +3,8 @@
 import { ShopApiClient, type ShopApiClientConstructorConfig } from "@app/shops/api/ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import type { PilulkaProductLD } from "@app/shops/api/shops/PilulkaClient.types";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { parseHTML } from "linkedom";
 
 const PILULKA_ORIGIN = "pilulka.cz";

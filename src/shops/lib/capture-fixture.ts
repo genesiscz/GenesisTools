@@ -1,10 +1,10 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ShopRegistry } from "@app/shops/api/ShopRegistry";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { toPosixPath } from "@app/utils/paths";
-import { WebView } from "@app/utils/WebView";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { toPosixPath } from "@genesiscz/utils/paths";
+import { WebView } from "@genesiscz/utils/WebView";
 
 const log = logger.child({ component: "shops:capture-fixture" });
 

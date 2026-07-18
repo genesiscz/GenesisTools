@@ -14,7 +14,7 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export type MigrationScope = "project" | "global" | "both";
 export type SingleScope = "project" | "global";

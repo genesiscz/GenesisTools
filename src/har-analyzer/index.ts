@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { handleReadmeFlag } from "@app/utils/readme";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
 
 handleReadmeFlag(import.meta.url);
@@ -15,7 +15,7 @@ program
     .option("-v, --verbose", "Verbose logging")
     .option("-i, --interactive", "Launch interactive mode");
 
-import { runTool } from "@app/utils/cli";
+import { runTool } from "@genesiscz/utils/cli";
 import { registerCookiesCommand } from "./commands/cookies";
 import { registerDashboardCommand } from "./commands/dashboard";
 import { registerDiffCommand } from "./commands/diff";

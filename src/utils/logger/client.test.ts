@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
  * 6. No Node-only imports (checked by inspecting the import block separately)
  */
 
-describe("@app/utils/logger/client", () => {
+describe("@genesiscz/utils/logger/client", () => {
     // biome-ignore lint/suspicious/noExplicitAny: test spy needs flexible capture
     let logs: any[][];
     // biome-ignore lint/suspicious/noExplicitAny: test spy needs flexible capture
@@ -181,17 +181,17 @@ describe("@app/utils/logger/client", () => {
     describe("prompt methods throw", () => {
         it("out.text() throws browser context error", async () => {
             const { out } = await import("./client");
-            expect(() => out.text({ message: "hi" })).toThrow("@app/utils/logger/client");
+            expect(() => out.text({ message: "hi" })).toThrow("@genesiscz/utils/logger/client");
         });
 
         it("out.confirm() throws browser context error", async () => {
             const { out } = await import("./client");
-            expect(() => out.confirm({ message: "ok?" })).toThrow("@app/utils/logger/client");
+            expect(() => out.confirm({ message: "ok?" })).toThrow("@genesiscz/utils/logger/client");
         });
 
         it("out.select() throws browser context error", async () => {
             const { out } = await import("./client");
-            expect(() => out.select({ message: "pick", options: [] })).toThrow("@app/utils/logger/client");
+            expect(() => out.select({ message: "pick", options: [] })).toThrow("@genesiscz/utils/logger/client");
         });
     });
 

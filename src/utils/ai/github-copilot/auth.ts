@@ -1,1 +1,1 @@
-export { fetchGithubUserLogin, getCopilotSession, readGithubToken } from "@app/utils/ai/github-copilot/token";
+export { fetchGithubUserLogin, getCopilotSession, readGithubToken } from "@genesiscz/utils/ai/github-copilot/token";

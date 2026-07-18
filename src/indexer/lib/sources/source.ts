@@ -1,5 +1,5 @@
-import { detectChangesPreHashed } from "@app/utils/fs/change-detector";
-import { xxhash } from "@app/utils/hash";
+import { detectChangesPreHashed } from "@genesiscz/utils/fs/change-detector";
+import { xxhash } from "@genesiscz/utils/hash";
 import type { MetadataColumnSpec } from "../types";
 
 export interface SourceEntry {

@@ -1,6 +1,6 @@
 import type { TimelyService } from "@app/timely/api/service";
 import type { TimelyEvent } from "@app/timely/types/api";
-import type { Storage } from "@app/utils/storage";
+import type { Storage } from "@genesiscz/utils/storage";
 
 const CORPUS_TTL = "1 day";
 const CORPUS_WINDOW_DAYS = 56; // 8 weeks

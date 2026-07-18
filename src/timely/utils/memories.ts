@@ -1,6 +1,6 @@
 import type { TimelyEntry } from "@app/timely/types";
-import { logger } from "@app/utils/logger";
-import type { Storage } from "@app/utils/storage";
+import { logger } from "@genesiscz/utils/logger";
+import type { Storage } from "@genesiscz/utils/storage";
 
 const CACHE_TTL = "30 days";
 

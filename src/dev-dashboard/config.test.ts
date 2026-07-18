@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { resolveVaultRoot } from "@app/utils/obsidian/config";
+import { resolveVaultRoot } from "@genesiscz/utils/obsidian/config";
 import { getConfig, resolveDashboardVault } from "./config";
 
 describe("dev-dashboard config", () => {

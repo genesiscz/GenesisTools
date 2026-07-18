@@ -2,7 +2,7 @@ import { collectProcesses, killProcess, sortProcesses } from "@app/dev-dashboard
 import type { ProcessSort } from "@app/dev-dashboard/lib/system/types";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 500;

@@ -1,5 +1,5 @@
-import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
+import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { getAllSuites } from "../lib/suites";

@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { removeRecursive } from "@app/utils/fs";
-import { makeTempDir } from "@app/utils/paths";
+import { removeRecursive } from "@genesiscz/utils/fs";
+import { makeTempDir } from "@genesiscz/utils/paths";
 import { PathHashStore } from "./path-hashes";
 
 describe("PathHashStore", () => {

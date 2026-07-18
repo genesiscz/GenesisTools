@@ -1,7 +1,7 @@
 import { formatSessionState } from "@app/task/lib/format-session-state";
 import { sessionFilePaths } from "@app/task/lib/paths";
 import { TaskSessionStore } from "@app/task/lib/session-store";
-import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
+import { filterLineRecords, readJsonlFile } from "@genesiscz/utils/log-session/jsonl-reader";
 
 export interface SessionSummary {
     name: string;

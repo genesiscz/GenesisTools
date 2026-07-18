@@ -1,6 +1,6 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import type { ExecResult } from "./executor";
 
 function getToolsPath(): string {

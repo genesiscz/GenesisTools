@@ -4,11 +4,11 @@ import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/typ
 import { resolveXaiApiKey, XAI_API_BASE_URL } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
 import { rewriteBodyModel } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
-import { GrokManagementClient } from "@app/utils/ai/grok";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { fetchDirect } from "@app/utils/net/fetch-direct";
+import { GrokManagementClient } from "@genesiscz/utils/ai/grok";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { fetchDirect } from "@genesiscz/utils/net/fetch-direct";
 
 export { resolveXaiApiKey, XAI_API_BASE_URL } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
 

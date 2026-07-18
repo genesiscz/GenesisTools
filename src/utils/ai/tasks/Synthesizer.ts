@@ -1,8 +1,8 @@
-import { playBuffer, playStream } from "@app/utils/audio/playback";
-import { isInteractive } from "@app/utils/cli/executor";
-import type { AIProviderType } from "@app/utils/config/ai.types";
-import { CLOUD_PROVIDER_TYPES } from "@app/utils/config/ai.types";
-import { logger } from "@app/utils/logger";
+import { playBuffer, playStream } from "@genesiscz/utils/audio/playback";
+import { isInteractive } from "@genesiscz/utils/cli/executor";
+import type { AIProviderType } from "@genesiscz/utils/config/ai.types";
+import { CLOUD_PROVIDER_TYPES } from "@genesiscz/utils/config/ai.types";
+import { logger } from "@genesiscz/utils/logger";
 import { AIConfig } from "../AIConfig";
 import { getProvidersForTask, getTextToSpeechProvider } from "../providers";
 import type { AITextToSpeechProvider, TTSOptions, TTSResult, TTSVoice } from "../types";

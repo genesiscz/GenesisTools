@@ -1,4 +1,4 @@
-import { parseCurl } from "@app/utils/curl";
+import { parseCurl } from "@genesiscz/utils/curl";
 
 export interface ClarityAuthFromCurl {
     baseUrl: string;

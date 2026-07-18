@@ -2,9 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execTool, stripAnsi } from "@app/utils/e2e/helpers";
-import { SafeJSON } from "@app/utils/json";
-import { skip } from "@app/utils/test/skip";
+import { execTool, stripAnsi } from "@genesiscz/utils/e2e/helpers";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { skip } from "@genesiscz/utils/test/skip";
 
 const TEST_PREFIX = `test_e2e_${Date.now()}`;
 let tempDir: string;

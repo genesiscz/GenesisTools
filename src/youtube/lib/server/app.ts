@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
-import { defineDashboardApp } from "@app/utils/DashboardApp";
-import { PROJECT_ROOT } from "@app/utils/paths";
+import { defineDashboardApp } from "@genesiscz/utils/DashboardApp";
+import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 
 const SERVER_ENTRY = resolve(PROJECT_ROOT, "src/youtube/lib/server/index.ts");
 

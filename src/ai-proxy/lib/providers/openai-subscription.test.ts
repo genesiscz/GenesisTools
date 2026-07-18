@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const TEST_TOKEN = "codex-access-token";
 const TEST_ACCOUNT_ID = "acct-123";

@@ -9,7 +9,7 @@ import {
     requestHasImageContent,
     resolveGrokUpstreamModelForImages,
 } from "@app/ai-proxy/lib/rewrite-upstream-body";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 describe("rewrite-upstream-body", () => {
     it("replaces proxy model id with upstream id in JSON body", () => {

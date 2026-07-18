@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { startWakefulInterval, type WakefulInterval } from "@app/utils/async";
-import { SafeJSON } from "@app/utils/json";
+import { startWakefulInterval, type WakefulInterval } from "@genesiscz/utils/async";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { KillResult, PortProcess, PortSnapshot, ProcessSnapshot, ProcessStatus } from "./types";
 
 const IS_WINDOWS = process.platform === "win32";
@@ -1130,7 +1130,7 @@ export function findOrphanedPorts(): PortSnapshot[] {
 function isProcessAliveLocal(pid: number): boolean {
     // Local wrapper kept for backwards-compat with the file-lock-style
     // semantics already used in this file. New code should prefer
-    // `import { isProcessAlive } from "@app/utils/process-alive"`.
+    // `import { isProcessAlive } from "@genesiscz/utils/process-alive"`.
     try {
         process.kill(pid, 0);
         return true;

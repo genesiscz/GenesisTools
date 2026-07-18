@@ -1,12 +1,12 @@
-import type { TranscriptionCapableProvider } from "@app/utils/ai/types";
-import { env } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
-import type { SearchItem } from "@app/utils/prompts/clack";
-import { searchSelect, searchSelectCancelSymbol } from "@app/utils/prompts/clack";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { DetectedProvider, ModelInfo, ProviderChoice } from "@ask/types";
 import { colorizeByPriceTier } from "@ask/utils/helpers";
 import * as p from "@clack/prompts";
+import type { TranscriptionCapableProvider } from "@genesiscz/utils/ai/types";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
+import type { SearchItem } from "@genesiscz/utils/prompts/clack";
+import { searchSelect, searchSelectCancelSymbol } from "@genesiscz/utils/prompts/clack";
 import pc from "picocolors";
 
 export class ModelSelector {

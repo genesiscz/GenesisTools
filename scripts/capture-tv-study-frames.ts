@@ -15,7 +15,7 @@ import type { StudyValues } from "@app/tradingview/lib/study";
 import { buildStudyValues } from "@app/tradingview/lib/study";
 import { toProSymbol } from "@app/tradingview/lib/symbols";
 import { TV_ORIGIN, tvSocket } from "@app/tradingview/lib/ws";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const FIXTURES_DIR = join(import.meta.dir, "../src/tradingview/lib/__fixtures__");
 const SYMBOL = "BYBIT:BTCUSDT.P";

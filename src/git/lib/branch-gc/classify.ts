@@ -1,4 +1,4 @@
-import { createGit, getCurrentBranch as getCurrentBranchOrNull } from "@app/utils/git";
+import { createGit, getCurrentBranch as getCurrentBranchOrNull } from "@genesiscz/utils/git";
 
 export type BranchStatus = "current" | "base" | "merged" | "squash-merged" | "gone" | "stale" | "active";
 

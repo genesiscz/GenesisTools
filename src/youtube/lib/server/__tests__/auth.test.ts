@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { env } from "@app/utils/env";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
 import {
     extractServiceToken,
@@ -8,6 +7,7 @@ import {
     requireUser,
     resolveServiceKeys,
 } from "@app/youtube/lib/server/auth";
+import { env } from "@genesiscz/utils/env";
 
 function makeRequest(init: { auth?: string; url?: string } = {}): Request {
     const headers = new Headers();

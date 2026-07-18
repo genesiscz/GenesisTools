@@ -1,4 +1,4 @@
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 const BASE_URL = "https://api.x.ai/v1";
 const WS_BASE_URL = "wss://api.x.ai/v1";

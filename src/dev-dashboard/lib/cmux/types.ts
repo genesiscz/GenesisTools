@@ -2,7 +2,7 @@ export type {
     CmuxLivePane as CmuxPane,
     CmuxLiveSnapshot as CmuxSnapshot,
     CmuxLiveWorkspace as CmuxWorkspace,
-} from "@app/utils/cmux/lib/live-snapshot";
+} from "@genesiscz/utils/cmux/lib/live-snapshot";
 export type {
     AttachTmuxResult,
     CmuxLayoutPane,
@@ -12,4 +12,4 @@ export type {
     CmuxLayoutWorkspace,
     CmuxSendTarget,
     DashboardSendTarget,
-} from "@app/utils/cmux/types";
+} from "@genesiscz/utils/cmux/types";

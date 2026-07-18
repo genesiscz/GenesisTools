@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { ChatSessionManagerRef } from "./ChatSession";
 import { ChatSession } from "./ChatSession";
 import type { SessionEntry } from "./types";

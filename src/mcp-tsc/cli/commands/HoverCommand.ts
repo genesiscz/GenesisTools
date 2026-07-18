@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { CliArgs, HoverResult, TSServer } from "@app/mcp-tsc/core/interfaces.js";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import ts from "typescript";
 
 export class HoverCommand {

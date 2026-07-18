@@ -1,9 +1,5 @@
 #!/usr/bin/env bun
 
-import { transcriptionManager } from "@app/utils/ai/transcription/TranscriptionManager";
-import { logger, out } from "@app/utils/logger";
-import { input } from "@app/utils/prompts/clack";
-import { handleReadmeFlag } from "@app/utils/readme";
 import { AIChat } from "@ask/AIChat";
 import { ChatEngine } from "@ask/chat/ChatEngine";
 import type { ChatState, CommandResult } from "@ask/chat/CommandHandler";
@@ -21,6 +17,10 @@ import { getLanguageModel } from "@ask/types";
 import { expandAtMentions } from "@ask/utils/at-mentions";
 import { webSearchTool } from "@ask/utils/websearch";
 import * as p from "@clack/prompts";
+import { transcriptionManager } from "@genesiscz/utils/ai/transcription/TranscriptionManager";
+import { logger, out } from "@genesiscz/utils/logger";
+import { input } from "@genesiscz/utils/prompts/clack";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import type { ToolSet } from "ai";
 import { tool } from "ai";
 import pc from "picocolors";
@@ -89,7 +89,7 @@ class ASKTool {
             }
 
             // Apply config defaults from unified AIConfig
-            const { AIConfig } = await import("@app/utils/ai/AIConfig");
+            const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
             const aiConfig = await AIConfig.load();
             const askDefaults = aiConfig.getAppDefaults("ask");
 

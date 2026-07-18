@@ -1,10 +1,3 @@
-import {
-    createSubscriptionFetch,
-    SUBSCRIPTION_BETAS,
-    SUBSCRIPTION_SYSTEM_PREFIX,
-} from "@app/utils/claude/subscription-billing";
-import { env } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
 import { askUI } from "@ask/output/AskUILogger";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
@@ -22,6 +15,13 @@ import type {
 } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
 import type { AskConfig } from "@ask/types/config";
+import {
+    createSubscriptionFetch,
+    SUBSCRIPTION_BETAS,
+    SUBSCRIPTION_SYSTEM_PREFIX,
+} from "@genesiscz/utils/claude/subscription-billing";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
 import { generateText } from "ai";
 
 interface ModelMetadata {
@@ -43,7 +43,7 @@ export class ProviderManager {
         const askConfig = await loadAskConfig();
 
         // Load AIConfig for provider enabled/disabled state
-        const { AIConfig } = await import("@app/utils/ai/AIConfig");
+        const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
         const aiConfig = await AIConfig.load();
 
         const configs = getProviderConfigs();
@@ -143,7 +143,7 @@ export class ProviderManager {
 
             // If we have an account ref, try the resolver
             if (accountName) {
-                const { ensureResolversInitialized, getResolver } = await import("@app/utils/ai/resolvers");
+                const { ensureResolversInitialized, getResolver } = await import("@genesiscz/utils/ai/resolvers");
                 await ensureResolversInitialized();
                 const provider = await getResolver("anthropic-sub").resolve(accountName);
                 const hint = askConfig.claude.accountLabel ? ` (${askConfig.claude.accountLabel})` : "";
@@ -199,7 +199,7 @@ export class ProviderManager {
      */
     private async resolveAnthropicViaResolver(): Promise<DetectedProvider | null> {
         try {
-            const { AIConfig } = await import("@app/utils/ai/AIConfig");
+            const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
             const config = await AIConfig.load();
             const accounts = config.getAccountsByProvider("anthropic-sub");
 
@@ -211,7 +211,7 @@ export class ProviderManager {
             const defaultAccount = config.getDefaultAccount("ask");
             const account = (defaultAccount && accounts.find((a) => a.name === defaultAccount.name)) || accounts[0];
 
-            const { ensureResolversInitialized, getResolver } = await import("@app/utils/ai/resolvers");
+            const { ensureResolversInitialized, getResolver } = await import("@genesiscz/utils/ai/resolvers");
             await ensureResolversInitialized();
             return await getResolver("anthropic-sub").resolve(account.name);
         } catch {
@@ -221,7 +221,7 @@ export class ProviderManager {
 
     private async detectGrokSubscription(detected: DetectedProvider[]): Promise<void> {
         try {
-            const { AIConfig } = await import("@app/utils/ai/AIConfig");
+            const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
             const aiConfig = await AIConfig.load();
             const subAccounts = aiConfig.getAccountsByProvider("grok-sub");
 
@@ -229,7 +229,7 @@ export class ProviderManager {
                 return;
             }
 
-            const { ensureResolversInitialized, getResolver } = await import("@app/utils/ai/resolvers");
+            const { ensureResolversInitialized, getResolver } = await import("@genesiscz/utils/ai/resolvers");
             await ensureResolversInitialized();
             const provider = await getResolver("grok-sub").resolve(subAccounts[0].name);
 
@@ -245,7 +245,7 @@ export class ProviderManager {
 
     private async detectOpenAISubscription(detected: DetectedProvider[]): Promise<void> {
         try {
-            const { AIConfig } = await import("@app/utils/ai/AIConfig");
+            const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
             const aiConfig = await AIConfig.load();
             const subAccounts = aiConfig.getAccountsByProvider("openai-sub");
 
@@ -253,7 +253,7 @@ export class ProviderManager {
                 return;
             }
 
-            const { ensureResolversInitialized, getResolver } = await import("@app/utils/ai/resolvers");
+            const { ensureResolversInitialized, getResolver } = await import("@genesiscz/utils/ai/resolvers");
             await ensureResolversInitialized();
             const provider = await getResolver("openai-sub").resolve(subAccounts[0].name);
 
@@ -801,7 +801,7 @@ export class ProviderManager {
      */
     async createSubscriptionProvider(accountName: string): Promise<DetectedProvider | null> {
         try {
-            const { ensureResolversInitialized, getResolver } = await import("@app/utils/ai/resolvers");
+            const { ensureResolversInitialized, getResolver } = await import("@genesiscz/utils/ai/resolvers");
             await ensureResolversInitialized();
             return await getResolver("anthropic-sub").resolve(accountName);
         } catch (err) {

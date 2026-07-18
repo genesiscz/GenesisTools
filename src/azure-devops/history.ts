@@ -13,7 +13,7 @@ import type {
     WorkItemHistorySection,
     WorkItemUpdate,
 } from "@app/azure-devops/types";
-import { removeDiacritics } from "@app/utils/string";
+import { removeDiacritics } from "@genesiscz/utils/string";
 
 /**
  * Normalize a user name for fuzzy matching.

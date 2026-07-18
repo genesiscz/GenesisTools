@@ -8,7 +8,7 @@ import {
 } from "@app/dev-dashboard/lib/auth";
 import { getTtydPort } from "@app/dev-dashboard/lib/ttyd/manager";
 import { injectTtydMobileShell, shouldInjectTtydMobileShell } from "@app/dev-dashboard/lib/ttyd/mobile-shell";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import type { Server, ServerWebSocket } from "bun";
 
 // Bun's node:http upgrade socket is a no-op (oven-sh/bun#28396 / PR #28347),

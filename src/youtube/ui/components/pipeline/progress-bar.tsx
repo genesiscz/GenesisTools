@@ -1,4 +1,4 @@
-import { Progress } from "@app/utils/ui/components/progress";
+import { Progress } from "@genesiscz/utils/ui/components/progress";
 
 export function ProgressBar({
     value = 0,

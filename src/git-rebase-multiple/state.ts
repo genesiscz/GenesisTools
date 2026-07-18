@@ -1,4 +1,4 @@
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { git } from "./git";
 import type { RebasePhase, RebaseState } from "./types";
 

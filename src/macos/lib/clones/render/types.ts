@@ -1,4 +1,4 @@
-import type { DedupeStatus, FindDuplicatesStats } from "@app/utils/fs/disk-usage";
+import type { DedupeStatus, FindDuplicatesStats } from "@genesiscz/utils/fs/disk-usage";
 
 export type Format = "auto" | "table" | "json" | "jsonl";
 

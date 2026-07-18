@@ -1,7 +1,7 @@
 import type { RecurringPurchase } from "@app/shops/lib/analytics/recurring";
-import { Badge } from "@app/utils/ui/components/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@app/utils/ui/components/card";
-import { cn } from "@app/utils/ui/lib/utils";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@genesiscz/utils/ui/components/card";
+import { cn } from "@genesiscz/utils/ui/lib/utils";
 import type { ReactNode } from "react";
 
 interface Props {

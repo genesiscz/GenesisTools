@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import { Command } from "commander";
 import {
     addGlobalVerboseOption,

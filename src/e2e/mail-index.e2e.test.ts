@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { execTool, stripAnsi } from "@app/utils/e2e/helpers";
+import { execTool, stripAnsi } from "@genesiscz/utils/e2e/helpers";
 
 const isDarwin = process.platform === "darwin";
 const ENVELOPE_INDEX = join(homedir(), "Library/Mail/V10/MailData/Envelope Index");

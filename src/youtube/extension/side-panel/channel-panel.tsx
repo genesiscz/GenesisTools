@@ -1,4 +1,3 @@
-import { Button } from "@app/utils/ui/components/button";
 import type { ChannelHandle } from "@app/youtube/lib/types";
 import {
     useAddChannel,
@@ -10,6 +9,7 @@ import {
     useWatchlist,
 } from "@ext/api.hooks";
 import { Header } from "@ext/side-panel/header";
+import { Button } from "@genesiscz/utils/ui/components/button";
 import { ExternalLink, Plus } from "lucide-react";
 import { useState } from "react";
 

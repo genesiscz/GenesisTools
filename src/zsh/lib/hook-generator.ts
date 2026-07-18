@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { Storage } from "@app/utils/storage/storage.ts";
+import { Storage } from "@genesiscz/utils/storage/storage.ts";
 import { getFeature } from "../features/index.ts";
 import type { ZshConfig } from "../features/types.ts";
 

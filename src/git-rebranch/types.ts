@@ -1,4 +1,4 @@
-import type { DetailedCommitInfo } from "@app/utils/git";
+import type { DetailedCommitInfo } from "@genesiscz/utils/git";
 
 /** Parsed conventional commit with extracted metadata */
 export interface ParsedCommit {

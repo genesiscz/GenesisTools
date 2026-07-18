@@ -5,7 +5,7 @@ import { SessionManager } from "@app/debugging-master/core/session-manager";
 import { sseBroadcaster } from "@app/debugging-master/core/sse-broadcaster";
 import type { LogEntry } from "@app/debugging-master/types";
 import { decodeSessionPathSegment, isSafeLogSessionName } from "@app/log-viewer/session-name";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 function ensureDir(): void {
     if (!existsSync(SESSIONS_DIR)) {

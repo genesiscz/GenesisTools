@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { type AgentRuntimeContext, getAgentRuntimeContext } from "@app/utils/agent-runtime";
-import { logger } from "@app/utils/logger";
+import { type AgentRuntimeContext, getAgentRuntimeContext } from "@genesiscz/utils/agent-runtime";
+import { logger } from "@genesiscz/utils/logger";
 import { loadConfig, type QuestionConfig } from "./config";
 import { appendEntry } from "./log-store";
 import { runFanOut } from "./sinks/registry";
 import "./sinks/obsidian";
 import "./sinks/sound";
 import "./sinks/notification";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import type { QaEntry, RecordInput, RecordResult } from "./types";
 
 const log = logger.child({ component: "question:record" });

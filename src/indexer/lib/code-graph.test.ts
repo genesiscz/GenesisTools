@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { CodeGraph } from "./code-graph";
 import { buildCodeGraph, findCircularDependencies, getGraphStats, toMermaidDiagram } from "./code-graph";
 import { loadPathAliases, parsePathAliases } from "./graph-aliases";

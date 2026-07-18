@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import * as socket from "@app/utils/cmux/lib/socket";
+import * as socket from "@genesiscz/utils/cmux/lib/socket";
 
 describe("cmux socket RPC params", () => {
     afterEach(() => {

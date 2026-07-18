@@ -1,6 +1,6 @@
 import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
-import { out } from "@app/utils/logger";
-import { iMessagesDatabase } from "@app/utils/macos/iMessagesDatabase";
+import { out } from "@genesiscz/utils/logger";
+import { iMessagesDatabase } from "@genesiscz/utils/macos/iMessagesDatabase";
 import type { Command } from "commander";
 
 export function registerMessagesShowCommand(program: Command): void {

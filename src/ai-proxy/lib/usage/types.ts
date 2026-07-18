@@ -1,5 +1,5 @@
 import type { GrokUsageDetails, SubscriptionUsageDetails } from "@app/ai-proxy/lib/types";
-import type { CopilotUsageSummary } from "@app/utils/ai/github-copilot/types";
+import type { CopilotUsageSummary } from "@genesiscz/utils/ai/github-copilot/types";
 
 export interface TokenUsage {
     prompt_tokens?: number;

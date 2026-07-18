@@ -1,8 +1,8 @@
 import type { MasterOfferRow } from "@app/shops/types";
 import { ShopBadge } from "@app/shops/ui/components/ShopBadge";
-import { Badge } from "@app/utils/ui/components/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@app/utils/ui/components/table";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@app/utils/ui/components/tooltip";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@genesiscz/utils/ui/components/table";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@genesiscz/utils/ui/components/tooltip";
 import { ExternalLink } from "lucide-react";
 
 interface CrossShopOffersTableProps {

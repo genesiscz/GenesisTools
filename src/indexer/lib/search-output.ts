@@ -1,6 +1,6 @@
 import { isAbsolute, relative } from "node:path";
-import { toPosixPath } from "@app/utils/paths";
-import { formatTable } from "@app/utils/table";
+import { toPosixPath } from "@genesiscz/utils/paths";
+import { formatTable } from "@genesiscz/utils/table";
 import pc from "picocolors";
 import { highlightQueryWords } from "./highlight";
 

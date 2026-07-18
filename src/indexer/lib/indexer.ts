@@ -1,12 +1,12 @@
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { findModel } from "@app/utils/ai/ModelRegistry";
-import type { Embedder } from "@app/utils/ai/tasks/Embedder";
-import { startWakefulInterval, type WakefulInterval } from "@app/utils/async";
-import type { WatcherSubscription } from "@app/utils/fs/watcher";
-import { logger } from "@app/utils/logger";
-import { Stopwatch } from "@app/utils/Stopwatch";
-import type { SearchOptions, SearchResult } from "@app/utils/search/types";
+import { findModel } from "@genesiscz/utils/ai/ModelRegistry";
+import type { Embedder } from "@genesiscz/utils/ai/tasks/Embedder";
+import { startWakefulInterval, type WakefulInterval } from "@genesiscz/utils/async";
+import type { WatcherSubscription } from "@genesiscz/utils/fs/watcher";
+import { logger } from "@genesiscz/utils/logger";
+import { Stopwatch } from "@genesiscz/utils/Stopwatch";
+import type { SearchOptions, SearchResult } from "@genesiscz/utils/search/types";
 import type { ChunkResult } from "./chunker";
 import { chunkFile } from "./chunker";
 import type { EventName, IndexerCallbacks, IndexerEventMap, SyncStats } from "./events";
@@ -125,7 +125,7 @@ export class Indexer extends IndexerEventEmitter {
 
         if (embeddingEnabled) {
             try {
-                const { Embedder: EmbedderClass } = await import("@app/utils/ai/tasks/Embedder");
+                const { Embedder: EmbedderClass } = await import("@genesiscz/utils/ai/tasks/Embedder");
                 embedder = await EmbedderClass.create({
                     provider: config.embedding?.provider,
                     model: config.embedding?.model,
@@ -347,7 +347,7 @@ export class Indexer extends IndexerEventEmitter {
         }
 
         // Native watcher for file-based indexes
-        const { createWatcher } = await import("@app/utils/fs/watcher");
+        const { createWatcher } = await import("@genesiscz/utils/fs/watcher");
 
         this.watchSubscription = await createWatcher(
             this.config.baseDir,

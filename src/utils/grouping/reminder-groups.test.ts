@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { groupReminders } from "@app/utils/grouping/reminder-groups";
 import type { ReminderInfo } from "@genesiscz/darwinkit";
+import { groupReminders } from "@genesiscz/utils/grouping/reminder-groups";
 
 function reminder(partial: Partial<ReminderInfo> & Pick<ReminderInfo, "identifier" | "title">): ReminderInfo {
     return {

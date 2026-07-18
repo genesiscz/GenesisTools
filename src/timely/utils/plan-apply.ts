@@ -3,7 +3,7 @@ import type { TimelyEvent } from "@app/timely/types/api";
 import type { CreatePlanV1, PlanIssue } from "@app/timely/types/plan";
 import { buildPayloadFromFlat, flattenMemories } from "@app/timely/utils/flatten-memories";
 import { fetchMemoriesForDates } from "@app/timely/utils/memories";
-import type { Storage } from "@app/utils/storage";
+import type { Storage } from "@genesiscz/utils/storage";
 
 export function validatePlan(plan: CreatePlanV1): PlanIssue[] {
     const issues: PlanIssue[] = [];

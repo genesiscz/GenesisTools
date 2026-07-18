@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { env } from "@app/utils/env";
-import { skip } from "@app/utils/test/skip";
+import { env } from "@genesiscz/utils/env";
+import { skip } from "@genesiscz/utils/test/skip";
 import {
     createLanguageDetector,
     DarwinKitTextDriver,
@@ -151,7 +151,7 @@ describe("LanguageDetector", () => {
         test("WhisperLanguageDriver detects language", async () => {
             const driver = new WhisperLanguageDriver("onnx-community/whisper-tiny");
             const { readFileSync } = await import("node:fs");
-            const { toFloat32Audio } = await import("@app/utils/audio/converter");
+            const { toFloat32Audio } = await import("@genesiscz/utils/audio/converter");
 
             const audio = readFileSync(TEST_AUDIO_FILE!);
             const float32 = await toFloat32Audio(audio);
@@ -167,7 +167,7 @@ describe("LanguageDetector", () => {
         test("MmsLidDriver detects Czech", async () => {
             const driver = new MmsLidDriver();
             const { readFileSync } = await import("node:fs");
-            const { toFloat32Audio } = await import("@app/utils/audio/converter");
+            const { toFloat32Audio } = await import("@genesiscz/utils/audio/converter");
 
             const audio = readFileSync(TEST_AUDIO_FILE!);
             const float32 = await toFloat32Audio(audio);

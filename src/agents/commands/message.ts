@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { deriveRegistry } from "../lib/derived-registry";
 import { FriendlyError, listAvailableNames, runWithFriendlyErrors } from "../lib/errors";

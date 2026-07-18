@@ -1,6 +1,6 @@
 import { logFilePathFor } from "@app/question/lib/log-store";
 import type { QaEntry } from "@app/question/lib/types";
-import { FileTailer } from "@app/utils/fs/file-tailer";
+import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
 
 export function todayLogFile(): string {
     return logFilePathFor({ ts: Date.now() });

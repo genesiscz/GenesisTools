@@ -20,7 +20,7 @@ import { RohlikClient } from "@app/shops/api/shops/RohlikClient";
 import { TetaClient } from "@app/shops/api/shops/TetaClient";
 import type { HttpRequestSink } from "@app/shops/lib/http-sink";
 import { syncShopsFromRegistry } from "@app/shops/lib/sync-shops-from-registry";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 let initialized = false;
 

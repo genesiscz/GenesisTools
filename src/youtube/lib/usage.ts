@@ -11,13 +11,14 @@
  * also written to `job_activity` so the jobs inspector can show prompts/responses/cost
  * per pipeline job.
  */
-import { logger } from "@app/utils/logger";
+
 import { getJobActivityContext } from "@app/youtube/lib/job-activity";
 import type { JobActivityKind } from "@app/youtube/lib/jobs.types";
 import { getRequestContext } from "@app/youtube/lib/request-context";
 import { costTracker } from "@ask/output/CostTracker";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { ProviderChoice } from "@ask/types";
+import { logger } from "@genesiscz/utils/logger";
 import type { LanguageModelUsage } from "ai";
 
 export type YoutubeUsageAction =

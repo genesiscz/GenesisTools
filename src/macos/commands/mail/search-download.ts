@@ -1,9 +1,9 @@
 import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
 import { exportMessages } from "@app/macos/lib/mail/export";
 import { resolveMailSearchMode, runMailSearch } from "@app/macos/lib/mail/search-runner";
-import { logger } from "@app/utils/logger";
-import { MailDatabase } from "@app/utils/macos/MailDatabase";
 import * as p from "@clack/prompts";
+import { logger } from "@genesiscz/utils/logger";
+import { MailDatabase } from "@genesiscz/utils/macos/MailDatabase";
 import type { Command } from "commander";
 
 export function registerSearchDownloadCommand(program: Command): void {

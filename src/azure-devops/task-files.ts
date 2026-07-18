@@ -5,7 +5,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { FoundTaskFile } from "@app/azure-devops/types";
-import { slugify } from "@app/utils/string";
+import { slugify } from "@genesiscz/utils/string";
 
 /**
  * Get the tasks directory (always in cwd), optionally with category subdirectory

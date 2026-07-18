@@ -1,5 +1,5 @@
-import { normalizeVaultPath } from "@app/utils/obsidian/paths";
-import type { VaultEntry } from "@app/utils/obsidian/vault-tree";
+import { normalizeVaultPath } from "@genesiscz/utils/obsidian/paths";
+import type { VaultEntry } from "@genesiscz/utils/obsidian/vault-tree";
 
 export function wikilinkTargetKey(target: string): string {
     return normalizeVaultPath(target.trim()).replace(/\.md$/i, "");

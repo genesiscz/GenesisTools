@@ -1,5 +1,3 @@
-import { SafeJSON } from "@app/utils/json";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@app/utils/ui/components/tabs";
 import type {
     AskCitation,
     JobStage,
@@ -26,6 +24,8 @@ import type { ModelPreset } from "@app/youtube/ui/components/shared/llm-confirm-
 import { scrollIntoPanelView } from "@app/youtube/ui/components/shared/scroll";
 import { SummaryTab } from "@app/youtube/ui/components/shared/summary-tab";
 import { TranscriptTab } from "@app/youtube/ui/components/shared/transcript-tab";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@genesiscz/utils/ui/components/tabs";
 import { useEffect, useRef, useState } from "react";
 
 export type VideoDetailTab = "insights" | "summary" | "ask" | "comments" | "transcript";

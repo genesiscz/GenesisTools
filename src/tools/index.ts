@@ -2,11 +2,11 @@
 
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
-import { copyToClipboard } from "@app/utils/clipboard";
-import { out } from "@app/utils/logger";
-import { renderMarkdownToCli } from "@app/utils/markdown/index.js";
-import { searchSelect, searchSelectCancelSymbol } from "@app/utils/prompts/clack/search-select.js";
 import * as p from "@clack/prompts";
+import { copyToClipboard } from "@genesiscz/utils/clipboard";
+import { out } from "@genesiscz/utils/logger";
+import { renderMarkdownToCli } from "@genesiscz/utils/markdown/index.js";
+import { searchSelect, searchSelectCancelSymbol } from "@genesiscz/utils/prompts/clack/search-select.js";
 import pc from "picocolors";
 import { discoverTools, getReadme, type ToolInfo } from "./lib/discovery.js";
 import { introspectTool } from "./lib/introspect.js";

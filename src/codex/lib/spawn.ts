@@ -1,9 +1,9 @@
 import { closeSync, openSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { isProcessAlive } from "@app/task/lib/process-alive";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
-import { atomicWriteFileSync } from "@app/utils/storage/storage";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { CODEX_SCHEMA_VERSION } from "./_generated/protocol";
 import { sessionDaemonLogPath, sessionLaunchPath } from "./paths";
 import { type CodexSessionMeta, CodexSessionStore, type CodexWritePolicy } from "./store";

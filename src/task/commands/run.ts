@@ -7,9 +7,9 @@ import { resolveRunMode } from "@app/task/lib/run-mode";
 import { runTask } from "@app/task/lib/runner";
 import { TaskSessionStore } from "@app/task/lib/session-store";
 import { suggestClearOlderThanSeq, suggestTail } from "@app/task/lib/suggest-flags";
-import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
-import { logger, out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 

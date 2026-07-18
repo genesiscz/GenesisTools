@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
-import { ensureExtensionCapableSQLite } from "@app/utils/search/stores/sqlite-vec-loader";
+import { env } from "@genesiscz/utils/env";
+import { ensureExtensionCapableSQLite } from "@genesiscz/utils/search/stores/sqlite-vec-loader";
 import { _resetIndexerStorageForTesting, getIndexerStorage, sanitizeName } from "./storage";
 import { createIndexStore } from "./store";
 
@@ -59,7 +59,7 @@ describe("searchIndexReadonly handle cleanup", () => {
         seedDb.close();
         closeCalls = 0;
 
-        mock.module("@app/utils/search/stores/sqlite-vec-loader", () => ({
+        mock.module("@genesiscz/utils/search/stores/sqlite-vec-loader", () => ({
             ensureExtensionCapableSQLite,
             assertVecExtensionAvailable: () => {
                 throw new Error("forced vec extension failure");

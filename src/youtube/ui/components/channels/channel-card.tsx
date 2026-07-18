@@ -1,3 +1,6 @@
+import type { Channel } from "@app/youtube/lib/types";
+import { useRemoveChannel, useSyncChannel } from "@app/yt/api.hooks";
+import { formatDateTime, formatNumber } from "@app/yt/lib/format";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -7,15 +10,12 @@ import {
     AlertDialogFooter,
     AlertDialogHeader,
     AlertDialogTitle,
-} from "@app/utils/ui/components/alert-dialog";
-import { Badge } from "@app/utils/ui/components/badge";
-import { Button } from "@app/utils/ui/components/button";
-import { Card, CardContent } from "@app/utils/ui/components/card";
-import { DropdownMenuItem } from "@app/utils/ui/components/dropdown-menu";
-import { IconDropdownMenu } from "@app/utils/ui/components/icon-button";
-import type { Channel } from "@app/youtube/lib/types";
-import { useRemoveChannel, useSyncChannel } from "@app/yt/api.hooks";
-import { formatDateTime, formatNumber } from "@app/yt/lib/format";
+} from "@genesiscz/utils/ui/components/alert-dialog";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Card, CardContent } from "@genesiscz/utils/ui/components/card";
+import { DropdownMenuItem } from "@genesiscz/utils/ui/components/dropdown-menu";
+import { IconDropdownMenu } from "@genesiscz/utils/ui/components/icon-button";
 import { useNavigate } from "@tanstack/react-router";
 import { MoreVertical, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";

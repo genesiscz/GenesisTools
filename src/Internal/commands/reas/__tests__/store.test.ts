@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { SavePropertyInput } from "@app/Internal/commands/reas/lib/store";
 import { ReasDatabase } from "@app/Internal/commands/reas/lib/store";
 import type { FullAnalysis } from "@app/Internal/commands/reas/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 function makeAnalysis(overrides?: Partial<Pick<FullAnalysis, "target" | "filters">>): FullAnalysis {
     return {

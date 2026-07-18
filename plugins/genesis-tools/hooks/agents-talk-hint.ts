@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const reminder =
     "Before spawning subagents that need to communicate with each other or with you, invoke `/gt:agents-talk` (the cross-agent messaging protocol via `tools agents`).";

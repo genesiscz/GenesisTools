@@ -1,6 +1,6 @@
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { User } from "@app/shops/db/types";
-import { nowUtcIso } from "@app/utils/sql-time";
+import { nowUtcIso } from "@genesiscz/utils/sql-time";
 
 export interface RegisterArgs {
     email: string;

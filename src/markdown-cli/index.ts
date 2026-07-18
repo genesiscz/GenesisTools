@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { runTool } from "@app/utils/cli";
-import { out } from "@app/utils/logger";
-import { type MarkdownRenderOptions, renderMarkdownToCli } from "@app/utils/markdown/index.js";
+import { runTool } from "@genesiscz/utils/cli";
+import { out } from "@genesiscz/utils/logger";
+import { type MarkdownRenderOptions, renderMarkdownToCli } from "@genesiscz/utils/markdown/index.js";
 import chokidar from "chokidar";
 import { Command, Option } from "commander";
 

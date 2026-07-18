@@ -1,4 +1,4 @@
-import type { AITask } from "@app/utils/config/ai.types";
+import type { AITask } from "@genesiscz/utils/config/ai.types";
 import type { ModelEntry } from "./types";
 
 // ── Embedding models ──

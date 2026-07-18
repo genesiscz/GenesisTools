@@ -1,6 +1,6 @@
-import { isInteractive } from "@app/utils/cli";
-import { listAppleNotesFolders } from "@app/utils/macos/apple-notes";
 import * as p from "@clack/prompts";
+import { isInteractive } from "@genesiscz/utils/cli";
+import { listAppleNotesFolders } from "@genesiscz/utils/macos/apple-notes";
 
 export async function pickAppleNotesFolder(): Promise<string> {
     if (!isInteractive()) {

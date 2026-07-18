@@ -1,14 +1,14 @@
 import { resolve } from "node:path";
 import { getConfig } from "@app/dev-dashboard/config";
 import { startFrontProxy } from "@app/dev-dashboard/lib/front-proxy";
-import { stopUiServerOnPort } from "@app/utils/DashboardApp";
+import { stopUiServerOnPort } from "@genesiscz/utils/DashboardApp";
 import {
     buildPreviewServerWatchGlobs,
     notifyPreviewReload,
     runDashboardPreviewUiServer,
-} from "@app/utils/DashboardApp/preview";
-import { findFreePort } from "@app/utils/net/free-port";
-import { PROJECT_ROOT } from "@app/utils/paths";
+} from "@genesiscz/utils/DashboardApp/preview";
+import { findFreePort } from "@genesiscz/utils/net/free-port";
+import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 
 export async function runPreviewUiServer(): Promise<void> {
     const devDashboardRoot = resolve(import.meta.dirname, "..");

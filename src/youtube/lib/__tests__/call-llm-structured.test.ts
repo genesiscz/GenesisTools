@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { SafeJSON } from "@app/utils/json";
 import { toLanguageModelUsage } from "@ask/utils/helpers";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
 
 const generateObjectMock = mock();
@@ -20,17 +20,17 @@ mock.module("ai", () => ({
 const fakeProviderChoice = {
     provider: { name: "fakeprov", type: "openai", provider: "openai", systemPromptPrefix: undefined },
     model: { id: "fake-model" },
-} as unknown as Parameters<typeof import("@app/utils/ai/call-llm").callLLMStructured>[0]["providerChoice"];
+} as unknown as Parameters<typeof import("@genesiscz/utils/ai/call-llm").callLLMStructured>[0]["providerChoice"];
 
-mock.module("@app/utils/ask/types/provider", () => ({
+mock.module("@genesiscz/utils/ask/types/provider", () => ({
     getLanguageModel: () => "MOCK_MODEL",
 }));
 
-mock.module("@app/utils/claude/subscription-billing", () => ({
+mock.module("@genesiscz/utils/claude/subscription-billing", () => ({
     applySystemPromptPrefix: (_prefix: string | undefined, system: string) => system,
 }));
 
-mock.module("@app/utils/ai/prompt-caching", () => ({
+mock.module("@genesiscz/utils/ai/prompt-caching", () => ({
     buildProviderOptions: () => ({}),
 }));
 
@@ -52,7 +52,7 @@ async function* partialsOf(...values: unknown[]): AsyncGenerator<unknown> {
 
 describe("callLLMStructured", () => {
     it("returns the typed object, JSON-stringified content, and usage", async () => {
-        const { callLLMStructured } = await import("@app/utils/ai/call-llm");
+        const { callLLMStructured } = await import("@genesiscz/utils/ai/call-llm");
         const fakeUsage = toLanguageModelUsage({ inputTokens: 100, outputTokens: 20, totalTokens: 120 });
         generateObjectMock.mockResolvedValueOnce({
             object: { tldr: "hello", points: ["a", "b"] },
@@ -81,7 +81,7 @@ describe("callLLMStructured", () => {
     });
 
     it("propagates the AI SDK error", async () => {
-        const { callLLMStructured } = await import("@app/utils/ai/call-llm");
+        const { callLLMStructured } = await import("@genesiscz/utils/ai/call-llm");
         generateObjectMock.mockRejectedValueOnce(new Error("schema mismatch"));
 
         await expect(
@@ -95,7 +95,7 @@ describe("callLLMStructured", () => {
     });
 
     it("streams partials through onPartial and resolves the final object", async () => {
-        const { callLLMStructured } = await import("@app/utils/ai/call-llm");
+        const { callLLMStructured } = await import("@genesiscz/utils/ai/call-llm");
         const fakeUsage = toLanguageModelUsage({ inputTokens: 10, outputTokens: 5, totalTokens: 15 });
         streamObjectMock.mockReturnValueOnce({
             partialObjectStream: partialsOf({ tldr: "he" }, { tldr: "hello" }),
@@ -119,7 +119,7 @@ describe("callLLMStructured", () => {
     });
 
     it("falls back to generateObject when streaming fails before the first chunk", async () => {
-        const { callLLMStructured } = await import("@app/utils/ai/call-llm");
+        const { callLLMStructured } = await import("@genesiscz/utils/ai/call-llm");
         streamObjectMock.mockImplementationOnce(() => {
             throw new Error("streaming unsupported");
         });
@@ -140,7 +140,7 @@ describe("callLLMStructured", () => {
     });
 
     it("falls back to generateObject when the stream errors during iteration before the first chunk", async () => {
-        const { callLLMStructured } = await import("@app/utils/ai/call-llm");
+        const { callLLMStructured } = await import("@genesiscz/utils/ai/call-llm");
         async function* emptyFailingStream(): AsyncGenerator<unknown> {
             throw new Error("stream failed before first chunk");
             // biome-ignore lint/correctness/noUnreachable: generator shape needs a yield
@@ -168,7 +168,7 @@ describe("callLLMStructured", () => {
     });
 
     it("propagates a mid-stream error after the first chunk (no fallback)", async () => {
-        const { callLLMStructured } = await import("@app/utils/ai/call-llm");
+        const { callLLMStructured } = await import("@genesiscz/utils/ai/call-llm");
         async function* failingStream(): AsyncGenerator<unknown> {
             yield { tldr: "he" };
             throw new Error("stream died");

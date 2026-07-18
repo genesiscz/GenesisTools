@@ -1,7 +1,7 @@
-import { runCmuxJSON } from "@app/utils/cmux/lib/cli";
-import { focusCmuxPane } from "@app/utils/cmux/lib/controls";
-import { withFocusedWorkspace } from "@app/utils/cmux/lib/focus-guard";
-import type { AttachTmuxResult, CmuxSendTarget } from "@app/utils/cmux/types";
+import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
+import { focusCmuxPane } from "@genesiscz/utils/cmux/lib/controls";
+import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
+import type { AttachTmuxResult, CmuxSendTarget } from "@genesiscz/utils/cmux/types";
 import {
     assertTerminalSurface,
     ensureWorkspaceByName,
@@ -9,9 +9,9 @@ import {
     openSurfaceInPane,
     renameSurfaceTab,
     sendAttachCommand,
-} from "@app/utils/cmux/workspace";
-import { logger } from "@app/utils/logger";
-import { sessionExists } from "@app/utils/tmux/sessions";
+} from "@genesiscz/utils/cmux/workspace";
+import { logger } from "@genesiscz/utils/logger";
+import { sessionExists } from "@genesiscz/utils/tmux/sessions";
 
 export interface AttachTmuxToCmuxOptions {
     tmuxSessionName: string;

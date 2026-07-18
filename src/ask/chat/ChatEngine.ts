@@ -1,12 +1,12 @@
-import type { AIAccount } from "@app/utils/ai/AIAccount";
-import { buildProviderOptions } from "@app/utils/ai/prompt-caching";
-import type { AnthropicModelCategory, OpenAIModelCategory } from "@app/utils/ask/providers/ModelResolver";
-import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { estimateTokens } from "@app/utils/tokens";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { ChatConfig, ChatMessage, DetectedProvider, ProviderChoice } from "@ask/types";
+import type { AIAccount } from "@genesiscz/utils/ai/AIAccount";
+import { buildProviderOptions } from "@genesiscz/utils/ai/prompt-caching";
+import type { AnthropicModelCategory, OpenAIModelCategory } from "@genesiscz/utils/ask/providers/ModelResolver";
+import { applySystemPromptPrefix } from "@genesiscz/utils/claude/subscription-billing";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { estimateTokens } from "@genesiscz/utils/tokens";
 import type { LanguageModel, LanguageModelUsage, ModelMessage, ToolSet } from "ai";
 import { generateText, stepCountIs, streamText } from "ai";
 
@@ -47,7 +47,7 @@ export class ChatEngine {
     }
 
     static async oneShot(options: OneShotOptions): Promise<ChatResponse> {
-        const { resolveModel } = await import("@app/utils/ask/providers/ModelResolver");
+        const { resolveModel } = await import("@genesiscz/utils/ask/providers/ModelResolver");
         const { getLanguageModel } = await import("@ask/types");
 
         let provider: DetectedProvider;

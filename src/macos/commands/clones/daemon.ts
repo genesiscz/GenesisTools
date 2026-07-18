@@ -1,8 +1,8 @@
 import { fileURLToPath } from "node:url";
 import { registerTask, unregisterTask } from "@app/daemon/lib/register";
-import { Executor } from "@app/utils/cli";
-import { logger } from "@app/utils/logger";
-import { escapeShellArg } from "@app/utils/string";
+import { Executor } from "@genesiscz/utils/cli";
+import { logger } from "@genesiscz/utils/logger";
+import { escapeShellArg } from "@genesiscz/utils/string";
 import { Command } from "commander";
 
 const log = logger.child({ component: "clones:daemon-cmd" });

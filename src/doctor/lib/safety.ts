@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { BLACKLIST_FILE } from "./paths";
 import type { Severity } from "./types";
 

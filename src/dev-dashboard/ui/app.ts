@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildDashboardUiServerCmd, defineDashboardApp } from "@app/utils/DashboardApp";
-import { PROJECT_ROOT } from "@app/utils/paths";
+import { buildDashboardUiServerCmd, defineDashboardApp } from "@genesiscz/utils/DashboardApp";
+import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 
 const serverScript = resolve(fileURLToPath(new URL("../index.ts", import.meta.url)));
 

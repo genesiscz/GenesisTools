@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:te
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
 import type { ChannelHandle, Transcript, Video, VideoId } from "@app/youtube/lib/types";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { Command } from "commander";
 import { type CaptionSegment, extractVideoId, formatTimestamp, toSRT, toVTT } from "./transcribe";
 
-mock.module("@app/utils/cli/executor", () => ({
+mock.module("@genesiscz/utils/cli/executor", () => ({
     isInteractive: () => false,
     suggestCommand: (toolName: string, mods: { add?: string[] } = {}) => `${toolName} ${(mods.add ?? []).join(" ")}`,
     enhanceHelp: () => undefined,

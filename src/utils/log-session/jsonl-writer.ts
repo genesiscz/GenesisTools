@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export class JsonlWriter {
     constructor(private readonly path: string) {}

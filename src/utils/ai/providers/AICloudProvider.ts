@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TranscriptionManager } from "@app/utils/ai/transcription/TranscriptionManager";
+import { TranscriptionManager } from "@genesiscz/utils/ai/transcription/TranscriptionManager";
 import type {
     AIEmbeddingProvider,
     AISummarizationProvider,
@@ -17,12 +17,12 @@ import type {
     TranscriptionResult,
     TranslateOptions,
     TranslationResult,
-} from "@app/utils/ai/types";
-import { convertFileToMonoMp3 } from "@app/utils/audio/converter";
-import { sniffAudioExt } from "@app/utils/audio/detect-format";
-import type { AIProviderType } from "@app/utils/config/ai.types";
-import { env } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
+} from "@genesiscz/utils/ai/types";
+import { convertFileToMonoMp3 } from "@genesiscz/utils/audio/converter";
+import { sniffAudioExt } from "@genesiscz/utils/audio/detect-format";
+import type { AIProviderType } from "@genesiscz/utils/config/ai.types";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
 
 type LlmCloudType = "openai" | "groq" | "openrouter";
 type TranscribeOnlyCloudType = "assemblyai" | "deepgram" | "gladia";

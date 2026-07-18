@@ -1,4 +1,4 @@
-import type { AgentRuntimeContext } from "@app/utils/claude/runtime-context";
+import type { AgentRuntimeContext } from "@genesiscz/utils/claude/runtime-context";
 
 /**
  * Codex runtime detection. Research-confirmed (openai/codex):

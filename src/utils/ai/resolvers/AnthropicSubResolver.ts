@@ -1,5 +1,5 @@
-import type { DetectedProvider } from "@app/utils/ask/types";
-import type { AIProvider } from "@app/utils/config/ai.types";
+import type { DetectedProvider } from "@genesiscz/utils/ask/types";
+import type { AIProvider } from "@genesiscz/utils/config/ai.types";
 import type { AccountResolver } from "./index";
 import { resolveModelsWithPricing } from "./resolve-models";
 
@@ -7,11 +7,11 @@ export class AnthropicSubResolver implements AccountResolver {
     readonly providerType: AIProvider = "anthropic-sub";
 
     async resolve(accountName: string): Promise<DetectedProvider> {
-        const { resolveAccountToken } = await import("@app/utils/claude/subscription-auth");
+        const { resolveAccountToken } = await import("@genesiscz/utils/claude/subscription-auth");
         const { token, account } = await resolveAccountToken(accountName);
 
         const { createSubscriptionFetch, SUBSCRIPTION_BETAS, SUBSCRIPTION_SYSTEM_PREFIX } = await import(
-            "@app/utils/claude/subscription-billing"
+            "@genesiscz/utils/claude/subscription-billing"
         );
 
         // Resolve the token per REQUEST, not at detection time: a long-running

@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
-import { enhanceHelp, isInteractive, runTool } from "@app/utils/cli";
-import { out } from "@app/utils/logger";
-import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
+import { enhanceHelp, isInteractive, runTool } from "@genesiscz/utils/cli";
+import { out } from "@genesiscz/utils/logger";
+import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import { Command } from "commander";
 import pc from "picocolors";
 import {

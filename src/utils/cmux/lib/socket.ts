@@ -1,7 +1,7 @@
 import { connect } from "node:net";
-import { runCmuxJSON } from "@app/utils/cmux/lib/cli";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 interface IdentifyResponse {
     socket_path: string;

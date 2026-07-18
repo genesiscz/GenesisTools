@@ -1,7 +1,7 @@
 import { cacheKey, getCached, MF_TTL, setCache } from "@app/Internal/commands/reas/cache/index";
 import { getCadastralMunicipalities } from "@app/Internal/commands/reas/data/cadastral-mapping";
 import type { CacheEntry, MfRentalBenchmark } from "@app/Internal/commands/reas/types";
-import { ApiClient } from "@app/utils/api/ApiClient";
+import { ApiClient } from "@genesiscz/utils/api/ApiClient";
 import * as XLSX from "xlsx";
 import type { CellValue } from "./MfRentalClient.types";
 

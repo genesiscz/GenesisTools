@@ -1,2 +1,2 @@
-export type { ApiKeyAccessor, EnvKey } from "@app/utils/env/env-core";
-export { type Env, env } from "@app/utils/env/envVariables";
+export type { ApiKeyAccessor, EnvKey } from "@genesiscz/utils/env/env-core";
+export { type Env, env } from "@genesiscz/utils/env/envVariables";

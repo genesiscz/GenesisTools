@@ -1,7 +1,7 @@
 import { getSessionInfo } from "@app/task/lib/get-session-info";
 import { TaskSessionStore } from "@app/task/lib/session-store";
 import { withResolvedSession } from "@app/task/lib/with-resolved-session";
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 export function registerGetCommand(program: Command): void {

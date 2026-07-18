@@ -1,5 +1,5 @@
-import { env } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
 import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from "axios";
 
 export interface JenkinsAuth {

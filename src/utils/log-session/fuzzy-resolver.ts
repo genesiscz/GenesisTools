@@ -1,4 +1,4 @@
-import { fuzzyFind } from "@app/utils/string";
+import { fuzzyFind } from "@genesiscz/utils/string";
 
 export interface FuzzyResolveOptions {
     toolHint?: string;

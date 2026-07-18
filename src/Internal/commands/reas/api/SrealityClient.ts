@@ -24,7 +24,7 @@ import { cacheKey, getCached, SREALITY_TTL, setCache } from "@app/Internal/comma
 import { getSrealityCategorySubCb } from "@app/Internal/commands/reas/data/disposition-map";
 import { matchesRequestedDistrict } from "@app/Internal/commands/reas/lib/district-matching";
 import type { AnalysisFilters, CacheEntry, SaleListing, SrealityRental } from "@app/Internal/commands/reas/types";
-import { ApiClient } from "@app/utils/api/ApiClient";
+import { ApiClient } from "@genesiscz/utils/api/ApiClient";
 
 const V1_BASE_URL = "https://www.sreality.cz/api/v1";
 const V2_BASE_URL = "https://www.sreality.cz/api/cs/v2";

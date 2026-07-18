@@ -1,7 +1,7 @@
-import { GithubCopilotApi } from "@app/utils/ai/github-copilot/api";
-import { fetchCopilotModels } from "@app/utils/ai/github-copilot/models";
-import { resolveGithubCopilotGhoToken } from "@app/utils/ai/github-copilot/token";
-import type { CopilotModelRecord } from "@app/utils/ai/github-copilot/types";
+import { GithubCopilotApi } from "@genesiscz/utils/ai/github-copilot/api";
+import { fetchCopilotModels } from "@genesiscz/utils/ai/github-copilot/models";
+import { resolveGithubCopilotGhoToken } from "@genesiscz/utils/ai/github-copilot/token";
+import type { CopilotModelRecord } from "@genesiscz/utils/ai/github-copilot/types";
 
 export interface ProbeCopilotModelsOptions {
     dataDir: string;

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { UserProvidersRepository } from "@app/shops/db/UserProvidersRepository";
 import { resetCryptoForTest } from "@app/shops/lib/crypto";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 function fresh(): UserProvidersRepository {
     const dir = mkdtempSync(join(tmpdir(), "shops-up-"));

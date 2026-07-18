@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { untarGz } from "@app/utils/fs";
-import { verifySriIntegrity } from "@app/utils/hash";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { assertSafePathSegment } from "@app/utils/paths";
-import { Storage } from "@app/utils/storage/storage";
+import { untarGz } from "@genesiscz/utils/fs";
+import { verifySriIntegrity } from "@genesiscz/utils/hash";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { assertSafePathSegment } from "@genesiscz/utils/paths";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import { beautify } from "./beautify";
 import { extractBunModules } from "./bun-binary";
 import { normalizeIdentifiers } from "./normalize";

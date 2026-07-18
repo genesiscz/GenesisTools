@@ -1,4 +1,4 @@
-import { PortalContainerContext } from "@app/utils/ui/components/select";
+import { PortalContainerContext } from "@genesiscz/utils/ui/components/select";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { cn } from "@ui/lib/utils";
 import { XIcon } from "lucide-react";

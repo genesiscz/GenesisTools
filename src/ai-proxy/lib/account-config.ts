@@ -1,8 +1,8 @@
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
-import { copilotDataDir } from "@app/utils/ai/github-copilot/paths";
-import type { CopilotAccountType } from "@app/utils/ai/github-copilot/types";
-import { grokAuthPath } from "@app/utils/ai/grok";
-import { SafeJSON } from "@app/utils/json";
+import { copilotDataDir } from "@genesiscz/utils/ai/github-copilot/paths";
+import type { CopilotAccountType } from "@genesiscz/utils/ai/github-copilot/types";
+import { grokAuthPath } from "@genesiscz/utils/ai/grok";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 type LegacyAccountFields = {
     grokAuthPath?: string;

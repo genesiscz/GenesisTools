@@ -1,5 +1,5 @@
 import { sep } from "node:path";
-import { matchGlob } from "@app/utils/string";
+import { matchGlob } from "@genesiscz/utils/string";
 
 /** Match `rel` against `pattern` as the full relpath OR any path segment.
  *  Splits on the platform path separator (`/` on POSIX, `\` on Windows). */

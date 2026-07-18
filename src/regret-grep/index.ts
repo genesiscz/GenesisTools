@@ -1,5 +1,5 @@
-import { runTool } from "@app/utils/cli";
-import { out } from "@app/utils/logger";
+import { runTool } from "@genesiscz/utils/cli";
+import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { isGitRepo, readStagedDiff, readWorkingDiff, repoToplevel } from "./lib/git";
 import { scoreQuery } from "./lib/similarity";

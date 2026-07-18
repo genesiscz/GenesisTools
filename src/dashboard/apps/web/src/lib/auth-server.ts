@@ -1,4 +1,4 @@
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import type { User } from "@workos-inc/node";
 import { WorkOS } from "@workos-inc/node";
 import { sealData } from "iron-session";

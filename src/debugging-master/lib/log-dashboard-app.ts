@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
-import { defineDashboardApp } from "@app/utils/DashboardApp";
-import { PROJECT_ROOT } from "@app/utils/paths";
-import { DASHBOARDS } from "@app/utils/ui/dashboards";
+import { defineDashboardApp } from "@genesiscz/utils/DashboardApp";
+import { PROJECT_ROOT } from "@genesiscz/utils/paths";
+import { DASHBOARDS } from "@genesiscz/utils/ui/dashboards";
 
 const SERVER_ENTRY = resolve(import.meta.dirname, "log-dashboard-server.ts");
 

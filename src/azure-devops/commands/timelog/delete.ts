@@ -1,7 +1,7 @@
 import { formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
-import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 export function registerDeleteSubcommand(parent: Command): void {

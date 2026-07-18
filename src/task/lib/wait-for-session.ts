@@ -1,7 +1,7 @@
 import { jsonlPath } from "@app/task/lib/paths";
-import { FileTailer } from "@app/utils/fs/file-tailer";
-import { filterLineRecords, readJsonlFile } from "@app/utils/log-session/jsonl-reader";
-import type { JsonlExitRecord, JsonlLineRecord, JsonlRecord } from "@app/utils/log-session/types";
+import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
+import { filterLineRecords, readJsonlFile } from "@genesiscz/utils/log-session/jsonl-reader";
+import type { JsonlExitRecord, JsonlLineRecord, JsonlRecord } from "@genesiscz/utils/log-session/types";
 
 export interface WaitOptions {
     session: string;

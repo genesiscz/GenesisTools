@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import { Storage } from "./storage";
 
 describe("Storage.parseTTL", () => {

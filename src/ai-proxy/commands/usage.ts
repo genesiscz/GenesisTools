@@ -10,8 +10,8 @@ import {
     usageStorePaths,
 } from "@app/ai-proxy/lib/usage/store";
 import type { AccountBillingSnapshot, UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
-import { formatTokens } from "@app/utils/format";
-import { out } from "@app/utils/logger";
+import { formatTokens } from "@genesiscz/utils/format";
+import { out } from "@genesiscz/utils/logger";
 
 export interface UsageCommandOptions {
     account?: string;

@@ -1,4 +1,4 @@
-import type { TmuxSessionInfo } from "@app/utils/tmux/types";
+import type { TmuxSessionInfo } from "@genesiscz/utils/tmux/types";
 
 export type SessionMatch =
     | { kind: "exact"; name: string }

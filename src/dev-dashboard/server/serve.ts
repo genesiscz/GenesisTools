@@ -15,7 +15,7 @@ import { setDashboardBoundHost, setDashboardBoundPort } from "@app/dev-dashboard
 import { handleE2eRpc } from "@app/dev-dashboard/server/transport/e2e-rpc";
 import { startMdnsAdvertiser } from "@app/dev-dashboard/server/transport/mdns-advertiser";
 import type { RouteServices } from "@app/dev-dashboard/server/types";
-import { logger, out } from "@app/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 
 export interface ServeAgentOptions {
     port: number;

@@ -1,5 +1,5 @@
 import { relative } from "node:path";
-import { printLn } from "@app/utils/cli";
+import { printLn } from "@genesiscz/utils/cli";
 import type { Command } from "commander";
 import {
     type BoardsSetConfig,

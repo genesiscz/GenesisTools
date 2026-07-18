@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { skip } from "@app/utils/test/skip";
+import { skip } from "@genesiscz/utils/test/skip";
 import { runDarwinKit } from "./helpers";
 
 describe.skipIf(skip.darwinkit)("darwinkit batch/text-analysis commands", () => {

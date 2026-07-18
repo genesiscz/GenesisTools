@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import { distillEntry } from "./lib/entry";
 import { collectBugFixCommits, extractDiffContentLines } from "./lib/git";
 import { scoreQuery } from "./lib/similarity";

@@ -1,4 +1,4 @@
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { E2E_USER_ID, genId, nowIso, withTestDb } from "./db";
 
 /**

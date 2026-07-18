@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { CmuxRunResult } from "@app/utils/cmux/lib/cli";
+import type { CmuxRunResult } from "@genesiscz/utils/cmux/lib/cli";
 import {
     buildRenameTabArgs,
     buildRenameWorkspaceArgs,
     focusCmuxPane,
     renameCmuxSurface,
     renameCmuxWorkspace,
-} from "@app/utils/cmux/lib/controls";
+} from "@genesiscz/utils/cmux/lib/controls";
 
 const okRunner =
     (calls: string[][]) =>

@@ -1,6 +1,6 @@
-import type { OAuthProfileResponse } from "@app/utils/claude/auth";
-import { logger } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage/storage";
+import type { OAuthProfileResponse } from "@genesiscz/utils/claude/auth";
+import { logger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage/storage";
 
 /** @deprecated Use AIAccountEntry from @app/utils/config/ai.types instead */
 export interface AccountConfig {
@@ -11,7 +11,7 @@ export interface AccountConfig {
 }
 
 /**
- * @deprecated Use `notificationsConfig.getChannels("claude")` from `@app/utils/notifications` instead.
+ * @deprecated Use `notificationsConfig.getChannels("claude")` from `@genesiscz/utils/notifications` instead.
  * Kept for backward compatibility with existing config files.
  */
 export interface NotificationChannels {
@@ -189,8 +189,8 @@ export function determineAccountLabel(profile: OAuthProfileResponse | undefined)
  * Best-effort — failures are silently ignored.
  */
 export async function refreshAccountLabels(): Promise<void> {
-    const { fetchOAuthProfile } = await import("@app/utils/claude/auth");
-    const { AIConfig } = await import("@app/utils/ai/AIConfig");
+    const { fetchOAuthProfile } = await import("@genesiscz/utils/claude/auth");
+    const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
 
     const config = await AIConfig.load();
     const accounts = config.getAccountsByProvider("anthropic-sub");

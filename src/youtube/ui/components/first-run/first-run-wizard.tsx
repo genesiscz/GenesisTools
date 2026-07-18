@@ -1,7 +1,7 @@
-import { Button } from "@app/utils/ui/components/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@app/utils/ui/components/card";
-import { Input } from "@app/utils/ui/components/input";
 import { patchUiConfig } from "@app/yt/config.client";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@genesiscz/utils/ui/components/card";
+import { Input } from "@genesiscz/utils/ui/components/input";
 import { useNavigate } from "@tanstack/react-router";
 import { Cable, Server } from "lucide-react";
 import { useState } from "react";

@@ -1,6 +1,6 @@
 import { getDb } from "@app/automate/lib/db";
-import { formatDuration } from "@app/utils/format";
 import * as p from "@clack/prompts";
+import { formatDuration } from "@genesiscz/utils/format";
 import type { Bot } from "grammy";
 
 export function registerTasksCommand(bot: Bot): void {

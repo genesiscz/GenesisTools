@@ -1,2 +1,2 @@
-export { fetchCmuxFullLayout } from "@app/utils/cmux/layout";
-export { fetchCmuxLiveSnapshot as fetchSnapshot } from "@app/utils/cmux/lib/live-snapshot";
+export { fetchCmuxFullLayout } from "@genesiscz/utils/cmux/layout";
+export { fetchCmuxLiveSnapshot as fetchSnapshot } from "@genesiscz/utils/cmux/lib/live-snapshot";

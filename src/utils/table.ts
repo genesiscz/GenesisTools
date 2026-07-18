@@ -1,4 +1,4 @@
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import Table from "cli-table3";
 import pc from "picocolors";
 

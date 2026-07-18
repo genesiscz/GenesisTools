@@ -1,5 +1,5 @@
-import type { CmuxTmuxSurfaceRef } from "@app/utils/cmux/tmux-bindings";
-import type { TmuxSessionInfo } from "@app/utils/tmux/types";
+import type { CmuxTmuxSurfaceRef } from "@genesiscz/utils/cmux/tmux-bindings";
+import type { TmuxSessionInfo } from "@genesiscz/utils/tmux/types";
 
 export interface TmuxHubSession extends TmuxSessionInfo {
     ttydTabIds: string[];

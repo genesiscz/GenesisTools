@@ -1,6 +1,6 @@
 import type { BoardEventDto } from "@app/dev-dashboard/contract/dto";
 import { paths } from "@app/dev-dashboard/contract/endpoints";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 

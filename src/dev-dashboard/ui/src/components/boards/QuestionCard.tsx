@@ -1,5 +1,5 @@
 import type { CardDto, QuestionDto } from "@app/dev-dashboard/contract/dto";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { boardsApi } from "./boards-api";

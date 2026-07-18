@@ -1,6 +1,6 @@
-import { env } from "@app/utils/env";
-import { logger } from "@app/utils/logger";
 import type { SearchResult, WebSearchOptions } from "@ask/types";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 
 export class WebSearchTool {

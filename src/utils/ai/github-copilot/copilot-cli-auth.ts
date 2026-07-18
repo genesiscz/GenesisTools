@@ -1,13 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { copilotGhoTokenAuthKey, githubTokenPath } from "@app/utils/ai/github-copilot/paths";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
-import { dispatchNotification } from "@app/utils/notifications";
-import { readTokenFile } from "@app/utils/oauth/storage";
-import { getAuthSecret, migrateFileToAuthStorage } from "@app/utils/storage";
+import { copilotGhoTokenAuthKey, githubTokenPath } from "@genesiscz/utils/ai/github-copilot/paths";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
+import { dispatchNotification } from "@genesiscz/utils/notifications";
+import { readTokenFile } from "@genesiscz/utils/oauth/storage";
+import { getAuthSecret, migrateFileToAuthStorage } from "@genesiscz/utils/storage";
 
 export const COPILOT_CLI_CONFIG_PATH = join(homedir(), ".copilot", "config.json");
 export const COPILOT_CLI_KEYCHAIN_SERVICE = "copilot-cli";

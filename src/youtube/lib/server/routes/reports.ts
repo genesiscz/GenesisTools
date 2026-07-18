@@ -1,4 +1,3 @@
-import { SafeJSON } from "@app/utils/json";
 import { grantArtifactAccess } from "@app/youtube/lib/artifact-access";
 import { enforceFreeQuota } from "@app/youtube/lib/quota";
 import { estimateReportCost, REPORT_MAX_MEMBERS, REPORT_MIN_MEMBERS } from "@app/youtube/lib/reports";
@@ -8,6 +7,7 @@ import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
 import type { Youtube } from "@app/youtube/lib/youtube";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export async function handleReportsRoute(req: Request, url: URL, yt: Youtube): Promise<Response> {
     try {

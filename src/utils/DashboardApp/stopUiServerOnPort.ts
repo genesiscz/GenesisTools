@@ -1,5 +1,5 @@
-import { logger } from "@app/utils/logger";
-import { parsePidLines } from "@app/utils/network";
+import { logger } from "@genesiscz/utils/logger";
+import { parsePidLines } from "@genesiscz/utils/network";
 
 function readPidsOnPort(port: number): number[] {
     const result = Bun.spawnSync(["lsof", "-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], {

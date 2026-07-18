@@ -1,6 +1,4 @@
 import { stat } from "node:fs/promises";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import type { FetchCommentsOpts, FetchedComment } from "@app/youtube/lib/comments.types";
 import type { VideoId } from "@app/youtube/lib/video.types";
@@ -14,6 +12,8 @@ import type {
     ListedVideo,
     YtDlpAvailability,
 } from "@app/youtube/lib/yt-dlp.types";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 interface RawListedVideo {
     id?: string;

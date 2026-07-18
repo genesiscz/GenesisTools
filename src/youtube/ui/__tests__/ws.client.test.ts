@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { SafeJSON } from "@app/utils/json";
 import { createEventStream } from "@app/yt/ws.client";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 interface WebSocketConstructor {
     new (url: string): FakeWebSocket;

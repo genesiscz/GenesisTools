@@ -1,5 +1,5 @@
-import type { DatabaseClient } from "@app/utils/database/client";
-import { SafeJSON } from "@app/utils/json";
+import type { DatabaseClient } from "@genesiscz/utils/database/client";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { getBoardDoc, listTrash, patchCard, restoreCard, softDeleteCard, toCardDto } from "./boards-store";
 import {
     COMPOSE_GAP,

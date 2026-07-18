@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { getDatabase, getOrCreateRepo, upsertIssue } from "@app/github/lib/cache";
 import { formatPR } from "@app/github/lib/output";
 import { calculateReviewStats, fetchPRReviewThreads, parseThreads } from "@app/github/lib/review-threads";
-import { getOctokit } from "@app/utils/github/octokit";
-import { withRetry } from "@app/utils/github/rate-limit";
+import { getOctokit } from "@genesiscz/utils/github/octokit";
+import { withRetry } from "@genesiscz/utils/github/rate-limit";
 import type {
     CheckData,
     CommitData,
@@ -17,10 +17,10 @@ import type {
     PRData,
     ReviewCommentData,
     ReviewThreadStats,
-} from "@app/utils/github/types";
-import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser";
-import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
-import { logger, out } from "@app/utils/logger";
+} from "@genesiscz/utils/github/types";
+import { detectRepoFromGit, parseGitHubUrl } from "@genesiscz/utils/github/url-parser";
+import { setGlobalVerbose, verbose } from "@genesiscz/utils/github/utils";
+import { logger, out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -286,7 +286,7 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
 
     // Handle worktree switching
     if (options.worktree && pr.head.ref) {
-        const { handleWorktreeOption } = await import("@app/utils/git/worktree");
+        const { handleWorktreeOption } = await import("@genesiscz/utils/git/worktree");
         await handleWorktreeOption({ worktree: options.worktree, branch: pr.head.ref, prNumber: number });
     }
 

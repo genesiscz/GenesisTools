@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { runTool } from "@app/utils/cli";
+import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
 import { type RedactCmdOptions, runRedactCommand } from "./commands/redact";
 import { type RestoreCmdOptions, runRestoreCommand } from "./commands/restore";

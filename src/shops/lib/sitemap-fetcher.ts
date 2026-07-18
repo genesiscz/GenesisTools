@@ -1,6 +1,6 @@
 import { gunzipSync } from "node:zlib";
-import { logger } from "@app/utils/logger";
 import { parseSitemap } from "@crawlee/utils";
+import { logger } from "@genesiscz/utils/logger";
 import { parseHTML } from "linkedom";
 
 const log = logger.child({ component: "sitemap-fetcher" });

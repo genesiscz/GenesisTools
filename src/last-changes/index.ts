@@ -1,10 +1,10 @@
 import { lstatSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { Executor, runTool } from "@app/utils/cli";
-import { logger, out } from "@app/utils/logger";
-import { handleReadmeFlag } from "@app/utils/readme";
+import { Executor, runTool } from "@genesiscz/utils/cli";
 import { formatDateTime } from "@genesiscz/utils/date";
 import { formatRelativeTime as _formatRelativeTime } from "@genesiscz/utils/format";
+import { logger, out } from "@genesiscz/utils/logger";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import chalk from "chalk";
 import { Command } from "commander";
 

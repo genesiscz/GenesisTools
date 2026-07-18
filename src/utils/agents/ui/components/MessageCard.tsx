@@ -1,6 +1,6 @@
-import { messageToBlocks } from "@app/utils/agents/formatters/block-parser";
-import type { FormatOptions, FormattedBlock } from "@app/utils/agents/formatters/types";
-import type { AgentMessage } from "@app/utils/agents/types";
+import { messageToBlocks } from "@genesiscz/utils/agents/formatters/block-parser";
+import type { FormatOptions, FormattedBlock } from "@genesiscz/utils/agents/formatters/types";
+import type { AgentMessage } from "@genesiscz/utils/agents/types";
 import { Badge } from "@ui/components/badge";
 import { cn } from "@ui/lib/utils";
 import { Bot, ChevronDown, User } from "lucide-react";

@@ -1,4 +1,4 @@
-import { out } from "@app/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import clipboardy from "clipboardy";
 import pc from "picocolors";
 

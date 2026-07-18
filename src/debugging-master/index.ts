@@ -1,4 +1,4 @@
-import { runTool } from "@app/utils/cli";
+import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
 import { registerCleanupCommand } from "./commands/cleanup";
 import { registerDashboardCommand } from "./commands/dashboard";

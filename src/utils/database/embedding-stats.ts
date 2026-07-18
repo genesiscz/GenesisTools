@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { loadSqliteVec } from "@app/utils/search/stores/sqlite-vec-loader";
+import { loadSqliteVec } from "@genesiscz/utils/search/stores/sqlite-vec-loader";
 
 /**
  * Count rows in whichever embedding-backing table is active for this index.

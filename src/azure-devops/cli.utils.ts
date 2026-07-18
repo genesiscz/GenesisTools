@@ -7,8 +7,8 @@
  * helpers from there instead of hand-rolling the command strings.
  */
 import { azLoginSuggestionBlock, extractTenantFromStderr } from "@app/azure-devops/lib/az-cli.utils";
-import { env } from "@app/utils/env";
-import { out } from "@app/utils/logger";
+import { env } from "@genesiscz/utils/env";
+import { out } from "@genesiscz/utils/logger";
 
 const SSL_PROXY_GUIDE = `
 🔐 SSL Certificate Error (Proxy Detected)

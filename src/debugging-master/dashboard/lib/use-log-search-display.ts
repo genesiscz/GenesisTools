@@ -1,6 +1,6 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
-import { fuzzySearchWithContext } from "@app/utils/fuzzy-search";
-import { tokenizeSearch } from "@app/utils/fuzzy-tokens";
+import { fuzzySearchWithContext } from "@genesiscz/utils/fuzzy-search";
+import { tokenizeSearch } from "@genesiscz/utils/fuzzy-tokens";
 import { useMemo, useState } from "react";
 import { DEFAULT_LOG_SEARCH, type LogSearchState } from "@/components/LogSearchPopover";
 import { logLineHaystack } from "./log-line-haystack";

@@ -11,10 +11,10 @@
  *   tools git configure-authors    # interactive (default)
  */
 
-import { Executor } from "@app/utils/cli";
-import { out } from "@app/utils/logger";
-import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
+import { Executor } from "@genesiscz/utils/cli";
+import { out } from "@genesiscz/utils/logger";
+import type { Storage } from "@genesiscz/utils/storage";
 import chalk from "chalk";
 import type { Command } from "commander";
 

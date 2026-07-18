@@ -5,7 +5,7 @@ import type {
     SelectValue,
     TextOpts,
     TypedConfirmOpts,
-} from "@app/utils/prompts/p";
+} from "@genesiscz/utils/prompts/p";
 import { createStore } from "zustand/vanilla";
 
 export type PromptTask =

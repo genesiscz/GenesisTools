@@ -1,5 +1,5 @@
-import { Badge } from "@app/utils/ui/components/badge";
-import { cn } from "@app/utils/ui/lib/utils";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
+import { cn } from "@genesiscz/utils/ui/lib/utils";
 
 export type WatchlistFilter = "all" | "alerting" | "quiet";
 

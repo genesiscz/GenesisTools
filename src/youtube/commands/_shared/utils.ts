@@ -1,8 +1,8 @@
-import { formatDuration } from "@app/utils/format";
 import { renderColumns } from "@app/youtube/commands/_shared/columns";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import type { ChannelHandle, JobStage, JobTargetKind, TimestampedSummaryEntry, VideoId } from "@app/youtube/lib/types";
 import type { Youtube } from "@app/youtube/lib/youtube";
+import { formatDuration } from "@genesiscz/utils/format";
 import pc from "picocolors";
 
 export interface GlobalFlags {

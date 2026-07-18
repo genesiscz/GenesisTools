@@ -1,9 +1,9 @@
-import type { CallLLMOptions, CallLLMResult } from "@app/utils/ai/call-llm";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { Language, TranscriptSegment } from "@app/youtube/lib/transcript.types";
 import type { VideoId } from "@app/youtube/lib/video.types";
 import type { DownloadAudioOpts, DownloadAudioResult, YtDlpProgressInfo } from "@app/youtube/lib/yt-dlp.types";
 import type { ProviderChoice } from "@ask/types";
+import type { CallLLMOptions, CallLLMResult } from "@genesiscz/utils/ai/call-llm";
 
 export interface TranscribeProgressInfo {
     phase: "audio" | "transcribe";

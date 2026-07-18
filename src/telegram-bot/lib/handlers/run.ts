@@ -1,7 +1,7 @@
 import { listPresets } from "@app/automate/lib/storage";
-import { execTool } from "@app/utils/cli/tools";
-import { stripAnsi, truncateForTelegram } from "@app/utils/telegram-bot/lib/formatting";
 import * as p from "@clack/prompts";
+import { execTool } from "@genesiscz/utils/cli/tools";
+import { stripAnsi, truncateForTelegram } from "@genesiscz/utils/telegram-bot/lib/formatting";
 import type { Bot } from "grammy";
 
 export function registerRunCommand(bot: Bot): void {

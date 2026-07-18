@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { formatDuration } from "@app/utils/format";
-import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
+import { formatDuration } from "@genesiscz/utils/format";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { Command } from "commander";
 import pc from "picocolors";
 import type { ContextConfig } from "../lib/context-artifacts";

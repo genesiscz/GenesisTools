@@ -10,8 +10,8 @@ export * from "./types";
 
 import { createReadStream, existsSync } from "node:fs";
 import { createInterface } from "node:readline";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
  * Parse a JSONL transcript file into an array of message objects.

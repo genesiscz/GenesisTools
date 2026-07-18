@@ -1,4 +1,4 @@
-import { makeStandaloneTmuxSessionName } from "@app/utils/tmux/naming";
+import { makeStandaloneTmuxSessionName } from "@genesiscz/utils/tmux/naming";
 
 export { DEV_DASHBOARD_WORKSPACE } from "@app/dev-dashboard/lib/tmux/constants";
 

@@ -3,7 +3,7 @@
  *
  * Usage from a tool:
  *
- *   import { defineDashboardApp } from "@app/utils/DashboardApp";
+ *   import { defineDashboardApp } from "@genesiscz/utils/DashboardApp";
  *
  *   const app = defineDashboardApp({
  *       type: "ui",
@@ -23,7 +23,7 @@
  *
  * See the DashboardApp design notes in the repo docs for the full design.
  */
-import { DASHBOARDS } from "@app/utils/ui/dashboards";
+import { DASHBOARDS } from "@genesiscz/utils/ui/dashboards";
 import { buildCommanderCommand } from "./commander";
 import {
     attach as attachLifecycle,

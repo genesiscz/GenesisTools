@@ -1,5 +1,5 @@
-import { formatDateTime } from "@app/utils/date";
-import { formatRelativeTime } from "@app/utils/format";
+import { formatDateTime } from "@genesiscz/utils/date";
+import { formatRelativeTime } from "@genesiscz/utils/format";
 import pc from "picocolors";
 import type { AccountUsage } from "./api";
 import type { NormalizedSpend, Severity } from "./limits";

@@ -1,6 +1,4 @@
 import { join } from "node:path";
-import { concurrentMap } from "@app/utils/async";
-import { logger } from "@app/utils/logger";
 import { audioPath, ensureBinaryDir, videoFilePath } from "@app/youtube/lib/cache";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import type { VideoComment } from "@app/youtube/lib/comments.types";
@@ -25,6 +23,8 @@ import {
     listChannelVideos,
 } from "@app/youtube/lib/yt-dlp";
 import type { ListedVideo } from "@app/youtube/lib/yt-dlp.types";
+import { concurrentMap } from "@genesiscz/utils/async";
+import { logger } from "@genesiscz/utils/logger";
 
 const DEFAULT_YOUTUBE_DEPS: YoutubeDeps = {
     listChannelVideos,

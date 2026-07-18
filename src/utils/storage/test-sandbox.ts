@@ -2,7 +2,7 @@ import { afterAll, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import { Storage } from "./storage";
 
 // Every Storage method that writes under baseDir. The sentinel guards ALL
@@ -53,7 +53,7 @@ function isInside(root: string, target: string): boolean {
  * since that would redirect every tool's Storage process-wide).
  *
  * Usage: create a thin `setup.ts` next to the test files that does
- * `import { setupStorageSandbox } from "@app/utils/storage/test-sandbox";
+ * `import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
  * setupStorageSandbox();`, then `import "./setup.js";` once per test file
  * (jest-setupFiles style) — before any dynamic `import()` of the
  * Storage-backed module under test.

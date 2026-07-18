@@ -8,9 +8,9 @@ import type { AzureConfigWithTimeLog } from "@app/azure-devops/types";
 import { getConfig, saveConfig } from "@app/clarity/config";
 import { parseAuthCurl } from "@app/clarity/lib/parse-auth-curl";
 import { type AuthStatus, pingAdo, pingClarity, pingTimelog, type ServiceAuthState } from "@app/clarity/lib/preflight";
-import { ClarityApi } from "@app/utils/clarity";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
+import { ClarityApi } from "@genesiscz/utils/clarity";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export type { AuthStatus, ServiceAuthState };
 

@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
-import { isInteractive } from "@app/utils/cli";
-import { ensurePackages, isPackageInstalled } from "@app/utils/packages";
 import { Lang, registerDynamicLanguage } from "@ast-grep/napi";
+import { isInteractive } from "@genesiscz/utils/cli";
+import { ensurePackages, isPackageInstalled } from "@genesiscz/utils/packages";
 
 const esmRequire = createRequire(import.meta.url);
 

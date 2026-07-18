@@ -1,7 +1,7 @@
 import type { StepContext } from "@app/automate/lib/registry";
 import { registerStepCatalog, registerStepHandler } from "@app/automate/lib/registry";
 import type { NotifyStepParams, PresetStep, StepResult } from "@app/automate/lib/types";
-import { copyToClipboard } from "@app/utils/clipboard";
+import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { makeResult } from "./helpers";
 
 async function notifyHandler(step: PresetStep, ctx: StepContext): Promise<StepResult> {
@@ -43,7 +43,7 @@ async function notifyHandler(step: PresetStep, ctx: StepContext): Promise<StepRe
 
             case "telegram": {
                 const { loadTelegramConfig } = await import("@app/telegram-bot/lib/config");
-                const { createApi, sendMessage } = await import("@app/utils/telegram-bot/lib/api");
+                const { createApi, sendMessage } = await import("@genesiscz/utils/telegram-bot/lib/api");
 
                 const config = await loadTelegramConfig();
                 if (!config) {

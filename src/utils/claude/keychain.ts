@@ -1,11 +1,11 @@
 import { chmodSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
-import type { AIConfig } from "@app/utils/ai/AIConfig";
-import type { AISecondaryLogin } from "@app/utils/config/ai.types";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import type { AISecondaryLogin } from "@genesiscz/utils/config/ai.types";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { CLAUDE_CODE_CLIENT_ID, fetchOAuthProfile } from "./auth";
 
 /**

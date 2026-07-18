@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
-import type { AITranscriptionProvider, TranscriptionResult } from "@app/utils/ai/types";
+import type { AITranscriptionProvider, TranscriptionResult } from "@genesiscz/utils/ai/types";
 
 // The designed-out invariant: local diarization is ALWAYS handed the full
 // original audio buffer, never a per-chunk slice — so speaker labels share
@@ -14,14 +14,14 @@ import type { AITranscriptionProvider, TranscriptionResult } from "@app/utils/ai
 
 const seenLengths: number[] = [];
 
-mock.module("@app/utils/audio/diarize-local", () => ({
+mock.module("@genesiscz/utils/audio/diarize-local", () => ({
     diarizeLocal: async (buf: Buffer) => {
         seenLengths.push(buf.length);
         return [{ start: 0, end: 1, speaker: "0" }];
     },
 }));
 
-const { Transcriber } = await import("@app/utils/ai/tasks/Transcriber");
+const { Transcriber } = await import("@genesiscz/utils/ai/tasks/Transcriber");
 
 type TranscriberCtor = new (
     provider: AITranscriptionProvider

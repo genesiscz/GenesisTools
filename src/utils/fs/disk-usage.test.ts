@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { linkSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileAllocatedSize, fileLogicalSize, walkFiles } from "@app/utils/fs/disk-usage";
+import { fileAllocatedSize, fileLogicalSize, walkFiles } from "@genesiscz/utils/fs/disk-usage";
 
 describe("disk-usage per-file sizers + walkFiles", () => {
     it("logical == byte length; allocated >= logical; walk skips symlinks", () => {
@@ -131,7 +131,7 @@ describe("disk-usage per-file sizers + walkFiles", () => {
     });
 });
 
-import { measureTree } from "@app/utils/fs/disk-usage";
+import { measureTree } from "@genesiscz/utils/fs/disk-usage";
 
 describe("measureTree", () => {
     it("aggregates logical/allocated/counts and collects errors", () => {
@@ -162,8 +162,8 @@ describe("measureTree", () => {
 });
 
 import { spawnSync } from "node:child_process";
-import { exactReclaimableBytes, findCloneFamilies, reclaimableBytes } from "@app/utils/fs/disk-usage";
-import { skip } from "@app/utils/test/skip";
+import { exactReclaimableBytes, findCloneFamilies, reclaimableBytes } from "@genesiscz/utils/fs/disk-usage";
+import { skip } from "@genesiscz/utils/test/skip";
 
 describe.skipIf(skip.unlessMac)("clone-family dedup (intra-tree)", () => {
     it("private undercounts a shared pair; exact ~= one copy; families grouped", () => {
@@ -197,7 +197,7 @@ describe("reclaimable accessors degrade gracefully", () => {
     });
 });
 
-import { formatDiskUsage, freeDiskSpace, overcountRatio } from "@app/utils/fs/disk-usage";
+import { formatDiskUsage, freeDiskSpace, overcountRatio } from "@genesiscz/utils/fs/disk-usage";
 
 describe("freeDiskSpace / overcountRatio / formatDiskUsage", () => {
     it("freeDiskSpace returns positive byte totals", () => {
@@ -235,7 +235,7 @@ describe("freeDiskSpace / overcountRatio / formatDiskUsage", () => {
     });
 });
 
-import { findDedupeCandidates, findDuplicateFiles } from "@app/utils/fs/disk-usage";
+import { findDedupeCandidates, findDuplicateFiles } from "@genesiscz/utils/fs/disk-usage";
 
 describe("duplicate detection", () => {
     it("groups byte-identical files; ignores unique and size-mismatched", async () => {
@@ -284,7 +284,7 @@ describe("duplicate detection", () => {
             expect(mem.size).toBe(2);
             const one = mem.get(join(dir, "one.bin"));
             expect(one).toBeDefined();
-            const { getCloneId } = await import("@app/utils/macos/apfs");
+            const { getCloneId } = await import("@genesiscz/utils/macos/apfs");
             const freshOne = getCloneId(join(dir, "one.bin"));
             const expectedOne = freshOne !== null && freshOne !== 0n ? freshOne.toString(16) : "";
             expect(one?.cloneId).toBe(expectedOne);
@@ -481,7 +481,7 @@ describe("duplicate detection", () => {
 });
 
 import { chmodSync, readFileSync, statSync, utimesSync } from "node:fs";
-import { dedupeFile } from "@app/utils/fs/disk-usage";
+import { dedupeFile } from "@genesiscz/utils/fs/disk-usage";
 
 describe.skipIf(skip.unlessMac)("dedupeFile safety", () => {
     it("converts a duplicate to a clone that still behaves independently", () => {
@@ -615,7 +615,7 @@ describe.skipIf(skip.unlessMac)("dedupeFile safety", () => {
     });
 });
 
-import { dedupeTree } from "@app/utils/fs/disk-usage";
+import { dedupeTree } from "@genesiscz/utils/fs/disk-usage";
 
 describe.skipIf(skip.unlessMac)("dedupeTree", () => {
     it("dry-run reports candidates and mutates nothing; apply reclaims space", async () => {

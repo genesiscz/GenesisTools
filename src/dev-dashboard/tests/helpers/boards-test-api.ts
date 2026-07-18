@@ -1,6 +1,6 @@
 import { appendFileSync } from "node:fs";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { APIRequestContext } from "@playwright/test";
 import { expect } from "@playwright/test";
 

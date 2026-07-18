@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import type { DaemonTask } from "./types";
 
 describe("loadConfig every-field validation", () => {

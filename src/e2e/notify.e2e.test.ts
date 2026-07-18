@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { execTool } from "@app/utils/e2e/helpers";
-import { skip } from "@app/utils/test/skip";
+import { execTool } from "@genesiscz/utils/e2e/helpers";
+import { skip } from "@genesiscz/utils/test/skip";
 
 describe("tools notify", () => {
     describe("help & no-args", () => {

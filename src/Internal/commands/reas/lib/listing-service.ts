@@ -1,8 +1,8 @@
 import { fetchBezrealitkyAdvertDetail } from "@app/Internal/commands/reas/api/bezrealitky-client";
 import { buildSavedPropertyFromListing } from "@app/Internal/commands/reas/lib/property-form-defaults";
 import { type ListingRow, reasDatabase } from "@app/Internal/commands/reas/lib/store";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 export interface ListingDetailResult {
     listing: ListingRow;

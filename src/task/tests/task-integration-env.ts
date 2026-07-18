@@ -3,7 +3,7 @@ import { type SpawnOptions, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 const TASK_TOOL = resolve(import.meta.dir, "../../../tools");
 

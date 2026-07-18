@@ -1,8 +1,8 @@
 import { findProjectRoot } from "@app/todo/lib/context";
 import { TodoStore } from "@app/todo/lib/store";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
 export function createRemoveCommand(): Command {

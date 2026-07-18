@@ -1,6 +1,6 @@
 import type { WorkItemTypeColor } from "@app/azure-devops/lib/work-item-enrichment";
 import type { AdoWorkItem, TimelogWorkItem } from "@app/clarity/lib/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";

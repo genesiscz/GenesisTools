@@ -6,10 +6,10 @@ import { FileMetaCache } from "@app/macos/lib/clones/file-meta-cache";
 import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
-import { isInteractive, parseVariadic } from "@app/utils/cli";
-import { formatBytes } from "@app/utils/format";
-import { logger } from "@app/utils/logger";
-import * as p from "@app/utils/prompts/p";
+import { isInteractive, parseVariadic } from "@genesiscz/utils/cli";
+import { formatBytes } from "@genesiscz/utils/format";
+import { logger } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { Command, Option } from "commander";
 
 /** Replace HOME with `~` and truncate the middle of long paths so the spinner

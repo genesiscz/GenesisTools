@@ -1,5 +1,5 @@
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
-import type { GithubCopilotTokenSource } from "@app/utils/ai/github-copilot/copilot-cli-auth";
+import type { GithubCopilotTokenSource } from "@genesiscz/utils/ai/github-copilot/copilot-cli-auth";
 import pc from "picocolors";
 
 export interface DetectedAccountReport {

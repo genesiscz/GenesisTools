@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { Storage } from "@app/utils/storage/storage";
+import { Storage } from "@genesiscz/utils/storage/storage";
 
 export interface ClonesConfig {
     watchedDirs: string[];

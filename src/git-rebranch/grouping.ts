@@ -1,4 +1,4 @@
-import type { DetailedCommitInfo } from "@app/utils/git";
+import type { DetailedCommitInfo } from "@genesiscz/utils/git";
 import type { CommitGroup, ParsedCommit } from "./types";
 
 /** Conventional commit regex: type(scope)!: message */

@@ -3,8 +3,8 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getPrivateSize } from "@app/utils/macos/apfs";
-import { skip } from "@app/utils/test/skip";
+import { getPrivateSize } from "@genesiscz/utils/macos/apfs";
+import { skip } from "@genesiscz/utils/test/skip";
 
 describe.skipIf(skip.unlessMac)("apfs getPrivateSize (clone semantics)", () => {
     it("reports ~0 for a fresh clone, then rises as it diverges", () => {
@@ -43,7 +43,7 @@ describe.skipIf(skip.unlessMac)("apfs getPrivateSize (clone semantics)", () => {
     });
 });
 
-import { getCloneId, getExtFlags, isApfsCloneSupported } from "@app/utils/macos/apfs";
+import { getCloneId, getExtFlags, isApfsCloneSupported } from "@genesiscz/utils/macos/apfs";
 
 describe.skipIf(skip.unlessMac)("apfs clone identity", () => {
     it("two clones share a non-zero clone id; ext flags mark sharing", () => {
@@ -74,7 +74,7 @@ describe.skipIf(skip.unlessMac)("apfs clone identity", () => {
 });
 
 import { lstatSync, mkdtempSync as mkd2, readFileSync } from "node:fs";
-import { CloneUnsupportedError, cloneFile, getFsType } from "@app/utils/macos/apfs";
+import { CloneUnsupportedError, cloneFile, getFsType } from "@genesiscz/utils/macos/apfs";
 
 describe.skipIf(skip.unlessMac)("apfs cloneFile + getFsType", () => {
     it("getFsType returns 'apfs' for the system volume", () => {

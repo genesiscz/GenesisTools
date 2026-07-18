@@ -49,7 +49,7 @@ describe.skipIf(!hasTtydDeps)("ttyd manager", () => {
         expect(await listTtyd()).toHaveLength(0);
 
         if (session.tmuxSessionName) {
-            const { killTmuxSession } = await import("@app/utils/tmux/sessions");
+            const { killTmuxSession } = await import("@genesiscz/utils/tmux/sessions");
             killTmuxSession(session.tmuxSessionName);
         }
     });

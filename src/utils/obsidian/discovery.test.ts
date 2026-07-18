@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { discoverVaults, resolveActiveVault } from "./discovery";
 
 function fixture(vaults: Record<string, { path: string; ts: number; open?: boolean }>): string {

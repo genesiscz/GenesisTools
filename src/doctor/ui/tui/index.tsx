@@ -1,7 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import type { PlainRunOpts } from "@app/doctor/ui/plain";
-import { setBackend } from "@app/utils/prompts/p";
-import { opentuiBackend } from "@app/utils/prompts/p/opentui-backend";
+import { setBackend } from "@genesiscz/utils/prompts/p";
+import { opentuiBackend } from "@genesiscz/utils/prompts/p/opentui-backend";
 import { createCliRenderer } from "@opentui/core";
 import { render } from "@opentui/solid";
 import "./views/register";

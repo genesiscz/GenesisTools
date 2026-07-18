@@ -1,10 +1,10 @@
-import { Button } from "@app/utils/ui/components/button";
 import { HistoryView } from "@app/youtube/ui/components/shared/history-view";
 import { useMe, useUserHistory } from "@ext/api.hooks";
 import { CollectionsSection } from "@ext/side-panel/account-collections";
 import { DigestSection } from "@ext/side-panel/account-digest";
 import { ActivityView } from "@ext/side-panel/activity-view";
 import { ReferralSection } from "@ext/side-panel/referral-section";
+import { Button } from "@genesiscz/utils/ui/components/button";
 import { ArrowLeft } from "lucide-react";
 import { useState } from "react";
 

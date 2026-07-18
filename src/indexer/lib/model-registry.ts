@@ -1,6 +1,11 @@
-import { getEmbedModelsForType, getMaxEmbedChars, getModelsForTask, getTaskPrefix } from "@app/utils/ai/ModelRegistry";
-import type { ModelEntry } from "@app/utils/ai/types";
-import { formatTable } from "@app/utils/table";
+import {
+    getEmbedModelsForType,
+    getMaxEmbedChars,
+    getModelsForTask,
+    getTaskPrefix,
+} from "@genesiscz/utils/ai/ModelRegistry";
+import type { ModelEntry } from "@genesiscz/utils/ai/types";
+import { formatTable } from "@genesiscz/utils/table";
 
 /** @deprecated Use ModelEntry from @app/utils/ai/types */
 export type ModelInfo = ModelEntry;

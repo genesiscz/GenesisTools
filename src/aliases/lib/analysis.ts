@@ -11,10 +11,10 @@ import {
     suggestAlias,
     updateLevel,
 } from "@app/aliases/lib/core";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage/storage";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage/storage";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const STATE_FILE = "state.json";

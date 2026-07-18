@@ -1,5 +1,3 @@
-import { Badge } from "@app/utils/ui/components/badge";
-import { Button } from "@app/utils/ui/components/button";
 import type { ChannelHandle } from "@app/youtube/lib/types";
 import { useChannels, useSyncChannel, useVideos } from "@app/yt/api.hooks";
 import { EmptyState } from "@app/yt/components/shared/empty-state";
@@ -7,6 +5,8 @@ import { Loading } from "@app/yt/components/shared/loading";
 import { VideoCard } from "@app/yt/components/videos/video-card";
 import { type VideoListFilterState, VideoListFilters } from "@app/yt/components/videos/video-list-filters";
 import { formatDateTime, formatNumber } from "@app/yt/lib/format";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
+import { Button } from "@genesiscz/utils/ui/components/button";
 import { RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";

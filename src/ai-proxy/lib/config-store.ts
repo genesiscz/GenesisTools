@@ -2,7 +2,7 @@ import { migrateAccountConfig } from "@app/ai-proxy/lib/account-config";
 import { normalizeBasePath } from "@app/ai-proxy/lib/path-prefix";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { AiProxyConfig, AiProxyPublicConfig } from "@app/ai-proxy/lib/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export function getDefaultConfig(): AiProxyConfig {
     return {

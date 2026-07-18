@@ -5,8 +5,8 @@ import { RefStoreManager } from "@app/har-analyzer/core/ref-store";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { HarEntry, HarHeader, OutputOptions } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
-import { formatBytes, formatDuration } from "@app/utils/format";
-import { out } from "@app/utils/logger";
+import { formatBytes, formatDuration } from "@genesiscz/utils/format";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 function headerMap(headers: HarHeader[]): Map<string, string> {

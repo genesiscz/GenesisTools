@@ -2,7 +2,7 @@ import { describe, expect, it, test } from "bun:test";
 import { ShopApiClient } from "@app/shops/api/ShopApiClient";
 import type { Category, ListingOptions, RawProduct, ShopCapabilities } from "@app/shops/api/ShopApiClient.types";
 import type { HttpRequestEvent, HttpRequestSink } from "@app/shops/lib/http-sink";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 class TestSink implements HttpRequestSink {
     public readonly events: HttpRequestEvent[] = [];

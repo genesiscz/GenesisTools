@@ -1,7 +1,7 @@
 import { cacheKey, getCached, SREALITY_TTL, setCache } from "@app/Internal/commands/reas/cache/index";
 import { matchesRequestedDistrict } from "@app/Internal/commands/reas/lib/district-matching";
 import type { AnalysisFilters, CacheEntry, RentalListing } from "@app/Internal/commands/reas/types";
-import { ApiClient, ApiClientError } from "@app/utils/api/ApiClient";
+import { ApiClient, ApiClientError } from "@genesiscz/utils/api/ApiClient";
 import type { ErealityListing } from "./ErealityClient.types";
 
 const BASE_URL = "https://www.ereality.cz/pronajem/byty";

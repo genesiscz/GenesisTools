@@ -11,7 +11,7 @@ import {
     runAnalysis,
 } from "@app/aliases/lib/analysis";
 import { isWorthAliasing, upsertManagedBlock } from "@app/aliases/lib/core";
-import { logger, out } from "@app/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 async function applyAction(flags: ApplyFlags): Promise<void> {

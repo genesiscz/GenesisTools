@@ -1,7 +1,7 @@
 import { getSessionListing, type SessionMetadataRecord } from "@app/claude/lib/history/search";
-import { readTailBytes } from "@app/utils/claude/session.utils";
-import { SafeJSON } from "@app/utils/json";
-import { collapsePath } from "@app/utils/paths";
+import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { collapsePath } from "@genesiscz/utils/paths";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 // --- Constants ---

@@ -32,7 +32,7 @@ import type {
     SaleListing,
     TargetProperty,
 } from "@app/Internal/commands/reas/types";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 /** Minimum rental price to filter garbage entries (e.g. 1 CZK placeholder listings) */
 const MIN_RENTAL_PRICE = 1000;

@@ -17,7 +17,7 @@ import { publishBoardEvent, wakeWorkWaiters } from "@app/dev-dashboard/lib/board
 import { getSet, getSetFile, setRefOf } from "@app/dev-dashboard/lib/boards/sets-store";
 import type { MessageAttachmentDto, Region } from "@app/dev-dashboard/lib/boards/types";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { boardsError } from "./boards-errors";
 import { actorFrom } from "./boards-sets";
 

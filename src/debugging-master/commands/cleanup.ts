@@ -2,8 +2,8 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSy
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
-import { suggestCommand } from "@app/utils/cli/executor";
-import { out } from "@app/utils/logger";
+import { suggestCommand } from "@genesiscz/utils/cli/executor";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { glob } from "glob";
 import pc from "picocolors";

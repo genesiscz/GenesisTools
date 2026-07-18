@@ -3,7 +3,7 @@
 import type { StepContext } from "@app/automate/lib/registry";
 import { registerStepCatalog, registerStepHandler } from "@app/automate/lib/registry";
 import type { GitStepParams, PresetStep, StepResult } from "@app/automate/lib/types";
-import { createGit } from "@app/utils/git/core";
+import { createGit } from "@genesiscz/utils/git/core";
 import { makeResult } from "./helpers";
 
 async function gitHandler(step: PresetStep, ctx: StepContext): Promise<StepResult> {

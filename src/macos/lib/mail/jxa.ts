@@ -1,6 +1,6 @@
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { killWithEscalation } from "@app/utils/process/killWithEscalation";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { killWithEscalation } from "@genesiscz/utils/process/killWithEscalation";
 
 interface JxaResult {
     stdout: string;

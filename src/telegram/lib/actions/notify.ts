@@ -1,4 +1,4 @@
-import { dispatchNotification } from "@app/utils/notifications";
+import { dispatchNotification } from "@genesiscz/utils/notifications";
 import type { ActionHandler } from "../types";
 
 export const handleNotify: ActionHandler = async (message, contact) => {

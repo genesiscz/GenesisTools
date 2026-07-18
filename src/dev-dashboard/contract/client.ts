@@ -32,7 +32,7 @@ import type {
     WeatherRes,
 } from "@app/dev-dashboard/contract/endpoints";
 import { paths, QA_STREAM_PATH } from "@app/dev-dashboard/contract/endpoints";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 /** Minimal EventSource shape. Web injects `window.EventSource`; RN injects an
  * `expo/fetch`-backed adapter (see mobile plan 04). Keeps the contract transport-free. */

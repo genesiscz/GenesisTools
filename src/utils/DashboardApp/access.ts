@@ -1,7 +1,7 @@
-import { Browser } from "@app/utils/browser";
-import { logger, out } from "@app/utils/logger";
-import { getLocalIpv4 } from "@app/utils/network";
-import { type QrOptions, renderQr } from "@app/utils/qr";
+import { Browser } from "@genesiscz/utils/browser";
+import { logger, out } from "@genesiscz/utils/logger";
+import { getLocalIpv4 } from "@genesiscz/utils/network";
+import { type QrOptions, renderQr } from "@genesiscz/utils/qr";
 import pc from "picocolors";
 import { waitForUrlReady } from "./readiness";
 import type { DashboardAppConfig, DashboardBindHost, DashboardQrOption } from "./types";

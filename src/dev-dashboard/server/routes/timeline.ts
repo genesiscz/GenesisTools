@@ -5,7 +5,7 @@ import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
 import { defaultDbPath } from "@app/question/commands/log";
 import { openReadModel, queryEntries } from "@app/question/lib/read-model";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 /** Local midnight today, epoch ms — the default "today on this machine" lower bound. */
 function startOfTodayMs(): number {

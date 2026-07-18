@@ -8,12 +8,12 @@ import {
     resolveColumnsFromFlag,
 } from "@app/macos/lib/mail/command-helpers";
 import { resolveMailSearchMode, runMailSearch } from "@app/macos/lib/mail/search-runner";
-import { isQuietOutput } from "@app/utils/cli/output-mode";
-import { createQuietSpinner } from "@app/utils/cli/quiet-spinner";
-import { logger } from "@app/utils/logger";
-import { MailDatabase } from "@app/utils/macos/MailDatabase";
-import type { SearchOptions } from "@app/utils/macos/mail/types";
 import * as p from "@clack/prompts";
+import { isQuietOutput } from "@genesiscz/utils/cli/output-mode";
+import { createQuietSpinner } from "@genesiscz/utils/cli/quiet-spinner";
+import { logger } from "@genesiscz/utils/logger";
+import { MailDatabase } from "@genesiscz/utils/macos/MailDatabase";
+import type { SearchOptions } from "@genesiscz/utils/macos/mail/types";
 import type { Command } from "commander";
 
 interface SearchCommandOptions {

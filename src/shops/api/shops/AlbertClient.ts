@@ -28,8 +28,8 @@ import type {
     AlbertNavigationResponse,
     AlbertRawProduct,
 } from "@app/shops/api/shops/AlbertClient.types";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const ALBERT_ORIGIN = "albert.cz";
 const STORE_ROOT = "https://www.albert.cz";

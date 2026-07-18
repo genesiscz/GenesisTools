@@ -20,10 +20,10 @@ import { buildWorkItemHistory, resolveUser, userMatches } from "@app/azure-devop
 import type { Comment, IdentityRef, WorkItemUpdate } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
 import { escapeWiqlValue } from "@app/azure-devops/wiql-builder";
-import { suggestCommand } from "@app/utils/cli";
-import { formatDateTime } from "@app/utils/date";
-import { out } from "@app/utils/logger";
 import * as p from "@clack/prompts";
+import { suggestCommand } from "@genesiscz/utils/cli";
+import { formatDateTime } from "@genesiscz/utils/date";
+import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 
 // ============= Types =============

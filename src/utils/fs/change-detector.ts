@@ -9,7 +9,7 @@ export interface ChangeSet {
     unchanged: string[];
 }
 
-import { xxhash } from "@app/utils/hash";
+import { xxhash } from "@genesiscz/utils/hash";
 
 export interface ChangeDetectorOptions {
     /** Hash function: (content) => hash string. Default: Bun.hash xxHash64 */

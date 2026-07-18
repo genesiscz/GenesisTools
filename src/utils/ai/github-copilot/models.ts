@@ -1,6 +1,6 @@
-import type { GithubCopilotApi } from "@app/utils/ai/github-copilot/api";
-import { parseCopilotChatQuota } from "@app/utils/ai/github-copilot/billing";
-import type { CopilotModelRecord } from "@app/utils/ai/github-copilot/types";
+import type { GithubCopilotApi } from "@genesiscz/utils/ai/github-copilot/api";
+import { parseCopilotChatQuota } from "@genesiscz/utils/ai/github-copilot/billing";
+import type { CopilotModelRecord } from "@genesiscz/utils/ai/github-copilot/types";
 
 export function toProxyId(accountName: string, upstreamId: string): string {
     return `${accountName}/github-copilot/${upstreamId}`;

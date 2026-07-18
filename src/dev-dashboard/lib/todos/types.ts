@@ -1,6 +1,6 @@
-import type { ReminderGroup, ReminderGroupBy } from "@app/utils/grouping/reminder-groups";
-import type { ReminderTodoPriority } from "@app/utils/macos/reminder-priority";
 import type { ReminderInfo, ReminderListInfo } from "@genesiscz/darwinkit";
+import type { ReminderGroup, ReminderGroupBy } from "@genesiscz/utils/grouping/reminder-groups";
+import type { ReminderTodoPriority } from "@genesiscz/utils/macos/reminder-priority";
 
 export type TodoPriority = ReminderTodoPriority;
 

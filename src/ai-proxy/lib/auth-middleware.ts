@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 function tokensMatch(presented: string, expected: string): boolean {
     const presentedBuffer = Buffer.from(presented);

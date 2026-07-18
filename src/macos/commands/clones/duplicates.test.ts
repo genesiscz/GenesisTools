@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDuplicatesCommand } from "@app/macos/commands/clones/duplicates";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 describe("createDuplicatesCommand", () => {
     it("named 'duplicates' with --group and --format", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { WatcherSubscription } from "@app/utils/fs/watcher";
+import type { WatcherSubscription } from "@genesiscz/utils/fs/watcher";
 
 /**
  * Integration-level tests for the native watcher start/stop lifecycle.

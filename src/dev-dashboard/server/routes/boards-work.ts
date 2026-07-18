@@ -13,7 +13,7 @@ import {
     releaseLease,
 } from "@app/dev-dashboard/lib/boards/work-store";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { boardsError } from "./boards-errors";
 
 function parseScope(q: URLSearchParams): WorkScope | null {

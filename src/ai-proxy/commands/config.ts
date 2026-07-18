@@ -9,8 +9,8 @@ import {
 import { formatDetectReportText } from "@app/ai-proxy/lib/detect-report";
 import { isValidThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import type { ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { out } from "@app/utils/logger";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { out } from "@genesiscz/utils/logger";
 
 export async function runConfigDetect(): Promise<void> {
     const reports = await detectAccountReports({

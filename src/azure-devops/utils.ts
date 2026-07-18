@@ -3,11 +3,11 @@
  * Import from specific modules for new code.
  */
 
-export { formatBytes } from "@app/utils/format";
-export { levenshteinDistance, similarityScore } from "@app/utils/fuzzy-match";
+export { formatBytes } from "@genesiscz/utils/format";
+export { levenshteinDistance, similarityScore } from "@genesiscz/utils/fuzzy-match";
 // Re-export shared utilities for backward compatibility
-export { htmlToMarkdown } from "@app/utils/markdown/html-to-md";
-export { slugify } from "@app/utils/string";
+export { htmlToMarkdown } from "@genesiscz/utils/markdown/html-to-md";
+export { slugify } from "@genesiscz/utils/string";
 export * from "./change-detection";
 export * from "./config";
 export * from "./field-schema";

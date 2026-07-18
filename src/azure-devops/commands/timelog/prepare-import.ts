@@ -9,10 +9,10 @@ import { convertToMinutes, formatMinutes } from "@app/azure-devops/timelog-api";
 import type { AllowedTypeConfig } from "@app/azure-devops/types";
 import { requireTimeLogConfig } from "@app/azure-devops/utils";
 import { precheckWorkItem } from "@app/azure-devops/workitem-precheck";
-import { concurrentMap } from "@app/utils/async";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage";
+import { concurrentMap } from "@genesiscz/utils/async";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage";
 import type { Command } from "commander";
 import { z } from "zod";
 

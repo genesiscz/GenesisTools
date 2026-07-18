@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { runTool } from "@app/utils/cli";
+import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
 import { registerApprovalCommands } from "./commands/approve";
 import { registerInterruptCommand } from "./commands/interrupt";

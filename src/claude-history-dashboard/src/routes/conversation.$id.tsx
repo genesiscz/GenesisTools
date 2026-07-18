@@ -1,5 +1,5 @@
-import type { AgentContentBlock, AgentMessage } from "@app/utils/agents/types";
-import { SessionTimeline } from "@app/utils/agents/ui/components/SessionTimeline";
+import type { AgentContentBlock, AgentMessage } from "@genesiscz/utils/agents/types";
+import { SessionTimeline } from "@genesiscz/utils/agents/ui/components/SessionTimeline";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Calendar, FolderOpen, GitBranch } from "lucide-react";
 import { useMemo } from "react";

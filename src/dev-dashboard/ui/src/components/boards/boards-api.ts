@@ -13,7 +13,7 @@ import type {
     StrokeDto,
 } from "@app/dev-dashboard/contract/dto";
 import { paths } from "@app/dev-dashboard/contract/endpoints";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { fetchJson } from "@/lib/api";
 
 /** A card_versions row — not part of the type-only contract (no DTO exists yet), so declared here. */

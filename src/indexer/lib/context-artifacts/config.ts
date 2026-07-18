@@ -1,6 +1,6 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { ContextArtifact, ContextConfig } from "./types";
 
 export const CONFIG_FILENAME = ".genesistoolscontext.json";

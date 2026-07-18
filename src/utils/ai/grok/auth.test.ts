@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { decodeJwtClaims, getActiveAuthEntry, getTokenPrefix, isTokenExpired, readAuthFile } from "./auth";
 
 const TEST_PAYLOAD = {

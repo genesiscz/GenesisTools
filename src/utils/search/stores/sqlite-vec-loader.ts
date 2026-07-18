@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import {
     ensureExtensionCapableSQLiteCore,
     getSqliteVecLoaderState,

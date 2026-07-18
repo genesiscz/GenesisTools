@@ -1,6 +1,11 @@
-import { logger } from "@app/utils/logger";
-import { captureTmuxSnapshot, restoreTmuxSession, SNAPSHOT_VERSION, type TmuxPreset } from "@app/utils/tmux/snapshot";
-import { TmuxPresetStore, type TmuxPresetSummary } from "@app/utils/tmux/snapshot-store";
+import { logger } from "@genesiscz/utils/logger";
+import {
+    captureTmuxSnapshot,
+    restoreTmuxSession,
+    SNAPSHOT_VERSION,
+    type TmuxPreset,
+} from "@genesiscz/utils/tmux/snapshot";
+import { TmuxPresetStore, type TmuxPresetSummary } from "@genesiscz/utils/tmux/snapshot-store";
 
 export interface SavePresetInput {
     name: string;

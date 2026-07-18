@@ -1,4 +1,4 @@
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 // The INNER request/response sealed inside an `E2eEnvelope` on the managed tier. The mobile
 // `E2eTransport` encodes an `E2eRequest`, seals it; the Agent `e2e-shim` opens it, replays it

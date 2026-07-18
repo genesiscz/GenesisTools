@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import * as patchModule from "../lib/patch";
 import { runGitIn } from "../lib/patch";
 import { saveCommand } from "./save";

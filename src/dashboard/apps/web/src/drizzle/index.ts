@@ -1,6 +1,6 @@
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";

@@ -8,7 +8,7 @@ import { Api } from "@app/azure-devops/api";
 import { formatJSON, saveGlobalCache } from "@app/azure-devops/cache";
 import type { OutputFormat } from "@app/azure-devops/types";
 import { extractDashboardId, requireConfig } from "@app/azure-devops/utils";
-import { logger, out } from "@app/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 /**

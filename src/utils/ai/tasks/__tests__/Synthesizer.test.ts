@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { skip } from "@app/utils/test/skip";
+import { skip } from "@genesiscz/utils/test/skip";
 import { Synthesizer } from "../Synthesizer";
 
 describe.skipIf(skip.unlessMac)("Synthesizer", () => {

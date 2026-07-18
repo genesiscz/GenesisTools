@@ -1,9 +1,9 @@
-import { setupStorageSandbox } from "@app/utils/storage/test-sandbox";
+import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 
 setupStorageSandbox();
 
 import { describe, expect, test } from "bun:test";
-import { Storage } from "@app/utils/storage/storage";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import type { AccountUsage, ExtraUsageBucket } from "./api";
 import { __makeExtraUsageNotifier } from "./extra-usage-notify";
 import { formatExtraUsageMessage } from "./extra-usage-tracker";

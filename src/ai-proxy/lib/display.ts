@@ -1,8 +1,8 @@
 import { isProviderImplemented } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
-import { suggestCommand } from "@app/utils/cli";
-import { formatTokens } from "@app/utils/format";
-import { out } from "@app/utils/logger";
+import { suggestCommand } from "@genesiscz/utils/cli";
+import { formatTokens } from "@genesiscz/utils/format";
+import { out } from "@genesiscz/utils/logger";
 import {
     createBoxTable,
     formatDotStatus,
@@ -10,7 +10,7 @@ import {
     renderCliKeyRow,
     renderCliSection,
     truncateDisplay,
-} from "@app/utils/table";
+} from "@genesiscz/utils/table";
 import pc from "picocolors";
 
 function formatVisibility(visibility: string): string {

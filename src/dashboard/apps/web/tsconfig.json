@@ -24,11 +24,11 @@
       "@/*": ["./src/*"],
       "@ui": ["../../../utils/ui/index.ts"],
       "@ui/*": ["../../../utils/ui/*"],
-      "@app/logger/client": ["../../../logger/client.ts"],
-      "@app/utils/json": ["../../../utils/json.ts"],
-      "@app/utils/env.client": ["../../../utils/env.client.ts"],
-      "@app/utils/env": ["../../../utils/env/index.ts"],
-      "@app/utils/env/*": ["../../../utils/env/*"],
+      "@genesiscz/utils/logger/client": ["../../../utils/logger/client.ts"],
+      "@genesiscz/utils/json": ["../../../utils/json.ts"],
+      "@genesiscz/utils/env.client": ["../../../utils/env.client.ts"],
+      "@genesiscz/utils/env": ["../../../utils/env/index.ts"],
+      "@genesiscz/utils/env/*": ["../../../utils/env/*"],
       "@dashboard/shared": ["../../packages/shared/src/index.ts"],
       "@dashboard/shared/*": ["../../packages/shared/src/*"]
     }

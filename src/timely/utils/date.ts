@@ -2,9 +2,9 @@
  * Date utilities for Timely commands.
  * Re-exports shared utilities and provides timely-specific formatDuration.
  */
-import { formatDuration as _formatDuration } from "@app/utils/format";
+import { formatDuration as _formatDuration } from "@genesiscz/utils/format";
 
-export { getDatesInMonth, getMonthDateRange } from "@app/utils/date";
+export { getDatesInMonth, getMonthDateRange } from "@genesiscz/utils/date";
 
 /**
  * Format total seconds as "Xh Ym"

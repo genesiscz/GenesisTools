@@ -1,8 +1,8 @@
 import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import type { NotificationsTable } from "@app/shops/db/types";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { nowUtcIso } from "@app/utils/sql-time";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { nowUtcIso } from "@genesiscz/utils/sql-time";
 import type { Selectable } from "kysely";
 
 const log = logger.child({ component: "NotificationsRepository" });

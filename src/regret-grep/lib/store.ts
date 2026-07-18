@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage/storage";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import { distillEntry } from "./entry";
 import { collectBugFixCommits } from "./git";
 import { INDEX_VERSION, type RegretIndex } from "./types";

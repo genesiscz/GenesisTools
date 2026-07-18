@@ -1,5 +1,5 @@
-import { out } from "@app/utils/logger";
-import { MacCalendar } from "@app/utils/macos/apple-calendar";
+import { out } from "@genesiscz/utils/logger";
+import { MacCalendar } from "@genesiscz/utils/macos/apple-calendar";
 import type { Command } from "commander";
 import pc from "picocolors";
 

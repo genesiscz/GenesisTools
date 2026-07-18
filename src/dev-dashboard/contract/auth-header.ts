@@ -3,7 +3,7 @@
 // (scrypt/hmac/timing-safe compare) stay in `lib/auth.ts`; only the encode/parse
 // pair lives here because the mobile client must build the `Authorization` header.
 
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 export interface BasicAuthInput {
     username: string;

@@ -1,7 +1,7 @@
 import type { BezrealitkyAdvertDetail } from "@app/Internal/commands/reas/api/bezrealitky-client";
 import { PROPERTY_TYPES } from "@app/Internal/commands/reas/lib/config-builder";
 import type { ListingRow } from "@app/Internal/commands/reas/lib/store";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";

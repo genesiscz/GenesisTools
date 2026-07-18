@@ -1,5 +1,5 @@
 import type { DebugMasterConfig, ProjectConfig } from "@app/debugging-master/types";
-import { Storage } from "@app/utils/storage/storage";
+import { Storage } from "@genesiscz/utils/storage/storage";
 
 export class ConfigManager {
     private storage: Storage;

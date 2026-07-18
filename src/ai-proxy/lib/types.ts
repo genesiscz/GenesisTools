@@ -1,5 +1,5 @@
-import type { CopilotAccountType, CopilotUsageSummary } from "@app/utils/ai/github-copilot/types";
-import type { GrokBillingConfig, GrokModelRecord, GrokSettings } from "@app/utils/ai/grok";
+import type { CopilotAccountType, CopilotUsageSummary } from "@genesiscz/utils/ai/github-copilot/types";
+import type { GrokBillingConfig, GrokModelRecord, GrokSettings } from "@genesiscz/utils/ai/grok";
 
 export type CursorTranslationMode = "auto" | "on" | "off";
 

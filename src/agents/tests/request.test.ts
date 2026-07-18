@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 import { appendFeed, appendMessage, readFeed } from "../lib/feed";
 import { ensureSessionDir, sessionPaths } from "../lib/paths";
 import { sendRequest } from "../lib/request";

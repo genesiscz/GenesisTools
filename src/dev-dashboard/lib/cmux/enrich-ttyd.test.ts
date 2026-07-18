@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { enrichPanesWithTtyd, resolveTtydForCmuxSurface } from "@app/dev-dashboard/lib/cmux/enrich-ttyd";
-import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveSurface } from "@app/utils/cmux/lib/live-snapshot";
+import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveSurface } from "@genesiscz/utils/cmux/lib/live-snapshot";
 
 function surface(overrides: Partial<CmuxLiveSurface>): CmuxLiveSurface {
     return {

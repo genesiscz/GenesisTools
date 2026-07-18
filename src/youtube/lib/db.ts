@@ -1,9 +1,5 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { BaseDatabase, SQL_NOW_UTC } from "@app/utils/database";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { withFileLock } from "@app/utils/storage";
 import { deleteIfExists } from "@app/youtube/lib/cache";
 import type { Channel, ChannelHandle } from "@app/youtube/lib/channel.types";
 import type { FetchedComment, VideoComment } from "@app/youtube/lib/comments.types";
@@ -82,6 +78,10 @@ import type {
     VideoLongSummary,
     VideoReport,
 } from "@app/youtube/lib/video.types";
+import { BaseDatabase, SQL_NOW_UTC } from "@genesiscz/utils/database";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { withFileLock } from "@genesiscz/utils/storage";
 
 export const DEFAULT_DB_PATH = join(homedir(), ".genesis-tools", "youtube", "youtube.db");
 

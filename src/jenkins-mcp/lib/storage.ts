@@ -1,6 +1,6 @@
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { Storage } from "@app/utils/storage/storage";
+import { Storage } from "@genesiscz/utils/storage/storage";
 
 const TOOL_NAME = "jenkins-mcp";
 

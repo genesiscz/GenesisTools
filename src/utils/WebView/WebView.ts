@@ -2,11 +2,11 @@ import crypto from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { platform } from "node:os";
 import { join } from "node:path";
-import { AsyncOpQueue, withTimeout } from "@app/utils/async";
-import { requireHeadlessBrowser } from "@app/utils/bun";
-import { SafeJSON } from "@app/utils/json";
-import { getLogger } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage/storage";
+import { AsyncOpQueue, withTimeout } from "@genesiscz/utils/async";
+import { requireHeadlessBrowser } from "@genesiscz/utils/bun";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { getLogger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import type { Logger } from "pino";
 import { WebViewError, WebViewEvaluateError, WebViewNavigationError, WebViewTimeoutError } from "./errors";
 import type {

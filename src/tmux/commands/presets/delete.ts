@@ -1,8 +1,8 @@
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { out } from "@app/utils/logger";
-import { withCancel } from "@app/utils/prompts/clack/helpers";
-import { TmuxPresetStore } from "@app/utils/tmux/snapshot-store";
 import * as p from "@clack/prompts";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { out } from "@genesiscz/utils/logger";
+import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
+import { TmuxPresetStore } from "@genesiscz/utils/tmux/snapshot-store";
 import type { Command } from "commander";
 import pc from "picocolors";
 

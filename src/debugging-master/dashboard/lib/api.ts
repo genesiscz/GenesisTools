@@ -1,7 +1,7 @@
 import type { IndexedLogEntry } from "@app/debugging-master/types";
 import type { DashboardSession, LogSourceId } from "@app/log-viewer/log-source";
 import { sessionKey } from "@app/log-viewer/session-key";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export interface SessionsResponse {
     sessions: DashboardSession[];

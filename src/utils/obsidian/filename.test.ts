@@ -3,7 +3,7 @@ import {
     buildObsidianNoteRelativePath,
     normalizeObsidianBaseName,
     obsidianNoteFileName,
-} from "@app/utils/obsidian/filename";
+} from "@genesiscz/utils/obsidian/filename";
 
 describe("obsidian filename", () => {
     test("normalizeObsidianBaseName strips a single .md suffix", () => {

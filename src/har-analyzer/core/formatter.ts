@@ -1,8 +1,8 @@
 import type { IndexedEntry, OutputFormat, SessionStats } from "@app/har-analyzer/types.ts";
-import { formatBytes, formatDuration } from "@app/utils/format.ts";
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
-import { formatTable } from "@app/utils/table.ts";
+import { formatBytes, formatDuration } from "@genesiscz/utils/format.ts";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
+import { formatTable } from "@genesiscz/utils/table.ts";
 
 export function truncatePath(path: string, maxLen: number): string {
     if (path.length <= maxLen) {

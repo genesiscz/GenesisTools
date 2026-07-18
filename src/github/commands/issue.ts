@@ -17,8 +17,8 @@ import {
 } from "@app/github/lib/cache";
 import { calculateStats, formatIssue } from "@app/github/lib/output";
 import { detectCrossReferences, findReplyTarget, processQuotes } from "@app/github/lib/quotes";
-import { getOctokit } from "@app/utils/github/octokit";
-import { withRetry } from "@app/utils/github/rate-limit";
+import { getOctokit } from "@genesiscz/utils/github/octokit";
+import { withRetry } from "@genesiscz/utils/github/rate-limit";
 import type {
     CommentData,
     CommentPreview,
@@ -30,8 +30,8 @@ import type {
     IssueData,
     LinkedIssue,
     TimelineEventData,
-} from "@app/utils/github/types";
-import { detectRepoFromGit, extractCommentId, parseDate, parseGitHubUrl } from "@app/utils/github/url-parser";
+} from "@genesiscz/utils/github/types";
+import { detectRepoFromGit, extractCommentId, parseDate, parseGitHubUrl } from "@genesiscz/utils/github/url-parser";
 import {
     fromCommentRecord,
     setGlobalVerbose,
@@ -40,9 +40,9 @@ import {
     sumReactions,
     toCommentRecord,
     verbose,
-} from "@app/utils/github/utils";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
+} from "@genesiscz/utils/github/utils";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
 import { Command } from "commander";
 

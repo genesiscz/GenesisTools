@@ -1,6 +1,6 @@
 import type { NotificationsRepository } from "@app/shops/db/NotificationsRepository";
 import type { DispatchResult, NotificationChannel, NotificationPayload } from "@app/shops/lib/channels/types";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 const log = logger.child({ component: "NotificationDispatcher" });
 

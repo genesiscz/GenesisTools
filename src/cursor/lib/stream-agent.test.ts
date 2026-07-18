@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { CursorStreamAdapter } from "@app/utils/agents/adapters/cursor";
+import type { CursorStreamAdapter } from "@genesiscz/utils/agents/adapters/cursor";
 import { streamCursorAgent } from "./stream-agent";
 
 describe("cursor streaming child exception safety", () => {

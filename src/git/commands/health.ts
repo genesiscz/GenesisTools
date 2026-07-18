@@ -9,8 +9,8 @@
 import { resolve } from "node:path";
 import { analyze } from "@app/git/lib/monster/analyze";
 import { renderHealth } from "@app/git/lib/monster/render";
-import { out } from "@app/utils/logger";
-import type { Storage } from "@app/utils/storage";
+import { out } from "@genesiscz/utils/logger";
+import type { Storage } from "@genesiscz/utils/storage";
 import type { Command } from "commander";
 
 interface HealthOptions {

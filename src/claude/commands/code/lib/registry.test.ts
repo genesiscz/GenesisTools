@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { fetchManifest, fetchPackument, hostPlatform, MAIN_PKG, platformPkg, resolveRange } from "./registry";
 
 const FAKE_PACKUMENT = {

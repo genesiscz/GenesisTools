@@ -1,5 +1,5 @@
-import { out } from "@app/utils/logger";
-import { TmuxPresetStore } from "@app/utils/tmux/snapshot-store";
+import { out } from "@genesiscz/utils/logger";
+import { TmuxPresetStore } from "@genesiscz/utils/tmux/snapshot-store";
 import type { Command } from "commander";
 import pc from "picocolors";
 

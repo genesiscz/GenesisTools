@@ -2,7 +2,7 @@
 // token-cheap digest for the agent — media images, note/text/element digests, annotations, and the
 // connect-tool edges walked into ordered journey chains. Pure over the loaded board doc.
 
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { blobUrl } from "./blobs";
 import { pairSectionMembers } from "./layout-engine";
 import { containingSection, type SectionCard, sectionByName, sectionFrames, sectionsToJSON } from "./sections";

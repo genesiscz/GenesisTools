@@ -3,9 +3,9 @@
 // Register all step handlers (http, file, git, json, text, array, notify, parallel, loop)
 import "./steps/index";
 
-import { env } from "@app/utils/env";
-import { formatDuration } from "@app/utils/format.ts";
 import * as p from "@clack/prompts";
+import { env } from "@genesiscz/utils/env";
+import { formatDuration } from "@genesiscz/utils/format.ts";
 import pc from "picocolors";
 import type { RunLogger } from "./run-logger.ts";
 import { executeStep, isParallelChild, setStepRunnerMeta } from "./step-runner.ts";

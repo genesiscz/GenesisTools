@@ -1,8 +1,3 @@
-import { logger } from "@app/utils/logger/client";
-import { Button } from "@app/utils/ui/components/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@app/utils/ui/components/dialog";
-import { Input } from "@app/utils/ui/components/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@app/utils/ui/components/select";
 import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
 import type { PresetKind, PromptPreset, ShareSummary, YtRole } from "@app/youtube/lib/types";
 import { ActivityGraph } from "@app/youtube/ui/components/shared/activity-graph";
@@ -30,6 +25,17 @@ import { persistUiLang, useT, useUiLang } from "@ext/shared/i18n";
 import type { AccountSection } from "@ext/side-panel/account-view";
 import { CustomizationSection } from "@ext/side-panel/customization-section";
 import { LowBalanceNudge, SubscriptionSection } from "@ext/side-panel/subscription-section";
+import { logger } from "@genesiscz/utils/logger/client";
+import { Button } from "@genesiscz/utils/ui/components/button";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+} from "@genesiscz/utils/ui/components/dialog";
+import { Input } from "@genesiscz/utils/ui/components/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@genesiscz/utils/ui/components/select";
 import {
     CreditCard,
     Gem,

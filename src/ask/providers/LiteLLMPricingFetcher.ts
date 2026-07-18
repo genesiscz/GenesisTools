@@ -1,7 +1,7 @@
-import type { PricingInfo } from "@app/utils/ask/types/provider";
-import { logger } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage/storage";
 import { askUI } from "@ask/output/AskUILogger";
+import type { PricingInfo } from "@genesiscz/utils/ask/types/provider";
+import { logger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import { z } from "zod";
 
 const storage = new Storage("ask");

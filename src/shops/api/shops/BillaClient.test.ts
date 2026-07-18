@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BillaClient } from "@app/shops/api/shops/BillaClient";
 import { MemoryHttpRequestSink } from "@app/shops/lib/http-sink";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 function readFixture<T>(rel: string): T {
     return SafeJSON.parse(readFileSync(join(import.meta.dir, "__fixtures__/billa", rel), "utf8")) as T;

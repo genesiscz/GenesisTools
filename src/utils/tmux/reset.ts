@@ -1,5 +1,5 @@
-import { logger } from "@app/utils/logger";
-import { ensureTmuxServerPersists } from "@app/utils/tmux/sessions";
+import { logger } from "@genesiscz/utils/logger";
+import { ensureTmuxServerPersists } from "@genesiscz/utils/tmux/sessions";
 import {
     captureTmuxSnapshot,
     killTmuxSessionsMatching,
@@ -8,8 +8,8 @@ import {
     SNAPSHOT_VERSION,
     type TmuxPreset,
     type TmuxSessionSnapshot,
-} from "@app/utils/tmux/snapshot";
-import { TmuxPresetStore } from "@app/utils/tmux/snapshot-store";
+} from "@genesiscz/utils/tmux/snapshot";
+import { TmuxPresetStore } from "@genesiscz/utils/tmux/snapshot-store";
 
 export interface ResetTargets {
     sessions: TmuxSessionSnapshot[];

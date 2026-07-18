@@ -1,7 +1,7 @@
-import { Badge } from "@app/utils/ui/components/badge";
-import { Card, CardContent } from "@app/utils/ui/components/card";
 import type { Video } from "@app/youtube/lib/types";
 import { formatDate, formatDuration, formatNumber } from "@app/yt/lib/format";
+import { Badge } from "@genesiscz/utils/ui/components/badge";
+import { Card, CardContent } from "@genesiscz/utils/ui/components/card";
 import { useNavigate } from "@tanstack/react-router";
 import { Captions, Eye, Radio } from "lucide-react";
 

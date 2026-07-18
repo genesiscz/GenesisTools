@@ -1,6 +1,6 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { MacCalendar } from "@app/utils/macos/apple-calendar";
-import { DarwinkitCrashError, MacReminders } from "@app/utils/macos/apple-reminders";
+import { MacCalendar } from "@genesiscz/utils/macos/apple-calendar";
+import { DarwinkitCrashError, MacReminders } from "@genesiscz/utils/macos/apple-reminders";
 import type { TodoStore } from "../store";
 import { countSynced, describeSyncFailures, type SyncResult, syncSucceeded, syncTodo } from "../sync";
 import type { Todo } from "../types";

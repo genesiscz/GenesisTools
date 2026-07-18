@@ -1,5 +1,5 @@
 import type { DashboardSession } from "@app/log-viewer/log-source";
-import { formatLastMessageAgo } from "@app/utils/format";
+import { formatLastMessageAgo } from "@genesiscz/utils/format";
 
 export function formatDashboardSessionStatusLabel({
     session,

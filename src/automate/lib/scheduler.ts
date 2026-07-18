@@ -1,5 +1,5 @@
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import type { AutomateDatabase, ScheduleRow } from "./db";
 import { runPreset } from "./engine";
 import { computeNextRunAt, parseInterval } from "./interval-parser";

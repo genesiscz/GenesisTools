@@ -13,11 +13,11 @@ import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import { probeUrl } from "@app/ai-proxy/lib/tunnel/cloudflared";
 import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
 import { scheduleBillingSyncForConfig } from "@app/ai-proxy/lib/usage/billing-sync";
-import { spawnDetached } from "@app/utils/DashboardApp/detach";
-import { waitForUrlReady } from "@app/utils/DashboardApp/readiness";
-import { logger, out } from "@app/utils/logger";
-import { getPortOwner } from "@app/utils/network";
-import { isProcessAlive } from "@app/utils/process-alive";
+import { spawnDetached } from "@genesiscz/utils/DashboardApp/detach";
+import { waitForUrlReady } from "@genesiscz/utils/DashboardApp/readiness";
+import { logger, out } from "@genesiscz/utils/logger";
+import { getPortOwner } from "@genesiscz/utils/network";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 
 function proxyEntryPath(): string {
     return join(import.meta.dir, "..", "index.ts");

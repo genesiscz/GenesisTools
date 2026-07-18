@@ -1,7 +1,7 @@
 import { access, mkdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { env } from "@app/utils/env";
 import { SafeJSON } from "@dashboard/shared";
+import { env } from "@genesiscz/utils/env";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireUserId } from "@/lib/auth/requireUser";

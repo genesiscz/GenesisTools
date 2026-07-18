@@ -1,5 +1,5 @@
-import { formatDateTime } from "@app/utils/date";
-import { SafeJSON } from "@app/utils/json";
+import { formatDateTime } from "@genesiscz/utils/date";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { MessageRow } from "./types";
 
 export type ExportFormat = "json" | "csv" | "txt";

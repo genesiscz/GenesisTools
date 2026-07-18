@@ -1,8 +1,8 @@
 // src/automate/commands/list.ts
 
 import { ensureStorage, listPresets } from "@app/automate/lib/storage.ts";
-import { formatRelativeTime } from "@app/utils/format.ts";
 import * as p from "@clack/prompts";
+import { formatRelativeTime } from "@genesiscz/utils/format.ts";
 import type { Command } from "commander";
 import pc from "picocolors";
 

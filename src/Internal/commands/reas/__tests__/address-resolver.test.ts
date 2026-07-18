@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { DistrictInfo } from "@app/Internal/commands/reas/data/districts";
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 describe("parseResolvedAddress", () => {
     test("extracts district from suggest result with matching district DB entry", async () => {

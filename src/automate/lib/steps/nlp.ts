@@ -3,7 +3,14 @@
 import type { StepContext } from "@app/automate/lib/registry";
 import { registerStepCatalog, registerStepHandler } from "@app/automate/lib/registry";
 import type { NlpStepParams, PresetStep, StepResult } from "@app/automate/lib/types";
-import { analyzeSentiment, closeDarwinKit, detectLanguage, embedText, tagText, textDistance } from "@app/utils/macos";
+import {
+    analyzeSentiment,
+    closeDarwinKit,
+    detectLanguage,
+    embedText,
+    tagText,
+    textDistance,
+} from "@genesiscz/utils/macos";
 import { makeResult } from "./helpers";
 
 async function nlpHandler(step: PresetStep, ctx: StepContext): Promise<StepResult> {

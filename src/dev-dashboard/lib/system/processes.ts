@@ -1,6 +1,6 @@
 import type { ProcessInfo, ProcessSort } from "@app/dev-dashboard/lib/system/types";
 import { parseEtime } from "@app/macos/lib/swap/scanner";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 // macOS `ps comm=` yields the full executable path. Surface a readable name:
 // the .app bundle name when present, otherwise the binary's basename.

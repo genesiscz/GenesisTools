@@ -1,6 +1,6 @@
 import { dirname, relative } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { toPosixPath } from "@app/utils/paths";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { toPosixPath } from "@genesiscz/utils/paths";
 import type { MerkleNode } from "./types";
 
 /**

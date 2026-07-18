@@ -5,7 +5,7 @@
  * into FormattedBlocks for the TerminalRenderer.
  */
 
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { FormattedBlock } from "../formatters/types";
 
 // ─── Cursor stream-json event types ────────────────────────────────────────

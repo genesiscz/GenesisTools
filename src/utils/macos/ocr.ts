@@ -1,7 +1,7 @@
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { getDarwinKit } from "./darwinkit";
 import type { OcrBlock, OcrLevel, OcrResult } from "./types";
 

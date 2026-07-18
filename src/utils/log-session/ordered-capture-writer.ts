@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { stripAnsi } from "@app/utils/string";
+import { stripAnsi } from "@genesiscz/utils/string";
 import { inferLineLevel } from "./infer-line-level";
 import { JsonlWriter } from "./jsonl-writer";
 import type { StreamOut } from "./types";

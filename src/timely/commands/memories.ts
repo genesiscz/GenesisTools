@@ -1,9 +1,9 @@
 import type { TimelyService } from "@app/timely/api/service";
 import type { OAuth2Tokens, TimelyEntry } from "@app/timely/types";
 import { fetchMemoriesForDates } from "@app/timely/utils/memories";
-import { SafeJSON } from "@app/utils/json";
-import { logger, out } from "@app/utils/logger";
-import type { Storage } from "@app/utils/storage";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
+import type { Storage } from "@genesiscz/utils/storage";
 import chalk from "chalk";
 import { type Command, Option } from "commander";
 

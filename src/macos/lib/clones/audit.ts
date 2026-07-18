@@ -10,12 +10,12 @@ import {
     utimesSync,
 } from "node:fs";
 import { join, relative } from "node:path";
-import { copyFileStreaming, dedupeFile, freeDiskSpace, sha256File, walkFiles } from "@app/utils/fs/disk-usage";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { CloneUnsupportedError, isApfsCloneSupported } from "@app/utils/macos/apfs";
-import { Stopwatch } from "@app/utils/Stopwatch";
-import { Storage } from "@app/utils/storage/storage";
+import { copyFileStreaming, dedupeFile, freeDiskSpace, sha256File, walkFiles } from "@genesiscz/utils/fs/disk-usage";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { CloneUnsupportedError, isApfsCloneSupported } from "@genesiscz/utils/macos/apfs";
+import { Stopwatch } from "@genesiscz/utils/Stopwatch";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import type {
     DuplicateSet,
     ProcessListEntry,

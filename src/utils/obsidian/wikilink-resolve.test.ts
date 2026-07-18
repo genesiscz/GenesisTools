@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { VaultEntry } from "@app/utils/obsidian/vault-tree";
-import { resolveWikilinkToVaultPath } from "@app/utils/obsidian/wikilink-resolve";
+import type { VaultEntry } from "@genesiscz/utils/obsidian/vault-tree";
+import { resolveWikilinkToVaultPath } from "@genesiscz/utils/obsidian/wikilink-resolve";
 
 const entries: VaultEntry[] = [
     {

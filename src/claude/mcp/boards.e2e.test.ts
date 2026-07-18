@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AnnotationDto, CardDto } from "@app/dev-dashboard/contract/dto";
 import { tarGz } from "@app/dev-dashboard/lib/boards/tar";
-import { env } from "@app/utils/env";
-import { SafeJSON } from "@app/utils/json";
-import { findFreePort } from "@app/utils/net/free-port";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { findFreePort } from "@genesiscz/utils/net/free-port";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 

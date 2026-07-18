@@ -33,10 +33,10 @@ import type {
     WorkItemTypeDefinition,
     WorkItemUpdate,
 } from "@app/azure-devops/types";
-import { concurrentMap } from "@app/utils/async";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { buildUrl } from "@app/utils/url";
+import { concurrentMap } from "@genesiscz/utils/async";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { buildUrl } from "@genesiscz/utils/url";
 import { $ } from "bun";
 
 // Azure DevOps API resource ID (constant for all Azure DevOps organizations)

@@ -1,22 +1,22 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { Embedder } from "@app/utils/ai/tasks/Embedder";
-import { attachReadonly, detachQuietly } from "@app/utils/database/attach";
-import { countActiveEmbeddings, countPairedEmbeddings } from "@app/utils/database/embedding-stats";
-import { getPendingMigrations, runMigrations } from "@app/utils/database/migrations";
-import { acquireLock, type LockHandle } from "@app/utils/fs/lock";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { SearchEngine } from "@app/utils/search/drivers/sqlite-fts5/index";
-import type { QdrantVectorStore } from "@app/utils/search/stores/qdrant-vector-store";
+import { Embedder } from "@genesiscz/utils/ai/tasks/Embedder";
+import { attachReadonly, detachQuietly } from "@genesiscz/utils/database/attach";
+import { countActiveEmbeddings, countPairedEmbeddings } from "@genesiscz/utils/database/embedding-stats";
+import { getPendingMigrations, runMigrations } from "@genesiscz/utils/database/migrations";
+import { acquireLock, type LockHandle } from "@genesiscz/utils/fs/lock";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { SearchEngine } from "@genesiscz/utils/search/drivers/sqlite-fts5/index";
+import type { QdrantVectorStore } from "@genesiscz/utils/search/stores/qdrant-vector-store";
 import {
     assertVecExtensionAvailable,
     ensureExtensionCapableSQLite,
     loadSqliteVec,
-} from "@app/utils/search/stores/sqlite-vec-loader";
-import type { VectorStore } from "@app/utils/search/stores/vector-store";
-import type { SearchOptions, SearchResult } from "@app/utils/search/types";
+} from "@genesiscz/utils/search/stores/sqlite-vec-loader";
+import type { VectorStore } from "@genesiscz/utils/search/stores/vector-store";
+import type { SearchOptions, SearchResult } from "@genesiscz/utils/search/types";
 import { buildMetadataPredicate, type MetadataFilter } from "./filters";
 import { INDEXER_MIGRATIONS } from "./indexer-migrations";
 import { deserializeMerkleTree } from "./merkle";
@@ -596,7 +596,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 throw new Error("Qdrant vectorDriver requires storage.qdrant.url to be set");
             }
 
-            const { QdrantVectorStore: QVS } = await import("@app/utils/search/stores/qdrant-vector-store");
+            const { QdrantVectorStore: QVS } = await import("@genesiscz/utils/search/stores/qdrant-vector-store");
             qdrantStore = new QVS({
                 collectionName: qdrantConfig.collectionName ?? sanitizeName(config.name),
                 dimensions: embedder?.dimensions ?? 768,

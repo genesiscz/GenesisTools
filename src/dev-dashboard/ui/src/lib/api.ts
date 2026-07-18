@@ -18,8 +18,8 @@ import type { VaultEntry } from "@app/dev-dashboard/lib/obsidian/types";
 import type { KillPortResult, PortsResult } from "@app/dev-dashboard/lib/ports/types";
 import type { ProcessSort } from "@app/dev-dashboard/lib/system/types";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
-import { SafeJSON } from "@app/utils/json";
-import type { TmuxScrollState } from "@app/utils/tmux/sessions";
+import { SafeJSON } from "@genesiscz/utils/json";
+import type { TmuxScrollState } from "@genesiscz/utils/tmux/sessions";
 
 export interface TmuxHubSession {
     name: string;

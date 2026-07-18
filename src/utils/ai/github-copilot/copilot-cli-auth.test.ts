@@ -6,10 +6,10 @@ import {
     clearGithubCopilotTokenResolutionCache,
     copilotCliKeychainAccount,
     resolveGithubCopilotGhoToken,
-} from "@app/utils/ai/github-copilot/copilot-cli-auth";
-import { githubTokenPath } from "@app/utils/ai/github-copilot/paths";
-import { env } from "@app/utils/env";
-import { InMemoryBackend, setAuthStorageBackend } from "@app/utils/storage";
+} from "@genesiscz/utils/ai/github-copilot/copilot-cli-auth";
+import { githubTokenPath } from "@genesiscz/utils/ai/github-copilot/paths";
+import { env } from "@genesiscz/utils/env";
+import { InMemoryBackend, setAuthStorageBackend } from "@genesiscz/utils/storage";
 
 describe("copilot-cli-auth", () => {
     const GITHUB_TOKEN_KEYS = ["GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"] as const;

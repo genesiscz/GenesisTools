@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { showServerConfig } from "@app/mcp-manager/commands/show.js";
-import { logger, out } from "@app/utils/logger";
-import { setupStorageSandbox } from "@app/utils/storage/test-sandbox";
+import { logger, out } from "@genesiscz/utils/logger";
+import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { createMockServerConfig, MockMCPProvider } from "./test-utils.js";
 
 setupStorageSandbox();

@@ -1,7 +1,7 @@
-import { SafeJSON } from "@app/utils/json";
-import { out } from "@app/utils/logger";
-import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
+import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
 import type { CodeGraph } from "../lib/code-graph";

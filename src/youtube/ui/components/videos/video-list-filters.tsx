@@ -1,5 +1,5 @@
-import { Input } from "@app/utils/ui/components/input";
-import { Switch } from "@app/utils/ui/components/switch";
+import { Input } from "@genesiscz/utils/ui/components/input";
+import { Switch } from "@genesiscz/utils/ui/components/switch";
 
 export interface VideoListFilterState {
     since: string;

@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import { join } from "node:path";
-import { SafeJSON } from "@app/utils/json";
-import { Storage } from "@app/utils/storage/storage";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import type { DuplicateSet } from "./render/types";
 
 const storage = new Storage("macos-clones");

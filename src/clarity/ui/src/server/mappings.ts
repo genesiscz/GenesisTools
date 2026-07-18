@@ -2,8 +2,8 @@ import type { ClarityMapping } from "@app/clarity/config";
 import { getConfig, saveConfig } from "@app/clarity/config";
 import { getTimesheetWeeks as getTimesheetWeeksShared, type TimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
 import type { ClarityTask } from "@app/clarity/lib/types";
-import type { TimeEntryRecord } from "@app/utils/clarity";
-import { ClarityApi } from "@app/utils/clarity";
+import type { TimeEntryRecord } from "@genesiscz/utils/clarity";
+import { ClarityApi } from "@genesiscz/utils/clarity";
 
 export type { TimesheetWeek };
 

@@ -2,7 +2,7 @@ import { SessionsRepository } from "@app/shops/db/SessionsRepository";
 import { getShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { parseCookies, SESSION_COOKIE_NAME } from "@app/shops/lib/auth";
 import { apiHandler, clearSessionCookie } from "@app/shops/ui/server/api-utils";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/api/auth/logout")({

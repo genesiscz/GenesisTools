@@ -9,7 +9,7 @@ import { registerRunCommand } from "@app/task/commands/run";
 import { registerSessionsCommand } from "@app/task/commands/sessions";
 import { registerTailCommand } from "@app/task/commands/tail";
 import { registerWaitCommand } from "@app/task/commands/wait";
-import { runTool } from "@app/utils/cli";
+import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
 
 const program = new Command();

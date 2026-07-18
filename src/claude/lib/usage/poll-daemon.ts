@@ -3,8 +3,8 @@ import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
 import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
-import { logger, out } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage/storage";
+import { logger, out } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage/storage";
 
 async function main(): Promise<void> {
     const startedAt = Date.now();

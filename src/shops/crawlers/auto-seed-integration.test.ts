@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { RohlikClient } from "@app/shops/api/shops/RohlikClient";
 import { RohlikRestCrawler } from "@app/shops/crawlers/RohlikRestCrawler";
 import { buildTestDatabase } from "@app/shops/test-utils/buildTestDatabase";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 function readFixture<T>(rel: string): T {
     return SafeJSON.parse(readFileSync(join(import.meta.dir, "../api/shops/__fixtures__/rohlik", rel), "utf8")) as T;

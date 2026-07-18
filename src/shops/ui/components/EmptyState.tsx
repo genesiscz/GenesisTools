@@ -1,4 +1,4 @@
-import { Card, CardContent } from "@app/utils/ui/components/card";
+import { Card, CardContent } from "@genesiscz/utils/ui/components/card";
 import type { ReactNode } from "react";
 
 interface EmptyStateProps {

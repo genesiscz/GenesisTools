@@ -1,9 +1,9 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import type { YtUser } from "@app/youtube/lib/users.types";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 /**
  * Optional per-user service-key auth for the YouTube API server.

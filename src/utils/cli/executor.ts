@@ -1,5 +1,5 @@
-import { env } from "@app/utils/env";
-import { out } from "@app/utils/logger";
+import { env } from "@genesiscz/utils/env";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 

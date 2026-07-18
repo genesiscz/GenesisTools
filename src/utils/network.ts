@@ -1,6 +1,6 @@
 import { createServer } from "node:net";
 import { networkInterfaces, userInfo } from "node:os";
-import { logger } from "@app/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 
 /**
  * Returns the first non-internal IPv4 address (LAN IP).

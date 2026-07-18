@@ -1,6 +1,6 @@
 import type { NotificationConfig } from "@app/claude/lib/config";
-import { out } from "@app/utils/logger";
-import { dispatchNotification } from "@app/utils/notifications";
+import { out } from "@genesiscz/utils/logger";
+import { dispatchNotification } from "@genesiscz/utils/notifications";
 import type { AccountUsage } from "./api";
 import { renderAllAccounts } from "./display";
 import type { Severity } from "./limits";

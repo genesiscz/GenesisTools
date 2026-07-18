@@ -1,4 +1,4 @@
-import { env } from "@app/utils/env";
+import { env } from "@genesiscz/utils/env";
 
 export async function detectCodexVersion(): Promise<string> {
     const proc = Bun.spawn({

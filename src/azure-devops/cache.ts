@@ -15,9 +15,9 @@ import type {
     WorkItemUpdate,
 } from "@app/azure-devops/types";
 import { WORKITEM_CACHE_VERSION } from "@app/azure-devops/types";
-import { SafeJSON } from "@app/utils/json";
-import { logger } from "@app/utils/logger";
-import { Storage } from "@app/utils/storage";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage";
 
 // Shared storage instance
 export const storage = new Storage("azure-devops");

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { TranscriptionSegment } from "@app/utils/ai/types";
+import type { TranscriptionSegment } from "@genesiscz/utils/ai/types";
 import { cleanRepetitions } from "./repetition-cleanup";
 
 describe("cleanRepetitions", () => {
