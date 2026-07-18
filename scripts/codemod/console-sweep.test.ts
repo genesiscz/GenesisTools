@@ -157,11 +157,11 @@ describe("console-sweep codemod snapshot", () => {
         expect(result).toContain("out");
     });
 
-    it("merges into existing @app/utils/logger import", () => {
+    it("merges into existing @genesiscz/utils/logger import", () => {
         const source = `import { something } from "@genesiscz/utils/logger";\nfunction f(): void { console.log("a"); }\n`;
         const result = applyTransform(source);
-        // Should have one @app/utils/logger import with both something and out
-        const matches = result.match(/@app\/logger/g);
+        // Should have one @genesiscz/utils/logger import with both something and out
+        const matches = result.match(/@genesiscz\/utils\/logger/g);
         expect(matches?.length).toBe(1);
         expect(result).toContain("out");
         expect(result).toContain("something");

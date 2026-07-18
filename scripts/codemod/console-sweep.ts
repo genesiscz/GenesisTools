@@ -9,7 +9,7 @@
  *   console.error(...) → out.error(...)
  *   console.debug(...) → logger.debug(...)
  *
- * Inserts missing @app/utils/logger imports (merges into existing if present).
+ * Inserts missing @genesiscz/utils/logger imports (merges into existing if present).
  *
  * Safety guards:
  *   - Skips shadowed `console` (local binding in call scope)
@@ -202,7 +202,7 @@ function ensureImport(sf: SourceFile, needsOut: boolean, needsLogger: boolean): 
         return;
     }
 
-    // Find existing @app/utils/logger import
+    // Find existing @genesiscz/utils/logger import
     let existing: ImportDeclaration | undefined;
     for (const imp of sf.getImportDeclarations()) {
         if (imp.getModuleSpecifierValue() === "@genesiscz/utils/logger") {
