@@ -12,10 +12,11 @@ export function registerDiscoveryCommands(program: Command): void {
         .requiredOption("--app <name>", "app process name")
         .option("--depth <n>", "max tree depth", "10")
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
             const result = runAx(["list", "--app", opts.app, "--depth", opts.depth]);
             if (opts.json) {
-                out.println(SafeJSON.stringify(result, null, 2));
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
             }
             if (!result.ok) {
@@ -38,46 +39,51 @@ export function registerDiscoveryCommands(program: Command): void {
         .requiredOption("--app <name>", "app process name")
         .option("--depth <n>", "max tree depth", "10")
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
             const result = runAx(["tree", "--app", opts.app, "--depth", opts.depth]);
             if (opts.json) {
-                out.println(SafeJSON.stringify(result, null, 2));
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
             }
             if (!result.ok) {
                 logger.error(String(result.error));
                 process.exit(1);
             }
-            out.println(SafeJSON.stringify(result, null, 2));
+            out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
         });
 
     program
         .command("find")
-        .description("Search for elements by role, title, value, or description")
+        .description(
+            "Search for elements. Note: many apps (Chromium browsers, SwiftUI) expose visible text via AXDescription — try --desc or --q when --title finds nothing."
+        )
         .requiredOption("--app <name>", "app process name")
-        .option("--role <role>", "filter by AXRole (exact match)")
+        .option("--role <role>", "filter by AXRole (fuzzy: 'button' matches AXButton)")
         .option("--title <title>", "filter by AXTitle (substring, case-insensitive)")
         .option("--value <value>", "filter by AXValue (substring, case-insensitive)")
         .option("--desc <desc>", "filter by AXDescription (substring, case-insensitive)")
+        .option("--subrole <subrole>", "filter by AXSubrole (fuzzy: 'close' matches AXCloseButton)")
+        .option("--text <query>", "search id+title+desc at once (OR)")
+        .option("--q <query>", "universal search — id, title, desc, value, role, subrole")
+        .option("--window <title>", "scope search to windows matching this title substring")
+        .option("--exact", "force strict role/subrole matching")
         .option("--depth <n>", "max search depth", "15")
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
             const axArgs = ["find", "--app", opts.app, "--depth", opts.depth];
-            if (opts.role) {
-                axArgs.push("--role", opts.role);
+            for (const flag of ["role", "title", "value", "desc", "subrole", "text", "q", "window"] as const) {
+                if (opts[flag]) {
+                    axArgs.push(`--${flag}`, opts[flag]);
+                }
             }
-            if (opts.title) {
-                axArgs.push("--title", opts.title);
-            }
-            if (opts.value) {
-                axArgs.push("--value", opts.value);
-            }
-            if (opts.desc) {
-                axArgs.push("--desc", opts.desc);
+            if (opts.exact) {
+                axArgs.push("--exact");
             }
             const result = runAx(axArgs);
             if (opts.json) {
-                out.println(SafeJSON.stringify(result, null, 2));
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
             }
             if (!result.ok) {
@@ -92,6 +98,39 @@ export function registerDiscoveryCommands(program: Command): void {
                 const label = e.title || e.desc || e.value || "";
                 out.println(`  ${role.padEnd(30)} ${id.padEnd(40)} ${label}`);
             }
+            if (result.hint) {
+                out.println(pc.yellow(`  hint: ${result.hint}`));
+            }
+        });
+
+    program
+        .command("apps")
+        .description("List running apps — valid --app values (name, pid, bundleId)")
+        .option("--all", "include background/agent processes")
+        .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
+        .action((opts) => {
+            const axArgs = ["apps"];
+            if (opts.all) {
+                axArgs.push("--all");
+            }
+            const result = runAx(axArgs);
+            if (opts.json) {
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
+                return;
+            }
+            if (!result.ok) {
+                logger.error(String(result.error));
+                process.exit(1);
+            }
+            const apps = (result.apps as Array<Record<string, unknown>>) ?? [];
+            out.println(pc.bold(`${apps.length} running apps\n`));
+            for (const a of apps) {
+                const front = a.frontmost ? pc.green(" frontmost") : "";
+                out.println(
+                    `  ${pc.cyan(String(a.name ?? "?").padEnd(32))} ${String(a.pid).padEnd(8)} ${pc.dim(String(a.bundleId ?? ""))}${front}`
+                );
+            }
         });
 
     program
@@ -99,10 +138,11 @@ export function registerDiscoveryCommands(program: Command): void {
         .description("Get window bounds, position, and state for an app")
         .requiredOption("--app <name>", "app process name")
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
             const result = runAx(["window", "--app", opts.app]);
             if (opts.json) {
-                out.println(SafeJSON.stringify(result, null, 2));
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
             }
             if (!result.ok) {
@@ -129,10 +169,11 @@ export function registerDiscoveryCommands(program: Command): void {
             .requiredOption("--app <name>", "app process name")
     )
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
             const result = runAx(["attrs", "--app", opts.app, ...targetArgs(opts)]);
             if (opts.json) {
-                out.println(SafeJSON.stringify(result, null, 2));
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
             }
             if (!result.ok) {
@@ -154,10 +195,11 @@ export function registerDiscoveryCommands(program: Command): void {
             .requiredOption("--app <name>", "app process name")
     )
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
             const result = runAx(["actions", "--app", opts.app, ...targetArgs(opts)]);
             if (opts.json) {
-                out.println(SafeJSON.stringify(result, null, 2));
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
             }
             if (!result.ok) {
@@ -173,24 +215,57 @@ export function registerDiscoveryCommands(program: Command): void {
 
     program
         .command("preflight")
-        .description("Discover app AX surface — windows, elements by role, addressable IDs, suggested plan")
+        .description(
+            "RUN THIS FIRST. One call: screens (scale/origins), frontmost app, windows (phantom strips flagged), elements by role, browser tab, units reminder, suggested plan."
+        )
         .requiredOption("--app <name>", "app process name")
         .option("--depth <n>", "max tree depth", "10")
+        .option(
+            "--wanted <groups>",
+            "comma list: screens,frontmost,windows,elements,browser,plan — elements:<Role> = full dump of one role (default: all, elements truncated 15/role)"
+        )
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .option("--save <path>", "save suggested plan to file")
         .action((opts) => {
-            const result = runAx(["preflight", "--app", opts.app, "--depth", opts.depth]);
+            const axArgs = ["preflight", "--app", opts.app, "--depth", opts.depth];
+            if (opts.wanted) {
+                axArgs.push("--wanted", opts.wanted);
+            }
+            const result = runAx(axArgs);
             if (!result.ok) {
                 logger.error(String(result.error));
                 process.exit(1);
             }
             if (opts.json) {
-                out.println(SafeJSON.stringify(result, null, 2));
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
             } else {
                 out.println(pc.bold(`${result.app} (pid ${result.pid})\n`));
+                const screens = (result.screens as Array<Record<string, unknown>>) ?? [];
+                for (const s of screens) {
+                    const pts = s.points as Record<string, number>;
+                    const origin = s.originCG as Record<string, number>;
+                    out.println(
+                        pc.dim(
+                            `  screen ${s.index}${s.isPrimary ? " (primary)" : ""}: ${pts.width}x${pts.height}pt @${s.scaleFactor}x originCG(${origin.x},${origin.y})`
+                        )
+                    );
+                }
+                const front = result.frontmost as Record<string, unknown> | undefined;
+                if (front?.app) {
+                    out.println(pc.dim(`  frontmost: ${front.app} (pid ${front.pid})`));
+                }
+                const tab = result.browserTab as Record<string, unknown> | undefined;
+                if (tab) {
+                    out.println(pc.dim(`  active tab: ${tab.title ?? ""} ${tab.url ?? ""}`));
+                }
                 const wins = (result.windows as Array<Record<string, unknown>>) ?? [];
                 for (const w of wins) {
                     out.println(`  ${pc.cyan(String(w.title ?? "?"))} ${w.width}x${w.height} at (${w.x},${w.y})`);
+                }
+                const phantoms = (result.phantomStrips as Array<Record<string, unknown>>) ?? [];
+                if (phantoms.length) {
+                    out.println(pc.dim(`  (${phantoms.length} transient/phantom windows hidden)`));
                 }
                 out.println(`\n  ${result.totalElements} elements, ${result.addressableCount} addressable`);
                 const rc = (result.roleCounts as Record<string, number>) ?? {};
@@ -205,11 +280,19 @@ export function registerDiscoveryCommands(program: Command): void {
                     if (!els?.length) {
                         continue;
                     }
-                    const unique = els.filter((e, i, a) => a.findIndex((x) => x.id === e.id) === i);
+                    const unique = els.filter(
+                        (e, i, a) =>
+                            a.findIndex((x) => (x.id ?? x.desc ?? x.title) === (e.id ?? e.desc ?? e.title)) === i
+                    );
                     out.println(pc.dim(`  ${role} (${unique.length}):`));
                     for (const e of unique.slice(0, 10)) {
-                        out.println(`    ${pc.cyan((e.id ?? "-").padEnd(35))} ${e.desc || e.title || ""}`);
+                        out.println(
+                            `    ${pc.cyan((e.id ?? e.desc ?? e.title ?? "-").padEnd(35))} ${e.id ? e.desc || e.title || "" : ""}`
+                        );
                     }
+                }
+                if (result.note) {
+                    out.println(pc.yellow(`  ${result.note}`));
                 }
                 out.println(`\n${pc.dim("  Plan contract: tools control run --help")}`);
                 out.println(

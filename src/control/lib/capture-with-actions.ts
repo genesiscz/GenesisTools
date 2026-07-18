@@ -370,7 +370,15 @@ type Action =
     // nothing at runtime, target markers do a bounds lookup at their atMs.
     // toMs makes the crop a standalone [atMs, toMs] window (overlap-capable);
     // without it the marker is sequential (opens/closes the single running window).
-    | { atMs: number; do: "crop"; region?: Region; label?: string; toMs?: number; target?: CropTarget; onError?: OnError }
+    | {
+          atMs: number;
+          do: "crop";
+          region?: Region;
+          label?: string;
+          toMs?: number;
+          target?: CropTarget;
+          onError?: OnError;
+      }
     | { atMs: number; do: "crop-stop"; onError?: OnError }
     // AX actions: target by axId (AXIdentifier, exact) OR q (universal search:
     // id > title > desc > value > role > subrole, fuzzy, refuses if ambiguous).

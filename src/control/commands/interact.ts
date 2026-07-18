@@ -13,10 +13,11 @@ export function registerInteractCommands(program: Command): void {
             .requiredOption("--app <name>", "app process name")
     )
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
             const result = runAx(["get", "--app", opts.app, ...targetArgs(opts)]);
             if (opts.json) {
-                out.println(SafeJSON.stringify(result, null, 2));
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
             }
             if (!result.ok) {
@@ -46,10 +47,11 @@ export function registerInteractCommands(program: Command): void {
             .requiredOption("--value <text>", "value to set")
     )
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
             const result = runAx(["set", "--app", opts.app, ...targetArgs(opts), "--value", opts.value]);
             if (opts.json) {
-                out.println(SafeJSON.stringify(result, null, 2));
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
             }
             if (!result.ok) {
@@ -66,10 +68,11 @@ export function registerInteractCommands(program: Command): void {
             .requiredOption("--app <name>", "app process name")
     )
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
             const result = runAx(["press", "--app", opts.app, ...targetArgs(opts)]);
             if (opts.json) {
-                out.println(SafeJSON.stringify(result, null, 2));
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
             }
             if (!result.ok) {
@@ -87,10 +90,11 @@ export function registerInteractCommands(program: Command): void {
             .requiredOption("--action <action>", "AX action name (e.g. AXPress, AXShowMenu, AXRaise)")
     )
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
             const result = runAx(["perform", "--app", opts.app, ...targetArgs(opts), "--action", opts.action]);
             if (opts.json) {
-                out.println(SafeJSON.stringify(result, null, 2));
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
             }
             if (!result.ok) {
@@ -107,10 +111,11 @@ export function registerInteractCommands(program: Command): void {
             .requiredOption("--app <name>", "app process name")
     )
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
             const result = runAx(["focus", "--app", opts.app, ...targetArgs(opts)]);
             if (opts.json) {
-                out.println(SafeJSON.stringify(result, null, 2));
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
             }
             if (!result.ok) {
@@ -128,10 +133,11 @@ export function registerInteractCommands(program: Command): void {
             .requiredOption("--app <name>", "app process name")
     )
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
             const result = runAx(["click", "--app", opts.app, ...targetArgs(opts)]);
             if (opts.json) {
-                out.println(SafeJSON.stringify(result, null, 2));
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
             }
             if (!result.ok) {
@@ -150,10 +156,11 @@ export function registerInteractCommands(program: Command): void {
             .requiredOption("--text <text>", "text to type")
     )
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
             const result = runAx(["type", "--app", opts.app, "--text", opts.text, ...targetArgs(opts)]);
             if (opts.json) {
-                out.println(SafeJSON.stringify(result, null, 2));
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
             }
             if (!result.ok) {
@@ -167,13 +174,25 @@ export function registerInteractCommands(program: Command): void {
 
     program
         .command("hotkey")
-        .description("Send key combo via CGEvent (no peekaboo/bridge)")
+        .description(
+            "Send key combo via CGEvent. --app activates the target first (refuses if it cannot become frontmost)"
+        )
         .requiredOption("--keys <keys>", "comma-separated: cmd,shift,a")
+        .option("--app <name>", "activate this app before sending keys")
+        .option("--hold <ms>", "ms between key down and up")
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
-            const result = runAx(["hotkey", "--keys", opts.keys]);
+            const axArgs = ["hotkey", "--keys", opts.keys];
+            if (opts.app) {
+                axArgs.push("--app", opts.app);
+            }
+            if (opts.hold) {
+                axArgs.push("--hold", opts.hold);
+            }
+            const result = runAx(axArgs);
             if (opts.json) {
-                out.println(SafeJSON.stringify(result, null, 2));
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
             }
             if (!result.ok) {
@@ -185,19 +204,26 @@ export function registerInteractCommands(program: Command): void {
 
     program
         .command("screenshot")
-        .description("Window screenshot via CGWindowList (no peekaboo/bridge)")
+        .description(
+            "Window screenshot via CGWindowList. --window fails loud on 0 or 2+ title matches; unscoped picks the largest window."
+        )
         .requiredOption("--app <name>", "app process name")
         .requiredOption("--path <file>", "output PNG path")
-        .option("--window <title>", "target specific window by title")
+        .option("--window <title>", "target specific window by title substring")
+        .option("--crop <x,y,w,h>", "crop in PIXELS of the captured image (origin top-left)")
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
             const axArgs = ["screenshot", "--app", opts.app, "--path", opts.path];
             if (opts.window) {
                 axArgs.push("--window", opts.window);
             }
+            if (opts.crop) {
+                axArgs.push("--crop", opts.crop);
+            }
             const result = runAx(axArgs);
             if (opts.json) {
-                out.println(SafeJSON.stringify(result, null, 2));
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
             }
             if (!result.ok) {

@@ -36,7 +36,7 @@ const program = new Command();
 program
     .name("control")
     .description(
-        "macOS UI automation — element control via the Accessibility API, plus screen recording with timed actions (capture)"
+        "macOS UI automation — element control via the Accessibility API, plus screen recording with timed actions (capture).\nRUN `control preflight --app <name>` FIRST: one call returns screens, frontmost app, windows, element inventory, browser tab, and a suggested plan.\nDiscover valid --app values with `control apps`."
     )
     .version("1.0.0");
 

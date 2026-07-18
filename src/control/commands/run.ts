@@ -1,4 +1,6 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
@@ -14,36 +16,48 @@ const ACTION_ALIASES: Record<string, string> = {
     axPerform: "perform",
 };
 
-const NO_APP_COMMANDS = new Set(["snapshot", "restore", "hotkey"]);
+const NO_APP_COMMANDS = new Set(["snapshot", "restore", "hotkey", "apps"]);
 
 export function registerRunCommand(program: Command): void {
     program
         .command("run <plan>")
-        .description(`Execute a plan file — sequential ax-tool commands with snapshot/restore.
+        .description(`Execute a plan file — ONE schema for sequential steps, timed timelines, and recordings.
 
   Plan contract (JSON):
     {
       "app":      "Genesis",         // default app for all steps
       "restore":  true,              // snapshot before, restore after
-      "delayMs":  300,               // pause between steps (ms, default 200)
+      "delayMs":  300,               // pause between steps (ms, default 200; ignored when atMs is used)
       "exact":    false,             // force strict role matching
+      "capture":  { ... },           // OPTIONAL — present = record video around the timeline
+                                     //   (full recording contract: tools control capture --help)
       "steps": [
         { "do": "focus" },
         { "do": "press", "q": "Chat" },
         { "do": "click", "desc": "Account", "role": "button" },
         { "do": "set", "id": "field-id", "value": "hello" },
-        { "do": "type", "q": "field-id", "text": "world" },
-        { "do": "screenshot", "path": "/tmp/shot.png" },
+        { "atMs": 2000, "do": "screenshot", "path": "/tmp/shot.png" },
         { "do": "hotkey", "keys": "cmd,w" },
         { "do": "click", "subrole": "close", "window": "Settings" }
       ]
     }
 
-  Step fields: do (command), q (universal search), id, role, title, desc,
-    subrole, window, value, text, path, keys, action, delay, app (override).
+  Modes (decided by the plan, same schema):
+    - no atMs anywhere  -> sequential: run each step, wait delayMs between
+    - any step has atMs -> timeline: steps fire at their atMs offset from start
+                           (steps without atMs run back-to-back after the previous)
+    - capture{} present -> the ENTIRE plan is handed to the capture runner
+                           ("steps" is accepted as an alias for its "actions")
+
+  Step fields: do (command), atMs, q (universal search), id, role, title, desc,
+    subrole, window, value, text, path, keys, action, crop, delay, app (override).
   Action aliases: ax-set/ax-press/ax-perform map to set/press/perform.
-  Role/subrole fuzzy by default: "button" matches AXButton.`)
+  Role/subrole fuzzy by default: "button" matches AXButton.
+
+  Result semantics: top-level ok is true only when EVERY step succeeded;
+  failedSteps carries the count, steps[] the per-step results.`)
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .action((planPath, opts) => {
             if (!existsSync(planPath)) {
                 logger.error(`plan file not found: ${planPath}`);
@@ -54,13 +68,25 @@ export function registerRunCommand(program: Command): void {
                 restore?: boolean;
                 delayMs?: number;
                 exact?: boolean;
-                steps: Array<Record<string, unknown>>;
+                capture?: Record<string, unknown>;
+                actions?: Array<Record<string, unknown>>;
+                steps?: Array<Record<string, unknown>>;
             };
-            if (!plan.steps?.length) {
+
+            // Recording plans: the capture runner owns the whole timeline.
+            if (plan.capture) {
+                const script = join(import.meta.dir, "..", "lib", "capture-with-actions.ts");
+                const r = spawnSync("bun", [script, planPath], { stdio: "inherit" });
+                process.exit(r.status ?? 1);
+            }
+
+            const steps = plan.steps ?? plan.actions ?? [];
+            if (!steps.length) {
                 logger.error("plan has no steps");
                 process.exit(1);
             }
 
+            const timeline = steps.some((s) => typeof s.atMs === "number");
             const delay = plan.delayMs ?? 200;
             let snapshot: AxResult | null = null;
 
@@ -68,14 +94,22 @@ export function registerRunCommand(program: Command): void {
                 snapshot = runAx(["snapshot"]);
             }
 
+            const startedAt = performance.now();
             const results: Array<{ step: Record<string, unknown>; result: AxResult; ms: number }> = [];
-            for (const step of plan.steps) {
+            for (const step of steps) {
                 let cmd = String(step.do ?? "");
                 cmd = ACTION_ALIASES[cmd] ?? cmd;
                 const app = String(step.app ?? plan.app ?? "");
                 if (!cmd) {
                     results.push({ step, result: { ok: false, error: "missing 'do'" }, ms: 0 });
                     continue;
+                }
+
+                if (timeline && typeof step.atMs === "number") {
+                    const wait = step.atMs - (performance.now() - startedAt);
+                    if (wait > 0) {
+                        Bun.sleepSync(wait);
+                    }
                 }
 
                 const args: string[] = [cmd];
@@ -86,8 +120,11 @@ export function registerRunCommand(program: Command): void {
                     }
                     args.push("--app", app);
                 }
+                if (cmd === "hotkey" && app) {
+                    args.push("--app", app);
+                }
                 for (const [k, v] of Object.entries(step)) {
-                    if (k === "do" || k === "app" || k === "delay" || v == null) {
+                    if (k === "do" || k === "app" || k === "delay" || k === "atMs" || v == null) {
                         continue;
                     }
                     args.push(`--${k}`, String(v));
@@ -107,9 +144,11 @@ export function registerRunCommand(program: Command): void {
                     out.println(`  ${status} ${pc.cyan(String(label))} ${pc.dim(`${ms}ms`)}`);
                 }
 
-                const stepDelay = typeof step.delay === "number" ? step.delay : delay;
-                if (stepDelay > 0) {
-                    Bun.sleepSync(stepDelay);
+                if (!timeline) {
+                    const stepDelay = typeof step.delay === "number" ? step.delay : delay;
+                    if (stepDelay > 0) {
+                        Bun.sleepSync(stepDelay);
+                    }
                 }
             }
 
@@ -120,13 +159,29 @@ export function registerRunCommand(program: Command): void {
                 }
             }
 
+            const failedSteps = results.filter((r) => !r.result.ok).length;
             if (opts.json) {
-                out.println(SafeJSON.stringify({ ok: true, steps: results, restored: !!plan.restore }, null, 2));
+                out.println(
+                    SafeJSON.stringify(
+                        {
+                            ok: failedSteps === 0,
+                            failedSteps,
+                            totalSteps: results.length,
+                            mode: timeline ? "timeline" : "sequential",
+                            steps: results,
+                            restored: !!plan.restore,
+                        },
+                        null,
+                        opts.pretty ? 2 : 0
+                    )
+                );
             } else {
-                const passed = results.filter((r) => r.result.ok).length;
-                const total = results.length;
+                const passed = results.length - failedSteps;
                 const totalMs = results.reduce((s, r) => s + r.ms, 0);
-                out.println(`\n${passed}/${total} steps passed, ${totalMs}ms total`);
+                out.println(`\n${passed}/${results.length} steps passed, ${totalMs}ms total`);
+            }
+            if (failedSteps > 0) {
+                process.exit(1);
             }
         });
 }

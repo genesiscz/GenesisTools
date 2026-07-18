@@ -9,10 +9,11 @@ export function registerStateCommands(program: Command): void {
         .command("snapshot")
         .description("Capture current mouse position + focused app/window")
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
             const result = runAx(["snapshot"]);
             if (opts.json) {
-                out.println(SafeJSON.stringify(result, null, 2));
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
             }
             if (!result.ok) {
@@ -31,10 +32,11 @@ export function registerStateCommands(program: Command): void {
         .description("Restore mouse position + focused app/window from a snapshot")
         .requiredOption("--snapshot <json>", "snapshot JSON from the snapshot command")
         .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
             const result = runAx(["restore", "--snapshot", opts.snapshot]);
             if (opts.json) {
-                out.println(SafeJSON.stringify(result, null, 2));
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
             }
             if (!result.ok) {

@@ -14,6 +14,10 @@ Resources in this skill: `references/capture.md` (recording discipline — read 
 ### Discovery (find elements you want to interact with)
 
 ```bash
+tools control preflight --app <name>                 # RUN THIS FIRST — screens, frontmost, windows,
+                                                     #   elements by role, browser tab, suggested plan
+                                                     #   --wanted screens,windows,elements[,elements:<Role>],browser,frontmost,plan
+tools control apps                                   # Running apps — valid --app values
 tools control list --app <name> [--depth N]          # Flat list of all elements (max 2000)
 tools control tree --app <name> [--depth N]          # Hierarchical nested tree (shows parent-child)
 tools control find --app <name> --role button        # Fuzzy: "button" matches AXButton
@@ -38,12 +42,12 @@ tools control window --app <name>                    # Window bounds: x,y,width,
 ### Interaction (modify elements)
 
 ```bash
-tools control set --app <name> <target> --value "text"                  # Set text field value (AXValue)
+tools control set --app <name> <target> --value "text"                  # Set text field + HARD VERIFY (reads back, 1 retry)
 tools control press --app <name> <target>                               # Press (AXPress — AX action path)
 tools control click --app <name> <target>                               # CGEvent click at element center
 tools control perform --app <name> <target> --action AXShowMenu         # Any AX action
 tools control focus --app <name> [<target>]                             # Activate app + focus element
-tools control type --app <name> --text "hello" [<target>]               # Type keystrokes via CGEvent
+tools control type --app <name> --text "hello" [<target>]               # Type + HARD VERIFY ([--clear] [--return])
 ```
 
 ### Targeting (`<target>`)
@@ -74,7 +78,7 @@ tools control click --app Genesis --subrole AXMinimizeButton --window Genesis
 |---------|-----------|-------------|
 | `press` | AX action (AXPress) | Buttons/toggles in native apps — position-independent, works on obscured or scrolled-away elements |
 | `click` | CGEvent at element center | Real mouse click — exercises hit testing, works on web content, triggers hover/focus |
-| `set` | AXValue write | Text fields — instant, no typing animation |
+| `set` | Text fields: CGEvent clear+type, then reads the field back (retry once, fail loud). Other elements: AXValue write | Text fields — verified content |
 | `type` | CGEvent keystrokes | When you need real typing (autocomplete, validation, non-AX inputs) |
 | `focus` | NSRunningApplication.activate + AXFocused | Bring app/element to front before typing |
 
@@ -95,11 +99,16 @@ For elements below the fold, prefer `press` (buttons) or `focus` + `type` (text 
 
 ## Output
 
-All commands return JSON to stdout: `{"ok": true, ...}` on success, `{"ok": false, "error": "..."}` on failure. Add `--json` to the TS wrapper for raw JSON (default is human-friendly formatting).
+All commands return JSON to stdout: `{"ok": true, ...}` on success, `{"ok": false, "error": "..."}` on failure. Add `--json` to the TS wrapper for raw JSON (compact; add `--pretty` to indent). Safety semantics: `set`/`type` refuse when the target app is not frontmost and hard-verify the field content after typing; `screenshot --window` and `--window` scoping fail loud with a `candidates` list on 0 or 2+ matches; `window` output flags transient popups (`"transient": true`).
 
 ## Plan runner (`tools control run`)
 
-Run a JSON plan file — sequential ax commands with automatic snapshot/restore:
+ONE plan schema covers sequential automation, timed timelines, and recordings:
+- no `atMs` anywhere → sequential (delayMs between steps)
+- any step has `atMs` → timeline (steps fire at their offset from start)
+- `capture{}` present → whole plan handed to the capture runner (records video; `steps` accepted as alias for its `actions`)
+
+Top-level result: `ok` is true only when EVERY step passed; `failedSteps` carries the count — never trust `ok` alone without it. Run a JSON plan file:
 
 ```json
 {
