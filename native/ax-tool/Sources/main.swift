@@ -1580,7 +1580,8 @@ func cmdPreflight(appName: String, maxDepth: Int) {
 
         out["suggestedPlan"] = [
             "app": appName, "restore": true, "delayMs": 300, "steps": planSteps,
-            "_contract": "tools control run --help for the full plan schema"
+            "_contract": "tools control run --help for the full plan schema",
+            "_note": "SKELETON — review before executing: press/set steps target real UI and set writes example text into real fields"
         ] as [String: Any]
     }
 

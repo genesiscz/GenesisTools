@@ -55,7 +55,8 @@ export function registerRunCommand(program: Command): void {
   Role/subrole fuzzy by default: "button" matches AXButton.
 
   Result semantics: top-level ok is true only when EVERY step succeeded;
-  failedSteps carries the count, steps[] the per-step results.`)
+  failedSteps carries the count, steps[] the per-step results, each with
+  its result JSON and ms wall-clock timing.`)
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
         .action((planPath, opts) => {
