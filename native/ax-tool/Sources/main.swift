@@ -475,7 +475,9 @@ func buildTree(_ el: AXUIElement, depth: Int = 0, maxDepth: Int = 10) -> [String
 // MARK: - JSON output
 
 func jsonOutput(_ dict: [String: Any]) {
-    if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]),
+    var opts: JSONSerialization.WritingOptions = [.sortedKeys]
+    if CommandLine.arguments.contains("--pretty") { opts.insert(.prettyPrinted) }
+    if let data = try? JSONSerialization.data(withJSONObject: dict, options: opts),
        let str = String(data: data, encoding: .utf8) {
         print(str)
     }
@@ -532,12 +534,46 @@ func cmdSet(appName: String, value: String) {
         } else {
             result["focusMethod"] = "ax"
         }
-        tapKey(0, flags: .maskCommand)  // Cmd+A
-        Thread.sleep(forTimeInterval: 0.15)
-        tapKey(51)  // Delete
-        Thread.sleep(forTimeInterval: 0.1)
-        typeString(value, delayMs: 8)
+        // HARD GUARD: Cmd+A/Delete/type go to whatever has OS keyboard focus.
+        // If the target app is not frontmost, refuse — otherwise we corrupt
+        // some other app's focused field (the "smart-set-tesreplace" family).
+        let frontPid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        if frontPid != pid {
+            errorExit("target app not frontmost (front pid \(frontPid ?? -1), want \(pid)) — refusing to send Cmd+A/type")
+        }
+        func clearAndType() {
+            tapKey(0, flags: .maskCommand)  // Cmd+A
+            Thread.sleep(forTimeInterval: 0.15)
+            tapKey(51)  // Delete
+            Thread.sleep(forTimeInterval: 0.1)
+            typeString(value, delayMs: 8)
+        }
+        func readBack() -> String? {
+            Thread.sleep(forTimeInterval: 0.15)
+            return axAttribute(element, "AXValue").map { "\($0)" }
+        }
+        clearAndType()
         result["method"] = "type"
+        // HARD VERIFY: read the field back; one retry on mismatch, then fail loud.
+        var got = readBack()
+        if let g = got, g != value {
+            clearAndType()
+            got = readBack()
+            result["retries"] = 1
+        }
+        if let g = got {
+            if g == value {
+                result["verified"] = true
+            } else {
+                jsonOutput(["ok": false,
+                    "error": "verify failed after retry: field shows '\(g)', expected '\(value)'",
+                    "fieldValue": g, "expected": value])
+                exit(1)
+            }
+        } else {
+            result["verified"] = false
+            result["warning"] = "field AXValue unreadable — typed but could not verify"
+        }
     } else {
         var isSettable: DarwinBoolean = false
         AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &isSettable)
@@ -693,8 +729,14 @@ func cmdFind(appName: String, role: String?, title: String?, value: String?,
         errorExit("at least one of --q, --text, --role, --title, --value, --desc, or --subrole required")
     }
     let app = AXUIElementCreateApplication(pid)
-    let windows = axWindows(app)
+    var windows = axWindows(app)
     if windows.isEmpty { errorExit("no windows for \(appName)") }
+    if let ws = argValue("--window") {
+        windows = windows.filter {
+            (axStringAttribute($0, "AXTitle") ?? "").localizedCaseInsensitiveContains(ws)
+        }
+        if windows.isEmpty { errorExit("no window matching '\(ws)' in \(appName)") }
+    }
     var all: [[String: Any]] = []
     let cap = 200
     for (i, w) in windows.enumerated() {
@@ -717,6 +759,9 @@ func cmdFind(appName: String, role: String?, title: String?, value: String?,
     }
     var result: [String: Any] = ["ok": true, "app": appName, "count": all.count, "matches": all]
     if all.count >= cap { result["truncated"] = true }
+    if all.isEmpty && title != nil {
+        result["hint"] = "many apps (e.g. Chromium browsers, SwiftUI) expose visible text via AXDescription, not AXTitle — try --desc or --q"
+    }
     jsonOutput(result)
 }
 
@@ -724,10 +769,21 @@ func resolveWindow(_ app: AXUIElement, _ appName: String) -> AXUIElement {
     let windows = axWindows(app)
     if windows.isEmpty { errorExit("no windows for \(appName)") }
     if let ws = argValue("--window") {
-        for w in windows {
-            if (axStringAttribute(w, "AXTitle") ?? "").localizedCaseInsensitiveContains(ws) { return w }
+        let matches = windows.filter {
+            (axStringAttribute($0, "AXTitle") ?? "").localizedCaseInsensitiveContains(ws)
         }
-        errorExit("no window matching '\(ws)' in \(appName)")
+        if matches.count == 1 { return matches[0] }
+        let titles = windows.map { axStringAttribute($0, "AXTitle") ?? "(untitled)" }
+        if matches.isEmpty {
+            jsonOutput(["ok": false,
+                "error": "no window matching '\(ws)' in \(appName)",
+                "candidates": titles])
+            exit(1)
+        }
+        jsonOutput(["ok": false,
+            "error": "ambiguous: '\(ws)' matches \(matches.count) windows in \(appName) — use a longer substring",
+            "candidates": matches.map { axStringAttribute($0, "AXTitle") ?? "(untitled)" }])
+        exit(1)
     }
     return windows.first!
 }
@@ -793,6 +849,13 @@ func cmdWindow(appName: String) {
         if let sub = axStringAttribute(w, "AXSubrole") { info["subrole"] = sub }
         if let val = axAttribute(w, "AXMinimized") as? NSNumber { info["minimized"] = val.boolValue }
         if let val = axAttribute(w, "AXFullScreen") as? NSNumber { info["fullscreen"] = val.boolValue }
+        // Transient popups (find bars, tooltips, hover cards) pollute the list
+        // and are easily mistaken for real windows.
+        let sub = axStringAttribute(w, "AXSubrole")
+        let height = axSizeValue(w, "AXSize")?.height ?? 0
+        if sub == "AXUnknown" || sub == "AXHelpTag" || height <= 50 {
+            info["transient"] = true
+        }
         infos.append(info)
     }
     jsonOutput(["ok": true, "app": appName, "pid": pid, "count": infos.count, "windows": infos])
@@ -987,22 +1050,69 @@ func cmdTypeText(appName: String, text: String) {
 
     Thread.sleep(forTimeInterval: 0.1)
 
-    if doClear {
-        tapKey(0, flags: .maskCommand)  // Cmd+A (select all, keycode 0 = 'a')
-        Thread.sleep(forTimeInterval: 0.03)
-        tapKey(51)  // Delete/Backspace
-        Thread.sleep(forTimeInterval: 0.03)
+    // HARD GUARD: keystrokes go to whatever has OS keyboard focus — refuse
+    // when the target app is not frontmost.
+    let frontPid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    if frontPid != pid {
+        errorExit("target app not frontmost (front pid \(frontPid ?? -1), want \(pid)) — refusing to type")
     }
 
-    typeString(text, delayMs: delayMs)
+    func clearAndType() {
+        if doClear {
+            tapKey(0, flags: .maskCommand)  // Cmd+A (select all, keycode 0 = 'a')
+            Thread.sleep(forTimeInterval: 0.15)
+            tapKey(51)  // Delete/Backspace
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        typeString(text, delayMs: delayMs)
+    }
+    clearAndType()
+
+    var result: [String: Any] = ["ok": true, "action": "type", "text": text, "length": text.count]
+    if let el = targetEl { result.merge(elementInfo(el)) { _, new in new } }
+
+    // HARD VERIFY against the targeted element when its value is readable.
+    // --clear → field must equal the text (one retry). Without --clear the
+    // text appends, so only check the field ENDS with what we typed (no retry
+    // — re-typing would double-append).
+    if let el = targetEl {
+        Thread.sleep(forTimeInterval: 0.15)
+        if let got = axAttribute(el, "AXValue").map({ "\($0)" }) {
+            if doClear {
+                if got != text {
+                    clearAndType()
+                    Thread.sleep(forTimeInterval: 0.15)
+                    let got2 = axAttribute(el, "AXValue").map { "\($0)" } ?? ""
+                    result["retries"] = 1
+                    if got2 != text {
+                        jsonOutput(["ok": false,
+                            "error": "verify failed after retry: field shows '\(got2)', expected '\(text)'",
+                            "fieldValue": got2, "expected": text])
+                        exit(1)
+                    }
+                }
+                result["verified"] = true
+            } else {
+                if got.hasSuffix(text) {
+                    result["verified"] = true
+                } else {
+                    jsonOutput(["ok": false,
+                        "error": "verify failed: field value does not end with typed text — keystrokes may have landed elsewhere",
+                        "fieldValue": got, "expected": text])
+                    exit(1)
+                }
+            }
+        } else {
+            result["verified"] = false
+            result["warning"] = "element AXValue unreadable — typed but could not verify"
+        }
+    }
 
     if doReturn {
         Thread.sleep(forTimeInterval: 0.03)
         tapKey(36)  // Return
     }
 
-    var result: [String: Any] = ["ok": true, "action": "type", "text": text, "length": text.count]
-    if let el = targetEl { result.merge(elementInfo(el)) { _, new in new } }
     jsonOutput(result)
 }
 
@@ -1014,29 +1124,71 @@ func cmdScreenshot(appName: String, path: String) {
 
     let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[CFString: Any]] ?? []
     let appWindows = windowList.filter { ($0[kCGWindowOwnerPID] as? Int32) == pid }
+    let windowName = { (w: [CFString: Any]) -> String in (w[kCGWindowName] as? String) ?? "(untitled)" }
+    let windowArea = { (w: [CFString: Any]) -> Double in
+        let b = w[kCGWindowBounds] as? [String: Any]
+        let width = (b?["Width"] as? Double) ?? 0
+        let height = (b?["Height"] as? Double) ?? 0
+        return width * height
+    }
 
     var targetWindow: [CFString: Any]? = nil
     if let ws = windowScope {
-        targetWindow = appWindows.first { w in
-            let name = w[kCGWindowName] as? String ?? ""
-            return name.localizedCaseInsensitiveContains(ws)
+        // Fail loud on 0 or >1 matches — a substring miss must never silently
+        // capture a different window (the "Find in page popup as Brave-Main" bug).
+        let matches = appWindows.filter { windowName($0).localizedCaseInsensitiveContains(ws) }
+        if matches.isEmpty {
+            jsonOutput(["ok": false,
+                "error": "no window matching '\(ws)' in \(appName)",
+                "candidates": appWindows.map { windowName($0) }])
+            exit(1)
         }
+        if matches.count > 1 {
+            jsonOutput(["ok": false,
+                "error": "ambiguous: '\(ws)' matches \(matches.count) windows in \(appName) — use a longer substring",
+                "candidates": matches.map { windowName($0) }])
+            exit(1)
+        }
+        targetWindow = matches[0]
+    } else {
+        // No scope: pick the LARGEST real window (z-order first() favors
+        // transient popups/find-bars that happen to be on top).
+        let real = appWindows.filter { w in
+            let b = w[kCGWindowBounds] as? [String: Any]
+            return ((b?["Height"] as? Double) ?? 0) > 50
+        }
+        targetWindow = (real.isEmpty ? appWindows : real).max { windowArea($0) < windowArea($1) }
     }
-    targetWindow = targetWindow ?? appWindows.first { w in
-        let h = w[kCGWindowBounds] as? [String: Any]
-        return (h?["Height"] as? Int ?? 0) > 50
-    }
-    targetWindow = targetWindow ?? appWindows.first
 
     guard let win = targetWindow,
           let windowID = win[kCGWindowNumber] as? CGWindowID else {
         errorExit("no capturable window for \(appName)")
     }
 
-    guard let cgImage = CGWindowListCreateImage(
+    guard var cgImage = CGWindowListCreateImage(
         .null, .optionIncludingWindow, windowID, [.boundsIgnoreFraming, .bestResolution]
     ) else {
         errorExit("CGWindowListCreateImage failed")
+    }
+
+    var result: [String: Any] = ["ok": true, "action": "screenshot", "path": path,
+                                 "window": windowName(win)]
+    if appWindows.count > 1 && windowScope == nil {
+        result["otherWindows"] = appWindows.filter { ($0[kCGWindowNumber] as? CGWindowID) != windowID }
+            .map { windowName($0) }
+        result["pickedBy"] = "largest-area (pass --window <title> to target another)"
+    }
+
+    // --crop x,y,w,h in PIXELS of the captured image (retina px, origin top-left)
+    if let cropStr = argValue("--crop") {
+        let p = cropStr.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        guard p.count == 4 else { errorExit("--crop format: x,y,w,h (pixels of the captured image)") }
+        let rect = CGRect(x: p[0], y: p[1], width: p[2], height: p[3])
+        guard let cropped = cgImage.cropping(to: rect) else {
+            errorExit("--crop \(cropStr) outside image bounds \(cgImage.width)x\(cgImage.height)")
+        }
+        cgImage = cropped
+        result["crop"] = ["x": p[0], "y": p[1], "w": p[2], "h": p[3]]
     }
 
     let url = URL(fileURLWithPath: path)
@@ -1048,9 +1200,9 @@ func cmdScreenshot(appName: String, path: String) {
         errorExit("failed to write PNG to \(path)")
     }
 
-    let title = win[kCGWindowName] as? String ?? ""
-    jsonOutput(["ok": true, "action": "screenshot", "path": path,
-                "width": cgImage.width, "height": cgImage.height, "window": title])
+    result["width"] = cgImage.width
+    result["height"] = cgImage.height
+    jsonOutput(result)
 }
 
 // MARK: - Hotkey
@@ -1073,6 +1225,18 @@ let KEY_MAP: [String: UInt16] = [
 ]
 
 func cmdHotkey(keys: String) {
+    // Optional --app: activate the target first so the combo lands there
+    // instead of whatever happens to have OS keyboard focus.
+    if let appTarget = argValue("--app") {
+        guard let pid = findApp(appTarget) else { errorExit("app not found: \(appTarget)") }
+        NSWorkspace.shared.runningApplications.first { $0.processIdentifier == pid }?
+            .activate(options: [.activateIgnoringOtherApps])
+        Thread.sleep(forTimeInterval: 0.15)
+        let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        if front != pid {
+            errorExit("could not bring \(appTarget) frontmost — refusing to send keys to the wrong app")
+        }
+    }
     let parts = keys.lowercased().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
     var flags: CGEventFlags = []
     var keyCode: UInt16 = 0
@@ -1113,6 +1277,25 @@ func cmdHotkey(keys: String) {
     up.post(tap: .cghidEventTap)
 
     jsonOutput(["ok": true, "action": "hotkey", "keys": keys])
+}
+
+// MARK: - Apps
+
+func cmdApps() {
+    let includeAll = args.contains("--all")
+    var list: [[String: Any]] = []
+    for app in NSWorkspace.shared.runningApplications {
+        if !includeAll && app.activationPolicy != .regular { continue }
+        var entry: [String: Any] = ["pid": app.processIdentifier]
+        if let n = app.localizedName { entry["name"] = n }
+        if let b = app.bundleIdentifier { entry["bundleId"] = b }
+        if app.isActive { entry["frontmost"] = true }
+        if app.isHidden { entry["hidden"] = true }
+        list.append(entry)
+    }
+    list.sort { (($0["name"] as? String) ?? "").lowercased() < (($1["name"] as? String) ?? "").lowercased() }
+    jsonOutput(["ok": true, "count": list.count, "apps": list,
+                "note": "these names are valid --app values (also matched case-insensitively and by bundleId substring)"])
 }
 
 // MARK: - Snapshot/Restore
@@ -1177,83 +1360,215 @@ func cmdRestore(snapshotJson: String) {
 
 // MARK: - Preflight
 
+let BROWSER_APPLESCRIPT_APPS: Set<String> = ["Brave Browser", "Google Chrome", "Arc", "Microsoft Edge", "Vivaldi", "Safari"]
+
+func runAppleScript(_ source: String) -> String? {
+    var error: NSDictionary?
+    let script = NSAppleScript(source: source)
+    let result = script?.executeAndReturnError(&error)
+    guard error == nil else { return nil }
+    return result?.stringValue
+}
+
+func screensInfo() -> [[String: Any]] {
+    let screens = NSScreen.screens
+    guard let primary = screens.first else { return [] }
+    let primaryHeight = primary.frame.height
+    var infos: [[String: Any]] = []
+    for (i, s) in screens.enumerated() {
+        let f = s.frame
+        let scale = s.backingScaleFactor
+        // NSScreen frames are AppKit space (origin bottom-left of primary);
+        // originCG converts to the CG top-left global point space that click
+        // coords and window bounds live in.
+        let cgX = f.origin.x
+        let cgY = primaryHeight - f.origin.y - f.height
+        infos.append([
+            "index": i,
+            "isPrimary": i == 0,
+            "points": ["width": f.width, "height": f.height],
+            "scaleFactor": scale,
+            "framePixels": ["width": f.width * scale, "height": f.height * scale],
+            "originCG": ["x": cgX, "y": cgY],
+        ])
+    }
+    return infos
+}
+
+func browserTabInfo(_ appName: String) -> [String: Any]? {
+    guard BROWSER_APPLESCRIPT_APPS.contains(appName) else { return nil }
+    let urlScript = appName == "Safari"
+        ? "tell application \"Safari\" to get URL of front document"
+        : "tell application \"\(appName)\" to get URL of active tab of front window"
+    let titleScript = appName == "Safari"
+        ? "tell application \"Safari\" to get name of front document"
+        : "tell application \"\(appName)\" to get title of active tab of front window"
+    var tab: [String: Any] = [:]
+    if let u = runAppleScript(urlScript) { tab["url"] = u }
+    if let t = runAppleScript(titleScript) { tab["title"] = t }
+    return tab.isEmpty ? nil : tab
+}
+
 func cmdPreflight(appName: String, maxDepth: Int) {
     guard let pid = findApp(appName) else { errorExit("app not found: \(appName)") }
     let app = AXUIElementCreateApplication(pid)
     let windows = axWindows(app)
     if windows.isEmpty { errorExit("no windows for \(appName)") }
 
-    var windowInfos: [[String: Any]] = []
-    for (i, w) in windows.enumerated() {
-        var info: [String: Any] = ["title": axStringAttribute(w, "AXTitle") ?? "window-\(i)"]
-        if let id = axStringAttribute(w, "AXIdentifier") { info["id"] = id }
-        if let pos = axPointValue(w, "AXPosition") { info["x"] = pos.x; info["y"] = pos.y }
-        if let sz = axSizeValue(w, "AXSize") { info["width"] = sz.width; info["height"] = sz.height }
-        windowInfos.append(info)
+    // --wanted screens,frontmost,windows,elements[,elements:<Role>],browser,plan
+    // Default: all groups, element groups truncated to 15/role.
+    var wantedGroups: Set<String>? = nil
+    var fullElementRole: String? = nil
+    if let w = argValue("--wanted") {
+        var groups: Set<String> = []
+        for part in w.split(separator: ",").map({ String($0).trimmingCharacters(in: .whitespaces) }) {
+            if part.hasPrefix("elements:") {
+                groups.insert("elements")
+                fullElementRole = String(part.dropFirst("elements:".count))
+            } else {
+                groups.insert(part)
+            }
+        }
+        wantedGroups = groups
+    }
+    func wanted(_ g: String) -> Bool { wantedGroups?.contains(g) ?? true }
+
+    var out: [String: Any] = ["ok": true, "app": appName, "pid": pid]
+
+    if wanted("screens") {
+        out["screens"] = screensInfo()
     }
 
-    var roleCounts: [String: Int] = [:]
+    if wanted("frontmost") {
+        let front = NSWorkspace.shared.frontmostApplication
+        var f: [String: Any] = [:]
+        if let n = front?.localizedName { f["app"] = n }
+        if let p = front?.processIdentifier { f["pid"] = p }
+        if let b = front?.bundleIdentifier { f["bundleId"] = b }
+        out["frontmost"] = f
+    }
+
+    if wanted("windows") {
+        var windowInfos: [[String: Any]] = []
+        var phantomStrips: [[String: Any]] = []
+        for (i, w) in windows.enumerated() {
+            var info: [String: Any] = ["title": axStringAttribute(w, "AXTitle") ?? "window-\(i)"]
+            if let id = axStringAttribute(w, "AXIdentifier") { info["id"] = id }
+            if let pos = axPointValue(w, "AXPosition") { info["x"] = pos.x; info["y"] = pos.y }
+            if let sz = axSizeValue(w, "AXSize") { info["width"] = sz.width; info["height"] = sz.height }
+            let sub = axStringAttribute(w, "AXSubrole")
+            if let s = sub { info["subrole"] = s }
+            let height = axSizeValue(w, "AXSize")?.height ?? 0
+            if sub == "AXUnknown" || sub == "AXHelpTag" || height <= 50 {
+                info["transient"] = true
+                phantomStrips.append(info)
+            } else {
+                windowInfos.append(info)
+            }
+        }
+        out["windows"] = windowInfos
+        if !phantomStrips.isEmpty { out["phantomStrips"] = phantomStrips }
+    }
+
+    if wanted("browser"), let tab = browserTabInfo(appName) {
+        out["browserTab"] = tab
+    }
+
     var addressable: [[String: String]] = []
-    for window in windows {
-        for info in collectElements(window, maxDepth: maxDepth) {
-            let role = info.role ?? "?"
-            roleCounts[role, default: 0] += 1
-            if let eid = info.identifier {
-                var entry: [String: String] = ["id": eid, "role": role]
-                if let d = info.description { entry["desc"] = d }
-                if let t = info.title { entry["title"] = t }
-                entry["window"] = axStringAttribute(window, "AXTitle") ?? ""
-                addressable.append(entry)
+    var roleCounts: [String: Int] = [:]
+    if wanted("elements") || wanted("plan") {
+        for window in windows {
+            for info in collectElements(window, maxDepth: maxDepth) {
+                let role = info.role ?? "?"
+                roleCounts[role, default: 0] += 1
+                // Addressable = targetable by id OR desc OR title (browsers
+                // have no AXIdentifiers but are fully targetable via desc).
+                if info.identifier != nil || info.description != nil || info.title != nil {
+                    var entry: [String: String] = ["role": role]
+                    if let eid = info.identifier { entry["id"] = eid }
+                    if let d = info.description { entry["desc"] = d }
+                    if let t = info.title { entry["title"] = t }
+                    entry["window"] = axStringAttribute(window, "AXTitle") ?? ""
+                    addressable.append(entry)
+                }
             }
         }
     }
 
-    let uniqueButtons = addressable.filter { $0["role"] == "AXButton" }
-        .reduce(into: [[String: String]]()) { result, el in
-            if !result.contains(where: { $0["id"] == el["id"] }) { result.append(el) }
+    if wanted("elements") {
+        var grouped: [String: [[String: String]]] = [:]
+        for el in addressable {
+            grouped[el["role"] ?? "?", default: []].append(el)
         }
-    let fields = addressable.filter { $0["role"] == "AXTextField" }
-    let checkboxes = addressable.filter { $0["role"] == "AXCheckBox" }
-    let popups = addressable.filter { $0["role"] == "AXPopUpButton" }
+        let perRoleCap = 15
+        var truncatedRoles: [String: Int] = [:]
+        if let fullRole = fullElementRole {
+            grouped = grouped.filter { fuzzyRoleMatch($0.key, fullRole, exact: false) }
+        } else {
+            for (role, els) in grouped where els.count > perRoleCap {
+                truncatedRoles[role] = els.count
+                grouped[role] = Array(els.prefix(perRoleCap))
+            }
+        }
+        out["grouped"] = grouped
+        out["roleCounts"] = roleCounts
+        out["addressableCount"] = addressable.count
+        out["totalElements"] = roleCounts.values.reduce(0, +)
+        if !truncatedRoles.isEmpty {
+            out["truncatedRoles"] = truncatedRoles
+            out["note"] = "element groups truncated to \(perRoleCap)/role — re-run with --wanted elements:<Role> for the full list of one role"
+        }
+    }
 
-    var planSteps: [[String: Any]] = [["do": "focus"]]
-    planSteps.append(["do": "screenshot", "path": "/tmp/ax-\(appName.lowercased())-before.png"])
-    for el in uniqueButtons.prefix(6) {
-        let label = el["desc"] ?? el["title"] ?? el["id"] ?? "?"
-        var step: [String: Any] = ["do": "press"]
-        step["id"] = el["id"]!
-        step["_label"] = label
-        planSteps.append(step)
-    }
-    for el in fields.prefix(3) {
-        planSteps.append(["do": "set", "id": el["id"]!, "value": "example",
-                          "_label": el["desc"] ?? el["title"] ?? el["id"] ?? "?"])
-    }
-    for el in checkboxes.prefix(2) {
-        planSteps.append(["do": "press", "id": el["id"]!,
-                          "_label": el["desc"] ?? el["title"] ?? el["id"] ?? "?"])
-    }
-    planSteps.append(["do": "screenshot", "path": "/tmp/ax-\(appName.lowercased())-after.png"])
+    if wanted("plan") {
+        func targetKey(_ el: [String: String]) -> [String: Any] {
+            if let id = el["id"] { return ["id": id] }
+            if let d = el["desc"] { return ["q": d] }
+            return ["q": el["title"] ?? "?"]
+        }
+        let uniqueButtons = addressable.filter { $0["role"] == "AXButton" }
+            .reduce(into: [[String: String]]()) { result, el in
+                let key = el["id"] ?? el["desc"] ?? el["title"] ?? ""
+                if !result.contains(where: { ($0["id"] ?? $0["desc"] ?? $0["title"] ?? "") == key }) {
+                    result.append(el)
+                }
+            }
+        let fields = addressable.filter { $0["role"] == "AXTextField" }
+        let checkboxes = addressable.filter { $0["role"] == "AXCheckBox" }
 
-    let plan: [String: Any] = [
-        "app": appName, "restore": true, "delayMs": 300, "steps": planSteps,
-        "_contract": "https://github.com/genesiscz/GenesisTools — tools ax run --help for full schema"
+        var planSteps: [[String: Any]] = [["do": "focus"]]
+        planSteps.append(["do": "screenshot", "path": "/tmp/ax-\(appName.lowercased())-before.png"])
+        for el in uniqueButtons.prefix(6) {
+            var step: [String: Any] = ["do": "press", "_label": el["desc"] ?? el["title"] ?? el["id"] ?? "?"]
+            step.merge(targetKey(el)) { _, new in new }
+            planSteps.append(step)
+        }
+        for el in fields.prefix(3) {
+            var step: [String: Any] = ["do": "set", "value": "example",
+                                        "_label": el["desc"] ?? el["title"] ?? el["id"] ?? "?"]
+            step.merge(targetKey(el)) { _, new in new }
+            planSteps.append(step)
+        }
+        for el in checkboxes.prefix(2) {
+            var step: [String: Any] = ["do": "press", "_label": el["desc"] ?? el["title"] ?? el["id"] ?? "?"]
+            step.merge(targetKey(el)) { _, new in new }
+            planSteps.append(step)
+        }
+        planSteps.append(["do": "screenshot", "path": "/tmp/ax-\(appName.lowercased())-after.png"])
+
+        out["suggestedPlan"] = [
+            "app": appName, "restore": true, "delayMs": 300, "steps": planSteps,
+            "_contract": "tools control run --help for the full plan schema"
+        ] as [String: Any]
+    }
+
+    out["unitsReminder"] = [
+        "clickCoords": "GLOBAL CG points (window bounds space; negatives legal on multi-display)",
+        "screenshotCrop": "PIXELS of the captured image (points x scaleFactor, origin top-left)",
+        "captureCropRegion": "FRAME pixels of the captured screen (points x scaleFactor)",
     ]
 
-    var grouped: [String: [[String: String]]] = [:]
-    for el in addressable {
-        grouped[el["role"] ?? "?", default: []].append(el)
-    }
-
-    jsonOutput([
-        "ok": true, "app": appName, "pid": pid,
-        "windows": windowInfos,
-        "roleCounts": roleCounts,
-        "grouped": grouped,
-        "addressableCount": addressable.count,
-        "totalElements": roleCounts.values.reduce(0, +),
-        "suggestedPlan": plan
-    ])
+    jsonOutput(out)
 }
 
 // MARK: - Main
@@ -1263,45 +1578,58 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
     let help = """
     ax-tool — fast AX API CLI for macOS UI automation
 
+    RUN `ax-tool preflight --app <name>` FIRST — one call returns screens
+    (scale/origins), frontmost app, windows (phantom strips flagged), element
+    inventory grouped by role, active browser tab, units reminder, and a
+    suggested plan. Kills the guess-the-coordinates/guess-the-field footguns.
+
     Usage:
+      ax-tool preflight --app <name> [--depth <n>] [--wanted g1,g2]  Discover everything (see above)
+                        --wanted groups: screens,frontmost,windows,elements,browser,plan
+                        (elements truncated 15/role; --wanted elements:<Role> = full one role)
+      ax-tool apps [--all]                                    List running apps (valid --app values)
       ax-tool list    --app <name> [--depth <n=10>]           List elements (flat, max 2000)
       ax-tool tree    --app <name> [--depth <n=10>]           Hierarchical tree (nested JSON)
       ax-tool get     --app <name> <target>                    Read element attributes
-      ax-tool set     --app <name> <target> --value <v>       Set element value
+      ax-tool set     --app <name> <target> --value <v>       Set + HARD VERIFY (reads field back, 1 retry)
       ax-tool press   --app <name> <target>                   Press (AXPress) an element
       ax-tool attrs   --app <name> <target>                   List ALL attributes + values
       ax-tool actions --app <name> <target>                   List available AX actions
       ax-tool perform --app <name> <target> --action <a>      Perform any AX action
-      ax-tool find    --app <name> [--role R] [--title T] [--value V] [--desc D] [--text Q]
-      ax-tool window  --app <name>                            Get window bounds and state
+      ax-tool find    --app <name> [--role R] [--title T] [--value V] [--desc D] [--subrole S]
+                      [--text Q] [--q Q] [--window W] [--exact]
+      ax-tool window  --app <name> [--action move|resize|minimize|maximize|close|focus]
       ax-tool focus   --app <name> [<target>]                 Activate app + focus element
       ax-tool click   --app <name> <target>                   CGEvent click at element center
-      ax-tool type    --app <name> --text <str> [<target>]    Type keystrokes into element
-      ax-tool screenshot --app <name> --path <file.png>        Window screenshot (CGWindowList, no bridge)
-      ax-tool hotkey --keys <cmd,a>                           Key combo via CGEvent
+      ax-tool type    --app <name> --text <str> [<target>]    Type + HARD VERIFY ([--clear] [--return])
+      ax-tool screenshot --app <name> --path <file.png> [--window W] [--crop x,y,w,h]
+                      --crop is PIXELS of the captured image; --window fails loud on 0/2+ matches
+      ax-tool hotkey --keys <cmd,a> [--app <name>]            Key combo (--app activates target first)
       ax-tool snapshot                                        Capture mouse + focused app/window
       ax-tool restore --snapshot <json>                       Restore mouse + focus from snapshot
-      ax-tool preflight --app <name> [--depth <n>]            Discover app surface + suggested plan
 
-    Target: --id <axId> OR any combo of --role/--title/--desc (first match).
-    Elements WITHOUT AXIdentifier are fully interactable via role/title/desc.
+    Target: --id <axId>, --q <query> (universal cascade), or any combo of
+    --role/--title/--desc/--subrole [--window W] [--exact].
+    Elements WITHOUT AXIdentifier are fully interactable via desc/role/subrole.
+    NOTE: many apps (Chromium browsers, SwiftUI) put visible text in
+    AXDescription, not AXTitle — when --title finds nothing, try --desc or --q.
 
-    Output: JSON to stdout. {"ok":true,...} on success, {"ok":false,"error":"..."} on failure.
+    Output: compact JSON to stdout (--pretty to indent). {"ok":true,...} on
+    success, {"ok":false,"error":"..."} on failure.
+    set/type refuse when the target app is not frontmost, and verify the field
+    content after typing (retry once, then fail loud with fieldValue).
     Permission: requires Accessibility access for the calling terminal/process.
 
     Examples:
-      ax-tool list --app Finder
-      ax-tool tree --app Finder --depth 3
-      ax-tool find --app "Brave Browser" --text "YouTube" --depth 10
-      ax-tool click --app "Brave Browser" --desc "Venge.io" --role AXButton
+      ax-tool preflight --app Genesis
+      ax-tool apps
+      ax-tool find --app "Brave Browser" --q "YouTube" --depth 10
+      ax-tool click --app "Brave Browser" --desc "youtube" --role AXRadioButton
       ax-tool press --app Genesis --desc "Account" --role AXButton
-      ax-tool focus --app Genesis --id auth-email
-      ax-tool type --app Genesis --id auth-email --text "user@test.com"
       ax-tool set --app Genesis --id auth-email --value "user@example.com"
-      ax-tool attrs --app "Brave Browser" --desc "Back" --role AXButton
-      ax-tool actions --app Finder --id FinderWindow
-      ax-tool perform --app Finder --id FinderWindow --action AXRaise
-      ax-tool window --app Finder
+      ax-tool screenshot --app Genesis --window "Genesis" --path /tmp/g.png --crop 0,0,1800,300
+      ax-tool hotkey --keys cmd,w --app "Brave Browser"
+      ax-tool window --app Finder --action move --x 100 --y 100
     """
     print(help)
     exit(args.count < 2 ? 2 : 0)
@@ -1316,6 +1644,10 @@ func argValue(_ flag: String) -> String? {
 
 if command == "snapshot" {
     cmdSnapshot()
+    exit(0)
+}
+if command == "apps" {
+    cmdApps()
     exit(0)
 }
 if command == "restore" {
