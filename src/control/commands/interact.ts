@@ -151,14 +151,33 @@ export function registerInteractCommands(program: Command): void {
     addTargetOptions(
         program
             .command("type")
-            .description("Type keystrokes into app, optionally focusing an element first")
+            .description(
+                "Type keystrokes + HARD VERIFY. Inserts at the CURRENT cursor — use --end to jump to the end first, --clear to replace the whole field."
+            )
             .requiredOption("--app <name>", "app process name")
             .requiredOption("--text <text>", "text to type")
     )
+        .option("--clear", "select-all + delete before typing (replace field content)")
+        .option("--end", "move the cursor to the end of the field before typing (append)")
+        .option("--return", "press Return after typing")
+        .option("--delay <ms>", "ms between keystrokes (default 8)")
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
-            const result = runAx(["type", "--app", opts.app, "--text", opts.text, ...targetArgs(opts)]);
+            const axArgs = ["type", "--app", opts.app, "--text", opts.text, ...targetArgs(opts)];
+            if (opts.clear) {
+                axArgs.push("--clear");
+            }
+            if (opts.end) {
+                axArgs.push("--end");
+            }
+            if (opts.return) {
+                axArgs.push("--return");
+            }
+            if (opts.delay) {
+                axArgs.push("--delay", opts.delay);
+            }
+            const result = runAx(axArgs, 30_000);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;

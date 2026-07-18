@@ -10,7 +10,8 @@ export function addTargetOptions(cmd: Command): Command {
         .option("--q <query>", "universal search — checks id, title, desc, value, role, subrole")
         .option("--subrole <subrole>", "target by AXSubrole (e.g. AXCloseButton)")
         .option("--window <title>", "scope search to window with this title")
-        .option("--exact", "force strict role/subrole matching (default is fuzzy)");
+        .option("--exact", "force strict role/subrole matching (default is fuzzy)")
+        .option("--depth <n>", "max search depth (default 15 — browser page content may need 40)");
 }
 
 /** Converts commander opts into ax-tool targeting flags. */
@@ -39,6 +40,9 @@ export function targetArgs(opts: Record<string, string | undefined>): string[] {
     }
     if (opts.exact) {
         a.push("--exact");
+    }
+    if (opts.depth) {
+        a.push("--depth", opts.depth);
     }
     return a;
 }

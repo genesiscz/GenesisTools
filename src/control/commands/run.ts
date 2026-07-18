@@ -25,9 +25,13 @@ function printStep(label: string, result: AxResult, ms: number): void {
         out.println(`  ${pc.green("ok")} ${pc.cyan(label)} ${pc.dim(`${ms}ms`)}`);
         return;
     }
-    const parts = [result.error, typeof result.actual === "string" ? result.actual : undefined]
-        .filter(Boolean)
-        .join(" — ");
+    const actual =
+        typeof result.actual === "string"
+            ? result.actual
+            : result.actual != null
+              ? `actual: ${SafeJSON.stringify(result.actual)}`
+              : undefined;
+    const parts = [result.error, actual].filter(Boolean).join(" — ");
     out.println(
         `  ${pc.red("FAIL")} ${pc.cyan(label)} ${pc.dim(`${ms}ms`)}${parts ? ` — ${parts.slice(0, 200)}` : ""}`
     );
@@ -134,7 +138,7 @@ export function registerRunCommand(program: Command): void {
                 // wait/assert are TS-side condition steps, not binary commands.
                 if (cmd === "wait" || cmd === "assert") {
                     const target: string[] = [];
-                    for (const k of ["q", "id", "role", "title", "desc", "subrole", "window"]) {
+                    for (const k of ["q", "id", "role", "title", "desc", "subrole", "window", "depth"]) {
                         if (step[k] != null) {
                             target.push(`--${k}`, String(step[k]));
                         }

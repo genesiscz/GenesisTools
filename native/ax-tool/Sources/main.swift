@@ -246,10 +246,18 @@ func stringMatches(_ haystack: String?, _ needle: String) -> Bool {
     return h.localizedCaseInsensitiveContains(needle)
 }
 
+// --depth applies to EVERY element search (get/press/click/wait targeting too,
+// not just find/list) — browser page content easily nests past the default 15.
+func targetSearchDepth() -> Int {
+    let a = CommandLine.arguments
+    if let i = a.firstIndex(of: "--depth"), i + 1 < a.count, let d = Int(a[i + 1]) { return d }
+    return 15
+}
+
 func findByAttributes(_ root: AXUIElement, role: String?, title: String?,
                        value: String?, desc: String?, subrole: String? = nil,
                        text: String? = nil, searchAll: Bool = false, exact: Bool = false,
-                       depth: Int = 0, maxDepth: Int = 15) -> [AXUIElement] {
+                       depth: Int = 0, maxDepth: Int = targetSearchDepth()) -> [AXUIElement] {
     if depth > maxDepth { return [] }
     var results: [AXUIElement] = []
     var matches = true
@@ -505,6 +513,19 @@ func errorExit(_ message: String) -> Never {
     exit(1)
 }
 
+/// Activate an app and poll until it is actually frontmost. One activate()
+/// call + fixed sleep races when another activation is still in flight —
+/// re-request each poll (up to ~1.5s).
+func bringFrontmost(_ pid: pid_t) -> Bool {
+    let runningApp = NSWorkspace.shared.runningApplications.first { $0.processIdentifier == pid }
+    for _ in 0..<15 {
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { return true }
+        runningApp?.activate(options: [.activateIgnoringOtherApps])
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    return NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+}
+
 // MARK: - Commands
 
 
@@ -538,9 +559,9 @@ func cmdSet(appName: String, value: String) {
     result.merge(elementInfo(element)) { _, new in new }
 
     if textRoles.contains(role) {
-        NSWorkspace.shared.runningApplications.first {
-            $0.processIdentifier == pid
-        }?.activate(options: [.activateIgnoringOtherApps])
+        if !bringFrontmost(pid) {
+            errorExit("could not bring \(appName) frontmost — set types via CGEvents, refusing while another app has keyboard focus")
+        }
         raiseElementWindow(element)
 
         AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, true as CFTypeRef)
@@ -800,6 +821,10 @@ func cmdFind(appName: String, role: String?, title: String?, value: String?,
     if all.count >= cap { result["truncated"] = true }
     if all.isEmpty && title != nil {
         result["hint"] = "many apps (e.g. Chromium browsers, SwiftUI) expose visible text via AXDescription, not AXTitle — try --desc or --q"
+    } else if all.isEmpty && maxDepth <= 15 {
+        // 0 matches at the default depth is ambiguous: missing vs nested past
+        // the cutoff (browser page content easily sits at depth 20-40).
+        result["hint"] = "0 matches at --depth \(maxDepth) — deeply nested UIs (browser page content) can exceed it; retry with --depth 40"
     }
     jsonOutput(result)
 }
@@ -904,10 +929,7 @@ func cmdWindow(appName: String) {
 
 func cmdFocus(appName: String) {
     let pid = resolveApp(appName)
-    let runningApp = NSWorkspace.shared.runningApplications.first {
-        $0.processIdentifier == pid
-    }
-    runningApp?.activate(options: [.activateIgnoringOtherApps])
+    _ = bringFrontmost(pid)
 
     let app = AXUIElementCreateApplication(pid)
     let hasTarget = argValue("--id") != nil || argValue("--role") != nil ||
@@ -964,9 +986,7 @@ func cmdClick(appName: String) {
     let right = args.contains("--right")
     let double = args.contains("--double")
 
-    NSWorkspace.shared.runningApplications.first {
-        $0.processIdentifier == pid
-    }?.activate(options: [.activateIgnoringOtherApps])
+    _ = bringFrontmost(pid)
 
     let app = AXUIElementCreateApplication(pid)
 
@@ -1046,9 +1066,7 @@ func tapKey(_ code: UInt16, flags: CGEventFlags = []) {
 
 func cmdTypeText(appName: String, text: String) {
     let pid = resolveApp(appName)
-    NSWorkspace.shared.runningApplications.first {
-        $0.processIdentifier == pid
-    }?.activate(options: [.activateIgnoringOtherApps])
+    _ = bringFrontmost(pid)
 
     let app = AXUIElementCreateApplication(pid)
     let hasTarget = argValue("--id") != nil || argValue("--role") != nil ||
@@ -1094,15 +1112,35 @@ func cmdTypeText(appName: String, text: String) {
     let delayMs = Double(argValue("--delay") ?? "8") ?? 8
     let doClear = args.contains("--clear")
     let doReturn = args.contains("--return")
+    let doEnd = args.contains("--end")
 
-    Thread.sleep(forTimeInterval: 0.1)
-
-    // HARD GUARD: keystrokes go to whatever has OS keyboard focus — refuse
-    // when the target app is not frontmost.
-    let frontPid = NSWorkspace.shared.frontmostApplication?.processIdentifier
-    if frontPid != pid {
-        errorExit("target app not frontmost (front pid \(frontPid ?? -1), want \(pid)) — refusing to type")
+    // Settle: re-activate until frontmost and (when targeted) the element
+    // reports focused — a fixed sleep lets the FIRST type after a window opens
+    // race the window server and silently drop every keystroke.
+    if !bringFrontmost(pid) {
+        let frontPid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        errorExit("target app not frontmost (front pid \(frontPid ?? -1), want \(pid)) — could not activate, refusing to type")
     }
+    for _ in 0..<8 {
+        if targetEl == nil || (axAttribute(targetEl!, "AXFocused") as? NSNumber)?.boolValue == true { break }
+        Thread.sleep(forTimeInterval: 0.05)
+    }
+    Thread.sleep(forTimeInterval: 0.08)
+
+    // --end: move the insertion point to the end of the field first (type
+    // inserts at the CURRENT cursor — fresh documents default to position 0).
+    func moveCursorToEnd() {
+        guard let el = targetEl else { return }
+        let len = (axAttribute(el, "AXValue").map { "\($0)" } ?? "").utf16.count
+        var range = CFRange(location: len, length: 0)
+        if let val = AXValueCreate(.cfRange, &range),
+           AXUIElementSetAttributeValue(el, "AXSelectedTextRange" as CFString, val) == .success {
+            return
+        }
+        tapKey(125, flags: .maskCommand)  // Cmd+Down = end of document
+        Thread.sleep(forTimeInterval: 0.08)
+    }
+    if doEnd { moveCursorToEnd() }
 
     func clearAndType() {
         if doClear {
@@ -1113,6 +1151,8 @@ func cmdTypeText(appName: String, text: String) {
         }
         typeString(text, delayMs: delayMs)
     }
+
+    let beforeValue = targetEl.flatMap { axAttribute($0, "AXValue").map { "\($0)" } }
     clearAndType()
 
     var result: [String: Any] = ["ok": true, "action": "type", "text": text, "length": text.count]
@@ -1120,11 +1160,12 @@ func cmdTypeText(appName: String, text: String) {
 
     // HARD VERIFY against the targeted element when its value is readable.
     // --clear → field must equal the text (one retry). Without --clear the
-    // text appends, so only check the field ENDS with what we typed (no retry
-    // — re-typing would double-append).
+    // text inserts at the cursor, so check the field CONTAINS what we typed;
+    // "field unchanged" (landed nowhere — focus race) gets ONE safe retry,
+    // "field changed but text missing" fails loud (re-typing would duplicate).
     if let el = targetEl {
         Thread.sleep(forTimeInterval: 0.15)
-        if let got = axAttribute(el, "AXValue").map({ "\($0)" }) {
+        if var got = axAttribute(el, "AXValue").map({ "\($0)" }) {
             if doClear {
                 if got != text {
                     clearAndType()
@@ -1140,12 +1181,39 @@ func cmdTypeText(appName: String, text: String) {
                 }
                 result["verified"] = true
             } else {
-                if got.hasSuffix(text) {
+                if got == beforeValue {
+                    // Landed NOWHERE — safe to retry once (nothing to duplicate).
+                    // AXFocused can read true on a fresh window whose field
+                    // editor is not first responder yet; a REAL click is what
+                    // reliably wires the keyboard target, so retry via click.
+                    if let pos = axPointValue(el, "AXPosition"), let size = axSizeValue(el, "AXSize") {
+                        postClick(at: CGPoint(x: pos.x + size.width / 2, y: pos.y + size.height / 2),
+                                  right: false, double: false)
+                        Thread.sleep(forTimeInterval: 0.25)
+                    } else {
+                        Thread.sleep(forTimeInterval: 0.2)
+                    }
+                    if doEnd || !doClear { moveCursorToEnd() }
+                    clearAndType()
+                    Thread.sleep(forTimeInterval: 0.15)
+                    got = axAttribute(el, "AXValue").map { "\($0)" } ?? got
+                    result["retries"] = 1
+                    if got == beforeValue {
+                        jsonOutput(["ok": false,
+                            "error": "keystrokes landed NOWHERE (field unchanged after click-retry) — focus race or read-only field",
+                            "fieldValue": got, "expected": text])
+                        exit(1)
+                    }
+                }
+                if got.contains(text) {
                     result["verified"] = true
+                    if !got.hasSuffix(text) {
+                        result["warning"] = "text inserted at the cursor position, not the end — pass --end to move the cursor to the end first"
+                    }
                 } else {
                     jsonOutput(["ok": false,
-                        "error": "verify failed: field value does not end with typed text — keystrokes may have landed elsewhere",
-                        "fieldValue": got, "expected": text])
+                        "error": "verify failed: field changed but does not contain the typed text — keystrokes landed in a different element, or an input filter transformed them",
+                        "fieldValue": got, "before": beforeValue ?? "", "expected": text])
                     exit(1)
                 }
             }
@@ -1211,11 +1279,30 @@ func cmdScroll(appName: String) {
     case "right": dx = Int32(-amount)
     default: errorExit("--direction must be up, down, left, or right")
     }
+
+    // No target/coords: aim at the app's main window center. A nil location
+    // posts at (0,0) — the menu bar — and scrolls nothing.
+    if point == nil {
+        for w in axWindows(app) {
+            guard let pos = axPointValue(w, "AXPosition"), let size = axSizeValue(w, "AXSize"),
+                  size.height > 50 else { continue }
+            point = CGPoint(x: pos.x + size.width / 2, y: pos.y + size.height / 2)
+            break
+        }
+    }
+
+    // Synthetic wheel events are DROPPED for background apps (verified against
+    // Chromium: identical event scrolls when frontmost, no-ops when not).
+    // Real mice scroll background windows; CGEvent posts do not.
+    if !bringFrontmost(pid) {
+        errorExit("could not bring \(appName) frontmost — synthetic wheel events are dropped for background apps, refusing to scroll")
+    }
+    Thread.sleep(forTimeInterval: 0.08)
+
     guard let ev = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2,
                            wheel1: dy, wheel2: dx, wheel3: 0) else {
         errorExit("failed to create scroll event")
     }
-    // Scroll goes to the window under the event location — no focus needed.
     if let p = point { ev.location = p }
     ev.post(tap: .cghidEventTap)
     var result: [String: Any] = ["ok": true, "action": "scroll", "method": "wheel",
@@ -1373,11 +1460,24 @@ func collectFramedElements(_ root: AXUIElement, all: Bool, depth: Int = 0, maxDe
 func annotateImage(_ image: CGImage, appName: String, pid: pid_t, windowTitle: String,
                     windowBoundsPts: CGRect) -> (CGImage, [[String: Any]]) {
     let app = AXUIElementCreateApplication(pid)
+    // Match the AX window to the CAPTURED window by FRAME, not just title —
+    // title-mismatch + .first fallback annotated a phantom translate popup's
+    // elements onto a screenshot of the real window (blind-test 4D).
     var axWin: AXUIElement? = nil
     for w in axWindows(app) {
-        if (axStringAttribute(w, "AXTitle") ?? "") == windowTitle { axWin = w; break }
+        guard let pos = axPointValue(w, "AXPosition"), let size = axSizeValue(w, "AXSize") else { continue }
+        if abs(pos.x - windowBoundsPts.origin.x) < 6 && abs(pos.y - windowBoundsPts.origin.y) < 6 &&
+           abs(size.width - windowBoundsPts.width) < 6 && abs(size.height - windowBoundsPts.height) < 6 {
+            axWin = w
+            break
+        }
     }
-    axWin = axWin ?? axWindows(app).first
+    if axWin == nil && !windowTitle.isEmpty {
+        for w in axWindows(app) {
+            if (axStringAttribute(w, "AXTitle") ?? "") == windowTitle { axWin = w; break }
+        }
+    }
+    // No frame/title match: better zero annotations than another window's boxes.
     guard let win = axWin else { return (image, []) }
 
     let all = args.contains("--all")
@@ -1531,11 +1631,7 @@ func cmdHotkey(keys: String) {
     // instead of whatever happens to have OS keyboard focus.
     if let appTarget = argValue("--app") {
         let pid = resolveApp(appTarget)
-        NSWorkspace.shared.runningApplications.first { $0.processIdentifier == pid }?
-            .activate(options: [.activateIgnoringOtherApps])
-        Thread.sleep(forTimeInterval: 0.15)
-        let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        if front != pid {
+        if !bringFrontmost(pid) {
             errorExit("could not bring \(appTarget) frontmost — refusing to send keys to the wrong app")
         }
     }
@@ -2058,7 +2154,8 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
       ax-tool window  --app <name> [--action move|resize|minimize|maximize|close|focus]
       ax-tool focus   --app <name> [<target>]                 Activate app + focus element
       ax-tool click   --app <name> <target>                   CGEvent click at element center
-      ax-tool type    --app <name> --text <str> [<target>]    Type + HARD VERIFY ([--clear] [--return])
+      ax-tool type    --app <name> --text <str> [<target>]    Type + HARD VERIFY ([--clear] [--end] [--return])
+                      (inserts at the CURRENT cursor; --end jumps to end first, --clear replaces all)
       ax-tool scroll  --app <name> [<target>|--coords x,y] --direction up|down|left|right [--amount n]
                       (no --direction + target = AXScrollToVisible: bring element into view)
       ax-tool screenshot --app <name> --path <file.png> [--window W] [--crop x,y,w,h] [--annotate [--all]]

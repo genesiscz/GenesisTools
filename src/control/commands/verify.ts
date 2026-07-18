@@ -114,7 +114,10 @@ export function registerVerifyCommands(program: Command): void {
             )
             .requiredOption("--app <name>", "app process name")
     )
-        .option("--for <cond>", "condition: exists (default) | enabled | focused")
+        .option(
+            "--for <cond>",
+            "state condition: exists (default) | enabled | focused (value checks are the separate --expect/--contains flags)"
+        )
         .option("--expect <value>", "wait until AXValue equals this")
         .option("--contains <text>", "wait until AXValue contains this")
         .option("--gone", "wait until the element does NOT exist (passes IMMEDIATELY if it never existed)")

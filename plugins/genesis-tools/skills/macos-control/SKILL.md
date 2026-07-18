@@ -133,6 +133,8 @@ For elements below the fold, prefer `press` (buttons) or `focus` + `type` (text 
 
 ## Gotchas
 
+- **One keyboard, one frontmost app — keyboard commands are machine-exclusive.** `set`/`type`/`hotkey` activate the target app and stream real CGEvents; a CONCURRENT session doing the same steals frontmost mid-type and keystrokes land in the wrong app (hard-verify catches it as "landed NOWHERE/different element", but the work still fails). Never run two agents that both do keyboard/focus work at the same time — parallelize read-only commands (find/get/ocr/screenshot) freely, serialize interaction.
+
 - **App-level screenshots capture the wrong window** when an app has multiple windows (e.g. Genesis main + Settings) — apps mark popups/strips as "main". Always pass a window title: `tools control screenshot --app X --window "..."` (peekaboo equivalent: `--window-title`).
 - **Browser elements use AXDescription, not AXTitle** — tab text is in `desc`, not `title`. Use `find --text "YouTube"` (searches all attributes) or `find --desc "YouTube"` specifically.
 - **Browser tabs are `AXRadioButton`**, not `AXButton` — `find --role AXButton` finds bookmark bar items, `find --role AXRadioButton` finds actual tabs.

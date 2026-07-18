@@ -135,12 +135,27 @@ export function registerDiscoveryCommands(program: Command): void {
 
     program
         .command("window")
-        .description("Get window bounds, position, and state for an app")
+        .description("Get window bounds/state — or mutate with --action move|resize|minimize|maximize|close|focus")
         .requiredOption("--app <name>", "app process name")
+        .option(
+            "--action <action>",
+            "move (needs --x --y) | resize (needs --width --height) | minimize | maximize | close | focus"
+        )
+        .option("--x <n>", "move: new x (screen points)")
+        .option("--y <n>", "move: new y (screen points)")
+        .option("--width <n>", "resize: new width (points)")
+        .option("--height <n>", "resize: new height (points)")
+        .option("--window <title>", "target a specific window by title substring")
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
-            const result = runAx(["window", "--app", opts.app]);
+            const axArgs = ["window", "--app", opts.app];
+            for (const k of ["action", "x", "y", "width", "height", "window"] as const) {
+                if (opts[k] != null) {
+                    axArgs.push(`--${k}`, String(opts[k]));
+                }
+            }
+            const result = runAx(axArgs);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
@@ -148,6 +163,10 @@ export function registerDiscoveryCommands(program: Command): void {
             if (!result.ok) {
                 logger.error(String(result.error));
                 process.exit(1);
+            }
+            if (opts.action) {
+                out.println(`${pc.green(String(result.action))} ${pc.cyan(String(result.window ?? opts.app))}`);
+                return;
             }
             const windows = (result.windows as Array<Record<string, unknown>>) ?? [];
             out.println(pc.bold(`${opts.app} — ${windows.length} windows\n`));
@@ -253,7 +272,9 @@ export function registerDiscoveryCommands(program: Command): void {
                 }
                 const front = result.frontmost as Record<string, unknown> | undefined;
                 if (front?.app) {
-                    out.println(pc.dim(`  frontmost: ${front.app} (pid ${front.pid})`));
+                    out.println(
+                        pc.dim(`  frontmost now: ${front.app} (pid ${front.pid}) — preflight does not activate --app`)
+                    );
                 }
                 const tab = result.browserTab as Record<string, unknown> | undefined;
                 if (tab) {
