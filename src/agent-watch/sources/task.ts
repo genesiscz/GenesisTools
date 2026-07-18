@@ -120,9 +120,8 @@ export async function readTaskSnapshots(opts: ReadTaskOptions): Promise<AgentSna
                 pidAlive,
             });
 
-            const lastEvent = events.at(-1);
             const exitEvent = events.find((e) => e.kind === "exit");
-            const lastOutputAt = lastEvent?.ts ?? lastModified;
+            const lastOutputAt = Math.max(events.at(-1)?.ts ?? 0, lastModified);
             const lastLine = events.findLast((e) => e.text)?.text;
 
             snapshots.push({

@@ -131,7 +131,10 @@ export async function readClaudeSnapshots(opts: ReadClaudeOptions): Promise<Agen
                     now: opts.now,
                     stallTimeoutMs: opts.stallTimeoutMs,
                 });
-                const lastOutputAt = events.at(-1)?.ts ?? lastModified;
+                // Same effective-activity timestamp the classifier uses —
+                // otherwise a live file with an older last parsed event can
+                // classify RUNNING yet fall outside the active window.
+                const lastOutputAt = Math.max(events.at(-1)?.ts ?? 0, lastModified);
 
                 snapshots.push({
                     id: `claude:${projDir.name}:${name}`,

@@ -126,16 +126,24 @@ export async function runWatch(opts: RunWatchOptions): Promise<void> {
 
     const watcher = chokidar.watch(roots, { persistent: true, ignoreInitial: true, depth: 6 });
     let sweeping = false;
+    let resweepQueued = false;
 
+    // An event landing DURING a sweep may describe a change the sweep already
+    // missed — dropping it would delay (or lose) the transition until the next
+    // poll. Queue exactly one follow-up sweep instead.
     const trigger = async (): Promise<void> => {
         if (sweeping) {
+            resweepQueued = true;
             return;
         }
 
         sweeping = true;
 
         try {
-            await sweep(opts, prevStates);
+            do {
+                resweepQueued = false;
+                await sweep(opts, prevStates);
+            } while (resweepQueued);
         } catch (err) {
             logger.warn({ err }, "agent-watch sweep failed");
         } finally {

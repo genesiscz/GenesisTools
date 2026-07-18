@@ -415,6 +415,9 @@ describe("collectSnapshots active window", () => {
             const fresh = [{ type: "line", seq: 1, out: "stdout", level: "info", ts: T0 - 1_000, text: "recent" }];
             writeFileSync(join(dir, "ancient.jsonl"), `${old.map((o) => SafeJSON.stringify(o)).join("\n")}\n`);
             writeFileSync(join(dir, "recent.jsonl"), `${fresh.map((o) => SafeJSON.stringify(o)).join("\n")}\n`);
+            // lastOutputAt = max(event ts, mtime) — age the mtimes to match the fixture clock.
+            utimesSync(join(dir, "ancient.jsonl"), (T0 - 10_000_000) / 1000, (T0 - 10_000_000) / 1000);
+            utimesSync(join(dir, "recent.jsonl"), (T0 - 1_000) / 1000, (T0 - 1_000) / 1000);
 
             const all = await collectSnapshots({ sources: ["task"], now: T0, stallTimeoutMs: 120_000, roots: { task: dir } });
             const windowed = await collectSnapshots({
