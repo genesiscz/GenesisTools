@@ -1,4 +1,6 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Storage } from "@genesiscz/utils/storage";
 import {
     DEFAULT_HTTP_PORT,
@@ -8,6 +10,31 @@ import {
     updateWakeupConfig,
 } from "../config";
 import { sendWakePacket } from "./wol";
+
+/** Constant-time string compare — token/password checks must not leak length-prefix timing. */
+function safeEqual(a: string, b: string): boolean {
+    const bufA = Buffer.from(a);
+    const bufB = Buffer.from(b);
+
+    if (bufA.length !== bufB.length) {
+        return false;
+    }
+
+    return timingSafeEqual(bufA, bufB);
+}
+
+/** Registered-client passwords are stored as sha256 digests, never plaintext. */
+export function hashClientPassword(password: string): string {
+    return createHash("sha256").update(password).digest("hex");
+}
+
+function passwordMatches(provided: string | undefined, storedDigest: string): boolean {
+    if (!provided) {
+        return false;
+    }
+
+    return safeEqual(hashClientPassword(provided), storedDigest);
+}
 
 export interface WakeServerOptions {
     port: number;
@@ -35,16 +62,16 @@ function authorize(req: Request, expectedToken: string | undefined): boolean {
     }
 
     const url = new URL(req.url);
+    const queryToken = url.searchParams.get("token");
 
-    if (url.searchParams.get("token") === expectedToken) {
+    if (queryToken !== null && safeEqual(queryToken, expectedToken)) {
         return true;
     }
 
     const auth = req.headers.get("authorization");
 
     if (auth?.toLowerCase().startsWith("bearer ")) {
-        const token = auth.slice(7).trim();
-        return token === expectedToken;
+        return safeEqual(auth.slice(7).trim(), expectedToken);
     }
 
     return false;
@@ -57,7 +84,7 @@ async function readBody(req: Request): Promise<WakeRequestBody | null> {
         try {
             return (await req.json()) as WakeRequestBody;
         } catch (err) {
-            console.debug("[wakeup] failed to parse JSON body", err);
+            logger.debug({ err }, "[wakeup] failed to parse JSON body");
             return null;
         }
     }
@@ -84,7 +111,7 @@ async function readBody(req: Request): Promise<WakeRequestBody | null> {
 
         return SafeJSON.parse(text, { strict: true }) as WakeRequestBody;
     } catch (err) {
-        console.debug("[wakeup] failed to parse body as JSON", err);
+        logger.debug({ err }, "[wakeup] failed to parse body as JSON");
         return null;
     }
 }
@@ -97,12 +124,15 @@ function json(data: unknown, status = 200): Response {
 }
 
 function logRequest(message: string, opts: WakeServerOptions, extra?: Record<string, unknown>): void {
+    // Always in the diagnostic log; mirrored to the console only with --log-requests.
+    logger.debug({ ...extra }, `[wakeup] ${message}`);
+
     if (!opts.logRequests) {
         return;
     }
 
     const payload = extra ? ` ${SafeJSON.stringify(extra)}` : "";
-    console.log(`[wakeup] ${message}${payload}`);
+    out.log.info(`[wakeup] ${message}${payload}`);
 }
 
 async function loadClients(storage: Storage | undefined): Promise<Map<string, RegisteredClient>> {
@@ -210,7 +240,7 @@ export async function runWakeServer(opts: WakeServerOptions): Promise<void> {
 
                 const record: RegisteredClient = {
                     name,
-                    password,
+                    password: hashClientPassword(password),
                     mac: clientMac,
                     broadcast: clientBroadcast,
                     wolPort: clientPort,
@@ -236,7 +266,7 @@ export async function runWakeServer(opts: WakeServerOptions): Promise<void> {
                     return json({ error: "client not found" }, 404);
                 }
 
-                if (client.password !== password) {
+                if (!passwordMatches(password, client.password)) {
                     return json({ error: "invalid password" }, 401);
                 }
 
@@ -261,7 +291,7 @@ export async function runWakeServer(opts: WakeServerOptions): Promise<void> {
                         return json({ error: "client not found" }, 404);
                     }
 
-                    if (client.password !== password) {
+                    if (!passwordMatches(password, client.password)) {
                         return json({ error: "invalid password" }, 401);
                     }
 
@@ -293,27 +323,28 @@ export async function runWakeServer(opts: WakeServerOptions): Promise<void> {
             return json({ error: "not found" }, 404);
         },
         error(error) {
-            console.error("[wakeup] server error", error);
+            logger.error({ error }, "[wakeup] server error");
             return json({ error: "server error" }, 500);
         },
     });
 
-    console.log(
+    out.log.info(
         `[wakeup] server listening on http://${hostname}:${opts.port} (default broadcast ${broadcast}:${wolPort})`
     );
+    logger.info({ hostname, port: opts.port, broadcast, wolPort, clients: clients.size }, "[wakeup] server started");
 
-    const shutdown = () => {
-        try {
-            server.stop();
-        } catch (err) {
-            console.error("[wakeup] stop failed", err);
-        }
-    };
+    await new Promise<void>((resolve) => {
+        const shutdown = (): void => {
+            try {
+                server.stop();
+            } catch (err) {
+                logger.error({ err }, "[wakeup] stop failed");
+            }
 
-    process.once("SIGINT", shutdown);
-    process.once("SIGTERM", shutdown);
+            resolve();
+        };
 
-    await new Promise<void>(() => {
-        /* keep running */
+        process.once("SIGINT", shutdown);
+        process.once("SIGTERM", shutdown);
     });
 }

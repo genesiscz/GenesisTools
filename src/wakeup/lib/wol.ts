@@ -14,27 +14,25 @@ export interface WakeResult {
     bytesSent: number;
 }
 
-function parseMac(mac: string): Uint8Array {
-    const cleaned = mac.replace(/[^0-9a-fA-F]/g, "");
+/** Parse a 6-byte hex string (separators allowed) into bytes, or throw with `label` context. */
+function parseHex6(raw: string, label: string): Uint8Array {
+    const cleaned = raw.replace(/[^0-9a-fA-F]/g, "");
 
     if (cleaned.length !== 12) {
-        throw new Error(`Invalid MAC address "${mac}". Expected 6 bytes (12 hex chars).`);
+        throw new Error(`Invalid ${label} "${raw}". Expected 6 bytes (12 hex chars).`);
     }
 
     const bytes = new Uint8Array(6);
 
     for (let i = 0; i < 6; i++) {
-        const part = cleaned.slice(i * 2, i * 2 + 2);
-        const value = Number.parseInt(part, 16);
-
-        if (Number.isNaN(value)) {
-            throw new Error(`Invalid MAC address byte "${part}" in "${mac}".`);
-        }
-
-        bytes[i] = value;
+        bytes[i] = Number.parseInt(cleaned.slice(i * 2, i * 2 + 2), 16);
     }
 
     return bytes;
+}
+
+function parseMac(mac: string): Uint8Array {
+    return parseHex6(mac, "MAC address");
 }
 
 function parsePassword(password: string | undefined): Uint8Array | null {
@@ -42,29 +40,10 @@ function parsePassword(password: string | undefined): Uint8Array | null {
         return null;
     }
 
-    const cleaned = password.replace(/[^0-9a-fA-F]/g, "");
-
-    if (cleaned.length !== 12) {
-        throw new Error("SecureOn password must be 6 bytes (12 hex characters).");
-    }
-
-    const bytes = new Uint8Array(6);
-
-    for (let i = 0; i < 6; i++) {
-        const part = cleaned.slice(i * 2, i * 2 + 2);
-        const value = Number.parseInt(part, 16);
-
-        if (Number.isNaN(value)) {
-            throw new Error(`Invalid SecureOn byte "${part}".`);
-        }
-
-        bytes[i] = value;
-    }
-
-    return bytes;
+    return parseHex6(password, "SecureOn password");
 }
 
-function buildMagicPacket(macBytes: Uint8Array, passwordBytes: Uint8Array | null): Buffer {
+export function buildMagicPacket(macBytes: Uint8Array, passwordBytes: Uint8Array | null): Buffer {
     const header = new Uint8Array(6).fill(0xff);
     const body = new Uint8Array(macBytes.length * 16);
 
@@ -93,7 +72,8 @@ export async function sendWakePacket(opts: WakeOptions): Promise<WakeResult> {
     const broadcast = opts.broadcast ?? "255.255.255.255";
     const port = opts.port ?? 9;
 
-    if (port <= 0 || port > 65535) {
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+        // NaN passes plain range checks (all comparisons false) — reject it explicitly.
         throw new Error(`Invalid UDP port "${port}".`);
     }
 

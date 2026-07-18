@@ -4,6 +4,7 @@ export type DeviceRole = "server" | "client" | "both";
 
 export interface RegisteredClient {
     name: string;
+    /** sha256 hex digest of the client password — never stored plaintext. */
     password: string;
     mac: string;
     broadcast: string;

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import * as p from "@clack/prompts";
-import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
 import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Storage } from "@genesiscz/utils/storage";
 import { Command } from "commander";
@@ -72,7 +72,7 @@ program.action(async () => {
 
 async function main(): Promise<void> {
     try {
-        await program.parseAsync(process.argv);
+        await runTool(program, { tool: "wakeup" });
     } catch (error) {
         p.log.error(error instanceof Error ? error.message : String(error));
         process.exit(1);
