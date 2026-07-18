@@ -43,7 +43,7 @@ async function notifyHandler(step: PresetStep, ctx: StepContext): Promise<StepRe
 
             case "telegram": {
                 const { loadTelegramConfig } = await import("@app/telegram-bot/lib/config");
-                const { createApi, sendMessage } = await import("@app/telegram-bot/lib/api");
+                const { createApi, sendMessage } = await import("@app/utils/telegram-bot/lib/api");
 
                 const config = await loadTelegramConfig();
                 if (!config) {

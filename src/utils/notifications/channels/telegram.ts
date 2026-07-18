@@ -7,8 +7,8 @@ export async function dispatchTelegram(event: NotificationEvent, config: Telegra
     }
 
     try {
-        const { createApi, sendMessage } = await import("@app/telegram-bot/lib/api");
-        const { escapeMarkdownV2 } = await import("@app/telegram-bot/lib/formatting");
+        const { createApi, sendMessage } = await import("@app/utils/telegram-bot/lib/api");
+        const { escapeMarkdownV2 } = await import("@app/utils/telegram-bot/lib/formatting");
         const api = createApi(config.botToken);
 
         const title = event.title ? `*${escapeMarkdownV2(event.title)}*` : "";

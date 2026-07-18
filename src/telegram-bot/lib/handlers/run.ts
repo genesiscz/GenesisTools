@@ -1,5 +1,5 @@
 import { listPresets } from "@app/automate/lib/storage";
-import { stripAnsi, truncateForTelegram } from "@app/telegram-bot/lib/formatting";
+import { stripAnsi, truncateForTelegram } from "@app/utils/telegram-bot/lib/formatting";
 import { execTool } from "@app/utils/cli/tools";
 import * as p from "@clack/prompts";
 import type { Bot } from "grammy";
