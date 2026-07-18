@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { type LaunchableModel, modelFamilyOf, resolveModelSpec } from "@app/claude/lib/models";
 import { type ScoredAccount, scoreAccounts } from "@app/claude/lib/usage/account-picker";
 import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
+import { tableSelectAccount } from "@app/claude/lib/usage/table-select";
+import { TIER_BADGE } from "@app/claude/lib/usage/usage-table";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
@@ -105,13 +107,6 @@ async function resolveModel(spec: string): Promise<string> {
     return picked as string;
 }
 
-const TIER_BADGE: Record<ScoredAccount["tier"], string> = {
-    ready: pc.green("●"),
-    "session-starved": pc.yellow("◐"),
-    "weekly-blocked": pc.red("○"),
-    "no-data": pc.dim("?"),
-};
-
 async function scoreTokenAccounts(
     withToken: AIAccountEntry[],
     modelId: string | undefined
@@ -211,26 +206,18 @@ async function pickAccount(
         return plainSelect(withToken, defaultName);
     }
 
-    const labelByName = new Map(withToken.map((a) => [a.name, a.label]));
-    const picked = await p.select({
-        message: "Launch Claude Code as which account? (best first)",
-        initialValue: scored[0].accountName,
-        options: scored.map((acc, i) => {
-            const label = labelByName.get(acc.accountName);
-            return {
-                value: acc.accountName,
-                label: `${TIER_BADGE[acc.tier]} ${acc.accountName}${label ? ` ${pc.dim(`(${label})`)}` : ""}${i === 0 ? pc.green(" ★") : ""}`,
-                hint: scoredHint(acc),
-            };
-        }),
+    const picked = await tableSelectAccount({
+        message: "Launch Claude Code as which account?",
+        scored,
+        accountsByName: new Map(withToken.map((a) => [a.name, a])),
     });
 
-    if (p.isCancel(picked)) {
+    if (picked === null) {
         p.cancel("Cancelled");
         process.exit(0);
     }
 
-    return picked as string;
+    return picked;
 }
 
 /**

@@ -1,5 +1,6 @@
 import type { ClaudeModelFamily } from "@app/claude/lib/models";
 import type { AccountUsage, UsageBucket } from "./api";
+import { type CompactLimits, extractCompactLimits } from "./compact-limits";
 
 /**
  * Account-picking heuristic for `tools claude start --pick/--autopick`.
@@ -61,6 +62,8 @@ export interface ScoredAccount {
     why: string;
     /** Set when usage data came from a stale cache or failed entirely. */
     dataNote?: string;
+    /** Compact 5h / weekly / Fable readout for the table-picker columns. */
+    limits?: CompactLimits;
 }
 
 export interface ScoreOptions {
@@ -146,6 +149,7 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
         const usage = account.usage;
         const session = viewBucket(usage.five_hour, SESSION_PERIOD_HOURS, now);
         const weekly = viewBucket(usage.seven_day, WEEKLY_PERIOD_HOURS, now);
+        const limits = extractCompactLimits(usage);
 
         // The binding weekly constraint: overall bucket, plus the model-specific
         // bucket when launching that family — whichever sustains the LOWER rate.
@@ -183,6 +187,7 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
                 sessionUsableFraction: usableFraction,
                 why: `${bindingName} exhausted — refills in ${fmtHours(binding.hoursToReset)}`,
                 dataNote: staleNote,
+                limits,
             };
         }
 
@@ -196,6 +201,7 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
                 sessionUsableFraction: usableFraction,
                 why: `would stall — ${sessionPhrase(session)}, needs ${Math.round(paceLine)}% to keep pace · ${weeklyPhrase(binding, bindingName)}`,
                 dataNote: staleNote,
+                limits,
             };
         }
 
@@ -209,6 +215,7 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
             sessionUsableFraction: usableFraction,
             why: `${fmtRate(weeklyRate)} sustainable — ${weeklyPhrase(binding, bindingName)} · ${sessionPhrase(session)}${usableNote}`,
             dataNote: staleNote,
+            limits,
         };
     });
 
