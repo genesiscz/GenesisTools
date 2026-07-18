@@ -1,5 +1,5 @@
 import { QA_STREAM_PATH, type QaRow } from "@dd/contract";
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { streamSse as defaultStreamSse, type SseEvent, type SseHandle, type StreamSseOptions } from "@/transport/sse-parser";
 import type { QaStream, QaStreamStatus } from "@/transport/Transport";
 
