@@ -1,8 +1,8 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/logger";
 import { buildExtension } from "@app/youtube/commands/extension";
+import { logger } from "@genesiscz/utils/logger";
 
 const DEFAULT_PORT = 9333;
 const CHROME_CANDIDATES = [

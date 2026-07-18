@@ -47,7 +47,7 @@ export class GrokSubResolver implements AccountResolver {
             })
         );
 
-        const { getProviderConfigs } = await import("@ask/providers/providers");
+        const { getProviderConfigs } = await import("@genesiscz/utils/ask/providers/providers");
         const config = getProviderConfigs().find((c) => c.name === "xai");
 
         if (!config) {

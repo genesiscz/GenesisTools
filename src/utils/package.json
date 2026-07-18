@@ -436,11 +436,19 @@
         "zustand": "^5.0.12"
     },
     "peerDependencies": {
+        "@ai-sdk/assemblyai": "*",
+        "@ai-sdk/gladia": "*",
         "ink": "^6.3.1",
         "react": "19.2.5",
         "react-dom": "19.2.5"
     },
     "peerDependenciesMeta": {
+        "@ai-sdk/assemblyai": {
+            "optional": true
+        },
+        "@ai-sdk/gladia": {
+            "optional": true
+        },
         "ink": {
             "optional": true
         },

@@ -1,7 +1,6 @@
 import { askUI } from "@ask/output/AskUILogger";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
-import { getProviderConfigs, KNOWN_MODELS } from "@ask/providers/providers";
 import type {
     AiSdkProvider,
     DetectedProvider,
@@ -15,6 +14,7 @@ import type {
 } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
 import type { AskConfig } from "@ask/types/config";
+import { getProviderConfigs, KNOWN_MODELS } from "@genesiscz/utils/ask/providers/providers";
 import {
     createSubscriptionFetch,
     SUBSCRIPTION_BETAS,

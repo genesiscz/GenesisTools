@@ -37,7 +37,7 @@ interface ImportHit {
     spec: string;
 }
 
-/** rg every `from "<spec>"` / bare `import "<spec>"` across scopes, excluding node_modules. */
+/** rg every `from "<spec>"`, bare `import "<spec>"`, dynamic `import("<spec>")`, and `require("<spec>")` across scopes, excluding node_modules. */
 async function collectImports(scopes: string[]): Promise<ImportHit[]> {
     // NOTE: glob patterns are interpolated as variables so Bun's `$` quotes
     // them — passing bare `-g *.ts` lets the embedded shell glob-expand `*.ts`
@@ -46,7 +46,8 @@ async function collectImports(scopes: string[]): Promise<ImportHit[]> {
     const excludeCodemods = "!scripts/codemods";
     const globTs = "*.ts";
     const globTsx = "*.tsx";
-    const pattern = "(?:from\\s+[\"']([^\"']+)[\"']|^\\s*import\\s+[\"']([^\"']+)[\"'])";
+    const pattern =
+        "(?:from\\s+[\"']([^\"']+)[\"']|^\\s*import\\s+[\"']([^\"']+)[\"']|import\\s*\\(\\s*[\"']([^\"']+)[\"']|require\\s*\\(\\s*[\"']([^\"']+)[\"'])";
     const raw =
         await $`rg -n --no-heading -g ${excludeNodeModules} -g ${excludeCodemods} -g ${globTs} -g ${globTsx} ${pattern} ${scopes}`
             .nothrow()
@@ -64,8 +65,15 @@ async function collectImports(scopes: string[]): Promise<ImportHit[]> {
         }
 
         const [, file, lineNo, rest] = m;
-        // Match `from "spec"` first, then fall back to bare side-effect `import "spec"`.
-        const specMatch = rest.match(/from\s+["']([^"']+)["']/) ?? rest.match(/^\s*import\s+["']([^"']+)["']/);
+        // Static `from "spec"` first, then side-effect `import "spec"`, then
+        // dynamic `import("spec")` / `require("spec")` — the dynamic forms are
+        // exactly how the @ask leak in ai/resolvers dodged the first version
+        // of this guard.
+        const specMatch =
+            rest.match(/from\s+["']([^"']+)["']/) ??
+            rest.match(/^\s*import\s+["']([^"']+)["']/) ??
+            rest.match(/import\s*\(\s*["']([^"']+)["']/) ??
+            rest.match(/require\s*\(\s*["']([^"']+)["']/);
         if (!specMatch) {
             continue;
         }
@@ -75,6 +83,16 @@ async function collectImports(scopes: string[]): Promise<ImportHit[]> {
 
     return hits;
 }
+
+/**
+ * Deliberate, documented cross-boundary escape hatches (dynamic imports with a
+ * graceful standalone fallback). Keyed `file -> spec`. Keep this list SHORT.
+ */
+const PURITY_EXEMPTIONS = new Map<string, string>([
+    // Pricing enrichment lives in the ask tool; resolve-models degrades to
+    // pricing-less models when @ask/* is absent (standalone utils install).
+    ["src/utils/ai/resolvers/resolve-models.ts", "@ask/providers/DynamicPricing"],
+]);
 
 function appSegmentOf(spec: string): string | null {
     const m = spec.match(TOOL_IMPORT_RE);
@@ -99,6 +117,10 @@ for (const hit of allHits) {
 
     // ---- rule 1b (FAIL): @ask/* aliases src/ask/* (tool internals) — same impurity as @app/*.
     if (hit.file.startsWith("src/utils/") && hit.spec.startsWith("@ask/")) {
+        if (PURITY_EXEMPTIONS.get(hit.file) === hit.spec) {
+            continue;
+        }
+
         hardErrors.push(`${hit.file}:${hit.line}  @genesiscz/utils must not import @ask/* (impurity): ${hit.spec}`);
         continue;
     }

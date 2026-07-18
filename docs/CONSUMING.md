@@ -70,8 +70,13 @@ bun add @genesiscz/utils
   the fragment.
 - `react`, `react-dom`, `ink` are optional peer dependencies — only needed
   if you import the UI/TUI parts.
-- `@ai-sdk/assemblyai` / `@ai-sdk/gladia` are lazy dynamic imports in the
-  transcription manager; install them only if you use those providers.
+- `@ai-sdk/assemblyai` / `@ai-sdk/gladia` are optional peers, lazy-imported by
+  the transcription manager; install them only if you use those providers.
+- Model resolution (`ai/resolvers`) enriches models with pricing via the ask
+  tool's DynamicPricing when running inside `@genesiscz/tools`; in a
+  standalone `@genesiscz/utils` install it degrades gracefully to
+  pricing-less models (the one documented cross-boundary escape hatch — see
+  `PURITY_EXEMPTIONS` in `scripts/ci/check-package-boundaries.ts`).
 
 ### Publishing (manual, deliberate)
 

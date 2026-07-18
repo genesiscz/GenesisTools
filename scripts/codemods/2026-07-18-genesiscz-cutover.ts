@@ -32,6 +32,16 @@ const MOVES: Move[] = [
         gitMoves: [],
         specRewrites: [{ from: "@app/utils", to: "@genesiscz/utils" }],
     },
+    {
+        id: "ask-providers",
+        description:
+            "ask provider config table -> utils (pure: only ProviderConfig type) — kills the @ask dynamic-import leak in utils/ai/resolvers",
+        gitMoves: [{ from: "src/ask/providers/providers.ts", to: "src/utils/ask/providers/providers.ts" }],
+        specRewrites: [{ from: "@ask/providers/providers", to: "@genesiscz/utils/ask/providers/providers" }],
+        fileRewrites: [
+            { file: "src/utils/ask/providers/providers.ts", from: "@ask/types", to: "@genesiscz/utils/ask/types" },
+        ],
+    },
 ];
 
 const args = process.argv.slice(2);

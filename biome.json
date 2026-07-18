@@ -91,7 +91,7 @@
                 "src/youtube/extension/**",
                 "src/youtube/ui/**",
                 "src/Internal/commands/reas/ui/**",
-                "src/logger/client.ts"
+                "src/utils/logger/client.ts"
             ],
             "linter": {
                 "rules": {
