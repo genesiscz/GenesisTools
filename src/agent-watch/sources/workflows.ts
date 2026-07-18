@@ -16,6 +16,33 @@ interface ReadWorkflowOptions {
 }
 
 /**
+ * Appending to an EXISTING file does not touch its parent directory's mtime
+ * (only create/rename/delete do), so an actively-writing workflow would look
+ * frozen by dir mtime alone. Activity = newest mtime of the dir or any file
+ * directly inside it (workflow transcripts are flat jsonl files).
+ */
+function newestMtime(dir: string): number {
+    let newest = statSync(dir).mtimeMs;
+
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isFile()) {
+            continue;
+        }
+
+        try {
+            const m = statSync(join(dir, entry.name)).mtimeMs;
+            if (m > newest) {
+                newest = m;
+            }
+        } catch (err) {
+            logger.debug({ err, dir, file: entry.name }, "workflow file vanished between readdir and stat");
+        }
+    }
+
+    return newest;
+}
+
+/**
  * Workflow transcripts live at projects/<proj>/<session>/subagents/workflows/**.
  * We treat each leaf workflow dir as one agent and classify by its mtime alone
  * (no per-event parse needed for v1 — a workflow dir untouched past the timeout
@@ -74,7 +101,7 @@ export async function readWorkflowSnapshots(opts: ReadWorkflowOptions): Promise<
                 const leafPath = join(wfRoot, leaf);
 
                 try {
-                    const lastModified = statSync(leafPath).mtimeMs;
+                    const lastModified = newestMtime(leafPath);
                     const state = classifyAgentState({
                         events: [],
                         lastModified,

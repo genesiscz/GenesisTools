@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -464,6 +464,30 @@ describe("sweep seed silence (continuous watch baseline)", () => {
             expect(calls).toHaveLength(0);
         } finally {
             rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("readWorkflowSnapshots activity detection", () => {
+    it("uses newest contained-file mtime, not the stale dir mtime (append-only writes)", async () => {
+        const root = mkdtempSync(join(tmpdir(), "agent-watch-wf-"));
+
+        try {
+            const leaf = join(root, "proj", "sess", "subagents", "workflows", "wf-1");
+            mkdirSync(leaf, { recursive: true });
+            const transcript = join(leaf, "agent-1.jsonl");
+            writeFileSync(transcript, "{}\n");
+
+            // Age the DIRECTORY far past the stall timeout; keep the FILE fresh.
+            const oldSec = (T0 - 10_000_000) / 1000;
+            utimesSync(leaf, oldSec, oldSec);
+            utimesSync(transcript, T0 / 1000, T0 / 1000);
+
+            const snaps = await readWorkflowSnapshots({ root, now: T0 + 1_000, stallTimeoutMs: 120_000 });
+            expect(snaps[0]?.state).toBe("RUNNING");
+            expect(snaps[0]?.lastOutputAt).toBe(T0);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
         }
     });
 });
