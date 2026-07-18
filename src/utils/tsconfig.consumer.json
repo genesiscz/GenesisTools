@@ -1,0 +1,14 @@
+{
+    // Shipped fragment — consumers `extends` this so TypeScript resolves
+    // @genesiscz/utils/* subpaths straight into the package's .ts sources
+    // (no build step). Paths resolve relative to THIS file's location, so it
+    // works from node_modules/@genesiscz/utils/ verbatim:
+    //   { "extends": "./node_modules/@genesiscz/utils/tsconfig.consumer.json" }
+    // (or "@genesiscz/utils/tsconfig.consumer.json" — covered by exports).
+    "compilerOptions": {
+        "paths": {
+            "@genesiscz/utils": ["./index.ts"],
+            "@genesiscz/utils/*": ["./*"]
+        }
+    }
+}

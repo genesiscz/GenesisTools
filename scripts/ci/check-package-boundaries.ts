@@ -97,6 +97,12 @@ for (const hit of allHits) {
         continue;
     }
 
+    // ---- rule 1b (FAIL): @ask/* aliases src/ask/* (tool internals) — same impurity as @app/*.
+    if (hit.file.startsWith("src/utils/") && hit.spec.startsWith("@ask/")) {
+        hardErrors.push(`${hit.file}:${hit.line}  @genesiscz/utils must not import @ask/* (impurity): ${hit.spec}`);
+        continue;
+    }
+
     const appTarget = appSegmentOf(hit.spec);
     if (appTarget === null) {
         continue;

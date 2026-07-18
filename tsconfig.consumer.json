@@ -1,0 +1,16 @@
+{
+    // Shipped fragment for git-dependency consumers of @genesiscz/tools.
+    // `extends` this from your tsconfig so TypeScript resolves the package's
+    // .ts sources directly (no build step). Paths resolve relative to THIS
+    // file, so it works from node_modules/@genesiscz/tools/ verbatim:
+    //   { "extends": "./node_modules/@genesiscz/tools/tsconfig.consumer.json" }
+    // Bun resolves the same aliases at runtime from this repo's own
+    // tsconfig.json, so no bundler config is needed.
+    "compilerOptions": {
+        "paths": {
+            "@genesiscz/utils": ["./src/utils/index.ts"],
+            "@genesiscz/utils/*": ["./src/utils/*"],
+            "@genesiscz/tools/*": ["./src/*"]
+        }
+    }
+}

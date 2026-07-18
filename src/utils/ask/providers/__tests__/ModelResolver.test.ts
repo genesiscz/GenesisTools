@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { ModelInfo } from "@ask/types";
+import type { ModelInfo } from "@genesiscz/utils/ask/types";
 import { AnthropicModelCategory, OpenAIModelCategory, resolveModel } from "../ModelResolver";
 
 const MOCK_MODELS: ModelInfo[] = [

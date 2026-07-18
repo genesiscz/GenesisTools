@@ -1,4 +1,4 @@
-import type { DetectedProvider, ModelInfo } from "@ask/types";
+import type { DetectedProvider, ModelInfo } from "@genesiscz/utils/ask/types";
 import type { AIProvider } from "@genesiscz/utils/config/ai.types";
 import type { AccountResolver } from "./index";
 

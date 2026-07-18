@@ -1,4 +1,29 @@
 {
-    "extends": "../../tsconfig.json",
-    "include": ["*.ts"]
+    // Self-contained on purpose (no extends): this file ships with the package,
+    // and Bun resolves a dependency's internal aliases from the dependency's own
+    // nearest tsconfig — so @genesiscz/utils/* and @ui/* self-imports keep
+    // working when the package is consumed from node_modules, where the repo
+    // root tsconfig.json does not exist. Mirrors the root compilerOptions.
+    "compilerOptions": {
+        "lib": ["ESNext", "DOM"],
+        "target": "ESNext",
+        "module": "ESNext",
+        "moduleDetection": "force",
+        "jsx": "react-jsx",
+        "allowJs": true,
+        "moduleResolution": "bundler",
+        "allowImportingTsExtensions": true,
+        "verbatimModuleSyntax": true,
+        "noEmit": true,
+        "strict": true,
+        "skipLibCheck": true,
+        "noFallthroughCasesInSwitch": true,
+        "paths": {
+            "@genesiscz/utils": ["./index.ts"],
+            "@genesiscz/utils/*": ["./*"],
+            "@ui": ["./ui/index.ts"],
+            "@ui/*": ["./ui/*"]
+        }
+    },
+    "include": ["**/*.ts", "**/*.tsx"]
 }
