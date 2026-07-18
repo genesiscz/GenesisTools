@@ -43,6 +43,14 @@ Notes:
 
 - Bun cannot install a subdirectory of a git repo — a git dep always brings
   the whole tree. That's the point here: the tools package IS the repo.
+- `Blocked 2 postinstalls` in the install output is expected and correct —
+  the repo's own `prepare`/`postinstall` (git hooks path + in-repo dependency
+  patches) must NOT run in consumers. Don't add `@genesiscz/tools` to
+  `trustedDependencies`.
+- Bun caches git deps globally by ref: after the branch moves, a reinstall can
+  serve the stale commit (or fail with "no commit matching"). Pin a commit sha
+  (`…GenesisTools.git#<sha>`) for reproducibility, or `bun pm cache rm` to
+  force a re-fetch of a moving branch ref.
 - Internal `@app/<tool>` imports inside the dep resolve through the dep's own
   root `tsconfig.json` at runtime (Bun), and through the fragment for your
   typechecker only where you import them.
