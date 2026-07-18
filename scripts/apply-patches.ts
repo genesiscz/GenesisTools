@@ -11,7 +11,7 @@
  * interop guard is redundant under a correctly-resolved string-width@4, and
  * the @opentui/solid patch is types-only).
  */
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
 
 const PATCHES: Array<{ pkg: string; patch: string }> = [
@@ -25,11 +25,15 @@ async function gitApply(args: string[]): Promise<number> {
 }
 
 let failed = false;
-for (const { pkg, patch } of PATCHES) {
-    if (!existsSync(pkg)) {
-        logger.debug({ pkg }, "apply-patches: package not installed, skipping");
+for (const { pkg: pkgPath, patch } of PATCHES) {
+    if (!existsSync(pkgPath)) {
+        logger.debug({ pkg: pkgPath }, "apply-patches: package not installed, skipping");
         continue;
     }
+
+    // git apply refuses paths "beyond a symbolic link" (worktrees often symlink
+    // node_modules to the main checkout) — resolve to the real directory first.
+    const pkg = realpathSync(pkgPath);
 
     if ((await gitApply(["--reverse", "--check", `--directory=${pkg}`, "--unsafe-paths", patch])) === 0) {
         continue;
