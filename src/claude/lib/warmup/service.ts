@@ -47,8 +47,21 @@ function shouldWarmWeekly(usage: UsageResponse): boolean {
 export async function sendWarmupMessage(accountName: string): Promise<boolean> {
     try {
         const { AIAccount } = await import("@genesiscz/utils/ai/AIAccount");
+        const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
         const { ChatEngine } = await import("@ask/chat/ChatEngine");
         const { AnthropicModelCategory } = await import("@genesiscz/utils/ask/providers/ModelResolver");
+
+        // Fail fast on credential-less entries (e.g. an aborted login left an
+        // account with empty tokens) instead of spinning through token-refresh
+        // retries and an API call that can only return "Invalid bearer token".
+        const aiConfig = await AIConfig.load();
+        const tokens = aiConfig.getAccount(accountName)?.tokens;
+        if (tokens && !tokens.accessToken && !tokens.refreshToken && !tokens.longLivedToken && !tokens.authFile) {
+            logger.warn(
+                `Warmup skipped for "${accountName}": no credentials stored. Run: tools claude login ${accountName}`
+            );
+            return false;
+        }
 
         const account = AIAccount.chooseClaude(accountName);
         await ChatEngine.oneShot({
