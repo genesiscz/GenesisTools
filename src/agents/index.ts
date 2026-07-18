@@ -7,6 +7,7 @@ import { registerDiscoverCommand } from "./commands/discover";
 import { registerListenCommand } from "./commands/listen";
 import { registerLoginCommand } from "./commands/login";
 import { registerMessageCommand } from "./commands/message";
+import { registerRequestCommand } from "./commands/request";
 
 handleReadmeFlag(import.meta.url);
 
@@ -19,6 +20,7 @@ program
 
 registerLoginCommand(program);
 registerMessageCommand(program);
+registerRequestCommand(program);
 registerDiscoverCommand(program);
 registerListenCommand(program);
 

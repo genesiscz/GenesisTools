@@ -59,6 +59,10 @@ tools agents discover
 # 6. Watch the whole conversation in a separate terminal (human-friendly):
 tools agents listen
 
+# Keep a compact receiver stream without changing what senders publish:
+tools agents login --agent-name lead --kinds message,error,approval_request
+tools agents login --agent-name lead --filter '.op=="approval_request"'
+
 # Enable verbose lifecycle visibility for ALL peers (default: only main sees
 # stream-mode join/leave + real-failure logout; other peers see nothing):
 tools agents login --agent-main --agent-name lead --debug
@@ -123,7 +127,29 @@ tools agents message --from reviewer --reply 0001 \
 
 # E. Pure ack (no body):
 tools agents message --from reviewer --reply 0001
+
+# Send one request and block until a correlated --reply arrives:
+tools agents request --from reviewer --to lead --body 'Approve the auth change?'
 ```
+
+## Long-lived Codex teammates
+
+`tools codex spawn` creates a persistent app-server session and auto-registers `codex_<name>` on this same bus. Do
+not manually log that identity in from the orchestrator. The driver observes inbound controls; the model receives with
+the seeded `tools agents login --agent-name codex_<name> --once --session <id>` command.
+
+Sessions are read-only unless you deliberately choose a write policy:
+
+```bash
+# Supervised worker: untrusted commands and write approvals go to lead.
+tools codex spawn --name implementer --write ask --prompt 'Implement the bounded change'
+
+# Trusted bounded worker: workspace writes without approval prompts.
+tools codex spawn --name implementer --write allow --prompt 'Implement the bounded change'
+```
+
+Omit `--write` (or use `--write deny`) for reviewers. Use `--write ask` as the default when edits are needed; use
+`--write allow` only when the task and writable roots are tightly bounded.
 
 ## What you receive on the `login` stream
 
@@ -169,6 +195,8 @@ You normally don't pass `--session` — it's automatic.
 - **Don't expect mid-tool-call interrupts.** Stream-mode `login` delivers between tool calls (via Monitor), `login --once` returns when next called. Neither preempts a running tool.
 - **Don't expect an idle teammate to wake on an agents-channel message.** See the idle-teammates section above — pair every send to a possibly-idle teammate with a harness `SendMessage` nudge.
 - **One main per session.** A second `login --agent-main` errors. Use a different `--agent-name` for additional coordinators.
+- **Receiver filters intentionally advance that receiver's cursor past non-matches.** Use a dedicated monitor identity
+  when you may later need the unfiltered stream.
 
 ## Quick reference
 
@@ -183,6 +211,9 @@ You normally don't pass `--session` — it's automatic.
 | `tools agents message --from X --reply 0001 --body '...'` | Reply (auto-routes to the original sender) |
 | `tools agents message --from X --reply 0001` | Pure ack (no body) |
 | `tools agents message --from X --to Y --body-file <path>` | Long/multi-section body — write it to a file first (avoids shell-quoting breaks from embedded `'`/`` ` ``/`$(...)` truncating `--body`) |
+| `tools agents request --from X --to Y --body '...'` | Send and block until a correlated reply arrives |
+| `tools agents login --agent-name X --kinds message,error` | Receiver-side event/body-kind filter |
+| `tools agents login --agent-name X --filter '.op=="approval_request"'` | Receiver-side structured-body filter |
 | `tools agents discover` | List all agents in session |
 | `tools agents listen` | Human-facing color-formatted feed follower (sees everything) |
 

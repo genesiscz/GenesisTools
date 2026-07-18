@@ -13,15 +13,18 @@ tools agents login --agent-name lead --agent-main              # auto-registers 
 tools agents login --agent-name researcher                     # auto-registers + attaches (stream mode)
 tools agents login --agent-id agt_xxx --agent-name X            # attach with a chosen id
 tools agents login --agent-name X --once                       # one-shot (poll loop)
+tools agents login --agent-name lead --kinds message,error     # receiver-side verbosity filter
+tools agents login --agent-name lead --filter '.op=="approval_request"'
 tools agents message --from X --to Y --body '...'
 tools agents message --from X --body '...'                     # broadcast (no --to)
 tools agents message --from X --reply 0001 --body '...'        # reply (auto-routes to original sender)
 tools agents message --from X --reply 0001                     # pure ack (no body)
+tools agents request --from X --to Y --body 'approve?'         # block for correlated reply
 tools agents discover                                          # list registry
 tools agents listen                                            # human-facing color follower
 ```
 
-There is no separate `register` command — `login` auto-registers on first use for a given `--agent-name`/`--agent-id`. There is no separate `respond` command — replies go through `message --reply <msg-id>`.
+There is no separate `register` command — `login` auto-registers on first use for a given `--agent-name`/`--agent-id`. There is no separate `respond` command — replies go through `message --reply <msg-id>`. `request` is a thin send-and-wait primitive over those same replies; it does not introduce a second channel.
 
 ## Session resolution
 
@@ -67,7 +70,7 @@ The registry (who's registered, logged in/out) is derived by replaying `feed.jso
 ## Build / test
 
 ```bash
-bunx tsgo --noEmit                                # type-check
+tsgo --noEmit                                     # type-check
 tools agents --help                               # show command tree
 tools agents login --agent-main --agent-name lead --once --session demo
 tools agents discover --session demo

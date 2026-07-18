@@ -11,6 +11,7 @@ import { isVisibleToAgent } from "../lib/filter";
 import { formatEventPretty } from "../lib/format-pretty";
 import { deriveMainAgentId, isMainId } from "../lib/id-gen";
 import { onShutdown } from "../lib/lifecycle";
+import { createListenerFilter } from "../lib/listener-filter";
 import { ensureSessionDir, sessionPaths } from "../lib/paths";
 import { readSessionMeta, type SessionMeta } from "../lib/session-meta";
 import { resolveSession } from "../lib/session-resolve";
@@ -32,6 +33,8 @@ interface LoginOpts {
     session?: string;
     observer?: boolean;
     format?: "pretty" | "json";
+    kinds?: string;
+    filter?: string;
 }
 
 interface ActiveLogin {
@@ -43,6 +46,7 @@ interface ActiveLogin {
     observer: boolean;
     format: "pretty" | "json";
     cursorSeq: number;
+    listenerFilter: (event: FeedEvent) => boolean;
 }
 
 async function pickAgent(records: AgentRecord[]): Promise<AgentRecord | null> {
@@ -275,6 +279,10 @@ function emitVisibleEvent(event: FeedEvent, active: ActiveLogin): boolean {
         return false;
     }
 
+    if (!active.listenerFilter(event)) {
+        return false;
+    }
+
     if (active.format === "pretty") {
         out.println(formatEventPretty(event));
     } else {
@@ -413,6 +421,7 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
             observer: Boolean(opts.observer),
             format,
             cursorSeq: readCursor(paths, record.agent_id),
+            listenerFilter: createListenerFilter({ kinds: opts.kinds, expression: opts.filter }),
         };
 
         await emitLoggedIn({ paths, record, mode });
@@ -501,6 +510,8 @@ export function registerLoginCommand(program: Command): void {
         .option("--session <id>", "Override session resolution")
         .option("--observer", "Read-only: bypass per-agent visibility filter and see ALL events")
         .option("--format <fmt>", "pretty | json (default: json; observer in TTY → pretty)")
+        .option("--kinds <csv>", "Only emit feed types or structured message op/event kinds")
+        .option("--filter <expr>", 'Filter structured bodies, e.g. .op=="approval_request"')
         .action(async (opts: LoginOpts) => {
             await runLogin(opts);
         });
