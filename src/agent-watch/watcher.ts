@@ -1,4 +1,4 @@
-import { logger, out } from "@app/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import chokidar from "chokidar";
 import { collectSnapshots, defaultClaudeRoot, defaultTaskDir, defaultWorkflowRoot } from "./sources/index";
 import { shouldNotify, transitionMessage } from "./transitions";

@@ -1,4 +1,4 @@
-import { formatTable } from "@app/utils/table";
+import { formatTable } from "@genesiscz/utils/table";
 import pc from "picocolors";
 import type { AgentSnapshot } from "./types";
 

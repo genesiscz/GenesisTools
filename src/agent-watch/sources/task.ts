@@ -1,10 +1,10 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { logger } from "@app/logger";
-import { SafeJSON } from "@app/utils/json";
-import { parseJsonl } from "@app/utils/jsonl";
-import { isProcessAlive } from "@app/utils/process-alive";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { parseJsonl } from "@genesiscz/utils/jsonl";
+import { logger } from "@genesiscz/utils/logger";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { classifyAgentState } from "../classify";
 import type { AgentEvent, AgentSnapshot } from "../types";
 

@@ -3,7 +3,7 @@ import { defaultClaudeRoot, readClaudeSnapshots } from "./claude";
 import { defaultTaskDir, readTaskSnapshots } from "./task";
 import { defaultWorkflowRoot, readWorkflowSnapshots } from "./workflows";
 
-export { defaultTaskDir, defaultClaudeRoot, defaultWorkflowRoot };
+export { defaultClaudeRoot, defaultTaskDir, defaultWorkflowRoot };
 
 export async function collectSnapshots(opts: CollectOptions): Promise<AgentSnapshot[]> {
     const { sources, now, stallTimeoutMs, roots } = opts;

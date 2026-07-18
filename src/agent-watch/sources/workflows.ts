@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@app/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { classifyAgentState } from "../classify";
 import type { AgentSnapshot } from "../types";
 

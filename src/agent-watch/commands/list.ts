@@ -1,4 +1,4 @@
-import { out } from "@app/logger";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { collectSnapshots } from "../sources/index";
 import { parseSharedOptions } from "./shared";

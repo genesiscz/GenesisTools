@@ -1,4 +1,4 @@
-import { out } from "@app/logger";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { renderStatusTable, toJsonSnapshot } from "../render";
 import { collectSnapshots } from "../sources/index";

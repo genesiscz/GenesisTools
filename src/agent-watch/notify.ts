@@ -1,6 +1,6 @@
-import { logger } from "@app/logger";
-import type { ChannelName } from "@app/utils/notifications";
-import { dispatchNotification } from "@app/utils/notifications";
+import { logger } from "@genesiscz/utils/logger";
+import type { ChannelName } from "@genesiscz/utils/notifications";
+import { dispatchNotification } from "@genesiscz/utils/notifications";
 import type { Notifier } from "./types";
 
 export type NotifyChannel = "terminal" | "say" | "telegram";
