@@ -1,4 +1,4 @@
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
  * The heart of the WebView renderer decision (path (a)): the server gives us a `<body>`-fragment

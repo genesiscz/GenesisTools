@@ -1,4 +1,4 @@
-import { SafeJSON } from "@app/utils/json";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
  * RN ↔ WebView message protocol for Driver B (the local xterm.js host page). Cribbed from the
