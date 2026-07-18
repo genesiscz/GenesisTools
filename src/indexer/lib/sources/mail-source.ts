@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
-import { ENVELOPE_INDEX_PATH, normalizeMailboxName, parseMailboxUrl } from "@app/macos/lib/mail/constants";
 import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
 import { MailDatabase, selectStaleMailChunkIds } from "@app/utils/macos/MailDatabase";
+import { ENVELOPE_INDEX_PATH, normalizeMailboxName, parseMailboxUrl } from "@app/utils/macos/mail/constants";
 import { ensureExtensionCapableSQLite } from "@app/utils/search/stores/sqlite-vec-loader";
 import {
     type DetectChangesOptions,

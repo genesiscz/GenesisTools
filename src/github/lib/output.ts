@@ -1,6 +1,7 @@
 // Output formatters for GitHub data
 
 import { formatReviewMarkdown, formatReviewTerminal } from "@app/github/lib/review-output";
+import { formatLocalDateTimeStamp } from "@app/utils/date";
 import type {
     ActivityItem,
     CommentData,
@@ -12,8 +13,7 @@ import type {
     RepoSearchResult,
     ReviewData,
     SearchResult,
-} from "@app/github/types";
-import { formatLocalDateTimeStamp } from "@app/utils/date";
+} from "@app/utils/github/types";
 import { sumReactions } from "@app/utils/github/utils";
 
 import { SafeJSON } from "@app/utils/json";

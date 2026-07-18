@@ -1,5 +1,3 @@
-import type { PromptTask, PromptTaskValue } from "@app/doctor/ui/tui/stores/prompt-store";
-import { usePromptStore } from "@app/doctor/ui/tui/stores/prompt-store";
 import type { PromptBackend } from "@app/utils/prompts/p/backend";
 import type {
     ConfirmOpts,
@@ -12,6 +10,8 @@ import type {
     TextOpts,
     TypedConfirmOpts,
 } from "@app/utils/prompts/p/types";
+import type { PromptTask, PromptTaskValue } from "@app/utils/tui/prompt-store";
+import { usePromptStore } from "@app/utils/tui/prompt-store";
 import type { CliRenderer } from "@opentui/core";
 
 export interface LogEntry {

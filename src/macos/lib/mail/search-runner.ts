@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { getIndexerStorage } from "@app/indexer/lib/storage";
 import { searchIndexReadonly } from "@app/indexer/lib/store";
 import { logger } from "@app/logger";
-import { ENVELOPE_INDEX_PATH } from "@app/macos/lib/mail/constants";
 import { buildMailFilterPredicate } from "@app/macos/lib/mail/search-filters";
 import {
     formatFallbackStart,
@@ -15,9 +14,10 @@ import {
 } from "@app/macos/lib/mail/search-label";
 import { mdfindMailRowids } from "@app/macos/lib/mail/spotlight";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
-import type { MailMessage, MailMessageRow, SearchOptions } from "@app/macos/lib/mail/types";
 import { closeDarwinKit, rankBySimilarity } from "@app/utils/macos";
 import type { MailDatabase } from "@app/utils/macos/MailDatabase";
+import { ENVELOPE_INDEX_PATH } from "@app/utils/macos/mail/constants";
+import type { MailMessage, MailMessageRow, SearchOptions } from "@app/utils/macos/mail/types";
 
 export type MailSearchMode = "auto" | "fulltext" | "hybrid" | "vector";
 

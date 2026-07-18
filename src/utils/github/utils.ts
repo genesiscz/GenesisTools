@@ -1,7 +1,7 @@
 // Shared utility functions for GitHub commands
 
-import type { CommentData, CommentRecord, GitHubReactions } from "@app/github/types";
 import { out } from "@app/logger";
+import type { CommentData, CommentRecord, GitHubReactions } from "@app/utils/github/types";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { MailMessage } from "@app/macos/lib/mail/types";
+import type { MailMessage } from "@app/utils/macos/mail/types";
 import { ALL_COLUMN_KEYS, DEFAULT_LIST_COLUMNS, MAIL_COLUMNS, type MailColumnKey, RECIPIENT_COLUMNS } from "./columns";
 
 function makeMockMessage(overrides?: Partial<MailMessage>): MailMessage {

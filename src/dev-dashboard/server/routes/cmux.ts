@@ -1,4 +1,3 @@
-import { focusCmuxPane, renameCmuxSurface, renameCmuxWorkspace } from "@app/cmux/lib/controls";
 import { createDevDashboardTerminal } from "@app/dev-dashboard/lib/cmux/create-terminal";
 import { createCmuxWorkspace } from "@app/dev-dashboard/lib/cmux/create-workspace";
 import { enrichPanesWithTtyd, resolveTtydForCmuxSurface } from "@app/dev-dashboard/lib/cmux/enrich-ttyd";
@@ -10,6 +9,7 @@ import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
 import { logger } from "@app/logger";
 import { fetchCmuxFullLayout } from "@app/utils/cmux/layout";
+import { focusCmuxPane, renameCmuxSurface, renameCmuxWorkspace } from "@app/utils/cmux/lib/controls";
 import type { DashboardSendTarget } from "@app/utils/cmux/types";
 
 export function cmuxRoutes(): RouteDef[] {

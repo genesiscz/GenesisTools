@@ -17,6 +17,9 @@ import {
 } from "@app/github/lib/cache";
 import { calculateStats, formatIssue } from "@app/github/lib/output";
 import { detectCrossReferences, findReplyTarget, processQuotes } from "@app/github/lib/quotes";
+import { logger, out } from "@app/logger";
+import { getOctokit } from "@app/utils/github/octokit";
+import { withRetry } from "@app/utils/github/rate-limit";
 import type {
     CommentData,
     CommentPreview,
@@ -28,10 +31,7 @@ import type {
     IssueData,
     LinkedIssue,
     TimelineEventData,
-} from "@app/github/types";
-import { logger, out } from "@app/logger";
-import { getOctokit } from "@app/utils/github/octokit";
-import { withRetry } from "@app/utils/github/rate-limit";
+} from "@app/utils/github/types";
 import { detectRepoFromGit, extractCommentId, parseDate, parseGitHubUrl } from "@app/utils/github/url-parser";
 import {
     fromCommentRecord,

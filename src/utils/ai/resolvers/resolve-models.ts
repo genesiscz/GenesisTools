@@ -1,4 +1,4 @@
-import type { ModelInfo, ProviderConfig } from "@ask/types";
+import type { ModelInfo, ProviderConfig } from "@app/utils/ask/types";
 
 interface ResolvedModels {
     models: ModelInfo[];

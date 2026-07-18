@@ -1,7 +1,7 @@
-import { runCmuxJSON } from "@app/cmux/lib/cli";
-import { focusCmuxPane } from "@app/cmux/lib/controls";
-import { withFocusedWorkspace } from "@app/cmux/lib/focus-guard";
 import { logger } from "@app/logger";
+import { runCmuxJSON } from "@app/utils/cmux/lib/cli";
+import { focusCmuxPane } from "@app/utils/cmux/lib/controls";
+import { withFocusedWorkspace } from "@app/utils/cmux/lib/focus-guard";
 import type { AttachTmuxResult, CmuxSendTarget } from "@app/utils/cmux/types";
 import {
     assertTerminalSurface,

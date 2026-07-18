@@ -1,8 +1,8 @@
-import { focusCmuxPane } from "@app/cmux/lib/controls";
-import { withFocusedWorkspace } from "@app/cmux/lib/focus-guard";
 import { DEV_DASHBOARD_WORKSPACE } from "@app/dev-dashboard/lib/tmux/constants";
 import { makeCmuxTmuxSessionName } from "@app/dev-dashboard/lib/tmux/naming";
 import { logger } from "@app/logger";
+import { focusCmuxPane } from "@app/utils/cmux/lib/controls";
+import { withFocusedWorkspace } from "@app/utils/cmux/lib/focus-guard";
 import type { AttachTmuxResult } from "@app/utils/cmux/types";
 import {
     ensureWorkspaceByName,

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import * as controls from "@app/cmux/lib/controls";
+import * as controls from "@app/utils/cmux/lib/controls";
 import { attachTmuxToCmux } from "@app/utils/cmux/send-tmux";
 import * as workspace from "@app/utils/cmux/workspace";
 import { resetTmuxBinCache, setTmuxBinForTests } from "@app/utils/tmux/bin";

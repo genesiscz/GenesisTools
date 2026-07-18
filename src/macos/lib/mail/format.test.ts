@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { generateAttachmentName } from "@app/macos/lib/mail/format";
-import type { MailMessage } from "@app/macos/lib/mail/types";
+import type { MailMessage } from "@app/utils/macos/mail/types";
 
 function msg(subject: string): MailMessage {
     return {

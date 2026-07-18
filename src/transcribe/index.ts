@@ -2,12 +2,12 @@
 
 import { existsSync } from "node:fs";
 import { basename, extname, resolve } from "node:path";
-import { audioProcessor } from "@app/ask/audio/AudioProcessor.ts";
 import { out } from "@app/logger";
 import { AI } from "@app/utils/ai/index.ts";
 import { getAllProviders } from "@app/utils/ai/providers/index.ts";
 import { formatOutput, formatTimestamp, type OutputFormat, toSRT, toVTT } from "@app/utils/ai/transcription-format.ts";
 import type { AIProviderType } from "@app/utils/ai/types.ts";
+import { audioProcessor } from "@app/utils/ask/audio/AudioProcessor.ts";
 import { runTool } from "@app/utils/cli";
 import { isInteractive, suggestCommand } from "@app/utils/cli/executor.ts";
 import { isQuietOutput } from "@app/utils/cli/output-mode.ts";

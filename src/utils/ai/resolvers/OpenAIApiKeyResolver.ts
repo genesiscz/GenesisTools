@@ -1,5 +1,5 @@
+import type { DetectedProvider } from "@app/utils/ask/types";
 import type { AIProvider } from "@app/utils/config/ai.types";
-import type { DetectedProvider } from "@ask/types";
 import type { AccountResolver } from "./index";
 import { resolveModelsWithPricing } from "./resolve-models";
 

@@ -1,4 +1,4 @@
-import type { CmuxLivePane, CmuxLiveSnapshot } from "@app/cmux/lib/live-snapshot";
+import type { CmuxLivePane, CmuxLiveSnapshot } from "@app/utils/cmux/lib/live-snapshot";
 
 interface TtydBinding {
     id: string;

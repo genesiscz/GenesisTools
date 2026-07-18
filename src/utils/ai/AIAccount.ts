@@ -1,6 +1,10 @@
+import type {
+    AnthropicModelCategory,
+    ModelSelection,
+    OpenAIModelCategory,
+} from "@app/utils/ask/providers/ModelResolver";
+import type { DetectedProvider, ModelInfo } from "@app/utils/ask/types";
 import type { AIProvider } from "@app/utils/config/ai.types";
-import type { AnthropicModelCategory, ModelSelection, OpenAIModelCategory } from "@ask/providers/ModelResolver";
-import type { DetectedProvider, ModelInfo } from "@ask/types";
 
 /**
  * A handle to an AI account from AIConfig.
@@ -145,7 +149,7 @@ export class AIAccount {
 
     /** Resolve a model by category (e.g. "haiku") or exact ID. */
     async model(selection: AnthropicModelCategory | OpenAIModelCategory | string): Promise<ModelSelection> {
-        const { resolveModel } = await import("@ask/providers/ModelResolver");
+        const { resolveModel } = await import("@app/utils/ask/providers/ModelResolver");
         const models = await this.models();
         return resolveModel(selection, models);
     }

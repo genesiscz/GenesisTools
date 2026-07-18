@@ -1,11 +1,11 @@
 // Search command implementation
 
 import { formatRepoResults, formatSearchResults } from "@app/github/lib/output";
-import type { RepoSearchResult, SearchCommandOptions, SearchResult } from "@app/github/types";
 import { logger, out } from "@app/logger";
 import { batchFetchCommentReactions } from "@app/utils/github/graphql";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
+import type { RepoSearchResult, SearchCommandOptions, SearchResult } from "@app/utils/github/types";
 import { parseRepo } from "@app/utils/github/url-parser";
 import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
 import chalk from "chalk";

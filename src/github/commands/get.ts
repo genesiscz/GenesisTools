@@ -1,11 +1,11 @@
 // Get file content command implementation
 
 import { resolve } from "node:path";
-import type { GitHubCommitUrl } from "@app/github/types";
 import { logger, out } from "@app/logger";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
+import type { GitHubCommitUrl } from "@app/utils/github/types";
 import { buildRawGitHubUrl, parseGitHubCommitUrl, parseGitHubFileUrl } from "@app/utils/github/url-parser";
 import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
 import { SafeJSON } from "@app/utils/json";

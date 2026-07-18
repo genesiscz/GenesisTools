@@ -22,7 +22,7 @@ const fakeProviderChoice = {
     model: { id: "fake-model" },
 } as unknown as Parameters<typeof import("@app/utils/ai/call-llm").callLLMStructured>[0]["providerChoice"];
 
-mock.module("@ask/types/provider", () => ({
+mock.module("@app/utils/ask/types/provider", () => ({
     getLanguageModel: () => "MOCK_MODEL",
 }));
 

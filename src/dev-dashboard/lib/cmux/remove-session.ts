@@ -1,5 +1,5 @@
-import { runCmuxOk } from "@app/cmux/lib/cli";
 import { fetchCmuxFullLayout } from "@app/utils/cmux/layout";
+import { runCmuxOk } from "@app/utils/cmux/lib/cli";
 import { findCmuxSurfacesForTmuxSession } from "@app/utils/cmux/tmux-bindings";
 
 export async function removeTmuxSessionFromCmux(tmuxSessionName: string): Promise<number> {

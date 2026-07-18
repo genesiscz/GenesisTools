@@ -1,11 +1,11 @@
 import { logger } from "@app/logger";
 import type { AIAccount } from "@app/utils/ai/AIAccount";
 import { buildProviderOptions } from "@app/utils/ai/prompt-caching";
+import type { AnthropicModelCategory, OpenAIModelCategory } from "@app/utils/ask/providers/ModelResolver";
 import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
-import type { AnthropicModelCategory, OpenAIModelCategory } from "@ask/providers/ModelResolver";
 import type { ChatConfig, ChatMessage, DetectedProvider, ProviderChoice } from "@ask/types";
 import type { LanguageModel, LanguageModelUsage, ModelMessage, ToolSet } from "ai";
 import { generateText, stepCountIs, streamText } from "ai";
@@ -47,7 +47,7 @@ export class ChatEngine {
     }
 
     static async oneShot(options: OneShotOptions): Promise<ChatResponse> {
-        const { resolveModel } = await import("@ask/providers/ModelResolver");
+        const { resolveModel } = await import("@app/utils/ask/providers/ModelResolver");
         const { getLanguageModel } = await import("@ask/types");
 
         let provider: DetectedProvider;

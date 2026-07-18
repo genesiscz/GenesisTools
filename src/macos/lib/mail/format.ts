@@ -1,6 +1,6 @@
 import { DEFAULT_LIST_COLUMNS, MAIL_COLUMNS, type MailColumnKey } from "@app/macos/lib/mail/columns";
-import type { MailMessage } from "@app/macos/lib/mail/types";
 import { formatBytes } from "@app/utils/format";
+import type { MailMessage } from "@app/utils/macos/mail/types";
 import { formatTable } from "@app/utils/table";
 
 /**

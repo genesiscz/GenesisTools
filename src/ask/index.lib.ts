@@ -1,4 +1,6 @@
 export { AIAccount } from "@app/utils/ai/AIAccount";
+export type { ModelSelection } from "@app/utils/ask/providers/ModelResolver";
+export { AnthropicModelCategory, OpenAIModelCategory, resolveModel } from "@app/utils/ask/providers/ModelResolver";
 export { AIChat } from "./AIChat";
 export type { OneShotOptions } from "./chat/ChatEngine";
 export { ChatEngine } from "./chat/ChatEngine";
@@ -19,8 +21,6 @@ export type {
     SessionStats,
     ToolCallResult,
 } from "./lib/types";
-export type { ModelSelection } from "./providers/ModelResolver";
-export { AnthropicModelCategory, OpenAIModelCategory, resolveModel } from "./providers/ModelResolver";
 export { ModelSelector } from "./providers/ModelSelector";
 export { ProviderManager } from "./providers/ProviderManager";
 export type { DetectedProvider, ModelInfo, ProviderChoice } from "./types";

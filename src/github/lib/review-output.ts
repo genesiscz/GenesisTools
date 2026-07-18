@@ -4,8 +4,8 @@
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve as pathResolve } from "node:path";
-import type { ParsedReviewThread, PRLevelComment, ReviewData } from "@app/github/types";
 import { formatRelativeTime } from "@app/utils/format";
+import type { ParsedReviewThread, PRLevelComment, ReviewData } from "@app/utils/github/types";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 

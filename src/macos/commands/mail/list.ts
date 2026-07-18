@@ -8,10 +8,10 @@ import {
 } from "@app/macos/lib/mail/command-helpers";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
-import type { MailMessage } from "@app/macos/lib/mail/types";
 import { isQuietOutput } from "@app/utils/cli/output-mode";
 import { createQuietSpinner } from "@app/utils/cli/quiet-spinner";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
+import type { MailMessage } from "@app/utils/macos/mail/types";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 

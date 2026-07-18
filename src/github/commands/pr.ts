@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { getDatabase, getOrCreateRepo, upsertIssue } from "@app/github/lib/cache";
 import { formatPR } from "@app/github/lib/output";
 import { calculateReviewStats, fetchPRReviewThreads, parseThreads } from "@app/github/lib/review-threads";
+import { logger, out } from "@app/logger";
+import { getOctokit } from "@app/utils/github/octokit";
+import { withRetry } from "@app/utils/github/rate-limit";
 import type {
     CheckData,
     CommitData,
@@ -15,10 +18,7 @@ import type {
     PRData,
     ReviewCommentData,
     ReviewThreadStats,
-} from "@app/github/types";
-import { logger, out } from "@app/logger";
-import { getOctokit } from "@app/utils/github/octokit";
-import { withRetry } from "@app/utils/github/rate-limit";
+} from "@app/utils/github/types";
 import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser";
 import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
 import chalk from "chalk";

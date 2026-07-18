@@ -1,11 +1,11 @@
 // Notifications command implementation
 
 import { formatNotifications } from "@app/github/lib/output";
-import type { GitHubNotification, NotificationItem, NotificationsCommandOptions } from "@app/github/types";
 import { logger, out } from "@app/logger";
 import { Browser } from "@app/utils/browser";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
+import type { GitHubNotification, NotificationItem, NotificationsCommandOptions } from "@app/utils/github/types";
 import { apiUrlToWebUrl, extractNumberFromApiUrl, parseDate } from "@app/utils/github/url-parser";
 import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
 import { SafeJSON } from "@app/utils/json";

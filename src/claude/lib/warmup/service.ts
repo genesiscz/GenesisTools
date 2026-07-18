@@ -48,7 +48,7 @@ export async function sendWarmupMessage(accountName: string): Promise<boolean> {
     try {
         const { AIAccount } = await import("@app/utils/ai/AIAccount");
         const { ChatEngine } = await import("@ask/chat/ChatEngine");
-        const { AnthropicModelCategory } = await import("@ask/providers/ModelResolver");
+        const { AnthropicModelCategory } = await import("@app/utils/ask/providers/ModelResolver");
 
         const account = AIAccount.chooseClaude(accountName);
         await ChatEngine.oneShot({

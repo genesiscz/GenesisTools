@@ -3,8 +3,8 @@ import { type Dirent, existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { logger } from "@app/logger";
+import { ENVELOPE_INDEX_PATH } from "@app/utils/macos/mail/constants";
 import { htmlToMarkdown } from "@app/utils/markdown/html-to-md";
-import { ENVELOPE_INDEX_PATH } from "./constants";
 import { extractRowidFromEmlxPath } from "./spotlight";
 
 const MAIL_V10_DIR = join(homedir(), "Library/Mail/V10");

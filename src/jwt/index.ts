@@ -1,8 +1,8 @@
 import { logger, out } from "@app/logger";
 import { isInteractive, runTool, suggestCommand } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
+import { decodeJwt, describeClaimTime, type JwtObject, type TimeClaim } from "@app/utils/jwt";
 import { Command } from "commander";
-import { decodeJwt, describeClaimTime, type JwtObject, type TimeClaim } from "./lib/jwt-core";
 
 const TIME_CLAIMS: TimeClaim[] = ["exp", "iat", "nbf"];
 

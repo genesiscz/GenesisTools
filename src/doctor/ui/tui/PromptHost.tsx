@@ -1,11 +1,11 @@
 /** @jsxImportSource @opentui/solid */
 import type { SelectValue } from "@app/utils/prompts/p";
 import { completeTask } from "@app/utils/prompts/p/opentui-backend";
+import type { PromptTask } from "@app/utils/tui/prompt-store";
+import { usePromptStore } from "@app/utils/tui/prompt-store";
 import { useKeyboard } from "@opentui/solid";
 import { createEffect, createMemo, createSignal, For, type Setter, Show } from "solid-js";
 import { Modal } from "./Modal";
-import type { PromptTask } from "./stores/prompt-store";
-import { usePromptStore } from "./stores/prompt-store";
 import { useStore } from "./stores/use-store";
 import { THEME } from "./theme";
 

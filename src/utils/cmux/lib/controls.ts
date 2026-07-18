@@ -1,4 +1,4 @@
-import { type CmuxRunResult, runCmuxOk } from "@app/cmux/lib/cli";
+import { type CmuxRunResult, runCmuxOk } from "@app/utils/cmux/lib/cli";
 
 type CmuxCommandRunner = (args: string[]) => Promise<CmuxRunResult>;
 

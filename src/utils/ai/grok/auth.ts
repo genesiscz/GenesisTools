@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
-import { decodeJwt } from "@app/jwt/lib/jwt-core";
 import { logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { decodeJwt } from "@app/utils/jwt";
 import { grokAuthPath } from "./paths";
 import type { GrokAuthEntry, GrokJwtClaims } from "./types";
 

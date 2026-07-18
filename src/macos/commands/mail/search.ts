@@ -9,10 +9,10 @@ import {
     resolveColumnsFromFlag,
 } from "@app/macos/lib/mail/command-helpers";
 import { resolveMailSearchMode, runMailSearch } from "@app/macos/lib/mail/search-runner";
-import type { SearchOptions } from "@app/macos/lib/mail/types";
 import { isQuietOutput } from "@app/utils/cli/output-mode";
 import { createQuietSpinner } from "@app/utils/cli/quiet-spinner";
 import { MailDatabase } from "@app/utils/macos/MailDatabase";
+import type { SearchOptions } from "@app/utils/macos/mail/types";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 

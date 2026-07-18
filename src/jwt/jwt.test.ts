@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { decodeJwt, describeClaimTime, humanizeDelta } from "./lib/jwt-core";
+import { decodeJwt, describeClaimTime, humanizeDelta } from "@app/utils/jwt";
 
 // Public jwt.io sample token (HS256). Decoding needs no secret.
 const SAMPLE =
