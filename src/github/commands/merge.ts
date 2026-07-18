@@ -103,7 +103,9 @@ export async function mergeCommand(input: string, options: MergeCommandOptions):
     }
 
     const { owner, repo, number } = parsed;
+    const { log } = logger.scoped("github:merge");
 
+    log.info({ owner, repo, number, method, deleteBranch, noRestack: Boolean(options.noRestack) }, "safe merge start");
     out.println(
         chalk.bold(
             `Safe merge ${owner}/${repo}#${number} (${method}${deleteBranch ? ", delete-branch after retarget" : ""})`
@@ -119,8 +121,24 @@ export async function mergeCommand(input: string, options: MergeCommandOptions):
         noRestack: Boolean(options.noRestack),
         commitTitle: options.subject,
         commitMessage: options.body,
-        log: (message) => out.println(message),
+        log: (message) => {
+            out.println(message);
+            log.debug(message);
+        },
     });
+
+    log.info(
+        {
+            number: result.number,
+            mergeSha: result.mergeSha,
+            rebaseMode: result.rebaseMode,
+            headRestacked: Boolean(result.headRestack?.rebased),
+            dependentsRetargeted: result.retargeted.length,
+            dependentsRestacked: result.dependentsRestacked.length,
+            branchDeleted: result.branchDeleted,
+        },
+        "merge completed"
+    );
 
     if (options.format === "json") {
         out.println(
