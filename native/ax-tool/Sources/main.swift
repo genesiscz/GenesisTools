@@ -1401,7 +1401,12 @@ func annotateImage(_ image: CGImage, appName: String, pid: pid_t, windowTitle: S
         let ryTop = (fe.frame.origin.y - windowBoundsPts.origin.y) * scale
         let rw = fe.frame.width * scale
         let rh = fe.frame.height * scale
-        if rx + rw < 0 || ryTop + rh < 0 || rx > CGFloat(width) || ryTop > CGFloat(height) { continue }
+        // Skip boxes with no meaningful visible portion — a sliver at the image
+        // edge gets a legend number but no readable box (blind-test 3A, n:10).
+        let visible = CGRect(x: rx, y: ryTop, width: rw, height: rh)
+            .intersection(CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
+        if visible.isNull || visible.width < 10 || visible.height < 10 ||
+           (rw * rh > 0 && visible.width * visible.height / (rw * rh) < 0.3) { continue }
         n += 1
         // CGContext origin is bottom-left — flip Y
         let ryCG = CGFloat(height) - ryTop - rh

@@ -56,10 +56,18 @@ export function waitFor(o: CheckOpts & { timeout: number; interval: number }): A
         }
         Bun.sleepSync(o.interval);
     }
+    const cond = o.gone
+        ? "gone"
+        : (o.for ??
+          (o.value !== undefined
+              ? `value == '${o.value}'`
+              : o.contains !== undefined
+                ? `value contains '${o.contains}'`
+                : "exists"));
     return {
         ok: false,
         action: "wait",
-        error: `timeout after ${o.timeout}ms (${polls} polls) — condition not met`,
+        error: `timeout after ${o.timeout}ms (${polls} polls) — ${o.target.join(" ")} in ${o.app}: '${cond}' not met`,
         lastState: last.state,
     };
 }
@@ -109,7 +117,7 @@ export function registerVerifyCommands(program: Command): void {
         .option("--for <cond>", "condition: exists (default) | enabled | focused")
         .option("--expect <value>", "wait until AXValue equals this")
         .option("--contains <text>", "wait until AXValue contains this")
-        .option("--gone", "wait until the element does NOT exist")
+        .option("--gone", "wait until the element does NOT exist (passes IMMEDIATELY if it never existed)")
         .option("--timeout <ms>", "give up after this many ms", "5000")
         .option("--interval <ms>", "poll interval", "200")
         .option("--json", "raw JSON output")
@@ -140,7 +148,7 @@ export function registerVerifyCommands(program: Command): void {
         .option("--for <cond>", "condition: exists (default) | enabled | focused")
         .option("--expect <value>", "assert AXValue equals this")
         .option("--contains <text>", "assert AXValue contains this")
-        .option("--gone", "assert the element does NOT exist")
+        .option("--gone", "assert the element does NOT exist (a never-existing element passes)")
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {

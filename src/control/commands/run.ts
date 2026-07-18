@@ -19,6 +19,20 @@ const ACTION_ALIASES: Record<string, string> = {
 
 const NO_APP_COMMANDS = new Set(["snapshot", "restore", "hotkey", "apps"]);
 
+/** Step line with the failure reason inline — a failing plan must say WHY without --json. */
+function printStep(label: string, result: AxResult, ms: number): void {
+    if (result.ok) {
+        out.println(`  ${pc.green("ok")} ${pc.cyan(label)} ${pc.dim(`${ms}ms`)}`);
+        return;
+    }
+    const parts = [result.error, typeof result.actual === "string" ? result.actual : undefined]
+        .filter(Boolean)
+        .join(" — ");
+    out.println(
+        `  ${pc.red("FAIL")} ${pc.cyan(label)} ${pc.dim(`${ms}ms`)}${parts ? ` — ${parts.slice(0, 200)}` : ""}`
+    );
+}
+
 export function registerRunCommand(program: Command): void {
     program
         .command("run <plan>")
@@ -52,6 +66,9 @@ export function registerRunCommand(program: Command): void {
 
   Step fields: do (command), atMs, q (universal search), id, role, title, desc,
     subrole, window, value, text, path, keys, action, crop, delay, app (override).
+  wait/assert steps also take: gone, for ("enabled"|"focused"), expect,
+    contains, timeout, interval — e.g. { "do": "wait", "q": "Save", "gone": true },
+    { "do": "assert", "id": "status", "contains": "Done" }.
   Action aliases: ax-set/ax-press/ax-perform map to set/press/perform.
   Role/subrole fuzzy by default: "button" matches AXButton.
 
@@ -143,8 +160,7 @@ export function registerRunCommand(program: Command): void {
                     results.push({ step, result, ms: msW });
                     if (!opts.json) {
                         const label = step.q ?? step.id ?? step.desc ?? cmd;
-                        const status = result.ok ? pc.green("ok") : pc.red("FAIL");
-                        out.println(`  ${status} ${pc.cyan(String(label))} ${pc.dim(`${msW}ms`)}`);
+                        printStep(String(label), result, msW);
                     }
                     continue;
                 }
@@ -178,8 +194,7 @@ export function registerRunCommand(program: Command): void {
 
                 if (!opts.json) {
                     const label = step.q ?? step.id ?? step.desc ?? step.subrole ?? step.text ?? cmd;
-                    const status = result.ok ? pc.green("ok") : pc.red("FAIL");
-                    out.println(`  ${status} ${pc.cyan(String(label))} ${pc.dim(`${ms}ms`)}`);
+                    printStep(String(label), result, ms);
                 }
 
                 if (!timeline) {

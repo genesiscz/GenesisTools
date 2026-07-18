@@ -177,7 +177,10 @@ export function registerInteractCommands(program: Command): void {
         .description(
             "Send key combo via CGEvent. --app activates the target first (refuses if it cannot become frontmost)"
         )
-        .requiredOption("--keys <keys>", "comma-separated: cmd,shift,a")
+        .requiredOption(
+            "--keys <keys>",
+            "comma-separated: cmd,shift,a — or a bare key: escape, return, tab, delete, up/down (aliases: esc, enter, backspace)"
+        )
         .option("--app <name>", "activate this app before sending keys")
         .option("--hold <ms>", "ms between key down and up")
         .option("--json", "raw JSON output")
