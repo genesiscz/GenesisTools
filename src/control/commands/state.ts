@@ -14,7 +14,7 @@ export function registerStateCommands(program: Command): void {
             const result = runAx(["snapshot"]);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
-                return;
+                process.exit(result.ok === false ? 1 : 0);
             }
             if (!result.ok) {
                 logger.error(String(result.error));
@@ -37,7 +37,7 @@ export function registerStateCommands(program: Command): void {
             const result = runAx(["restore", "--snapshot", opts.snapshot]);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
-                return;
+                process.exit(result.ok === false ? 1 : 0);
             }
             if (!result.ok) {
                 logger.error(String(result.error));

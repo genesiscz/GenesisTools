@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
@@ -18,6 +19,29 @@ const ACTION_ALIASES: Record<string, string> = {
 };
 
 const NO_APP_COMMANDS = new Set(["snapshot", "restore", "hotkey", "apps"]);
+
+const KNOWN_STEP_COMMANDS = new Set([
+    "focus",
+    "press",
+    "click",
+    "set",
+    "type",
+    "get",
+    "find",
+    "attrs",
+    "actions",
+    "perform",
+    "window",
+    "scroll",
+    "hotkey",
+    "screenshot",
+    "ocr",
+    "wait",
+    "assert",
+    "snapshot",
+    "restore",
+    "apps",
+]);
 
 /** Step line with the failure reason inline — a failing plan must say WHY without --json. */
 function printStep(label: string, result: AxResult, ms: number): void {
@@ -97,9 +121,42 @@ export function registerRunCommand(program: Command): void {
             };
 
             // Recording plans: the capture runner owns the whole timeline.
+            // Normalize BEFORE delegating — the runner reads `actions` with its
+            // own ax-prefixed verbs and axId targeting; the unified schema
+            // promises `steps` + plain verbs + `id` work here too.
             if (plan.capture) {
+                const CAPTURE_VERBS: Record<string, string> = {
+                    press: "ax-press",
+                    set: "ax-set",
+                    perform: "ax-perform",
+                };
+                const rawActions = plan.actions ?? plan.steps ?? [];
+                const normalized: Record<string, unknown> = { ...plan };
+                delete normalized.steps;
+                normalized.actions = rawActions.map((a) => {
+                    const step: Record<string, unknown> = { ...a };
+                    const verb = CAPTURE_VERBS[String(step.do ?? "")];
+                    if (verb) {
+                        step.do = verb;
+                    }
+                    if (step.id != null && step.axId == null) {
+                        step.axId = step.id;
+                        delete step.id;
+                    }
+                    if (step.app == null && plan.app) {
+                        step.app = plan.app;
+                    }
+                    return step;
+                });
+                const tmpPath = join(tmpdir(), `control-run-capture-${process.pid}.json`);
+                writeFileSync(tmpPath, SafeJSON.stringify(normalized));
                 const script = join(import.meta.dir, "..", "lib", "capture-with-actions.ts");
-                const r = spawnSync("bun", [script, planPath], { stdio: "inherit" });
+                const r = spawnSync("bun", [script, tmpPath], { stdio: "inherit" });
+                try {
+                    unlinkSync(tmpPath);
+                } catch {
+                    // best-effort cleanup
+                }
                 process.exit(r.status ?? 1);
             }
 
@@ -125,6 +182,17 @@ export function registerRunCommand(program: Command): void {
                 const app = String(step.app ?? plan.app ?? "");
                 if (!cmd) {
                     results.push({ step, result: { ok: false, error: "missing 'do'" }, ms: 0 });
+                    continue;
+                }
+                if (!KNOWN_STEP_COMMANDS.has(cmd)) {
+                    const result: AxResult = {
+                        ok: false,
+                        error: `unknown step command '${cmd}' — valid: ${[...KNOWN_STEP_COMMANDS].join(", ")}`,
+                    };
+                    results.push({ step, result, ms: 0 });
+                    if (!opts.json) {
+                        printStep(cmd, result, 0);
+                    }
                     continue;
                 }
 

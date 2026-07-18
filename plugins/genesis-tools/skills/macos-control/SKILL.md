@@ -254,6 +254,11 @@ tools control capture plan.json 1>result.json 2>err.log
 
 **Read `references/capture.md` before writing any recording plan** — it holds the full recording discipline (duration/fps parsing, capture-target resolution, timing model, crop markers, focus re-assertion, troubleshooting, anti-patterns). `references/peekaboo.md` has the underlying peekaboo flag tables. Recording requires the external `peekaboo` binary (homebrew); element control does not.
 
+Capture-plan notes:
+- In a `capture{}` plan run via `tools control run`, plain verbs are auto-mapped (`press`→`ax-press`, `set`→`ax-set`, `perform`→`ax-perform`) and `id`→`axId`; the capture runner also has EXTRA action types (click/hotkey/type/scroll/crop/screenshot markers — see `capture --help`) that plain plans don't.
+- If the result carries `capture.failed: true` with "peekaboo produced NO output", the peekaboo BINARY is crashing (verify standalone: `peekaboo capture live --mode screen --duration 2 --json`; known with 3.0.0-beta3 on some macOS builds). Element control, screenshots, annotate, and OCR don't use that path and keep working.
+- Capture preflight cross-checks its CGWindowList view against the AX API — windows only CGWindowList sees (other Spaces, stale entries) are marked `axVisible: false` and never picked as the crop basis.
+
 Capture plans support three AX action types (same targeting as the CLI):
 
 | Action type | What it does | Needs ax-tool binary? |

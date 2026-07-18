@@ -18,7 +18,7 @@ export function registerInteractCommands(program: Command): void {
             const result = runAx(["get", "--app", opts.app, ...targetArgs(opts)]);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
-                return;
+                process.exit(result.ok === false ? 1 : 0);
             }
             if (!result.ok) {
                 logger.error(String(result.error));
@@ -52,7 +52,7 @@ export function registerInteractCommands(program: Command): void {
             const result = runAx(["set", "--app", opts.app, ...targetArgs(opts), "--value", opts.value]);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
-                return;
+                process.exit(result.ok === false ? 1 : 0);
             }
             if (!result.ok) {
                 logger.error(String(result.error));
@@ -73,7 +73,7 @@ export function registerInteractCommands(program: Command): void {
             const result = runAx(["press", "--app", opts.app, ...targetArgs(opts)]);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
-                return;
+                process.exit(result.ok === false ? 1 : 0);
             }
             if (!result.ok) {
                 logger.error(String(result.error));
@@ -95,7 +95,7 @@ export function registerInteractCommands(program: Command): void {
             const result = runAx(["perform", "--app", opts.app, ...targetArgs(opts), "--action", opts.action]);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
-                return;
+                process.exit(result.ok === false ? 1 : 0);
             }
             if (!result.ok) {
                 logger.error(String(result.error));
@@ -116,7 +116,7 @@ export function registerInteractCommands(program: Command): void {
             const result = runAx(["focus", "--app", opts.app, ...targetArgs(opts)]);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
-                return;
+                process.exit(result.ok === false ? 1 : 0);
             }
             if (!result.ok) {
                 logger.error(String(result.error));
@@ -138,7 +138,7 @@ export function registerInteractCommands(program: Command): void {
             const result = runAx(["click", "--app", opts.app, ...targetArgs(opts)]);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
-                return;
+                process.exit(result.ok === false ? 1 : 0);
             }
             if (!result.ok) {
                 logger.error(String(result.error));
@@ -180,7 +180,7 @@ export function registerInteractCommands(program: Command): void {
             const result = runAx(axArgs, 30_000);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
-                return;
+                process.exit(result.ok === false ? 1 : 0);
             }
             if (!result.ok) {
                 logger.error(String(result.error));
@@ -215,7 +215,7 @@ export function registerInteractCommands(program: Command): void {
             const result = runAx(axArgs);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
-                return;
+                process.exit(result.ok === false ? 1 : 0);
             }
             if (!result.ok) {
                 logger.error(String(result.error));
@@ -251,7 +251,7 @@ export function registerInteractCommands(program: Command): void {
             const result = runAx(axArgs);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
-                return;
+                process.exit(result.ok === false ? 1 : 0);
             }
             if (!result.ok) {
                 logger.error(String(result.error));
@@ -294,7 +294,7 @@ export function registerInteractCommands(program: Command): void {
             const result = runAx(axArgs, 30_000);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
-                return;
+                process.exit(result.ok === false ? 1 : 0);
             }
             if (!result.ok) {
                 logger.error(String(result.error));
@@ -339,7 +339,7 @@ export function registerInteractCommands(program: Command): void {
             const result = runAx(axArgs, 30_000);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
-                return;
+                process.exit(result.ok === false ? 1 : 0);
             }
             if (!result.ok) {
                 logger.error(String(result.error));

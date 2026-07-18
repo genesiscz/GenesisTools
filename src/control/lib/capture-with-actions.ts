@@ -1246,9 +1246,44 @@ if (argv[0] === "preflight") {
     const windows = app ? listWindowBounds(app) : [];
     // Flag phantom strip windows (menu bar, titlebar): full-width x <=50px
     const phantomStrips = windows.filter((w) => w.h <= 50);
-    const realWindows = windows.filter((w) => w.h > 50);
-    // largest window, not isMainWindow — apps report invisible menu-bar strips as main
-    const main = pickLargestWindow(realWindows.length > 0 ? realWindows : windows);
+    let realWindows = windows.filter((w) => w.h > 50);
+
+    // Cross-check against the AX window list: peekaboo's CGWindowList view
+    // includes other-Space/stale windows the AX API doesn't show — picking one
+    // of those as the crop basis targets the wrong window (blind-test 6).
+    if (app && AX_TOOL_AVAILABLE) {
+        const axr = runCmd([AX_TOOL_PATH, "window", "--app", app]);
+        if (axr.ok) {
+            try {
+                const parsed = SafeJSON.parse(axr.stdout) as {
+                    windows?: Array<{ title?: string; x?: number; y?: number; width?: number; height?: number }>;
+                };
+                const axWins = parsed.windows ?? [];
+                const axMatch = (w: { title: string; x: number; y: number; w: number; h: number }): boolean =>
+                    axWins.some(
+                        (a) =>
+                            (Math.abs((a.x ?? 0) - w.x) < 6 &&
+                                Math.abs((a.y ?? 0) - w.y) < 6 &&
+                                Math.abs((a.width ?? 0) - w.w) < 6 &&
+                                Math.abs((a.height ?? 0) - w.h) < 6) ||
+                            (!!a.title && a.title === w.title)
+                    );
+                realWindows = realWindows.map((w) => ({ ...w, axVisible: axMatch(w) }));
+                const visible = realWindows.filter((w) => (w as { axVisible?: boolean }).axVisible);
+                if (visible.length > 0) {
+                    realWindows = [...visible, ...realWindows.filter((w) => !(w as { axVisible?: boolean }).axVisible)];
+                }
+            } catch {
+                // ax cross-check unavailable — fall through to CG-only view
+            }
+        }
+    }
+
+    // largest AX-VISIBLE window preferred; CG-only windows only when AX saw none
+    const axVisibleWindows = realWindows.filter((w) => (w as { axVisible?: boolean }).axVisible !== false);
+    const main = pickLargestWindow(
+        axVisibleWindows.length > 0 ? axVisibleWindows : realWindows.length > 0 ? realWindows : windows
+    );
 
     let activeScreen: ScreenInfo | undefined;
     if (main) {
@@ -1311,7 +1346,7 @@ if (argv[0] === "preflight") {
                             : undefined,
                     pickedWindow: main ?? null,
                     pickedBy:
-                        "largest-area (isMainWindow lies: apps report menu strips/popups as main; <=50px windows filtered as phantom strips)",
+                        "largest AX-visible window (CGWindowList shows other-Space/stale windows the AX API doesn't; isMainWindow lies; <=50px windows filtered as phantom strips)",
                     mainWindowPoints: main ? { x: main.x, y: main.y, w: main.w, h: main.h } : null,
                     mainWindowFramePx: mainFramePx ?? null,
                     activeScreenIndex: activeScreen.index,
@@ -1499,6 +1534,12 @@ if (argv[0] === "recrop") {
 }
 
 const plan: Plan = SafeJSON.parse(await Bun.file(argv[0]).text());
+// Unified-schema alias: `steps` is accepted for `actions` (tools control run
+// normalizes too, but direct invocations deserve the same grace).
+if (!plan.actions && (plan as unknown as { steps?: Action[] }).steps) {
+    plan.actions = (plan as unknown as { steps?: Action[] }).steps ?? [];
+}
+plan.actions ??= [];
 const cap = plan.capture;
 if (!cap?.mode || !cap?.duration) {
     fail("plan.capture.mode and plan.capture.duration are required");
@@ -1957,7 +1998,20 @@ let captureResult: unknown;
 try {
     captureResult = SafeJSON.parse(stdoutText);
 } catch {
-    captureResult = { parseError: true, raw: stdoutText.slice(0, 2000), stderr: stderrText.slice(0, 1000) };
+    const exitCode = exitedInTime ? await proc.exited : null;
+    const diagnosis =
+        stdoutText.length === 0
+            ? `peekaboo 'capture live' produced NO output${exitCode != null ? ` (exit ${exitCode}${exitCode === 133 ? " = SIGTRAP crash" : ""})` : ""} — the peekaboo binary itself is failing on this system. Verify standalone: peekaboo capture live --mode screen --duration 2 --json. Element control, screenshots, and OCR do not use this path and keep working.`
+            : "peekaboo stdout was not valid JSON";
+    captureResult = {
+        failed: true,
+        parseError: true,
+        exitCode,
+        error: diagnosis,
+        raw: stdoutText.slice(0, 2000),
+        stderr: stderrText.slice(0, 1000),
+    };
+    warnings.push(`capture failed: ${diagnosis}`);
 }
 
 let frames: FrameInfo[] = ((captureResult as { data?: { frames?: FrameInfo[] } })?.data?.frames ?? [])
@@ -2021,9 +2075,12 @@ if (plan.vitrinka) {
     }
 }
 
+const captureFailed = (captureResult as { failed?: boolean })?.failed === true;
+const actionsFailed = fired.some((f) => !f.ok && !f.skipped);
 console.log(
     SafeJSON.stringify(
         {
+            ok: !captureFailed && !actionsFailed,
             sessionDir,
             exitCode: proc.exitCode,
             warnings,
@@ -2038,3 +2095,6 @@ console.log(
         2
     )
 );
+if (captureFailed) {
+    process.exit(1);
+}

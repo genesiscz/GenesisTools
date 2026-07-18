@@ -2281,5 +2281,5 @@ case "screenshot":
     guard let path = argValue("--path") else { errorExit("--path <file.png> required") }
     cmdScreenshot(appName: appName, path: path)
 default:
-    errorExit("unknown command: \(command). Use: list, tree, get, set, press, attrs, actions, perform, find, window, focus, click, type")
+    errorExit("unknown command: \(command). Use: list, tree, get, set, press, attrs, actions, perform, find, window, focus, click, type, scroll, hotkey, screenshot, ocr, preflight, apps, snapshot, restore, record")
 }
