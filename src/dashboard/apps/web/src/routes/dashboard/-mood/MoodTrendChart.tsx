@@ -112,7 +112,7 @@ function MoodDot({ cx, cy, payload }: DotProps) {
 }
 
 function MoodTooltip({ active, payload }: { active?: boolean; payload?: TooltipPayloadItem[] }) {
-    if (!active || !payload || !payload.length) {
+    if (!active || !payload?.length) {
         return null;
     }
 

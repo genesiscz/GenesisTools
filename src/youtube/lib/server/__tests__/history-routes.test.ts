@@ -61,7 +61,7 @@ describe("history + watchlist + digest routes", () => {
         expect(byVideo.status).toBe(200);
         expect(byVideo.json.groupBy).toBe("video");
         expect((byVideo.json.videos as Array<{ videoId: string }>)[0].videoId).toBe("vid00000001");
-        expect((byVideo.json.videosById as Record<string, unknown>)["vid00000001"]).toBeDefined();
+        expect((byVideo.json.videosById as Record<string, unknown>).vid00000001).toBeDefined();
 
         const byAction = await call("GET", "/api/v1/users/history?groupBy=action", user.token);
 
