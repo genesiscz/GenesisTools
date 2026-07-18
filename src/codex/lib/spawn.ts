@@ -1,8 +1,8 @@
 import { closeSync, openSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { CODEX_SCHEMA_VERSION } from "./_generated/protocol";
 import { sessionDaemonLogPath, sessionLaunchPath } from "./paths";
