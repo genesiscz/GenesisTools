@@ -560,8 +560,8 @@ Only these languages have 512-dim `NLEmbedding` support for `nlp.embed`, `nlp.di
 ### TypeScript / Bun (GenesisTools pattern)
 
 ```typescript
-// @app/utils/macos provides this already — see src/utils/macos/
-import { getDarwinKit, closeDarwinKit } from "@app/utils/macos";
+// @genesiscz/utils/macos provides this already — see src/utils/macos/
+import { getDarwinKit, closeDarwinKit } from "@genesiscz/utils/macos";
 
 // Language detection
 const lang = await getDarwinKit().call("nlp.language", { text: "Bonjour" });
@@ -572,7 +572,7 @@ const sentiment = await getDarwinKit().call("nlp.sentiment", { text: "Amazing!" 
 // → { score: 1.0, label: "positive" }
 
 // Semantic embedding + ranking
-import { rankBySimilarity } from "@app/utils/macos";
+import { rankBySimilarity } from "@genesiscz/utils/macos";
 const ranked = await rankBySimilarity("budget planning", items, { maxDistance: 1.0 });
 
 // OCR

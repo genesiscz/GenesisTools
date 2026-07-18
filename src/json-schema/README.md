@@ -61,4 +61,4 @@ tools json-schema data.json -m typescript --pretty --clipboard
 
 ## Notes
 
-The actual inference happens in `@app/utils/json-schema` (`inferSchema`, `formatSchema`) so the same logic is reused by `har-analyzer`'s `expand --schema`.
+The actual inference happens in `@genesiscz/utils/json-schema` (`inferSchema`, `formatSchema`) so the same logic is reused by `har-analyzer`'s `expand --schema`.

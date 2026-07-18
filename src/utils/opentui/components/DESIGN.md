@@ -366,7 +366,7 @@ Doctor's `engine-store` already owns selection; it doesn't need `useListSelectio
 ## Example end-to-end usage (doctor's FindingsDrawer rewritten against these primitives)
 
 ```tsx
-import { Table, StatusStrip, KeyHelp } from "@app/utils/opentui/components";
+import { Table, StatusStrip, KeyHelp } from "@genesiscz/utils/opentui/components";
 import type { Finding } from "@app/doctor/lib/types";
 import { viewForAnalyzer } from "./views";
 

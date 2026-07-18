@@ -229,7 +229,7 @@ Before the first overwrite, the original v1 file is copied to `~/.genesis-tools/
 ## Programmatic use
 
 ```ts
-import { speak } from "@app/utils/macos/tts";
+import { speak } from "@genesiscz/utils/macos/tts";
 
 await speak("Build done", { app: "build" }); // resolves the "build" profile
 ```
@@ -237,7 +237,7 @@ await speak("Build done", { app: "build" }); // resolves the "build" profile
 For full config CRUD:
 
 ```ts
-import { SayConfigManager } from "@app/utils/macos/SayConfigManager";
+import { SayConfigManager } from "@genesiscz/utils/macos/SayConfigManager";
 
 const mgr = new SayConfigManager();
 await mgr.patchApp("claude", { voice: "Samantha", provider: "macos" });

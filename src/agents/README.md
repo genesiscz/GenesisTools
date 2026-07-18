@@ -49,14 +49,14 @@ The registry (who's registered, logged in/out) is derived by replaying `feed.jso
 
 ## Reused utilities
 
-- `@app/utils/storage` (`withFileLock`, atomic writes)
-- `@app/utils/storage/storage` (`atomicWriteFileSync`)
-- `@app/utils/storage/stale-lock-sweep` (new — generic stale-PID lock reaper)
-- `@app/utils/log-session/jsonl-reader` (line-safe JSONL parsing)
-- `@app/utils/json` (`SafeJSON`, never `JSON`)
-- `@app/utils/process-alive` (`isProcessAlive`)
-- `@app/utils/cli` (`runTool`, `suggestCommand`, `isInteractive`)
-- `@app/utils/env` (`env.tools.getHome()`)
+- `@genesiscz/utils/storage` (`withFileLock`, atomic writes)
+- `@genesiscz/utils/storage/storage` (`atomicWriteFileSync`)
+- `@genesiscz/utils/storage/stale-lock-sweep` (new — generic stale-PID lock reaper)
+- `@genesiscz/utils/log-session/jsonl-reader` (line-safe JSONL parsing)
+- `@genesiscz/utils/json` (`SafeJSON`, never `JSON`)
+- `@genesiscz/utils/process-alive` (`isProcessAlive`)
+- `@genesiscz/utils/cli` (`runTool`, `suggestCommand`, `isInteractive`)
+- `@genesiscz/utils/env` (`env.tools.getHome()`)
 
 ## V1 limits
 

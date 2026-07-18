@@ -71,7 +71,7 @@ Process exits with the result mapped to a code:
 
 ### `monitor` notifications
 
-- Backed by `@app/utils/macos/notifications.sendNotification` → DarwinKit (native `UNUserNotificationCenter`), ~92ms per call. Falls back to `terminal-notifier` then `osascript` if DarwinKit is unavailable.
+- Backed by `@genesiscz/utils/macos/notifications.sendNotification` → DarwinKit (native `UNUserNotificationCenter`), ~92ms per call. Falls back to `terminal-notifier` then `osascript` if DarwinKit is unavailable.
 - One notification per stage transition (not for historical snapshot). Subtitle = stage name. Body = `✓ SUCCESS  27s` style with duration.
 - `thread_identifier` is `jenkins-<jobPath>-<build>` so stage notifications for one build collapse instead of stacking.
 - Click handler routes through `Browser.open(url, { browser: "brave" })` — opens the stage's deep-linked URL in Brave (or your preferred browser via `Browser.setPreferred()`).

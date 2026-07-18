@@ -12,7 +12,7 @@ Thin shared layer over `bun:sqlite`. **Use `createKyselyClient<DB>()` for new co
 ## Quick start
 
 ```ts
-import { createKyselyClient } from "@app/utils/database";
+import { createKyselyClient } from "@genesiscz/utils/database";
 import type { DB } from "./db-types";
 
 const client = createKyselyClient<DB>({
@@ -33,7 +33,7 @@ await client.kysely.selectFrom("users").select(["id", "name"]).execute();
 | Need | Use |
 |---|---|
 | Type-safe SELECT/INSERT/UPDATE/DELETE | `client.kysely.<query>` |
-| Composable WHERE clauses with tokens | `buildLikePredicate(tokens, columns)` from `@app/utils/database` |
+| Composable WHERE clauses with tokens | `buildLikePredicate(tokens, columns)` from `@genesiscz/utils/database` |
 | FTS5 `CREATE VIRTUAL TABLE` | `migrations` option on `createKyselyClient` (existing `runMigrations` framework) |
 | FTS5 `MATCH` operator | `sql\`${col} MATCH ${query}\`` inside `where(...)` |
 | sqlite-vec extension | Load via `onOpen`; query via `client.raw` (vec0 doesn't fit a static interface) |

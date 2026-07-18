@@ -72,7 +72,7 @@ When spawning tools from shell hooks, always background (`&`) — 86ms Bun start
 
 ### Environment variables
 
-Never read `process.env` directly in application code — use `import { env } from "@app/utils/env"`. Values: `env.getXAIApiKey()` or `env.x.getApiKey()`; resolved key names (for config metadata): `env.getXAIApiEnvKey()` or `env.x.getApiEnvKey()`. Grouped domains: `env.tools`, `env.ai.*`, `env.github`, `env.log`, `env.paths`, `env.device`, `env.test`, etc. Tests that need overrides: `env.testing.set()` / `env.testing.withOverrides()`.
+Never read `process.env` directly in application code — use `import { env } from "@genesiscz/utils/env"`. Values: `env.getXAIApiKey()` or `env.x.getApiKey()`; resolved key names (for config metadata): `env.getXAIApiEnvKey()` or `env.x.getApiEnvKey()`. Grouped domains: `env.tools`, `env.ai.*`, `env.github`, `env.log`, `env.paths`, `env.device`, `env.test`, etc. Tests that need overrides: `env.testing.set()` / `env.testing.withOverrides()`.
 
 ### Utility Convention
 
@@ -105,10 +105,10 @@ Most tools follow these common patterns:
 **Interactive User Experience**:
 
 -   Two prompt libraries available: `@inquirer/prompts` (legacy) and `@clack/prompts` (preferred for new tools)
--   **Non-TTY guard**: Always check `isInteractive()` (from `@app/utils/cli`) before showing prompts. When non-interactive, either error with `suggestCommand()` showing required CLI flags, or use a sensible default:
+-   **Non-TTY guard**: Always check `isInteractive()` (from `@genesiscz/utils/cli`) before showing prompts. When non-interactive, either error with `suggestCommand()` showing required CLI flags, or use a sensible default:
 
     ```typescript
-    import { isInteractive, suggestCommand } from "@app/utils/cli";
+    import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 
     if (!isInteractive()) {
         logger.error("--provider required in non-interactive mode.");
@@ -124,7 +124,7 @@ Most tools follow these common patterns:
 -   Use `clipboardy` for clipboard operations
 -   Use `picocolors` (or `chalk`) for colored terminal output (but strip ANSI codes for non-TTY)
 -   Respect `--silent` and `--verbose` flags
--   **Human inventory lists (models, accounts, ports, processes, …):** do **not** dump multi-column data via clack `out.log.info`. Use the port-style table helpers from `@app/utils/table` + `out.println` — see **CLI inventory tables** below.
+-   **Human inventory lists (models, accounts, ports, processes, …):** do **not** dump multi-column data via clack `out.log.info`. Use the port-style table helpers from `@genesiscz/utils/table` + `out.println` — see **CLI inventory tables** below.
 
 **Process Execution**:
 
@@ -149,7 +149,7 @@ See `.claude/docs/tool-template.md` for complete templates (@inquirer + @clack/p
 - **No file-path comments**: Never add `// src/path/to/file.ts` as first line of files
 - **No obvious comments**: Don't add comments that restate what the code already says (e.g. `// Build initial context` before `buildContext()`)
 - **Concise commit messages**: Just a title line, no per-file breakdown in the body. Keep it short and focused on the "why"
-- **Always use `SafeJSON`, never `JSON`**: Import `SafeJSON` from `@app/utils/json` and use `SafeJSON.parse()` / `SafeJSON.stringify()` everywhere — `JSON` is biome-restricted in this repo. `SafeJSON` is a comment-json wrapper that handles `//` comments, multi-line comments, and trailing commas. For strict JSON behavior, pass `{ strict: true }` or `{ jsonl: true }`.
+- **Always use `SafeJSON`, never `JSON`**: Import `SafeJSON` from `@genesiscz/utils/json` and use `SafeJSON.parse()` / `SafeJSON.stringify()` everywhere — `JSON` is biome-restricted in this repo. `SafeJSON` is a comment-json wrapper that handles `//` comments, multi-line comments, and trailing commas. For strict JSON behavior, pass `{ strict: true }` or `{ jsonl: true }`.
 
 ## Code Style: Conditionals & Spacing
 
@@ -183,20 +183,20 @@ See `.claude/docs/tool-template.md` for complete templates (@inquirer + @clack/p
 ## Debugging & Logging
 
 - **Triage from logs first.** When any tool misbehaves, the FIRST step is to read `~/.genesis-tools/logs/<today>.log` (and recent days) and `rg` for the tool name / error string — *before* forming hypotheses or reproducing. Logs are day-stamped pino JSON. This bug (`sqlite-vec extension failed to load`) was in the logs for weeks before it was triaged; checking them first collapses hours of guessing into one `rg`.
-- **Log enough to triage from logs alone.** Every tool must emit enough via `@app/utils/logger` that a future reader can reconstruct what happened without re-running it: log key decision branches, every external-resource access (DB opens with their paths, spawned commands, API URLs), mode/config resolution, and result counts.
+- **Log enough to triage from logs alone.** Every tool must emit enough via `@genesiscz/utils/logger` that a future reader can reconstruct what happened without re-running it: log key decision branches, every external-resource access (DB opens with their paths, spawned commands, API URLs), mode/config resolution, and result counts.
 - **Never swallow errors.** A bare `catch {}` is forbidden. At minimum `logger.debug` (or `.warn`) the caught error with context. A swallowed error is a future debugging session that did not have to happen.
 
 ## Logging & output
 
 Two cleanly separated layers (the 2026-05 logger+out overhaul):
 
-- **`logger` — diagnostics.** `import { logger } from "@app/utils/logger"` (named only; there is **no** default export and no `consoleLog` — they were removed). Writes to the day-stamped file **always** (debug+), and to the console **on stderr**, gated by level. `logger.*` is **never** the result channel. Global `-v` promotes file-only `logger.debug` to the console; `-vv` → trace (only on tools that opted into `--trace`).
-- **`out` — user-facing.** `import { out } from "@app/utils/logger"` (or `const { log, out } = logger.scoped("comp")`). clack-shaped. **`out.result(data)` / `out.print(raw)` are the ONLY writers to stdout** (the machine result). `out.log.*` / spinners / notes / prompts → stderr. Never emit a serialized result via `logger.*` — that is `out.result()`'s job (CI guard enforces this).
+- **`logger` — diagnostics.** `import { logger } from "@genesiscz/utils/logger"` (named only; there is **no** default export and no `consoleLog` — they were removed). Writes to the day-stamped file **always** (debug+), and to the console **on stderr**, gated by level. `logger.*` is **never** the result channel. Global `-v` promotes file-only `logger.debug` to the console; `-vv` → trace (only on tools that opted into `--trace`).
+- **`out` — user-facing.** `import { out } from "@genesiscz/utils/logger"` (or `const { log, out } = logger.scoped("comp")`). clack-shaped. **`out.result(data)` / `out.print(raw)` are the ONLY writers to stdout** (the machine result). `out.log.*` / spinners / notes / prompts → stderr. Never emit a serialized result via `logger.*` — that is `out.result()`'s job (CI guard enforces this).
 - **`const { log, out } = logger.scoped("comp")`:** `log.*` = logger-only (diagnostics); `log.out.*` / `log.tee.*` = both (component-tagged single mirror); destructured `out.*` = only-out (no logger mirror).
-- **Every commander entrypoint** ends with `await runTool(program, { tool })` (from `@app/utils/cli`) — it owns `-v`/`--readme`/help registration, console-level resolution, and the `{tool}` log binding, then `parseAsync`. The subprocess **spawner** is `execTool` (renamed from the old `runTool`).
-- **`scripts/ci/logging-guard.sh`** enforces this convention repo-wide in CI: no default/extension/relative-path/any-name import of the logger module (root `./tools` and `scripts/` included — not just `src/`), no bare `logger.*(SafeJSON.stringify(…))` result dumps, no reintroduced transitional shims, and that the browser-client isolation test exists. Browser-client trees never value-importing `@app/utils/logger` is authoritatively enforced by `src/logger/client-isolation.test.ts`.
-- **`@app/utils/cli/ui` — high-density CLI status.** For tools that emit many short status lines per command (e.g. `tools stash`), clack's `│ ◆ ●` box-drawing is the wrong texture. Import `{ ui }` from `@app/utils/cli/ui` to get plain stderr writes with chalk decoration (`ui.ok/info/warn/err/dim/header/kv/section/raw`). Use this INSTEAD of `out.log.*` for high-density status; keep `out.log.*` for clack-shaped task lifecycles. `out.print()` / `out.result()` are still the only writers to stdout for machine-readable output.
-- **CLI inventory tables (port-style) — prefer this for multi-column human output.** Canonical helpers live in `@app/utils/table` (not reimplemented per tool). Reference UIs: `tools port`, `tools ai-proxy models`, `tools macos swap`.
+- **Every commander entrypoint** ends with `await runTool(program, { tool })` (from `@genesiscz/utils/cli`) — it owns `-v`/`--readme`/help registration, console-level resolution, and the `{tool}` log binding, then `parseAsync`. The subprocess **spawner** is `execTool` (renamed from the old `runTool`).
+- **`scripts/ci/logging-guard.sh`** enforces this convention repo-wide in CI: no default/extension/relative-path/any-name import of the logger module (root `./tools` and `scripts/` included — not just `src/`), no bare `logger.*(SafeJSON.stringify(…))` result dumps, no reintroduced transitional shims, and that the browser-client isolation test exists. Browser-client trees never value-importing `@genesiscz/utils/logger` is authoritatively enforced by `src/logger/client-isolation.test.ts`.
+- **`@genesiscz/utils/cli/ui` — high-density CLI status.** For tools that emit many short status lines per command (e.g. `tools stash`), clack's `│ ◆ ●` box-drawing is the wrong texture. Import `{ ui }` from `@genesiscz/utils/cli/ui` to get plain stderr writes with chalk decoration (`ui.ok/info/warn/err/dim/header/kv/section/raw`). Use this INSTEAD of `out.log.*` for high-density status; keep `out.log.*` for clack-shaped task lifecycles. `out.print()` / `out.result()` are still the only writers to stdout for machine-readable output.
+- **CLI inventory tables (port-style) — prefer this for multi-column human output.** Canonical helpers live in `@genesiscz/utils/table` (not reimplemented per tool). Reference UIs: `tools port`, `tools ai-proxy models`, `tools macos swap`.
 
   | Need | API | Notes |
   |---|---|---|
@@ -211,9 +211,9 @@ Two cleanly separated layers (the 2026-05 logger+out overhaul):
   Pattern:
 
   ```typescript
-  import { out } from "@app/logger";
-  import { suggestCommand } from "@app/utils/cli";
-  import { createBoxTable, formatDotStatus, renderCliHeader, renderCliSection } from "@app/utils/table";
+  import { out } from "@genesiscz/utils/logger";
+  import { suggestCommand } from "@genesiscz/utils/cli";
+  import { createBoxTable, formatDotStatus, renderCliHeader, renderCliSection } from "@genesiscz/utils/table";
   import pc from "picocolors";
 
   renderCliHeader("Proxy Models", "ids clients can call");
@@ -224,7 +224,7 @@ Two cleanly separated layers (the 2026-05 logger+out overhaul):
   // footer: counts · Next/Debug via suggestCommand("tools <tool>", { replaceCommand: [...] })
   ```
 
-  **Do not** hand-roll `new Table({ chars: … })` or copy/paste box-drawing from `src/port/` — import from `@app/utils/table`. Keep domain coloring (framework names, etc.) in the tool's `display.ts`; keep the table chrome shared.
+  **Do not** hand-roll `new Table({ chars: … })` or copy/paste box-drawing from `src/port/` — import from `@genesiscz/utils/table`. Keep domain coloring (framework names, etc.) in the tool's `display.ts`; keep the table chrome shared.
 
 ## Database & Migrations
 
