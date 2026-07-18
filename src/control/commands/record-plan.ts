@@ -5,7 +5,7 @@ import { logger, out } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { ensureBinary, RECORD_DIR, RECORD_SESSION } from "../lib/runner";
+import { ensureBinary, RECORD_DIR, RECORD_SESSION, recordSource } from "../lib/runner";
 
 const COMMANDS_LOG = join(RECORD_DIR, "commands.jsonl");
 const ACTIVITY_LOG = join(RECORD_DIR, "activity.jsonl");
@@ -38,6 +38,7 @@ interface SessionState {
     mode: "commands" | "activity" | "all";
     startedAt: number;
     activityPid?: number;
+    src?: string;
 }
 
 interface RecEvent {
@@ -98,8 +99,18 @@ function readJsonl<T>(path: string): T[] {
     return items;
 }
 
+interface CommandLine {
+    ts: number;
+    ok?: boolean;
+    src?: string;
+    args: string[];
+}
+
+// Flags whose values are numbers — keep plan JSON typed for hand-editing/diffing.
+const NUMERIC_KEYS = new Set(["amount", "timeout", "interval", "hold", "delay", "duration", "depth"]);
+
 /** tools-control invocations (commands.jsonl argv) -> plan steps. */
-function commandsToSteps(lines: Array<{ ts: number; ok?: boolean; args: string[] }>): TimedStep[] {
+function commandsToSteps(lines: CommandLine[], ownSrc?: string): TimedStep[] {
     const steps: TimedStep[] = [];
     for (const line of lines) {
         if (line.ok === false) {
@@ -125,12 +136,17 @@ function commandsToSteps(lines: Array<{ ts: number; ok?: boolean; args: string[]
             }
             const next = argv[i + 1];
             if (next !== undefined && !next.startsWith("--")) {
-                step[key] = next;
+                step[key] = NUMERIC_KEYS.has(key) && !Number.isNaN(Number(next)) ? Number(next) : next;
                 i += 2;
             } else {
                 step[key] = true;
                 i++;
             }
+        }
+        // Mark commands that came from a different terminal/session than the one
+        // that started the recording ("_"-prefixed keys are ignored by run).
+        if (ownSrc && line.src && line.src !== ownSrc) {
+            step._foreign = line.src;
         }
         steps.push({ ts: line.ts, step });
     }
@@ -304,11 +320,17 @@ function dedupeMerged(commandSteps: TimedStep[], activitySteps: TimedStep[]): Ti
     return [...commandSteps, ...kept].sort((x, y) => x.ts - y.ts);
 }
 
-function synthesizePlan(session: SessionState, forcedApp?: string): Record<string, unknown> {
-    const commandSteps =
-        session.mode !== "activity"
-            ? commandsToSteps(readJsonl<{ ts: number; ok?: boolean; args: string[] }>(COMMANDS_LOG))
-            : [];
+function synthesizePlan(
+    session: SessionState,
+    forcedApp?: string,
+    excludeForeign = false
+): { plan: Record<string, unknown>; foreignCount: number } {
+    let commandSteps =
+        session.mode !== "activity" ? commandsToSteps(readJsonl<CommandLine>(COMMANDS_LOG), session.src) : [];
+    const foreignCount = commandSteps.filter((t) => t.step._foreign).length;
+    if (excludeForeign) {
+        commandSteps = commandSteps.filter((t) => !t.step._foreign);
+    }
     const activitySteps =
         session.mode !== "commands" ? activityToSteps(readJsonl<RecEvent>(ACTIVITY_LOG), session.startedAt) : [];
 
@@ -339,7 +361,7 @@ function synthesizePlan(session: SessionState, forcedApp?: string): Record<strin
         plan.app = planApp;
     }
     plan.steps = steps;
-    return plan;
+    return { plan, foreignCount: excludeForeign ? 0 : foreignCount };
 }
 
 function stopActivityRecorder(session: SessionState): void {
@@ -381,6 +403,10 @@ export function registerRecordPlanCommand(program: Command): void {
         .option("--duration <s>", "one-shot: record activity for N seconds, then emit the plan")
         .option("--out <path>", "write plan JSON to this file (default: stdout)")
         .option("--app <name>", "force the plan-level app instead of the most frequent")
+        .option(
+            "--exclude-foreign",
+            "stop: drop commands recorded from OTHER terminals/sessions instead of marking them _foreign"
+        )
         .option("--json", "machine output for start/status/stop metadata")
         .action((action: string | undefined, opts) => {
             const mode = String(opts.record) as SessionState["mode"];
@@ -403,7 +429,7 @@ export function registerRecordPlanCommand(program: Command): void {
                         unlinkSync(f);
                     }
                 }
-                const session: SessionState = { mode, startedAt: Date.now() };
+                const session: SessionState = { mode, startedAt: Date.now(), src: recordSource() };
                 if (mode !== "commands") {
                     const bin = ensureBinary();
                     const recArgs = ["record", "--out", ACTIVITY_LOG];
@@ -426,7 +452,7 @@ export function registerRecordPlanCommand(program: Command): void {
                 }
                 stopActivityRecorder(session);
                 Bun.sleepSync(150);
-                const plan = synthesizePlan(session, opts.app);
+                const { plan, foreignCount } = synthesizePlan(session, opts.app, !!opts.excludeForeign);
                 unlinkSync(RECORD_SESSION);
                 const planJson = SafeJSON.stringify(plan, null, 2);
                 const stepCount = (plan.steps as unknown[]).length;
@@ -438,6 +464,11 @@ export function registerRecordPlanCommand(program: Command): void {
                     out.println(pc.dim(`review it, then: tools control run ${opts.out}`));
                 } else {
                     out.println(planJson);
+                }
+                if (foreignCount > 0) {
+                    logger.warn(
+                        `${foreignCount} of ${stepCount} steps came from a DIFFERENT terminal/session (marked "_foreign") — delete them from the plan before replay (next time: stop --exclude-foreign drops them)`
+                    );
                 }
                 if (stepCount === 0) {
                     logger.warn(
@@ -470,7 +501,9 @@ export function registerRecordPlanCommand(program: Command): void {
                     out.println(opts.json ? SafeJSON.stringify({ ok: true, recording: false }) : "not recording");
                     return;
                 }
-                const commands = readJsonl(COMMANDS_LOG).length;
+                const commandLines = readJsonl<CommandLine>(COMMANDS_LOG);
+                const commands = commandLines.length;
+                const foreign = session.src ? commandLines.filter((l) => l.src && l.src !== session.src).length : 0;
                 const activity = readJsonl(ACTIVITY_LOG).length;
                 const info = {
                     ok: true,
@@ -478,13 +511,31 @@ export function registerRecordPlanCommand(program: Command): void {
                     mode: session.mode,
                     elapsedS: Math.round((Date.now() - session.startedAt) / 1000),
                     commandsLogged: commands,
+                    foreignCommands: foreign,
                     activityEvents: activity,
+                    commands: commandLines.map((l) => ({
+                        args: l.args,
+                        ...(l.src && session.src && l.src !== session.src ? { foreign: true } : {}),
+                    })),
                 };
+                if (opts.json) {
+                    out.println(SafeJSON.stringify(info));
+                    return;
+                }
                 out.println(
-                    opts.json
-                        ? SafeJSON.stringify(info)
-                        : `recording mode=${info.mode} elapsed=${info.elapsedS}s commands=${commands} activityEvents=${activity}`
+                    `recording mode=${info.mode} elapsed=${info.elapsedS}s commands=${commands} activityEvents=${activity}`
                 );
+                const tail = commandLines.slice(-5);
+                if (tail.length) {
+                    out.println(pc.dim("  last commands:"));
+                    for (const l of tail) {
+                        const mark = l.src && session.src && l.src !== session.src ? pc.yellow(" [foreign]") : "";
+                        out.println(pc.dim(`    ${l.args.join(" ")}${mark}`));
+                    }
+                }
+                if (foreign > 0) {
+                    logger.warn(`${foreign} of ${commands} buffered commands came from a different terminal/session`);
+                }
                 return;
             }
             if (!action && opts.duration) {

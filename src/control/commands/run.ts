@@ -161,7 +161,8 @@ export function registerRunCommand(program: Command): void {
                     args.push("--app", app);
                 }
                 for (const [k, v] of Object.entries(step)) {
-                    if (k === "do" || k === "app" || k === "delay" || k === "atMs" || v == null) {
+                    // "_"-prefixed keys are annotations (_label, _foreign), not flags.
+                    if (k === "do" || k === "app" || k === "delay" || k === "atMs" || k.startsWith("_") || v == null) {
                         continue;
                     }
                     args.push(`--${k}`, String(v));

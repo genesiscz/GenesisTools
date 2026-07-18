@@ -267,12 +267,14 @@ export function registerDiscoveryCommands(program: Command): void {
                 if (phantoms.length) {
                     out.println(pc.dim(`  (${phantoms.length} transient/phantom windows hidden)`));
                 }
-                out.println(`\n  ${result.totalElements} elements, ${result.addressableCount} addressable`);
-                const rc = (result.roleCounts as Record<string, number>) ?? {};
-                const roles = Object.entries(rc)
-                    .sort((a, b) => b[1] - a[1])
-                    .slice(0, 6);
-                out.println(`  ${roles.map(([r, n]) => `${r}:${n}`).join("  ")}\n`);
+                if (result.totalElements !== undefined) {
+                    out.println(`\n  ${result.totalElements} elements, ${result.addressableCount} addressable`);
+                    const rc = (result.roleCounts as Record<string, number>) ?? {};
+                    const roles = Object.entries(rc)
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 6);
+                    out.println(`  ${roles.map(([r, n]) => `${r}:${n}`).join("  ")}\n`);
+                }
                 const grouped = (result.grouped as Record<string, Array<Record<string, string>>>) ?? {};
                 const SHOW_ROLES = ["AXButton", "AXTextField", "AXCheckBox", "AXPopUpButton", "AXRadioButton"];
                 for (const role of SHOW_ROLES) {

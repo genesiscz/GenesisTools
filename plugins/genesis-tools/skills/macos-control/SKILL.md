@@ -88,6 +88,8 @@ tools control record-plan --record activity --duration 20 --out plan.json   # on
 
 `commands` logs subsequent `tools control` action commands (any terminal). `activity` records real user clicks/keys/scrolls via a CGEvent tap, clicks resolved to AX elements (id > desc > title > coords). `all` merges both, deduping our own synthetic events. Keystrokes coalesce into `type` steps, combos into `hotkey`, wheel bursts into `scroll`. Review before running.
 
+**Multi-session warning:** the commands recorder is machine-global. Commands from a different terminal/Claude session get marked `"_foreign"` in the plan and warned about in `status`/`stop`; `stop --exclude-foreign` drops them. Concurrent subagents of the SAME session are indistinguishable (same env identity) — don't run parallel agents through `tools control` while recording.
+
 ### Targeting (`<target>`)
 
 All interaction/inspection commands accept `--id <axId>` OR any combination of `--role`/`--title`/`--desc`/`--subrole` (first match). Elements without AXIdentifier (browser tabs, toolbar buttons, window close buttons) are fully interactable:

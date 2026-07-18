@@ -23,6 +23,17 @@ const RECORDED_COMMANDS = new Set([
     "window",
 ]);
 
+/**
+ * Best-effort identity of the terminal/session running this command — lets
+ * record-plan flag commands spliced in by OTHER concurrent sessions.
+ * Same-session subagents share these envs and stay indistinguishable.
+ */
+export function recordSource(): string {
+    const e = process.env;
+    const parts = [e.CLAUDE_CODE_SESSION_ID, e.ITERM_SESSION_ID, e.TERM_SESSION_ID, e.TMUX_PANE].filter(Boolean);
+    return parts.length ? parts.join(":") : "unknown";
+}
+
 /** When a record-plan session is active, log action commands for plan synthesis. */
 function maybeRecord(args: string[], ok: boolean): void {
     if (!existsSync(RECORD_SESSION)) {
@@ -37,7 +48,10 @@ function maybeRecord(args: string[], ok: boolean): void {
         if (session.mode !== "commands" && session.mode !== "all") {
             return;
         }
-        appendFileSync(join(RECORD_DIR, "commands.jsonl"), `${SafeJSON.stringify({ ts: Date.now(), ok, args })}\n`);
+        appendFileSync(
+            join(RECORD_DIR, "commands.jsonl"),
+            `${SafeJSON.stringify({ ts: Date.now(), ok, src: recordSource(), args })}\n`
+        );
     } catch {
         // recording must never break the command itself
     }
