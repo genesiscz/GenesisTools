@@ -57,7 +57,8 @@ export async function openConfig(options: ConfigOptions = {}): Promise<void> {
     const editor = env.editor.get() || "nano";
     // Split editor command in case it has arguments (e.g., "code --wait")
     const editorParts = editor.split(" ");
-    const proc = Bun.spawn([...editorParts, configPath], {
+    const proc = Bun.spawn({
+        cmd: [...editorParts, configPath],
         stdio: ["inherit", "inherit", "inherit"],
     });
 
