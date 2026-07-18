@@ -27,7 +27,7 @@ language js(typescript, jsx)
     },
     register_diagnostic(
         span = $match,
-        message = "Direct prompt-backend call. Use `p.X(...)` facade from `@app/utils/prompts/p` + `p.setBackend(inquirerBackend)` once at the tool's entrypoint. PR #179 t5-t8.",
+        message = "Direct prompt-backend call. Use `p.X(...)` facade from `@genesiscz/utils/prompts/p` + `p.setBackend(inquirerBackend)` once at the tool's entrypoint. PR #179 t5-t8.",
         severity = "error"
     )
 }

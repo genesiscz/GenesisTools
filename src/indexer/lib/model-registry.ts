@@ -7,7 +7,7 @@ import {
 import type { ModelEntry } from "@genesiscz/utils/ai/types";
 import { formatTable } from "@genesiscz/utils/table";
 
-/** @deprecated Use ModelEntry from @app/utils/ai/types */
+/** @deprecated Use ModelEntry from @genesiscz/utils/ai/types */
 export type ModelInfo = ModelEntry;
 
 export { getMaxEmbedChars, getTaskPrefix };

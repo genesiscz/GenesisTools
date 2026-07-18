@@ -1,6 +1,6 @@
 // no-mock-module-prompts.grit — Block `mock.module(...)` against the prompt
 // facade / backend modules. Use `installPromptMock(...)` from
-// `@app/utils/testing/prompt-mock` + a `PromptBackend` impl instead.
+// `@genesiscz/utils/testing/prompt-mock` + a `PromptBackend` impl instead.
 //
 // Why: bun:test's `mock.module()` is process-global and leaks across test
 // files via worker-pool reuse. This session we hit a 23-test cross-file
@@ -21,10 +21,10 @@ engine biome(1.0)
 language js(typescript, jsx)
 
 `mock.module($specifier, $rest)` as $match where {
-    $specifier <: r"^[\"'`]@(app/utils/prompts/p(/inquirer-backend|/clack-backend|/opentui-backend)?|inquirer/prompts)[\"'`]$",
+    $specifier <: r"^[\"'`]@((app|genesiscz)/utils/prompts/p(/inquirer-backend|/clack-backend|/opentui-backend)?|inquirer/prompts)[\"'`]$",
     register_diagnostic(
         span = $match,
-        message = "Don't mock prompt modules with mock.module — it leaks across test files via worker-pool reuse. Use `installPromptMock(yourBackend)` from `@app/utils/testing/prompt-mock`. See commit c4230745a.",
+        message = "Don't mock prompt modules with mock.module — it leaks across test files via worker-pool reuse. Use `installPromptMock(yourBackend)` from `@genesiscz/utils/testing/prompt-mock`. See commit c4230745a.",
         severity = "error"
     )
 }
