@@ -1,6 +1,6 @@
 import { closeSync, openSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { isProcessAlive } from "@app/task/lib/process-alive";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";

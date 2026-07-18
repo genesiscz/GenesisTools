@@ -122,6 +122,7 @@ export class CodexSessionRuntime {
                           agentName: this.meta.agentName,
                           rendezvousSession: this.meta.rendezvousSession,
                           leadName: "lead",
+                          sandbox: this.meta.sandbox,
                       }),
                   }
                 : {}),
@@ -282,9 +283,25 @@ export class CodexSessionRuntime {
         return this.meta.threadId;
     }
 
-    private async steer(body: string, force: boolean): Promise<{ turnId?: string; queued: boolean }> {
+    private async steer(
+        body: string,
+        force: boolean
+    ): Promise<{ turnId?: string; queued: boolean; merged?: boolean }> {
+        // codex 0.144.5 accepts turn/start during an active turn and MERGES the
+        // input into it (verified live): the returned turn id never runs as a
+        // separate turn, so keep the original active id in meta instead of the
+        // phantom one. The error path below is kept for servers that reject
+        // same-turn input.
+        const activeBefore = this.meta.activeTurnId;
+
         try {
             const turnId = await this.startTurn(body);
+
+            if (activeBefore) {
+                await this.updateMeta({ activeTurnId: activeBefore });
+                return { turnId, queued: false, merged: true };
+            }
+
             return { turnId, queued: false };
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);

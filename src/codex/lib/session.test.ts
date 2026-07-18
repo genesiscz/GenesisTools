@@ -158,7 +158,11 @@ describe("CodexSessionRuntime", () => {
 
             const result = await runtime.execute({ op: "steer", body: "Focus on auth", force: false });
 
-            expect(result).toEqual({ turnId: "turn-2", queued: false });
+            // codex 0.144.5 merges mid-turn input into the ACTIVE turn (verified
+            // live): the phantom new turn id is reported, but meta keeps the
+            // original active turn.
+            expect(result).toEqual({ turnId: "turn-2", queued: false, merged: true });
+            expect((await store.readMeta("reviewer"))?.activeTurnId).toBe("turn-1");
             expect(client.requests.at(-1)).toEqual({
                 method: "turn/start",
                 params: {
