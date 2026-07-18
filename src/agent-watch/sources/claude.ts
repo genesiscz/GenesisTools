@@ -80,6 +80,8 @@ interface ReadClaudeOptions {
     root?: string;
     now: number;
     stallTimeoutMs: number;
+    /** Skip files whose mtime is older than this window (ms). 0/undefined = read everything. */
+    activeWindowMs?: number;
 }
 
 export async function readClaudeSnapshots(opts: ReadClaudeOptions): Promise<AgentSnapshot[]> {
@@ -90,6 +92,7 @@ export async function readClaudeSnapshots(opts: ReadClaudeOptions): Promise<Agen
         return [];
     }
 
+    const cutoffMs = opts.activeWindowMs && opts.activeWindowMs > 0 ? opts.now - opts.activeWindowMs : undefined;
     const snapshots: AgentSnapshot[] = [];
     let projectDirs: import("node:fs").Dirent[] = [];
 
@@ -116,6 +119,15 @@ export async function readClaudeSnapshots(opts: ReadClaudeOptions): Promise<Agen
             const name = basename(file, ".jsonl");
 
             try {
+                const lastModified = statSync(path).mtimeMs;
+
+                // Pre-read cutoff: don't parse hundreds of stale historical
+                // transcripts just to filter them out afterwards. lastOutputAt
+                // is always >= mtime, so nothing active is skipped.
+                if (cutoffMs !== undefined && lastModified < cutoffMs) {
+                    continue;
+                }
+
                 const buf = readFileSync(path);
 
                 if (buf.length === 0) {
@@ -124,7 +136,6 @@ export async function readClaudeSnapshots(opts: ReadClaudeOptions): Promise<Agen
 
                 const records = parseJsonl<ClaudeRecord>(buf);
                 const events = recordsToEvents(records);
-                const lastModified = statSync(path).mtimeMs;
                 const state = classifyAgentState({
                     events,
                     lastModified,

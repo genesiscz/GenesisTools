@@ -2,7 +2,7 @@ import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { createNotifier, parseChannels } from "../notify";
 import { runWatch } from "../watcher";
-import { parseSharedOptions } from "./shared";
+import { parseNonNegativeInt, parseSharedOptions } from "./shared";
 
 interface WatchOpts {
     stallTimeout: string;
@@ -28,7 +28,8 @@ export function registerWatchCommand(program: Command): Command {
         .action(async (opts: WatchOpts) => {
             const { stallTimeoutMs, sources, activeWindowMs } = parseSharedOptions(opts);
             const channels = parseChannels(opts.notify);
-            const pollMs = Math.max(1, Number.parseInt(opts.poll, 10) || 5) * 1000;
+            const pollSeconds = parseNonNegativeInt(opts.poll, "--poll");
+            const pollMs = Math.max(1, pollSeconds > 0 ? pollSeconds : 5) * 1000;
             const notifier = createNotifier(channels);
 
             out.log.info(

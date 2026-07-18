@@ -56,6 +56,8 @@ interface ReadTaskOptions {
     dir?: string;
     now: number;
     stallTimeoutMs: number;
+    /** Skip files whose on-disk activity is older than this (ms). 0/undefined = read everything. */
+    activeWindowMs?: number;
 }
 
 export async function readTaskSnapshots(opts: ReadTaskOptions): Promise<AgentSnapshot[]> {
@@ -77,11 +79,31 @@ export async function readTaskSnapshots(opts: ReadTaskOptions): Promise<AgentSna
 
     const snapshots: AgentSnapshot[] = [];
 
+    const cutoffMs = opts.activeWindowMs && opts.activeWindowMs > 0 ? opts.now - opts.activeWindowMs : undefined;
+
     for (const file of files) {
         const path = join(dir, file);
         const name = basename(file, ".jsonl");
+        const metaPath = join(dir, `${name}.meta.json`);
 
         try {
+            // Sidecar activity: the meta file may record activity (or its own
+            // mtime) newer than the jsonl — e.g. an exit written only there.
+            let metaActivityAt = 0;
+            const hasMeta = existsSync(metaPath);
+            let meta: TaskMeta | null = null;
+
+            if (hasMeta) {
+                metaActivityAt = statSync(metaPath).mtimeMs;
+            }
+
+            // Pre-read cutoff: skip stale historical sessions without parsing
+            // them. Uses the same activity signal (jsonl mtime + sidecar) the
+            // snapshot itself is stamped with, so nothing active is skipped.
+            if (cutoffMs !== undefined && statSync(path).mtimeMs < cutoffMs && metaActivityAt < cutoffMs) {
+                continue;
+            }
+
             const buf = readFileSync(path);
 
             if (buf.length === 0) {
@@ -91,15 +113,15 @@ export async function readTaskSnapshots(opts: ReadTaskOptions): Promise<AgentSna
             const records = parseJsonl<TaskLine>(buf);
             const events = records.map(lineToEvent).filter((e): e is AgentEvent => e !== undefined);
 
-            const metaPath = join(dir, `${name}.meta.json`);
             let pidAlive: boolean | undefined;
             let metaExitCode: number | undefined;
 
-            if (existsSync(metaPath)) {
-                const meta = SafeJSON.parse(readFileSync(metaPath, "utf8")) as TaskMeta | null;
+            if (hasMeta) {
+                meta = SafeJSON.parse(readFileSync(metaPath, "utf8")) as TaskMeta | null;
 
                 if (meta) {
                     metaExitCode = meta.exitCode;
+                    metaActivityAt = Math.max(metaActivityAt, meta.lastActivityAt ?? 0);
 
                     if (meta.exitCode !== undefined) {
                         // Session recorded its exit in the sidecar; even if the
@@ -111,7 +133,7 @@ export async function readTaskSnapshots(opts: ReadTaskOptions): Promise<AgentSna
                 }
             }
 
-            const lastModified = statSync(path).mtimeMs;
+            const lastModified = Math.max(statSync(path).mtimeMs, metaActivityAt);
             const state = classifyAgentState({
                 events,
                 lastModified,

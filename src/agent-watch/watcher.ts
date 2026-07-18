@@ -21,9 +21,9 @@ export async function decideAndNotify(input: DecideAndNotifyInput): Promise<Agen
 
     for (const snap of snapshots) {
         const prev = prevStates.get(snap.id);
-        prevStates.set(snap.id, snap.state);
 
         if (!shouldNotify(prev, snap.state)) {
+            prevStates.set(snap.id, snap.state);
             continue;
         }
 
@@ -31,9 +31,12 @@ export async function decideAndNotify(input: DecideAndNotifyInput): Promise<Agen
 
         try {
             await notifier.notify(msg);
+            // Commit the state only after the notify succeeds — a transient
+            // notifier failure leaves prev unchanged so the next sweep retries.
+            prevStates.set(snap.id, snap.state);
             fired.push(snap);
         } catch (err) {
-            logger.warn({ err, id: snap.id }, "notifier failed");
+            logger.warn({ err, id: snap.id }, "notifier failed; transition will retry on next sweep");
         }
     }
 
@@ -74,11 +77,14 @@ function watchRootsFor(sources: WatchSourceName[]): string[] {
 
 const SILENT_NOTIFIER: Notifier = { notify: async () => {} };
 
-export async function sweep(
-    opts: RunWatchOptions,
-    prevStates: Map<string, AgentState>,
-    mode: { notify: boolean } = { notify: true }
-): Promise<AgentSnapshot[]> {
+export interface SweepInput {
+    opts: RunWatchOptions;
+    prevStates: Map<string, AgentState>;
+    mode?: { notify: boolean };
+}
+
+export async function sweep(input: SweepInput): Promise<AgentSnapshot[]> {
+    const { opts, prevStates, mode = { notify: true } } = input;
     const now = (opts.now ?? Date.now)();
     const snapshots = await collectSnapshots({
         sources: opts.sources,
@@ -91,6 +97,11 @@ export async function sweep(
         prevStates,
         notifier: mode.notify ? opts.notifier : SILENT_NOTIFIER,
     });
+
+    logger.debug(
+        { sources: opts.sources, notify: mode.notify, snapshots: snapshots.length, fired: fired.length },
+        "sweep complete"
+    );
 
     if (!mode.notify) {
         return [];
@@ -105,6 +116,7 @@ export async function sweep(
         }
     }
 
+    await out.flush();
     return fired;
 }
 
@@ -115,7 +127,7 @@ export async function runWatch(opts: RunWatchOptions): Promise<void> {
     // window SHOULD fire (that's the single-shot's purpose). In continuous mode
     // the baseline only seeds prevStates — notifying on states that were already
     // notable before we started would replay history as a notification storm.
-    await sweep(opts, prevStates, { notify: opts.once === true });
+    await sweep({ opts, prevStates, mode: { notify: opts.once === true } });
 
     if (opts.once) {
         return;
@@ -142,7 +154,7 @@ export async function runWatch(opts: RunWatchOptions): Promise<void> {
         try {
             do {
                 resweepQueued = false;
-                await sweep(opts, prevStates);
+                await sweep({ opts, prevStates });
             } while (resweepQueued);
         } catch (err) {
             logger.warn({ err }, "agent-watch sweep failed");
@@ -166,8 +178,12 @@ export async function runWatch(opts: RunWatchOptions): Promise<void> {
     await new Promise<void>((resolve) => {
         const stop = (): void => {
             clearInterval(interval);
-            void watcher.close();
-            resolve();
+            watcher
+                .close()
+                .catch((err) => {
+                    logger.warn({ err }, "watcher close failed");
+                })
+                .finally(resolve);
         };
 
         process.once("SIGINT", stop);

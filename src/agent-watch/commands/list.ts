@@ -1,4 +1,4 @@
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { collectSnapshots } from "../sources/index";
 import { parseSharedOptions } from "./shared";
@@ -12,6 +12,7 @@ export function registerListCommand(program: Command): void {
         .option("--json", "Emit JSON to stdout", false)
         .action(async (opts: { sources: string; active: string; json: boolean }) => {
             const { sources, activeWindowMs } = parseSharedOptions({ ...opts, stallTimeout: "120" });
+            logger.debug({ sources, activeWindowMs }, "agent-watch list: collecting");
             const snapshots = await collectSnapshots({
                 sources,
                 now: Date.now(),
@@ -19,9 +20,11 @@ export function registerListCommand(program: Command): void {
                 activeWindowMs,
             });
             const rows = snapshots.map((s) => ({ id: s.id, name: s.name, source: s.source }));
+            logger.debug({ count: rows.length }, "agent-watch list: collected");
 
             if (opts.json) {
                 out.result(rows);
+                await out.flush();
                 return;
             }
 

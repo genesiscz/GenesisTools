@@ -13,6 +13,8 @@ interface ReadWorkflowOptions {
     root?: string;
     now: number;
     stallTimeoutMs: number;
+    /** Skip leaves whose newest mtime is older than this window (ms). 0/undefined = keep everything. */
+    activeWindowMs?: number;
 }
 
 /**
@@ -56,6 +58,7 @@ export async function readWorkflowSnapshots(opts: ReadWorkflowOptions): Promise<
         return [];
     }
 
+    const cutoffMs = opts.activeWindowMs && opts.activeWindowMs > 0 ? opts.now - opts.activeWindowMs : undefined;
     const snapshots: AgentSnapshot[] = [];
     let projectDirs: import("node:fs").Dirent[] = [];
 
@@ -102,6 +105,11 @@ export async function readWorkflowSnapshots(opts: ReadWorkflowOptions): Promise<
 
                 try {
                     const lastModified = newestMtime(leafPath);
+
+                    if (cutoffMs !== undefined && lastModified < cutoffMs) {
+                        continue;
+                    }
+
                     const state = classifyAgentState({
                         events: [],
                         lastModified,

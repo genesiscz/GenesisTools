@@ -10,15 +10,15 @@ export async function collectSnapshots(opts: CollectOptions): Promise<AgentSnaps
     let results: AgentSnapshot[] = [];
 
     if (sources.includes("task")) {
-        results.push(...(await readTaskSnapshots({ dir: roots?.task, now, stallTimeoutMs })));
+        results.push(...(await readTaskSnapshots({ dir: roots?.task, now, stallTimeoutMs, activeWindowMs })));
     }
 
     if (sources.includes("claude")) {
-        results.push(...(await readClaudeSnapshots({ root: roots?.claude, now, stallTimeoutMs })));
+        results.push(...(await readClaudeSnapshots({ root: roots?.claude, now, stallTimeoutMs, activeWindowMs })));
     }
 
     if (sources.includes("workflows")) {
-        results.push(...(await readWorkflowSnapshots({ root: roots?.workflow, now, stallTimeoutMs })));
+        results.push(...(await readWorkflowSnapshots({ root: roots?.workflow, now, stallTimeoutMs, activeWindowMs })));
     }
 
     if (activeWindowMs !== undefined && activeWindowMs > 0) {

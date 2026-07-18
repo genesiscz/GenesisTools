@@ -1,4 +1,4 @@
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { renderStatusTable, toJsonSnapshot } from "../render";
 import { collectSnapshots } from "../sources/index";
@@ -14,11 +14,14 @@ export function registerStatusCommand(program: Command): void {
         .option("--json", "Emit a JSON snapshot to stdout", false)
         .action(async (opts: { stallTimeout: string; sources: string; active: string; json: boolean }) => {
             const { stallTimeoutMs, sources, activeWindowMs } = parseSharedOptions(opts);
+            logger.debug({ sources, stallTimeoutMs, activeWindowMs }, "agent-watch status: collecting");
             const now = Date.now();
             const snapshots = await collectSnapshots({ sources, now, stallTimeoutMs, activeWindowMs });
+            logger.debug({ count: snapshots.length }, "agent-watch status: collected");
 
             if (opts.json) {
                 out.result(toJsonSnapshot(snapshots, now));
+                await out.flush();
                 return;
             }
 
