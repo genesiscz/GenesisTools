@@ -19,15 +19,15 @@ config.resolver.nodeModulesPaths = [
 
 // Mirror the tsconfig `paths` so Metro resolves the same aliases TypeScript does (a
 // tsconfig-only alias type-checks but fails the Metro bundle — both must agree). Order
-// matters: the most-specific match (`@app/utils/json`) must beat the catch-all `@app/*`.
+// matters: the most-specific match (`@genesiscz/utils/json`) must beat the catch-all `@app/*`.
 // Alias map (project convention D30 — no relative imports in app code):
 //   @/*   → mobile-internal modules (DevDashboard/mobile/src)
 //   @dd/* → shared dev-dashboard code (repo src/dev-dashboard), e.g. @dd/contract
-//   @app/utils/json → the RN-safe SafeJSON shim (the contract's one runtime value-import)
+//   @genesiscz/utils/json → the RN-safe SafeJSON shim (the contract's one runtime value-import)
 //   @app/* → repo src (only the contract's own internal re-exports reach this at runtime;
 //            everything else from there is a type-only re-export — see contract-purity.test.ts)
 const aliasResolvers = [
-    { match: "@app/utils/json", target: path.resolve(projectRoot, "src/shims/safe-json.ts") },
+    { match: "@genesiscz/utils/json", target: path.resolve(projectRoot, "src/shims/safe-json.ts") },
     { prefix: "@dd/", target: path.resolve(workspaceRoot, "src/dev-dashboard") },
     { prefix: "@/", target: path.resolve(projectRoot, "src") },
     { prefix: "@app/", target: path.resolve(workspaceRoot, "src") },

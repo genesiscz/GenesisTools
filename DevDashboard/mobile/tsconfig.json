@@ -12,7 +12,7 @@
       "@dd/*": [
         "../../src/dev-dashboard/*"
       ],
-      "@app/utils/json": [
+      "@genesiscz/utils/json": [
         "./src/shims/safe-json.ts"
       ],
       "@app/*": [
