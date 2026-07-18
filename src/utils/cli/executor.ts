@@ -299,13 +299,17 @@ export class Executor {
 
         if (options?.timeout) {
             const timeoutMs = options.timeout;
+            // Cleared after the race — an uncleared timer keeps the event loop
+            // (and the whole CLI process) alive for the full timeout after exit.
+            let timer: ReturnType<typeof setTimeout> | undefined;
 
             const timeoutResult = await Promise.race([
                 collectOutput.then((r) => ({ type: "done" as const, value: r })),
-                new Promise<{ type: "timeout" }>((resolve) =>
-                    setTimeout(() => resolve({ type: "timeout" }), timeoutMs)
-                ),
+                new Promise<{ type: "timeout" }>((resolve) => {
+                    timer = setTimeout(() => resolve({ type: "timeout" }), timeoutMs);
+                }),
             ]);
+            clearTimeout(timer);
 
             if (timeoutResult.type === "timeout") {
                 proc.kill();
