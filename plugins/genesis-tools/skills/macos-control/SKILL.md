@@ -71,11 +71,20 @@ Both work as plan steps too: `{ "do": "wait", "q": "Save", "timeout": 3000 }`, `
 tools control screenshot --app <name> --path /tmp/s.png [--window T] [--crop x,y,w,h]
 tools control screenshot --app <name> --path /tmp/s.png --annotate [--all]   # numbered boxes on interactable
                                                                              #   elements + legend in --json
-tools control ocr --app <name> [--crop x,y,w,h]                              # Vision OCR: read text + pixel boxes
+tools control ocr --app <name> [--window T] [--crop x,y,w,h]                 # Vision OCR: read text + pixel boxes
 tools control ocr --image /tmp/s.png                                         # OCR an existing file
 ```
 
-`--annotate` is the "what can I click?" picture: every interactable element gets a numbered box, the JSON legend maps numbers to id/role/desc. `ocr` reads rendered text pixels — the check that survives apps lying in their AX tree.
+`--annotate` is the "what can I click?" picture: every interactable element gets a numbered box, the JSON legend maps numbers to id/role/desc. `ocr` reads rendered text pixels — the check that survives apps lying in their AX tree. Both default to the app's LARGEST window; `--window <title>` scopes either.
+
+### Snapshot / restore (leave the machine how you found it)
+
+```bash
+tools control snapshot                          # prints JSON: mouse position + frontmost app/window
+tools control restore --snapshot '<that json>'  # restores mouse + focus (takes the literal JSON, not a file path)
+```
+
+Wrap disruptive work: `SNAP=$(tools control snapshot)` → do focus-stealing things → `tools control restore --snapshot "$SNAP"`. Plans do this declaratively with `"restore": true`.
 
 ### Record a plan instead of writing one
 
@@ -92,7 +101,13 @@ tools control record-plan --record activity --duration 20 --out plan.json   # on
 
 ### Targeting (`<target>`)
 
-All interaction/inspection commands accept `--id <axId>` OR any combination of `--role`/`--title`/`--desc`/`--subrole` (first match). Elements without AXIdentifier (browser tabs, toolbar buttons, window close buttons) are fully interactable:
+All interaction/inspection commands accept:
+- `--q <query>` — **universal search** (checks id + title + desc + value + role + subrole at once). The escape hatch when you don't know WHICH attribute holds the visible text — reach for it first when unsure.
+- `--id <axId>` — exact AXIdentifier.
+- Any combination of `--role`/`--title`/`--desc`/`--subrole` (first match), `--window <title>` to scope, `--exact` for strict role matching.
+- `--depth <n>` — search depth (default 15; browser page content may need 40 — a 0-match result at default depth hints this).
+
+Elements without AXIdentifier (browser tabs, toolbar buttons, window close buttons) are fully interactable:
 
 ```bash
 # By AXIdentifier (native apps with .accessibilityIdentifier)
@@ -142,7 +157,7 @@ For elements below the fold, prefer `press` (buttons) or `focus` + `type` (text 
 
 ## Output
 
-All commands return JSON to stdout: `{"ok": true, ...}` on success, `{"ok": false, "error": "..."}` on failure. Add `--json` to the TS wrapper for raw JSON (compact; add `--pretty` to indent). Safety semantics: `set`/`type` refuse when the target app is not frontmost and hard-verify the field content after typing; `screenshot --window` and `--window` scoping fail loud with a `candidates` list on 0 or 2+ matches; `window` output flags transient popups (`"transient": true`).
+Default output is a human-readable summary line (`pressed nav-chat`, `assert ok board-poll-hint`). Add `--json` for the raw machine JSON — `{"ok": true, ...}` on success, `{"ok": false, "error": "..."}` on failure (compact; `--pretty` to indent). In `list`/`find` tables, the label column shows title, else desc, else value — static text usually surfaces in value, buttons in desc. Safety semantics: `set`/`type` refuse when the target app is not frontmost and hard-verify the field content after typing; `screenshot --window` and `--window` scoping fail loud with a `candidates` list on 0 or 2+ matches; `window` output flags transient popups (`"transient": true`).
 
 ## Plan runner (`tools control run`)
 

@@ -315,6 +315,7 @@ export function registerInteractCommands(program: Command): void {
         )
         .option("--app <name>", "capture this app's window and OCR it")
         .option("--image <path>", "OCR an existing image file instead")
+        .option("--window <title>", "with --app: target a specific window by title substring")
         .option("--crop <x,y,w,h>", "restrict OCR to this pixel region of the image")
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
@@ -328,6 +329,9 @@ export function registerInteractCommands(program: Command): void {
                 axArgs.push("--image", opts.image);
             } else {
                 axArgs.push("--app", opts.app);
+                if (opts.window) {
+                    axArgs.push("--window", opts.window);
+                }
             }
             if (opts.crop) {
                 axArgs.push("--crop", opts.crop);
