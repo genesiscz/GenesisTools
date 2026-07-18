@@ -18,8 +18,10 @@ import { runTool } from "@app/utils/cli";
 import { Command } from "commander";
 import { registerDiscoveryCommands } from "./commands/discovery";
 import { registerInteractCommands } from "./commands/interact";
+import { registerRecordPlanCommand } from "./commands/record-plan";
 import { registerRunCommand } from "./commands/run";
 import { registerStateCommands } from "./commands/state";
+import { registerVerifyCommands } from "./commands/verify";
 
 // `control capture ...` forwards raw args to the capture runner script, which
 // does its own argv parsing (plan files, preflight, clickmap, --help). Handled
@@ -42,8 +44,10 @@ program
 
 registerDiscoveryCommands(program);
 registerInteractCommands(program);
+registerRecordPlanCommand(program);
 registerRunCommand(program);
 registerStateCommands(program);
+registerVerifyCommands(program);
 
 program
     .command("capture [args...]")

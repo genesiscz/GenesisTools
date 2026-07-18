@@ -202,15 +202,57 @@ export function registerInteractCommands(program: Command): void {
             out.println(`${pc.green("sent")} ${pc.cyan(opts.keys)}`);
         });
 
+    addTargetOptions(
+        program
+            .command("scroll")
+            .description(
+                "Scroll: --direction sends wheel events (at element center / --coords / screen center); WITHOUT --direction scrolls the target element into view (AXScrollToVisible)."
+            )
+            .requiredOption("--app <name>", "app process name")
+    )
+        .option("--direction <dir>", "up | down | left | right (wheel mode)")
+        .option("--amount <n>", "wheel lines to scroll (default 3)")
+        .option("--coords <x,y>", "scroll at this screen point instead of an element")
+        .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
+        .action((opts) => {
+            const axArgs = ["scroll", "--app", opts.app, ...targetArgs(opts)];
+            if (opts.direction) {
+                axArgs.push("--direction", opts.direction);
+            }
+            if (opts.amount) {
+                axArgs.push("--amount", opts.amount);
+            }
+            if (opts.coords) {
+                axArgs.push("--coords", opts.coords);
+            }
+            const result = runAx(axArgs);
+            if (opts.json) {
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
+                return;
+            }
+            if (!result.ok) {
+                logger.error(String(result.error));
+                process.exit(1);
+            }
+            if (result.method === "AXScrollToVisible") {
+                out.println(`${pc.green("scrolled into view")} ${pc.cyan(targetLabel(opts, result))}`);
+            } else {
+                out.println(`${pc.green("scrolled")} ${opts.direction} x${result.amount}`);
+            }
+        });
+
     program
         .command("screenshot")
         .description(
-            "Window screenshot via CGWindowList. --window fails loud on 0 or 2+ title matches; unscoped picks the largest window."
+            "Window screenshot via CGWindowList. --window fails loud on 0 or 2+ title matches; unscoped picks the largest window. --annotate draws numbered boxes on interactable elements + returns a legend."
         )
         .requiredOption("--app <name>", "app process name")
         .requiredOption("--path <file>", "output PNG path")
         .option("--window <title>", "target specific window by title substring")
         .option("--crop <x,y,w,h>", "crop in PIXELS of the captured image (origin top-left)")
+        .option("--annotate", "draw numbered boxes around interactable elements (legend in JSON)")
+        .option("--all", "with --annotate: box EVERY element with id/desc/title, not just interactable roles")
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
@@ -221,7 +263,13 @@ export function registerInteractCommands(program: Command): void {
             if (opts.crop) {
                 axArgs.push("--crop", opts.crop);
             }
-            const result = runAx(axArgs);
+            if (opts.annotate) {
+                axArgs.push("--annotate");
+            }
+            if (opts.all) {
+                axArgs.push("--all");
+            }
+            const result = runAx(axArgs, 30_000);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 return;
@@ -233,5 +281,48 @@ export function registerInteractCommands(program: Command): void {
             out.println(
                 `${pc.green("captured")} ${result.window} ${result.width}x${result.height} -> ${pc.dim(String(result.path))}`
             );
+            if (Array.isArray(result.annotations)) {
+                out.println(pc.dim(`${result.annotations.length} annotated elements (legend in --json output)`));
+            }
+        });
+
+    program
+        .command("ocr")
+        .description(
+            "Vision OCR — read visible text from an app window (or --image file). Returns text blocks with pixel bounding boxes."
+        )
+        .option("--app <name>", "capture this app's window and OCR it")
+        .option("--image <path>", "OCR an existing image file instead")
+        .option("--crop <x,y,w,h>", "restrict OCR to this pixel region of the image")
+        .option("--json", "raw JSON output")
+        .option("--pretty", "indent JSON output (default compact)")
+        .action((opts) => {
+            if (!opts.app && !opts.image) {
+                logger.error("ocr needs --app <name> or --image <path>");
+                process.exit(1);
+            }
+            const axArgs = ["ocr"];
+            if (opts.image) {
+                axArgs.push("--image", opts.image);
+            } else {
+                axArgs.push("--app", opts.app);
+            }
+            if (opts.crop) {
+                axArgs.push("--crop", opts.crop);
+            }
+            const result = runAx(axArgs, 30_000);
+            if (opts.json) {
+                out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
+                return;
+            }
+            if (!result.ok) {
+                logger.error(String(result.error));
+                process.exit(1);
+            }
+            const blocks = Array.isArray(result.blocks) ? (result.blocks as Array<{ text?: string }>) : [];
+            for (const b of blocks) {
+                out.println(String(b.text ?? ""));
+            }
+            out.println(pc.dim(`${blocks.length} text blocks (--json for bounding boxes)`));
         });
 }

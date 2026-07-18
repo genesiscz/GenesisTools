@@ -1,11 +1,47 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 
 const GT_ROOT = join(import.meta.dir, "..", "..", "..");
 const BINARY_PATH = join(GT_ROOT, "native", "ax-tool", ".build", "release", "ax-tool");
 const SWIFT_SOURCE = join(GT_ROOT, "native", "ax-tool");
+
+export const RECORD_DIR = join(homedir(), ".genesis-tools", "control", "record");
+export const RECORD_SESSION = join(RECORD_DIR, "session.json");
+const RECORDED_COMMANDS = new Set([
+    "press",
+    "click",
+    "set",
+    "type",
+    "hotkey",
+    "focus",
+    "scroll",
+    "perform",
+    "screenshot",
+    "window",
+]);
+
+/** When a record-plan session is active, log action commands for plan synthesis. */
+function maybeRecord(args: string[], ok: boolean): void {
+    if (!existsSync(RECORD_SESSION)) {
+        return;
+    }
+    const cmd = args[0];
+    if (!cmd || !RECORDED_COMMANDS.has(cmd)) {
+        return;
+    }
+    try {
+        const session = SafeJSON.parse(readFileSync(RECORD_SESSION, "utf-8")) as { mode?: string };
+        if (session.mode !== "commands" && session.mode !== "all") {
+            return;
+        }
+        appendFileSync(join(RECORD_DIR, "commands.jsonl"), `${SafeJSON.stringify({ ts: Date.now(), ok, args })}\n`);
+    } catch {
+        // recording must never break the command itself
+    }
+}
 
 export interface AxResult {
     ok: boolean;
@@ -55,12 +91,16 @@ export function runAx(args: string[], timeoutMs = 10_000): AxResult {
 
     const stdout = (r.stdout ?? "").trim();
     if (!stdout) {
+        maybeRecord(args, false);
         return { ok: false, error: r.stderr?.trim() || `ax-tool exited ${r.status} with no output` };
     }
 
     try {
-        return SafeJSON.parse(stdout) as AxResult;
+        const parsed = SafeJSON.parse(stdout) as AxResult;
+        maybeRecord(args, parsed.ok);
+        return parsed;
     } catch {
+        maybeRecord(args, false);
         return { ok: false, error: `invalid JSON: ${stdout.slice(0, 200)}` };
     }
 }

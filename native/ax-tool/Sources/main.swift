@@ -1,6 +1,8 @@
 import ApplicationServices
 import AppKit
+import CoreText
 import Foundation
+import Vision
 
 // MARK: - AX helpers
 
@@ -505,6 +507,26 @@ func errorExit(_ message: String) -> Never {
 
 // MARK: - Commands
 
+
+// Try AXScrollToVisible on an off-screen element, then re-check that its
+// center landed inside a visible window. Used by set/type before refusing.
+func tryScrollIntoView(_ el: AXUIElement, app: AXUIElement) -> Bool {
+    guard axActionNames(el).contains("AXScrollToVisible") else { return false }
+    let err = performActionWithTimeout(el, action: "AXScrollToVisible", timeoutMs: 3000)
+    guard err == .success else { return false }
+    Thread.sleep(forTimeInterval: 0.2)
+    guard let pos = axPointValue(el, "AXPosition"),
+          let size = axSizeValue(el, "AXSize") else { return false }
+    let point = CGPoint(x: pos.x + size.width / 2, y: pos.y + size.height / 2)
+    for w in axWindows(app) {
+        if let wp = axPointValue(w, "AXPosition"), let ws = axSizeValue(w, "AXSize"),
+           CGRect(x: wp.x, y: wp.y, width: ws.width, height: ws.height).contains(point) {
+            return true
+        }
+    }
+    return false
+}
+
 func cmdSet(appName: String, value: String) {
     let pid = resolveApp(appName)
     let app = AXUIElementCreateApplication(pid)
@@ -539,11 +561,21 @@ func cmdSet(appName: String, value: String) {
                 }
             }
             if !visible {
-                errorExit("text field outside visible window and AXFocused failed — cannot type safely")
+                if tryScrollIntoView(element, app: app),
+                   let pos2 = axPointValue(element, "AXPosition"),
+                   let size2 = axSizeValue(element, "AXSize") {
+                    let point2 = CGPoint(x: pos2.x + size2.width / 2, y: pos2.y + size2.height / 2)
+                    postClick(at: point2, right: false, double: false)
+                    Thread.sleep(forTimeInterval: 0.1)
+                    result["focusMethod"] = "scroll+click"
+                } else {
+                    errorExit("text field outside visible window and AXFocused failed — AXScrollToVisible unavailable, cannot type safely")
+                }
+            } else {
+                postClick(at: point, right: false, double: false)
+                Thread.sleep(forTimeInterval: 0.1)
+                result["focusMethod"] = "click"
             }
-            postClick(at: point, right: false, double: false)
-            Thread.sleep(forTimeInterval: 0.1)
-            result["focusMethod"] = "click"
         } else {
             result["focusMethod"] = "ax"
         }
@@ -1045,9 +1077,17 @@ func cmdTypeText(appName: String, text: String) {
                 }
             }
             if !visible {
-                errorExit("element outside visible window and AXFocused failed — cannot type safely")
+                if tryScrollIntoView(targetEl!, app: app),
+                   let pos2 = axPointValue(targetEl!, "AXPosition"),
+                   let size2 = axSizeValue(targetEl!, "AXSize") {
+                    postClick(at: CGPoint(x: pos2.x + size2.width / 2, y: pos2.y + size2.height / 2),
+                              right: false, double: false)
+                } else {
+                    errorExit("element outside visible window and AXFocused failed — AXScrollToVisible unavailable, cannot type safely")
+                }
+            } else {
+                postClick(at: point, right: false, double: false)
             }
-            postClick(at: point, right: false, double: false)
         }
     }
 
@@ -1123,9 +1163,79 @@ func cmdTypeText(appName: String, text: String) {
     jsonOutput(result)
 }
 
+// MARK: - Scroll
+
+func cmdScroll(appName: String) {
+    let pid = resolveApp(appName)
+    let app = AXUIElementCreateApplication(pid)
+    let direction = argValue("--direction")
+    let amount = Int(argValue("--amount") ?? "3") ?? 3
+
+    let hasTarget = argValue("--id") != nil || argValue("--q") != nil || argValue("--role") != nil ||
+                    argValue("--title") != nil || argValue("--desc") != nil || argValue("--subrole") != nil
+    var point: CGPoint? = nil
+    var el: AXUIElement? = nil
+    if let coordStr = argValue("--coords") {
+        let parts = coordStr.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 2 else { errorExit("--coords format: x,y") }
+        point = CGPoint(x: parts[0], y: parts[1])
+    } else if hasTarget {
+        el = resolveElement(app, appName)
+        if let pos = axPointValue(el!, "AXPosition"), let size = axSizeValue(el!, "AXSize") {
+            point = CGPoint(x: pos.x + size.width / 2, y: pos.y + size.height / 2)
+        }
+    }
+
+    // No --direction: scroll the target element INTO VIEW (AXScrollToVisible).
+    if direction == nil {
+        guard let el = el else {
+            errorExit("scroll without --direction needs a target element (performs AXScrollToVisible); add --direction up/down/left/right for wheel scrolling")
+        }
+        if axActionNames(el).contains("AXScrollToVisible") {
+            let err = performActionWithTimeout(el, action: "AXScrollToVisible", timeoutMs: 3000)
+            if err != .success { errorExit("AXScrollToVisible failed: AXError \(err.rawValue)") }
+            var result: [String: Any] = ["ok": true, "action": "scroll", "method": "AXScrollToVisible"]
+            result.merge(elementInfo(el)) { _, new in new }
+            jsonOutput(result)
+            return
+        }
+        errorExit("element does not support AXScrollToVisible — use --direction with wheel scrolling instead")
+    }
+
+    var dy: Int32 = 0
+    var dx: Int32 = 0
+    switch direction! {
+    case "up": dy = Int32(amount)
+    case "down": dy = Int32(-amount)
+    case "left": dx = Int32(amount)
+    case "right": dx = Int32(-amount)
+    default: errorExit("--direction must be up, down, left, or right")
+    }
+    guard let ev = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2,
+                           wheel1: dy, wheel2: dx, wheel3: 0) else {
+        errorExit("failed to create scroll event")
+    }
+    // Scroll goes to the window under the event location — no focus needed.
+    if let p = point { ev.location = p }
+    ev.post(tap: .cghidEventTap)
+    var result: [String: Any] = ["ok": true, "action": "scroll", "method": "wheel",
+                                  "direction": direction!, "amount": amount]
+    if let p = point { result["x"] = p.x; result["y"] = p.y }
+    if let el = el { result.merge(elementInfo(el)) { _, new in new } }
+    jsonOutput(result)
+}
+
 // MARK: - Screenshot
 
-func cmdScreenshot(appName: String, path: String) {
+// Shared window-capture: resolves the target window (fail-loud --window,
+// largest-area default), returns (image, title, pid, bounds in CG points)
+// plus other-window names for reporting.
+func captureWindowCGImage(_ appName: String) -> (CGImage, String, pid_t, CGRect) {
+    let (img, title, pid, bounds, _) = captureWindowCGImageFull(appName)
+    return (img, title, pid, bounds)
+}
+
+func captureWindowCGImageFull(_ appName: String) -> (CGImage, String, pid_t, CGRect, [String]) {
     let pid = resolveApp(appName)
     let windowScope = argValue("--window")
 
@@ -1171,19 +1281,35 @@ func cmdScreenshot(appName: String, path: String) {
           let windowID = win[kCGWindowNumber] as? CGWindowID else {
         errorExit("no capturable window for \(appName)")
     }
-
-    guard var cgImage = CGWindowListCreateImage(
+    guard let cgImage = CGWindowListCreateImage(
         .null, .optionIncludingWindow, windowID, [.boundsIgnoreFraming, .bestResolution]
     ) else {
         errorExit("CGWindowListCreateImage failed")
     }
+    let b = win[kCGWindowBounds] as? [String: Any]
+    let bounds = CGRect(x: (b?["X"] as? Double) ?? 0, y: (b?["Y"] as? Double) ?? 0,
+                        width: (b?["Width"] as? Double) ?? 1, height: (b?["Height"] as? Double) ?? 1)
+    let others = appWindows.filter { ($0[kCGWindowNumber] as? CGWindowID) != windowID }.map { windowName($0) }
+    return (cgImage, windowName(win), pid, bounds, others)
+}
 
-    var result: [String: Any] = ["ok": true, "action": "screenshot", "path": path,
-                                 "window": windowName(win)]
-    if appWindows.count > 1 && windowScope == nil {
-        result["otherWindows"] = appWindows.filter { ($0[kCGWindowNumber] as? CGWindowID) != windowID }
-            .map { windowName($0) }
+func cmdScreenshot(appName: String, path: String) {
+    var (cgImage, title, pid, boundsPts, others) = captureWindowCGImageFull(appName)
+
+    var result: [String: Any] = ["ok": true, "action": "screenshot", "path": path, "window": title]
+    if !others.isEmpty && argValue("--window") == nil {
+        result["otherWindows"] = others
         result["pickedBy"] = "largest-area (pass --window <title> to target another)"
+    }
+
+    // --annotate: draw numbered boxes around interactable AX elements
+    // (--all = every element with id/desc/title) + legend in the JSON.
+    if args.contains("--annotate") {
+        let (annotated, legend) = annotateImage(cgImage, appName: appName, pid: pid,
+                                               windowTitle: title, windowBoundsPts: boundsPts)
+        cgImage = annotated
+        result["annotations"] = legend
+        result["annotated"] = true
     }
 
     // --crop x,y,w,h in PIXELS of the captured image (retina px, origin top-left)
@@ -1198,18 +1324,182 @@ func cmdScreenshot(appName: String, path: String) {
         result["crop"] = ["x": p[0], "y": p[1], "w": p[2], "h": p[3]]
     }
 
+    writePNG(cgImage, to: path)
+    result["width"] = cgImage.width
+    result["height"] = cgImage.height
+    jsonOutput(result)
+}
+
+
+// MARK: - Annotate + OCR
+
+let INTERACTABLE_ROLES: Set<String> = [
+    "AXButton", "AXTextField", "AXTextArea", "AXSecureTextField", "AXCheckBox",
+    "AXRadioButton", "AXPopUpButton", "AXLink", "AXMenuButton", "AXComboBox",
+    "AXSearchField", "AXSlider", "AXDisclosureTriangle", "AXIncrementor",
+]
+
+struct FramedElement {
+    let el: AXUIElement
+    let role: String
+    let frame: CGRect  // global CG points
+}
+
+func collectFramedElements(_ root: AXUIElement, all: Bool, depth: Int = 0, maxDepth: Int = 15) -> [FramedElement] {
+    if depth > maxDepth { return [] }
+    var out: [FramedElement] = []
+    if let role = axStringAttribute(root, "AXRole"),
+       all ? true : INTERACTABLE_ROLES.contains(role),
+       let pos = axPointValue(root, "AXPosition"),
+       let size = axSizeValue(root, "AXSize"),
+       size.width > 1, size.height > 1 {
+        if all {
+            if axStringAttribute(root, "AXIdentifier") != nil ||
+               axStringAttribute(root, "AXDescription") != nil ||
+               axStringAttribute(root, "AXTitle") != nil {
+                out.append(FramedElement(el: root, role: role,
+                    frame: CGRect(origin: pos, size: size)))
+            }
+        } else {
+            out.append(FramedElement(el: root, role: role, frame: CGRect(origin: pos, size: size)))
+        }
+    }
+    for child in axChildren(root) {
+        out.append(contentsOf: collectFramedElements(child, all: all, depth: depth + 1, maxDepth: maxDepth))
+    }
+    return out
+}
+
+func annotateImage(_ image: CGImage, appName: String, pid: pid_t, windowTitle: String,
+                    windowBoundsPts: CGRect) -> (CGImage, [[String: Any]]) {
+    let app = AXUIElementCreateApplication(pid)
+    var axWin: AXUIElement? = nil
+    for w in axWindows(app) {
+        if (axStringAttribute(w, "AXTitle") ?? "") == windowTitle { axWin = w; break }
+    }
+    axWin = axWin ?? axWindows(app).first
+    guard let win = axWin else { return (image, []) }
+
+    let all = args.contains("--all")
+    let elements = collectFramedElements(win, all: all)
+    let scale = CGFloat(image.width) / windowBoundsPts.width
+
+    let width = image.width
+    let height = image.height
+    guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                              bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+        return (image, [])
+    }
+    ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+    var legend: [[String: Any]] = []
+    var n = 0
+    for fe in elements {
+        // element global pts -> window-relative pts -> image px (top-left origin)
+        let rx = (fe.frame.origin.x - windowBoundsPts.origin.x) * scale
+        let ryTop = (fe.frame.origin.y - windowBoundsPts.origin.y) * scale
+        let rw = fe.frame.width * scale
+        let rh = fe.frame.height * scale
+        if rx + rw < 0 || ryTop + rh < 0 || rx > CGFloat(width) || ryTop > CGFloat(height) { continue }
+        n += 1
+        // CGContext origin is bottom-left — flip Y
+        let ryCG = CGFloat(height) - ryTop - rh
+        let rect = CGRect(x: rx, y: ryCG, width: rw, height: rh)
+        ctx.setStrokeColor(CGColor(red: 1, green: 0.1, blue: 0.5, alpha: 0.9))
+        ctx.setLineWidth(2)
+        ctx.stroke(rect)
+
+        let label = "\(n)"
+        let font = CTFontCreateWithName("Helvetica-Bold" as CFString, 22, nil)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: CGColor(red: 1, green: 1, blue: 1, alpha: 1),
+        ]
+        let astr = NSAttributedString(string: label, attributes: attrs)
+        let line = CTLineCreateWithAttributedString(astr)
+        let tb = CTLineGetBoundsWithOptions(line, .useOpticalBounds)
+        let pad: CGFloat = 3
+        let bgRect = CGRect(x: rect.minX, y: rect.maxY - tb.height - 2 * pad,
+                            width: tb.width + 2 * pad, height: tb.height + 2 * pad)
+        ctx.setFillColor(CGColor(red: 1, green: 0.1, blue: 0.5, alpha: 0.9))
+        ctx.fill(bgRect)
+        ctx.textPosition = CGPoint(x: bgRect.minX + pad, y: bgRect.minY + pad)
+        CTLineDraw(line, ctx)
+
+        var entry: [String: Any] = ["n": n, "role": fe.role,
+            "px": ["x": Int(rx), "y": Int(ryTop), "w": Int(rw), "h": Int(rh)]]
+        entry.merge(elementInfo(fe.el)) { _, new in new }
+        legend.append(entry)
+    }
+    let annotated = ctx.makeImage() ?? image
+    return (annotated, legend)
+}
+
+func writePNG(_ image: CGImage, to path: String) {
     let url = URL(fileURLWithPath: path)
     guard let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else {
         errorExit("cannot create image file at \(path)")
     }
-    CGImageDestinationAddImage(dest, cgImage, nil)
-    if !CGImageDestinationFinalize(dest) {
-        errorExit("failed to write PNG to \(path)")
-    }
+    CGImageDestinationAddImage(dest, image, nil)
+    if !CGImageDestinationFinalize(dest) { errorExit("failed to write PNG to \(path)") }
+}
 
-    result["width"] = cgImage.width
-    result["height"] = cgImage.height
-    jsonOutput(result)
+func runOCR(on image: CGImage) -> [String: Any] {
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    request.usesLanguageCorrection = true
+    let handler = VNImageRequestHandler(cgImage: image, options: [:])
+    do { try handler.perform([request]) } catch {
+        errorExit("OCR failed: \(error.localizedDescription)")
+    }
+    let W = CGFloat(image.width)
+    let H = CGFloat(image.height)
+    var blocks: [[String: Any]] = []
+    var lines: [String] = []
+    for obs in request.results ?? [] {
+        guard let cand = obs.topCandidates(1).first else { continue }
+        let bb = obs.boundingBox  // normalized, origin bottom-left
+        blocks.append([
+            "text": cand.string,
+            "confidence": Double(cand.confidence),
+            "px": ["x": Int(bb.minX * W), "y": Int((1 - bb.maxY) * H),
+                    "w": Int(bb.width * W), "h": Int(bb.height * H)],
+        ])
+        lines.append(cand.string)
+    }
+    return ["ok": true, "action": "ocr", "blocks": blocks, "count": blocks.count,
+            "text": lines.joined(separator: "\n"),
+            "note": "px coords are pixels of the source image, origin top-left"]
+}
+
+func loadCGImage(_ path: String) -> CGImage {
+    guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+          let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
+        errorExit("cannot read image: \(path)")
+    }
+    return img
+}
+
+func cmdOcr(appName: String?) {
+    var image: CGImage
+    if let imgPath = argValue("--image") {
+        image = loadCGImage(imgPath)
+    } else if let appName = appName {
+        let (img, _, _, _) = captureWindowCGImage(appName)
+        image = img
+    } else {
+        errorExit("ocr needs --image <path> or --app <name>")
+    }
+    if let cropStr = argValue("--crop") {
+        let pcs = cropStr.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        guard pcs.count == 4 else { errorExit("--crop format: x,y,w,h (pixels of the image)") }
+        guard let cropped = image.cropping(to: CGRect(x: pcs[0], y: pcs[1], width: pcs[2], height: pcs[3])) else {
+            errorExit("--crop outside image bounds \(image.width)x\(image.height)")
+        }
+        image = cropped
+    }
+    jsonOutput(runOCR(on: image))
 }
 
 // MARK: - Hotkey
@@ -1363,6 +1653,145 @@ func cmdRestore(snapshotJson: String) {
 
     jsonOutput(["ok": true, "action": "restore",
                 "mouse": snap["mouse"] ?? [:], "app": snap["app"] ?? ""])
+}
+
+// MARK: - Record (activity recorder for record-plan)
+
+// Listen-only CGEvent tap streaming NDJSON events (click/key/scroll) with the
+// AX element under each click resolved to app/role/title/desc/id. The TS side
+// (record-plan) converts the stream into plan steps.
+final class ActivityRecorder {
+    let handle: FileHandle?
+    let start = CFAbsoluteTimeGetCurrent()
+
+    init(outPath: String?) {
+        if let p = outPath {
+            FileManager.default.createFile(atPath: p, contents: nil)
+            guard let h = FileHandle(forWritingAtPath: p) else {
+                errorExit("cannot open --out for writing: \(p)")
+            }
+            handle = h
+        } else {
+            handle = nil
+        }
+    }
+
+    func emit(_ dict: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]) else { return }
+        var line = data
+        line.append(0x0A)
+        if let h = handle { h.write(line) } else { FileHandle.standardOutput.write(line) }
+    }
+
+    func elementAt(_ point: CGPoint) -> [String: Any] {
+        let sys = AXUIElementCreateSystemWide()
+        var elRef: AXUIElement?
+        guard AXUIElementCopyElementAtPosition(sys, Float(point.x), Float(point.y), &elRef) == .success,
+              let el = elRef else { return [:] }
+        // Climb to the nearest ancestor that is addressable (id/title/desc or
+        // pressable) so the recorded step can be replayed by attribute lookup.
+        var chosen = el
+        var hops = 0
+        while hops < 6 {
+            let hasHandle = axStringAttribute(chosen, "AXIdentifier") != nil
+                || (axStringAttribute(chosen, "AXTitle")?.isEmpty == false)
+                || (axStringAttribute(chosen, "AXDescription")?.isEmpty == false)
+            if hasHandle || axActionNames(chosen).contains("AXPress") { break }
+            guard let parentRef = axAttribute(chosen, "AXParent") else { break }
+            let parent = parentRef as! AXUIElement
+            chosen = parent
+            hops += 1
+        }
+        var info = elementInfo(chosen)
+        if let sub = axStringAttribute(chosen, "AXSubrole") { info["subrole"] = sub }
+        var pid: pid_t = 0
+        if AXUIElementGetPid(chosen, &pid) == .success,
+           let app = NSRunningApplication(processIdentifier: pid) {
+            info["app"] = app.localizedName ?? ""
+            info["pid"] = Int(pid)
+        }
+        return info
+    }
+
+    func handleEvent(type: CGEventType, event: CGEvent) {
+        let ts = Int((CFAbsoluteTimeGetCurrent() - start) * 1000)
+        switch type {
+        case .leftMouseDown, .rightMouseDown:
+            let loc = event.location
+            var e: [String: Any] = ["type": "click", "ts": ts,
+                                    "x": Int(loc.x), "y": Int(loc.y)]
+            if type == .rightMouseDown { e["right"] = true }
+            e["element"] = elementAt(loc)
+            emit(e)
+        case .keyDown:
+            if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { return }
+            let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+            var length = 0
+            var chars = [UniChar](repeating: 0, count: 4)
+            event.keyboardGetUnicodeString(maxStringLength: 4, actualStringLength: &length, unicodeString: &chars)
+            let s = String(utf16CodeUnits: chars, count: length)
+            var mods: [String] = []
+            let f = event.flags
+            if f.contains(.maskCommand) { mods.append("cmd") }
+            if f.contains(.maskControl) { mods.append("ctrl") }
+            if f.contains(.maskAlternate) { mods.append("alt") }
+            if f.contains(.maskShift) { mods.append("shift") }
+            var e: [String: Any] = ["type": "key", "ts": ts, "keycode": Int(keycode), "char": s]
+            if !mods.isEmpty { e["mods"] = mods }
+            if let front = NSWorkspace.shared.frontmostApplication?.localizedName { e["app"] = front }
+            emit(e)
+        case .scrollWheel:
+            let dy = event.getIntegerValueField(.scrollWheelEventDeltaAxis1)
+            let dx = event.getIntegerValueField(.scrollWheelEventDeltaAxis2)
+            if dy == 0 && dx == 0 { return }
+            var e: [String: Any] = ["type": "scroll", "ts": ts, "dy": Int(dy), "dx": Int(dx)]
+            if let front = NSWorkspace.shared.frontmostApplication?.localizedName { e["app"] = front }
+            emit(e)
+        default:
+            break
+        }
+    }
+}
+
+func cmdRecord() {
+    let duration = Double(argValue("--duration") ?? "0") ?? 0
+    let recorder = ActivityRecorder(outPath: argValue("--out"))
+
+    let mask: CGEventMask =
+        (1 << CGEventType.leftMouseDown.rawValue) |
+        (1 << CGEventType.rightMouseDown.rawValue) |
+        (1 << CGEventType.keyDown.rawValue) |
+        (1 << CGEventType.scrollWheel.rawValue)
+
+    let callback: CGEventTapCallBack = { _, type, event, refcon in
+        if let refcon {
+            Unmanaged<ActivityRecorder>.fromOpaque(refcon).takeUnretainedValue()
+                .handleEvent(type: type, event: event)
+        }
+        return Unmanaged.passUnretained(event)
+    }
+
+    guard let tap = CGEvent.tapCreate(
+        tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly,
+        eventsOfInterest: mask, callback: callback,
+        userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(recorder).toOpaque())
+    ) else {
+        errorExit("could not create event tap — grant Accessibility + Input Monitoring to the calling terminal")
+    }
+
+    let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+    CGEvent.tapEnable(tap: tap, enable: true)
+
+    recorder.emit(["type": "meta", "ts": 0, "recording": true,
+                   "frontmost": NSWorkspace.shared.frontmostApplication?.localizedName ?? "",
+                   "duration": duration])
+    signal(SIGINT) { _ in exit(0) }
+    signal(SIGTERM) { _ in exit(0) }
+    if duration > 0 {
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { exit(0) }
+    }
+    CFRunLoopRun()
 }
 
 // MARK: - Preflight
@@ -1625,11 +2054,17 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
       ax-tool focus   --app <name> [<target>]                 Activate app + focus element
       ax-tool click   --app <name> <target>                   CGEvent click at element center
       ax-tool type    --app <name> --text <str> [<target>]    Type + HARD VERIFY ([--clear] [--return])
-      ax-tool screenshot --app <name> --path <file.png> [--window W] [--crop x,y,w,h]
+      ax-tool scroll  --app <name> [<target>|--coords x,y] --direction up|down|left|right [--amount n]
+                      (no --direction + target = AXScrollToVisible: bring element into view)
+      ax-tool screenshot --app <name> --path <file.png> [--window W] [--crop x,y,w,h] [--annotate [--all]]
                       --crop is PIXELS of the captured image; --window fails loud on 0/2+ matches
+                      --annotate draws numbered boxes on interactable elements + legend in JSON
+      ax-tool ocr     --app <name> | --image <path> [--crop x,y,w,h]   Vision OCR: text blocks + pixel boxes
       ax-tool hotkey --keys <cmd,a> [--app <name>]            Key combo (--app activates target first)
       ax-tool snapshot                                        Capture mouse + focused app/window
       ax-tool restore --snapshot <json>                       Restore mouse + focus from snapshot
+      ax-tool record [--out <f.jsonl>] [--duration <s>]       Stream user activity as NDJSON
+                      (clicks resolved to AX elements; keys; scrolls; SIGINT to stop)
 
     Target: --id <axId>, --q <query> (universal cascade), or any combo of
     --role/--title/--desc/--subrole [--window W] [--exact].
@@ -1684,6 +2119,15 @@ if command == "hotkey" {
     exit(0)
 }
 
+if command == "ocr", let _ = argValue("--image") {
+    cmdOcr(appName: nil)
+    exit(0)
+}
+if command == "record" {
+    cmdRecord()
+    exit(0)
+}
+
 guard let appName = argValue("--app") else {
     errorExit("--app <name> required")
 }
@@ -1722,11 +2166,15 @@ case "focus":
     cmdFocus(appName: appName)
 case "click":
     cmdClick(appName: appName)
+case "scroll":
+    cmdScroll(appName: appName)
 case "type":
     guard let text = argValue("--text") else { errorExit("--text required") }
     cmdTypeText(appName: appName, text: text)
 case "preflight":
     cmdPreflight(appName: appName, maxDepth: maxDepth)
+case "ocr":
+    cmdOcr(appName: appName)
 case "screenshot":
     guard let path = argValue("--path") else { errorExit("--path <file.png> required") }
     cmdScreenshot(appName: appName, path: path)

@@ -48,7 +48,45 @@ tools control click --app <name> <target>                               # CGEven
 tools control perform --app <name> <target> --action AXShowMenu         # Any AX action
 tools control focus --app <name> [<target>]                             # Activate app + focus element
 tools control type --app <name> --text "hello" [<target>]               # Type + HARD VERIFY ([--clear] [--return])
+tools control scroll --app <name> --direction down [--amount N]         # Wheel scroll (at <target> center or --coords x,y)
+tools control scroll --app <name> <target>                              # No --direction: AXScrollToVisible (bring into view)
+tools control hotkey --keys cmd,shift,a [--app <name>]                  # Key combo (--app activates target first)
 ```
+
+### Verification (wait / assert — replaces sleep-guessing)
+
+```bash
+tools control wait --app <name> <target> [--timeout 5000] [--interval 200]   # Poll until element exists
+tools control wait --app <name> <target> --gone                              # ...until it disappears
+tools control wait --app <name> <target> --for enabled|focused               # ...until enabled/focused
+tools control wait --app <name> <target> --contains "Saved"                  # ...until AXValue contains text
+tools control assert --app <name> <target> [--expect V|--contains T|--gone]  # Single-shot check, exit 1 on fail
+```
+
+Both work as plan steps too: `{ "do": "wait", "q": "Save", "timeout": 3000 }`, `{ "do": "assert", "id": "status", "contains": "Done" }` — plans become UI tests.
+
+### Vision (screenshot / annotate / OCR)
+
+```bash
+tools control screenshot --app <name> --path /tmp/s.png [--window T] [--crop x,y,w,h]
+tools control screenshot --app <name> --path /tmp/s.png --annotate [--all]   # numbered boxes on interactable
+                                                                             #   elements + legend in --json
+tools control ocr --app <name> [--crop x,y,w,h]                              # Vision OCR: read text + pixel boxes
+tools control ocr --image /tmp/s.png                                         # OCR an existing file
+```
+
+`--annotate` is the "what can I click?" picture: every interactable element gets a numbered box, the JSON legend maps numbers to id/role/desc. `ocr` reads rendered text pixels — the check that survives apps lying in their AX tree.
+
+### Record a plan instead of writing one
+
+```bash
+tools control record-plan start --record all       # commands | activity | all
+# ...run tools control commands and/or drive the UI by hand...
+tools control record-plan stop --out plan.json     # synthesized, runnable plan
+tools control record-plan --record activity --duration 20 --out plan.json   # one-shot
+```
+
+`commands` logs subsequent `tools control` action commands (any terminal). `activity` records real user clicks/keys/scrolls via a CGEvent tap, clicks resolved to AX elements (id > desc > title > coords). `all` merges both, deduping our own synthetic events. Keystrokes coalesce into `type` steps, combos into `hotkey`, wheel bursts into `scroll`. Review before running.
 
 ### Targeting (`<target>`)
 
@@ -137,8 +175,9 @@ Plan fields:
 - `restore` — snapshot mouse + focus before, restore after
 - `delayMs` — pause between steps (default 200ms, overridable per step with `"delay": N`)
 - `exact` — force strict role/subrole matching for all steps
-- `steps[].do` — any ax-tool command name (focus/click/press/set/type/get/find/attrs/actions/perform/window)
-- Steps take the same fields as CLI flags: `id`, `role`, `title`, `desc`, `subrole`, `window`, `value`, `text`, `action`
+- `steps[].do` — any command name (focus/click/press/set/type/get/find/attrs/actions/perform/window/scroll/hotkey/screenshot/wait/assert)
+- Steps take the same fields as CLI flags: `id`, `role`, `title`, `desc`, `subrole`, `window`, `value`, `text`, `action`, `keys`, `direction`, `amount`, `path`
+- `wait`/`assert` steps additionally take `timeout`, `interval`, `gone`, `for`, `expect`, `contains`
 
 The runner is the declarative equivalent of the shell snapshot/restore pattern but in one call, with timing and error tracking per step.
 

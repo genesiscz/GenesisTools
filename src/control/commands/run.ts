@@ -6,6 +6,7 @@ import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { type AxResult, runAx } from "../lib/runner";
+import { assertEl, waitFor } from "./verify";
 
 const ACTION_ALIASES: Record<string, string> = {
     "ax-set": "set",
@@ -111,6 +112,41 @@ export function registerRunCommand(program: Command): void {
                     if (wait > 0) {
                         Bun.sleepSync(wait);
                     }
+                }
+
+                // wait/assert are TS-side condition steps, not binary commands.
+                if (cmd === "wait" || cmd === "assert") {
+                    const target: string[] = [];
+                    for (const k of ["q", "id", "role", "title", "desc", "subrole", "window"]) {
+                        if (step[k] != null) {
+                            target.push(`--${k}`, String(step[k]));
+                        }
+                    }
+                    const cond = {
+                        app,
+                        target,
+                        gone: step.gone === true,
+                        for: step.for as string | undefined,
+                        value: step.expect as string | undefined,
+                        contains: step.contains as string | undefined,
+                    };
+                    const t0w = performance.now();
+                    const result =
+                        cmd === "wait"
+                            ? waitFor({
+                                  ...cond,
+                                  timeout: typeof step.timeout === "number" ? step.timeout : 5000,
+                                  interval: typeof step.interval === "number" ? step.interval : 200,
+                              })
+                            : assertEl(cond);
+                    const msW = Math.round(performance.now() - t0w);
+                    results.push({ step, result, ms: msW });
+                    if (!opts.json) {
+                        const label = step.q ?? step.id ?? step.desc ?? cmd;
+                        const status = result.ok ? pc.green("ok") : pc.red("FAIL");
+                        out.println(`  ${status} ${pc.cyan(String(label))} ${pc.dim(`${msW}ms`)}`);
+                    }
+                    continue;
                 }
 
                 const args: string[] = [cmd];
