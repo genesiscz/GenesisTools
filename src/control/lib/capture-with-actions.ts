@@ -981,13 +981,24 @@ function validatePlan(plan: Plan): string[] {
 function focusWindow(
     target: { app: string; windowTitle?: string },
     timeoutMs = 15_000
-): { ok: boolean; via: "peekaboo" | "osascript" | "none"; detail: string } {
+): { ok: boolean; via: "ax-tool" | "peekaboo" | "osascript" | "none"; detail: string } {
+    // Native ax-tool first: activates + raises without the peekaboo bridge
+    // (peekaboo 3.9.4 'window focus' HANGS — observed killed at 30s+).
+    if (AX_TOOL_AVAILABLE) {
+        const axCmd = target.windowTitle
+            ? [AX_TOOL_PATH, "window", "--app", target.app, "--action", "focus", "--window", target.windowTitle]
+            : [AX_TOOL_PATH, "focus", "--app", target.app];
+        const ax = runCmd(axCmd, 8_000);
+        if (ax.ok) {
+            return { ok: true, via: "ax-tool", detail: "" };
+        }
+    }
+
     const cmd = ["peekaboo", "window", "focus", "--app", target.app];
     if (target.windowTitle) {
         cmd.push("--window-title", target.windowTitle);
     }
-
-    const r = runCmd(cmd, timeoutMs);
+    const r = runCmd(cmd, Math.min(timeoutMs, 5_000));
     if (r.ok) {
         return { ok: true, via: "peekaboo", detail: "" };
     }
