@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
+import { buildFrameParts, renderFrame } from "@genesiscz/utils/prompts/clack/table-select";
 import { stripAnsi } from "@genesiscz/utils/string";
 import type { ScoredAccount } from "./account-picker";
-import { buildFrameParts, renderFrame } from "./table-select";
+import { buildAccountTableOpts } from "./table-select";
 
 const NOW = new Date("2026-07-18T12:00:00");
 const in2h = new Date(NOW.getTime() + 2 * 3600e3).toISOString();
@@ -51,11 +52,11 @@ const ACCOUNTS = new Map<string, AIAccountEntry>([
     ],
 ]);
 
-const OPTS = { message: "Launch as?", scored: SCORED, accountsByName: ACCOUNTS };
+const OPTS = buildAccountTableOpts({ message: "Launch as?", scored: SCORED, accountsByName: ACCOUNTS }, NOW);
 
-describe("renderFrame", () => {
+describe("account table select frame", () => {
     test("active frame: labeled headers, coarse resets, focus pointer", () => {
-        const parts = buildFrameParts(OPTS, NOW);
+        const parts = buildFrameParts(OPTS);
         const frame = stripAnsi(renderFrame(OPTS, parts, "active", 0));
 
         expect(frame).toContain("RESETS 5H·WL");
@@ -65,7 +66,7 @@ describe("renderFrame", () => {
     });
 
     test("detail zone: identity, plan + why line, 3-column limit table", () => {
-        const parts = buildFrameParts(OPTS, NOW);
+        const parts = buildFrameParts(OPTS);
         const frame = stripAnsi(renderFrame(OPTS, parts, "active", 0));
 
         expect(frame).toContain("ohfixit@gmail.com");
@@ -79,7 +80,7 @@ describe("renderFrame", () => {
     });
 
     test("detail zone follows the cursor with fixed height", () => {
-        const parts = buildFrameParts(OPTS, NOW);
+        const parts = buildFrameParts(OPTS);
         const frame0 = stripAnsi(renderFrame(OPTS, parts, "active", 0));
         const frame1 = stripAnsi(renderFrame(OPTS, parts, "active", 1));
 
@@ -89,13 +90,13 @@ describe("renderFrame", () => {
     });
 
     test("focused row name carries the accent color", () => {
-        const parts = buildFrameParts(OPTS, NOW);
+        const parts = buildFrameParts(OPTS);
         const frame = renderFrame(OPTS, parts, "active", 1);
         expect(frame).toContain("\x1b[1;38;5;75mlpreservine\x1b[22;39m");
     });
 
     test("submit frame collapses to the picked name", () => {
-        const parts = buildFrameParts(OPTS, NOW);
+        const parts = buildFrameParts(OPTS);
         const frame = stripAnsi(renderFrame(OPTS, parts, "submit", 1));
         expect(frame).toContain("lpreservine");
         expect(frame).not.toContain("RESETS");

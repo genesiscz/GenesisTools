@@ -10,4 +10,5 @@ export * from "./multiline";
 export * from "./search-multiselect";
 export * from "./search-select";
 export * from "./settings-summary";
+export * from "./table-select";
 export * from "./trash-staging";

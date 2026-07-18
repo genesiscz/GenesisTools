@@ -15,6 +15,12 @@ import type {
 } from "./types";
 
 export { isCancel } from "@clack/prompts";
+export type {
+    TableSelectColumn,
+    TableSelectOptions,
+    TableSelectRow,
+} from "@genesiscz/utils/prompts/clack/table-select";
+export { tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
 export type { PromptBackend } from "./backend";
 export type { InquirerBackend } from "./inquirer-backend";
 export { inquirerBackend } from "./inquirer-backend";

@@ -1,26 +1,8 @@
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
-import { stripAnsi } from "@genesiscz/utils/string";
+import { accent, padVisible } from "@genesiscz/utils/prompts/clack/table-select";
 import pc from "picocolors";
 import type { ScoredAccount } from "./account-picker";
 import type { CompactLimit } from "./compact-limits";
-
-/**
- * Focus highlight: 256-color 75 (#5fafff), bold — a light azure with strong
- * contrast on dark terminal backgrounds, distinct from the cyan frame.
- */
-export function accent(text: string): string {
-    return `\x1b[1;38;5;75m${text}\x1b[22;39m`;
-}
-
-export function visibleWidth(text: string): number {
-    return stripAnsi(text).length;
-}
-
-/** Pad an ANSI-colored string to a visible width. */
-export function padVisible(text: string, width: number, align: "left" | "right" = "left"): string {
-    const pad = Math.max(0, width - visibleWidth(text));
-    return align === "left" ? text + " ".repeat(pad) : " ".repeat(pad) + text;
-}
 
 export const TIER_BADGE: Record<ScoredAccount["tier"], string> = {
     ready: pc.green("●"),
@@ -43,11 +25,11 @@ function colorByPct(pct: number, text: string): string {
 
 function pctCell(limit: CompactLimit | undefined): string {
     if (!limit) {
-        return pc.dim("   —");
+        return pc.dim("—");
     }
 
     const pct = Math.round(limit.leftPct);
-    return colorByPct(pct, `${String(pct).padStart(3)}%`);
+    return colorByPct(pct, `${pct}%`);
 }
 
 function hoursUntil(resetsAt: string | null | undefined, now: Date): number | null {
@@ -98,41 +80,20 @@ function fmtRelative(from: Date, to: Date): string {
     return `${Math.max(1, minutes)}m`;
 }
 
-export interface TableWidths {
-    name: number;
-}
-
-export function tableWidths(scored: ScoredAccount[]): TableWidths {
-    return { name: Math.max(7, ...scored.map((s) => s.accountName.length)) + 2 };
-}
-
-const PCT_W = 4;
-const GAP = "  ";
-const RESETS_W = 12;
-
-/** `  ACCOUNT      5H    WL    FB   RESETS 5H·WL` (dim). */
-export function tableHeaderRow(widths: TableWidths): string {
-    return pc.dim(
-        `${padVisible("ACCOUNT", widths.name)}${GAP}${padVisible("5H", PCT_W, "right")}${GAP}` +
-            `${padVisible("WL", PCT_W, "right")}${GAP}${padVisible("FB", PCT_W, "right")}${GAP} ${padVisible("RESETS 5H·WL", RESETS_W)}`
-    );
-}
-
-/** `ohfixit         100%   99%   98%   2h · 38h` — badge NOT included. */
-export function tableRow(scored: ScoredAccount, widths: TableWidths, now: Date = new Date(), focused = false): string {
+/** The five table cells for one account: name, 5h / weekly / Fable headroom, coarse resets. */
+export function accountCells(scored: ScoredAccount, now: Date = new Date()): string[] {
     const limits = scored.limits;
     const resets = limits
         ? `${fmtCoarse(hoursUntil(limits.session?.resetsAt, now))} · ${fmtCoarse(hoursUntil(limits.weekly?.resetsAt, now))}`
         : "—";
-    const name = focused
-        ? padVisible(accent(scored.accountName), widths.name)
-        : padVisible(scored.accountName, widths.name);
 
-    return (
-        `${name}${GAP}${padVisible(pctCell(limits?.session), PCT_W, "right")}${GAP}` +
-        `${padVisible(pctCell(limits?.weekly), PCT_W, "right")}${GAP}${padVisible(pctCell(limits?.fable), PCT_W, "right")}${GAP} ` +
-        padVisible(pc.dim(resets), RESETS_W)
-    );
+    return [
+        scored.accountName,
+        pctCell(limits?.session),
+        pctCell(limits?.weekly),
+        pctCell(limits?.fable),
+        pc.dim(resets),
+    ];
 }
 
 const DETAIL_LABEL_W = 8;
