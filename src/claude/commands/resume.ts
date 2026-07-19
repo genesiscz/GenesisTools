@@ -9,15 +9,15 @@ import {
 import * as p from "@clack/prompts";
 import { findClaudeCommand, resolveProjectFilter } from "@genesiscz/utils/claude";
 import { getSessionMetadata } from "@genesiscz/utils/claude/history-cache";
-import { formatDateTime } from "@genesiscz/utils/date";
+import { buildSessionTableOpts } from "@genesiscz/utils/claude/session-display";
+import { isInteractive } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
+import { tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
 import type { Command } from "commander";
 import pc from "picocolors";
 
 // --- Constants ---
 
-const NAME_MAX_LEN = 45;
-const ID_PREFIX_LEN = 8;
 const PROMPT_PREVIEW_LEN = 60;
 
 // --- Types ---
@@ -66,13 +66,6 @@ function toDisplay(
         firstPrompt: opts.firstPrompt || "",
         matchSnippet: opts.matchSnippet,
     };
-}
-
-function formatDate(iso: string): string {
-    if (!iso) {
-        return "";
-    }
-    return formatDateTime(iso, { relative: "always-relative-short" });
 }
 
 function dedup(sessions: DisplaySession[]): DisplaySession[] {
@@ -139,6 +132,47 @@ async function loadSessions(allProjects: boolean, spinner: Spinner): Promise<Loa
     };
 }
 
+function normalizeAlphanumeric(s: string): string {
+    return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function scoreContentMatch(s: DisplaySession, query: string): number {
+    const q = query.toLowerCase();
+    const qNorm = normalizeAlphanumeric(q);
+    let score = 0;
+
+    if (s.name.toLowerCase().includes(q)) {
+        score += 100;
+    } else if (qNorm.length >= 3 && normalizeAlphanumeric(s.name).includes(qNorm)) {
+        score += 80;
+    }
+
+    if (s.firstPrompt.toLowerCase().includes(q)) {
+        score += 50;
+    } else if (qNorm.length >= 3 && normalizeAlphanumeric(s.firstPrompt).includes(qNorm)) {
+        score += 40;
+    }
+
+    if (s.branch.toLowerCase().includes(q)) {
+        score += 30;
+    }
+
+    if (s.project.toLowerCase().includes(q)) {
+        score += 20;
+    } else if (qNorm.length >= 3 && normalizeAlphanumeric(s.project).includes(qNorm)) {
+        score += 15;
+    }
+
+    if (s.modified) {
+        const ageDays = (Date.now() - new Date(s.modified).getTime()) / (1000 * 60 * 60 * 24);
+        if (ageDays < 7) {
+            score += Math.round(20 * (1 - ageDays / 7));
+        }
+    }
+
+    return score;
+}
+
 function matchByIdOrName(all: DisplaySession[], query: string): DisplaySession[] {
     const q = query.toLowerCase();
     const byId = all.filter((s) => s.sessionId.toLowerCase().startsWith(q));
@@ -146,13 +180,27 @@ function matchByIdOrName(all: DisplaySession[], query: string): DisplaySession[]
         return byId;
     }
 
-    return all.filter(
+    const exact = all.filter(
         (s) =>
             s.name.toLowerCase().includes(q) ||
             s.branch.toLowerCase().includes(q) ||
             s.project.toLowerCase().includes(q) ||
             s.firstPrompt.toLowerCase().includes(q)
     );
+    if (exact.length > 0) {
+        return exact;
+    }
+
+    // Normalized match: strip non-alphanumeric, retry substring.
+    // Catches "last24h" matching "last 24 hours", "devdashboard" matching "dev-dashboard", etc.
+    const qNorm = normalizeAlphanumeric(q);
+    if (qNorm.length >= 3) {
+        return all.filter((s) =>
+            [s.name, s.branch, s.project, s.firstPrompt].some((f) => normalizeAlphanumeric(f).includes(qNorm))
+        );
+    }
+
+    return [];
 }
 
 interface ContentSearchResult {
@@ -231,68 +279,33 @@ async function searchByContent(query: string, spinner: Spinner, project?: string
 
 // --- UI ---
 
-const EXCERPT_MAX_LEN = 120;
-
-function buildExcerpt(s: DisplaySession): string | undefined {
-    if (s.matchSnippet) {
-        return s.matchSnippet;
-    }
-
-    const nameNorm = s.name.toLowerCase().trim();
-
-    if (s.summary && s.summary.toLowerCase().trim() !== nameNorm) {
-        return s.summary;
-    }
-
-    const promptPreview = s.firstPrompt.slice(0, PROMPT_PREVIEW_LEN);
-    if (s.firstPrompt && promptPreview.toLowerCase().trim() !== nameNorm) {
-        return s.firstPrompt;
-    }
-
-    return undefined;
-}
-
-function sessionOption(s: DisplaySession) {
-    const hints = [
-        pc.dim(s.sessionId.slice(0, ID_PREFIX_LEN)),
-        s.branch ? pc.magenta(s.branch) : "",
-        s.project ? pc.blue(s.project) : "",
-        pc.dim(formatDate(s.modified)),
-        s.source === "search" ? pc.yellow("[search]") : "",
-    ].filter(Boolean);
-
-    const excerpt = buildExcerpt(s);
-    let label = s.name.slice(0, NAME_MAX_LEN);
-    if (excerpt) {
-        const cleaned = excerpt.slice(0, EXCERPT_MAX_LEN).replace(/\n/g, " ").trim();
-        label += `\n  ${pc.dim(cleaned)}`;
-    }
-
-    return {
-        value: s,
-        label,
-        hint: hints.join(" "),
-    };
-}
-
-async function selectSession(candidates: DisplaySession[]): Promise<DisplaySession> {
+async function selectSession(candidates: DisplaySession[], query?: string): Promise<DisplaySession> {
     if (candidates.length === 1) {
         const s = candidates[0];
         p.log.info(
-            `${pc.bold(s.name)} ${pc.dim(s.sessionId.slice(0, ID_PREFIX_LEN))} ${pc.magenta(s.branch)} ${pc.dim(formatDate(s.modified))}`
+            `${pc.bold(s.name)} ${pc.dim(s.sessionId.slice(0, 8))} ${pc.magenta(s.branch)} ${s.project ? pc.blue(s.project) : ""}`
         );
         return s;
     }
 
-    const result = await p.select({
+    if (!isInteractive()) {
+        const s = candidates[0];
+        p.log.info(`Auto-selected: ${pc.bold(s.name)} ${pc.dim(s.sessionId.slice(0, 8))}`);
+        return s;
+    }
+
+    const opts = buildSessionTableOpts(candidates, {
         message: "Select session to resume:",
-        options: candidates.map(sessionOption),
+        query,
     });
 
-    if (p.isCancel(result)) {
+    const result = await tableSelect(opts);
+
+    if (!result) {
         p.cancel("Cancelled");
         process.exit(0);
     }
+
     return result;
 }
 
@@ -369,6 +382,7 @@ export async function pickSessionForResume(
         candidates = matchByIdOrName(sessions, query);
 
         if (candidates.length > 0) {
+            candidates.sort((a, b) => scoreContentMatch(b, query) - scoreContentMatch(a, query));
             p.log.info(
                 pc.dim(`index: ${candidates.length} match${candidates.length !== 1 ? "es" : ""} `) +
                     pc.dim(`(name/branch/project/prompt)`)
@@ -394,6 +408,9 @@ export async function pickSessionForResume(
                         return cached ? { ...cached, source: "search" as const, matchSnippet: h.matchSnippet } : h;
                     })
                 );
+                // Rank by metadata relevance so sessions whose name/prompt matches
+                // sort above sessions where the query only appears in tool output
+                candidates.sort((a, b) => scoreContentMatch(b, query) - scoreContentMatch(a, query));
             }
         }
 
@@ -403,7 +420,7 @@ export async function pickSessionForResume(
         }
     }
 
-    return selectSession(candidates);
+    return selectSession(candidates, query);
 }
 
 async function main(query: string | undefined, opts: ResumeOptions) {

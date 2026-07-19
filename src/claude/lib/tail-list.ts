@@ -17,6 +17,7 @@ import { formatRelativeTime } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { truncateText } from "@genesiscz/utils/string";
+import { renderCliHeader } from "@genesiscz/utils/table";
 import pc from "picocolors";
 
 const STATUSLINE_DIR = resolve(homedir(), ".claude", "statusline");
@@ -77,12 +78,13 @@ export async function renderSessionList(options: ListSessionsOptions): Promise<v
 
     const activeIds = getActiveSessionIds();
     sortByRecency(sessions);
-    printSuggestHeader(sessions[0], options);
 
-    for (const session of sessions) {
-        if (options.level === 1) {
-            await renderCompactSession(session, activeIds, options);
-        } else {
+    if (options.level === 1) {
+        renderCliHeader("Sessions", "recent Claude Code sessions");
+        await renderCompactList(sessions, activeIds);
+    } else {
+        printSuggestHeader(sessions[0], options);
+        for (const session of sessions) {
             await renderVerboseSession(session, activeIds, options);
         }
     }
@@ -94,7 +96,7 @@ export async function renderSessionList(options: ListSessionsOptions): Promise<v
 export async function renderActiveSessionList(
     activeSessions: SessionInfo[],
     activeIds: Set<string>,
-    options: ListSessionsOptions
+    _options: ListSessionsOptions
 ): Promise<void> {
     if (activeSessions.length === 0) {
         return;
@@ -102,45 +104,76 @@ export async function renderActiveSessionList(
 
     sortByRecency(activeSessions);
 
-    out.println(
-        options.colors
-            ? pc.yellow(`⚠️ ${activeSessions.length} active sessions — pick one:`)
-            : `⚠️ ${activeSessions.length} active sessions — pick one:`
-    );
-    out.println();
-
-    printSuggestHeader(activeSessions[0], options);
-
-    for (const session of activeSessions) {
-        await renderCompactSession(session, activeIds, options);
-    }
+    renderCliHeader("Active Sessions", `${activeSessions.length} running — pick one`);
+    await renderCompactList(activeSessions, activeIds);
 }
 
-// ─── Compact List (-l) ──────────────────────────────────────────────────────
+// ─── Compact Table (-l) ─────────────────────────────────────────────────────
 
-async function renderCompactSession(
-    session: SessionInfo,
-    activeIds: Set<string>,
-    options: ListSessionsOptions
-): Promise<void> {
-    const c = options.colors;
-    renderSessionHeader(session, activeIds, options);
-
-    const preview = await extractSessionPreview(session.filePath);
-
-    if (preview.lastUserMessage) {
-        const collapsed = preview.lastUserMessage.replace(/\n+/g, " ");
-        const truncated = truncateText(collapsed, 120);
-        out.println(c ? `   ${pc.dim("›")} ${pc.green(truncated)}` : `   › ${truncated}`);
+function formatAge(date: Date | null | undefined): string {
+    if (!date) {
+        return pc.dim("—");
     }
 
-    for (const excerpt of preview.assistantExcerpts) {
-        const collapsed = excerpt.replace(/\n+/g, " ");
-        const truncated = truncateText(collapsed, 200);
-        out.println(c ? `   ${pc.dim("│")} ${pc.dim(truncated)}` : `   │ ${truncated}`);
+    const text = formatRelativeTime(date, { compact: true });
+    const ms = Date.now() - date.getTime();
+    const hours = ms / 3_600_000;
+
+    if (hours < 1) {
+        return pc.green(text);
     }
 
-    out.println();
+    if (hours < 12) {
+        return pc.yellow(text);
+    }
+
+    return pc.dim(text);
+}
+
+async function renderCompactList(sessions: SessionInfo[], activeIds: Set<string>): Promise<void> {
+    for (const session of sessions) {
+        const isActive = session.sessionId ? activeIds.has(session.sessionId) : false;
+        const shortId = (session.sessionId ?? "unknown").slice(0, 8);
+        const displayTime = session.lastTimestamp ?? session.startDate;
+        const branch = session.gitBranch ?? "";
+        const status = isActive ? pc.green("●") : pc.dim("●");
+        const title = session.title || session.summary || "";
+
+        const header = [
+            `${status} ${pc.bold(pc.white(shortId))}`,
+            formatAge(displayTime),
+            branch ? pc.magenta(branch) : "",
+            title ? pc.white(truncateText(title, 40)) : "",
+        ]
+            .filter(Boolean)
+            .join("  ");
+        out.println(`  ${header}`);
+
+        const preview = await extractSessionPreview(session.filePath);
+
+        if (preview.lastUserMessage) {
+            const collapsed = preview.lastUserMessage.replace(/\n+/g, " ");
+            out.println(`   ${pc.dim("›")} ${pc.green(truncateText(collapsed, 100))}`);
+        }
+
+        for (const excerpt of preview.assistantExcerpts.slice(-2)) {
+            const collapsed = excerpt.replace(/\n+/g, " ");
+            out.println(`   ${pc.dim("│")} ${pc.dim(truncateText(collapsed, 100))}`);
+        }
+
+        out.println();
+    }
+
+    if (sessions[0]?.sessionId) {
+        const hint = suggestCommand("tools claude", {
+            replaceCommand: ["tail", sessions[0].sessionId.slice(0, 8)],
+            keepFlags: ["-p", "--project"],
+        });
+        out.println(
+            `  ${pc.dim(`${sessions.length} session${sessions.length === 1 ? "" : "s"}  ·  `)}${pc.cyan(hint)}${pc.dim(" to tail")}`
+        );
+        out.println();
+    }
 }
 
 function renderSessionHeader(session: SessionInfo, activeIds: Set<string>, options: ListSessionsOptions): void {
@@ -226,8 +259,6 @@ async function extractSessionPreview(filePath: string): Promise<SessionPreview> 
                 }
 
                 let text = extractUserText(msg.message?.content ?? "");
-
-                // Strip system-reminder blocks and task-notification XML
                 text = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "");
                 text = text.replace(/<task-notification>[\s\S]*?<\/task-notification>/g, "");
                 text = text.trim();

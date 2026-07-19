@@ -51,6 +51,8 @@ interface TailOptions {
     output?: string;
     outputCli: boolean;
     project?: string;
+    agent?: string;
+    timestamps: boolean;
     listSessions: number;
 }
 
@@ -72,6 +74,8 @@ export function registerTailCommand(program: Command): void {
         .option("-o, --output <file>", "Write formatted output to file")
         .option("--output-cli", "Also print to CLI when using -o", false)
         .option("-p, --project <path>", "Search in specific project directory")
+        .option("-a, --agent <id>", "Tail a specific agent by ID prefix (searches subagents/ dirs)")
+        .option("--timestamps", "Show timestamps on each line", false)
         .option("-l, --list-sessions", "List recent sessions (-l compact, -ll verbose)", increaseCount, 0)
         .combineFlagAndOptionalValue(false)
         .addHelpText("after", `\n${INCLUDE_HELP}`)
@@ -86,6 +90,28 @@ export function registerTailCommand(program: Command): void {
                     project: projectPath,
                     colors: useColors,
                 });
+                return;
+            }
+
+            if (opts.agent) {
+                const agents = ClaudeSession.findSubagents({
+                    query: opts.agent,
+                    project: projectPath,
+                    allProjects: !projectPath,
+                });
+
+                if (agents.length === 0) {
+                    out.error(pc.red(`No agent matching "${opts.agent}" found.`));
+                    process.exit(1);
+                }
+
+                const target = agents.length === 1 ? agents[0] : await promptSelectTarget(agents);
+
+                if (!target) {
+                    process.exit(0);
+                }
+
+                await startTailing(target, opts);
                 return;
             }
 
@@ -166,6 +192,7 @@ async function startTailing(target: TailTarget, opts: TailOptions): Promise<void
         outputFile: opts.output,
         cliOutput,
         raw: opts.raw,
+        timestamps: opts.timestamps,
     });
 
     if (!opts.raw) {
@@ -482,10 +509,6 @@ async function resolveIncludeSpec(opts: TailOptions): Promise<IncludeSpec> {
 
     if (opts.interactive) {
         return await runInteractiveSetup(true);
-    }
-
-    if (opts.follow && process.stdout.isTTY) {
-        return await runInteractiveSetup(false);
     }
 
     return IncludeSpec.defaults();

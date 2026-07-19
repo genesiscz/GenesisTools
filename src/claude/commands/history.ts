@@ -15,15 +15,19 @@ import {
 } from "@app/claude/lib/history/search";
 import { getAgentRuntimeContext } from "@genesiscz/utils/agent-runtime";
 import { resolveProjectFilter } from "@genesiscz/utils/claude";
+import { formatSessionAge } from "@genesiscz/utils/claude/session-display";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { buildViteDevCmd, defineDashboardApp } from "@genesiscz/utils/DashboardApp";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 import * as p from "@genesiscz/utils/prompts/p";
+import { truncateText } from "@genesiscz/utils/string";
+import { createBoxTable, formatDotStatus, renderCliHeader } from "@genesiscz/utils/table";
 import { spawn } from "bun";
 import chalk from "chalk";
 import type { Command } from "commander";
+import pc from "picocolors";
 
 // =============================================================================
 // Output Formatting
@@ -135,6 +139,37 @@ function formatResultsAsMarkdown(results: SearchResult[], filters: SearchFilters
     }
 
     return lines.join("\n");
+}
+
+function formatResultsAsTable(results: SearchResult[], filters: SearchFilters): void {
+    const queryDesc = filters.query ? `matching "${filters.query}"` : "recent sessions";
+    renderCliHeader("History", queryDesc);
+
+    const table = createBoxTable(["ID", "TITLE", "BRANCH", "DATE", "STATUS"]);
+
+    for (const result of results) {
+        const title = result.customTitle || result.summary || "(unnamed)";
+        const shortId = result.sessionId.slice(0, 8);
+
+        table.push([
+            pc.white(pc.bold(shortId)),
+            pc.white(truncateText(title, 36)),
+            result.gitBranch ? pc.magenta(truncateText(result.gitBranch, 18)) : pc.dim("—"),
+            formatSessionAge(result.timestamp.toISOString()),
+            result.isSubagent ? formatDotStatus("dim", "agent") : formatDotStatus("ok", "main"),
+        ]);
+    }
+
+    out.println(table.toString());
+    out.println();
+
+    const parts = [
+        pc.dim(`${results.length} result${results.length !== 1 ? "s" : ""}`),
+        filters.sortByRelevance ? pc.dim("sorted by relevance") : "",
+        filters.summaryOnly ? pc.dim("summary-only") : "",
+    ].filter(Boolean);
+    out.println(`  ${parts.join(pc.dim("  ·  "))}`);
+    out.println();
 }
 
 function formatResultsAsJson(results: SearchResult[]): string {
@@ -287,6 +322,8 @@ export function registerHistoryCommand(program: Command): void {
 
                 if (options.format === "json") {
                     out.println(formatResultsAsJson(results));
+                } else if (process.stdout.isTTY && !filters.context) {
+                    formatResultsAsTable(results, filters);
                 } else {
                     out.println(formatResultsAsMarkdown(results, filters));
                 }

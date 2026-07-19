@@ -88,6 +88,7 @@ export class ClaudeSessionFormatter {
     private activeAgentId: string | null = null;
     private agentStartTime = new Map<string, number>();
     private fileStream: WriteStream | null = null;
+    private lastRecordType: string | null = null;
 
     constructor(private options: FormatterOptions) {
         if (options.outputFile) {
@@ -108,7 +109,7 @@ export class ClaudeSessionFormatter {
     }
 
     private get showTimestamps(): boolean {
-        return this.options.timestamps ?? !this.isMini;
+        return this.options.timestamps ?? false;
     }
 
     private get maxChars(): number {
@@ -132,6 +133,22 @@ export class ClaudeSessionFormatter {
         }
 
         const timestamp = "timestamp" in record && typeof record.timestamp === "string" ? record.timestamp : "";
+
+        const recordType = (record as { type: string }).type;
+
+        if (!this.isMini && this.lastRecordType && recordType !== this.lastRecordType) {
+            const isTurnBoundary =
+                (this.lastRecordType === "user" && (recordType === "assistant" || recordType === "A")) ||
+                ((this.lastRecordType === "assistant" || this.lastRecordType === "A") && recordType === "user");
+
+            if (isTurnBoundary) {
+                this.writeLine("");
+            }
+        }
+
+        if (recordType === "user" || recordType === "assistant" || recordType === "A") {
+            this.lastRecordType = recordType;
+        }
 
         switch (record.type) {
             case "user":
@@ -278,9 +295,16 @@ export class ClaudeSessionFormatter {
                         const maxChars = this.options.includeSpec.truncationLength("tools:out");
                         const isError = block.is_error;
                         const truncated = truncateText(result.trim(), maxChars);
-                        const line = `  ⎿ ${truncated}`;
-                        const formatted = this.options.colors ? (isError ? pc.red(line) : pc.dim(line)) : line;
-                        this.writeLine(formatted);
+
+                        if (this.options.colors && !isError) {
+                            const rendered = renderMarkdown(truncated);
+                            for (const line of rendered.split("\n")) {
+                                this.writeLine(`  ${pc.dim("⎿")} ${pc.dim(line)}`);
+                            }
+                        } else {
+                            const line = `  ⎿ ${truncated}`;
+                            this.writeLine(isError ? pc.red(line) : pc.dim(line));
+                        }
                     }
                 }
             }
@@ -484,9 +508,16 @@ export class ClaudeSessionFormatter {
                         if (result) {
                             const truncated = truncateText(result.trim(), maxChars);
                             const prefix = this.agentLinePrefix(agentId);
-                            const line = `${prefix}  ⎿ ${truncated}`;
-                            const formatted = this.options.colors ? (isError ? pc.red(line) : pc.dim(line)) : line;
-                            this.writeLine(formatted);
+
+                            if (this.options.colors && !isError) {
+                                const rendered = renderMarkdown(truncated);
+                                for (const line of rendered.split("\n")) {
+                                    this.writeLine(`${prefix}  ${pc.dim("⎿")} ${pc.dim(line)}`);
+                                }
+                            } else {
+                                const line = `${prefix}  ⎿ ${truncated}`;
+                                this.writeLine(isError ? pc.red(line) : pc.dim(line));
+                            }
                         }
                     }
                 }

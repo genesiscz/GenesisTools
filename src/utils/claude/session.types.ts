@@ -138,4 +138,5 @@ export interface TailTarget {
 export interface AgentMeta {
     agentType: string;
     description: string;
+    name?: string;
 }

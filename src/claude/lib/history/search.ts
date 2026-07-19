@@ -1404,6 +1404,213 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
 // resolveProjectDir and findConversationFilesInDir are now in shared modules
 // (imported at top of file)
 
+const METADATA_USER_TEXT_CAP = 5000;
+const METADATA_LINE_LIMIT = 200;
+const METADATA_TAIL_BYTES = 64 * 1024;
+const NEWLINE_BYTE = 0x0a;
+
+interface MetadataScanState {
+    sessionId: string | null;
+    customTitle: string | null;
+    summary: string | null;
+    firstPrompt: string | null;
+    gitBranch: string | null;
+    cwd: string | null;
+    firstTimestamp: string | null;
+    userTexts: string[];
+    userTextLen: number;
+}
+
+function createMetadataScanState(): MetadataScanState {
+    return {
+        sessionId: null,
+        customTitle: null,
+        summary: null,
+        firstPrompt: null,
+        gitBranch: null,
+        cwd: null,
+        firstTimestamp: null,
+        userTexts: [],
+        userTextLen: 0,
+    };
+}
+
+function isMetadataScanComplete(state: MetadataScanState): boolean {
+    return Boolean(
+        state.summary &&
+            state.customTitle &&
+            state.sessionId &&
+            state.gitBranch &&
+            state.cwd &&
+            state.firstTimestamp &&
+            state.userTextLen >= METADATA_USER_TEXT_CAP
+    );
+}
+
+// Applies one JSONL line to the scan state. custom-title/summary are "latest wins"
+// (they're rewritten late in a session); everything else is "first wins".
+function applyMetadataLine(line: string, state: MetadataScanState): void {
+    if (!line.trim()) {
+        return;
+    }
+
+    try {
+        const obj = SafeJSON.parse(line, { strict: true });
+
+        if (obj.type === "summary" && obj.summary) {
+            state.summary = obj.summary;
+        }
+        if (obj.type === "custom-title" && obj.customTitle) {
+            state.customTitle = obj.customTitle;
+        }
+        if (obj.sessionId && !state.sessionId) {
+            state.sessionId = obj.sessionId;
+        }
+        if (obj.gitBranch && !state.gitBranch) {
+            state.gitBranch = obj.gitBranch;
+        }
+        if (obj.cwd && !state.cwd) {
+            state.cwd = obj.cwd;
+        }
+        if (obj.timestamp && !state.firstTimestamp) {
+            state.firstTimestamp = obj.timestamp;
+        }
+
+        if (obj.type === "user" && state.userTextLen < METADATA_USER_TEXT_CAP) {
+            let text = "";
+            if (typeof obj.message?.content === "string") {
+                text = obj.message.content;
+            } else if (Array.isArray(obj.message?.content)) {
+                const textBlock = obj.message.content.find((b: { type: string }) => b.type === "text");
+                if (textBlock?.text) {
+                    text = textBlock.text;
+                }
+            }
+            if (text) {
+                if (!state.firstPrompt) {
+                    state.firstPrompt = text;
+                }
+                const remaining = METADATA_USER_TEXT_CAP - state.userTextLen;
+                state.userTexts.push(text.slice(0, remaining));
+                state.userTextLen += text.length;
+            }
+        }
+    } catch {
+        // Skip unparseable lines
+    }
+}
+
+function findNthNewlineOffset(bytes: Uint8Array, n: number): number | null {
+    let count = 0;
+    for (let i = 0; i < bytes.length; i++) {
+        if (bytes[i] === NEWLINE_BYTE) {
+            count++;
+            if (count === n) {
+                return i;
+            }
+        }
+    }
+    return null;
+}
+
+// Scans metadata straight out of a mmap'd Uint8Array — only the pages actually
+// sliced/decoded get paged in by the OS, so large files stay cheap.
+function scanMetadataFromMmap(mapped: Uint8Array, isLargeFile: boolean): MetadataScanState {
+    const state = createMetadataScanState();
+    const decoder = new TextDecoder();
+
+    let headEnd = mapped.length;
+    let hitLimit = false;
+
+    if (isLargeFile) {
+        const offset = findNthNewlineOffset(mapped, METADATA_LINE_LIMIT);
+        if (offset !== null && offset < mapped.length - 1) {
+            headEnd = offset;
+            hitLimit = true;
+        }
+    }
+
+    const headLines = decoder.decode(mapped.subarray(0, headEnd)).split("\n");
+    for (const line of headLines) {
+        applyMetadataLine(line, state);
+        if (isMetadataScanComplete(state)) {
+            break;
+        }
+    }
+
+    // For large files where we hit the line limit, scan the tail for
+    // custom-title and summary — they're written late in the session
+    if (isLargeFile && hitLimit && (!state.customTitle || !state.summary)) {
+        const tailStart = Math.max(0, mapped.length - METADATA_TAIL_BYTES);
+        const tailLines = decoder.decode(mapped.subarray(tailStart)).split("\n");
+
+        // Skip the first (possibly partial) line when reading mid-file
+        const linesToScan = tailStart > 0 ? tailLines.slice(1) : tailLines;
+        for (const line of linesToScan) {
+            applyMetadataLine(line, state);
+        }
+    }
+
+    return state;
+}
+
+// Fallback path for filesystems where Bun.mmap throws (e.g. network mounts).
+async function scanMetadataFromStream(
+    filePath: string,
+    fileSize: number,
+    isLargeFile: boolean
+): Promise<MetadataScanState> {
+    const state = createMetadataScanState();
+    const fileStream = createReadStream(filePath);
+    const rl = createInterface({ input: fileStream, crlfDelay: Number.POSITIVE_INFINITY });
+
+    const LINE_LIMIT = isLargeFile ? METADATA_LINE_LIMIT : Number.POSITIVE_INFINITY;
+    let lineCount = 0;
+    let hitLimit = false;
+
+    for await (const line of rl) {
+        if (!line.trim()) {
+            continue;
+        }
+
+        lineCount++;
+        if (lineCount > LINE_LIMIT) {
+            hitLimit = true;
+            break;
+        }
+
+        applyMetadataLine(line, state);
+
+        if (isMetadataScanComplete(state)) {
+            fileStream.destroy();
+            break;
+        }
+    }
+
+    if (isLargeFile && hitLimit && (!state.customTitle || !state.summary)) {
+        try {
+            const tailStart = Math.max(0, fileSize - METADATA_TAIL_BYTES);
+            const tailStream = createReadStream(filePath, { start: tailStart });
+            const tailRl = createInterface({ input: tailStream, crlfDelay: Number.POSITIVE_INFINITY });
+            let firstLine = tailStart > 0;
+
+            for await (const line of tailRl) {
+                // Skip the first (possibly partial) line when reading mid-file
+                if (firstLine) {
+                    firstLine = false;
+                    continue;
+                }
+
+                applyMetadataLine(line, state);
+            }
+        } catch {
+            // Tail scan is best-effort
+        }
+    }
+
+    return state;
+}
+
 /**
  * Extract session metadata by reading the entire JSONL file.
  * Captures: summary, custom-title, sessionId, gitBranch, cwd,
@@ -1421,112 +1628,41 @@ export async function extractSessionMetadataFromFile(
         const fileStat = await stat(filePath);
         const isLargeFile = fileStat.size > 10 * 1024 * 1024;
 
-        const fileStream = createReadStream(filePath);
-        const rl = createInterface({ input: fileStream, crlfDelay: Number.POSITIVE_INFINITY });
+        let state: MetadataScanState | null = null;
 
-        let sessionId: string | null = null;
-        let customTitle: string | null = null;
-        let summary: string | null = null;
-        let firstPrompt: string | null = null;
-        let gitBranch: string | null = null;
-        let cwd: string | null = null;
-        let firstTimestamp: string | null = null;
-        const userTexts: string[] = [];
-        let userTextLen = 0;
-        const USER_TEXT_CAP = 5000;
-        const LINE_LIMIT = isLargeFile ? 200 : Number.POSITIVE_INFINITY;
-        let lineCount = 0;
-
-        for await (const line of rl) {
-            if (!line.trim()) {
-                continue;
-            }
-
-            lineCount++;
-            if (lineCount > LINE_LIMIT) {
-                break;
-            }
-
+        // Bun.mmap doesn't support empty files (throws EINVAL) — skip straight to the stream fallback
+        if (fileStat.size > 0) {
             try {
-                const obj = SafeJSON.parse(line, { strict: true });
-
-                // Always capture summary/custom-title (latest wins)
-                if (obj.type === "summary" && obj.summary) {
-                    summary = obj.summary;
-                }
-                if (obj.type === "custom-title" && obj.customTitle) {
-                    customTitle = obj.customTitle;
-                }
-                if (obj.sessionId && !sessionId) {
-                    sessionId = obj.sessionId;
-                }
-                if (obj.gitBranch && !gitBranch) {
-                    gitBranch = obj.gitBranch;
-                }
-                if (obj.cwd && !cwd) {
-                    cwd = obj.cwd;
-                }
-                if (obj.timestamp && !firstTimestamp) {
-                    firstTimestamp = obj.timestamp;
-                }
-
-                // Collect ALL user messages
-                if (obj.type === "user" && userTextLen < USER_TEXT_CAP) {
-                    let text = "";
-                    if (typeof obj.message?.content === "string") {
-                        text = obj.message.content;
-                    } else if (Array.isArray(obj.message?.content)) {
-                        const textBlock = obj.message.content.find((b: { type: string }) => b.type === "text");
-                        if (textBlock?.text) {
-                            text = textBlock.text;
-                        }
-                    }
-                    if (text) {
-                        if (!firstPrompt) {
-                            firstPrompt = text;
-                        }
-                        const remaining = USER_TEXT_CAP - userTextLen;
-                        userTexts.push(text.slice(0, remaining));
-                        userTextLen += text.length;
-                    }
-                }
-
-                // Early exit: all metadata found and user text cap reached
-                if (
-                    summary &&
-                    customTitle &&
-                    sessionId &&
-                    gitBranch &&
-                    cwd &&
-                    firstTimestamp &&
-                    userTextLen >= USER_TEXT_CAP
-                ) {
-                    fileStream.destroy();
-                    break;
-                }
-            } catch {
-                // Skip unparseable lines
+                let mapped: Uint8Array | null = Bun.mmap(filePath);
+                state = scanMetadataFromMmap(mapped, isLargeFile);
+                mapped = null;
+            } catch (err) {
+                logger.debug(
+                    { err, filePath },
+                    "Bun.mmap failed for session metadata scan, falling back to stream read"
+                );
             }
         }
 
-        // Fall back to filename as sessionId
-        if (!sessionId) {
-            sessionId = basename(filePath, ".jsonl");
+        if (!state) {
+            state = await scanMetadataFromStream(filePath, fileStat.size, isLargeFile);
         }
+
+        const sessionId = state.sessionId ?? basename(filePath, ".jsonl");
 
         return {
             filePath,
             sessionId,
-            customTitle,
-            summary,
-            firstPrompt,
-            gitBranch,
+            customTitle: state.customTitle,
+            summary: state.summary,
+            firstPrompt: state.firstPrompt,
+            gitBranch: state.gitBranch,
             project,
-            cwd,
+            cwd: state.cwd,
             mtime,
-            firstTimestamp,
+            firstTimestamp: state.firstTimestamp,
             isSubagent,
-            allUserText: userTexts.length > 0 ? userTexts.join(" ") : null,
+            allUserText: state.userTexts.length > 0 ? state.userTexts.join(" ") : null,
         };
     } catch {
         return null;

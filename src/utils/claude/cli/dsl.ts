@@ -31,7 +31,7 @@ export class IncludeSpec {
     agentsThinking: boolean;
 
     static DEFAULT_SPEC =
-        "thinking,tools:in:500,tools:out:500,agents:input,agents:tools:in:50,agents:tools:out:500,agents:result";
+        "thinking,tools:in:2000,tools:out:2000,agents:input,agents:tools:in:2000,agents:tools:out:2000,agents:result,agents:thinking";
 
     constructor(spec?: string) {
         this.thinking = false;

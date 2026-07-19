@@ -440,12 +440,13 @@ export class ClaudeSession {
                 // Derive session ID from parent directory name
                 const parentDir = basename(dirname(subagentsDir));
 
-                // Match against query
+                // Match against query (id, name, or description)
                 if (lowerQuery) {
-                    const idMatch = agentId.toLowerCase().startsWith(lowerQuery);
+                    const idMatch = agentId.toLowerCase().includes(lowerQuery);
+                    const nameMatch = meta?.name?.toLowerCase().includes(lowerQuery) ?? false;
                     const descMatch = meta?.description?.toLowerCase().includes(lowerQuery) ?? false;
 
-                    if (!idMatch && !descMatch) {
+                    if (!idMatch && !nameMatch && !descMatch) {
                         continue;
                     }
                 }
