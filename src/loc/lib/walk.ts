@@ -20,8 +20,13 @@ function toPosix(p: string): string {
     return p.split(sep).join("/");
 }
 
-function loadGitignore(root: string): Ignore | null {
-    const gitignorePath = join(root, ".gitignore");
+interface IgnoreLayer {
+    base: string;
+    ig: Ignore;
+}
+
+function loadIgnoreFile(dir: string): Ignore | null {
+    const gitignorePath = join(dir, ".gitignore");
 
     try {
         if (existsSync(gitignorePath)) {
@@ -34,12 +39,30 @@ function loadGitignore(root: string): Ignore | null {
     return null;
 }
 
+function isIgnored(layers: IgnoreLayer[], abs: string, isDir: boolean): boolean {
+    for (const layer of layers) {
+        const rel = toPosix(relative(layer.base, abs));
+        if (layer.ig.ignores(isDir ? `${rel}/` : rel)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 async function collectFiles(input: ScanInput): Promise<string[]> {
     const { root, gitignore, includeHidden } = input;
-    const ig = gitignore ? loadGitignore(root) : null;
     const files: string[] = [];
 
-    async function walk(dir: string): Promise<void> {
+    async function walk(dir: string, parentLayers: IgnoreLayer[]): Promise<void> {
+        let layers = parentLayers;
+        if (gitignore) {
+            const ig = loadIgnoreFile(dir);
+            if (ig) {
+                layers = [...parentLayers, { base: dir, ig }];
+            }
+        }
+
         let entries: Dirent[];
         try {
             entries = await readdir(dir, { withFileTypes: true });
@@ -60,24 +83,20 @@ async function collectFiles(input: ScanInput): Promise<string[]> {
             }
 
             const abs = join(dir, name);
-            const rel = toPosix(relative(root, abs));
 
-            if (ig && rel.length > 0) {
-                const probe = entry.isDirectory() ? `${rel}/` : rel;
-                if (ig.ignores(probe)) {
-                    continue;
-                }
+            if (layers.length > 0 && isIgnored(layers, abs, entry.isDirectory())) {
+                continue;
             }
 
             if (entry.isDirectory()) {
-                await walk(abs);
+                await walk(abs, layers);
             } else if (entry.isFile()) {
                 files.push(abs);
             }
         }
     }
 
-    await walk(root);
+    await walk(root, []);
     return files;
 }
 

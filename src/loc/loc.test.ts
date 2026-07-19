@@ -174,6 +174,19 @@ describe("scanDirectory", () => {
         expect(ts?.counts).toEqual({ code: 1, comment: 1, blank: 1 });
     });
 
+    it("honours nested .gitignore files in subdirectories", async () => {
+        const root = makeRepo();
+        mkdirSync(join(root, "app"));
+        writeFileSync(join(root, "app", ".gitignore"), "ios/\n");
+        mkdirSync(join(root, "app", "ios"));
+        writeFileSync(join(root, "app", "ios", "pod.c"), "int main() { return 0; }\n");
+        writeFileSync(join(root, "app", "kept.ts"), "export const z = 3;\n");
+
+        const results = await scanDirectory({ root, gitignore: true, includeHidden: false });
+        const exts = results.map((r) => r.ext).sort();
+        expect(exts).toEqual(["py", "ts", "ts", "ts"]);
+    });
+
     it("includes gitignored files when gitignore is disabled but still skips node_modules", async () => {
         const root = makeRepo();
         const results = await scanDirectory({ root, gitignore: false, includeHidden: false });
