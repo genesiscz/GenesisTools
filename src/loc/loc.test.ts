@@ -26,6 +26,17 @@ describe("resolveLanguage", () => {
         expect(resolveLanguage("xyz")).toBe("Other");
         expect(resolveLanguage("")).toBe("Other");
     });
+
+    it("maps config, template and misc extensions", () => {
+        expect(resolveLanguage("xml")).toBe("XML");
+        expect(resolveLanguage("twig")).toBe("Twig");
+        expect(resolveLanguage("ini")).toBe("INI");
+        expect(resolveLanguage("neon")).toBe("NEON");
+        expect(resolveLanguage("lock")).toBe("Lock");
+        expect(resolveLanguage("stub")).toBe("Stub");
+        expect(resolveLanguage("dockerfile")).toBe("Docker");
+        expect(resolveLanguage("makefile")).toBe("Makefile");
+    });
 });
 
 describe("commentSyntaxForExt", () => {
@@ -49,6 +60,12 @@ describe("commentSyntaxForExt", () => {
         const syntax = commentSyntaxForExt("json");
         expect(syntax.line).toEqual([]);
         expect(syntax.block).toEqual([]);
+    });
+
+    it("returns twig block and ini hash+semicolon comments", () => {
+        expect(commentSyntaxForExt("twig").block).toEqual([{ open: "{#", close: "#}" }]);
+        expect(commentSyntaxForExt("ini").line).toEqual(["#", ";"]);
+        expect(commentSyntaxForExt("xml").block).toEqual([{ open: "<!--", close: "-->" }]);
     });
 });
 
@@ -185,6 +202,16 @@ describe("scanDirectory", () => {
         const results = await scanDirectory({ root, gitignore: true, includeHidden: false });
         const exts = results.map((r) => r.ext).sort();
         expect(exts).toEqual(["py", "ts", "ts", "ts"]);
+    });
+
+    it("skips binary files and maps extensionless names like Makefile", async () => {
+        const root = makeRepo();
+        writeFileSync(join(root, "blob"), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x00, 0x0a, 0x41, 0x0a]));
+        writeFileSync(join(root, "Makefile"), "all:\n\techo hi\n");
+
+        const results = await scanDirectory({ root, gitignore: true, includeHidden: false });
+        const languages = results.map((r) => r.language).sort();
+        expect(languages).toEqual(["Makefile", "Python", "TypeScript", "TypeScript"]);
     });
 
     it("includes gitignored files when gitignore is disabled but still skips node_modules", async () => {

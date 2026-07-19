@@ -51,6 +51,26 @@ const EXT_TO_LANGUAGE: Record<string, string> = {
     zsh: "Shell",
     sql: "SQL",
     lua: "Lua",
+    xml: "XML",
+    svg: "SVG",
+    twig: "Twig",
+    blade: "Blade",
+    stub: "Stub",
+    ini: "INI",
+    conf: "INI",
+    env: "INI",
+    neon: "NEON",
+    txt: "Text",
+    log: "Text",
+    lock: "Lock",
+    mdc: "Markdown",
+    csv: "CSV",
+    graphql: "GraphQL",
+    gql: "GraphQL",
+    prisma: "Prisma",
+    proto: "Protobuf",
+    dockerfile: "Docker",
+    makefile: "Makefile",
 };
 
 const C_LIKE = new Set([
@@ -80,9 +100,26 @@ const C_LIKE = new Set([
     "svelte",
 ]);
 
-const HASH_LINE = new Set(["py", "rb", "sh", "bash", "zsh", "yaml", "yml", "toml"]);
+const HASH_LINE = new Set([
+    "py",
+    "rb",
+    "sh",
+    "bash",
+    "zsh",
+    "yaml",
+    "yml",
+    "toml",
+    "ini",
+    "conf",
+    "env",
+    "neon",
+    "graphql",
+    "gql",
+    "dockerfile",
+    "makefile",
+]);
 const DASH_LINE = new Set(["sql", "lua"]);
-const HTML_LIKE = new Set(["html", "htm", "md", "vue", "svelte"]);
+const HTML_LIKE = new Set(["html", "htm", "md", "mdc", "vue", "svelte", "xml", "svg"]);
 
 function normalizeExt(ext: string): string {
     return ext.replace(/^\./, "").toLowerCase();
@@ -113,6 +150,24 @@ export function commentSyntaxForExt(ext: string): CommentSyntax {
 
     if (key === "css") {
         block.push(SLASH_STAR);
+    }
+
+    if (key === "prisma" || key === "proto") {
+        line.push("//");
+        block.push(SLASH_STAR);
+    }
+
+    if (key === "ini") {
+        line.push(";");
+    }
+
+    if (key === "twig") {
+        block.push({ open: "{#", close: "#}" });
+    }
+
+    if (key === "blade") {
+        block.push({ open: "{{--", close: "--}}" });
+        block.push(HTML_BLOCK);
     }
 
     if (HTML_LIKE.has(key)) {

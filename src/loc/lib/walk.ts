@@ -104,10 +104,17 @@ function extOf(filePath: string): string {
     const base = filePath.split(sep).pop() ?? filePath;
     const dot = base.lastIndexOf(".");
     if (dot <= 0) {
-        return "";
+        return base.replace(/^\./, "").toLowerCase();
     }
 
     return base.slice(dot + 1).toLowerCase();
+}
+
+const BINARY_SNIFF_BYTES = 8192;
+
+async function isBinaryFile(filePath: string): Promise<boolean> {
+    const head = await Bun.file(filePath).slice(0, BINARY_SNIFF_BYTES).arrayBuffer();
+    return new Uint8Array(head).includes(0);
 }
 
 export async function scanDirectory(input: ScanInput): Promise<FileResult[]> {
@@ -120,6 +127,11 @@ export async function scanDirectory(input: ScanInput): Promise<FileResult[]> {
         fn: async (filePath): Promise<FileResult | null> => {
             const ext = extOf(filePath);
             try {
+                if (await isBinaryFile(filePath)) {
+                    logger.debug({ filePath }, "loc: skipped binary file");
+                    return null;
+                }
+
                 const content = await Bun.file(filePath).text();
                 return { ext, language: resolveLanguage(ext), counts: classifyFile({ content, ext }) };
             } catch (err) {
