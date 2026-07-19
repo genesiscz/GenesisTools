@@ -2,6 +2,8 @@ import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
 import { loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { type AccountListRow, displayAccountsTable, displayAccountTestResult } from "@app/ai-proxy/lib/display";
 import { createProvider, isProviderImplemented } from "@app/ai-proxy/lib/providers/registry";
+import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { CODEX_AUTH_PATH, extractPlanType, readCodexAuthJson } from "@genesiscz/utils/ai/openai/codex-auth";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 
@@ -77,6 +79,70 @@ export async function runAccountsTest(name: string): Promise<void> {
         out.println(`  ${cmd(["config", "show"])}`);
         out.println(`  ${cmd(["status"])}`);
         out.println();
+    }
+}
+
+/**
+ * Auth detail for codex (openai-subscription) accounts: where the token comes
+ * from, when it expires, and the ChatGPT plan when the JWT carries it.
+ */
+export async function runAccountsStatus(): Promise<void> {
+    const config = await loadConfig();
+    const codexAccounts = config.accounts.filter((account) => account.provider === "openai-subscription");
+
+    if (codexAccounts.length === 0) {
+        out.log.info("No openai-subscription accounts configured.");
+        out.log.info(cmd(["accounts", "login", "codex"]));
+        return;
+    }
+
+    const aiConfig = await AIConfig.load();
+
+    for (const account of codexAccounts) {
+        const accountName = account.openaiSub?.accountName;
+        let source: string;
+        let accessToken: string | undefined;
+        let expiresAt: number | undefined;
+
+        if (accountName) {
+            const entry = aiConfig.getAccount(accountName);
+
+            if (!entry) {
+                out.log.warn(`${account.name}: AI-config account "${accountName}" not found`);
+                continue;
+            }
+
+            if (entry.tokens.authFile) {
+                source = `codex-auth.json (${entry.tokens.authFile})`;
+                const tokens = await readCodexAuthJson(entry.tokens.authFile);
+                accessToken = tokens?.accessToken;
+                expiresAt = tokens?.expiresAt;
+            } else {
+                source = `ai-config (${accountName})`;
+                accessToken = entry.tokens.accessToken;
+                expiresAt = entry.tokens.expiresAt;
+            }
+        } else {
+            const path = account.openaiSub?.codexAuthPath ?? CODEX_AUTH_PATH;
+            source = `codex-auth.json (${path})`;
+            const tokens = await readCodexAuthJson(path);
+            accessToken = tokens?.accessToken;
+            expiresAt = tokens?.expiresAt;
+        }
+
+        const plan = accessToken ? extractPlanType(accessToken) : undefined;
+        const failover = account.openaiSub?.failoverAccountNames;
+        const expiry = expiresAt
+            ? `${new Date(expiresAt).toLocaleString()}${expiresAt < Date.now() ? " (EXPIRED)" : ""}`
+            : "unknown";
+
+        out.log.info(`${account.name}${plan ? ` (${plan})` : ""}${account.enabled ? "" : " [disabled]"}`);
+        out.log.info(`  auth:    ${accessToken ? source : `${source} — NO TOKEN`}`);
+        out.log.info(`  expires: ${expiry}`);
+
+        if (failover && failover.length > 0) {
+            out.log.info(`  failover: ${failover.join(", ")}`);
+        }
     }
 }
 

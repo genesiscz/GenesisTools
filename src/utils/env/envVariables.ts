@@ -72,6 +72,11 @@ export const env = {
         getApiHomeEnvKey: () => (isNonEmpty("COPILOT_API_HOME") ? "COPILOT_API_HOME" : undefined),
     },
 
+    aiProxy: {
+        /** Save the last failing WHAM request/response (redacted, no tokens) under ~/.genesis-tools/ai-proxy/debug/. */
+        getDebugCapture: () => isFlag("AI_PROXY_DEBUG_CAPTURE"),
+    },
+
     github: {
         getToken: () => getFirstValue(GITHUB_TOKEN_KEYS),
         getTokenEnvKey: () => getFirstEnvKey(GITHUB_TOKEN_KEYS),

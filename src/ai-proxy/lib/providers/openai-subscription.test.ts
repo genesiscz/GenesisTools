@@ -1,12 +1,40 @@
-import { afterEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { resetCooldowns } from "@app/ai-proxy/lib/providers/cooldown";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 const TEST_TOKEN = "codex-access-token";
 const TEST_ACCOUNT_ID = "acct-123";
 
+let primaryResolver: (options?: { forceRefresh?: boolean }) => Promise<{ token: string; accountId?: string }> =
+    async () => ({ token: TEST_TOKEN, accountId: TEST_ACCOUNT_ID });
+let failoverResolver: (
+    name: string,
+    options?: { forceRefresh?: boolean }
+) => Promise<{ token: string; accountId?: string }> = async (name) => ({ token: `${name}-token` });
+
 mock.module("@app/ai-proxy/lib/providers/openai-sub-token", () => ({
-    resolveOpenAiSubToken: async () => ({ token: TEST_TOKEN, accountId: TEST_ACCOUNT_ID }),
+    resolveOpenAiSubToken: async (_account: unknown, options?: { forceRefresh?: boolean }) => primaryResolver(options),
+    resolveOpenAiSubFailoverToken: async (name: string, options?: { forceRefresh?: boolean }) =>
+        failoverResolver(name, options),
+}));
+
+interface StubWhamModel {
+    slug: string;
+    displayName: string;
+    contextWindow: number;
+    visibility: "list" | "hide";
+    inputModalities?: string[];
+}
+
+let whamModelsStub: StubWhamModel[] | null = null;
+
+mock.module("@genesiscz/utils/ai/openai/sub-models", () => ({
+    OPENAI_SUB_STATIC_CATALOG: [],
+    OPENAI_SUB_BUILTIN_ALIAS_NAMES: ["latest", "codex", "mini"],
+    resolveOpenAiSubModel: (id: string, aliases?: Record<string, string>) => aliases?.[id] ?? id,
+    tryFetchWhamModels: async () => whamModelsStub,
+    fetchWhamModels: async () => whamModelsStub ?? [],
 }));
 
 const account: AiProxyAccountConfig = {
@@ -37,6 +65,13 @@ function whamStreamResponse(): Response {
 
 const realFetch = globalThis.fetch;
 
+beforeEach(() => {
+    resetCooldowns();
+    primaryResolver = async () => ({ token: TEST_TOKEN, accountId: TEST_ACCOUNT_ID });
+    failoverResolver = async (name) => ({ token: `${name}-token` });
+    whamModelsStub = null;
+});
+
 afterEach(() => {
     globalThis.fetch = realFetch;
 });
@@ -44,7 +79,7 @@ afterEach(() => {
 describe("buildWhamResponsesBody", () => {
     it("extracts system→instructions, maps messages→input, forces stream", async () => {
         const { buildWhamResponsesBody } = await import("./openai-subscription");
-        const body = buildWhamResponsesBody(
+        const { body, dropped } = buildWhamResponsesBody(
             {
                 model: "codex/codex/gpt-5.5",
                 messages: [
@@ -64,11 +99,12 @@ describe("buildWhamResponsesBody", () => {
         // WHAM rejects max_output_tokens ("Unsupported parameter"), so the
         // caller's max_tokens cap must NOT be forwarded (verified live 2026-07-12).
         expect(body.max_output_tokens).toBeUndefined();
+        expect(dropped).toContain("max_tokens");
     });
 
     it("maps chat function tools to flat Responses tools", async () => {
         const { buildWhamResponsesBody } = await import("./openai-subscription");
-        const body = buildWhamResponsesBody(
+        const { body } = buildWhamResponsesBody(
             {
                 messages: [{ role: "user", content: "go" }],
                 tools: [
@@ -84,6 +120,57 @@ describe("buildWhamResponsesBody", () => {
         expect(body.tools).toEqual([
             { type: "function", name: "search", description: "d", parameters: { type: "object" } },
         ]);
+    });
+
+    it("records dropped sampling params and unsupported tool types", async () => {
+        const { buildWhamResponsesBody } = await import("./openai-subscription");
+        const { body, dropped } = buildWhamResponsesBody(
+            {
+                messages: [{ role: "user", content: "go" }],
+                temperature: 0.2,
+                top_p: 0.9,
+                tools: [{ type: "web_search" }, { type: "function", function: { name: "f", parameters: {} } }],
+            },
+            "gpt-5.5"
+        );
+
+        expect(dropped).toContain("temperature");
+        expect(dropped).toContain("top_p");
+        expect(dropped).toContain("tools[type=web_search]");
+        expect(body.tools).toEqual([{ type: "function", name: "f", description: undefined, parameters: {} }]);
+    });
+
+    it("passes client reasoning through and clamps unknown efforts", async () => {
+        const { buildWhamResponsesBody } = await import("./openai-subscription");
+
+        const passthrough = buildWhamResponsesBody(
+            { messages: [{ role: "user", content: "x" }], reasoning: { effort: "high" } },
+            "gpt-5.5"
+        );
+        expect(passthrough.body.reasoning).toEqual({ effort: "high" });
+
+        const clamped = buildWhamResponsesBody(
+            { messages: [{ role: "user", content: "x" }], reasoning: { effort: "ultra-max" } },
+            "gpt-5.5"
+        );
+        expect(clamped.body.reasoning).toEqual({ effort: "low" });
+    });
+
+    it("honours defaultReasoningEffort config, including none=omit", async () => {
+        const { buildWhamResponsesBody } = await import("./openai-subscription");
+
+        const highDefault = buildWhamResponsesBody({ messages: [{ role: "user", content: "x" }] }, "gpt-5.5", {
+            defaultReasoningEffort: "high",
+        });
+        expect(highDefault.body.reasoning).toEqual({ effort: "high" });
+
+        const omitted = buildWhamResponsesBody({ messages: [{ role: "user", content: "x" }] }, "gpt-5.5", {
+            defaultReasoningEffort: "none",
+        });
+        expect(omitted.body.reasoning).toBeUndefined();
+
+        const fallback = buildWhamResponsesBody({ messages: [{ role: "user", content: "x" }] }, "gpt-5.5");
+        expect(fallback.body.reasoning).toEqual({ effort: "low" });
     });
 });
 
@@ -115,9 +202,15 @@ describe("OpenAiSubscriptionProvider", () => {
         const completion = (await res.json()) as {
             object: string;
             choices: Array<{ message: { content: string } }>;
+            usage?: Record<string, unknown>;
         };
         expect(completion.object).toBe("chat.completion");
         expect(completion.choices[0]?.message.content).toBe("CODEX_OK");
+        expect(completion.usage).toEqual({
+            prompt_tokens: 10,
+            completion_tokens: 3,
+            total_tokens: 13,
+        });
 
         // upstream targeted WHAM with the Codex token + account id
         expect(capturedUrl).toBe("https://chatgpt.com/backend-api/wham/responses");
@@ -159,6 +252,9 @@ describe("OpenAiSubscriptionProvider", () => {
         expect(text).toContain('"object":"chat.completion.chunk"');
         expect(text).toContain("CODEX");
         expect(text).toContain("[DONE]");
+        // WHAM's response.completed usage must survive into the chat stream.
+        expect(text).toContain('"prompt_tokens":10');
+        expect(text).toContain('"completion_tokens":3');
     });
 
     it("returns 400 (not a 502) for a non-object JSON body", async () => {
@@ -198,7 +294,275 @@ describe("OpenAiSubscriptionProvider", () => {
         const res = await provider.responses(req, "gpt-5.5", bodyText);
 
         expect(res.status).toBe(502);
-        const errorBody = (await res.json()) as { error: { message: string } };
+        const errorBody = (await res.json()) as { error: { message: string; type?: string } };
         expect(errorBody.error.message).toBe("upstream boom");
+        expect(errorBody.error.type).toBe("upstream_error");
+    });
+
+    it("surfaces x-ai-proxy-dropped through the chat translation path", async () => {
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) =>
+            whamStreamResponse()) as typeof fetch;
+
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+
+        const bodyText = SafeJSON.stringify({
+            model: "codex/codex/gpt-5.5",
+            messages: [{ role: "user", content: "hi" }],
+            max_tokens: 32,
+            temperature: 0.5,
+        });
+        const req = new Request("http://localhost/v1/chat/completions", { method: "POST", body: bodyText });
+        const res = await provider.chatCompletions(req, "gpt-5.5", bodyText);
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get("x-ai-proxy-dropped")).toBe("max_tokens,temperature");
+    });
+
+    it("fails over to the next account on 429 within one request", async () => {
+        const authHeaders: Array<string | null> = [];
+        let call = 0;
+
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            authHeaders.push(new Headers(init?.headers).get("authorization"));
+            call += 1;
+
+            if (call === 1) {
+                return new Response('{"error":{"message":"slow down"}}', {
+                    status: 429,
+                    headers: { "retry-after": "60" },
+                });
+            }
+
+            return whamStreamResponse();
+        }) as typeof fetch;
+
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create({
+            ...account,
+            openaiSub: { failoverAccountNames: ["backup"] },
+        });
+
+        const bodyText = SafeJSON.stringify({
+            model: "codex/codex/gpt-5.5",
+            messages: [{ role: "user", content: "hi" }],
+        });
+        const req = new Request("http://localhost/v1/chat/completions", { method: "POST", body: bodyText });
+        const res = await provider.chatCompletions(req, "gpt-5.5", bodyText);
+
+        expect(res.status).toBe(200);
+        expect(authHeaders).toEqual([`Bearer ${TEST_TOKEN}`, "Bearer backup-token"]);
+    });
+
+    it("returns a rate_limit_error envelope with Retry-After when every account is limited", async () => {
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) =>
+            new Response('{"error":{"message":"slow down"}}', {
+                status: 429,
+                headers: { "retry-after": "45" },
+            })) as typeof fetch;
+
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+
+        const bodyText = SafeJSON.stringify({
+            model: "codex/codex/gpt-5.5",
+            messages: [{ role: "user", content: "hi" }],
+        });
+        const req = new Request("http://localhost/v1/responses", { method: "POST", body: bodyText });
+        const res = await provider.responses(req, "gpt-5.5", bodyText);
+
+        expect(res.status).toBe(429);
+        expect(res.headers.get("retry-after")).toBe("45");
+        const body = (await res.json()) as { error: { type: string; message: string } };
+        expect(body.error.type).toBe("rate_limit_error");
+    });
+
+    it("skips a cooling account on the next request instead of hitting upstream", async () => {
+        let upstreamCalls = 0;
+
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) => {
+            upstreamCalls += 1;
+            return new Response('{"error":{"message":"slow down"}}', {
+                status: 429,
+                headers: { "retry-after": "60" },
+            });
+        }) as typeof fetch;
+
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+
+        const bodyText = SafeJSON.stringify({
+            model: "codex/codex/gpt-5.5",
+            messages: [{ role: "user", content: "hi" }],
+        });
+
+        const first = await provider.responses(
+            new Request("http://localhost/v1/responses", { method: "POST", body: bodyText }),
+            "gpt-5.5",
+            bodyText
+        );
+        expect(first.status).toBe(429);
+        expect(upstreamCalls).toBe(1);
+
+        const second = await provider.responses(
+            new Request("http://localhost/v1/responses", { method: "POST", body: bodyText }),
+            "gpt-5.5",
+            bodyText
+        );
+        expect(second.status).toBe(502);
+        expect(upstreamCalls).toBe(1);
+        const body = (await second.json()) as { error: { message: string } };
+        expect(body.error.message).toContain("cooling down");
+    });
+
+    it("force-refreshes once on 401 and succeeds on retry", async () => {
+        const refreshCalls: Array<boolean | undefined> = [];
+        primaryResolver = async (options) => {
+            refreshCalls.push(options?.forceRefresh);
+            return {
+                token: options?.forceRefresh ? "fresh-token" : "stale-token",
+                accountId: TEST_ACCOUNT_ID,
+            };
+        };
+
+        const authHeaders: Array<string | null> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            const auth = new Headers(init?.headers).get("authorization");
+            authHeaders.push(auth);
+
+            if (auth === "Bearer stale-token") {
+                return new Response('{"detail":"Unauthorized"}', { status: 401 });
+            }
+
+            return whamStreamResponse();
+        }) as typeof fetch;
+
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+
+        const bodyText = SafeJSON.stringify({
+            model: "codex/codex/gpt-5.5",
+            messages: [{ role: "user", content: "hi" }],
+        });
+        const req = new Request("http://localhost/v1/chat/completions", { method: "POST", body: bodyText });
+        const res = await provider.chatCompletions(req, "gpt-5.5", bodyText);
+
+        expect(res.status).toBe(200);
+        expect(refreshCalls).toEqual([undefined, true]);
+        expect(authHeaders).toEqual(["Bearer stale-token", "Bearer fresh-token"]);
+    });
+
+    it("rejects image input for models known to lack the image modality", async () => {
+        whamModelsStub = [
+            {
+                slug: "gpt-5.5",
+                displayName: "GPT-5.5",
+                contextWindow: 272_000,
+                visibility: "list",
+                inputModalities: ["text"],
+            },
+            {
+                slug: "gpt-5.6-sol",
+                displayName: "GPT-5.6-Sol",
+                contextWindow: 372_000,
+                visibility: "list",
+                inputModalities: ["text", "image"],
+            },
+        ];
+
+        let upstreamCalled = false;
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) => {
+            upstreamCalled = true;
+            return whamStreamResponse();
+        }) as typeof fetch;
+
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+
+        const bodyText = SafeJSON.stringify({
+            model: "codex/codex/gpt-5.5",
+            messages: [
+                {
+                    role: "user",
+                    content: [
+                        { type: "text", text: "what is this?" },
+                        { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
+                    ],
+                },
+            ],
+        });
+        const res = await provider.responses(
+            new Request("http://localhost/v1/responses", { method: "POST", body: bodyText }),
+            "gpt-5.5",
+            bodyText
+        );
+
+        expect(res.status).toBe(400);
+        expect(upstreamCalled).toBe(false);
+        const body = (await res.json()) as { error: { code: string; message: string } };
+        expect(body.error.code).toBe("unsupported_modality");
+        expect(body.error.message).toContain("gpt-5.6-sol");
+    });
+
+    it("lets image input pass when modalities are unknown", async () => {
+        whamModelsStub = null;
+
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) =>
+            whamStreamResponse()) as typeof fetch;
+
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+
+        const bodyText = SafeJSON.stringify({
+            model: "codex/codex/gpt-5.5",
+            messages: [
+                { role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AAA" } }] },
+            ],
+        });
+        const res = await provider.responses(
+            new Request("http://localhost/v1/responses", { method: "POST", body: bodyText }),
+            "gpt-5.5",
+            bodyText
+        );
+
+        expect(res.status).toBe(200);
+    });
+
+    it("marks the account unhealthy after a second 401 and returns authentication_error", async () => {
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) =>
+            new Response('{"detail":"Unauthorized"}', { status: 401 })) as typeof fetch;
+
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+
+        const bodyText = SafeJSON.stringify({
+            model: "codex/codex/gpt-5.5",
+            messages: [{ role: "user", content: "hi" }],
+        });
+        const res = await provider.responses(
+            new Request("http://localhost/v1/responses", { method: "POST", body: bodyText }),
+            "gpt-5.5",
+            bodyText
+        );
+
+        expect(res.status).toBe(401);
+        const body = (await res.json()) as { error: { type: string; message: string } };
+        expect(body.error.type).toBe("authentication_error");
+        expect(body.error.message).toContain("accounts login codex");
+
+        // Account is now cooling — next request short-circuits without upstream.
+        let upstreamCalled = false;
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) => {
+            upstreamCalled = true;
+            return whamStreamResponse();
+        }) as typeof fetch;
+
+        const second = await provider.responses(
+            new Request("http://localhost/v1/responses", { method: "POST", body: bodyText }),
+            "gpt-5.5",
+            bodyText
+        );
+        expect(second.status).toBe(502);
+        expect(upstreamCalled).toBe(false);
     });
 });

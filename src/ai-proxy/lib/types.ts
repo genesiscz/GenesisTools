@@ -96,6 +96,18 @@ export interface AiProxyOpenAiSubAccountConfig {
     accountName?: string;
     /** Override path to the Codex CLI auth.json (defaults to ~/.codex/auth.json). */
     codexAuthPath?: string;
+    /**
+     * Additional `openai-sub` AI-config account names tried in order when the
+     * primary is rate-limited (429) or its auth dies (401 after refresh).
+     */
+    failoverAccountNames?: string[];
+    /**
+     * Reasoning effort sent to WHAM when the client omits `reasoning`.
+     * "none" omits the field entirely. Default: "low".
+     */
+    defaultReasoningEffort?: "none" | "low" | "medium" | "high";
+    /** Extra model aliases for this account, e.g. { "fast": "gpt-5.4-mini" }. */
+    aliases?: Record<string, string>;
 }
 
 export interface AiProxyAccountConfig {
@@ -155,6 +167,9 @@ export interface ProxyModelMeta {
     agentType?: string;
     apiBackend?: string;
     supportsTools?: boolean;
+    /** Input modalities upstream advertises (e.g. ["text","image"]); absent = unknown. */
+    inputModalities?: string[];
+    supportsParallelToolCalls?: boolean;
     billingPlane: "subscription" | "api-key";
     source: GrokModelRecord["source"];
     probeStatus?: GrokModelRecord["probeStatus"];

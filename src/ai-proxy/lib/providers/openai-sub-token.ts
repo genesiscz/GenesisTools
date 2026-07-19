@@ -23,14 +23,34 @@ export interface OpenAiSubToken {
  *  - otherwise → the Codex CLI cache (`~/.codex/auth.json`), read-only. The CLI
  *    keeps this fresh; the local proxy piggybacks on the machine's `codex login`.
  */
-export async function resolveOpenAiSubToken(account: AiProxyAccountConfig): Promise<OpenAiSubToken> {
+export async function resolveOpenAiSubToken(
+    account: AiProxyAccountConfig,
+    options?: { forceRefresh?: boolean }
+): Promise<OpenAiSubToken> {
     const accountName = account.openaiSub?.accountName;
 
     if (accountName) {
-        return resolveCodexAccountToken(accountName);
+        return resolveCodexAccountToken(accountName, options);
+    }
+
+    if (options?.forceRefresh) {
+        throw new Error(
+            "openai-subscription account uses the Codex CLI cache — the proxy cannot refresh it. Run `codex login`."
+        );
     }
 
     return resolveFromCodexCli(account.openaiSub?.codexAuthPath);
+}
+
+/**
+ * Resolve a token for one of `openaiSub.failoverAccountNames` — always a named
+ * `openai-sub` account in the unified AI config.
+ */
+export async function resolveOpenAiSubFailoverToken(
+    accountName: string,
+    options?: { forceRefresh?: boolean }
+): Promise<OpenAiSubToken> {
+    return resolveCodexAccountToken(accountName, options);
 }
 
 async function resolveFromCodexCli(authPath?: string): Promise<OpenAiSubToken> {

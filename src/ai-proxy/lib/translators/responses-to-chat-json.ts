@@ -176,6 +176,7 @@ export async function responsesToChatJson({
     }
 
     const rawText = await upstream.text();
+    const droppedHeader = upstream.headers.get("x-ai-proxy-dropped");
 
     try {
         const parsed = SafeJSON.parse(rawText, { strict: true }) as JsonObject;
@@ -185,7 +186,10 @@ export async function responsesToChatJson({
         return pipelineResult(
             new Response(responseText, {
                 status: upstream.status,
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                    "Content-Type": "application/json",
+                    ...(droppedHeader ? { "x-ai-proxy-dropped": droppedHeader } : {}),
+                },
             }),
             responseText
         );

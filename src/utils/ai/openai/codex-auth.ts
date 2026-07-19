@@ -302,7 +302,10 @@ export interface ResolvedCodexToken {
  * the cross-process AI-config lock, re-read inside the lock, and
  * short-circuits if another caller/process already refreshed while waiting.
  */
-export async function resolveCodexAccountToken(accountName: string): Promise<ResolvedCodexToken> {
+export async function resolveCodexAccountToken(
+    accountName: string,
+    options?: { forceRefresh?: boolean }
+): Promise<ResolvedCodexToken> {
     const { AIConfig } = await import("../AIConfig");
     const config = await AIConfig.load();
     const entry = config.getAccount(accountName);
@@ -315,6 +318,12 @@ export async function resolveCodexAccountToken(accountName: string): Promise<Res
     // (~/.codex/auth.json). Live-read, never copied — the CLI owns refresh.
     // An explicit reference wins over any stored (possibly stale) tokens.
     if (entry.tokens.authFile) {
+        if (options?.forceRefresh) {
+            throw new Error(
+                `openai-sub account "${accountName}" references the Codex CLI cache — the proxy cannot refresh it. Run \`codex login\`.`
+            );
+        }
+
         const tokens = await readCodexAuthJson(entry.tokens.authFile);
 
         if (!tokens?.accessToken) {
@@ -337,7 +346,12 @@ export async function resolveCodexAccountToken(accountName: string): Promise<Res
         throw new Error(`No access token for openai-sub account "${accountName}". Run \`tools ask config\`.`);
     }
 
-    if (entry.tokens.expiresAt && codexOAuth.needsRefresh(entry.tokens.expiresAt)) {
+    const staleToken = accessToken;
+    const wantsRefresh =
+        options?.forceRefresh === true ||
+        (entry.tokens.expiresAt != null && codexOAuth.needsRefresh(entry.tokens.expiresAt));
+
+    if (wantsRefresh) {
         accessToken = await config.withLock(async (data) => {
             const acc = data.accounts.find((a) => a.name === accountName);
 
@@ -345,7 +359,16 @@ export async function resolveCodexAccountToken(accountName: string): Promise<Res
                 throw new Error(`openai-sub account "${accountName}" not found in AI config.`);
             }
 
-            if (acc.tokens.expiresAt && !codexOAuth.needsRefresh(acc.tokens.expiresAt) && acc.tokens.accessToken) {
+            // Another caller/process already rotated the token while we waited
+            // for the lock — use theirs. On forceRefresh (upstream said 401),
+            // "already rotated" means a token DIFFERENT from the one that failed.
+            const alreadyFresh =
+                acc.tokens.accessToken &&
+                acc.tokens.expiresAt &&
+                !codexOAuth.needsRefresh(acc.tokens.expiresAt) &&
+                (!options?.forceRefresh || acc.tokens.accessToken !== staleToken);
+
+            if (alreadyFresh && acc.tokens.accessToken) {
                 return acc.tokens.accessToken;
             }
 

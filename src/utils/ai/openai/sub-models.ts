@@ -27,8 +27,34 @@ export const OPENAI_SUB_STATIC_CATALOG: WhamModelRecord[] = [
     { slug: "gpt-5-codex", displayName: "GPT-5-Codex", contextWindow: 272_000, visibility: "list" },
 ];
 
-/** Codex model ids are already concrete; unknown values pass through unchanged. */
-export function resolveOpenAiSubModel(id: string): string {
+/**
+ * Built-in aliases resolved against the static catalog (first list-visible
+ * match). Config aliases (per proxy account) win over built-ins; unknown ids
+ * pass through unchanged so WHAM's own 400 surfaces for bad slugs.
+ */
+export const OPENAI_SUB_BUILTIN_ALIAS_NAMES = ["latest", "codex", "mini"] as const;
+
+const OPENAI_SUB_BUILTIN_ALIASES: Record<string, (catalog: WhamModelRecord[]) => string | undefined> = {
+    latest: (catalog) => catalog.find((record) => record.visibility === "list")?.slug,
+    codex: (catalog) =>
+        catalog.find((record) => record.visibility === "list" && record.slug.includes("codex"))?.slug ??
+        catalog.find((record) => record.visibility === "list")?.slug,
+    mini: (catalog) => catalog.find((record) => record.visibility === "list" && record.slug.includes("mini"))?.slug,
+};
+
+export function resolveOpenAiSubModel(id: string, aliases?: Record<string, string>): string {
+    const fromConfig = aliases?.[id];
+
+    if (fromConfig) {
+        return fromConfig;
+    }
+
+    const builtin = OPENAI_SUB_BUILTIN_ALIASES[id];
+
+    if (builtin) {
+        return builtin(OPENAI_SUB_STATIC_CATALOG) ?? id;
+    }
+
     return id;
 }
 

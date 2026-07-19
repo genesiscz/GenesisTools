@@ -14,6 +14,30 @@ describe("chat-to-responses-body", () => {
         ]);
     });
 
+    it("converts chat image_url parts to flat Responses input_image parts", () => {
+        const input = convertMessagesToInput([
+            {
+                role: "user",
+                content: [
+                    { type: "text", text: "what is this?" },
+                    { type: "image_url", image_url: { url: "data:image/png;base64,AAA", detail: "high" } },
+                    { type: "image_url", image_url: "https://example.com/x.png" },
+                ],
+            },
+        ]);
+
+        expect(input).toEqual([
+            {
+                role: "user",
+                content: [
+                    { type: "input_text", text: "what is this?" },
+                    { type: "input_image", image_url: "data:image/png;base64,AAA", detail: "high" },
+                    { type: "input_image", image_url: "https://example.com/x.png", detail: "auto" },
+                ],
+            },
+        ]);
+    });
+
     it("ensures responses bodies have input instead of messages", () => {
         const body = ensureResponsesInput({
             model: "grok-composer-2.5-fast",

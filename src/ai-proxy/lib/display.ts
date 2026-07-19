@@ -82,6 +82,15 @@ function formatContextWindow(tokens: number | undefined): string {
     return pc.white(formatTokens(tokens));
 }
 
+function formatModalities(modalities: string[] | undefined): string {
+    if (!modalities || modalities.length === 0) {
+        return pc.dim("—");
+    }
+
+    const short = modalities.map((modality) => modality.slice(0, 1)).join("+");
+    return pc.white(short);
+}
+
 function formatEnabled(enabled: boolean): string {
     if (enabled) {
         return formatDotStatus("ok", "yes");
@@ -131,7 +140,7 @@ export function displayModelsTable(models: ProxyModelMeta[]): void {
         return;
     }
 
-    const table = createBoxTable(["PROXY ID", "VIS", "SPEED", "THINK", "CTX", "PROBE"]);
+    const table = createBoxTable(["PROXY ID", "VIS", "SPEED", "THINK", "CTX", "MODAL", "PROBE"]);
 
     for (const model of models) {
         table.push([
@@ -140,6 +149,7 @@ export function displayModelsTable(models: ProxyModelMeta[]): void {
             formatSpeed(model.speed),
             formatThinking(model.thinking),
             formatContextWindow(model.contextWindow),
+            formatModalities(model.inputModalities),
             formatProbeStatus(model.probeStatus),
         ]);
     }
@@ -158,6 +168,7 @@ export function displayModelsTable(models: ProxyModelMeta[]): void {
     renderCliKeyRow("SPEED", "relative latency class (not a hard SLA)");
     renderCliKeyRow("THINK", "reasoning mode: none | optional | reasoning | multi-agent");
     renderCliKeyRow("CTX", "context window in tokens (— if unknown)");
+    renderCliKeyRow("MODAL", "input modalities upstream advertises (t=text, i=image; — if unknown)");
     renderCliKeyRow(
         "PROBE",
         "ok=upstream advertises it (or Grok chat-probe ok) · fail=Grok dead id · skip=static fallback · n/a=no signal"

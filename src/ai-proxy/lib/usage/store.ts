@@ -182,6 +182,10 @@ function bumpDailyAggregate(record: UsageRequestRecord): void {
         current.rate_limits += 1;
     }
 
+    if (record.usage?.source === "estimated") {
+        current.estimated_requests = (current.estimated_requests ?? 0) + 1;
+    }
+
     store.days[day][key] = current;
     void saveDailyStoreAsync();
 }
@@ -343,10 +347,8 @@ export function readRecentRequestsForAccount(account: string, limit = 20): Usage
     return collectTailJsonlRecords(path, limit, (record) => record.account === account);
 }
 
-export function getTodayUsageSummary(account?: string): DailyModelUsage {
-    const store = readDailyStore();
-    const today = store.days[dayKey()] ?? {};
-    const summary: DailyModelUsage = {
+function emptyDailyModelUsage(): DailyModelUsage {
+    return {
         requests: 0,
         prompt_tokens: 0,
         completion_tokens: 0,
@@ -354,8 +356,10 @@ export function getTodayUsageSummary(account?: string): DailyModelUsage {
         errors: 0,
         rate_limits: 0,
     };
+}
 
-    for (const [key, stats] of Object.entries(today)) {
+function addDayIntoSummary(day: Record<string, DailyModelUsage>, summary: DailyModelUsage, account?: string): void {
+    for (const [key, stats] of Object.entries(day)) {
         if (account && !key.startsWith(`${account}/`)) {
             continue;
         }
@@ -366,9 +370,65 @@ export function getTodayUsageSummary(account?: string): DailyModelUsage {
         summary.total_tokens += stats.total_tokens;
         summary.errors += stats.errors;
         summary.rate_limits += stats.rate_limits;
+
+        if (stats.estimated_requests) {
+            summary.estimated_requests = (summary.estimated_requests ?? 0) + stats.estimated_requests;
+        }
+    }
+}
+
+export function getTodayUsageSummary(account?: string): DailyModelUsage {
+    const store = readDailyStore();
+    const today = store.days[dayKey()] ?? {};
+    const summary = emptyDailyModelUsage();
+    addDayIntoSummary(today, summary, account);
+
+    return summary;
+}
+
+/** Aggregate daily usage over the trailing N days (today included). */
+export function getUsageSummarySince(daysBack: number, account?: string): DailyModelUsage {
+    const store = readDailyStore();
+    const summary = emptyDailyModelUsage();
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - daysBack);
+
+    for (const [day, stats] of Object.entries(store.days)) {
+        if (day < dayKey(cutoff)) {
+            continue;
+        }
+
+        addDayIntoSummary(stats, summary, account);
     }
 
     return summary;
+}
+
+/** Per-model aggregate over the trailing N days for one account (today included). */
+export function getModelUsageBreakdownSince(daysBack: number, account: string): Record<string, DailyModelUsage> {
+    const store = readDailyStore();
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - daysBack);
+    const breakdown: Record<string, DailyModelUsage> = {};
+
+    for (const [day, stats] of Object.entries(store.days)) {
+        if (day < dayKey(cutoff)) {
+            continue;
+        }
+
+        for (const [key, usage] of Object.entries(stats)) {
+            if (!key.startsWith(`${account}/`)) {
+                continue;
+            }
+
+            const model = key.slice(account.length + 1);
+            const current = breakdown[model] ?? emptyDailyModelUsage();
+            addDayIntoSummary({ [key]: usage }, current);
+            breakdown[model] = current;
+        }
+    }
+
+    return breakdown;
 }
 
 export function usageStorePaths(): { billing: string; daily: string; requests: string } {

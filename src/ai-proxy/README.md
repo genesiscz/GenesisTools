@@ -93,7 +93,9 @@ Speaks OpenAI (`/v1/chat/completions`) to proxy clients and forwards the Claude 
 
 ### OpenAI (ChatGPT/Codex) subscription
 
-Speaks OpenAI to proxy clients on both `/v1/chat/completions` and `/v1/responses`, converting to/from the ChatGPT backend's Responses-only WHAM API (`chatgpt.com/backend-api/wham/responses`, streaming-only — non-streaming callers get the SSE accumulated into a single JSON response). No interactive `accounts login` flow yet — add the account by hand:
+Speaks OpenAI to proxy clients on both `/v1/chat/completions` and `/v1/responses`, converting to/from the ChatGPT backend's Responses-only WHAM API (`chatgpt.com/backend-api/wham/responses`, streaming-only — non-streaming callers get the SSE accumulated into a single JSON response).
+
+**Login** (recommended): `tools ai-proxy accounts login codex` — browser OAuth, saves an `openai-sub` account into `~/.genesis-tools/ai/config.json` and points (or creates) a proxy account at it. `tools ai-proxy accounts status` shows auth source, token expiry, and ChatGPT plan. Manual config (advanced):
 
 ```json
 {
@@ -102,7 +104,10 @@ Speaks OpenAI to proxy clients on both `/v1/chat/completions` and `/v1/responses
   "providerSlug": "codex",
   "enabled": true,
   "openaiSub": {
-    "accountName": "codex-account"
+    "accountName": "codex-account",
+    "failoverAccountNames": ["codex-backup"],
+    "defaultReasoningEffort": "low",
+    "aliases": { "fast": "gpt-5.4-mini" }
   }
 }
 ```
@@ -110,6 +115,13 @@ Speaks OpenAI to proxy clients on both `/v1/chat/completions` and `/v1/responses
 Two token sources, tried in order:
 - `openaiSub.accountName` set → the named `openai-sub` account in `~/.genesis-tools/ai/config.json` (refreshed via Codex OAuth and persisted).
 - `openaiSub.accountName` omitted → the Codex CLI's own cache (`~/.codex/auth.json`, read-only; run `codex login` to refresh it). Override the path with `openaiSub.codexAuthPath`.
+
+Behavior notes:
+- **Rate limits / failover:** a 429 puts the account on an in-memory cooldown (honours `Retry-After`, else exponential backoff); `failoverAccountNames` (additional `openai-sub` AI-config accounts) are tried in order within the same request. A 401 triggers one forced token refresh + retry before the account is marked unhealthy for 15 minutes.
+- **Parameters:** WHAM rejects `max_output_tokens`, `temperature`, and `top_p` — the proxy strips them (warned once per process, surfaced in the `x-ai-proxy-dropped` response header). Client `reasoning` passes through (unknown efforts clamp to `low`); when omitted, `openaiSub.defaultReasoningEffort` applies (`"none"` omits the field, default `low`).
+- **Aliases:** built-ins `latest`, `codex`, `mini` resolve against the catalog; `openaiSub.aliases` adds per-account ones. Unknown ids pass through so WHAM's own 400 surfaces.
+- **Usage:** `tools ai-proxy usage` reports proxy-observed token counts from the local store — ChatGPT exposes no plan-quota endpoint, so weekly-limit numbers are never claimed.
+- **Local health checks:** shell proxies break localhost curls — use `curl --noproxy '*' http://127.0.0.1:<port>/…` (or unset `http_proxy`/`https_proxy`).
 
 ### xAI API key
 

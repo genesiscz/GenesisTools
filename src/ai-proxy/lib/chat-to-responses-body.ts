@@ -26,6 +26,21 @@ function contentToParts(content: unknown, textType: "input_text" | "output_text"
             return part;
         }
 
+        // Chat image parts nest the url ({image_url:{url,detail}}); the
+        // Responses API wants a flat input_image part with a string image_url.
+        if (part.type === "image_url" && textType === "input_text") {
+            const nested = isObject(part.image_url) ? part.image_url : undefined;
+            const url = nested ? nested.url : part.image_url;
+
+            if (typeof url === "string") {
+                return {
+                    type: "input_image",
+                    image_url: url,
+                    detail: nested && typeof nested.detail === "string" ? nested.detail : "auto",
+                };
+            }
+        }
+
         return part;
     });
 }

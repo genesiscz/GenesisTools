@@ -6,6 +6,8 @@ export interface TokenUsage {
     completion_tokens?: number;
     total_tokens?: number;
     cost_in_usd_ticks?: number;
+    /** "estimated" = local char-heuristic because upstream omitted usage; absent = upstream-reported. */
+    source?: "estimated";
 }
 
 export interface UsageRequestRecord {
@@ -47,6 +49,8 @@ export interface DailyModelUsage {
     total_tokens: number;
     errors: number;
     rate_limits: number;
+    /** Requests whose tokens were locally estimated (upstream sent no usage). */
+    estimated_requests?: number;
 }
 
 export interface DailyUsageStore {

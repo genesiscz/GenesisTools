@@ -223,6 +223,8 @@ export async function responsesToChatSse({
         },
     });
 
+    const droppedHeader = upstream.headers.get("x-ai-proxy-dropped");
+
     return pipelineResult(
         new Response(stream, {
             status: 200,
@@ -233,6 +235,7 @@ export async function responsesToChatSse({
                 // close per stream (see providers/anthropic-subscription.ts).
                 Connection: "close",
                 "X-Accel-Buffering": "no",
+                ...(droppedHeader ? { "x-ai-proxy-dropped": droppedHeader } : {}),
             },
         }),
         responseBody

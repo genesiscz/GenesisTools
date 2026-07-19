@@ -1,6 +1,11 @@
 import type { ResolvedRoute } from "@app/ai-proxy/lib/types";
 import { recordClientUsage } from "@app/ai-proxy/lib/usage/client-ledger";
-import { bodyWantsStream, extractLatestUsageFromSse, extractUsageFromJsonBody } from "@app/ai-proxy/lib/usage/extract";
+import {
+    bodyWantsStream,
+    estimateUsageFromExchange,
+    extractLatestUsageFromSse,
+    extractUsageFromJsonBody,
+} from "@app/ai-proxy/lib/usage/extract";
 import { recordUsageRequest } from "@app/ai-proxy/lib/usage/store";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -18,7 +23,21 @@ export function trackCompletedRequest(input: {
     thinking?: string;
 }): void {
     const stream = input.stream ?? bodyWantsStream(input.bodyText);
-    const usage = stream ? extractLatestUsageFromSse(input.responseBody) : extractUsageFromJsonBody(input.responseBody);
+    let usage = stream ? extractLatestUsageFromSse(input.responseBody) : extractUsageFromJsonBody(input.responseBody);
+
+    // Upstream sent no usage on a successful exchange — record a local estimate,
+    // explicitly tagged so it is never mistaken for upstream-reported numbers.
+    if (!usage && input.status < 400 && input.responseBody.length > 0) {
+        usage = estimateUsageFromExchange({
+            bodyText: input.bodyText,
+            responseBody: input.responseBody,
+            stream,
+        });
+        logger.debug(
+            { model: input.proxyModel, usage },
+            "ai-proxy usage: upstream omitted usage — recorded local estimate"
+        );
+    }
 
     const record = {
         ts: new Date().toISOString(),

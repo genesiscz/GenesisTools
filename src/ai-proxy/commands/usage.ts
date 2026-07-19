@@ -4,6 +4,7 @@ import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
 import { maybeSyncBilling } from "@app/ai-proxy/lib/usage/billing-sync";
 import {
+    getModelUsageBreakdownSince,
     getTodayUsageSummary,
     readBillingStore,
     readRecentRequestsForAccount,
@@ -15,9 +16,12 @@ import { out } from "@genesiscz/utils/logger";
 
 export interface UsageCommandOptions {
     account?: string;
+    provider?: string;
     json?: boolean;
     recent?: number;
     paths?: boolean;
+    /** Show per-model aggregates over the trailing 30 days. */
+    breakdown?: boolean;
 }
 
 interface UsageCommandResult {
@@ -30,6 +34,7 @@ interface UsageCommandResult {
     today: ReturnType<typeof getTodayUsageSummary>;
     last?: UsageRequestRecord;
     recent?: UsageRequestRecord[];
+    breakdown?: ReturnType<typeof getModelUsageBreakdownSince>;
     storePaths?: ReturnType<typeof usageStorePaths>;
 }
 
@@ -53,9 +58,10 @@ function formatLastRequest(record: UsageRequestRecord): string {
 
 function formatTodaySummary(today: ReturnType<typeof getTodayUsageSummary>): string {
     const tokenSummary = today.total_tokens > 0 ? `, ${formatTokens(today.total_tokens)} tokens` : "";
+    const estimated = today.estimated_requests ? `, ${today.estimated_requests} estimated` : "";
     const rateLimits = today.rate_limits > 0 ? ` (${today.rate_limits} rate limits)` : "";
 
-    return `${today.requests} requests${tokenSummary}${rateLimits}`;
+    return `${today.requests} requests${tokenSummary}${estimated}${rateLimits}`;
 }
 
 function billingSnapshot(snapshot?: AccountBillingSnapshot): UsageCommandResult["billing"] {
@@ -74,7 +80,8 @@ async function fetchLiveUsage(account: AiProxyAccountConfig): Promise<UsageSumma
     if (
         account.provider === "grok-subscription" ||
         account.provider === "github-copilot-subscription" ||
-        account.provider === "xai-api-key"
+        account.provider === "xai-api-key" ||
+        account.provider === "openai-subscription"
     ) {
         const provider = await createProvider(account);
         return provider.getUsage();
@@ -115,13 +122,24 @@ async function buildAccountUsage(
         today,
         last,
         recent: options.recent ? accountRecent : undefined,
+        breakdown: options.breakdown ? getModelUsageBreakdownSince(30, account.name) : undefined,
         storePaths: options.paths ? usageStorePaths() : undefined,
     };
 }
 
 export async function runUsageCommand(options: UsageCommandOptions): Promise<void> {
     const config = await loadConfig();
-    const accounts = config.accounts.filter((item) => (options.account ? item.name === options.account : item.enabled));
+    const accounts = config.accounts.filter((item) => {
+        if (options.account) {
+            return item.name === options.account;
+        }
+
+        if (options.provider && item.provider !== options.provider && item.providerSlug !== options.provider) {
+            return false;
+        }
+
+        return item.enabled;
+    });
 
     if (accounts.length === 0) {
         out.log.error("No matching accounts in config");
@@ -157,6 +175,22 @@ export async function runUsageCommand(options: UsageCommandOptions): Promise<voi
 
         if (summary.last) {
             out.log.info(`  last: ${formatLastRequest(summary.last)}`);
+        }
+
+        if (summary.breakdown) {
+            const entries = Object.entries(summary.breakdown).sort((a, b) => b[1].total_tokens - a[1].total_tokens);
+
+            if (entries.length === 0) {
+                out.log.info("  30d: no tracked requests");
+            }
+
+            for (const [model, stats] of entries) {
+                const shortModel = model.split("/").slice(2).join("/") || model;
+                const rateLimits = stats.rate_limits > 0 ? `, ${stats.rate_limits} rate limits` : "";
+                out.log.info(
+                    `  30d ${shortModel}: ${stats.requests} req, ${formatTokens(stats.total_tokens)} tok${rateLimits}`
+                );
+            }
         }
     }
 }

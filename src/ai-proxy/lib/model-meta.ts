@@ -19,7 +19,9 @@ import type { GrokModelRecord } from "@genesiscz/utils/ai/grok";
 import { GROK_STATIC_CATALOG, inferModelSpeed, inferModelThinking, toProxyId } from "@genesiscz/utils/ai/grok";
 import { WHAM_BASE_URL } from "@genesiscz/utils/ai/openai/codex-auth";
 import {
+    OPENAI_SUB_BUILTIN_ALIAS_NAMES,
     OPENAI_SUB_STATIC_CATALOG,
+    resolveOpenAiSubModel,
     tryFetchWhamModels,
     type WhamModelRecord,
 } from "@genesiscz/utils/ai/openai/sub-models";
@@ -255,8 +257,8 @@ export async function listOpenAiSubProxyModels(account: AiProxyAccountConfig): P
         logger.debug({ err, account: account.name }, "ai-proxy: codex catalog auth/list failed — static fallback");
     }
 
-    return records.map((record) => ({
-        proxyId: toProxyId(account.name, account.providerSlug, record.slug),
+    const toMeta = (id: string, record: WhamModelRecord, description: string): ProxyModelMeta => ({
+        proxyId: toProxyId(account.name, account.providerSlug, id),
         accountName: account.name,
         providerSlug: account.providerSlug,
         upstreamId: record.slug,
@@ -267,14 +269,37 @@ export async function listOpenAiSubProxyModels(account: AiProxyAccountConfig): P
         thinking: "reasoning" as const,
         contextWindow: record.contextWindow,
         supportsTools: true,
+        inputModalities: record.inputModalities,
+        supportsParallelToolCalls: record.supportsParallelToolCalls,
         billingPlane: "subscription" as const,
         source,
         probeStatus,
-        description: `${record.displayName} via ChatGPT/Codex subscription`,
+        description,
         object: "model" as const,
         created: 1_740_960_000,
         owned_by: providerKey(account),
-    }));
+    });
+
+    // Aliases (builtin + per-account config) advertised when they resolve to a
+    // record on this plan's list.
+    const aliasNames = [...OPENAI_SUB_BUILTIN_ALIAS_NAMES, ...Object.keys(account.openaiSub?.aliases ?? {})];
+    const aliases: ProxyModelMeta[] = [];
+
+    for (const alias of aliasNames) {
+        const concrete = resolveOpenAiSubModel(alias, account.openaiSub?.aliases);
+        const record = records.find((item) => item.slug === concrete);
+
+        if (concrete === alias || !record) {
+            continue;
+        }
+
+        aliases.push(toMeta(alias, record, `Codex ${alias} alias (${concrete})`));
+    }
+
+    return [
+        ...aliases,
+        ...records.map((record) => toMeta(record.slug, record, `${record.displayName} via ChatGPT/Codex subscription`)),
+    ];
 }
 
 function catalogCopilotRecords(account: AiProxyAccountConfig): CopilotModelRecord[] {
