@@ -4,10 +4,18 @@ import { getAgentRuntimeContext } from "@genesiscz/utils/agent-runtime";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { attachmentFilePath, ingestAttachmentBytes, ingestAttachmentFromPath } from "./attachments";
-import { CANCELLED_INFO, DONE_INFO, isHumanOwner, sessionIdMatches } from "./fold";
+import { CANCELLED_INFO, claimMatches, DONE_INFO, isHumanOwner, sessionIdMatches } from "./fold";
 import { generateEditId, generateEventUid, generateHandoffId, normalizeEditId, normalizeHandoffId } from "./ids";
 import { appendHandoffEvents } from "./log-store";
-import { catchUpHandoffs, getEventOutcome, getHandoffById, listHandoffRows, openHandoffModel } from "./read-model";
+import { isEventsOnlyInclude, type ProjectedHandoff, parseIncludeSections, projectHandoff } from "./project";
+import {
+    catchUpHandoffs,
+    getEventOutcome,
+    getHandoffById,
+    listHandoffEvents,
+    listHandoffRows,
+    openHandoffModel,
+} from "./read-model";
 import type {
     Handoff,
     HandoffActionInput,
@@ -16,6 +24,7 @@ import type {
     HandoffEventBy,
     HandoffListRow,
     HandoffProof,
+    HandoffPublicEvent,
     HandoffTarget,
     HandoffTaskInput,
 } from "./types";
@@ -98,7 +107,7 @@ function publicHandoff(h: Handoff, base?: string): PublicHandoff {
 }
 
 function isClaimedBy(h: Handoff, by: HandoffEventBy): boolean {
-    return h.claimedBy.some((c) => sessionIdMatches(c.sessionId, by.sessionId));
+    return h.claimedBy.some((c) => claimMatches(c, by));
 }
 
 function isPosterSession(h: Handoff, by: HandoffEventBy): boolean {
@@ -273,14 +282,34 @@ export interface GetHandoffInput {
     id: string;
     claim?: boolean;
     unclaim?: boolean;
+    /** MCP section scoping. Omit → full PublicHandoff (HTTP). MCP handlers default to ["tasks"]. */
+    include?: string[];
 }
 
-export interface GetHandoffResponse {
+export type GetHandoffFullResponse = {
     handoff: PublicHandoff;
     editId?: string;
     info: string[];
-}
+};
 
+export type GetHandoffScopedResponse =
+    | {
+          handoff: ProjectedHandoff;
+          editId?: string;
+          info: string[];
+      }
+    | {
+          events: HandoffPublicEvent[];
+          info: string[];
+      };
+
+export type GetHandoffResponse = GetHandoffFullResponse | GetHandoffScopedResponse;
+
+export function getHandoff(
+    input: GetHandoffInput & { include: string[] },
+    deps?: HandoffDeps
+): GetHandoffScopedResponse;
+export function getHandoff(input: Omit<GetHandoffInput, "include">, deps?: HandoffDeps): GetHandoffFullResponse;
 export function getHandoff(input: GetHandoffInput, deps: HandoffDeps = {}): GetHandoffResponse {
     if (input.claim === true && input.unclaim === true) {
         throw new Error(
@@ -288,6 +317,7 @@ export function getHandoff(input: GetHandoffInput, deps: HandoffDeps = {}): GetH
         );
     }
 
+    const sections = input.include !== undefined ? parseIncludeSections(input.include) : null;
     const id = normalizeHandoffId(String(input.id ?? ""));
     const by = buildBy(deps);
 
@@ -368,10 +398,24 @@ export function getHandoff(input: GetHandoffInput, deps: HandoffDeps = {}): GetH
             }
         }
 
-        const response: GetHandoffResponse = {
-            handoff: publicHandoff(handoff, deps.base),
-            info: [...extraInfo, ...stateInfo(handoff, by)],
-        };
+        const info = [...extraInfo, ...stateInfo(handoff, by)];
+
+        if (sections !== null && isEventsOnlyInclude(sections)) {
+            const { events: publicEvents } = listHandoffEvents({ db, handoffId: id });
+            return { events: publicEvents, info };
+        }
+
+        const full = publicHandoff(handoff, deps.base);
+        let projectedEvents: HandoffPublicEvent[] | undefined;
+
+        if (sections?.includes("events")) {
+            projectedEvents = listHandoffEvents({ db, handoffId: id }).events;
+        }
+
+        const response = {
+            handoff: sections === null ? full : projectHandoff({ handoff: full, sections, events: projectedEvents }),
+            info,
+        } as GetHandoffFullResponse | Extract<GetHandoffScopedResponse, { handoff: unknown }>;
 
         // editId recovery: ONLY the posting session (or the dashboard owner) ever sees it (§3).
         if (isPosterSession(handoff, by) || isHumanOwner(by)) {
@@ -392,10 +436,12 @@ export interface ListHandoffsInput {
     mine?: boolean;
     open?: boolean;
     project?: string;
+    /** Only `"tasks"` is honored on list rows; other values no-op with an info line. */
+    include?: string[];
 }
 
 export interface ListHandoffsResponse {
-    handoffs: HandoffListRow[];
+    handoffs: (HandoffListRow & { taskList?: Handoff["tasks"] })[];
     info: string[];
 }
 
@@ -403,6 +449,9 @@ export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = 
     const by = buildBy(deps);
     const limit = input.limit !== undefined && input.limit > 0 ? input.limit : 20;
     const offset = input.offset !== undefined && input.offset > 0 ? input.offset : 0;
+    const sections = input.include !== undefined ? parseIncludeSections(input.include) : [];
+    const wantTasks = sections.includes("tasks");
+    const ignored = sections.filter((s) => s !== "tasks");
 
     return withDb(deps, (db) => {
         catchUpHandoffs(db, deps.base);
@@ -426,9 +475,9 @@ export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = 
         const total = rows.length;
         const page = rows.slice(offset, offset + limit);
         const now = Date.now();
-        const handoffs = page.map((h): HandoffListRow => {
+        const handoffs = page.map((h): HandoffListRow & { taskList?: Handoff["tasks"] } => {
             const p = progress(h);
-            const row: HandoffListRow = {
+            const row: HandoffListRow & { taskList?: Handoff["tasks"] } = {
                 id: h.id,
                 title: h.title,
                 status: h.status,
@@ -447,6 +496,10 @@ export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = 
                 row.progress = `${p.resolved}/${p.total}${p.denied > 0 ? ` (${p.denied} denied)` : ""}`;
             }
 
+            if (wantTasks) {
+                row.taskList = h.tasks;
+            }
+
             return row;
         });
 
@@ -454,6 +507,10 @@ export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = 
 
         if (total > offset + page.length) {
             info.push(`More available — pass offset: ${offset + page.length}.`);
+        }
+
+        if (ignored.length > 0) {
+            info.push(`include sections ignored on list (only "tasks" applies): ${ignored.join(", ")}.`);
         }
 
         return { handoffs, info };
@@ -532,14 +589,32 @@ export interface ExecuteActionsInput {
     id: string;
     editId?: string;
     actions: HandoffActionInput[];
+    /** MCP section scoping. Omit → full PublicHandoff (HTTP). MCP handlers default to ["tasks"]. */
+    include?: string[];
 }
 
-export interface ExecuteActionsResponse {
+export type ExecuteActionsFullResponse = {
     handoff: PublicHandoff;
     results: HandoffActionResult[];
     info: string[];
-}
+};
 
+export type ExecuteActionsScopedResponse = {
+    handoff: ProjectedHandoff;
+    results: HandoffActionResult[];
+    info: string[];
+};
+
+export type ExecuteActionsResponse = ExecuteActionsFullResponse | ExecuteActionsScopedResponse;
+
+export function executeHandoffActions(
+    input: ExecuteActionsInput & { include: string[] },
+    deps?: HandoffDeps
+): ExecuteActionsScopedResponse;
+export function executeHandoffActions(
+    input: Omit<ExecuteActionsInput, "include">,
+    deps?: HandoffDeps
+): ExecuteActionsFullResponse;
 export function executeHandoffActions(input: ExecuteActionsInput, deps: HandoffDeps = {}): ExecuteActionsResponse {
     if (!Array.isArray(input.actions) || input.actions.length === 0) {
         throw new Error(
@@ -548,6 +623,7 @@ export function executeHandoffActions(input: ExecuteActionsInput, deps: HandoffD
         );
     }
 
+    const sections = input.include !== undefined ? parseIncludeSections(input.include) : null;
     const id = normalizeHandoffId(String(input.id ?? ""));
     const editId = normalizeEditId(input.editId);
     const by = buildBy(deps);
@@ -629,11 +705,18 @@ export function executeHandoffActions(input: ExecuteActionsInput, deps: HandoffD
             "handoff actions executed"
         );
 
+        const full = publicHandoff(handoff, deps.base);
+        let projectedEvents: HandoffPublicEvent[] | undefined;
+
+        if (sections?.includes("events")) {
+            projectedEvents = listHandoffEvents({ db, handoffId: id }).events;
+        }
+
         return {
-            handoff: publicHandoff(handoff, deps.base),
+            handoff: sections === null ? full : projectHandoff({ handoff: full, sections, events: projectedEvents }),
             results,
             info: stateInfo(handoff, by),
-        };
+        } as ExecuteActionsResponse;
     });
 }
 

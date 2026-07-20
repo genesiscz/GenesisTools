@@ -14,6 +14,7 @@ export interface HandoffGetArgs {
     id: string;
     claim?: boolean;
     unclaim?: boolean;
+    include?: string[];
 }
 
 export interface HandoffListArgs {
@@ -22,24 +23,28 @@ export interface HandoffListArgs {
     mine?: boolean;
     open?: boolean;
     project?: string;
+    include?: string[];
 }
 
 export interface HandoffActionArgs {
     id: string;
     editId?: string;
     actions: HandoffActionInput[];
+    include?: string[];
 }
 
 function render(value: unknown): string {
     return SafeJSON.stringify(value, { strict: true }, 2);
 }
 
+const DEFAULT_MCP_INCLUDE = ["tasks"];
+
 export async function handleHandoffPost(args: HandoffPostArgs, deps: HandoffDeps = {}): Promise<string> {
     return render(postHandoff(args, deps));
 }
 
 export async function handleHandoffGet(args: HandoffGetArgs, deps: HandoffDeps = {}): Promise<string> {
-    return render(getHandoff(args, deps));
+    return render(getHandoff({ ...args, include: args.include ?? DEFAULT_MCP_INCLUDE }, deps));
 }
 
 export async function handleHandoffList(args: HandoffListArgs, deps: HandoffDeps = {}): Promise<string> {
@@ -47,7 +52,7 @@ export async function handleHandoffList(args: HandoffListArgs, deps: HandoffDeps
 }
 
 export async function handleHandoffAction(args: HandoffActionArgs, deps: HandoffDeps = {}): Promise<string> {
-    return render(executeHandoffActions(args, deps));
+    return render(executeHandoffActions({ ...args, include: args.include ?? DEFAULT_MCP_INCLUDE }, deps));
 }
 
 export const HANDOFF_POST_DESCRIPTION =
@@ -64,19 +69,24 @@ export const HANDOFF_GET_DESCRIPTION =
     "unclaim: true). If this session posted the handoff (same sessionId — sessions are ephemeral, identity " +
     "is per-session not per-human), the response also returns your editId; if the posting session is gone " +
     "and the editId is lost, your user can read it on the dev-dashboard /qa Agent-tasks tab. info[] always " +
-    "states where you stand and the one next step. After claiming, record work via handoff_action check_task.";
+    "states where you stand and the one next step. After claiming, record work via handoff_action check_task. " +
+    'Optional include: string[] scopes the response (default ["tasks"] — full task array). Sections: tasks, ' +
+    'claimedBy, comments, attachments, events, postedBy, postedByContext. Special: include:["events"] alone ' +
+    "returns {events, info} without the handoff envelope.";
 
 export const HANDOFF_LIST_DESCRIPTION =
     "List recent handoffs, newest-updated first — ALL projects by default; project: '<name>' narrows. " +
     "open: true → only unresolved (not done/cancelled); mine: true → posted by, claimed by, or targeted at " +
     "this session; limit (default 20) + offset page through. Open rows are detailed, claimed rows concise. " +
+    'Optional include: ["tasks"] adds the full task array per row (other include values are ignored with an info line). ' +
     "Use the id with handoff_get.";
 
 export const HANDOFF_ACTION_DESCRIPTION =
     "Change a handoff — tasks and lifecycle (claim/unclaim also exist as a convenience on handoff_get; " +
     'identical effect). Ordered actions array; every action is an object { action: "<verb>", …verb fields } ' +
     "(payload-less verbs may be bare strings). Claimer verbs (be claimed, or start with {action:'claim'}): " +
-    "claim, unclaim, check_task {taskId, proof:{answer, commitIds?, context?}}, uncheck_task {taskId}, " +
+    "claim, unclaim, check_task {taskId, proof:{answer, commitIds?, context?}}, uncheck_task {taskId} " +
+    "(keeps prior proof on the task; clears checkedBy/checkedTs), " +
     "deny_task {taskId, reason}, undeny_task {taskId}, comment {text}, finish_handoff (rejected unless every " +
     "task is checked or denied — force: true overrides; undo via reopen_handoff). Poster verbs (from the " +
     "posting session, or with editId): add_tasks {tasks:[…]}, modify_task {taskId, text?, acceptanceCriteria?}, " +
@@ -85,7 +95,16 @@ export const HANDOFF_ACTION_DESCRIPTION =
     "closed it). attach_file {path, taskId?, note?} attaches a local file (screenshot, log) to the handoff or " +
     "a task. Common short forms are accepted as aliases (done/finish→finish_handoff, check→check_task, " +
     "add→add_tasks, modify→modify_task, deny→deny_task, uncheck→uncheck_task). An unrecognized verb is " +
-    "rejected with the full valid-verb list.";
+    'rejected with the full valid-verb list. Optional include: string[] scopes the returned handoff (default ["tasks"]; ' +
+    'same sections as handoff_get; include:["events"] alone is not special here — events are added on the handoff object).';
+
+const INCLUDE_PROP = {
+    type: "array",
+    items: { type: "string" },
+    description:
+        "optional response sections — tasks | claimedBy | comments | attachments | events | postedBy | postedByContext. " +
+        'Default on get/action: ["tasks"]. Unknown names → error listing valid sections.',
+} as const;
 
 const TASK_ITEM_SCHEMA = {
     type: "object",
@@ -141,6 +160,7 @@ export const HANDOFF_GET_INPUT_SCHEMA = {
             description: "claim this handoff for the calling session before working (co-owning is allowed)",
         },
         unclaim: { type: "boolean", description: "release ONLY this session's claim (no-op if not claimed)" },
+        include: INCLUDE_PROP,
     },
     required: ["id"],
 } as const;
@@ -156,6 +176,11 @@ export const HANDOFF_LIST_INPUT_SCHEMA = {
         },
         open: { type: "boolean", description: "only unresolved handoffs (status open or claimed)" },
         project: { type: "string", description: "narrow to one project (default: all projects)" },
+        include: {
+            type: "array",
+            items: { type: "string" },
+            description: 'optional — only "tasks" is honored on list rows (adds full task array as taskList)',
+        },
     },
 } as const;
 
@@ -171,6 +196,7 @@ export const HANDOFF_ACTION_INPUT_SCHEMA = {
             description:
                 "poster edit credential from handoff_post — only needed for poster verbs from a session other than the posting one; your user can read it on the dev-dashboard /qa Agent-tasks tab",
         },
+        include: INCLUDE_PROP,
         actions: {
             type: "array",
             minItems: 1,

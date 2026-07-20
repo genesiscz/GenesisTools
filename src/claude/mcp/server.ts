@@ -95,11 +95,14 @@ const SERVER_INSTRUCTIONS =
     '("ok", "thanks", "continue"), or trivial lookups not worth preserving.\n\n' +
     "HANDOFFS (cross-agent task handoff): `handoff_post` creates. `handoff_get` reads. `handoff_list` lists. " +
     "`handoff_action` changes. To delegate work, handoff_post {title, tasks} → copy the returned `paste` block " +
-    "into the receiving agent's chat. Receiving agent: handoff_get {id} → claim (claim: true) → work the tasks " +
-    "→ handoff_action check_task with proof per task (deny_task with reason for tasks you can't do) → " +
-    "finish_handoff when all resolved. Poster edits anytime from its own session via handoff_action " +
+    'into the receiving agent\'s chat. Receiving agent: handoff_get {id} (default include:["tasks"] — full task ' +
+    "array) → claim (claim: true) → work the tasks " +
+    "→ handoff_action check_task with proof per task (deny_task with reason for tasks you can't do; " +
+    "uncheck_task keeps prior proof) → " +
+    'finish_handoff when all resolved. Pass include:["events"] on handoff_get for a bare {events, info} ' +
+    "activity trace (editId-free). Poster edits anytime from its own session via handoff_action " +
     "(add_tasks/modify_task/modify_handoff/cancel_handoff); from other sessions pass the editId. Progress is " +
-    'live on the dev-dashboard /qa "Agent tasks" tab.\n\n' +
+    'live on the dev-dashboard /qa "Agent tasks" tab (SSE via /api/qa/stream type=handoff).\n\n' +
     "BOARDS (dev-dashboard annotation boards):\n" +
     "- Boards live on the DEV-DASHBOARD server (base auto-resolved from its config; default " +
     "http://127.0.0.1:3042, override BOARDS_BASE_URL). Other local dashboards on other ports (e.g. the " +
