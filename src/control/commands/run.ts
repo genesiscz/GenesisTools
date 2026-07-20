@@ -1,11 +1,10 @@
-import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
+import type { Plan } from "../lib/capture-plan";
+import { CaptureRunError, runCapturePlan } from "../lib/capture-runner";
 import { type AxResult, runAx } from "../lib/runner";
 import { assertEl, waitFor } from "./verify";
 
@@ -105,7 +104,7 @@ export function registerRunCommand(program: Command): void {
   its result JSON and ms wall-clock timing.`)
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
-        .action((planPath, opts) => {
+        .action(async (planPath, opts) => {
             if (!existsSync(planPath)) {
                 logger.error(`plan file not found: ${planPath}`);
                 process.exit(1);
@@ -148,16 +147,18 @@ export function registerRunCommand(program: Command): void {
                     }
                     return step;
                 });
-                const tmpPath = join(tmpdir(), `control-run-capture-${process.pid}.json`);
-                writeFileSync(tmpPath, SafeJSON.stringify(normalized));
-                const script = join(import.meta.dir, "..", "lib", "capture-with-actions.ts");
-                const r = spawnSync("bun", [script, tmpPath], { stdio: "inherit" });
                 try {
-                    unlinkSync(tmpPath);
-                } catch {
-                    // best-effort cleanup
+                    const { captureFailed, ...printable } = await runCapturePlan(normalized as unknown as Plan);
+                    out.println(SafeJSON.stringify(printable, null, 2));
+                    process.exit(captureFailed ? 1 : 0);
+                } catch (e) {
+                    if (e instanceof CaptureRunError) {
+                        logger.error(e.message);
+                        process.exit(e.exitCode);
+                    }
+
+                    throw e;
                 }
-                process.exit(r.status ?? 1);
             }
 
             const steps = plan.steps ?? plan.actions ?? [];

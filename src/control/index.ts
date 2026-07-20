@@ -7,15 +7,14 @@
  * actions/preflight, get/set/press/perform/focus/click/type/hotkey/screenshot,
  * snapshot/restore, plan runner (run).
  *
- * Recording (capture subcommand): declarative peekaboo capture + timed UI
- * actions — forwarded verbatim to lib/capture-with-actions.ts.
+ * Recording (capture subcommand group): declarative peekaboo capture + timed
+ * UI actions — run/recrop/clickmap/preflight over lib/capture-runner.ts.
  */
 
-import { spawnSync } from "node:child_process";
-import { join } from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
+import { registerCaptureCommands } from "./commands/capture";
 import { registerDiscoveryCommands } from "./commands/discovery";
 import { registerDrawCommand } from "./commands/draw";
 import { registerInteractCommands } from "./commands/interact";
@@ -23,16 +22,6 @@ import { registerRecordPlanCommand } from "./commands/record-plan";
 import { registerRunCommand } from "./commands/run";
 import { registerStateCommands } from "./commands/state";
 import { registerVerifyCommands } from "./commands/verify";
-
-// `control capture ...` forwards raw args to the capture runner script, which
-// does its own argv parsing (plan files, preflight, clickmap, --help). Handled
-// before commander so flags pass through untouched.
-const captureIdx = process.argv.indexOf("capture");
-if (captureIdx === 2 || (captureIdx === 3 && process.argv[2]?.endsWith("index.ts"))) {
-    const script = join(import.meta.dir, "lib", "capture-with-actions.ts");
-    const r = spawnSync("bun", [script, ...process.argv.slice(captureIdx + 1)], { stdio: "inherit" });
-    process.exit(r.status ?? 1);
-}
 
 const program = new Command();
 
@@ -43,6 +32,7 @@ program
     )
     .version("1.0.0");
 
+registerCaptureCommands(program);
 registerDiscoveryCommands(program);
 registerDrawCommand(program);
 registerInteractCommands(program);
@@ -50,12 +40,6 @@ registerRecordPlanCommand(program);
 registerRunCommand(program);
 registerStateCommands(program);
 registerVerifyCommands(program);
-
-program
-    .command("capture [args...]")
-    .description("Screen recording with timed UI actions (peekaboo capture live) — `tools control capture --help`")
-    .allowUnknownOption(true)
-    .helpOption(false);
 
 try {
     await runTool(program, { tool: "control" });
