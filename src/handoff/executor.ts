@@ -1111,7 +1111,10 @@ export function resolveAttachment(attachmentId: string, deps: HandoffDeps = {}):
 
             if (found !== undefined) {
                 if (typeof found.filename !== "string" || typeof found.mime !== "string") {
-                    log.warn({ handoffId: row.id, attachmentId }, "attachment entry missing string filename/mime — skipping");
+                    log.warn(
+                        { handoffId: row.id, attachmentId },
+                        "attachment entry missing string filename/mime — skipping"
+                    );
                     continue;
                 }
 
