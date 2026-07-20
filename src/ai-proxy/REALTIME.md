@@ -40,6 +40,27 @@ The proxy resolves the model, rewrites it (top-level `model` and
 minted secret connects to the upstream DIRECTLY — it bypasses the proxy's
 logging/usage. Prefer the WS tunnel when the client can reach the proxy.
 
+## Batch STT: `POST /v1/audio/transcriptions`
+
+OpenAI Whisper-compatible batch transcription for non-realtime use:
+
+```
+POST http://127.0.0.1:8317/v1/audio/transcriptions
+Authorization: Bearer <proxy key>
+multipart/form-data: model=martin/grok/grok-transcribe, file=<audio>, [language=…]
+```
+
+xAI has NO OpenAI-shape transcriptions route (404, verified live 2026-07-20) —
+its STT is `POST /v1/stt` (multipart, no model field, `file` appended last).
+The provider translates: `model` is consumed by proxy routing, remaining
+fields + file forward to `/stt`, and the response (`{text, language, duration,
+words}` — a superset of OpenAI's `json` format) passes through as-is. 25 MB
+body cap (OpenAI's Whisper limit).
+
+Relay gotcha fixed along the way: Bun's fetch decodes gzip upstream bodies but
+keeps `Content-Encoding` on the headers; relaying them verbatim gave clients a
+ZlibError. The xAI provider now strips stale framing headers on every relay.
+
 ## Provider support
 
 Realtime is a provider capability (`realtimeConnect` / `realtimeClientSecrets`
@@ -57,16 +78,34 @@ usage ledger on close (`path: "/v1/realtime"`, `status: 101`) plus a
 If the upstream omits usage events the session is still recorded, just without
 token counts — no local estimate is attempted for audio.
 
-## Verification status (2026-07-20)
+## Verification status (2026-07-20): LIVE-VERIFIED against real xAI
 
-**Live xAI verification is pending credits** — the team's xAI credits are
-exhausted (`POST /v1/realtime/client_secrets` → 403 "team … used all available
-credits"). The tunnel is verified against a mock upstream WS instead
-(`lib/realtime.test.ts`): auth rejection, model routing (upstream saw
-`grok-voice-latest` + the account key), text and binary frames piped both ways,
-pre-upstream-open frames queued not dropped, upstream close propagated with
-code/reason, and usage capture from `response.done`. Once credits exist, a live
-check is just: connect the URL above with a real key and speak.
+Credits were refilled and the full stack was verified against the real
+upstream via `scripts/verify-realtime-live.ts` (throwaway proxy, temp config,
+real `XAI_API_KEY`; spends ~a cent):
+
+- **WS tunnel, full speech-to-speech round trip**: spoke a `say`-synthesized
+  sample through `ws://…/v1/realtime?model=live/grok/grok-voice-latest`;
+  upstream transcribed the input ("Hello there, please tell me one fun fact."),
+  streamed 273 KB of `response.output_audio.delta` plus the output transcript
+  ("The world's largest snowflake was recorded in 1887 and measured 15 inches
+  wide!"), full GA event ladder through `response.done`, clean close.
+  Session shape mirrored the companion client: `session.update` with
+  `turn_detection: null`, `audio.input.format {audio/pcm, rate 24000}`,
+  `audio.input.transcription {model: grok-transcribe}`, then
+  `input_audio_buffer.append` (base64 PCM) → `commit` → `response.create`.
+- **Batch `/v1/audio/transcriptions`**: HTTP 200 with the exact transcript +
+  word timings through the proxy.
+- **Mint `/v1/realtime/client_secrets`**: HTTP 200 with a 107-char
+  `xai-realtime-client-secret-…` (was 403 credits-exhausted before refill).
+
+Caveat: xAI's realtime `response.done` reports `usage` with all-zero token
+counts — the ledger records the session (frames/bytes/duration) but token
+usage stays 0 until xAI populates it.
+
+Earlier mock coverage remains in `lib/realtime.test.ts` (auth rejection, model
+routing, both-way text+binary piping, pre-open queueing, close propagation,
+usage capture, batch STT translation).
 
 ## genesis-server note
 
