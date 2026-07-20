@@ -162,7 +162,9 @@ export function handoffRoutes(): RouteDef[] {
                     }
 
                     const safeName = resolved.filename.replace(/"/g, "");
-                    const disposition = resolved.mime.startsWith("image/") ? "inline" : "attachment";
+                    // SVG is a scriptable same-origin document even with nosniff — force it to download.
+                    const inlineOk = resolved.mime.startsWith("image/") && resolved.mime !== "image/svg+xml";
+                    const disposition = inlineOk ? "inline" : "attachment";
 
                     return {
                         kind: "binary",

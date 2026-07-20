@@ -1105,9 +1105,16 @@ export function resolveAttachment(attachmentId: string, deps: HandoffDeps = {}):
                 continue;
             }
 
-            const found = attachments.find((a) => a.attachmentId === attachmentId);
+            const found = attachments.find(
+                (a) => a !== null && typeof a === "object" && a.attachmentId === attachmentId
+            );
 
             if (found !== undefined) {
+                if (typeof found.filename !== "string" || typeof found.mime !== "string") {
+                    log.warn({ handoffId: row.id, attachmentId }, "attachment entry missing string filename/mime — skipping");
+                    continue;
+                }
+
                 return {
                     handoffId: row.id,
                     attachmentId,

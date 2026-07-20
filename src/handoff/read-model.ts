@@ -309,14 +309,24 @@ function readSuffix(file: string, start: number, size: number): Buffer {
     const length = size - start;
     const buf = Buffer.allocUnsafe(length);
     const fd = openSync(file, "r");
+    let total = 0;
 
     try {
-        readSync(fd, buf, 0, length, start);
+        // readSync may return short; the file may also have been truncated/replaced
+        // since statSync. Loop until the snapshot is filled or EOF (bytesRead 0).
+        while (total < length) {
+            const bytesRead = readSync(fd, buf, total, length - total, start + total);
+            if (bytesRead === 0) {
+                break;
+            }
+
+            total += bytesRead;
+        }
     } finally {
         closeSync(fd);
     }
 
-    return buf;
+    return total === length ? buf : buf.subarray(0, total);
 }
 
 export interface ApplyBatchInput {
