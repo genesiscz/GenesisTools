@@ -1,6 +1,8 @@
 import { accountConfigFingerprint, resolveGrokAuthPath } from "@app/ai-proxy/lib/account-config";
 import { listGrokProxyModels } from "@app/ai-proxy/lib/model-meta";
+import { mapGrokError } from "@app/ai-proxy/lib/providers/grok-errors";
 import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
+import { parseRetryAfterSeconds } from "@app/ai-proxy/lib/providers/wham-errors";
 import { prepareGrokUpstreamBody } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
 import {
@@ -112,6 +114,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
 
             if (!upstream.ok) {
                 const retryAfter = upstream.headers.get("retry-after");
+                const errorBody = await upstream.text();
                 logger.warn(
                     {
                         account: this.account.name,
@@ -122,23 +125,42 @@ export class GrokSubscriptionProvider implements ProxyProvider {
                         status: upstream.status,
                         elapsedMs,
                         retryAfter,
+                        body: errorBody.slice(0, 500),
                     },
                     "ai-proxy: upstream request failed"
                 );
-            } else {
-                logger.debug(
-                    {
-                        account: this.account.name,
-                        upstreamModel: prepared.upstreamModel,
-                        requestedModel: upstreamModel,
-                        imageRouted: prepared.imageRouted,
-                        path,
-                        status: upstream.status,
-                        elapsedMs,
-                    },
-                    "ai-proxy: upstream request ok"
-                );
+
+                // Grok's `{"code":…,"error":"…"}` shape doesn't match the OpenAI
+                // error envelope, so SDK clients would only surface the bare
+                // statusText ("Bad Request") — re-wrap so the real message survives.
+                const envelope = mapGrokError({
+                    status: upstream.status,
+                    bodyText: errorBody,
+                    retryAfterSec: parseRetryAfterSeconds(upstream.headers),
+                });
+                const headers = new Headers({ "Content-Type": "application/json" });
+                if (retryAfter) {
+                    headers.set("retry-after", retryAfter);
+                }
+
+                return new Response(SafeJSON.stringify(envelope), {
+                    status: upstream.status,
+                    headers,
+                });
             }
+
+            logger.debug(
+                {
+                    account: this.account.name,
+                    upstreamModel: prepared.upstreamModel,
+                    requestedModel: upstreamModel,
+                    imageRouted: prepared.imageRouted,
+                    path,
+                    status: upstream.status,
+                    elapsedMs,
+                },
+                "ai-proxy: upstream request ok"
+            );
 
             return new Response(upstream.body, {
                 status: upstream.status,

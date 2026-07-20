@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+    findInvalidImageDataPayload,
     GROK_IMAGE_FALLBACK_MODEL,
     grokModelSupportsImages,
     latestUserTurnHasImages,
@@ -300,5 +301,81 @@ describe("rewrite-upstream-body", () => {
         expect(parsed.model).toBe("grok-build");
         expect(rewritten.imageRouted).toBe(false);
         expect(parsed.messages[0]?.content?.[0]?.type).toBe("image_url");
+    });
+});
+
+describe("findInvalidImageDataPayload", () => {
+    it("catches a stringified-object payload in chat messages", () => {
+        // ai@7 + @ai-sdk/openai v2 compat mode stringifies V4 tagged file data
+        // into "[object Object]" — the exact request shape eve sent.
+        const payload = findInvalidImageDataPayload({
+            messages: [
+                {
+                    role: "user",
+                    content: [
+                        { type: "text", text: "What do you see?" },
+                        { type: "image_url", image_url: { url: "data:image/jpeg;base64,[object Object]" } },
+                    ],
+                },
+            ],
+        });
+
+        expect(payload).toBe("[object Object]");
+    });
+
+    it("catches invalid payloads in responses input items", () => {
+        const payload = findInvalidImageDataPayload({
+            input: [
+                {
+                    role: "user",
+                    content: [{ type: "input_image", image_url: "data:image/png;base64,not valid!" }],
+                },
+            ],
+        });
+
+        expect(payload).toBe("not valid!");
+    });
+
+    it("catches empty base64 payloads", () => {
+        const payload = findInvalidImageDataPayload({
+            messages: [
+                { role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64," } }] },
+            ],
+        });
+
+        expect(payload).toBe("");
+    });
+
+    it("accepts valid base64 payloads", () => {
+        const payload = findInvalidImageDataPayload({
+            messages: [
+                {
+                    role: "user",
+                    content: [{ type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } }],
+                },
+            ],
+        });
+
+        expect(payload).toBeNull();
+    });
+
+    it("ignores remote URLs and non-base64 data URLs", () => {
+        const payload = findInvalidImageDataPayload({
+            messages: [
+                {
+                    role: "user",
+                    content: [
+                        { type: "image_url", image_url: { url: "https://example.com/cat.jpg" } },
+                        { type: "image_url", image_url: { url: "data:image/svg+xml,%3Csvg%3E%3C/svg%3E" } },
+                    ],
+                },
+            ],
+        });
+
+        expect(payload).toBeNull();
+    });
+
+    it("ignores bodies without image parts", () => {
+        expect(findInvalidImageDataPayload({ messages: [{ role: "user", content: "hi" }] })).toBeNull();
     });
 });

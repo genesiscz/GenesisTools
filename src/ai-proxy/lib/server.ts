@@ -6,6 +6,7 @@ import { stripBasePath } from "@app/ai-proxy/lib/path-prefix";
 import { buildProviderMap, routeProviderKey, tryCreateProvider } from "@app/ai-proxy/lib/providers/registry";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { resolveModel } from "@app/ai-proxy/lib/resolve-model";
+import { findInvalidImageDataPayload } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import { resolveThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import { resolveTranslationMode } from "@app/ai-proxy/lib/translation-config";
 import { handleChatCompletions } from "@app/ai-proxy/lib/translators";
@@ -203,6 +204,28 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         status: 400,
                         headers: { "Content-Type": "application/json" },
                     });
+                }
+
+                const invalidImagePayload = findInvalidImageDataPayload(parsed as Record<string, unknown>);
+
+                if (invalidImagePayload !== null) {
+                    logger.warn(
+                        { path, model: parsed.model, payloadPreview: invalidImagePayload },
+                        "ai-proxy: rejecting image content with invalid base64 payload"
+                    );
+                    return new Response(
+                        SafeJSON.stringify({
+                            error: {
+                                message:
+                                    `Image content part carries an invalid base64 payload (${SafeJSON.stringify(invalidImagePayload)}) — ` +
+                                    "the image bytes never reached the proxy. This usually means the client stringified an object " +
+                                    'into the data URL (e.g. AI SDK v2-compat file parts becoming "[object Object]").',
+                                type: "invalid_request_error",
+                                code: "invalid_image_data",
+                            },
+                        }),
+                        { status: 400, headers: { "Content-Type": "application/json" } }
+                    );
                 }
 
                 try {

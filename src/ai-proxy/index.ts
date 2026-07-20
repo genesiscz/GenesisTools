@@ -21,7 +21,16 @@ import { runUsageCommand } from "@app/ai-proxy/commands/usage";
 import { isValidThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import type { AiProxyProviderType, CursorTranslationMode, ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
 import { runTool } from "@genesiscz/utils/cli";
+import { configureLogger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
+
+// proxy.log is the serve process's stderr — without timestamps a stale log
+// file is indistinguishable from a quiet one, which is exactly how a 5-day-old
+// proxy.log derailed an incident investigation. Must run before runTool: its
+// setBaseBinding() instantiates the logger, freezing timestamp options.
+if (process.argv.includes("serve")) {
+    configureLogger({ includeTimestamp: true, timestampFormat: "SYS:yyyy-mm-dd HH:MM:ss" });
+}
 
 const program = new Command()
     .name("ai-proxy")

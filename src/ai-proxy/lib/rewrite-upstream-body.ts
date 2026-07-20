@@ -183,6 +183,73 @@ function imageDataUrlFromPart(part: JsonObject): string | null {
     return null;
 }
 
+const BASE64_MARKER = ";base64,";
+
+/**
+ * Returns the (truncated) offending payload when an image part carries a
+ * base64 data URL whose payload cannot be base64 — e.g. a client stringified
+ * an object into the data slot ("[object Object]", seen from ai@7 running
+ * @ai-sdk/openai v2 in compatibility mode). The image bytes never reached the
+ * proxy in that case, so rejecting early with a clear message beats burning an
+ * upstream call on a cryptic 400.
+ */
+export function findInvalidImageDataPayload(body: JsonObject): string | null {
+    const partsToCheck: JsonObject[] = [];
+
+    if (Array.isArray(body.messages)) {
+        for (const message of body.messages) {
+            if (isObject(message) && Array.isArray(message.content)) {
+                for (const part of message.content) {
+                    if (isObject(part) && isImageContentPart(part)) {
+                        partsToCheck.push(part);
+                    }
+                }
+            }
+        }
+    }
+
+    if (Array.isArray(body.input)) {
+        for (const item of body.input) {
+            if (!isObject(item)) {
+                continue;
+            }
+
+            if (isImageContentPart(item)) {
+                partsToCheck.push(item);
+            } else if (Array.isArray(item.content)) {
+                for (const part of item.content) {
+                    if (isObject(part) && isImageContentPart(part)) {
+                        partsToCheck.push(part);
+                    }
+                }
+            }
+        }
+    }
+
+    for (const part of partsToCheck) {
+        const dataUrl = imageDataUrlFromPart(part);
+
+        if (!dataUrl?.startsWith("data:")) {
+            continue;
+        }
+
+        const markerIndex = dataUrl.indexOf(BASE64_MARKER);
+
+        if (markerIndex === -1) {
+            continue;
+        }
+
+        const payload = dataUrl.slice(markerIndex + BASE64_MARKER.length);
+        const stripped = payload.replace(/\s+/g, "");
+
+        if (stripped.length === 0 || /[^A-Za-z0-9+/=_-]/.test(stripped)) {
+            return payload.slice(0, 100);
+        }
+    }
+
+    return null;
+}
+
 function normalizeImagePartForChat(part: JsonObject): JsonObject {
     const dataUrl = imageDataUrlFromPart(part);
 
