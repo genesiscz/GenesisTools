@@ -157,7 +157,7 @@ export function commentSyntaxForExt(ext: string): CommentSyntax {
         block.push(SLASH_STAR);
     }
 
-    if (key === "ini") {
+    if (resolveLanguage(key) === "INI") {
         line.push(";");
     }
 
