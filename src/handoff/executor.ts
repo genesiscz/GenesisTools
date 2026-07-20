@@ -1,8 +1,9 @@
 import type { Database } from "bun:sqlite";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent-runtime";
 import { getAgentRuntimeContext } from "@genesiscz/utils/agent-runtime";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { attachmentFilePath, ingestAttachmentFromPath } from "./attachments";
+import { attachmentFilePath, ingestAttachmentBytes, ingestAttachmentFromPath } from "./attachments";
 import { CANCELLED_INFO, DONE_INFO, isHumanOwner, sessionIdMatches } from "./fold";
 import { generateEditId, generateEventUid, generateHandoffId, normalizeEditId, normalizeHandoffId } from "./ids";
 import { appendHandoffEvents } from "./log-store";
@@ -1004,4 +1005,108 @@ function parseAction(
         default:
             return shapeFail(index, verb, `Unknown action "${requested}". ${VERB_CATALOG}`);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard helpers (routes share this executor — §7.2)
+// ---------------------------------------------------------------------------
+
+export interface AttachBytesInput {
+    id: string;
+    filename: string;
+    bytes: Uint8Array;
+    taskId?: string;
+    note?: string;
+}
+
+export interface AttachBytesResponse {
+    attachmentId: string;
+    handoff: PublicHandoff;
+    info: string[];
+}
+
+/** The dashboard /attach route: pasted/dropped bytes → store + attach event. */
+export function attachHandoffBytes(input: AttachBytesInput, deps: HandoffDeps = {}): AttachBytesResponse {
+    const id = normalizeHandoffId(String(input.id ?? ""));
+    const by = buildBy(deps);
+
+    return withDb(deps, (db) => {
+        catchUpHandoffs(db, deps.base);
+        const existing = getHandoffById(db, id);
+
+        if (existing === null) {
+            throw new Error(`No handoff ${id} — re-check the paste block or call handoff_list to find it.`);
+        }
+
+        const ingested = ingestAttachmentBytes(id, input.filename, input.bytes, deps.base);
+        const event: HandoffEvent = {
+            ev: "attach",
+            ts: nowIso(deps),
+            uid: generateEventUid(),
+            id,
+            by,
+            attachmentId: ingested.attachmentId,
+            filename: ingested.filename,
+            mime: ingested.mime,
+            bytes: ingested.bytes,
+            ...(input.taskId !== undefined && input.taskId.length > 0 ? { taskId: input.taskId } : {}),
+            ...(input.note !== undefined && input.note.length > 0 ? { note: input.note } : {}),
+        };
+        appendHandoffEvents([event], deps.base);
+        catchUpHandoffs(db, deps.base);
+        const outcome = getEventOutcome(db, event.uid);
+
+        if (outcome !== null && !outcome.applied) {
+            throw new Error(outcome.error ?? "attach rejected by fold");
+        }
+
+        const handoff = getHandoffById(db, id);
+
+        if (handoff === null) {
+            throw new Error(`No handoff ${id} after fold — check ~/.genesis-tools/logs for details.`);
+        }
+
+        return {
+            attachmentId: ingested.attachmentId,
+            handoff: publicHandoff(handoff, deps.base),
+            info: stateInfo(handoff, by),
+        };
+    });
+}
+
+export interface ResolvedAttachment {
+    handoffId: string;
+    attachmentId: string;
+    filename: string;
+    mime: string;
+    path: string;
+    missing: boolean;
+}
+
+/** Locate an attachment by id across handoffs (dashboard /attachment route). */
+export function resolveAttachment(attachmentId: string, deps: HandoffDeps = {}): ResolvedAttachment | null {
+    return withDb(deps, (db) => {
+        catchUpHandoffs(db, deps.base);
+        const rows = db
+            .query("SELECT id, attachments FROM handoffs WHERE attachments LIKE ?")
+            .all(`%${attachmentId}%`) as { id: string; attachments: string }[];
+
+        for (const row of rows) {
+            const attachments = SafeJSON.parse(row.attachments, { strict: true }) as Handoff["attachments"];
+            const found = attachments.find((a) => a.attachmentId === attachmentId);
+
+            if (found !== undefined) {
+                return {
+                    handoffId: row.id,
+                    attachmentId,
+                    filename: found.filename,
+                    mime: found.mime,
+                    path: attachmentFilePath(row.id, attachmentId, found.filename, deps.base),
+                    missing: found.missing === true,
+                };
+            }
+        }
+
+        return null;
+    });
 }

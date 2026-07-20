@@ -9,6 +9,8 @@ import { useQuery } from "@tanstack/react-query";
 import { BlinkingBox } from "@ui/components/BlinkingBox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import { type KeyboardEvent, type MouseEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { HandoffTab } from "@/components/handoff/HandoffTab";
+import { useHandoffList } from "@/components/handoff/useHandoffApi";
 import { QaClockProvider } from "@/components/QaClockProvider";
 import { QaCopyButtons } from "@/components/QaCopyButtons";
 import { QaReadTime } from "@/components/QaReadTime";
@@ -350,6 +352,55 @@ const QaCard = memo(function QaCard({
 });
 
 export function QaRoute() {
+    const [tab, setTab] = useState<"qa" | "tasks">(() =>
+        new URLSearchParams(window.location.search).get("tab") === "tasks" ? "tasks" : "qa"
+    );
+    const handoffList = useHandoffList();
+    const openCount = (handoffList.data?.handoffs ?? []).filter(
+        (h) => h.status === "open" || h.status === "claimed"
+    ).length;
+
+    const switchTab = (next: "qa" | "tasks"): void => {
+        setTab(next);
+        const url = new URL(window.location.href);
+
+        if (next === "tasks") {
+            url.searchParams.set("tab", "tasks");
+        } else {
+            url.searchParams.delete("tab");
+        }
+
+        window.history.replaceState(null, "", url.toString());
+    };
+
+    const tabClass = (active: boolean): string =>
+        `cursor-pointer rounded-t border-b-2 px-3 py-1.5 font-mono text-xs uppercase tracking-wider transition-colors ${
+            active
+                ? "dd-accent-text border-[var(--color-primary)]"
+                : "border-transparent text-[var(--dd-text-muted)] hover:text-[var(--dd-text-primary)]"
+        }`;
+
+    return (
+        <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-1 border-b border-[var(--dd-border)]/60">
+                <button type="button" className={tabClass(tab === "qa")} onClick={() => switchTab("qa")}>
+                    Q&amp;A
+                </button>
+                <button type="button" className={tabClass(tab === "tasks")} onClick={() => switchTab("tasks")}>
+                    Agent tasks
+                    {openCount > 0 ? (
+                        <span className="ml-1.5 rounded-full border border-[#3f5530] px-1.5 py-px text-[10px] text-[#a3e635]">
+                            {openCount}
+                        </span>
+                    ) : null}
+                </button>
+            </div>
+            {tab === "qa" ? <QaFeed /> : <HandoffTab />}
+        </div>
+    );
+}
+
+function QaFeed() {
     const urlPinnedId = useMemo(() => new URLSearchParams(window.location.search).get("id"), []);
     const [pinnedId] = useState<string | null>(urlPinnedId);
     const logQuery = useQuery({ queryKey: ["qa-log"], queryFn: fetchQaLog, retry: false });
