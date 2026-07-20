@@ -38,6 +38,19 @@ export interface DashboardViteConfig {
 const BROWSER_ASYNC_HOOKS_POLYFILL = resolve(__dirname, "browser-async-hooks.ts");
 
 /**
+ * Absolute path to the published `@genesiscz/utils` package root (src/utils).
+ *
+ * This file lives at `src/utils/ui/vite.base.ts`, so the package root is its
+ * parent directory — resolved from `__dirname` exactly like the `@ui` alias
+ * below (`resolve(__dirname, ".")`). Anchoring on `__dirname` (not the passed
+ * `root`, which is the dashboard's UI dir) makes the alias authoritative and
+ * correct in both the main repo and any git worktree, so browser resolution of
+ * `@genesiscz/utils/*` subpaths never depends on the package's `exports` map
+ * being complete.
+ */
+const UTILS_PACKAGE_ROOT = resolve(__dirname, "..");
+
+/**
  * Vite plugin that pins ALL bare-module resolution to the dashboard's own
  * directory tree (walking up to its nearest `node_modules/`).
  *
@@ -229,7 +242,7 @@ export function createDashboardViteConfig({
     const { plugins: _ignored, resolve: _resolveIgnored, optimizeDeps: overrideOptimizeDeps, ...rest } = overrides;
     const allAliases: Record<string, string> = {
         "@app": resolve(root, "src"),
-        "@genesiscz/utils": resolve(root, "src/utils"),
+        "@genesiscz/utils": UTILS_PACKAGE_ROOT,
         ...aliases,
     };
     const appDir = allAliases["@app"];
