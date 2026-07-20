@@ -327,6 +327,11 @@
             "types": "./ui/index.ts",
             "default": "./ui/index.ts"
         },
+        "./ui/vite.base": {
+            "bun": "./ui/vite.base.ts",
+            "types": "./ui/vite.base.ts",
+            "default": "./ui/vite.base.ts"
+        },
         "./url": {
             "bun": "./url.ts",
             "types": "./url.ts",
