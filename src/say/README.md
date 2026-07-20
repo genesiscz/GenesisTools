@@ -24,6 +24,10 @@ tools say "x done" --app claude
 # Override one field on a single run (does NOT persist)
 tools say "x done" --app claude --voice Daniel
 
+# Save speech to a file (no playback; blocks until written)
+tools say "Deploy done" --output /tmp/done.aiff --provider macos
+tools say "Hello" --output /tmp/hello.mp3 --provider xai --format mp3
+
 # Manage profiles interactively
 tools say config
 ```
@@ -201,7 +205,8 @@ In a non-TTY context both entry points fail fast — pass `--app <name> --save` 
 | `--language <bcp47>` | Language hint (xAI) |
 | `--format <codec>` | `mp3` or `wav` |
 | `--file <path>` | Read text from a file |
-| `--stream` / `--no-stream` | Force streaming mode on/off |
+| `--output <path>` | Write audio to a file instead of playing. Blocks until written. macOS → AIFF; cloud → mp3/wav per `--format`. Mute is ignored. No extension → appends the correct one. |
+| `--stream` / `--no-stream` | Force streaming mode on/off (ignored with `--output`, which always buffers fully) |
 | `--model <id>` | Provider-specific model (OpenAI: `tts-1`, `gpt-4o-mini-tts`) |
 | `--save` | Persist explicitly-passed flags to `--app`'s profile |
 | `--unset <fields>` | Comma-separated profile fields to ignore (or remove with `--save`) |
