@@ -1,10 +1,7 @@
-import { clientProviderDenial, resolveClient } from "@app/ai-proxy/lib/clients";
-import { acquireProvider, routeProviderKey } from "@app/ai-proxy/lib/providers/registry";
 import type { ProxyProvider, RealtimeConnectTarget } from "@app/ai-proxy/lib/providers/types";
-import { resolveModel } from "@app/ai-proxy/lib/resolve-model";
+import { guardProxyRoute, jsonError } from "@app/ai-proxy/lib/route-guards";
 import type { AiProxyConfig, ResolvedRoute } from "@app/ai-proxy/lib/types";
 import { scheduleBillingSync } from "@app/ai-proxy/lib/usage/billing-sync";
-import { checkClientQuota } from "@app/ai-proxy/lib/usage/client-ledger";
 import { recordUsageRequest } from "@app/ai-proxy/lib/usage/store";
 import type { TokenUsage } from "@app/ai-proxy/lib/usage/types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -33,13 +30,6 @@ export interface RealtimeBridgeData {
     upstreamFrames: number;
     upstreamBytes: number;
     usage: TokenUsage | null;
-}
-
-function jsonError(status: number, message: string, extra?: { type?: string; code?: string }): Response {
-    return new Response(SafeJSON.stringify({ error: { message, ...extra } }), {
-        status,
-        headers: { "Content-Type": "application/json" },
-    });
 }
 
 /** Browsers cannot set WS headers — accept the proxy key via `?key=` too. */
@@ -121,44 +111,20 @@ export async function handleRealtimeUpgrade(input: {
     config: AiProxyConfig;
     providers: Map<string, ProxyProvider>;
 }): Promise<Response | undefined> {
-    const client = resolveClient(realtimeAuthRequest(input.req, input.url), input.config);
-
-    if (!client) {
-        return jsonError(401, "Invalid proxy API key", { type: "auth_error" });
-    }
-
     const proxyModel = input.url.searchParams.get("model");
+    const guarded = await guardProxyRoute({
+        authReq: realtimeAuthRequest(input.req, input.url),
+        config: input.config,
+        providers: input.providers,
+        proxyModel,
+        logLabel: "realtime",
+    });
 
-    if (!proxyModel) {
-        return jsonError(400, "Missing model query param");
+    if (guarded instanceof Response) {
+        return guarded;
     }
 
-    let route: ResolvedRoute;
-    try {
-        route = resolveModel(proxyModel, input.config.accounts);
-    } catch (err) {
-        return jsonError(400, err instanceof Error ? err.message : String(err));
-    }
-
-    const denial = clientProviderDenial(client, route.account.provider);
-
-    if (denial) {
-        logger.warn({ client: client.name, model: proxyModel, denial }, "ai-proxy: realtime provider denied");
-        return jsonError(403, denial, { type: "forbidden", code: "provider_not_allowed" });
-    }
-
-    const quota = checkClientQuota(client);
-
-    if (!quota.ok) {
-        logger.warn({ client: client.name, reason: quota.reason }, "ai-proxy: realtime quota exceeded");
-        return jsonError(429, quota.reason, { type: "quota_exceeded", code: "monthly_quota_exceeded" });
-    }
-
-    const provider = await acquireProvider(input.providers, route);
-
-    if (!provider) {
-        return jsonError(500, `Provider not loaded: ${routeProviderKey(route)}`);
-    }
+    const { client, route, provider } = guarded;
 
     if (typeof provider.realtimeConnect !== "function") {
         return jsonError(400, `Provider "${route.account.provider}" does not support realtime`);
@@ -168,7 +134,7 @@ export async function handleRealtimeUpgrade(input: {
         target: provider.realtimeConnect(route.upstreamId),
         client: client.name,
         route,
-        proxyModel,
+        proxyModel: guarded.proxyModel,
         providers: input.providers,
         upstream: null,
         queue: [],
@@ -354,12 +320,6 @@ export async function handleRealtimeClientSecrets(input: {
     config: AiProxyConfig;
     providers: Map<string, ProxyProvider>;
 }): Promise<Response> {
-    const client = resolveClient(input.req, input.config);
-
-    if (!client) {
-        return jsonError(401, "Invalid proxy API key", { type: "auth_error" });
-    }
-
     const bodyText = await input.req.text();
 
     let parsed: { model?: string; session?: { model?: string } };
@@ -375,32 +335,19 @@ export async function handleRealtimeClientSecrets(input: {
         return jsonError(400, "Missing model (set session.model)");
     }
 
-    let route: ResolvedRoute;
-    try {
-        route = resolveModel(proxyModel, input.config.accounts);
-    } catch (err) {
-        return jsonError(400, err instanceof Error ? err.message : String(err));
+    const guarded = await guardProxyRoute({
+        authReq: input.req,
+        config: input.config,
+        providers: input.providers,
+        proxyModel,
+        logLabel: "realtime",
+    });
+
+    if (guarded instanceof Response) {
+        return guarded;
     }
 
-    const denial = clientProviderDenial(client, route.account.provider);
-
-    if (denial) {
-        logger.warn({ client: client.name, model: proxyModel, denial }, "ai-proxy: realtime provider denied");
-        return jsonError(403, denial, { type: "forbidden", code: "provider_not_allowed" });
-    }
-
-    const quota = checkClientQuota(client);
-
-    if (!quota.ok) {
-        logger.warn({ client: client.name, reason: quota.reason }, "ai-proxy: realtime quota exceeded");
-        return jsonError(429, quota.reason, { type: "quota_exceeded", code: "monthly_quota_exceeded" });
-    }
-
-    const provider = await acquireProvider(input.providers, route);
-
-    if (!provider) {
-        return jsonError(500, `Provider not loaded: ${routeProviderKey(route)}`);
-    }
+    const { client, route, provider } = guarded;
 
     if (typeof provider.realtimeClientSecrets !== "function") {
         return jsonError(400, `Provider "${route.account.provider}" does not support realtime client secrets`);

@@ -25,4 +25,6 @@ export interface ProxyProvider {
     realtimeConnect?(model: string): RealtimeConnectTarget;
     /** POST /realtime/client_secrets pass-through (ephemeral token mint); absent = unsupported. */
     realtimeClientSecrets?(req: Request, model: string, bodyText: string): Promise<Response>;
+    /** OpenAI-compatible batch STT (/v1/audio/transcriptions); absent = unsupported. */
+    audioTranscriptions?(req: Request, model: string, form: FormData): Promise<Response>;
 }

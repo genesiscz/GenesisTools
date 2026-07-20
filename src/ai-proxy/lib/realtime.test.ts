@@ -22,6 +22,15 @@ interface UpstreamSession {
 
 const upstreamSessions: UpstreamSession[] = [];
 
+interface SttRequest {
+    authorization: string | null;
+    model: FormDataEntryValue | null;
+    language: FormDataEntryValue | null;
+    fileBytes: number;
+}
+
+const sttRequests: SttRequest[] = [];
+
 let mockUpstream: ReturnType<typeof Bun.serve>;
 let proxy: ReturnType<typeof startAiProxyServer>;
 let proxyUrl: string;
@@ -33,8 +42,23 @@ function startMockUpstream() {
     return Bun.serve<UpstreamSession, never>({
         hostname: "127.0.0.1",
         port: 0,
-        fetch(req, server) {
+        async fetch(req, server) {
             const url = new URL(req.url);
+
+            if (url.pathname === "/stt" && req.method === "POST") {
+                const form = await req.formData();
+                const file = form.get("file");
+                sttRequests.push({
+                    authorization: req.headers.get("Authorization"),
+                    model: form.get("model"),
+                    language: form.get("language"),
+                    fileBytes: file instanceof Blob ? file.size : -1,
+                });
+
+                return new Response(SafeJSON.stringify({ text: "mock transcript", language: "en", duration: 1.2 }), {
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
 
             if (url.pathname !== "/realtime") {
                 return new Response("Not Found", { status: 404 });
@@ -279,5 +303,76 @@ describe("realtime client_secrets mint", () => {
         expect(res.status).toBe(400);
         const body = (await res.json()) as { error: { message: string } };
         expect(body.error.message).toContain("Missing model");
+    });
+});
+
+describe("audio transcriptions", () => {
+    function transcriptionForm(overrides?: { model?: string | null; file?: boolean }) {
+        const form = new FormData();
+
+        if (overrides?.model !== null) {
+            form.append("model", overrides?.model ?? "martin/grok/grok-transcribe");
+        }
+
+        form.append("language", "en");
+
+        if (overrides?.file !== false) {
+            form.append("file", new Blob([new Uint8Array([1, 2, 3, 4])], { type: "audio/wav" }), "sample.wav");
+        }
+
+        return form;
+    }
+
+    it("rejects a bad proxy key with 401", async () => {
+        const res = await fetch(`http://127.0.0.1:${proxy.port}/v1/audio/transcriptions`, {
+            method: "POST",
+            headers: { Authorization: "Bearer wrong-key" },
+            body: transcriptionForm(),
+        });
+
+        expect(res.status).toBe(401);
+    });
+
+    it("rejects a missing file with 400", async () => {
+        const res = await fetch(`http://127.0.0.1:${proxy.port}/v1/audio/transcriptions`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${PROXY_KEY}` },
+            body: transcriptionForm({ file: false }),
+        });
+
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as { error: { message: string } };
+        expect(body.error.message).toContain("Missing file");
+    });
+
+    it("rejects a missing model with 400", async () => {
+        const res = await fetch(`http://127.0.0.1:${proxy.port}/v1/audio/transcriptions`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${PROXY_KEY}` },
+            body: transcriptionForm({ model: null }),
+        });
+
+        expect(res.status).toBe(400);
+    });
+
+    it("routes to the upstream STT with the account key, dropping the model field", async () => {
+        const before = sttRequests.length;
+        const res = await fetch(`http://127.0.0.1:${proxy.port}/v1/audio/transcriptions`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${PROXY_KEY}` },
+            body: transcriptionForm(),
+        });
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as { text: string };
+        expect(body.text).toBe("mock transcript");
+
+        expect(sttRequests.length).toBe(before + 1);
+        const seen = sttRequests[before];
+        expect(seen.authorization).toBe("Bearer xai-mock-key");
+        // xAI /stt has no model concept — routing consumed it.
+        expect(seen.model).toBeNull();
+        expect(seen.language).toBe("en");
+        expect(seen.fileBytes).toBe(4);
     });
 });

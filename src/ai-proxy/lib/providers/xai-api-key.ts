@@ -12,6 +12,20 @@ import { fetchDirect } from "@genesiscz/utils/net/fetch-direct";
 
 export { resolveXaiApiKey, XAI_API_BASE_URL } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
 
+/**
+ * Bun's fetch transparently decodes compressed upstream bodies but leaves
+ * Content-Encoding/Content-Length on the headers; relaying those verbatim
+ * makes the client try to gunzip already-plain bytes (ZlibError — bit the
+ * /stt relay live 2026-07-20). Strip the now-stale framing headers.
+ */
+function relayHeaders(upstream: Response): Headers {
+    const headers = new Headers(upstream.headers);
+    headers.delete("content-encoding");
+    headers.delete("content-length");
+    headers.delete("transfer-encoding");
+    return headers;
+}
+
 function maskKey(key: string): string {
     if (key.length <= 8) {
         return "****";
@@ -84,6 +98,82 @@ export class XaiApiKeyProvider implements ProxyProvider {
     /** Ephemeral client-secret mint — model is rewritten both top-level and in `session.model`. */
     async realtimeClientSecrets(req: Request, model: string, bodyText: string): Promise<Response> {
         return this.forward("/realtime/client_secrets", model, rewriteSessionModel(bodyText, model), req);
+    }
+
+    /**
+     * OpenAI Whisper-compatible in, xAI /stt out. xAI has no
+     * /audio/transcriptions route (404, verified 2026-07-20); its STT takes
+     * multipart WITHOUT a model field (routing consumed the proxy model) and
+     * requires `file` appended last. Response ({text, language, duration,
+     * words}) is a superset of OpenAI's json format — passed through as-is.
+     */
+    async audioTranscriptions(req: Request, upstreamModel: string, form: FormData): Promise<Response> {
+        const started = performance.now();
+        const upstream = new FormData();
+
+        for (const [key, value] of form.entries()) {
+            if (key === "model" || key === "file") {
+                continue;
+            }
+
+            upstream.append(key, value);
+        }
+
+        const file = form.get("file");
+
+        if (file instanceof Blob) {
+            upstream.append("file", file, file instanceof File ? file.name : "audio");
+        }
+
+        try {
+            const response = await fetchDirect(`${this.baseUrl}/stt`, {
+                method: "POST",
+                body: upstream,
+                signal: req.signal,
+                headers: { Authorization: `Bearer ${this.apiKey}` },
+            });
+
+            const elapsedMs = Math.round(performance.now() - started);
+            logger[response.ok ? "debug" : "warn"](
+                { account: this.account.name, upstreamModel, path: "/stt", status: response.status, elapsedMs },
+                `ai-proxy: xai-api-key upstream stt ${response.ok ? "ok" : "failed"}`
+            );
+
+            return new Response(response.body, {
+                status: response.status,
+                headers: relayHeaders(response),
+            });
+        } catch (err) {
+            if (req.signal.aborted) {
+                logger.debug({ account: this.account.name, path: "/stt" }, "ai-proxy: xai-api-key client aborted");
+                return new Response(null, { status: 499 });
+            }
+
+            logger.warn(
+                {
+                    err,
+                    account: this.account.name,
+                    upstreamModel,
+                    path: "/stt",
+                    elapsedMs: Math.round(performance.now() - started),
+                },
+                "ai-proxy: xai-api-key upstream stt threw"
+            );
+
+            return new Response(
+                SafeJSON.stringify({
+                    error: {
+                        message: err instanceof Error ? err.message : String(err),
+                        type: "upstream_error",
+                        code: "xai_api_fetch_failed",
+                    },
+                }),
+                {
+                    status: 502,
+                    headers: { "Content-Type": "application/json" },
+                }
+            );
+        }
     }
 
     async getUsage(): Promise<UsageSummary> {
@@ -177,7 +267,7 @@ export class XaiApiKeyProvider implements ProxyProvider {
 
             return new Response(upstream.body, {
                 status: upstream.status,
-                headers: upstream.headers,
+                headers: relayHeaders(upstream),
             });
         } catch (err) {
             if (req.signal.aborted) {

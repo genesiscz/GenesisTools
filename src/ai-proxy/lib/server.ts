@@ -1,3 +1,4 @@
+import { handleAudioTranscriptions } from "@app/ai-proxy/lib/audio";
 import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
 import { clientProviderDenial, resolveClient, validateClients } from "@app/ai-proxy/lib/clients";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
@@ -135,6 +136,10 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
 
             if (path === "/v1/realtime/client_secrets" && req.method === "POST") {
                 return handleRealtimeClientSecrets({ req, config, providers: runtime.providers });
+            }
+
+            if (path === "/v1/audio/transcriptions" && req.method === "POST") {
+                return handleAudioTranscriptions({ req, config, providers: runtime.providers });
             }
 
             if (path === "/v1/models" && req.method === "GET") {
