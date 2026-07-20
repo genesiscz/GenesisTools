@@ -75,7 +75,29 @@ tools control ocr --app <name> [--window T] [--crop x,y,w,h]                 # V
 tools control ocr --image /tmp/s.png                                         # OCR an existing file
 ```
 
-`--annotate` is the "what can I click?" picture: every interactable element gets a numbered box, the JSON legend maps numbers to id/role/desc. `ocr` reads rendered text pixels — the check that survives apps lying in their AX tree. Both default to the app's LARGEST window; `--window <title>` scopes either.
+`--annotate` is the "what can I click?" picture: every interactable element gets a numbered box, the JSON legend maps numbers to id/role/desc. `ocr` reads rendered text pixels — the check that survives apps lying in their AX tree. Both default to the app's LARGEST window; `--window <title>` scopes either. (`screenshot --annotate` = AX element legend; drawing SHAPES on an image is the separate `draw` command below.)
+
+### Draw annotations on ANY image (`draw`) — capture-agnostic post-processing
+
+```bash
+tools control draw shot.png --annotate '[{"kind":"highlight","rect":{"x":748,"y":812,"w":1246,"h":430},"label":{"text":"Build pipeline"}}]'
+tools control draw shot.png --annotate plan.json --out annotated.png [--preset review-red|callout-amber|redact]
+```
+
+Draws a JSON annotation plan onto an existing image: `highlight` (rounded-rect outline + translucent wash — the review register), `box`, `ellipse`, `arrow {from,to}`, `label {at,text}` (chip), `blur {rect,strength}` (redact secrets), `crop {rect}` (applied LAST), `grid {step,originOffset,labels}` (coordinate finder — what clickmap uses). Coordinates are NATURAL IMAGE PIXELS; annotations draw in array order; the input is never mutated without `--in-place`. `--annotate` sniffs inline JSON (`{`/`[`) vs a plan.json path. MCP twin: `annotate_image { input, annotations, output?, preset? }` on the genesis-tools server.
+
+**Which capture tool feeds it — pick deliberately:**
+- **Web app** → `playwright-mcp browser_take_screenshot`: exact CSS-pixel viewport or full-page DOM capture, no window chrome or personal UI leaking in, `fullPage` for scrollable pages, works headless.
+- **Native app / OS surface (menu bar, dialogs, Dock) / cross-app flow** → this skill's `screenshot`/capture: physical-screen capture is the only option there, but it needs the window frontmost/unoccluded and can't capture a full scrollable page.
+- Neither can produce an ANNOTATED artifact by itself — that's `draw`'s job, deliberately designed as annotate-an-existing-image so it works on ANY capture source.
+
+### Compare two screenshots (`compare-screenshot`)
+
+```bash
+tools control compare-screenshot a.png b.png [--threshold 0.1] [--max-mismatch 0.5] [--diff-out diff.png] [--resize-to-match] [--json]
+```
+
+Pixelmatch diff: mismatch count/% + similarity score; `--max-mismatch <pct>` gates the exit code (0 pass / 1 fail / 2 unusable inputs). Visual-regression checks, migration verification, "did anything change?".
 
 ### Snapshot / restore (leave the machine how you found it)
 
@@ -250,6 +272,9 @@ Everything above is single-shot element control. For **multi-frame recording** �
 tools control capture preflight [--app "<Name>"]   # ALWAYS FIRST when writing a capture plan
 tools control capture --help                       # full plan/actions contract
 tools control capture plan.json 1>result.json 2>err.log
+tools control capture plan.json --annotate draw-plan.json   # one-shot capture+draw: renders the
+                                                            #   annotation plan onto every kept frame
+                                                            #   -> <sessionDir>/annotated/ (result.annotated)
 ```
 
 **Read `references/capture.md` before writing any recording plan** — it holds the full recording discipline (duration/fps parsing, capture-target resolution, timing model, crop markers, focus re-assertion, troubleshooting, anti-patterns). `references/peekaboo.md` has the underlying peekaboo flag tables. Recording requires the external `peekaboo` binary (homebrew); element control does not.

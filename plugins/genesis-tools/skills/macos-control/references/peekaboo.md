@@ -254,5 +254,5 @@ Config-file equivalent of `PEEKABOO_ALLOW_TOOLS`/`PEEKABOO_DISABLE_TOOLS`: `{"to
 
 ## Docs vs beta3 discrepancies
 
-- **`capture action`** (record around a child command with pre/post-roll) — documented in context7 sources, confirmed **absent** from beta3: `peekaboo capture action --help` falls through to the parent `capture` help with no `action` subcommand listed. SKILL.md's runner script (`scripts/capture-with-actions.ts`) is the beta3-compatible substitute and should keep being used.
+- **`capture action`** (record around a child command with pre/post-roll) — documented in context7 sources, confirmed **absent** from beta3: `peekaboo capture action --help` falls through to the parent `capture` help with no `action` subcommand listed. SKILL.md's capture runner (`tools control capture`, lib/capture-runner.ts) is the beta3-compatible substitute and should keep being used.
 - Everything else pulled from context7 in this pass (`capture live`/`capture video` flags, all UI automation commands, `see`, `agent`, `window`/`space`/`dialog`/`menu`/`dock`/`app`/`clipboard`, bridge/permissions commands, env vars) was independently confirmed present via local `--help` output — no other gaps found in this beta.
