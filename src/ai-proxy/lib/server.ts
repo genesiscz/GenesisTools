@@ -1,10 +1,10 @@
-import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
 import { clientProviderDenial, resolveClient, validateClients } from "@app/ai-proxy/lib/clients";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import { stripBasePath } from "@app/ai-proxy/lib/path-prefix";
-import { buildProviderMap, routeProviderKey, tryCreateProvider } from "@app/ai-proxy/lib/providers/registry";
+import { acquireProvider, buildProviderMap, routeProviderKey } from "@app/ai-proxy/lib/providers/registry";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
+import { handleRealtimeClientSecrets, handleRealtimeUpgrade, realtimeWebsocket } from "@app/ai-proxy/lib/realtime";
 import { resolveModel } from "@app/ai-proxy/lib/resolve-model";
 import { findInvalidImageDataPayload } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import { resolveThinkingMode } from "@app/ai-proxy/lib/thinking-config";
@@ -116,7 +116,8 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
         hostname: listen.host,
         port: listen.port,
         idleTimeout: 120,
-        async fetch(req) {
+        websocket: realtimeWebsocket,
+        async fetch(req, server) {
             const url = new URL(req.url);
             const path = normalizePath(url.pathname, runtime.config.public?.basePath);
 
@@ -127,6 +128,14 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
             }
 
             const config = await loadConfigFresh();
+
+            if (path === "/v1/realtime" && req.method === "GET") {
+                return handleRealtimeUpgrade({ req, url, server, config, providers: runtime.providers });
+            }
+
+            if (path === "/v1/realtime/client_secrets" && req.method === "POST") {
+                return handleRealtimeClientSecrets({ req, config, providers: runtime.providers });
+            }
 
             if (path === "/v1/models" && req.method === "GET") {
                 const client = resolveClient(req, config);
@@ -259,34 +268,16 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         );
                     }
 
-                    const key = routeProviderKey(route);
-                    const fingerprint = accountConfigFingerprint(route.account);
-                    let provider = runtime.providers.get(key);
-
-                    if (provider && provider.accountFingerprint !== fingerprint) {
-                        const refreshed = await tryCreateProvider(route.account);
-                        if (refreshed) {
-                            runtime.providers.set(key, refreshed);
-                            provider = refreshed;
-                        } else {
-                            runtime.providers.delete(key);
-                            provider = undefined;
-                        }
-                    }
+                    const provider = await acquireProvider(runtime.providers, route);
 
                     if (!provider) {
-                        const created = await tryCreateProvider(route.account);
-                        if (created) {
-                            runtime.providers.set(key, created);
-                            provider = created;
-                        }
-                    }
-
-                    if (!provider) {
-                        return new Response(SafeJSON.stringify({ error: { message: `Provider not loaded: ${key}` } }), {
-                            status: 500,
-                            headers: { "Content-Type": "application/json" },
-                        });
+                        return new Response(
+                            SafeJSON.stringify({ error: { message: `Provider not loaded: ${routeProviderKey(route)}` } }),
+                            {
+                                status: 500,
+                                headers: { "Content-Type": "application/json" },
+                            }
+                        );
                     }
 
                     if (path === "/v1/responses") {

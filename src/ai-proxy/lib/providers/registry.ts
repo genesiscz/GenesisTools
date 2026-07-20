@@ -1,3 +1,4 @@
+import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { AnthropicSubscriptionProvider } from "@app/ai-proxy/lib/providers/anthropic-subscription";
 import { GithubCopilotSubscriptionProvider } from "@app/ai-proxy/lib/providers/github-copilot-subscription";
 import { GrokSubscriptionProvider } from "@app/ai-proxy/lib/providers/grok-subscription";
@@ -72,6 +73,41 @@ export async function createProvider(account: AiProxyAccountConfig): Promise<Pro
     }
 
     throw new Error(`Provider not implemented yet: ${account.provider}`);
+}
+
+/**
+ * Fetch the cached provider for a resolved route, recreating it when the
+ * account config changed (fingerprint mismatch) or it was never built. Returns
+ * null when the provider cannot be created.
+ */
+export async function acquireProvider(
+    providers: Map<string, ProxyProvider>,
+    route: { accountName: string; providerSlug: string; account: AiProxyAccountConfig }
+): Promise<ProxyProvider | null> {
+    const key = routeProviderKey(route);
+    const fingerprint = accountConfigFingerprint(route.account);
+    let provider = providers.get(key);
+
+    if (provider && provider.accountFingerprint !== fingerprint) {
+        const refreshed = await tryCreateProvider(route.account);
+        if (refreshed) {
+            providers.set(key, refreshed);
+            provider = refreshed;
+        } else {
+            providers.delete(key);
+            provider = undefined;
+        }
+    }
+
+    if (!provider) {
+        const created = await tryCreateProvider(route.account);
+        if (created) {
+            providers.set(key, created);
+            provider = created;
+        }
+    }
+
+    return provider ?? null;
 }
 
 export async function tryCreateProvider(account: AiProxyAccountConfig): Promise<ProxyProvider | null> {

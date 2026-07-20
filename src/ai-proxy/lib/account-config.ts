@@ -22,6 +22,7 @@ export function accountConfigFingerprint(account: AiProxyAccountConfig): string 
     return SafeJSON.stringify({
         provider: account.provider,
         baseUrl: account.baseUrl,
+        realtimeBaseUrl: account.realtimeBaseUrl,
         grok: account.grok,
         githubCopilot: account.githubCopilot,
         anthropicSub: account.anthropicSub,
