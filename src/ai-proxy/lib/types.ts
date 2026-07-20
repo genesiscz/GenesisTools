@@ -122,6 +122,12 @@ export interface AiProxyAccountConfig {
     openaiSub?: AiProxyOpenAiSubAccountConfig;
     apiKeyEnv?: string;
     baseUrl?: string;
+    /**
+     * Override for the realtime WebSocket base (e.g. wss://api.x.ai/v1).
+     * Defaults to `baseUrl` with http(s):// swapped for ws(s)://. Point it at a
+     * local mock server in tests.
+     */
+    realtimeBaseUrl?: string;
     managementKeyEnv?: string;
     teamId?: string;
 }

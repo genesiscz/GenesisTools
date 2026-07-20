@@ -1,6 +1,6 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { listXaiProxyModels } from "@app/ai-proxy/lib/model-meta";
-import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
+import type { OpenAiModel, ProxyProvider, RealtimeConnectTarget } from "@app/ai-proxy/lib/providers/types";
 import { resolveXaiApiKey, XAI_API_BASE_URL } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
 import { rewriteBodyModel } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
@@ -69,6 +69,21 @@ export class XaiApiKeyProvider implements ProxyProvider {
 
     async responses(req: Request, model: string, bodyText: string): Promise<Response> {
         return this.forward("/responses", model, bodyText, req);
+    }
+
+    /** Upstream realtime WS: `baseUrl` with ws(s) scheme unless `realtimeBaseUrl` overrides. */
+    realtimeConnect(model: string): RealtimeConnectTarget {
+        const wsBase = (this.account.realtimeBaseUrl ?? this.baseUrl).replace(/\/$/, "").replace(/^http/, "ws");
+
+        return {
+            url: `${wsBase}/realtime?model=${encodeURIComponent(model)}`,
+            headers: { Authorization: `Bearer ${this.apiKey}` },
+        };
+    }
+
+    /** Ephemeral client-secret mint — model is rewritten both top-level and in `session.model`. */
+    async realtimeClientSecrets(req: Request, model: string, bodyText: string): Promise<Response> {
+        return this.forward("/realtime/client_secrets", model, rewriteSessionModel(bodyText, model), req);
     }
 
     async getUsage(): Promise<UsageSummary> {
@@ -195,6 +210,25 @@ export class XaiApiKeyProvider implements ProxyProvider {
                 }
             );
         }
+    }
+}
+
+/**
+ * client_secrets bodies nest the model under `session.model` (top-level `model`
+ * is handled by rewriteBodyModel in forward()); rewrite the nested one here.
+ */
+function rewriteSessionModel(bodyText: string, upstreamModel: string): string {
+    try {
+        const parsed = SafeJSON.parse(bodyText, { strict: true }) as Record<string, unknown>;
+        const session = parsed.session;
+
+        if (session && typeof session === "object" && "model" in session) {
+            return SafeJSON.stringify({ ...parsed, session: { ...session, model: upstreamModel } });
+        }
+
+        return bodyText;
+    } catch {
+        return bodyText;
     }
 }
 
