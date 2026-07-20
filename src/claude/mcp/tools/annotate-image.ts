@@ -1,3 +1,4 @@
+import { isAbsolute, resolve } from "node:path";
 import type { Annotation, PresetName } from "@genesiscz/utils/image";
 import { renderAnnotationPlan, validateAnnotations } from "@genesiscz/utils/image";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -14,6 +15,10 @@ export async function handleAnnotateImage(args: AnnotateImageArgs): Promise<stri
         throw new Error('input is required — the absolute path of the image to annotate, e.g. "/tmp/shot.png"');
     }
 
+    if (!isAbsolute(args.input)) {
+        throw new Error(`input must be an absolute path, got "${args.input}"`);
+    }
+
     if (!(await Bun.file(args.input).exists())) {
         throw new Error(`image not found: ${args.input} (pass an absolute path on this machine)`);
     }
@@ -24,7 +29,12 @@ export async function handleAnnotateImage(args: AnnotateImageArgs): Promise<stri
         annotations: args.annotations,
         preset: args.preset,
     });
-    const output = args.output ?? args.input.replace(/(\.[a-z0-9]+)?$/i, (ext) => `-annotated${ext || ".png"}`);
+    const output = args.output ?? args.input.replace(/(\.[a-z0-9]+)?$/i, "-annotated.png");
+
+    if (resolve(output) === resolve(args.input)) {
+        throw new Error(`output must not equal input: ${output} (this tool never mutates the original)`);
+    }
+
     await Bun.write(output, result.png);
 
     return SafeJSON.stringify({

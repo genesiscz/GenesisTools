@@ -426,8 +426,13 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
     const stderrText = await attempt.stderrText;
 
     let captureResult: unknown;
+    const jsonStart = stdoutText.indexOf("{");
     try {
-        captureResult = SafeJSON.parse(stdoutText);
+        if (jsonStart < 0) {
+            throw new Error("no JSON object in peekaboo stdout");
+        }
+
+        captureResult = SafeJSON.parse(stdoutText.slice(jsonStart));
     } catch {
         const exitCode = exitedInTime ? await proc.exited : null;
         const diagnosis =
@@ -547,7 +552,15 @@ export interface RecropResult {
 
 export async function runRecrop(resultPath: string, planPath: string): Promise<RecropResult> {
     const prior = SafeJSON.parse(await Bun.file(resultPath).text());
+    if (!prior || typeof prior !== "object") {
+        throw new CaptureRunError("invalid prior result: expected a JSON object");
+    }
+
     const plan: Plan = SafeJSON.parse(await Bun.file(planPath).text());
+    if (!plan || typeof plan !== "object") {
+        throw new CaptureRunError("invalid plan: expected a JSON object");
+    }
+
     normalizePlan(plan);
     const frames: FrameInfo[] = (prior?.capture?.data?.frames ?? [])
         .slice()

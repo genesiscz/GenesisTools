@@ -47,6 +47,22 @@ function buildTile(frame: Image, region: { x: number; y: number; w: number; h: n
     return tile;
 }
 
+/** Vision-sized copy: only ever shrinks the longest side to REVIEW_MAX; copies as-is otherwise. */
+async function writeReviewCopy(source: Canvas, reviewPath: string): Promise<void> {
+    const longest = Math.max(source.width, source.height);
+    if (longest > REVIEW_MAX) {
+        const scale = REVIEW_MAX / longest;
+        const review = createCanvas(Math.round(source.width * scale), Math.round(source.height * scale));
+        const rctx = review.getContext("2d");
+        rctx.imageSmoothingEnabled = true;
+        rctx.imageSmoothingQuality = "high";
+        rctx.drawImage(source, 0, 0, review.width, review.height);
+        await Bun.write(reviewPath, review.toBuffer("image/png"));
+    } else {
+        await Bun.write(reviewPath, source.toBuffer("image/png"));
+    }
+}
+
 export async function applyCrops(
     sessionDir: string,
     frames: FrameInfo[],
@@ -65,6 +81,7 @@ export async function applyCrops(
     mkdirSync(cropDir, { recursive: true });
 
     const frameImages = new Map<string, Image>();
+    const usedPaths = new Set<string>();
 
     for (let i = 0; i < sorted.length; i++) {
         const spec = sorted[i];
@@ -80,7 +97,12 @@ export async function applyCrops(
             }
 
             const label = `${spec.label ?? `crop${i}`} t=${f.timestampMs}ms`;
-            const outPath = join(cropDir, `${f.file.replace(/\.png$/, "")}-${spec.label ?? `crop${i}`}.png`);
+            const baseStem = `${f.file.replace(/\.png$/, "")}-${spec.label ?? `crop${i}`}`;
+            // Same explicit label matching the same frame would collide on disk and
+            // silently clobber the earlier tile — suffix only the actual collisions.
+            const basePath = join(cropDir, `${baseStem}.png`);
+            const outPath = usedPaths.has(basePath) ? join(cropDir, `${baseStem}-${i}.png`) : basePath;
+            usedPaths.add(outPath);
             try {
                 let frame = frameImages.get(f.path);
                 if (!frame) {
@@ -127,37 +149,12 @@ export async function applyCrops(
         // Vision-sized copy: full strips grow to 4000x8000+ px, which agents
         // should never Read raw — cap the longest side, only ever shrinking.
         const reviewPath = join(cropDir, "strip-review.png");
-        const longest = Math.max(stripW, stripH);
-        if (longest > REVIEW_MAX) {
-            const scale = REVIEW_MAX / longest;
-            const review = createCanvas(Math.round(stripW * scale), Math.round(stripH * scale));
-            const rctx = review.getContext("2d");
-            rctx.imageSmoothingEnabled = true;
-            rctx.imageSmoothingQuality = "high";
-            rctx.drawImage(stripCanvas, 0, 0, review.width, review.height);
-            await Bun.write(reviewPath, review.toBuffer("image/png"));
-        } else {
-            await Bun.write(reviewPath, stripCanvas.toBuffer("image/png"));
-        }
-
+        await writeReviewCopy(stripCanvas, reviewPath);
         stripReview = reviewPath;
     } else if (good.length === 1) {
         strip = good[0].path;
         const reviewPath = join(cropDir, "strip-review.png");
-        const single = good[0].canvas!;
-        const longest = Math.max(single.width, single.height);
-        if (longest > REVIEW_MAX) {
-            const scale = REVIEW_MAX / longest;
-            const review = createCanvas(Math.round(single.width * scale), Math.round(single.height * scale));
-            const rctx = review.getContext("2d");
-            rctx.imageSmoothingEnabled = true;
-            rctx.imageSmoothingQuality = "high";
-            rctx.drawImage(single, 0, 0, review.width, review.height);
-            await Bun.write(reviewPath, review.toBuffer("image/png"));
-        } else {
-            await Bun.write(reviewPath, single.toBuffer("image/png"));
-        }
-
+        await writeReviewCopy(good[0].canvas!, reviewPath);
         stripReview = reviewPath;
     }
 

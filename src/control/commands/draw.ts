@@ -9,7 +9,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 
 function defaultOutputPath(input: string): string {
-    return input.replace(/(\.[a-z0-9]+)?$/i, (ext) => `-annotated${ext || ".png"}`);
+    return input.replace(/(\.[a-z0-9]+)?$/i, "-annotated.png");
 }
 
 export function registerDrawCommand(program: Command): void {

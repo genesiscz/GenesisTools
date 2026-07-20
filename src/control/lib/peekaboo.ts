@@ -7,6 +7,7 @@
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { tmpdir } from "@genesiscz/utils/paths";
 import type { Coords, CropTarget, RelativeTo } from "./capture-plan";
 
 export const CHROMIUM_APPS = new Set([
@@ -518,8 +519,7 @@ export function killTree(pid: number): void {
 }
 
 export function captureSessionsRoot(): string {
-    const tmpBase = process.env.TMPDIR ?? "/tmp/";
-    return join(tmpBase, "peekaboo", "capture-sessions");
+    return join(tmpdir({ preferRoot: false }), "peekaboo", "capture-sessions");
 }
 
 export interface CaptureAttempt {

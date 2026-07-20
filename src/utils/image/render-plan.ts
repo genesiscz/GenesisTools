@@ -47,6 +47,19 @@ export function validateAnnotations(annotations: unknown): asserts annotations i
         if (!KNOWN_KINDS.includes(kind as (typeof KNOWN_KINDS)[number])) {
             throw new Error(`annotations[${i}] has unknown kind "${kind}" — valid kinds: ${KNOWN_KINDS.join(", ")}`);
         }
+
+        const obj = a as Record<string, unknown>;
+        if ((kind === "highlight" || kind === "box" || kind === "ellipse" || kind === "blur" || kind === "crop") && !obj.rect) {
+            throw new Error(`annotations[${i}] (${kind}) requires "rect"`);
+        }
+
+        if (kind === "arrow" && (!obj.from || !obj.to)) {
+            throw new Error(`annotations[${i}] (arrow) requires "from" and "to"`);
+        }
+
+        if (kind === "label" && (!obj.at || typeof obj.text !== "string")) {
+            throw new Error(`annotations[${i}] (label) requires "at" and "text"`);
+        }
     }
 }
 
@@ -68,6 +81,10 @@ export async function loadAnnotationPlanValue(value: string): Promise<Annotation
         }
 
         parsed = SafeJSON.parse(await file.text());
+    }
+
+    if (!parsed || typeof parsed !== "object") {
+        throw new Error("invalid annotation plan: expected a JSON object or array");
     }
 
     const plan: AnnotationPlanFile = Array.isArray(parsed)
@@ -171,15 +188,16 @@ function placeShapeLabel(
     };
 }
 
-function drawShape(
-    ctx: SKRSContext2D,
-    kind: "highlight" | "box" | "ellipse",
-    rect: AnnotationRect,
-    style: ShapeStyle | undefined,
-    label: ShapeLabel | undefined,
-    preset: AnnotationPreset,
-    bounds: { width: number; height: number }
-): void {
+function drawShape(opts: {
+    ctx: SKRSContext2D;
+    kind: "highlight" | "box" | "ellipse";
+    rect: AnnotationRect;
+    style: ShapeStyle | undefined;
+    label: ShapeLabel | undefined;
+    preset: AnnotationPreset;
+    bounds: { width: number; height: number };
+}): void {
+    const { ctx, kind, rect, style, label, preset, bounds } = opts;
     const stroke = style?.stroke ?? preset.shape.stroke;
     const strokeWidth = style?.strokeWidth ?? preset.shape.strokeWidth;
     const fill = style?.fill ?? preset.shape.fill;
@@ -265,7 +283,7 @@ function drawGrid(
     annotation: Extract<Annotation, { kind: "grid" }>
 ): void {
     const style: Required<GridStyle> = { ...GRID_DEFAULTS, ...annotation.style };
-    const step = annotation.step !== undefined && annotation.step > 0 ? annotation.step : 100;
+    const step = Math.max(4, annotation.step !== undefined && annotation.step > 0 ? annotation.step : 100);
     const ox = annotation.originOffset?.x ?? 0;
     const oy = annotation.originOffset?.y ?? 0;
     const withLabels = annotation.labels !== false;
@@ -351,7 +369,7 @@ export async function renderAnnotationPlan(opts: RenderPlanInput): Promise<Rende
                     throw new Error(`annotations[${i}] (${a.kind}) has a zero-size rect`);
                 }
 
-                drawShape(ctx, a.kind, rect, a.style, a.label, preset, bounds);
+                drawShape({ ctx, kind: a.kind, rect, style: a.style, label: a.label, preset, bounds });
                 break;
             }
             case "arrow":

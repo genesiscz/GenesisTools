@@ -134,7 +134,12 @@ export function isPresetName(value: string): value is PresetName {
 
 export function parseRect(rect: RectInput): AnnotationRect {
     if (typeof rect === "string") {
-        const [x, y, w, h] = rect.split(",").map((n) => Number(n.trim()));
+        const parts = rect.split(",").map((n) => Number(n.trim()));
+        if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) {
+            throw new Error(`malformed rect "${rect}" — expected "x,y,w,h" with 4 finite numbers`);
+        }
+
+        const [x, y, w, h] = parts;
         return { x, y, w, h };
     }
 

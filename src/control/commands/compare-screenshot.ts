@@ -41,8 +41,16 @@ export function registerCompareScreenshotCommand(program: Command): void {
                 process.exit(2);
             }
 
-            const a = await decodeImageRgba(aPath);
-            let b = await decodeImageRgba(bPath);
+            let a: Awaited<ReturnType<typeof decodeImageRgba>>;
+            let b: Awaited<ReturnType<typeof decodeImageRgba>>;
+            try {
+                a = await decodeImageRgba(aPath);
+                b = await decodeImageRgba(bPath);
+            } catch (e) {
+                logger.error(`cannot decode image: ${e instanceof Error ? e.message : String(e)}`);
+                process.exit(2);
+            }
+
             let resized = false;
 
             if (a.width !== b.width || a.height !== b.height) {
@@ -68,6 +76,11 @@ export function registerCompareScreenshotCommand(program: Command): void {
             }
 
             const maxMismatch = opts.maxMismatch !== undefined ? Number(opts.maxMismatch) : undefined;
+            if (maxMismatch !== undefined && (!Number.isFinite(maxMismatch) || maxMismatch < 0 || maxMismatch > 100)) {
+                logger.error(`--max-mismatch must be a percentage between 0 and 100 (got "${opts.maxMismatch}")`);
+                process.exit(2);
+            }
+
             const pass = maxMismatch === undefined ? true : mismatchPct <= maxMismatch;
 
             if (opts.json) {

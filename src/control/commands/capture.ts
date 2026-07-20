@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { loadAnnotationPlanValue } from "@genesiscz/utils/image";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { tmpdir } from "@genesiscz/utils/paths";
 import type { Command } from "commander";
 import { CAPTURE_HELP, type Plan } from "../lib/capture-plan";
 import {
@@ -55,6 +56,10 @@ export function registerCaptureCommands(program: Command): void {
                 plan = SafeJSON.parse(await Bun.file(planPath).text());
             } catch (e) {
                 fail(`cannot read plan ${planPath}: ${e instanceof Error ? e.message : String(e)}`);
+            }
+
+            if (!plan || typeof plan !== "object") {
+                fail(`invalid plan ${planPath}: expected a JSON object`);
             }
 
             if (opts.annotate) {
@@ -113,8 +118,13 @@ export function registerCaptureCommands(program: Command): void {
         .option("--grid <points>", "grid step in screen points (min 20)", "100")
         .option("--out <png>", "output path (default $TMPDIR/clickmap-<ts>.png)")
         .action(async (opts: { app: string; windowTitle?: string; grid: string; out?: string }) => {
-            const gridStep = Math.max(20, Number(opts.grid) || 100);
-            const outPath = opts.out ?? join(process.env.TMPDIR ?? "/tmp/", `clickmap-${Date.now()}.png`);
+            const parsedGrid = Number(opts.grid);
+            if (!Number.isFinite(parsedGrid) || parsedGrid <= 0) {
+                fail(`--grid must be a positive finite number (got "${opts.grid}")`);
+            }
+
+            const gridStep = Math.max(20, parsedGrid);
+            const outPath = opts.out ?? join(tmpdir({ preferRoot: false }), `clickmap-${Date.now()}.png`);
             try {
                 const result = await runClickmap({ app: opts.app, windowTitle: opts.windowTitle, gridStep, outPath });
                 out.println(SafeJSON.stringify(result, null, 2));

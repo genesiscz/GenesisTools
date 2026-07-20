@@ -4,7 +4,7 @@
  * capture-runner.ts).
  */
 
-import type { Annotation, PresetName } from "@genesiscz/utils/image";
+import { type Annotation, parseRect, type PresetName } from "@genesiscz/utils/image";
 
 export const CAPTURE_HELP = `control capture — declarative peekaboo capture + timed UI actions
 
@@ -265,6 +265,8 @@ RESULT SCHEMA (stdout JSON)
       strip: string | null;         // path to crops/strip.png (all tiles stacked)
       stripReview: string | null;   // path to crops/strip-review.png (<=1600px)
       vitrinka?: { ok: boolean; urls: string[]; error?: string };
+      annotated?: string[];         // paths under <sessionDir>/annotated/, when plan.annotate is set
+      captureFailed: boolean;       // true when the recording itself failed
       capture: unknown;             // raw peekaboo result JSON
   }
   interface ActionResult {
@@ -457,12 +459,7 @@ export interface CropOut {
 }
 
 export function parseRegion(r: Region): { x: number; y: number; w: number; h: number } {
-    if (typeof r === "string") {
-        const [x, y, w, h] = r.split(",").map((n) => Number(n.trim()));
-        return { x, y, w, h };
-    }
-
-    return r;
+    return parseRect(r);
 }
 
 export function coordsToString(c: Coords): string {
