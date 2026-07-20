@@ -1,4 +1,5 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
+import { relayHeaders, rewriteSessionModel, toWsBase } from "@app/ai-proxy/lib/providers/http-relay";
 import { listXaiProxyModels } from "@app/ai-proxy/lib/model-meta";
 import type { OpenAiModel, ProxyProvider, RealtimeConnectTarget } from "@app/ai-proxy/lib/providers/types";
 import { resolveXaiApiKey, XAI_API_BASE_URL } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
@@ -11,20 +12,6 @@ import { logger } from "@genesiscz/utils/logger";
 import { fetchDirect } from "@genesiscz/utils/net/fetch-direct";
 
 export { resolveXaiApiKey, XAI_API_BASE_URL } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
-
-/**
- * Bun's fetch transparently decodes compressed upstream bodies but leaves
- * Content-Encoding/Content-Length on the headers; relaying those verbatim
- * makes the client try to gunzip already-plain bytes (ZlibError — bit the
- * /stt relay live 2026-07-20). Strip the now-stale framing headers.
- */
-function relayHeaders(upstream: Response): Headers {
-    const headers = new Headers(upstream.headers);
-    headers.delete("content-encoding");
-    headers.delete("content-length");
-    headers.delete("transfer-encoding");
-    return headers;
-}
 
 function maskKey(key: string): string {
     if (key.length <= 8) {
@@ -87,7 +74,7 @@ export class XaiApiKeyProvider implements ProxyProvider {
 
     /** Upstream realtime WS: `baseUrl` with ws(s) scheme unless `realtimeBaseUrl` overrides. */
     realtimeConnect(model: string): RealtimeConnectTarget {
-        const wsBase = (this.account.realtimeBaseUrl ?? this.baseUrl).replace(/\/$/, "").replace(/^http/, "ws");
+        const wsBase = toWsBase(this.account.realtimeBaseUrl ?? this.baseUrl);
 
         return {
             url: `${wsBase}/realtime?model=${encodeURIComponent(model)}`,
@@ -300,25 +287,6 @@ export class XaiApiKeyProvider implements ProxyProvider {
                 }
             );
         }
-    }
-}
-
-/**
- * client_secrets bodies nest the model under `session.model` (top-level `model`
- * is handled by rewriteBodyModel in forward()); rewrite the nested one here.
- */
-function rewriteSessionModel(bodyText: string, upstreamModel: string): string {
-    try {
-        const parsed = SafeJSON.parse(bodyText, { strict: true }) as Record<string, unknown>;
-        const session = parsed.session;
-
-        if (session && typeof session === "object" && "model" in session) {
-            return SafeJSON.stringify({ ...parsed, session: { ...session, model: upstreamModel } });
-        }
-
-        return bodyText;
-    } catch {
-        return bodyText;
     }
 }
 

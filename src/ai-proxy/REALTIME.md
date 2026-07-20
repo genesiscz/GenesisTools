@@ -64,10 +64,27 @@ ZlibError. The xAI provider now strips stale framing headers on every relay.
 ## Provider support
 
 Realtime is a provider capability (`realtimeConnect` / `realtimeClientSecrets`
-on `ProxyProvider`); currently only `xai-api-key` implements it. The upstream
-WS base defaults to the account's `baseUrl` with `http(s)` swapped for
-`ws(s)`; set `realtimeBaseUrl` on the account to override (this is how tests
-point it at a mock server).
+on `ProxyProvider`), implemented by two providers. The upstream WS base
+defaults to the account's `baseUrl` with `http(s)` swapped for `ws(s)`; set
+`realtimeBaseUrl` on the account to override (this is how tests point it at a
+mock server).
+
+| Provider (config `provider`) | Upstream | Realtime models | Key |
+|---|---|---|---|
+| `xai-api-key` | `wss://api.x.ai/v1/realtime` | `grok-voice-latest` | `apiKeyEnv` (e.g. XAI_API_KEY) |
+| `openai` | `wss://api.openai.com/v1/realtime` | `gpt-realtime`, `gpt-realtime-mini`, `gpt-4o-realtime-preview` | `apiKeyEnv` (default OPENAI_API_KEY) |
+
+Example account for OpenAI realtime (routes `martin/openai/gpt-realtime`):
+
+```json
+{ "name": "martin", "provider": "openai", "providerSlug": "openai", "enabled": true, "apiKeyEnv": "OPENAI_API_KEY" }
+```
+
+`openai` (platform API key) is distinct from `openai-subscription`
+(ChatGPT/Codex OAuth); it also forwards `/chat/completions` and `/responses`,
+and being an api-key provider it is grantable to non-owner clients. Note:
+`openai` accounts don't appear in the `/v1/models` catalog (no model-meta
+integration) — use full ids.
 
 ## Usage / billing
 
@@ -103,9 +120,17 @@ Caveat: xAI's realtime `response.done` reports `usage` with all-zero token
 counts — the ledger records the session (frames/bytes/duration) but token
 usage stays 0 until xAI populates it.
 
+**OpenAI provider (same run):** the tunnel routed
+`live-oa/openai/gpt-realtime` to the real OpenAI upstream — WS opened, key
+accepted (mint returns 200 with an `ek_…` secret), and OpenAI's
+`insufficient_quota` error event + 1013 close relayed verbatim to the client.
+The identical error reproduces connecting to OpenAI directly (proxy bypassed),
+so the block is the OpenAI **account's billing**, not the tunnel; a funded
+account is the only missing piece for an OpenAI speech round trip.
+
 Earlier mock coverage remains in `lib/realtime.test.ts` (auth rejection, model
-routing, both-way text+binary piping, pre-open queueing, close propagation,
-usage capture, batch STT translation).
+routing incl. openai-account routing, both-way text+binary piping, pre-open
+queueing, close propagation, usage capture, batch STT translation).
 
 ## genesis-server note
 

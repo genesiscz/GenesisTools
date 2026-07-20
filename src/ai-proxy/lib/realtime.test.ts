@@ -138,6 +138,7 @@ beforeAll(async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "ai-proxy-realtime-"));
     env.testing.set("GENESIS_TOOLS_HOME", tempDir);
     env.testing.set("AI_PROXY_TEST_XAI_KEY", "xai-mock-key");
+    env.testing.set("AI_PROXY_TEST_OPENAI_KEY", "openai-mock-key");
     resetAiProxyConfigStore();
     resetAiProxyStorage();
 
@@ -154,6 +155,15 @@ beforeAll(async () => {
                 providerSlug: "grok",
                 enabled: true,
                 apiKeyEnv: "AI_PROXY_TEST_XAI_KEY",
+                baseUrl: `http://127.0.0.1:${mockUpstream.port}`,
+                realtimeBaseUrl: `ws://127.0.0.1:${mockUpstream.port}`,
+            },
+            {
+                name: "martin",
+                provider: "openai",
+                providerSlug: "openai",
+                enabled: true,
+                apiKeyEnv: "AI_PROXY_TEST_OPENAI_KEY",
                 baseUrl: `http://127.0.0.1:${mockUpstream.port}`,
                 realtimeBaseUrl: `ws://127.0.0.1:${mockUpstream.port}`,
             },
@@ -185,6 +195,8 @@ afterAll(() => {
     } else {
         env.testing.set("AI_PROXY_TEST_XAI_KEY", originalKey);
     }
+
+    env.testing.unset("AI_PROXY_TEST_OPENAI_KEY");
 });
 
 describe("realtime WS tunnel", () => {
@@ -241,6 +253,22 @@ describe("realtime WS tunnel", () => {
         expect(client.events[2]).toBeInstanceOf(ArrayBuffer);
         expect(Array.from(new Uint8Array(client.events[2] as ArrayBuffer))).toEqual(Array.from(audio));
 
+        client.ws.close(1000);
+    });
+
+    it("routes an openai model to the openai account with its own key", async () => {
+        const sessionsBefore = upstreamSessions.length;
+        const client = await connectClient("?model=martin/openai/gpt-realtime", {
+            Authorization: `Bearer ${PROXY_KEY}`,
+        });
+        await client.opened;
+        await waitFor(() => client.events.length >= 1);
+
+        expect(upstreamSessions.length).toBe(sessionsBefore + 1);
+        const session = upstreamSessions[sessionsBefore];
+        expect(session.model).toBe("gpt-realtime");
+        expect(session.authorization).toBe("Bearer openai-mock-key");
+        expect(client.events[0]).toBe('{"type":"session.created","model":"gpt-realtime"}');
         client.ws.close(1000);
     });
 
