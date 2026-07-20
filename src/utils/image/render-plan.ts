@@ -49,7 +49,10 @@ export function validateAnnotations(annotations: unknown): asserts annotations i
         }
 
         const obj = a as Record<string, unknown>;
-        if ((kind === "highlight" || kind === "box" || kind === "ellipse" || kind === "blur" || kind === "crop") && !obj.rect) {
+        if (
+            (kind === "highlight" || kind === "box" || kind === "ellipse" || kind === "blur" || kind === "crop") &&
+            !obj.rect
+        ) {
             throw new Error(`annotations[${i}] (${kind}) requires "rect"`);
         }
 

@@ -4,7 +4,7 @@
  * capture-runner.ts).
  */
 
-import { type Annotation, parseRect, type PresetName } from "@genesiscz/utils/image";
+import { type Annotation, type PresetName, parseRect } from "@genesiscz/utils/image";
 
 export const CAPTURE_HELP = `control capture — declarative peekaboo capture + timed UI actions
 
