@@ -147,7 +147,98 @@ function isImageContentPart(part: unknown): boolean {
         return true;
     }
 
+    // AI SDK file parts carrying an image (only when the image payload is
+    // actually extractable — non-image file parts must stay untouched).
+    if (part.type === "file") {
+        return fileImageDataUrl(part) !== null;
+    }
+
     return false;
+}
+
+const IMAGE_MEDIA_TYPE_KEYS = ["mediaType", "media_type", "mimeType", "mime_type"] as const;
+
+function imageMediaTypeFromPart(part: JsonObject): string | null {
+    for (const key of IMAGE_MEDIA_TYPE_KEYS) {
+        const value = part[key];
+
+        if (typeof value === "string" && value.startsWith("image/")) {
+            return value;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Inline payload of an AI SDK `file` part. Covers the plain-string `data`
+ * form, UI-message `url`, and ai@7's V4 tagged objects
+ * ({type:'data', data} / {type:'url', url}) — when a client serializes the V4
+ * prompt shape straight to JSON, the base64 is still recoverable here.
+ */
+function filePartInlineData(part: JsonObject): string | null {
+    if (typeof part.data === "string") {
+        return part.data;
+    }
+
+    if (isObject(part.data)) {
+        if (part.data.type === "data" && typeof part.data.data === "string") {
+            return part.data.data;
+        }
+
+        if (part.data.type === "url" && typeof part.data.url === "string") {
+            return part.data.url;
+        }
+    }
+
+    if (typeof part.url === "string") {
+        return part.url;
+    }
+
+    return null;
+}
+
+/** Data/remote URL of a `file` part when it carries an image; null otherwise. */
+function fileImageDataUrl(part: JsonObject): string | null {
+    if (part.type !== "file") {
+        return null;
+    }
+
+    const mediaType = imageMediaTypeFromPart(part);
+    const raw = filePartInlineData(part);
+
+    if (!raw) {
+        return null;
+    }
+
+    if (raw.startsWith("data:")) {
+        return raw.startsWith("data:image/") || mediaType ? raw : null;
+    }
+
+    if (/^https?:/.test(raw)) {
+        return mediaType ? raw : null;
+    }
+
+    // Raw base64 — only an image when the part declares an image media type.
+    return mediaType ? `data:${mediaType};base64,${raw}` : null;
+}
+
+/** Data/remote URL of an AI SDK core image part ({type:'image', image: …}). */
+function imageFieldDataUrl(part: JsonObject): string | null {
+    const image = part.image;
+    const raw = typeof image === "string" ? image : isObject(image) && typeof image.url === "string" ? image.url : null;
+
+    if (!raw) {
+        return null;
+    }
+
+    if (raw.startsWith("data:") || /^https?:/.test(raw)) {
+        return raw;
+    }
+
+    // Raw base64 with no declared media type — jpeg is the pragmatic default
+    // (matches AI SDK's own image/* fallback behavior).
+    return `data:${imageMediaTypeFromPart(part) ?? "image/jpeg"};base64,${raw}`;
 }
 
 function imageDataUrlFromPart(part: JsonObject): string | null {
@@ -178,6 +269,14 @@ function imageDataUrlFromPart(part: JsonObject): string | null {
         if (data) {
             return `data:${mediaType};base64,${data}`;
         }
+    }
+
+    if (part.type === "image") {
+        return imageFieldDataUrl(part);
+    }
+
+    if (part.type === "file") {
+        return fileImageDataUrl(part);
     }
 
     return null;

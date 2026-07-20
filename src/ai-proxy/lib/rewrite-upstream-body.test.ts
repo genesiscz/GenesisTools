@@ -378,4 +378,166 @@ describe("findInvalidImageDataPayload", () => {
     it("ignores bodies without image parts", () => {
         expect(findInvalidImageDataPayload({ messages: [{ role: "user", content: "hi" }] })).toBeNull();
     });
+
+    it("catches stringified-object data inside AI SDK file parts", () => {
+        const payload = findInvalidImageDataPayload({
+            messages: [
+                {
+                    role: "user",
+                    content: [{ type: "file", mediaType: "image/jpeg", data: "[object Object]" }],
+                },
+            ],
+        });
+
+        expect(payload).toBe("[object Object]");
+    });
+});
+
+describe("AI SDK image part variants", () => {
+    const JPEG_B64 = "/9j/4AAQSkZJRg==";
+
+    function firstContentPart(bodyText: string): Record<string, unknown> {
+        const parsed = SafeJSON.parse(bodyText) as {
+            messages: Array<{ content: Array<Record<string, unknown>> }>;
+        };
+        const part = parsed.messages[0]?.content?.[0];
+        if (!part) {
+            throw new Error("no content part");
+        }
+        return part;
+    }
+
+    it("routes and normalizes image_url string form", () => {
+        const rewritten = prepareGrokUpstreamBody(
+            SafeJSON.stringify({
+                model: "martin/grok/grok-4.3",
+                messages: [
+                    { role: "user", content: [{ type: "image_url", image_url: `data:image/jpeg;base64,${JPEG_B64}` }] },
+                ],
+            }),
+            "grok-4.3",
+            "chat"
+        );
+
+        expect(rewritten.imageRouted).toBe(true);
+        expect(rewritten.upstreamModel).toBe(GROK_IMAGE_FALLBACK_MODEL);
+        expect(firstContentPart(rewritten.bodyText)).toEqual({
+            type: "image_url",
+            image_url: { url: `data:image/jpeg;base64,${JPEG_B64}` },
+        });
+    });
+
+    it("routes and normalizes input_image parts", () => {
+        const rewritten = prepareGrokUpstreamBody(
+            SafeJSON.stringify({
+                model: "martin/grok/grok-4.3",
+                messages: [
+                    {
+                        role: "user",
+                        content: [{ type: "input_image", image_url: `data:image/png;base64,${JPEG_B64}` }],
+                    },
+                ],
+            }),
+            "grok-4.3",
+            "chat"
+        );
+
+        expect(rewritten.imageRouted).toBe(true);
+        expect(firstContentPart(rewritten.bodyText)).toEqual({
+            type: "image_url",
+            image_url: { url: `data:image/png;base64,${JPEG_B64}` },
+        });
+    });
+
+    it("routes and normalizes file parts with image mediaType and raw base64", () => {
+        const rewritten = prepareGrokUpstreamBody(
+            SafeJSON.stringify({
+                model: "martin/grok/grok-4.3",
+                messages: [{ role: "user", content: [{ type: "file", mediaType: "image/jpeg", data: JPEG_B64 }] }],
+            }),
+            "grok-4.3",
+            "chat"
+        );
+
+        expect(rewritten.imageRouted).toBe(true);
+        expect(firstContentPart(rewritten.bodyText)).toEqual({
+            type: "image_url",
+            image_url: { url: `data:image/jpeg;base64,${JPEG_B64}` },
+        });
+    });
+
+    it("routes and normalizes file parts with a data URL and no mediaType", () => {
+        const rewritten = prepareGrokUpstreamBody(
+            SafeJSON.stringify({
+                model: "martin/grok/grok-4.3",
+                messages: [{ role: "user", content: [{ type: "file", data: `data:image/jpeg;base64,${JPEG_B64}` }] }],
+            }),
+            "grok-4.3",
+            "chat"
+        );
+
+        expect(rewritten.imageRouted).toBe(true);
+        expect(firstContentPart(rewritten.bodyText)).toEqual({
+            type: "image_url",
+            image_url: { url: `data:image/jpeg;base64,${JPEG_B64}` },
+        });
+    });
+
+    it("recovers ai@7 V4 tagged file data serialized to JSON", () => {
+        const rewritten = prepareGrokUpstreamBody(
+            SafeJSON.stringify({
+                model: "martin/grok/grok-4.3",
+                messages: [
+                    {
+                        role: "user",
+                        content: [{ type: "file", mediaType: "image/jpeg", data: { type: "data", data: JPEG_B64 } }],
+                    },
+                ],
+            }),
+            "grok-4.3",
+            "chat"
+        );
+
+        expect(rewritten.imageRouted).toBe(true);
+        expect(firstContentPart(rewritten.bodyText)).toEqual({
+            type: "image_url",
+            image_url: { url: `data:image/jpeg;base64,${JPEG_B64}` },
+        });
+    });
+
+    it("routes and normalizes AI SDK core image parts (image field, raw base64)", () => {
+        const rewritten = prepareGrokUpstreamBody(
+            SafeJSON.stringify({
+                model: "martin/grok/grok-4.3",
+                messages: [{ role: "user", content: [{ type: "image", image: JPEG_B64 }] }],
+            }),
+            "grok-4.3",
+            "chat"
+        );
+
+        expect(rewritten.imageRouted).toBe(true);
+        expect(firstContentPart(rewritten.bodyText)).toEqual({
+            type: "image_url",
+            image_url: { url: `data:image/jpeg;base64,${JPEG_B64}` },
+        });
+    });
+
+    it("leaves non-image file parts untouched and unrouted", () => {
+        const rewritten = prepareGrokUpstreamBody(
+            SafeJSON.stringify({
+                model: "martin/grok/grok-4.3",
+                messages: [{ role: "user", content: [{ type: "file", mediaType: "application/pdf", data: JPEG_B64 }] }],
+            }),
+            "grok-4.3",
+            "chat"
+        );
+
+        expect(rewritten.imageRouted).toBe(false);
+        expect(rewritten.upstreamModel).toBe("grok-4.3");
+        expect(firstContentPart(rewritten.bodyText)).toEqual({
+            type: "file",
+            mediaType: "application/pdf",
+            data: JPEG_B64,
+        });
+    });
 });
