@@ -13,8 +13,13 @@ afterEach(() => {
 
 describe("jobs user attribution", () => {
     it("stores and returns userId on enqueue", () => {
-        const owned = db.enqueueJob({ targetKind: "video", target: "vid00000001", stages: ["captions"], userId: 42 });
-        const anonymous = db.enqueueJob({ targetKind: "video", target: "vid00000002", stages: ["captions"] });
+        const { job: owned } = db.enqueueJob({
+            targetKind: "video",
+            target: "vid00000001",
+            stages: ["captions"],
+            userId: 42,
+        });
+        const { job: anonymous } = db.enqueueJob({ targetKind: "video", target: "vid00000002", stages: ["captions"] });
 
         expect(owned.userId).toBe(42);
         expect(anonymous.userId).toBeNull();
@@ -22,7 +27,7 @@ describe("jobs user attribution", () => {
     });
 
     it("keeps userId across claim and requeue", () => {
-        const job = db.enqueueJob({ targetKind: "video", target: "vid00000003", stages: ["captions"], userId: 7 });
+        const { job } = db.enqueueJob({ targetKind: "video", target: "vid00000003", stages: ["captions"], userId: 7 });
         const claimed = db.claimNextJob("worker-1");
 
         expect(claimed?.id).toBe(job.id);

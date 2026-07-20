@@ -13,6 +13,7 @@ import type {
     AskMessageRecord,
     AskThreadRecord,
     Channel,
+    ChannelEnsureResult,
     ChannelHandle,
     CollectionKind,
     CollectionRecord,
@@ -52,7 +53,9 @@ export type ExtensionRequest =
     | { type: "config:get" }
     | { type: "config:set"; apiBaseUrl: string; serviceKey?: string }
     | { type: "api:listChannels" }
+    | { type: "api:ensureChannel"; handle: ChannelHandle }
     | { type: "api:addChannel"; handle: ChannelHandle }
+    | { type: "api:syncChannel"; handle: ChannelHandle }
     | { type: "api:listVideos"; channel?: ChannelHandle; since?: string; limit?: number; includeShorts?: boolean }
     | { type: "api:getVideo"; id: VideoId }
     | { type: "api:getTranscript"; id: VideoId; lang?: string; source?: "captions" | "ai" }
@@ -185,7 +188,9 @@ export interface ExtensionApiMap {
     "config:get": ExtensionConfig;
     "config:set": ExtensionConfig;
     "api:listChannels": { channels: Channel[] };
+    "api:ensureChannel": ChannelEnsureResult;
     "api:addChannel": { added: ChannelHandle[] };
+    "api:syncChannel": { enqueuedJobId: number; enqueuedJobIds?: number[] };
     "api:listVideos": { videos: Video[] };
     "api:getVideo": { video: Video; transcripts: Transcript[] };
     "api:getTranscript": { transcript: Transcript; speakerLabels?: Record<number, string> };
@@ -208,6 +213,9 @@ export interface ExtensionApiMap {
         lang?: string;
         cached?: boolean;
         jobId?: number;
+        queuePosition?: number | null;
+        status?: string;
+        priority?: number;
         /** True when the call unlocked an existing shared artifact instead of generating. */
         reused?: boolean;
         creditsSpent?: number;
@@ -217,12 +225,17 @@ export interface ExtensionApiMap {
     "api:patchMe": { user: YtUser };
     "api:generateSummaryAudio": { url: string; cached: boolean; creditsSpent: number; credits: number };
     "api:askVideo": {
-        answer: string;
-        citations: AskCitation[];
-        creditsSpent: number;
-        credits: number;
-        historyId: number;
-        /** Metadata for every distinct cited video — drives grouped citation headers. */
+        jobId: number;
+        queuePosition?: number | null;
+        status?: string;
+        priority?: number;
+        reused?: boolean;
+        lang?: string;
+        credits?: number;
+        answer?: string;
+        citations?: AskCitation[];
+        creditsSpent?: number;
+        historyId?: number;
         citedVideos?: Record<string, { title: string; uploadDate: string | null; thumbUrl: string | null }>;
     };
     "api:startPipeline": { job: PipelineJob };

@@ -16,7 +16,7 @@ describe("Pipeline", () => {
         const off = pipeline.on("job:created", (event) => events.push(event));
 
         try {
-            const job = pipeline.enqueue({ targetKind: "video", target: "abc123def45", stages: ["metadata"] });
+            const job = pipeline.enqueue({ targetKind: "video", target: "abc123def45", stages: ["metadata"] }).job!;
 
             expect(job.status).toBe("pending");
             expect(events).toEqual([{ type: "job:created", job }]);
@@ -50,7 +50,7 @@ describe("Pipeline", () => {
         pipeline.on("job:completed", () => events.push("job:completed"));
 
         try {
-            const job = pipeline.enqueue({ targetKind: "video", target: "abc123def45", stages: ["metadata"] });
+            const job = pipeline.enqueue({ targetKind: "video", target: "abc123def45", stages: ["metadata"] }).job!;
             await pipeline.start();
             await waitFor(() => pipeline.getJob(job.id)?.status === "completed");
 
@@ -85,7 +85,7 @@ describe("Pipeline", () => {
         pipeline.on("job:failed", (event) => failures.push(event));
 
         try {
-            const job = pipeline.enqueue({ targetKind: "video", target: "abc123def45", stages: ["metadata"] });
+            const job = pipeline.enqueue({ targetKind: "video", target: "abc123def45", stages: ["metadata"] }).job!;
             await pipeline.start();
             await waitFor(() => pipeline.getJob(job.id)?.status === "failed");
 
@@ -126,7 +126,7 @@ describe("Pipeline", () => {
 
         try {
             await pipeline.start();
-            const job = pipeline.enqueue({ targetKind: "video", target: "live-cancel", stages: ["metadata"] });
+            const job = pipeline.enqueue({ targetKind: "video", target: "live-cancel", stages: ["metadata"] }).job!;
             await waitFor(() => observedSignal !== null);
             pipeline.cancelJob(job.id);
             await waitFor(() => abortObserved);
@@ -148,9 +148,17 @@ describe("Pipeline", () => {
         pipeline.on("job:cancelled", (event) => cancelled.push(event));
 
         try {
-            const interrupted = db.enqueueJob({ targetKind: "video", target: "interrupted", stages: ["metadata"] });
+            const { job: interrupted } = db.enqueueJob({
+                targetKind: "video",
+                target: "interrupted",
+                stages: ["metadata"],
+            });
             db.claimNextJob("old-worker");
-            const cancelledJob = pipeline.enqueue({ targetKind: "video", target: "cancelled", stages: ["metadata"] });
+            const cancelledJob = pipeline.enqueue({
+                targetKind: "video",
+                target: "cancelled",
+                stages: ["metadata"],
+            }).job!;
             pipeline.cancelJob(cancelledJob.id);
             await pipeline.start();
             await waitFor(() => pipeline.getJob(interrupted.id)?.status === "completed");

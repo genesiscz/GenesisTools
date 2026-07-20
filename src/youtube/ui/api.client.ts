@@ -31,8 +31,17 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { reportBackendReachable, reportBackendUnreachable } from "./backend-status";
 
 export interface AskVideoResponse {
+    jobId?: number;
+    reused?: boolean;
+    queuePosition?: number | null;
+    status?: string;
+    priority?: number;
+    lang?: string;
+    credits?: number;
     answer: string;
     citations: AskCitation[];
+    historyId?: number;
+    citedVideos?: Record<string, { title: string; uploadDate: string | null; thumbUrl: string | null }>;
 }
 
 export interface CacheStatsResponse {
@@ -231,32 +240,60 @@ export const apiClient = {
             tone?: "insightful" | "funny" | "actionable" | "controversial";
             format?: "list" | "qa";
             length?: "short" | "auto" | "detailed";
+            lang?: string;
         }
     ) => {
         const response = await api<{
-            summary: string | TimestampedSummaryEntry[] | VideoLongSummary | null;
-            mode: "short" | "timestamped" | "long";
-            cached: boolean;
+            summary?: string | TimestampedSummaryEntry[] | VideoLongSummary | null;
+            mode?: "short" | "timestamped" | "long";
+            lang?: string;
+            cached?: boolean;
             jobId?: number;
+            reused?: boolean;
+            queuePosition?: number | null;
+            status?: string;
+            priority?: number;
+            credits?: number;
         }>(`/videos/${encodeURIComponent(id)}/summary`, { method: "POST", body: SafeJSON.stringify(opts) });
 
-        if (opts.mode === "timestamped") {
+        // Artifact reuse / unlock still returns the summary inline.
+        if (response.summary !== undefined || response.cached === true) {
+            if (opts.mode === "timestamped") {
+                return {
+                    timestamped: (response.summary ?? []) as TimestampedSummaryEntry[],
+                    cached: response.cached ?? true,
+                    lang: response.lang,
+                    jobId: response.jobId,
+                };
+            }
+
+            if (opts.mode === "long") {
+                return {
+                    long: (response.summary ?? null) as VideoLongSummary | null,
+                    cached: response.cached ?? true,
+                    lang: response.lang,
+                    jobId: response.jobId,
+                };
+            }
+
             return {
-                timestamped: (response.summary ?? []) as TimestampedSummaryEntry[],
-                cached: response.cached,
+                short: (response.summary ?? "") as string,
+                cached: response.cached ?? true,
+                lang: response.lang,
                 jobId: response.jobId,
             };
         }
 
-        if (opts.mode === "long") {
-            return {
-                long: (response.summary ?? null) as VideoLongSummary | null,
-                cached: response.cached,
-                jobId: response.jobId,
-            };
-        }
-
-        return { short: (response.summary ?? "") as string, cached: response.cached, jobId: response.jobId };
+        // Background job — caller polls WS / job until complete then GETs summary.
+        return {
+            jobId: response.jobId,
+            reused: response.reused,
+            queuePosition: response.queuePosition ?? null,
+            status: response.status,
+            priority: response.priority,
+            cached: false,
+            lang: response.lang,
+        };
     },
     askVideo: (
         id: VideoId,
@@ -270,10 +307,32 @@ export const apiClient = {
             presetId?: number;
         }
     ) =>
-        api<AskVideoResponse>(`/videos/${encodeURIComponent(id)}/qa`, {
+        api<{
+            jobId: number;
+            reused?: boolean;
+            queuePosition?: number | null;
+            status?: string;
+            priority?: number;
+            lang?: string;
+            credits?: number;
+            // Legacy inline answer fields (kept optional for older servers).
+            answer?: string;
+            citations?: AskCitation[];
+            historyId?: number;
+            citedVideos?: AskVideoResponse["citedVideos"];
+        }>(`/videos/${encodeURIComponent(id)}/qa`, {
             method: "POST",
             body: SafeJSON.stringify(opts),
         }),
+    listQaHistory: (videoId?: VideoId, limit?: number) =>
+        api<{
+            items: Array<{ id: number; videoId: string; question: string; answer: string; citations: AskCitation[] }>;
+        }>(
+            withQuery("/users/qa-history", [
+                ["video", videoId],
+                ["limit", limit],
+            ])
+        ),
     listJobs: (params: { status?: JobStatus; limit?: number } = {}) =>
         api<{ jobs: PipelineJob[] }>(
             withQuery("/jobs", [

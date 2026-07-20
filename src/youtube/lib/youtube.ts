@@ -1,10 +1,12 @@
 import { join } from "node:path";
+import { grantArtifactAccess } from "@app/youtube/lib/artifact-access";
 import { audioPath, ensureBinaryDir, videoFilePath } from "@app/youtube/lib/cache";
-import type { ChannelHandle } from "@app/youtube/lib/channel.types";
+import type { ChannelEnsureResult, ChannelHandle, ChannelSyncStatus } from "@app/youtube/lib/channel.types";
 import type { VideoComment } from "@app/youtube/lib/comments.types";
 import { DEFAULT_BASE_DIR, YoutubeConfig } from "@app/youtube/lib/config";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { UpsertVideoInput } from "@app/youtube/lib/db.types";
+import { buildJobFingerprint } from "@app/youtube/lib/job-fingerprint";
 import type { JobStage } from "@app/youtube/lib/jobs.types";
 import { Pipeline } from "@app/youtube/lib/pipeline";
 import type { PipelineHandlerMap, StageHandlerCtx } from "@app/youtube/lib/pipeline.types";
@@ -65,6 +67,8 @@ export class Youtube {
             handle: ChannelHandle,
             opts?: { limit?: number; includeShorts?: boolean; signal?: AbortSignal }
         ) => Promise<number>;
+        /** Upsert + enqueue discover/metadata when not yet synced (deduped). */
+        ensure: (handle: ChannelHandle, opts?: { userId?: number | null }) => ChannelEnsureResult;
     };
     readonly videos: {
         list: YoutubeDatabase["listVideos"];
@@ -99,6 +103,69 @@ export class Youtube {
             remove: (handle: ChannelHandle): void => {
                 logger.info({ handle }, "youtube channel remove");
                 this.db.removeChannel(handle);
+            },
+            ensure: (handle: ChannelHandle, opts: { userId?: number | null } = {}): ChannelEnsureResult => {
+                this.db.upsertChannel({ handle });
+                const channel = this.db.getChannel(handle);
+
+                if (!channel) {
+                    throw new Error(`ensure: channel ${handle} missing after upsert`);
+                }
+
+                const stages: JobStage[] = ["discover", "metadata"];
+                const fingerprint = buildJobFingerprint({
+                    targetKind: "channel",
+                    target: handle,
+                    stages,
+                });
+                const active = this.db.findActiveJobByFingerprint(fingerprint);
+
+                if (channel.lastSyncedAt && !active) {
+                    logger.info({ handle }, "youtube channel ensure: already synced");
+
+                    return {
+                        channel,
+                        tracked: true,
+                        syncStatus: "synced",
+                        job: null,
+                        queuePosition: null,
+                        reused: false,
+                    };
+                }
+
+                const result = this.pipeline.enqueue({
+                    targetKind: "channel",
+                    target: handle,
+                    stages,
+                    userId: opts.userId ?? null,
+                });
+
+                if (!result.job) {
+                    throw new Error(`ensure: enqueue returned no job for ${handle}`);
+                }
+
+                const syncStatus: ChannelSyncStatus =
+                    result.job.status === "running" ? "running" : result.job.status === "failed" ? "failed" : "queued";
+
+                logger.info(
+                    {
+                        handle,
+                        jobId: result.job.id,
+                        reused: result.reused,
+                        queuePosition: result.queuePosition,
+                        syncStatus,
+                    },
+                    "youtube channel ensure"
+                );
+
+                return {
+                    channel: this.db.getChannel(handle) ?? channel,
+                    tracked: true,
+                    syncStatus,
+                    job: result.job,
+                    queuePosition: result.queuePosition,
+                    reused: result.reused,
+                };
             },
             sync: async (
                 handle: ChannelHandle,
@@ -394,12 +461,152 @@ export class Youtube {
                 await this.runGatedTranscribe(ctx, { forceTranscribe: true });
             },
             summarize: async (ctx) => {
-                await this.summary.summarize({ videoId: ctx.job.target as VideoId, mode: "short", signal: ctx.signal });
+                const params = ctx.job.params ?? {};
+                const mode =
+                    params.mode === "long" || params.mode === "timestamped" || params.mode === "short"
+                        ? params.mode
+                        : "short";
+                const holdId = typeof params.holdId === "number" ? params.holdId : null;
+                const creditCost = typeof params.creditCost === "number" ? params.creditCost : 0;
+                const videoId = ctx.job.target as VideoId;
+
+                try {
+                    const providerChoice = await resolveProviderChoice({
+                        provider: typeof params.provider === "string" ? params.provider : undefined,
+                        model: typeof params.model === "string" ? params.model : undefined,
+                        fallbackSpec: undefined,
+                    });
+
+                    await this.summary.summarize({
+                        videoId,
+                        mode,
+                        provider: typeof params.provider === "string" ? params.provider : undefined,
+                        providerChoice,
+                        targetBins: typeof params.targetBins === "number" ? params.targetBins : undefined,
+                        forceRecompute: params.force === true,
+                        tone:
+                            params.tone === "insightful" ||
+                            params.tone === "funny" ||
+                            params.tone === "actionable" ||
+                            params.tone === "controversial"
+                                ? params.tone
+                                : undefined,
+                        format: params.format === "list" || params.format === "qa" ? params.format : undefined,
+                        length:
+                            params.length === "short" || params.length === "auto" || params.length === "detailed"
+                                ? params.length
+                                : undefined,
+                        lang: typeof params.language === "string" ? params.language : undefined,
+                        presetInstructions:
+                            typeof params.presetInstructions === "string" ? params.presetInstructions : undefined,
+                        signal: ctx.signal,
+                        onProgress: (info) => ctx.onProgress((info.percent ?? 50) / 100, info.message),
+                        onPartial: (partial) => {
+                            if (partial === null || typeof partial !== "object") {
+                                return;
+                            }
+
+                            this.pipeline.emitExternal({
+                                type: "summary:partial",
+                                jobId: ctx.job.id,
+                                videoId,
+                                mode,
+                                partial,
+                            });
+                        },
+                    });
+
+                    if (holdId !== null && ctx.job.userId !== null) {
+                        this.db.transaction(() => {
+                            grantArtifactAccess(this.db, {
+                                userId: ctx.job.userId as number,
+                                kind: `summary:${mode}`,
+                                videoId,
+                                creditsSpent: creditCost,
+                            });
+                            this.db.commitHold(holdId);
+                        });
+                    }
+                } catch (error) {
+                    if (holdId !== null) {
+                        this.db.releaseHold(holdId);
+                    }
+
+                    throw error;
+                }
             },
             qa: async (ctx) => {
-                // QA runs inline in POST /videos/:id/qa; no worker claims this
-                // stage (worker count 0). Guard against a future regression.
-                throw new Error(`qa stage is inline-only (job ${ctx.job.id} should not be queue-claimed)`);
+                const params = ctx.job.params ?? {};
+                const holdId = typeof params.holdId === "number" ? params.holdId : null;
+                const question = typeof params.question === "string" ? params.question : "";
+                const videoId = ctx.job.target as VideoId;
+                const scope = params.scope === "channel" ? ("channel" as const) : ("video" as const);
+                const sources = Array.isArray(params.sources)
+                    ? (params.sources.filter((s) => s === "transcript" || s === "comments") as Array<
+                          "transcript" | "comments"
+                      >)
+                    : (["transcript"] as Array<"transcript" | "comments">);
+                const lang = typeof params.language === "string" ? params.language : "en";
+                const askCost = typeof params.creditCost === "number" ? params.creditCost : 0;
+                const topK = typeof params.topK === "number" ? params.topK : undefined;
+                const presetInstructions =
+                    typeof params.presetInstructions === "string" ? params.presetInstructions : undefined;
+                const videoIds = Array.isArray(params.videoIds)
+                    ? (params.videoIds.filter((id): id is string => typeof id === "string") as VideoId[])
+                    : [videoId];
+
+                if (!question.trim()) {
+                    throw new Error(`qa job ${ctx.job.id}: missing question in params`);
+                }
+
+                try {
+                    ctx.onProgress(0.05, "Indexing transcript");
+                    const providerChoice = await resolveProviderChoice({
+                        provider: typeof params.provider === "string" ? params.provider : undefined,
+                        model: typeof params.model === "string" ? params.model : undefined,
+                        fallbackSpec: undefined,
+                    });
+
+                    for (const memberId of videoIds) {
+                        await this.qa.index({ videoId: memberId, sources });
+                    }
+
+                    ctx.onProgress(0.5, "Answering question");
+                    const result = await this.qa.ask({
+                        videoIds,
+                        question,
+                        topK,
+                        providerChoice,
+                        presetInstructions,
+                        sources,
+                        lang,
+                    });
+
+                    if (ctx.job.userId !== null) {
+                        this.db.insertQaHistory({
+                            userId: ctx.job.userId,
+                            videoId,
+                            question,
+                            answer: result.answer,
+                            citations: result.citations,
+                            creditsSpent: askCost,
+                            sources,
+                            scope,
+                            candidateVideoIds: scope === "channel" ? videoIds : undefined,
+                            lang,
+                        });
+                    }
+
+                    if (holdId !== null) {
+                        this.db.commitHold(holdId);
+                    }
+                } catch (error) {
+                    if (holdId !== null) {
+                        this.db.releaseHold(holdId);
+                    }
+
+                    throw error;
+                }
             },
             reportSynthesize: async (ctx) => {
                 if (ctx.job.targetKind !== "report") {

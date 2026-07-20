@@ -10,6 +10,8 @@ interface AppShellProps {
     title?: string;
     description?: string;
     statusLabel?: string;
+    /** Extra controls on the right of the top bar (before the status pill). */
+    headerEnd?: React.ReactNode;
     /** Ambient bloom. Default "subtle" (dashboard / DashboardLayout-safe, no
      *  perf cost). "rich" = warm amber+teal static bloom. "playful" = restrained
      *  4-hue (amber/teal/magenta/violet) static wash. "rich-animated" = +pulse
@@ -28,6 +30,7 @@ export function AppShell({
     title,
     description,
     statusLabel = "System Online",
+    headerEnd,
     glowVariant = "subtle",
     themeClass,
     gridBackground,
@@ -61,6 +64,7 @@ export function AppShell({
                         )}
 
                         <div className="ml-auto flex items-center gap-2">
+                            {headerEnd}
                             <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
                                 <span className="uppercase tracking-widest">{statusLabel}</span>

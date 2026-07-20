@@ -16,6 +16,7 @@ import {
     useTranscript,
     useVideo,
 } from "@app/yt/api.hooks";
+import { useOptionalAuthGate } from "@app/yt/components/account/auth-gate";
 import { AddToCollectionButton } from "@app/yt/components/collections/add-to-collection-button";
 import { ProgressBar } from "@app/yt/components/pipeline/progress-bar";
 import { Loading } from "@app/yt/components/shared/loading";
@@ -46,6 +47,7 @@ export const Route = createFileRoute("/videos/$id")({
 function VideoDetailPage() {
     const { id } = Route.useParams();
     const video = useVideo(id as VideoId);
+    const auth = useOptionalAuthGate();
     const [activeTab, setActiveTab] = useState<VideoDetailTab>("summary");
     const [seekToSec, setSeekToSec] = useState<number | null>(null);
     const [progress, setProgress] = useState(0);
@@ -160,6 +162,7 @@ function VideoDetailPage() {
                     onSeek={setSeekToSec}
                     runPipeline={runPipeline}
                     pipelineProgress={progress > 0 && progress < 1 ? { progress, message: progressMessage } : null}
+                    onRequireLogin={auth ? (retry) => auth.requireLogin(retry) : undefined}
                 />
             </aside>
         </div>

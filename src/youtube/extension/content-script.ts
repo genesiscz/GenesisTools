@@ -1,4 +1,10 @@
 import { mountSidePanel, unmountSidePanel } from "@ext/content-script-mount";
+import {
+    isFullBleedOverPlayer,
+    isInFlowPosition,
+    isUsableLiveChatStyle,
+    rectsOverlapSubstantially,
+} from "@ext/placement";
 import { type ChapterTicksHandle, mountChapterTicks } from "@ext/player-chapters";
 import type { PlayerChaptersMessage, PlayerTimeMessage } from "@ext/shared/messages";
 import type { PanelTarget } from "@ext/side-panel/target";
@@ -83,8 +89,7 @@ function isInFlowRail(el: HTMLElement): boolean {
     // Only flow inline when #secondary is a normal in-flow rail; otherwise the
     // caller uses the fixed host fallback, which pins us to the right clear of
     // the player.
-    const position = getComputedStyle(el).position;
-    return position === "static" || position === "relative";
+    return isInFlowPosition(getComputedStyle(el).position);
 }
 
 function findLiveChatFrame(): HTMLElement | null {
@@ -96,13 +101,25 @@ function findLiveChatFrame(): HTMLElement | null {
     return document.querySelector<HTMLElement>("ytd-live-chat-frame");
 }
 
+function isUsableLiveChat(el: HTMLElement): boolean {
+    if (!el.isConnected) {
+        return false;
+    }
+
+    const style = getComputedStyle(el);
+    return isUsableLiveChatStyle({ display: style.display, visibility: style.visibility }, el.getBoundingClientRect());
+}
+
+function findPlayerEl(): HTMLElement | null {
+    return document.querySelector<HTMLElement>("#movie_player") ?? document.querySelector<HTMLElement>("ytd-player");
+}
+
 function coversPlayer(host: HTMLElement): boolean {
     // Safety net for responsive edge cases: whatever container we picked, if
     // the panel actually landed on top of the video we retreat to the fixed
     // right-side host instead. getBoundingClientRect forces a sync reflow so
     // the measurement is accurate right after insertion.
-    const player =
-        document.querySelector<HTMLElement>("#movie_player") ?? document.querySelector<HTMLElement>("ytd-player");
+    const player = findPlayerEl();
 
     if (!player) {
         return false;
@@ -110,14 +127,17 @@ function coversPlayer(host: HTMLElement): boolean {
 
     const h = host.getBoundingClientRect();
     const p = player.getBoundingClientRect();
+    return rectsOverlapSubstantially(h, p) || isFullBleedOverPlayer(h, p);
+}
 
-    if (h.width === 0 || p.width === 0) {
+function secondaryOverlapsPlayer(secondary: HTMLElement): boolean {
+    const player = findPlayerEl();
+
+    if (!player) {
         return false;
     }
 
-    const horizontal = Math.min(h.right, p.right) - Math.max(h.left, p.left);
-    const vertical = Math.min(h.bottom, p.bottom) - Math.max(h.top, p.top);
-    return horizontal > 40 && vertical > 40;
+    return rectsOverlapSubstantially(secondary.getBoundingClientRect(), player.getBoundingClientRect());
 }
 
 function tryInlinePlacement(host: HTMLElement, insert: () => void): boolean {
@@ -210,9 +230,9 @@ function attachHost(target: PanelTarget): { host: HTMLElement; placement: Placem
     shieldKeyboardEvents(host);
 
     if (target.kind === "video" && location.pathname === "/watch") {
-        // Prefer sitting directly above the live chat when one is present.
+        // Prefer sitting directly above a *usable* live chat (ignore ghost frames).
         const chat = findLiveChatFrame();
-        if (chat?.parentElement) {
+        if (chat?.parentElement && isUsableLiveChat(chat)) {
             const parent = chat.parentElement;
             if (tryInlinePlacement(host, () => parent.insertBefore(host, chat))) {
                 return { host, placement: "inline" };
@@ -220,9 +240,9 @@ function attachHost(target: PanelTarget): { host: HTMLElement; placement: Placem
         }
 
         // Otherwise flow at the top of the related-videos rail, but only when
-        // #secondary is a normal in-flow column (see isInFlowRail).
+        // #secondary is a normal in-flow column that doesn't overlap the player.
         const secondary = findWatchSecondaryColumn();
-        if (secondary && isInFlowRail(secondary)) {
+        if (secondary && isInFlowRail(secondary) && !secondaryOverlapsPlayer(secondary)) {
             if (tryInlinePlacement(host, () => secondary.insertBefore(host, secondary.firstChild))) {
                 return { host, placement: "inline" };
             }
@@ -232,6 +252,77 @@ function attachHost(target: PanelTarget): { host: HTMLElement; placement: Placem
     applyFixedStyles(host);
     document.body.appendChild(host);
     return { host, placement: "fixed" };
+}
+
+let layoutWatchTimer: number | null = null;
+let layoutResizeObserver: ResizeObserver | null = null;
+let layoutMutationObserver: MutationObserver | null = null;
+
+function stopLayoutWatch(): void {
+    if (layoutWatchTimer !== null) {
+        window.clearTimeout(layoutWatchTimer);
+        layoutWatchTimer = null;
+    }
+
+    layoutResizeObserver?.disconnect();
+    layoutResizeObserver = null;
+    layoutMutationObserver?.disconnect();
+    layoutMutationObserver = null;
+}
+
+function inlinePlacementStillValid(host: HTMLElement): boolean {
+    if (coversPlayer(host)) {
+        return false;
+    }
+
+    const chat = findLiveChatFrame();
+    if (chat && host.parentElement === chat.parentElement && !isUsableLiveChat(chat)) {
+        return false;
+    }
+
+    const secondary = findWatchSecondaryColumn();
+    if (secondary?.contains(host) && (!isInFlowRail(secondary) || secondaryOverlapsPlayer(secondary))) {
+        return false;
+    }
+
+    return true;
+}
+
+function startLayoutWatch(host: HTMLElement, placement: Placement): void {
+    stopLayoutWatch();
+
+    if (placement !== "inline" || location.pathname !== "/watch") {
+        return;
+    }
+
+    const recheck = (): void => {
+        if (layoutWatchTimer !== null) {
+            return;
+        }
+
+        layoutWatchTimer = window.setTimeout(() => {
+            layoutWatchTimer = null;
+            const liveHost = document.getElementById(hostId);
+
+            if (!liveHost || liveHost !== host) {
+                return;
+            }
+
+            if (!inlinePlacementStillValid(liveHost)) {
+                ensureSidePanel();
+            }
+        }, 200);
+    };
+
+    const player = findPlayerEl();
+    if (player && typeof ResizeObserver !== "undefined") {
+        layoutResizeObserver = new ResizeObserver(recheck);
+        layoutResizeObserver.observe(player);
+    }
+
+    const flexy = document.querySelector("ytd-watch-flexy") ?? document.body;
+    layoutMutationObserver = new MutationObserver(recheck);
+    layoutMutationObserver.observe(flexy, { childList: true, subtree: true, attributes: true });
 }
 
 function ensureSidePanel(): void {
@@ -245,9 +336,11 @@ function ensureSidePanel(): void {
     const { host, placement } = attachHost(target);
     const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
     mountSidePanel(shadow, target, placement);
+    startLayoutWatch(host, placement);
 }
 
 function removeSidePanel(): void {
+    stopLayoutWatch();
     const host = document.getElementById(hostId);
     if (!host) {
         return;
@@ -440,6 +533,7 @@ window.__genesisYtCleanup = () => {
         mountRetryTimer = null;
     }
 
+    stopLayoutWatch();
     removeSidePanel();
     window.removeEventListener("yt-navigate-finish", scheduleMount);
     window.removeEventListener("popstate", scheduleMount);

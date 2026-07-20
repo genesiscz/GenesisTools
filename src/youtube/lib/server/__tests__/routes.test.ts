@@ -3,9 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startServer } from "@app/youtube/lib/server";
-import type { SummarizeOpts, SummarizeResult } from "@app/youtube/lib/summarize.types";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { skip } from "@genesiscz/utils/test/skip";
 import { apiUrl } from "./test-helpers";
 
 describe("youtube server foundation", () => {
@@ -72,6 +70,34 @@ describe("youtube server foundation", () => {
 
             expect(deleteResponse.status).toBe(200);
             expect(deleteBody.removed).toBe("@mkbhd");
+        } finally {
+            await handle.stop();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("GET /channels/:handle ensures and dedupes discover enqueue", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "youtube-server-ensure-"));
+        const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
+
+        try {
+            const first = await fetch(apiUrl(handle.port, `/channels/%40opat04`));
+            const firstBody = await first.json();
+
+            expect(first.status).toBe(200);
+            expect(firstBody.tracked).toBe(true);
+            expect(firstBody.channel.handle).toBe("@opat04");
+            expect(firstBody.job?.id).toBeNumber();
+            expect(firstBody.syncStatus).toBe("queued");
+            expect(firstBody.reused).toBe(false);
+
+            const second = await fetch(apiUrl(handle.port, `/channels/%40opat04`));
+            const secondBody = await second.json();
+
+            expect(second.status).toBe(200);
+            expect(secondBody.job?.id).toBe(firstBody.job.id);
+            expect(secondBody.reused).toBe(true);
+            expect(secondBody.syncStatus).toBe("queued");
         } finally {
             await handle.stop();
             await rm(dir, { recursive: true, force: true });
@@ -250,73 +276,93 @@ describe("youtube server foundation", () => {
         }
     });
 
-    it.skipIf(skip.network)(
-        "POST /summary with mode=long, tone, format, length passes them through to summarize",
-        async () => {
-            const dir = await mkdtemp(join(tmpdir(), "youtube-server-routes-"));
-            const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
+    it("POST /summary with mode=long enqueues a high-priority summarize job with params", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "youtube-server-routes-"));
+        const handle = await startServer({ port: 0, baseDir: dir, startPipeline: false });
 
-            try {
-                handle.youtube.db.upsertChannel({ handle: "@mkbhd" });
-                handle.youtube.db.upsertVideo({
-                    id: "abc123def45",
-                    channelHandle: "@mkbhd",
-                    title: "Test Video",
-                    uploadDate: "2026-04-01",
-                });
-                handle.youtube.db.saveTranscript({
-                    videoId: "abc123def45",
-                    lang: "en",
-                    source: "captions",
-                    text: "hello",
-                    segments: [{ text: "hello", start: 0, end: 1 }],
-                    durationSec: 1,
-                });
+        try {
+            handle.youtube.db.upsertChannel({ handle: "@mkbhd" });
+            handle.youtube.db.upsertVideo({
+                id: "abc123def45",
+                channelHandle: "@mkbhd",
+                title: "Test Video",
+                uploadDate: "2026-04-01",
+            });
+            handle.youtube.db.saveTranscript({
+                videoId: "abc123def45",
+                lang: "en",
+                source: "captions",
+                text: "hello",
+                segments: [{ text: "hello", start: 0, end: 1 }],
+                durationSec: 1,
+            });
 
-                const captured: SummarizeOpts[] = [];
-                handle.youtube.summary.summarize = async (opts: SummarizeOpts): Promise<SummarizeResult> => {
-                    captured.push(opts);
-                    return {
-                        long: {
-                            tldr: "ok",
-                            keyPoints: [],
-                            learnings: [],
-                            chapters: [],
-                            conclusion: null,
-                        },
-                    };
-                };
+            const user = handle.youtube.db.createUser({
+                email: "summary-enqueue@example.com",
+                passwordHash: "x",
+                apiToken: "ytu_summary_enqueue",
+            });
+            handle.youtube.db.grantCredits(user.id, 500, "dev-topup");
 
-                const res = await fetch(apiUrl(handle.port, `/videos/abc123def45/summary`), {
-                    method: "POST",
-                    headers: { "content-type": "application/json" },
-                    body: SafeJSON.stringify({
-                        mode: "long",
-                        tone: "actionable",
-                        format: "qa",
-                        length: "detailed",
-                        provider: "anthropic",
-                        model: "claude-haiku-4-5",
-                    }),
-                });
-                const body = (await res.json()) as { summary: { tldr: string }; mode: string; jobId: number };
+            const summaryBody = {
+                mode: "long",
+                tone: "actionable",
+                format: "qa",
+                length: "detailed",
+                provider: "anthropic",
+                model: "claude-haiku-4-5",
+            };
 
-                expect(res.status).toBe(200);
-                expect(body.mode).toBe("long");
-                expect(body.summary.tldr).toBe("ok");
-                expect(typeof body.jobId).toBe("number");
-                expect(captured[0]).toMatchObject({
-                    mode: "long",
-                    tone: "actionable",
-                    format: "qa",
-                    length: "detailed",
-                });
-            } finally {
-                await handle.stop();
-                await rm(dir, { recursive: true, force: true });
-            }
+            const res = await fetch(apiUrl(handle.port, `/videos/abc123def45/summary`), {
+                method: "POST",
+                headers: {
+                    "content-type": "application/json",
+                    authorization: "Bearer ytu_summary_enqueue",
+                },
+                body: SafeJSON.stringify(summaryBody),
+            });
+            const body = (await res.json()) as {
+                jobId: number;
+                queuePosition: number | null;
+                status: string;
+                priority: number;
+                reused: boolean;
+                summary?: unknown;
+            };
+
+            expect(res.status).toBe(200);
+            expect(body.summary).toBeUndefined();
+            expect(typeof body.jobId).toBe("number");
+            expect(body.status).toBe("pending");
+            expect(body.priority).toBe(100);
+            expect(body.reused).toBe(false);
+
+            const job = handle.youtube.db.getJob(body.jobId);
+            expect(job?.stages).toContain("summarize");
+            expect(job?.params).toMatchObject({
+                mode: "long",
+                tone: "actionable",
+                format: "qa",
+                length: "detailed",
+            });
+
+            const again = await fetch(apiUrl(handle.port, `/videos/abc123def45/summary`), {
+                method: "POST",
+                headers: {
+                    "content-type": "application/json",
+                    authorization: "Bearer ytu_summary_enqueue",
+                },
+                body: SafeJSON.stringify(summaryBody),
+            });
+            const againBody = (await again.json()) as { jobId: number; reused: boolean };
+            expect(again.status).toBe(200);
+            expect(againBody.jobId).toBe(body.jobId);
+            expect(againBody.reused).toBe(true);
+        } finally {
+            await handle.stop();
+            await rm(dir, { recursive: true, force: true });
         }
-    );
+    });
 
     it("serves cache stats and config get/patch routes", async () => {
         const dir = await mkdtemp(join(tmpdir(), "youtube-server-routes-"));

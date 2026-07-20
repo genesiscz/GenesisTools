@@ -83,8 +83,8 @@ function JobsPage() {
                             </h1>
                             <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
                                 Watch discovery, transcript, download, and summarization stages move through the local
-                                queue in real time. Click any row to see every LLM, embedding, and transcription call
-                                recorded against that job.
+                                queue in real time. Click any row to see every yt-dlp / YouTube fetch, LLM, embedding,
+                                and transcription call recorded against that job.
                             </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-1 rounded-full border border-primary/20 bg-black/30 p-1 font-mono text-[0.7rem] uppercase tracking-[0.18em]">

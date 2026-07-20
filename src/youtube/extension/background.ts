@@ -85,10 +85,17 @@ export async function handleRequest(req: ExtensionRequest): Promise<ExtensionRes
     switch (req.type) {
         case "api:listChannels":
             return apiCall(`${base}/api/v1/channels`);
+        case "api:ensureChannel":
+            return apiCall(`${base}/api/v1/channels/${encodeURIComponent(req.handle)}`);
         case "api:addChannel":
             return apiCall(`${base}/api/v1/channels`, {
                 method: "POST",
                 body: JSON.stringify({ handles: [req.handle] }),
+            });
+        case "api:syncChannel":
+            return apiCall(`${base}/api/v1/channels/${encodeURIComponent(req.handle)}/sync`, {
+                method: "POST",
+                body: JSON.stringify({}),
             });
         case "api:listVideos": {
             const query = new URLSearchParams();

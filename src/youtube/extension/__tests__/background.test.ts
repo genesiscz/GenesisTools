@@ -85,6 +85,17 @@ describe("extension background request routing", () => {
         expect(calls.at(-1)?.init.method ?? "GET").toBe("GET");
     });
 
+    it("POSTs channel sync for api:syncChannel", async () => {
+        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const handleRequest = await loadHandleRequest();
+
+        const res = await handleRequest({ type: "api:syncChannel", handle: "@opat04" });
+
+        expect(res.ok).toBe(true);
+        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/channels/%40opat04/sync");
+        expect(calls.at(-1)?.init.method).toBe("POST");
+    });
+
     it("omits absent optional params for api:listVideos", async () => {
         const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
         const handleRequest = await loadHandleRequest();

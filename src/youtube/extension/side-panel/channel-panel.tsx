@@ -1,35 +1,57 @@
 import type { ChannelHandle } from "@app/youtube/lib/types";
-import {
-    useAddChannel,
-    useChannels,
-    useChannelVideos,
-    useConfig,
-    useMe,
-    useToggleWatchlist,
-    useWatchlist,
-} from "@ext/api.hooks";
+import { useChannelVideos, useConfig, useEnsureChannel, useMe, useToggleWatchlist, useWatchlist } from "@ext/api.hooks";
+import { youtubeChannelWebUrl } from "@ext/shared/web-ui-url";
 import { Header } from "@ext/side-panel/header";
 import { Button } from "@genesiscz/utils/ui/components/button";
-import { ExternalLink, Plus } from "lucide-react";
-import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { ExternalLink, Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+
+/** How long to poll for discover results while ensure is syncing. */
+const POST_ENSURE_POLL_MS = 90_000;
 
 export function ChannelPanel({ handle }: { handle: string | null }) {
     const channelHandle = handle as ChannelHandle | null;
+    const queryClient = useQueryClient();
     const config = useConfig();
-    const channels = useChannels();
-    const addChannel = useAddChannel();
-    const videos = useChannelVideos(channelHandle, { limit: 20, includeShorts: true });
+    const ensure = useEnsureChannel(channelHandle);
+    const [pollVideosUntil, setPollVideosUntil] = useState<number | null>(null);
+    const videos = useChannelVideos(channelHandle, {
+        limit: 20,
+        includeShorts: true,
+        pollWhileEmptyUntil: pollVideosUntil,
+    });
     const [collapsed, setCollapsed] = useState(false);
     const me = useMe();
     const watchlist = useWatchlist(Boolean(me.data?.user));
     const toggleWatchlist = useToggleWatchlist();
 
-    const tracked = channelHandle !== null && (channels.data ?? []).some((item) => item.handle === channelHandle);
+    const syncStatus = ensure.data?.syncStatus;
+    const tracked = ensure.data?.tracked === true;
+    const syncing = syncStatus === "queued" || syncStatus === "running";
+    const queuePosition = ensure.data?.queuePosition ?? null;
     const followed =
         channelHandle !== null && (watchlist.data ?? []).some((entry) => entry.channelHandle === channelHandle);
     const rows = videos.data ?? [];
+    const awaitingVideos =
+        tracked && rows.length === 0 && pollVideosUntil !== null && Date.now() < pollVideosUntil && !videos.isError;
     const base = config.data?.apiBaseUrl.replace(/\/$/, "") ?? "";
-    const webUrl = channelHandle ? `${base}/channels/${encodeURIComponent(channelHandle)}` : base;
+    const webUrl = channelHandle && base ? youtubeChannelWebUrl(base, channelHandle) : "";
+
+    useEffect(() => {
+        if (syncing) {
+            setPollVideosUntil(Date.now() + POST_ENSURE_POLL_MS);
+        }
+    }, [syncing]);
+
+    useEffect(() => {
+        if (!channelHandle || syncStatus !== "synced") {
+            return;
+        }
+
+        void queryClient.invalidateQueries({ queryKey: ["channels"] });
+        void queryClient.invalidateQueries({ queryKey: ["videos", channelHandle] });
+    }, [channelHandle, syncStatus, queryClient]);
 
     return (
         <div className="flex h-auto min-h-0 flex-col overflow-hidden rounded-xl border border-white/8 bg-card">
@@ -54,24 +76,44 @@ export function ChannelPanel({ handle }: { handle: string | null }) {
                             tab and try again.
                         </p>
                     ) : (
-                        <div className="flex flex-wrap gap-2">
-                            <Button
-                                onClick={() => addChannel.mutate(channelHandle)}
-                                disabled={addChannel.isPending || tracked}
-                            >
-                                <Plus className="size-4" />
-                                {tracked ? "Tracked" : addChannel.isPending ? "Tracking…" : "Track this channel"}
-                            </Button>
+                        <div className="flex flex-wrap items-center gap-2">
+                            {ensure.isPending || syncing ? (
+                                <div className="flex items-center gap-2 rounded-2xl border border-primary/20 bg-black/20 px-3 py-2 text-sm text-muted-foreground">
+                                    <Loader2 className="size-4 animate-spin text-secondary" />
+                                    <span>
+                                        {syncStatus === "running"
+                                            ? "Discovering channel…"
+                                            : queuePosition != null
+                                              ? `Not tracked yet — queued (#${queuePosition})`
+                                              : "Not tracked yet — queuing discover…"}
+                                    </span>
+                                </div>
+                            ) : syncStatus === "synced" ? (
+                                <div className="rounded-2xl border border-primary/15 bg-black/20 px-3 py-2 text-sm text-foreground/80">
+                                    Tracked in GenesisTools
+                                </div>
+                            ) : ensure.isError ? (
+                                <p className="text-xs text-destructive">
+                                    {ensure.error instanceof Error
+                                        ? ensure.error.message
+                                        : "Failed to ensure channel tracking."}
+                                </p>
+                            ) : null}
                             {me.data?.user ? (
                                 <Button
                                     variant={followed ? "cyber-secondary" : "default"}
+                                    title={
+                                        followed
+                                            ? "Remove from your personal digest watchlist"
+                                            : "Follow for your personal digest (new uploads from this channel)"
+                                    }
                                     disabled={toggleWatchlist.isPending}
                                     onClick={() => toggleWatchlist.mutate({ handle: channelHandle, follow: !followed })}
                                 >
-                                    {followed ? "Following" : "Follow"}
+                                    {followed ? "Following" : "Follow for digest"}
                                 </Button>
                             ) : null}
-                            {base ? (
+                            {webUrl ? (
                                 <Button asChild variant="cyber-secondary">
                                     <a href={webUrl} target="_blank" rel="noopener noreferrer">
                                         <ExternalLink className="size-4" />
@@ -82,9 +124,18 @@ export function ChannelPanel({ handle }: { handle: string | null }) {
                         </div>
                     )}
 
-                    {addChannel.isError ? (
+                    {me.data?.user && channelHandle !== null ? (
+                        <p className="text-[11px] leading-snug text-muted-foreground">
+                            Opening a channel auto-queues discover. <span className="text-secondary">Follow</span> adds
+                            it to your personal digest.
+                        </p>
+                    ) : null}
+
+                    {toggleWatchlist.isError ? (
                         <p className="text-xs text-destructive">
-                            {addChannel.error instanceof Error ? addChannel.error.message : "Failed to track channel."}
+                            {toggleWatchlist.error instanceof Error
+                                ? toggleWatchlist.error.message
+                                : "Failed to update digest follow."}
                         </p>
                     ) : null}
 
@@ -102,10 +153,11 @@ export function ChannelPanel({ handle }: { handle: string | null }) {
                             </p>
                         ) : rows.length === 0 ? (
                             <p className="rounded-2xl border border-dashed border-primary/25 p-4 text-sm text-muted-foreground">
-                                No videos for this channel yet.
-                                {tracked
-                                    ? " They'll appear here once the dashboard has fetched them."
-                                    : " Track the channel on the dashboard to fetch its videos."}
+                                {awaitingVideos || syncing
+                                    ? "Fetching videos… they'll show up here as the discover job finishes."
+                                    : tracked
+                                      ? "No videos for this channel yet. They'll appear here once discover finishes."
+                                      : "No videos for this channel yet."}
                             </p>
                         ) : (
                             <ul className="space-y-2">

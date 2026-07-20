@@ -317,7 +317,7 @@ function buildSchemas(): Record<string, OpenApiSchema> {
                 id: { type: "integer" },
                 jobId: { type: "integer" },
                 stage: { oneOf: [ref("JobStage"), { type: "null" }] },
-                kind: { type: "string", enum: ["llm", "embed", "transcribe"] },
+                kind: { type: "string", enum: ["llm", "embed", "transcribe", "api"] },
                 action: nullableString(),
                 provider: nullableString(),
                 model: nullableString(),

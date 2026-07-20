@@ -553,7 +553,7 @@ describe("YoutubeDatabase QA chunks", () => {
 
 describe("YoutubeDatabase jobs", () => {
     it("enqueues and retrieves a pending job", () => {
-        const job = db.enqueueJob({ targetKind: "video", target: "vid00000001", stages: ["metadata", "captions"] });
+        const { job } = db.enqueueJob({ targetKind: "video", target: "vid00000001", stages: ["metadata", "captions"] });
 
         expect(job.id).toBeGreaterThan(0);
         expect(job.status).toBe("pending");
@@ -562,12 +562,12 @@ describe("YoutubeDatabase jobs", () => {
     });
 
     it("claims only jobs whose next stage matches the worker stage", () => {
-        const discoverThenMetadata = db.enqueueJob({
+        const { job: discoverThenMetadata } = db.enqueueJob({
             targetKind: "channel",
             target: "@mkbhd",
             stages: ["discover", "metadata"],
         });
-        const metadataOnly = db.enqueueJob({ targetKind: "video", target: "meta", stages: ["metadata"] });
+        const { job: metadataOnly } = db.enqueueJob({ targetKind: "video", target: "meta", stages: ["metadata"] });
         const claimed = db.claimNextJob("worker-1", { stage: "metadata" });
 
         expect(claimed?.id).toBe(metadataOnly.id);
@@ -578,7 +578,7 @@ describe("YoutubeDatabase jobs", () => {
     });
 
     it("updates running jobs through completion", () => {
-        const job = db.enqueueJob({ targetKind: "video", target: "vid00000001", stages: ["metadata"] });
+        const { job } = db.enqueueJob({ targetKind: "video", target: "vid00000001", stages: ["metadata"] });
         const claimed = db.claimNextJob("worker-1");
 
         db.updateJob(claimed?.id ?? job.id, { currentStage: "metadata", progress: 0.5, progressMessage: "half" });
@@ -592,7 +592,7 @@ describe("YoutubeDatabase jobs", () => {
     });
 
     it("rejects invalid job state transitions", () => {
-        const job = db.enqueueJob({ targetKind: "video", target: "vid00000001", stages: ["metadata"] });
+        const { job } = db.enqueueJob({ targetKind: "video", target: "vid00000001", stages: ["metadata"] });
 
         expect(() => db.updateJob(job.id, { status: "completed" })).toThrow(
             "invalid job transition pending -> completed"
@@ -600,7 +600,7 @@ describe("YoutubeDatabase jobs", () => {
     });
 
     it("cancels pending and running jobs", () => {
-        const pending = db.enqueueJob({ targetKind: "video", target: "pending", stages: ["metadata"] });
+        const { job: pending } = db.enqueueJob({ targetKind: "video", target: "pending", stages: ["metadata"] });
         db.enqueueJob({ targetKind: "video", target: "running", stages: ["metadata"] });
         const running = db.claimNextJob("worker-1");
 
@@ -612,8 +612,8 @@ describe("YoutubeDatabase jobs", () => {
     });
 
     it("requeues interrupted running jobs", () => {
-        const first = db.enqueueJob({ targetKind: "video", target: "first", stages: ["metadata"] });
-        const second = db.enqueueJob({ targetKind: "video", target: "second", stages: ["metadata"] });
+        const { job: first } = db.enqueueJob({ targetKind: "video", target: "first", stages: ["metadata"] });
+        const { job: second } = db.enqueueJob({ targetKind: "video", target: "second", stages: ["metadata"] });
         db.claimNextJob("worker-1");
         db.claimNextJob("worker-2");
         db.updateJob(first.id, { currentStage: "metadata", progress: 0.25, progressMessage: "working" });
@@ -627,7 +627,7 @@ describe("YoutubeDatabase jobs", () => {
     });
 
     it("lists jobs by filters", () => {
-        const parent = db.enqueueJob({ targetKind: "channel", target: "@mkbhd", stages: ["discover"] });
+        const { job: parent } = db.enqueueJob({ targetKind: "channel", target: "@mkbhd", stages: ["discover"] });
         db.enqueueJob({ targetKind: "video", target: "child", stages: ["metadata"], parentJobId: parent.id });
         db.enqueueJob({ targetKind: "video", target: "other", stages: ["metadata"] });
 

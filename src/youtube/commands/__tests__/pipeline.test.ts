@@ -32,6 +32,9 @@ mock.module("@app/youtube/commands/_shared/ensure-pipeline", () => ({
                     createdAt: "2026-04-01",
                     updatedAt: "2026-04-01",
                     completedAt: "2026-04-01",
+                    priority: 50,
+                    params: null,
+                    fingerprint: null,
                 };
                 jobs.push(job);
 

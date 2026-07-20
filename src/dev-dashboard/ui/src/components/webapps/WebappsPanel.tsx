@@ -80,8 +80,8 @@ export function WebappsPanel({ enableLive = true }: { enableLive?: boolean } = {
     const pendingCount = normal.filter((p) => p.probeStatus === "pending").length;
 
     return (
-        <div className="dd-panel flex flex-col gap-3 p-4">
-            <div className="flex flex-col gap-2">
+        <div className="dd-panel flex max-h-[min(60vh,28rem)] min-h-0 flex-col gap-3 overflow-hidden p-4">
+            <div className="flex shrink-0 flex-col gap-2">
                 <div className="flex items-center justify-between gap-3">
                     <h3 className="dd-accent-text text-sm font-bold tracking-widest">
                         PORTS ({visible.length}
@@ -106,36 +106,38 @@ export function WebappsPanel({ enableLive = true }: { enableLive?: boolean } = {
                 ) : null}
             </div>
 
-            {visible.length === 0 ? (
-                <p className="font-mono text-sm text-[var(--dd-text-muted)]">
-                    {!data ? "Scanning…" : query ? `No ports match "${query}".` : "No matching listeners."}
-                </p>
-            ) : (
-                <ul className="flex flex-col gap-2">
-                    {visible.map((app) => (
-                        <PortRow key={`${app.pid}-${app.port}`} app={app} />
-                    ))}
-                </ul>
-            )}
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                {visible.length === 0 ? (
+                    <p className="font-mono text-sm text-[var(--dd-text-muted)]">
+                        {!data ? "Scanning…" : query ? `No ports match "${query}".` : "No matching listeners."}
+                    </p>
+                ) : (
+                    <ul className="flex flex-col gap-2">
+                        {visible.map((app) => (
+                            <PortRow key={`${app.pid}-${app.port}`} app={app} />
+                        ))}
+                    </ul>
+                )}
 
-            {hiddenSorted.length > 0 ? (
-                <div className="border-t border-[var(--dd-border)] pt-2">
-                    <button
-                        type="button"
-                        onClick={() => setShowHidden((v) => !v)}
-                        className="w-full text-left font-mono text-xs text-[var(--dd-text-muted)] hover:text-[var(--dd-text-secondary)]"
-                    >
-                        {showHidden ? "▾" : "▸"} {hiddenSorted.length} system / junk hidden
-                    </button>
-                    {showHidden ? (
-                        <ul className="mt-2 flex flex-col gap-2 opacity-80">
-                            {hiddenSorted.map((app) => (
-                                <PortRow key={`h-${app.pid}-${app.port}`} app={app} />
-                            ))}
-                        </ul>
-                    ) : null}
-                </div>
-            ) : null}
+                {hiddenSorted.length > 0 ? (
+                    <div className="mt-2 border-t border-[var(--dd-border)] pt-2">
+                        <button
+                            type="button"
+                            onClick={() => setShowHidden((v) => !v)}
+                            className="w-full text-left font-mono text-xs text-[var(--dd-text-muted)] hover:text-[var(--dd-text-secondary)]"
+                        >
+                            {showHidden ? "▾" : "▸"} {hiddenSorted.length} system / junk hidden
+                        </button>
+                        {showHidden ? (
+                            <ul className="mt-2 flex flex-col gap-2 opacity-80">
+                                {hiddenSorted.map((app) => (
+                                    <PortRow key={`h-${app.pid}-${app.port}`} app={app} />
+                                ))}
+                            </ul>
+                        ) : null}
+                    </div>
+                ) : null}
+            </div>
         </div>
     );
 }

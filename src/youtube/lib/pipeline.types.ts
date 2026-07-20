@@ -22,6 +22,20 @@ export interface EnqueuePipelineJobInput {
     stages: JobStage[];
     parentJobId?: number;
     userId?: number | null;
+    params?: Record<string, unknown> | null;
+    priority?: number;
+    /** Bypass fingerprint reuse and artifact short-circuit. */
+    force?: boolean;
+}
+
+export interface EnqueuePipelineResult {
+    /** Null when `skipped: "artifact"` — no job row was created or reused. */
+    job: PipelineJob | null;
+    reused: boolean;
+    /** 1-based position among pending jobs under priority claim order; null if not pending. */
+    queuePosition: number | null;
+    /** Set when enqueue was skipped because the artifact already exists. */
+    skipped?: "artifact";
 }
 
 export interface ListPipelineJobsOpts {

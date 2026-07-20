@@ -40,13 +40,19 @@ export function registerPipelineCommand(program: Command): void {
                 yt.pipeline.setGlobalConcurrencyOverride(opts.concurrency);
             }
 
-            const jobs = splitTargets(targets).map((target) =>
-                yt.pipeline.enqueue({
+            const jobs = splitTargets(targets).map((target) => {
+                const { job } = yt.pipeline.enqueue({
                     targetKind: resolveTargetKind(target),
                     target,
                     stages,
-                })
-            );
+                });
+
+                if (!job) {
+                    throw new Error(`pipeline enqueue returned no job for ${target}`);
+                }
+
+                return job;
+            });
             await yt.pipeline.start();
 
             const finalRows = opts.watch

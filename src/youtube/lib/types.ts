@@ -2,7 +2,7 @@ export type { MeBillingContext, SubscriptionPlan, SubscriptionStatus } from "@ap
 export { LOW_BALANCE_THRESHOLD, SUBSCRIPTION_PLANS } from "@app/youtube/lib/billing.types";
 export type { CacheLayout } from "@app/youtube/lib/cache.types";
 export type { FetchCaptionsOpts, FetchCaptionsResult } from "@app/youtube/lib/captions.types";
-export type { Channel, ChannelHandle } from "@app/youtube/lib/channel.types";
+export type { Channel, ChannelEnsureResult, ChannelHandle, ChannelSyncStatus } from "@app/youtube/lib/channel.types";
 export type { CollectionRule, WatchedRule } from "@app/youtube/lib/collection-rules";
 export type { FetchCommentsOpts, FetchedComment, VideoComment } from "@app/youtube/lib/comments.types";
 export type {

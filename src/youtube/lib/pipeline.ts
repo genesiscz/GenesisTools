@@ -5,11 +5,13 @@ import { withJobActivity } from "@app/youtube/lib/job-activity";
 import type { JobEvent, JobStage, PipelineJob } from "@app/youtube/lib/jobs.types";
 import type {
     EnqueuePipelineJobInput,
+    EnqueuePipelineResult,
     JobEventHandler,
     ListPipelineJobsOpts,
     PipelineDeps,
     StageHandlerCtx,
 } from "@app/youtube/lib/pipeline.types";
+import type { VideoId } from "@app/youtube/lib/video.types";
 import { logger } from "@genesiscz/utils/logger";
 
 const DEFAULT_POLL_MS = 250;
@@ -35,8 +37,17 @@ export class Pipeline {
         return () => this.emitter.off(event, wrapped);
     }
 
-    enqueue(input: EnqueuePipelineJobInput): PipelineJob {
-        const job = this.db.enqueueJob(input);
+    enqueue(input: EnqueuePipelineJobInput): EnqueuePipelineResult {
+        if (!input.force) {
+            const artifact = this.tryArtifactShortCircuit(input);
+
+            if (artifact) {
+                return artifact;
+            }
+        }
+
+        const { job, reused } = this.db.enqueueJob(input);
+        const queuePosition = this.db.getJobQueuePosition(job.id);
         logger.info(
             {
                 jobId: job.id,
@@ -44,12 +55,18 @@ export class Pipeline {
                 target: job.target,
                 stages: job.stages,
                 parentJobId: job.parentJobId,
+                reused,
+                queuePosition,
+                priority: job.priority,
             },
-            "youtube pipeline job enqueued"
+            reused ? "youtube pipeline job reused" : "youtube pipeline job enqueued"
         );
-        this.emit({ type: "job:created", job });
 
-        return job;
+        if (!reused) {
+            this.emit({ type: "job:created", job });
+        }
+
+        return { job, reused, queuePosition };
     }
 
     getJob(id: number): PipelineJob | null {
@@ -227,6 +244,16 @@ export class Pipeline {
 
             const message = error instanceof Error ? error.message : String(error);
             this.db.updateJob(job.id, { status: "failed", error: message, completedAt: new Date().toISOString() });
+            const holdId = job.params && typeof job.params.holdId === "number" ? job.params.holdId : null;
+
+            if (holdId !== null) {
+                try {
+                    this.db.releaseHold(holdId);
+                } catch (releaseError) {
+                    logger.warn({ err: releaseError, jobId: job.id, holdId }, "youtube pipeline: release hold failed");
+                }
+            }
+
             const failed = this.db.getJob(job.id) ?? job;
             logger.error(
                 { jobId: failed.id, targetKind: failed.targetKind, target: failed.target, error: message },
@@ -239,12 +266,6 @@ export class Pipeline {
     }
 
     private async workerCountForStage(stage: JobStage): Promise<number> {
-        // Inline-only stage (POST /videos/:id/qa) — never queue-claimed, even
-        // under a global concurrency override (checked first on purpose).
-        if (stage === "qa") {
-            return 0;
-        }
-
         if (this.globalConcurrencyOverride !== null) {
             return this.globalConcurrencyOverride;
         }
@@ -261,6 +282,7 @@ export class Pipeline {
             case "transcribe":
                 return Math.max(1, Math.max(concurrency.localTranscribe, concurrency.cloudTranscribe));
             case "summarize":
+            case "qa":
             case "reportSynthesize":
                 return Math.max(1, concurrency.summarize);
             case "video":
@@ -270,6 +292,31 @@ export class Pipeline {
 
     private emit(event: JobEvent): void {
         this.emitter.emit(event.type, event);
+    }
+
+    /**
+     * Skip enqueue when the requested fetch work is already satisfied locally
+     * (comments / captions). Channel ensure handles discover sync itself.
+     */
+    private tryArtifactShortCircuit(input: EnqueuePipelineJobInput): EnqueuePipelineResult | null {
+        if (input.targetKind !== "video") {
+            return null;
+        }
+
+        const videoId = input.target as VideoId;
+        const work = input.stages.filter((stage) => stage !== "metadata");
+
+        if (work.length === 1 && work[0] === "comments" && this.db.getComments(videoId).length > 0) {
+            logger.info({ videoId, stages: input.stages }, "youtube pipeline skip enqueue: comments exist");
+            return { job: null, reused: true, queuePosition: null, skipped: "artifact" };
+        }
+
+        if (work.length === 1 && work[0] === "captions" && this.db.getTranscript(videoId)) {
+            logger.info({ videoId, stages: input.stages }, "youtube pipeline skip enqueue: transcript exists");
+            return { job: null, reused: true, queuePosition: null, skipped: "artifact" };
+        }
+
+        return null;
     }
 
     /** Emit pipeline lifecycle events for a job that runs OUTSIDE the queue worker
@@ -289,6 +336,7 @@ const JOB_STAGES: JobStage[] = [
     "video",
     "transcribe",
     "summarize",
+    "qa",
     "reportSynthesize",
 ];
 

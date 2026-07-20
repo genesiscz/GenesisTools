@@ -42,6 +42,10 @@ interface AppSidebarProps {
     /** Optional account footer. Omitted entirely when not provided (e.g. tools with no auth). */
     user?: { name: string; email?: string; avatarUrl?: string; initials: string };
     onSignOut?: () => void;
+    /** Opens sign-in when the footer is shown without a `user` (guest CTA). */
+    onSignIn?: () => void;
+    /** Full override for the footer (takes precedence over `user` / `onSignIn`). */
+    renderFooter?: () => ReactNode;
     /** Per-item render override. Replaces the default menu-button rendering. */
     MenuItemComponent?: React.ComponentType<{
         item: SidebarNavItem;
@@ -74,12 +78,15 @@ export function AppSidebar({
     activePath,
     user,
     onSignOut,
+    onSignIn,
+    renderFooter,
     MenuItemComponent,
     LinkComponent,
 }: AppSidebarProps) {
     const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
     const isActive = (url: string) => activePath === url || activePath.startsWith(`${url}/`);
+    const showDefaultFooter = !renderFooter && (user != null || onSignIn != null);
 
     return (
         <Sidebar className="border-r border-primary/20 bg-sidebar">
@@ -158,57 +165,82 @@ export function AppSidebar({
                 ))}
             </SidebarContent>
 
-            {user && (
+            {renderFooter ? (
+                <SidebarFooter className="border-t border-sidebar-border p-2 bg-gradient-to-t from-sidebar to-sidebar/80">
+                    {renderFooter()}
+                </SidebarFooter>
+            ) : showDefaultFooter ? (
                 <SidebarFooter className="border-t border-sidebar-border p-2 bg-gradient-to-t from-sidebar to-sidebar/80">
                     <SidebarMenu>
                         <SidebarMenuItem>
-                            <div className="relative">
+                            {user ? (
+                                <div className="relative">
+                                    <SidebarMenuButton
+                                        className="h-12 hover:bg-sidebar-accent/10 transition-colors"
+                                        onClick={() => setIsUserMenuOpen((current) => !current)}
+                                    >
+                                        <div className="h-7 w-7 rounded-full border border-sidebar-primary/30 overflow-hidden bg-sidebar-primary/10 text-sidebar-primary text-xs font-semibold flex items-center justify-center">
+                                            {user.avatarUrl ? (
+                                                <img
+                                                    src={user.avatarUrl}
+                                                    alt=""
+                                                    className="h-full w-full object-cover"
+                                                />
+                                            ) : (
+                                                user.initials
+                                            )}
+                                        </div>
+                                        <div className="flex flex-col items-start text-xs">
+                                            <span className="font-medium text-sidebar-foreground">{user.name}</span>
+                                            <span className="text-sidebar-foreground/60 text-[10px] truncate max-w-[120px]">
+                                                {user.email}
+                                            </span>
+                                        </div>
+                                        <ChevronUp className="ml-auto h-4 w-4 text-sidebar-foreground/50" />
+                                    </SidebarMenuButton>
+
+                                    {isUserMenuOpen && (
+                                        <div className="absolute bottom-full left-0 z-50 mb-2 w-56 rounded-md border border-border/50 bg-card p-1 shadow-lg">
+                                            <MenuLink LinkComponent={LinkComponent} to="/profile">
+                                                <UserIcon className="mr-2 h-4 w-4" />
+                                                Profile
+                                            </MenuLink>
+                                            <MenuLink LinkComponent={LinkComponent} to="/settings">
+                                                <SettingsIcon className="mr-2 h-4 w-4" />
+                                                Settings
+                                            </MenuLink>
+                                            <div className="my-1 h-px bg-amber-500/10" />
+                                            <button
+                                                type="button"
+                                                onClick={() => onSignOut?.()}
+                                                className="relative flex w-full cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none transition-colors text-red-400 focus:text-red-400 hover:bg-accent hover:text-accent-foreground"
+                                            >
+                                                <LogOut className="mr-2 h-4 w-4" />
+                                                Sign out
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
                                 <SidebarMenuButton
-                                    className="h-12 hover:bg-sidebar-accent/10 transition-colors"
-                                    onClick={() => setIsUserMenuOpen((current) => !current)}
+                                    className="h-11 hover:bg-sidebar-accent/10 transition-colors"
+                                    onClick={() => onSignIn?.()}
                                 >
-                                    <div className="h-7 w-7 rounded-full border border-sidebar-primary/30 overflow-hidden bg-sidebar-primary/10 text-sidebar-primary text-xs font-semibold flex items-center justify-center">
-                                        {user.avatarUrl ? (
-                                            <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" />
-                                        ) : (
-                                            user.initials
-                                        )}
+                                    <div className="flex h-7 w-7 items-center justify-center rounded-full border border-sidebar-primary/30 bg-sidebar-primary/10 text-sidebar-primary">
+                                        <UserIcon className="h-3.5 w-3.5" />
                                     </div>
                                     <div className="flex flex-col items-start text-xs">
-                                        <span className="font-medium text-sidebar-foreground">{user.name}</span>
-                                        <span className="text-sidebar-foreground/60 text-[10px] truncate max-w-[120px]">
-                                            {user.email}
+                                        <span className="font-medium text-sidebar-foreground">Log in</span>
+                                        <span className="text-sidebar-foreground/60 text-[10px]">
+                                            Or create an account
                                         </span>
                                     </div>
-                                    <ChevronUp className="ml-auto h-4 w-4 text-sidebar-foreground/50" />
                                 </SidebarMenuButton>
-
-                                {isUserMenuOpen && (
-                                    <div className="absolute bottom-full left-0 z-50 mb-2 w-56 rounded-md border border-border/50 bg-card p-1 shadow-lg">
-                                        <MenuLink LinkComponent={LinkComponent} to="/profile">
-                                            <UserIcon className="mr-2 h-4 w-4" />
-                                            Profile
-                                        </MenuLink>
-                                        <MenuLink LinkComponent={LinkComponent} to="/settings">
-                                            <SettingsIcon className="mr-2 h-4 w-4" />
-                                            Settings
-                                        </MenuLink>
-                                        <div className="my-1 h-px bg-amber-500/10" />
-                                        <button
-                                            type="button"
-                                            onClick={() => onSignOut?.()}
-                                            className="relative flex w-full cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none transition-colors text-red-400 focus:text-red-400 hover:bg-accent hover:text-accent-foreground"
-                                        >
-                                            <LogOut className="mr-2 h-4 w-4" />
-                                            Sign out
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
+                            )}
                         </SidebarMenuItem>
                     </SidebarMenu>
                 </SidebarFooter>
-            )}
+            ) : null}
 
             <SidebarRail />
         </Sidebar>

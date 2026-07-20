@@ -29,7 +29,7 @@ describe("youtube server websocket", () => {
                 targetKind: "video",
                 target: "abc123def45",
                 stages: ["metadata"],
-            });
+            }).job!;
             const created = await nextMessage(ws);
 
             expect(created.type).toBe("job:created");
@@ -58,7 +58,7 @@ describe("youtube server websocket", () => {
                 targetKind: "video",
                 target: "second",
                 stages: ["metadata"],
-            });
+            }).job!;
             const created = await nextMessage(ws);
 
             expect(secondJob.id).toBe(2);
@@ -93,7 +93,7 @@ describe("youtube server websocket", () => {
                 target: "aaaaaaaaaaa",
                 stages: ["metadata"],
                 userId: userA.id,
-            });
+            }).job!;
             const created = await nextMessage(ws);
 
             expect(created.type).toBe("job:created");

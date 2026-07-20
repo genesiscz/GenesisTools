@@ -3,7 +3,7 @@ import { useCancelJob } from "@app/yt/api.hooks";
 import { JobActivityDrawer } from "@app/yt/components/jobs/job-activity-drawer";
 import { JobStatusBadge } from "@app/yt/components/jobs/job-status-badge";
 import { EmptyState } from "@app/yt/components/shared/empty-state";
-import { parseSqliteDate } from "@app/yt/lib/format";
+import { formatDateTime, parseSqliteDate } from "@app/yt/lib/format";
 import { formatDuration } from "@genesiscz/utils/format";
 import { Button } from "@genesiscz/utils/ui/components/button";
 import { Progress } from "@genesiscz/utils/ui/components/progress";
@@ -44,6 +44,9 @@ export function JobsTable({ jobs }: { jobs: PipelineJob[] }) {
                                 Job
                             </TableHead>
                             <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+                                When
+                            </TableHead>
+                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
                                 Target
                             </TableHead>
                             <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
@@ -79,6 +82,19 @@ export function JobsTable({ jobs }: { jobs: PipelineJob[] }) {
                                     </TableCell>
                                     <TableCell>
                                         <span className="font-mono text-sm font-semibold text-primary">#{job.id}</span>
+                                    </TableCell>
+                                    <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
+                                        <div title={job.createdAt}>
+                                            {formatDateTime(job.claimedAt ?? job.createdAt)}
+                                        </div>
+                                        {job.completedAt ? (
+                                            <div
+                                                className="mt-0.5 text-[0.65rem] text-muted-foreground/70"
+                                                title={job.completedAt}
+                                            >
+                                                done {formatDateTime(job.completedAt)}
+                                            </div>
+                                        ) : null}
                                     </TableCell>
                                     <TableCell>
                                         <div className="max-w-72 truncate font-medium text-foreground/95">

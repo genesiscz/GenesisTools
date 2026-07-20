@@ -26,6 +26,31 @@ import { useRef } from "react";
 /** Stop polling a still-generating report after this long and tell the user to check the dashboard. */
 const REPORT_POLL_TIMEOUT_MS = 10 * 60_000;
 
+async function waitForExtensionJob(
+    jobId: number,
+    opts: { timeoutMs?: number; intervalMs?: number } = {}
+): Promise<void> {
+    const timeoutMs = opts.timeoutMs ?? REPORT_POLL_TIMEOUT_MS;
+    const intervalMs = opts.intervalMs ?? 1500;
+    const started = Date.now();
+
+    while (Date.now() - started < timeoutMs) {
+        const { job } = await send<{ job: PipelineJob }>({ type: "api:getJob", id: jobId });
+
+        if (job.status === "completed") {
+            return;
+        }
+
+        if (job.status === "failed" || job.status === "cancelled") {
+            throw new Error(job.error ?? `Job ${jobId} ${job.status}`);
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+
+    throw new Error(`Job ${jobId} timed out after ${timeoutMs}ms`);
+}
+
 export function useConfig() {
     return useQuery({
         queryKey: ["config"],
@@ -41,9 +66,31 @@ export function useChannels() {
     });
 }
 
+/** Auto-track via GET ensure — polls while discover is queued/running. */
+export function useEnsureChannel(handle: ChannelHandle | null) {
+    return useQuery({
+        queryKey: ["channel-ensure", handle],
+        queryFn: () =>
+            send<ExtensionApiMap["api:ensureChannel"]>({
+                type: "api:ensureChannel",
+                handle: handle as ChannelHandle,
+            }),
+        enabled: handle !== null,
+        refetchInterval: (query) => {
+            const status = query.state.data?.syncStatus;
+
+            if (status === "queued" || status === "running") {
+                return 2000;
+            }
+
+            return false;
+        },
+    });
+}
+
 export function useChannelVideos(
     channel: ChannelHandle | null,
-    opts: { limit?: number; includeShorts?: boolean } = {}
+    opts: { limit?: number; includeShorts?: boolean; pollWhileEmptyUntil?: number | null } = {}
 ) {
     return useQuery({
         queryKey: ["videos", channel, opts.limit, opts.includeShorts],
@@ -56,6 +103,20 @@ export function useChannelVideos(
             }),
         select: (response) => response.videos,
         enabled: channel !== null,
+        refetchInterval: (query) => {
+            const until = opts.pollWhileEmptyUntil;
+            if (until == null || Date.now() >= until) {
+                return false;
+            }
+
+            // Cache holds queryFn result (pre-select).
+            const cached = query.state.data as { videos?: unknown[] } | undefined;
+            if ((cached?.videos?.length ?? 0) > 0) {
+                return false;
+            }
+
+            return 2500;
+        },
     });
 }
 
@@ -63,9 +124,19 @@ export function useAddChannel() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: (handle: ChannelHandle) =>
-            send<ExtensionApiMap["api:addChannel"]>({ type: "api:addChannel", handle }),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["channels"] }),
+        mutationFn: async (handle: ChannelHandle) => {
+            const added = await send<ExtensionApiMap["api:addChannel"]>({ type: "api:addChannel", handle });
+            // Mirror the dashboard AddChannelDialog: add alone only inserts the
+            // row — discover/metadata must be enqueued via sync or videos stay empty.
+            const sync = await send<ExtensionApiMap["api:syncChannel"]>({ type: "api:syncChannel", handle });
+
+            return { ...added, sync };
+        },
+        onSuccess: (_data, handle) => {
+            queryClient.invalidateQueries({ queryKey: ["channels"] });
+            queryClient.invalidateQueries({ queryKey: ["videos", handle] });
+            queryClient.invalidateQueries({ queryKey: ["jobs"] });
+        },
     });
 }
 
@@ -207,6 +278,43 @@ export function useGenerateSummary(id: VideoId) {
                 id,
                 ...opts,
             });
+
+            if (response.jobId != null && response.summary === undefined && !response.cached) {
+                await waitForExtensionJob(response.jobId);
+                const loaded = await send<ExtensionApiMap["api:getSummary"]>({
+                    type: "api:getSummary",
+                    id,
+                    mode: opts.mode,
+                });
+
+                if ("locked" in loaded && loaded.locked) {
+                    throw new Error("Summary is locked after generation");
+                }
+
+                const summary = "summary" in loaded ? loaded.summary : undefined;
+                const lang = "lang" in loaded ? loaded.lang : response.lang;
+
+                if (opts.mode === "long") {
+                    return {
+                        long: (summary ?? null) as VideoLongSummary | null,
+                        cached: false,
+                        lang,
+                        jobId: response.jobId,
+                    };
+                }
+
+                if (opts.mode === "timestamped") {
+                    return {
+                        timestamped: (summary ?? []) as TimestampedSummaryEntry[],
+                        cached: false,
+                        lang,
+                        jobId: response.jobId,
+                    };
+                }
+
+                return { short: (summary ?? "") as string, cached: false, lang, jobId: response.jobId };
+            }
+
             const cached = response.cached ?? false;
             const lang = response.lang;
 
@@ -242,7 +350,7 @@ export function useAskVideo(id: VideoId) {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: (vars: {
+        mutationFn: async (vars: {
             question: string;
             topK?: number;
             provider?: string;
@@ -250,7 +358,37 @@ export function useAskVideo(id: VideoId) {
             presetId?: number;
             sources?: QaSource[];
             scope?: "video" | "channel";
-        }) => send<ExtensionApiMap["api:askVideo"]>({ type: "api:askVideo", id, ...vars }),
+        }) => {
+            const enqueued = await send<ExtensionApiMap["api:askVideo"]>({ type: "api:askVideo", id, ...vars });
+
+            if (enqueued.answer) {
+                return {
+                    ...enqueued,
+                    answer: enqueued.answer,
+                    citations: enqueued.citations ?? [],
+                    creditsSpent: enqueued.creditsSpent ?? 0,
+                    credits: enqueued.credits ?? 0,
+                    historyId: enqueued.historyId ?? 0,
+                };
+            }
+
+            await waitForExtensionJob(enqueued.jobId);
+            const { items } = await send<ExtensionApiMap["api:qaHistory"]>({ type: "api:qaHistory", id });
+            const match = items.find((item) => item.question === vars.question) ?? items[0];
+
+            if (!match) {
+                throw new Error("Ask completed but no answer found in history");
+            }
+
+            return {
+                ...enqueued,
+                answer: match.answer,
+                citations: match.citations,
+                creditsSpent: match.creditsSpent,
+                credits: enqueued.credits ?? 0,
+                historyId: match.id,
+            };
+        },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["me"] });
             queryClient.invalidateQueries({ queryKey: ["qaHistory", id] });

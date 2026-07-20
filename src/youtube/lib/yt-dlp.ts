@@ -1,6 +1,7 @@
 import { stat } from "node:fs/promises";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import type { FetchCommentsOpts, FetchedComment } from "@app/youtube/lib/comments.types";
+import { summarizeJson, traceJobExternalCall } from "@app/youtube/lib/job-activity";
 import type { VideoId } from "@app/youtube/lib/video.types";
 import type {
     DownloadAudioOpts,
@@ -74,6 +75,29 @@ export async function checkYtDlp(): Promise<YtDlpAvailability> {
 }
 
 export async function listChannelVideos(opts: ListChannelVideosOpts): Promise<ListedVideo[]> {
+    return traceJobExternalCall(
+        {
+            action: "yt-dlp:list-channel",
+            provider: "yt-dlp",
+            model: opts.handle,
+            prompt: summarizeJson({
+                handle: opts.handle,
+                limit: opts.limit ?? null,
+                includeShorts: opts.includeShorts ?? false,
+                sinceUploadDate: opts.sinceUploadDate ?? null,
+            }),
+            summarize: (videos) =>
+                summarizeJson({
+                    videos: videos.length,
+                    ids: videos.slice(0, 20).map((video) => video.id),
+                    truncated: videos.length > 20,
+                }),
+        },
+        () => listChannelVideosInner(opts)
+    );
+}
+
+async function listChannelVideosInner(opts: ListChannelVideosOpts): Promise<ListedVideo[]> {
     logger.info(
         { handle: opts.handle, limit: opts.limit, includeShorts: opts.includeShorts },
         "yt-dlp listChannelVideos started"
@@ -158,6 +182,30 @@ export async function dumpVideoMetadata(
     idOrUrl: string,
     opts: { signal?: AbortSignal } = {}
 ): Promise<DumpedVideoMetadata> {
+    return traceJobExternalCall(
+        {
+            action: "yt-dlp:dump-metadata",
+            provider: "yt-dlp",
+            model: idOrUrl,
+            prompt: idOrUrl,
+            summarize: (meta) =>
+                summarizeJson({
+                    id: meta.id,
+                    title: meta.title,
+                    uploadDate: meta.uploadDate,
+                    durationSec: meta.durationSec,
+                    channelHandle: meta.channelHandle,
+                    viewCount: meta.viewCount,
+                }),
+        },
+        () => dumpVideoMetadataInner(idOrUrl, opts)
+    );
+}
+
+async function dumpVideoMetadataInner(
+    idOrUrl: string,
+    opts: { signal?: AbortSignal } = {}
+): Promise<DumpedVideoMetadata> {
     const target = normalizeVideoTarget(idOrUrl);
     logger.info({ target: idOrUrl, normalizedTarget: target }, "yt-dlp dumpVideoMetadata started");
     const proc = Bun.spawn(["yt-dlp", "--skip-download", "--dump-json", "--no-warnings", target], {
@@ -203,6 +251,19 @@ export async function dumpVideoMetadata(
 }
 
 export async function fetchComments(videoId: VideoId, opts: FetchCommentsOpts = {}): Promise<FetchedComment[]> {
+    return traceJobExternalCall(
+        {
+            action: "yt-dlp:fetch-comments",
+            provider: "yt-dlp",
+            model: videoId,
+            prompt: summarizeJson({ videoId, max: opts.max ?? null }),
+            summarize: (comments) => summarizeJson({ comments: comments.length }),
+        },
+        () => fetchCommentsInner(videoId, opts)
+    );
+}
+
+async function fetchCommentsInner(videoId: VideoId, opts: FetchCommentsOpts = {}): Promise<FetchedComment[]> {
     const target = normalizeVideoTarget(videoId);
     logger.info({ videoId, max: opts.max }, "yt-dlp fetchComments started");
     const args = ["yt-dlp", "--skip-download", "--write-comments", "--dump-single-json", "--no-warnings"];
@@ -230,6 +291,23 @@ export async function fetchComments(videoId: VideoId, opts: FetchCommentsOpts = 
 }
 
 export async function downloadAudio(opts: DownloadAudioOpts): Promise<DownloadAudioResult> {
+    return traceJobExternalCall(
+        {
+            action: "yt-dlp:download-audio",
+            provider: "yt-dlp",
+            model: opts.idOrUrl,
+            prompt: summarizeJson({
+                idOrUrl: opts.idOrUrl,
+                format: opts.format ?? null,
+                outPath: opts.outPath,
+            }),
+            summarize: (result) => summarizeJson({ path: result.path, sizeBytes: result.sizeBytes }),
+        },
+        () => downloadAudioInner(opts)
+    );
+}
+
+async function downloadAudioInner(opts: DownloadAudioOpts): Promise<DownloadAudioResult> {
     const args = ["yt-dlp", "-x", "--no-playlist", "--newline", "-o", opts.outPath];
 
     if (opts.format === "wav") {
@@ -253,6 +331,23 @@ export async function downloadAudio(opts: DownloadAudioOpts): Promise<DownloadAu
 }
 
 export async function downloadVideo(opts: DownloadVideoOpts): Promise<DownloadVideoResult> {
+    return traceJobExternalCall(
+        {
+            action: "yt-dlp:download-video",
+            provider: "yt-dlp",
+            model: opts.idOrUrl,
+            prompt: summarizeJson({
+                idOrUrl: opts.idOrUrl,
+                quality: opts.quality,
+                outPath: opts.outPath,
+            }),
+            summarize: (result) => summarizeJson({ path: result.path, sizeBytes: result.sizeBytes }),
+        },
+        () => downloadVideoInner(opts)
+    );
+}
+
+async function downloadVideoInner(opts: DownloadVideoOpts): Promise<DownloadVideoResult> {
     const heightMap = { "720p": 720, "1080p": 1080, best: undefined };
     const fmtFilter =
         opts.quality === "best"

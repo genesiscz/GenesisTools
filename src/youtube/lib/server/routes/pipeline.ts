@@ -10,6 +10,9 @@ interface EnqueueBody {
     target: string;
     targetKind?: JobTargetKind;
     stages: JobStage[];
+    params?: Record<string, unknown> | null;
+    priority?: number;
+    force?: boolean;
 }
 
 export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): Promise<Response> {
@@ -18,14 +21,25 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
             const body = (await req.json()) as EnqueueBody;
             const targetKind = body.targetKind ?? inferTargetKind(body.target);
             const user = resolveUser(req, url, yt.db);
-            const job = yt.pipeline.enqueue({
+            const result = yt.pipeline.enqueue({
                 targetKind,
                 target: body.target,
                 stages: body.stages,
                 userId: user?.id ?? null,
+                params: body.params ?? null,
+                priority: body.priority,
+                force: body.force === true,
             });
 
-            return Response.json({ job }, { headers: CORS_HEADERS });
+            return Response.json(
+                {
+                    job: result.job,
+                    reused: result.reused,
+                    queuePosition: result.queuePosition,
+                    skipped: result.skipped,
+                },
+                { headers: CORS_HEADERS }
+            );
         }
 
         if (matchRoute(req, "GET", "/api/v1/jobs", url.pathname)) {
@@ -43,13 +57,14 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
         const jobOnly = matchRoute(req, "GET", "/api/v1/jobs/:id", url.pathname);
 
         if (jobOnly) {
-            const job = yt.pipeline.getJob(parseInt(jobOnly.id, 10));
+            const id = parseInt(jobOnly.id, 10);
+            const job = yt.pipeline.getJob(id);
 
             if (!job) {
                 return jsonError("job not found", 404);
             }
 
-            return Response.json({ job }, { headers: CORS_HEADERS });
+            return Response.json({ job, queuePosition: yt.db.getJobQueuePosition(id) }, { headers: CORS_HEADERS });
         }
 
         const activity = matchRoute(req, "GET", "/api/v1/jobs/:id/activity", url.pathname);

@@ -18,6 +18,16 @@ export async function handleChannelsRoute(req: Request, url: URL, yt: Youtube): 
             return Response.json({ channels: yt.channels.list() }, { headers: CORS_HEADERS });
         }
 
+        const ensure = matchRoute(req, "GET", "/api/v1/channels/:handle", url.pathname);
+
+        if (ensure) {
+            const handle = normaliseHandle(ensure.handle);
+            const user = resolveUser(req, url, yt.db);
+            const result = yt.channels.ensure(handle, { userId: user?.id ?? null });
+
+            return Response.json(result, { headers: CORS_HEADERS });
+        }
+
         if (matchRoute(req, "POST", "/api/v1/channels", url.pathname)) {
             const body = (await req.json()) as AddChannelsBody;
             const inputs = [...(body.handles ?? []), ...(body.handle ? [body.handle] : []), ...(body.fromFile ?? [])];
@@ -44,14 +54,26 @@ export async function handleChannelsRoute(req: Request, url: URL, yt: Youtube): 
         if (sync) {
             const handle = normaliseHandle(sync.handle);
             const user = resolveUser(req, url, yt.db);
-            const job = yt.pipeline.enqueue({
+            const { job } = yt.pipeline.enqueue({
                 targetKind: "channel",
                 target: handle,
                 stages: ["discover", "metadata"],
                 userId: user?.id ?? null,
             });
 
-            return Response.json({ enqueuedJobIds: [job.id], enqueuedJobId: job.id }, { headers: CORS_HEADERS });
+            if (!job) {
+                throw new Error("channel sync enqueue returned no job");
+            }
+
+            return Response.json(
+                {
+                    enqueuedJobIds: [job.id],
+                    enqueuedJobId: job.id,
+                    reused: false,
+                    queuePosition: yt.db.getJobQueuePosition(job.id),
+                },
+                { headers: CORS_HEADERS }
+            );
         }
 
         return jsonError("not found", 404);

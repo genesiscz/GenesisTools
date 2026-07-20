@@ -70,6 +70,10 @@ const shared: UserConfig = {
             "@app": resolve(root, "../.."),
             "@ext": root,
             "@ui": resolve(root, "../../utils/ui"),
+            // Same as dashboard vite.base: make @genesiscz/utils/* subpaths
+            // resolve to src/utils without depending on the package exports map
+            // (components/* are not listed there; rolldown/vite 8 enforces it).
+            "@genesiscz/utils": resolve(root, "../../utils"),
         },
     },
 };

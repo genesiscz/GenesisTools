@@ -1,5 +1,5 @@
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
-import type { JobActivityKind, JobStage, JobStatus, JobTargetKind } from "@app/youtube/lib/jobs.types";
+import type { JobActivityKind, JobStage, JobStatus, JobTargetKind, PipelineJob } from "@app/youtube/lib/jobs.types";
 import type { QaSource } from "@app/youtube/lib/qa.types";
 import type { Language, TranscriptSegment } from "@app/youtube/lib/transcript.types";
 import type { TimestampedSummaryEntry, VideoId, VideoLongSummary } from "@app/youtube/lib/video.types";
@@ -126,6 +126,17 @@ export interface EnqueueJobInput {
     parentJobId?: number | null;
     /** Requesting user, when the job was triggered by an authenticated request. Null for CLI/operator jobs. */
     userId?: number | null;
+    /** Extra identity params (e.g. `mode`, `language`, `question`) folded into the job fingerprint. */
+    params?: Record<string, unknown> | null;
+    /** Overrides the stage-derived default (see `priorityForStages`). */
+    priority?: number;
+    /** Skip fingerprint-based reuse and always insert a new job. */
+    force?: boolean;
+}
+
+export interface EnqueueJobResult {
+    job: PipelineJob;
+    reused: boolean;
 }
 
 export interface ClaimJobOpts {

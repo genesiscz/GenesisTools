@@ -1,6 +1,7 @@
 import { DIAMOND_PACKS } from "@app/youtube/lib/billing.types";
 import type { PresetKind, PromptPreset, ShareSummary, YtRole } from "@app/youtube/lib/types";
 import { ActivityGraph } from "@app/youtube/ui/components/shared/activity-graph";
+import { AuthForm as SharedAuthForm } from "@app/youtube/ui/components/shared/auth-form";
 import { Diamond, formatDiamonds } from "@app/youtube/ui/components/shared/diamond";
 import { isLoginRequiredError } from "@app/youtube/ui/components/shared/login-required";
 import { OUTPUT_LANGS } from "@app/youtube/ui/components/shared/output-langs";
@@ -51,9 +52,7 @@ import {
     Trash2,
     Wand2,
 } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
-
-type AuthMode = "login" | "register";
+import { useEffect, useRef, useState } from "react";
 
 export function SettingsDialog({
     open,
@@ -770,123 +769,24 @@ function PresetsSection() {
 }
 
 function AuthForm() {
-    const [mode, setMode] = useState<AuthMode>("login");
-    const [email, setEmail] = useState("");
-    const [password, setPassword] = useState("");
-    const [error, setError] = useState<string | null>(null);
     const login = useLogin();
     const register = useRegister();
     const t = useT();
     const busy = login.isPending || register.isPending;
 
-    function switchMode(next: AuthMode) {
-        setMode(next);
-        setError(null);
-    }
-
-    async function submit(event: FormEvent) {
-        event.preventDefault();
-
-        if (busy) {
-            return;
-        }
-
-        setError(null);
-        try {
-            const action = mode === "login" ? login : register;
-            await action.mutateAsync({ email, password });
-            setPassword("");
-        } catch (err) {
-            // No credentials in the payload — mode only.
-            logger.warn({ error: err, mode }, "settings-dialog: auth submit failed");
-            setError(err instanceof Error ? err.message : String(err));
-        }
-    }
-
-    const toggleBase = "h-7 flex-1 rounded-md text-xs font-medium transition-colors";
-    const toggleActive = "bg-white/10 text-foreground";
-    const toggleIdle = "text-muted-foreground hover:text-foreground";
-
     return (
-        <form className="space-y-3" onSubmit={submit}>
-            <div className="flex gap-1 rounded-lg border border-white/8 bg-black/20 p-1" role="tablist">
-                <button
-                    type="button"
-                    role="tab"
-                    aria-selected={mode === "login"}
-                    className={`${toggleBase} ${mode === "login" ? toggleActive : toggleIdle}`}
-                    onClick={() => switchMode("login")}
-                >
-                    {t("action.logIn")}
-                </button>
-                <button
-                    type="button"
-                    role="tab"
-                    aria-selected={mode === "register"}
-                    className={`${toggleBase} ${mode === "register" ? toggleActive : toggleIdle}`}
-                    onClick={() => switchMode("register")}
-                >
-                    {t("action.register")}
-                </button>
-            </div>
-
-            <div className="space-y-1">
-                <label htmlFor="yt-auth-email" className="text-xs font-medium text-muted-foreground">
-                    {t("auth.email")}
-                </label>
-                <Input
-                    id="yt-auth-email"
-                    type="email"
-                    autoComplete="email"
-                    required
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    placeholder="you@example.com"
-                    disabled={busy}
-                    className="h-9 text-sm"
-                />
-            </div>
-
-            <div className="space-y-1">
-                <label htmlFor="yt-auth-password" className="text-xs font-medium text-muted-foreground">
-                    {t("auth.password")}
-                </label>
-                <Input
-                    id="yt-auth-password"
-                    type="password"
-                    autoComplete={mode === "login" ? "current-password" : "new-password"}
-                    required
-                    minLength={8}
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    placeholder={mode === "register" ? "At least 8 characters" : "Your password"}
-                    disabled={busy}
-                    className="h-9 text-sm"
-                />
-            </div>
-
-            {error ? (
-                <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-sm">
-                    <p className="break-words text-destructive/90">{error}</p>
-                </div>
-            ) : null}
-
-            <Button type="submit" size="sm" className="w-full" disabled={busy || email === "" || password === ""}>
-                {busy ? (
-                    <>
-                        <Loader2 className="size-4 animate-spin" />
-                        {mode === "login" ? "Signing in…" : "Creating account…"}
-                    </>
-                ) : mode === "login" ? (
-                    t("action.logIn")
-                ) : (
-                    t("action.createAccount")
-                )}
-            </Button>
-
-            {mode === "register" ? (
-                <p className="text-center text-xs text-muted-foreground">New accounts start with 💎 100.</p>
-            ) : null}
-        </form>
+        <SharedAuthForm
+            idPrefix="yt-ext-auth"
+            busy={busy}
+            labels={{
+                logIn: t("action.logIn"),
+                register: t("action.register"),
+                createAccount: t("action.createAccount"),
+                email: t("auth.email"),
+                password: t("auth.password"),
+            }}
+            onLogin={(creds) => login.mutateAsync(creds).then(() => undefined)}
+            onRegister={(creds) => register.mutateAsync(creds).then(() => undefined)}
+        />
     );
 }

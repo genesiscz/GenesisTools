@@ -1,4 +1,5 @@
 import type { FetchCaptionsOpts, FetchCaptionsResult } from "@app/youtube/lib/captions.types";
+import { summarizeJson, traceJobExternalCall } from "@app/youtube/lib/job-activity";
 import { logger } from "@genesiscz/utils/logger";
 import { type TranscriptResponse, YoutubeTranscript } from "youtube-transcript";
 
@@ -7,6 +8,29 @@ interface TranscriptResponseWithLang extends TranscriptResponse {
 }
 
 export async function fetchCaptions(opts: FetchCaptionsOpts): Promise<FetchCaptionsResult | null> {
+    return traceJobExternalCall(
+        {
+            action: "youtube-transcript:fetch",
+            provider: "youtube-transcript",
+            model: opts.videoId,
+            prompt: summarizeJson({
+                videoId: opts.videoId,
+                preferredLangs: opts.preferredLangs ?? null,
+            }),
+            summarize: (result) =>
+                result
+                    ? summarizeJson({
+                          lang: result.lang,
+                          segments: result.segments.length,
+                          chars: result.text.length,
+                      })
+                    : summarizeJson({ hit: false }),
+        },
+        () => fetchCaptionsInner(opts)
+    );
+}
+
+async function fetchCaptionsInner(opts: FetchCaptionsOpts): Promise<FetchCaptionsResult | null> {
     const langs = opts.preferredLangs?.length ? opts.preferredLangs : [undefined];
 
     for (const lang of langs) {

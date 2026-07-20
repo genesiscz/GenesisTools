@@ -35,7 +35,7 @@ describe("recordYoutubeUsage → ai_calls", () => {
     });
 
     it("prefers job-context attribution (jobId + job owner) over request context", async () => {
-        const job = db.enqueueJob({ targetKind: "video", target: "vid00000002", stages: ["summarize"], userId: 7 });
+        const { job } = db.enqueueJob({ targetKind: "video", target: "vid00000002", stages: ["summarize"], userId: 7 });
 
         await withRequestContext({ userId: 99, db }, async () => {
             await withJobActivity({ jobId: job.id, stage: "summarize", db, userId: 7 }, async () => {

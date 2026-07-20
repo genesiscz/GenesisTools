@@ -33,6 +33,9 @@ export interface PipelineJob {
     createdAt: string;
     updatedAt: string;
     completedAt: string | null;
+    priority: number;
+    params: Record<string, unknown> | null;
+    fingerprint: string | null;
 }
 
 export type JobEvent =
@@ -47,11 +50,13 @@ export type JobEvent =
     | { type: "job:cancelled"; jobId: number }
     | { type: "job:activity"; jobId: number; activityId: number };
 
-export type JobActivityKind = "llm" | "embed" | "transcribe";
+export type JobActivityKind = "llm" | "embed" | "transcribe" | "api";
 
 /**
- * One AI/API event recorded against a pipeline job (LLM call, embedding batch, transcription).
- * Surfaces in the jobs inspector drawer so the operator can see prompt/response/cost per call.
+ * One event recorded against a pipeline job (LLM call, embedding, transcription,
+ * or external API/CLI such as yt-dlp / youtube-transcript).
+ * Surfaces in the jobs inspector drawer so the operator can see prompt/response/cost
+ * (or request/result for API calls) per step.
  */
 export interface JobActivity {
     id: number;

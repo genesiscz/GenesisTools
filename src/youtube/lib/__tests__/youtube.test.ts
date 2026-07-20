@@ -106,7 +106,7 @@ describe("Youtube", () => {
                 targetKind: "channel",
                 target: "@mkbhd",
                 stages: ["discover", "metadata"],
-            });
+            }).job!;
             await yt.pipeline.start();
             await waitFor(() => yt.pipeline.getJob(parent.id)?.status === "completed");
             await yt.pipeline.stop();

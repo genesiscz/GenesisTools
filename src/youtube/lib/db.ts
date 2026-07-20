@@ -19,6 +19,7 @@ import type {
     CollectionRecord,
     CreateCollectionInput,
     EnqueueJobInput,
+    EnqueueJobResult,
     GetTranscriptOpts,
     ListJobsOpts,
     ListVideosOpts,
@@ -58,6 +59,8 @@ import type {
     WebhookLogRecord,
     WebhookOutcome,
 } from "@app/youtube/lib/db.types";
+import { buildJobFingerprint } from "@app/youtube/lib/job-fingerprint";
+import { priorityForStages } from "@app/youtube/lib/job-priority";
 import type {
     JobActivity,
     JobActivityKind,
@@ -205,11 +208,15 @@ export class YoutubeDatabase extends BaseDatabase {
                 created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
                 updated_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
                 completed_at TEXT,
+                params TEXT,
+                fingerprint TEXT,
+                priority INTEGER NOT NULL DEFAULT 50,
                 FOREIGN KEY (parent_job_id) REFERENCES jobs(id) ON DELETE SET NULL
             );
             CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, current_stage);
             CREATE INDEX IF NOT EXISTS idx_jobs_target ON jobs(target_kind, target);
             CREATE INDEX IF NOT EXISTS idx_jobs_parent ON jobs(parent_job_id);
+            CREATE INDEX IF NOT EXISTS idx_jobs_fingerprint_active ON jobs(fingerprint) WHERE status IN ('pending','running');
 
             CREATE TABLE IF NOT EXISTS qa_chunks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -615,6 +622,28 @@ export class YoutubeDatabase extends BaseDatabase {
             if (!cols.some((column) => column.name === "user_id")) {
                 this.db.exec("ALTER TABLE jobs ADD COLUMN user_id INTEGER");
             }
+        });
+
+        this.runMigration("add-jobs-fingerprint-priority", () => {
+            const cols = this.db.query<{ name: string }, []>("PRAGMA table_info(jobs)").all() as Array<{
+                name: string;
+            }>;
+
+            if (!cols.some((column) => column.name === "params")) {
+                this.db.exec("ALTER TABLE jobs ADD COLUMN params TEXT");
+            }
+
+            if (!cols.some((column) => column.name === "fingerprint")) {
+                this.db.exec("ALTER TABLE jobs ADD COLUMN fingerprint TEXT");
+            }
+
+            if (!cols.some((column) => column.name === "priority")) {
+                this.db.exec("ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 50");
+            }
+
+            this.db.exec(
+                "CREATE INDEX IF NOT EXISTS idx_jobs_fingerprint_active ON jobs(fingerprint) WHERE status IN ('pending','running')"
+            );
         });
 
         // User-owned video collections (Phase 3). Manual and dynamic share one
@@ -1344,18 +1373,49 @@ export class YoutubeDatabase extends BaseDatabase {
         this.db.run(`DELETE FROM qa_chunks WHERE ${where.join(" AND ")}`, params);
     }
 
-    enqueueJob(input: EnqueueJobInput): PipelineJob {
+    enqueueJob(input: EnqueueJobInput): EnqueueJobResult {
+        const fingerprint = buildJobFingerprint({
+            targetKind: input.targetKind,
+            target: input.target,
+            stages: input.stages,
+            params: input.params ?? null,
+        });
+
+        if (!input.force) {
+            const existingRow = this.db
+                .query<JobRow, [string]>(
+                    "SELECT * FROM jobs WHERE fingerprint = ? AND status IN ('pending','running') ORDER BY id ASC LIMIT 1"
+                )
+                .get(fingerprint);
+
+            if (existingRow) {
+                return { job: rowToJob(existingRow), reused: true };
+            }
+        }
+
+        const priority =
+            input.priority ??
+            priorityForStages(input.stages, {
+                bulkChild: Boolean(input.parentJobId) && !input.stages.includes("discover"),
+            });
+
         const result = this.db
-            .query<{ id: number }, [string, string, string, number | null, number | null]>(
-                `INSERT INTO jobs (target_kind, target, stages, parent_job_id, user_id, status)
-                 VALUES (?, ?, ?, ?, ?, 'pending') RETURNING id`
+            .query<
+                { id: number },
+                [string, string, string, number | null, number | null, string | null, string, number]
+            >(
+                `INSERT INTO jobs (target_kind, target, stages, parent_job_id, user_id, params, fingerprint, priority, status)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending') RETURNING id`
             )
             .get(
                 input.targetKind,
                 input.target,
                 SafeJSON.stringify(input.stages),
                 input.parentJobId ?? null,
-                input.userId ?? null
+                input.userId ?? null,
+                input.params ? SafeJSON.stringify(input.params, { strict: true }) : null,
+                fingerprint,
+                priority
             );
 
         if (!result) {
@@ -1368,7 +1428,7 @@ export class YoutubeDatabase extends BaseDatabase {
             throw new Error(`enqueueJob: inserted id=${result.id} but read returned null`);
         }
 
-        return job;
+        return { job, reused: false };
     }
 
     claimNextJob(workerId: string, opts: ClaimJobOpts = {}): PipelineJob | null {
@@ -1378,7 +1438,7 @@ export class YoutubeDatabase extends BaseDatabase {
                   .query<JobRow, [string, string]>(
                       `UPDATE jobs SET status = 'running', worker_id = ?, claimed_at = ${SQL_NOW_UTC}, updated_at = ${SQL_NOW_UTC}
                        WHERE id = (
-                           SELECT id FROM jobs WHERE status = 'pending' ${stageClause} ORDER BY id ASC LIMIT 1
+                           SELECT id FROM jobs WHERE status = 'pending' ${stageClause} ORDER BY priority DESC, id ASC LIMIT 1
                        )
                        RETURNING *`
                   )
@@ -1387,13 +1447,40 @@ export class YoutubeDatabase extends BaseDatabase {
                   .query<JobRow, [string]>(
                       `UPDATE jobs SET status = 'running', worker_id = ?, claimed_at = ${SQL_NOW_UTC}, updated_at = ${SQL_NOW_UTC}
                        WHERE id = (
-                           SELECT id FROM jobs WHERE status = 'pending' ORDER BY id ASC LIMIT 1
+                           SELECT id FROM jobs WHERE status = 'pending' ORDER BY priority DESC, id ASC LIMIT 1
                        )
                        RETURNING *`
                   )
                   .get(workerId);
 
         return row ? rowToJob(row) : null;
+    }
+
+    findActiveJobByFingerprint(fingerprint: string): PipelineJob | null {
+        const row = this.db
+            .query<JobRow, [string]>(
+                "SELECT * FROM jobs WHERE fingerprint = ? AND status IN ('pending','running') ORDER BY id ASC LIMIT 1"
+            )
+            .get(fingerprint);
+
+        return row ? rowToJob(row) : null;
+    }
+
+    /** 1-based position in the pending queue (priority-aware); `null` if the job is missing or not pending. */
+    getJobQueuePosition(jobId: number): number | null {
+        const job = this.getJob(jobId);
+
+        if (job?.status !== "pending") {
+            return null;
+        }
+
+        const row = this.db
+            .query<{ count: number }, [number, number, number]>(
+                "SELECT COUNT(*) AS count FROM jobs WHERE status = 'pending' AND (priority > ? OR (priority = ? AND id < ?))"
+            )
+            .get(job.priority, job.priority, job.id);
+
+        return (row?.count ?? 0) + 1;
     }
 
     updateJob(id: number, partial: UpdateJobPartial): void {
@@ -3682,6 +3769,9 @@ interface JobRow {
     created_at: string;
     updated_at: string;
     completed_at: string | null;
+    params: string | null;
+    fingerprint: string | null;
+    priority: number | null;
 }
 
 function rowToJob(row: JobRow): PipelineJob {
@@ -3702,6 +3792,9 @@ function rowToJob(row: JobRow): PipelineJob {
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         completedAt: row.completed_at,
+        priority: row.priority ?? 50,
+        params: row.params ? (SafeJSON.parse(row.params) as Record<string, unknown>) : null,
+        fingerprint: row.fingerprint ?? null,
     };
 }
 
@@ -3901,7 +3994,7 @@ function rowToJobActivity(row: JobActivityRow): JobActivity {
 }
 
 function isJobActivityKind(value: unknown): value is JobActivityKind {
-    return value === "llm" || value === "embed" || value === "transcribe";
+    return value === "llm" || value === "embed" || value === "transcribe" || value === "api";
 }
 
 interface VideoSearchRow {

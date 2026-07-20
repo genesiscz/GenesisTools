@@ -531,15 +531,20 @@ export async function handleUsersRoute(req: Request, url: URL, yt: Youtube): Pro
                 return user;
             }
 
-            const enqueuedJobIds = yt.db.listWatchlist(user.id).map(
-                (entry) =>
-                    yt.pipeline.enqueue({
-                        targetKind: "channel",
-                        target: entry.channelHandle,
-                        stages: ["discover", "metadata"],
-                        userId: user.id,
-                    }).id
-            );
+            const enqueuedJobIds = yt.db.listWatchlist(user.id).map((entry) => {
+                const { job } = yt.pipeline.enqueue({
+                    targetKind: "channel",
+                    target: entry.channelHandle,
+                    stages: ["discover", "metadata"],
+                    userId: user.id,
+                });
+
+                if (!job) {
+                    throw new Error(`watchlist sync enqueue returned no job for ${entry.channelHandle}`);
+                }
+
+                return job.id;
+            });
 
             return Response.json({ enqueuedJobIds }, { headers: CORS_HEADERS });
         }

@@ -6,7 +6,7 @@ import { formatDuration } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger/client";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@genesiscz/utils/ui/components/sheet";
 import { Skeleton } from "@genesiscz/utils/ui/components/skeleton";
-import { ChevronRight, Cog, Copy, DollarSign, Hash, Sparkles, Telescope, Workflow, Zap } from "lucide-react";
+import { ChevronRight, Cog, Copy, DollarSign, Globe2, Hash, Sparkles, Telescope, Workflow, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -15,6 +15,8 @@ interface KindStyle {
     icon: typeof Cog;
     badgeClass: string;
     accentClass: string;
+    requestLabel: string;
+    responseLabel: string;
 }
 
 const KIND_STYLES: Record<JobActivity["kind"], KindStyle> = {
@@ -23,18 +25,32 @@ const KIND_STYLES: Record<JobActivity["kind"], KindStyle> = {
         icon: Sparkles,
         badgeClass: "border-amber-400/40 bg-amber-400/10 text-amber-100",
         accentClass: "from-amber-400/80 via-amber-300/60 to-amber-500/0",
+        requestLabel: "Prompt",
+        responseLabel: "Response",
     },
     embed: {
         label: "Embed",
         icon: Workflow,
         badgeClass: "border-fuchsia-400/40 bg-fuchsia-400/10 text-fuchsia-100",
         accentClass: "from-fuchsia-400/80 via-fuchsia-300/60 to-fuchsia-500/0",
+        requestLabel: "Prompt",
+        responseLabel: "Response",
     },
     transcribe: {
         label: "Transcribe",
         icon: Telescope,
         badgeClass: "border-cyan-400/40 bg-cyan-400/10 text-cyan-100",
         accentClass: "from-cyan-400/80 via-cyan-300/60 to-cyan-500/0",
+        requestLabel: "Prompt",
+        responseLabel: "Response",
+    },
+    api: {
+        label: "API",
+        icon: Globe2,
+        badgeClass: "border-emerald-400/40 bg-emerald-400/10 text-emerald-100",
+        accentClass: "from-emerald-400/80 via-emerald-300/60 to-emerald-500/0",
+        requestLabel: "Request",
+        responseLabel: "Result",
     },
 };
 
@@ -52,11 +68,13 @@ export function JobActivityDrawer({
     const totals = useMemo(() => {
         const rows = activity.data ?? [];
         const calls = rows.length;
+        const apiCalls = rows.filter((row) => row.kind === "api").length;
+        const aiCalls = calls - apiCalls;
         const tokensIn = rows.reduce((acc, row) => acc + (row.tokensIn ?? 0), 0);
         const tokensOut = rows.reduce((acc, row) => acc + (row.tokensOut ?? 0), 0);
         const costUsd = rows.reduce((acc, row) => acc + (row.costUsd ?? 0), 0);
         const lastSeen = rows.at(-1)?.completedAt ?? rows.at(-1)?.createdAt ?? null;
-        return { calls, tokensIn, tokensOut, costUsd, lastSeen };
+        return { calls, apiCalls, aiCalls, tokensIn, tokensOut, costUsd, lastSeen };
     }, [activity.data]);
 
     return (
@@ -90,8 +108,8 @@ export function JobActivityDrawer({
                             Activity for job <span className="font-mono">#{jobId ?? "?"}</span>
                         </SheetTitle>
                         <SheetDescription className="text-sm leading-6 text-muted-foreground">
-                            Every LLM, embedding, and transcription call recorded against this pipeline job — with
-                            prompt, response, token use, and cost.
+                            Every yt-dlp / YouTube fetch, LLM, embedding, and transcription call recorded against this
+                            pipeline job — with request/result (or prompt/response), timing, and cost.
                         </SheetDescription>
                     </SheetHeader>
 
@@ -102,6 +120,7 @@ export function JobActivityDrawer({
                             value={String(totals.calls)}
                             valueClass="text-emerald-200"
                             ring="from-emerald-400/40 via-emerald-400/10 to-transparent"
+                            hint={totals.calls > 0 ? `${totals.apiCalls} api · ${totals.aiCalls} ai` : undefined}
                         />
                         <SummaryCard
                             icon={<Zap className="size-4" />}
@@ -172,8 +191,9 @@ function SummaryCard({
 function ActivityRow({ row }: { row: JobActivity }) {
     const [expanded, setExpanded] = useState(false);
     const startedAt = parseSqliteDate(row.startedAt ?? row.createdAt);
-    const kind = KIND_STYLES[row.kind];
+    const kind = KIND_STYLES[row.kind] ?? KIND_STYLES.api;
     const KindIcon = kind.icon;
+    const isApi = row.kind === "api";
 
     return (
         <li className="group relative overflow-hidden rounded-2xl border border-primary/12 bg-black/35 transition duration-200 hover:-translate-y-0.5 hover:border-amber-400/35 hover:shadow-[0_18px_44px_rgba(0,0,0,0.45),0_0_28px_rgba(245,158,11,0.08)]">
@@ -202,19 +222,25 @@ function ActivityRow({ row }: { row: JobActivity }) {
                             </span>
                         ) : null}
                         <span className="truncate font-mono text-xs text-foreground/85">
-                            <span className="text-secondary">{row.provider ?? "—"}</span>
+                            <span className="text-secondary">{row.provider ?? row.action ?? "—"}</span>
                             <span className="mx-1 text-muted-foreground/60">·</span>
-                            <span className="text-foreground/75">{row.model ?? "—"}</span>
+                            <span className="text-foreground/75">{row.model ?? row.action ?? "—"}</span>
                         </span>
                     </div>
                     <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[0.7rem] tabular-nums text-muted-foreground sm:grid-cols-4">
-                        <Stat label="tokens">
-                            <span className="text-cyan-200">{row.tokensIn ?? 0}</span>
-                            <span className="mx-0.5 text-muted-foreground/60">/</span>
-                            <span className="text-cyan-200/80">{row.tokensOut ?? 0}</span>
-                        </Stat>
+                        {isApi ? (
+                            <Stat label="action">
+                                <span className="truncate text-emerald-200">{row.action ?? "—"}</span>
+                            </Stat>
+                        ) : (
+                            <Stat label="tokens">
+                                <span className="text-cyan-200">{row.tokensIn ?? 0}</span>
+                                <span className="mx-0.5 text-muted-foreground/60">/</span>
+                                <span className="text-cyan-200/80">{row.tokensOut ?? 0}</span>
+                            </Stat>
+                        )}
                         <Stat label="cost">
-                            <span className="text-amber-200">{formatCost(row.costUsd ?? 0)}</span>
+                            <span className="text-amber-200">{isApi ? "—" : formatCost(row.costUsd ?? 0)}</span>
                         </Stat>
                         <Stat label="time">
                             {row.durationMs !== null ? formatDuration(row.durationMs, "ms", "hms") : "—"}
@@ -233,8 +259,8 @@ function ActivityRow({ row }: { row: JobActivity }) {
             </button>
             {expanded ? (
                 <div className="space-y-3 border-t border-primary/10 px-4 py-3">
-                    <PayloadBlock label="Prompt" value={row.prompt} tone="amber" />
-                    <PayloadBlock label="Response" value={row.response} tone="cyan" />
+                    <PayloadBlock label={kind.requestLabel} value={row.prompt} tone="amber" />
+                    <PayloadBlock label={kind.responseLabel} value={row.response} tone="cyan" />
                 </div>
             ) : null}
         </li>
@@ -311,8 +337,8 @@ function ActivityEmpty() {
                 no calls yet
             </p>
             <p className="mt-1 text-sm text-muted-foreground/80">
-                Activity appears the moment a stage runs an LLM, embedder, or transcriber. Pipeline downloads and
-                metadata fetches don't create activity rows.
+                Activity appears as stages run yt-dlp / YouTube fetches, LLMs, embedders, or transcribers. Older jobs
+                completed before API tracing won't have rows.
             </p>
         </div>
     );

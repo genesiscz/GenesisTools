@@ -110,7 +110,7 @@ export function useGenerateSummary(id: VideoId) {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: (opts: {
+        mutationFn: async (opts: {
             mode: "short" | "timestamped" | "long";
             force?: boolean;
             provider?: string;
@@ -119,7 +119,20 @@ export function useGenerateSummary(id: VideoId) {
             tone?: "insightful" | "funny" | "actionable" | "controversial";
             format?: "list" | "qa";
             length?: "short" | "auto" | "detailed";
-        }) => apiClient.generateSummary(id, opts),
+            lang?: string;
+        }) => {
+            const result = await apiClient.generateSummary(id, opts);
+
+            // Background enqueue — wait for the job, then load the artifact.
+            if (result.jobId != null && !("long" in result) && !("short" in result) && !("timestamped" in result)) {
+                await waitForJob(result.jobId);
+                const summary = await apiClient.getSummary(id, opts.mode);
+
+                return { ...summary, jobId: result.jobId, cached: false as const };
+            }
+
+            return result;
+        },
         onSuccess: (_data, opts) => {
             queryClient.invalidateQueries({ queryKey: ["summary", id, opts.mode] });
             queryClient.invalidateQueries({ queryKey: ["video", id] });
@@ -131,9 +144,33 @@ export function useGenerateSummary(id: VideoId) {
     });
 }
 
+async function waitForJob(jobId: number, opts: { timeoutMs?: number; intervalMs?: number } = {}): Promise<void> {
+    const timeoutMs = opts.timeoutMs ?? 10 * 60_000;
+    const intervalMs = opts.intervalMs ?? 1500;
+    const started = Date.now();
+
+    while (Date.now() - started < timeoutMs) {
+        const { job } = await apiClient.getJob(jobId);
+
+        if (job.status === "completed") {
+            return;
+        }
+
+        if (job.status === "failed" || job.status === "cancelled") {
+            throw new Error(job.error ?? `Job ${jobId} ${job.status}`);
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+
+    throw new Error(`Job ${jobId} timed out after ${timeoutMs}ms`);
+}
+
 export function useAskVideo(id: VideoId) {
+    const queryClient = useQueryClient();
+
     return useMutation({
-        mutationFn: (vars: {
+        mutationFn: async (vars: {
             question: string;
             topK?: number;
             provider?: string;
@@ -141,7 +178,36 @@ export function useAskVideo(id: VideoId) {
             sources?: QaSource[];
             scope?: "video" | "channel";
             presetId?: number;
-        }) => apiClient.askVideo(id, vars),
+        }) => {
+            const enqueued = await apiClient.askVideo(id, vars);
+
+            if (enqueued.answer) {
+                return {
+                    ...enqueued,
+                    answer: enqueued.answer,
+                    citations: enqueued.citations ?? [],
+                };
+            }
+
+            await waitForJob(enqueued.jobId);
+            const { items } = await apiClient.listQaHistory(id, 10);
+            const match = items.find((item) => item.question === vars.question) ?? items[0];
+
+            if (!match) {
+                throw new Error("Ask completed but no answer found in history");
+            }
+
+            return {
+                ...enqueued,
+                answer: match.answer,
+                citations: match.citations,
+                historyId: match.id,
+            };
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["qa-history", id] });
+            queryClient.invalidateQueries({ queryKey: ["jobs"] });
+        },
     });
 }
 

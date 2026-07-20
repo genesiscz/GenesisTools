@@ -29,11 +29,15 @@ export function registerDownloadCommand(program: Command): void {
         .action(async (target: string, opts: DownloadOpts) => {
             const yt = await getYoutube();
             const stages = downloadStages(opts);
-            const job = yt.pipeline.enqueue({
+            const { job } = yt.pipeline.enqueue({
                 targetKind: resolveTargetKind(target),
                 target,
                 stages,
             });
+
+            if (!job) {
+                throw new Error("download enqueue returned no job");
+            }
 
             await yt.pipeline.start();
             if (opts.keep && resolveTargetKind(target) === "video") {

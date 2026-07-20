@@ -1,4 +1,7 @@
 import { useUserSettings } from "@app/yt/api.hooks";
+import { AccountHeaderControl } from "@app/yt/components/account/account-header-control";
+import { AccountSidebarFooter } from "@app/yt/components/account/account-sidebar-footer";
+import { AuthGateProvider } from "@app/yt/components/account/auth-gate";
 import { ErrorBoundary } from "@app/yt/components/shared/error-boundary";
 import { fetchUiConfig } from "@app/yt/config.client";
 import { applyAppearance } from "@app/yt/lib/appearance";
@@ -85,50 +88,64 @@ function RootLayout() {
 
     useAppearance();
 
-    return (
-        <AppShell
-            themeClass="cyberpunk"
-            glowVariant="rich"
-            sidebar={
-                <AppSidebar
-                    renderBrand={() => (
-                        <div className="flex items-center gap-3 rounded-2xl border border-primary/25 bg-primary/10 p-4 neon-border">
-                            <div className="grid size-11 place-items-center rounded-xl bg-primary text-primary-foreground shadow-lg shadow-primary/25">
-                                <PlaySquare className="size-5" />
-                            </div>
-                            <div>
-                                <p className="text-xs font-mono uppercase tracking-[0.35em] text-primary">Genesis</p>
-                                <h1 className="text-lg font-semibold text-foreground">YouTube AI</h1>
-                            </div>
-                        </div>
-                    )}
-                    navGroups={[
-                        {
-                            label: "",
-                            theme: "primary",
-                            items: [
-                                { title: "Channels", url: "/", icon: Youtube },
-                                { title: "History", url: "/history", icon: History },
-                                { title: "Collections", url: "/collections", icon: Library },
-                                { title: "Digest", url: "/digest", icon: Newspaper },
-                                { title: "Jobs", url: "/jobs", icon: BriefcaseBusiness },
-                                { title: "Settings", url: "/settings", icon: Settings },
-                            ],
-                        },
-                    ]}
-                    activePath={pathname}
-                    MenuItemComponent={YtSidebarItem}
-                    LinkComponent={Link}
-                />
-            }
-            title={pageTitleFromPath(pathname)}
-            statusLabel={connected ? "Live" : "Polling"}
-            gridBackground
-            scanLinesEffect
-        >
+    if (pathname === "/first-run") {
+        return (
             <ErrorBoundary>
                 <Outlet />
             </ErrorBoundary>
-        </AppShell>
+        );
+    }
+
+    return (
+        <AuthGateProvider>
+            <AppShell
+                themeClass="cyberpunk"
+                glowVariant="rich"
+                sidebar={
+                    <AppSidebar
+                        renderBrand={() => (
+                            <div className="flex items-center gap-3 rounded-2xl border border-primary/25 bg-primary/10 p-4 neon-border">
+                                <div className="grid size-11 place-items-center rounded-xl bg-primary text-primary-foreground shadow-lg shadow-primary/25">
+                                    <PlaySquare className="size-5" />
+                                </div>
+                                <div>
+                                    <p className="text-xs font-mono uppercase tracking-[0.35em] text-primary">
+                                        Genesis
+                                    </p>
+                                    <h1 className="text-lg font-semibold text-foreground">YouTube AI</h1>
+                                </div>
+                            </div>
+                        )}
+                        navGroups={[
+                            {
+                                label: "",
+                                theme: "primary",
+                                items: [
+                                    { title: "Channels", url: "/", icon: Youtube },
+                                    { title: "History", url: "/history", icon: History },
+                                    { title: "Collections", url: "/collections", icon: Library },
+                                    { title: "Digest", url: "/digest", icon: Newspaper },
+                                    { title: "Jobs", url: "/jobs", icon: BriefcaseBusiness },
+                                    { title: "Settings", url: "/settings", icon: Settings },
+                                ],
+                            },
+                        ]}
+                        activePath={pathname}
+                        MenuItemComponent={YtSidebarItem}
+                        LinkComponent={Link}
+                        renderFooter={() => <AccountSidebarFooter />}
+                    />
+                }
+                title={pageTitleFromPath(pathname)}
+                statusLabel={connected ? "Live" : "Polling"}
+                headerEnd={<AccountHeaderControl />}
+                gridBackground
+                scanLinesEffect
+            >
+                <ErrorBoundary>
+                    <Outlet />
+                </ErrorBoundary>
+            </AppShell>
+        </AuthGateProvider>
     );
 }

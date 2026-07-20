@@ -108,12 +108,16 @@ export async function handleReportsRoute(req: Request, url: URL, yt: Youtube): P
                 return { report: insertedReport, credits: remaining };
             });
 
-            const job = yt.pipeline.enqueue({
+            const { job } = yt.pipeline.enqueue({
                 targetKind: "report",
                 target: String(report.id),
                 stages: ["reportSynthesize"],
                 userId: user.id,
             });
+
+            if (!job) {
+                throw new Error("report synthesize enqueue returned no job");
+            }
 
             return Response.json(
                 { report, jobId: job.id, creditsSpent: estimate.creditCost, credits },

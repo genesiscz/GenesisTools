@@ -1,5 +1,6 @@
 export { ActivityGraph } from "@app/youtube/ui/components/shared/activity-graph";
 export { AskTab } from "@app/youtube/ui/components/shared/ask-tab";
+export { AuthForm } from "@app/youtube/ui/components/shared/auth-form";
 export { computeCreditBuckets, subscriptionRenewalCopy } from "@app/youtube/ui/components/shared/billing-ui";
 export { CommentsTab } from "@app/youtube/ui/components/shared/comments-tab";
 export { Diamond, DiamondValue, formatDiamonds } from "@app/youtube/ui/components/shared/diamond";

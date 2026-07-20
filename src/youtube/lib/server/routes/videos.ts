@@ -1,6 +1,5 @@
 import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import { grantArtifactAccess, resolveArtifactPrice } from "@app/youtube/lib/artifact-access";
-import { withJobActivity } from "@app/youtube/lib/job-activity";
 import { isOutputLang } from "@app/youtube/lib/languages";
 import { getPresetForUse } from "@app/youtube/lib/presets";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
@@ -29,7 +28,6 @@ import type { Youtube } from "@app/youtube/lib/youtube";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { estimateLlmCallCostUsd, estimateSpeechTokens } from "@genesiscz/utils/ai/llm-cost";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
 import { estimateTokens } from "@genesiscz/utils/tokens";
 
 /** System prompt + instructions sent alongside the transcript. */
@@ -552,206 +550,68 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             }
 
             const hasTranscript = yt.db.getTranscript(id) !== null;
-            const needsProvider = mode !== "short" || !!provider || !!model;
-            const providerChoice = needsProvider
-                ? await resolveProviderChoice({
-                      provider,
-                      model,
-                      fallbackSpec: resolveAiSpecForTask(
-                          await yt.config.getAll(),
-                          mode === "timestamped" ? "insights" : "summary"
-                      ),
-                  })
-                : undefined;
             const quotaError = await enforceFreeQuota(yt, user);
 
             if (quotaError) {
                 return quotaError;
             }
 
-            // Reserve BEFORE the pipeline work so concurrent requests cannot pass
-            // a stale balance check and burn provider cost; released on failure.
+            // Reserve BEFORE enqueue so concurrent requests cannot pass a stale
+            // balance check. Worker commits/releases via params.holdId.
             const hold = yt.db.reserveCredits({
                 userId: user.id,
                 amount: creditCost,
                 reason: `summary:${mode}`,
                 context: id,
             });
-            // Q2 (frozen): the ASR fallback costs the same as the standalone
-            // transcribe path. Reserved lazily — only if captions actually miss.
-            // Ref container: the reserve happens inside a deeply-nested callback,
-            // and TS's closure-assignment narrowing collapses a plain `let` to
-            // `never` at the later checks — a stable object property does not.
-            const transcribeHold: { current: { holdId: number; credits: number } | null } = { current: null };
             const stages = hasTranscript ? (["summarize"] as const) : (["captions", "summarize"] as const);
-            const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: [...stages], userId: user.id });
-            yt.pipeline.emitExternal({ type: "job:created", job });
-            const startedAt = new Date().toISOString();
-            yt.db.updateJob(job.id, {
-                status: "running",
-                currentStage: hasTranscript ? "summarize" : "captions",
-                progress: 0,
-                progressMessage: hasTranscript ? "Compacting transcript" : "Fetching captions / transcribing",
+            const enqueue = yt.pipeline.enqueue({
+                targetKind: "video",
+                target: id,
+                stages: [...stages],
+                userId: user.id,
+                priority: 100,
+                force,
+                params: {
+                    mode,
+                    language: lang,
+                    force,
+                    provider,
+                    model,
+                    targetBins,
+                    tone,
+                    format,
+                    length,
+                    presetInstructions,
+                    holdId: hold.holdId,
+                    creditCost,
+                },
             });
-            const startedJob = yt.db.getJob(job.id) ?? job;
-            yt.pipeline.emitExternal({ type: "job:started", job: startedJob });
 
-            try {
-                if (!hasTranscript) {
-                    yt.pipeline.emitExternal({ type: "stage:started", jobId: job.id, stage: "captions" });
-                    yt.pipeline.emitExternal({
-                        type: "stage:progress",
-                        jobId: job.id,
-                        stage: "captions",
-                        progress: 0.05,
-                        message: "Fetching captions",
-                    });
-                    await withJobActivity({ jobId: job.id, stage: "captions", db: yt.db, userId: user.id }, () =>
-                        yt.transcripts.transcribe({
-                            videoId: id,
-                            beforeAiTranscription: () => {
-                                transcribeHold.current = yt.db.reserveCredits({
-                                    userId: user.id,
-                                    amount: CREDIT_COSTS["transcribe:ai"],
-                                    reason: "transcribe:ai",
-                                    context: id,
-                                });
-                            },
-                            onProgress: (info) => {
-                                const stagePct = (info.percent ?? 0) / 100;
-                                const overall = Math.min(0.25, 0.05 + stagePct * 0.2);
-                                yt.db.updateJob(job.id, { progress: overall, progressMessage: info.message });
-                                yt.pipeline.emitExternal({
-                                    type: "stage:progress",
-                                    jobId: job.id,
-                                    stage: "captions",
-                                    progress: overall,
-                                    message: info.message,
-                                });
-                            },
-                        })
-                    );
-                    yt.pipeline.emitExternal({ type: "stage:completed", jobId: job.id, stage: "captions" });
-                }
-
-                yt.db.updateJob(job.id, {
-                    currentStage: "summarize",
-                    progress: 0.25,
-                    progressMessage: "Compacting transcript",
-                });
-                yt.pipeline.emitExternal({ type: "stage:started", jobId: job.id, stage: "summarize" });
-                yt.pipeline.emitExternal({
-                    type: "stage:progress",
-                    jobId: job.id,
-                    stage: "summarize",
-                    progress: 0.25,
-                    message: "Compacting transcript",
-                });
-
-                const result = await withJobActivity(
-                    { jobId: job.id, stage: "summarize", db: yt.db, userId: user.id },
-                    () =>
-                        yt.summary.summarize({
-                            videoId: id,
-                            mode,
-                            provider,
-                            providerChoice,
-                            targetBins,
-                            forceRecompute: force,
-                            tone,
-                            format,
-                            length,
-                            lang,
-                            presetInstructions,
-                            onProgress: (info) => {
-                                const progress = (info.percent ?? 50) / 100;
-                                yt.db.updateJob(job.id, { progress, progressMessage: info.message });
-                                yt.pipeline.emitExternal({
-                                    type: "stage:progress",
-                                    jobId: job.id,
-                                    stage: "summarize",
-                                    progress,
-                                    message: info.message,
-                                });
-                            },
-                            onPartial: (partial) => {
-                                if (partial === null || typeof partial !== "object") {
-                                    logger.debug({ jobId: job.id, videoId: id }, "skipping malformed summary partial");
-                                    return;
-                                }
-
-                                yt.pipeline.emitExternal({
-                                    type: "summary:partial",
-                                    jobId: job.id,
-                                    videoId: id,
-                                    mode,
-                                    partial,
-                                });
-                            },
-                        })
-                );
-                yt.db.updateJob(job.id, {
-                    status: "completed",
-                    progress: 1,
-                    progressMessage: null,
-                    currentStage: null,
-                    completedAt: new Date().toISOString(),
-                });
-                const completedJob = yt.db.getJob(job.id) ?? job;
-                yt.pipeline.emitExternal({ type: "stage:completed", jobId: job.id, stage: "summarize" });
-                yt.pipeline.emitExternal({ type: "job:completed", job: completedJob });
-                // Full-price generation also records access — the generator
-                // never pays again, and later users can unlock this artifact.
-                // Access grant + hold commits in one transaction: a crash between
-                // them must not charge without granting access (or vice versa). If
-                // it throws, the rollback leaves the holds "held" and releasable
-                // in the catch below.
-                yt.db.transaction(() => {
-                    grantArtifactAccess(yt.db, {
-                        userId: user.id,
-                        kind: `summary:${mode}`,
-                        videoId: id,
-                        creditsSpent: creditCost,
-                    });
-
-                    if (transcribeHold.current !== null) {
-                        yt.db.commitHold(transcribeHold.current.holdId);
-                    }
-
-                    yt.db.commitHold(hold.holdId);
-                });
-
-                return Response.json(
-                    {
-                        summary:
-                            mode === "timestamped"
-                                ? (result.timestamped ?? [])
-                                : mode === "long"
-                                  ? (result.long ?? null)
-                                  : (result.short ?? ""),
-                        mode,
-                        lang,
-                        cached: false,
-                        jobId: job.id,
-                        startedAt,
-                        creditsSpent:
-                            creditCost + (transcribeHold.current !== null ? CREDIT_COSTS["transcribe:ai"] : 0),
-                        credits: transcribeHold.current !== null ? transcribeHold.current.credits : hold.credits,
-                    },
-                    { headers: CORS_HEADERS }
-                );
-            } catch (error) {
+            if (!enqueue.job) {
                 yt.db.releaseHold(hold.holdId);
-                if (transcribeHold.current !== null) {
-                    yt.db.releaseHold(transcribeHold.current.holdId);
-                }
-
-                const message = error instanceof Error ? error.message : String(error);
-                yt.db.updateJob(job.id, { status: "failed", error: message, completedAt: new Date().toISOString() });
-                const failedJob = yt.db.getJob(job.id) ?? job;
-                yt.pipeline.emitExternal({ type: "job:failed", job: failedJob, error: message });
-                throw error;
+                throw new Error("summary enqueue returned no job");
             }
+
+            // If we reused an in-flight job, release this request's hold — the
+            // original enqueuer already reserved credits for the shared work.
+            if (enqueue.reused) {
+                yt.db.releaseHold(hold.holdId);
+            }
+
+            return Response.json(
+                {
+                    jobId: enqueue.job.id,
+                    reused: enqueue.reused,
+                    queuePosition: enqueue.queuePosition,
+                    status: enqueue.job.status,
+                    priority: enqueue.job.priority,
+                    mode,
+                    lang,
+                    credits: hold.credits,
+                },
+                { headers: CORS_HEADERS }
+            );
         }
 
         const estimateRoute = matchRoute(req, "GET", "/api/v1/videos/:id/estimate", url.pathname);
@@ -861,7 +721,6 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             const question = body.question;
 
             let videoIds: VideoId[] = [id];
-            let crossVideo: NonNullable<Parameters<typeof yt.qa.ask>[0]["crossVideo"]> | undefined;
 
             if (scope === "channel") {
                 const video = yt.videos.show(id);
@@ -872,19 +731,6 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
                 const selection = selectCandidateVideos(yt.db, { channel: video.channelHandle, question });
                 videoIds = selection.videoIds.length > 0 ? selection.videoIds : [id];
-                crossVideo = {
-                    videos: Object.fromEntries(
-                        videoIds.map((videoId) => {
-                            const member = yt.db.getVideo(videoId);
-
-                            return [
-                                videoId,
-                                { title: member?.title ?? videoId, uploadDate: member?.uploadDate ?? null },
-                            ];
-                        })
-                    ),
-                    skippedUnindexed: selection.skippedUnindexed,
-                };
             } else {
                 if (sources.includes("transcript") && !yt.db.getTranscript(id)) {
                     return jsonError("no transcript yet for this video — run pipeline / transcribe first", 409);
@@ -896,11 +742,6 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
             }
 
             const topK = typeof body.topK === "number" ? body.topK : undefined;
-            const providerChoice = await resolveProviderChoice({
-                provider: typeof body.provider === "string" ? body.provider : undefined,
-                model: typeof body.model === "string" ? body.model : undefined,
-                fallbackSpec: resolveAiSpecForTask(await yt.config.getAll(), "qa"),
-            });
             const presetId = typeof body.presetId === "number" ? body.presetId : undefined;
             let presetInstructions: string | undefined;
 
@@ -920,114 +761,55 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
                 return quotaError;
             }
 
-            // Reserve BEFORE the retrieval/LLM work so concurrent requests cannot
-            // pass a stale balance check and burn provider cost; released on failure.
+            // Reserve BEFORE enqueue; worker commits/releases via params.holdId.
             const hold = yt.db.reserveCredits({
                 userId: user.id,
                 amount: askCost,
                 reason: scope === "channel" ? "qa:channel" : "ask",
                 context: id,
             });
-            const job = yt.db.enqueueJob({ targetKind: "video", target: id, stages: ["qa"], userId: user.id });
-            yt.pipeline.emitExternal({ type: "job:created", job });
-            yt.db.updateJob(job.id, { status: "running", currentStage: "qa" });
-            const startedJob = yt.db.getJob(job.id) ?? job;
-            yt.pipeline.emitExternal({ type: "job:started", job: startedJob });
-            yt.pipeline.emitExternal({ type: "stage:started", jobId: job.id, stage: "qa" });
-            yt.pipeline.emitExternal({
-                type: "stage:progress",
-                jobId: job.id,
-                stage: "qa",
-                progress: 0.05,
-                message: "Indexing transcript",
-            });
-
-            try {
-                const result = await withJobActivity({ jobId: job.id, stage: "qa", db: yt.db }, async () => {
-                    for (const videoId of videoIds) {
-                        await yt.qa.index({ videoId, sources });
-                    }
-
-                    yt.pipeline.emitExternal({
-                        type: "stage:progress",
-                        jobId: job.id,
-                        stage: "qa",
-                        progress: 0.5,
-                        message: "Answering question",
-                    });
-                    return yt.qa.ask({
-                        videoIds,
-                        question,
-                        topK,
-                        providerChoice,
-                        presetInstructions,
-                        sources,
-                        crossVideo,
-                        lang,
-                    });
-                });
-                yt.db.updateJob(job.id, {
-                    status: "completed",
-                    progress: 1,
-                    currentStage: null,
-                    completedAt: new Date().toISOString(),
-                });
-                const completedJob = yt.db.getJob(job.id) ?? job;
-                yt.pipeline.emitExternal({ type: "stage:completed", jobId: job.id, stage: "qa" });
-                yt.pipeline.emitExternal({ type: "job:completed", job: completedJob });
-                const historyItem = yt.db.insertQaHistory({
-                    userId: user.id,
-                    videoId: id,
+            const enqueue = yt.pipeline.enqueue({
+                targetKind: "video",
+                target: id,
+                stages: ["qa"],
+                userId: user.id,
+                priority: 100,
+                params: {
                     question,
-                    answer: result.answer,
-                    citations: result.citations,
-                    creditsSpent: askCost,
                     sources,
                     scope,
-                    candidateVideoIds: scope === "channel" ? videoIds : undefined,
-                    lang,
-                });
+                    language: lang,
+                    topK,
+                    provider: typeof body.provider === "string" ? body.provider : undefined,
+                    model: typeof body.model === "string" ? body.model : undefined,
+                    presetInstructions,
+                    videoIds,
+                    holdId: hold.holdId,
+                    creditCost: askCost,
+                },
+            });
 
-                // Metadata for every distinct cited video — the UI renders
-                // grouped citation headers (title, date, thumbnail) from it.
-                const citedVideos = Object.fromEntries(
-                    [...new Set(result.citations.map((citation) => citation.videoId))].map((videoId) => {
-                        const member = yt.db.getVideo(videoId);
-
-                        return [
-                            videoId,
-                            {
-                                title: member?.title ?? videoId,
-                                uploadDate: member?.uploadDate ?? null,
-                                thumbUrl: member?.thumbUrl ?? null,
-                            },
-                        ];
-                    })
-                );
-                // Last DB action before the response: anything throwing above
-                // still finds the hold "held" and releasable in the catch.
-                yt.db.commitHold(hold.holdId);
-
-                return Response.json(
-                    {
-                        ...result,
-                        jobId: job.id,
-                        lang,
-                        creditsSpent: askCost,
-                        credits: hold.credits,
-                        historyId: historyItem.id,
-                        citedVideos,
-                    },
-                    { headers: CORS_HEADERS }
-                );
-            } catch (error) {
+            if (!enqueue.job) {
                 yt.db.releaseHold(hold.holdId);
-                const message = error instanceof Error ? error.message : String(error);
-                yt.db.updateJob(job.id, { status: "failed", error: message, completedAt: new Date().toISOString() });
-                const failedJob = yt.db.getJob(job.id) ?? job;
-                yt.pipeline.emitExternal({ type: "job:failed", job: failedJob, error: message });
-                throw error;
+                throw new Error("qa enqueue returned no job");
             }
+
+            if (enqueue.reused) {
+                yt.db.releaseHold(hold.holdId);
+            }
+
+            return Response.json(
+                {
+                    jobId: enqueue.job.id,
+                    reused: enqueue.reused,
+                    queuePosition: enqueue.queuePosition,
+                    status: enqueue.job.status,
+                    priority: enqueue.job.priority,
+                    lang,
+                    credits: hold.credits,
+                },
+                { headers: CORS_HEADERS }
+            );
         }
 
         return jsonError("not found", 404);
