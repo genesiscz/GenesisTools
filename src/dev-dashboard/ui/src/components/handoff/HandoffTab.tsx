@@ -1,8 +1,11 @@
-import type { HandoffListRow, HandoffPostResponse, HandoffStreamFrame } from "@app/dev-dashboard/lib/handoff-types";
-import { SafeJSON } from "@genesiscz/utils/json";
+import type { HandoffListRow, HandoffPostResponse } from "@app/dev-dashboard/lib/handoff-types";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useActivityPanel } from "@/hooks/useActivityPanel";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useQaStream } from "@/hooks/useQaStream";
+import { ActivityPanel } from "./ActivityPanel";
 import { HandoffDetail } from "./HandoffDetail";
 import { HandoffCreateDialog } from "./HandoffDialogs";
 import { useHandoffList } from "./useHandoffApi";
@@ -32,10 +35,12 @@ function statusDot(status: string): string {
 
 function HandoffRow({
     row,
+    ordinal,
     selected,
     onSelect,
 }: {
     row: HandoffListRow;
+    ordinal: number;
     selected: boolean;
     onSelect: (id: string) => void;
 }) {
@@ -52,6 +57,7 @@ function HandoffRow({
                     className="h-1.5 w-1.5 shrink-0 rounded-full"
                     style={{ backgroundColor: statusDot(row.status) }}
                 />
+                <span className="font-mono text-[10px] text-[var(--dd-text-muted)]">#{ordinal}</span>
                 <span className="min-w-0 flex-1 truncate text-sm text-[var(--dd-text-primary)]">{row.title}</span>
                 <span className="font-mono text-[10px] text-[var(--dd-text-secondary)]">
                     {row.progress ?? row.tasks}
@@ -79,6 +85,8 @@ function HandoffRow({
 export function HandoffTab() {
     const list = useHandoffList();
     const queryClient = useQueryClient();
+    const activityPanel = useActivityPanel();
+    const isDesktop = useMediaQuery("(min-width: 1024px)");
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [openOnly, setOpenOnly] = useState(false);
     const [project, setProject] = useState<string>("");
@@ -86,21 +94,16 @@ export function HandoffTab() {
     const [editIdToast, setEditIdToast] = useState<HandoffPostResponse | null>(null);
     const rows = useMemo(() => list.data?.handoffs ?? [], [list.data]);
 
-    // SSE keeps every window live (§7.3): each frame → refetch that handoff + the list.
-    useEffect(() => {
-        const es = new EventSource("/api/handoff/stream");
-        es.onmessage = (ev) => {
-            try {
-                const frame = SafeJSON.parse(ev.data, { strict: true }) as HandoffStreamFrame;
-                void queryClient.invalidateQueries({ queryKey: ["handoff-log"] });
-                void queryClient.invalidateQueries({ queryKey: ["handoff", frame.id] });
-            } catch {
-                /* malformed frame — ignore */
-            }
-        };
+    // Unified /api/qa/stream — handoff frames invalidate list + detail (+ events when selected).
+    useQaStream((frame) => {
+        if (frame.type !== "handoff") {
+            return;
+        }
 
-        return () => es.close();
-    }, [queryClient]);
+        void queryClient.invalidateQueries({ queryKey: ["handoff-log"] });
+        void queryClient.invalidateQueries({ queryKey: ["handoff", frame.id] });
+        void queryClient.invalidateQueries({ queryKey: ["handoff-events", frame.id] });
+    });
 
     const projects = useMemo(
         () => [...new Set(rows.map((r) => r.project).filter((p): p is string => p !== null))].sort(),
@@ -109,9 +112,14 @@ export function HandoffTab() {
     const filtered = rows.filter(
         (r) => (!openOnly || r.status === "open" || r.status === "claimed") && (project === "" || r.project === project)
     );
+    const ordinalById = new Map(filtered.map((row, index) => [row.id, index + 1]));
+    const activityColumn = activityPanel.state === "collapsed" ? "44px" : "340px";
 
     return (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)]">
+        <div
+            className="grid grid-cols-1 gap-4 transition-[grid-template-columns] duration-200 ease-out"
+            style={isDesktop ? { gridTemplateColumns: `minmax(0,0.7fr) minmax(0,1.6fr) ${activityColumn}` } : undefined}
+        >
             <div className="dd-panel flex flex-col gap-3 self-start p-3">
                 <div className="flex items-center gap-2">
                     <Button
@@ -169,6 +177,7 @@ export function HandoffTab() {
                                     <HandoffRow
                                         key={row.id}
                                         row={row}
+                                        ordinal={ordinalById.get(row.id) ?? 0}
                                         selected={row.id === selectedId}
                                         onSelect={setSelectedId}
                                     />
@@ -188,6 +197,8 @@ export function HandoffTab() {
                     </div>
                 )}
             </div>
+
+            <ActivityPanel id={selectedId} />
 
             <HandoffCreateDialog
                 open={createOpen}

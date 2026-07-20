@@ -1,11 +1,12 @@
 import type { HandoffActionInput, HandoffTask, PublicHandoff } from "@app/dev-dashboard/lib/handoff-types";
 import { Checkbox } from "@ui/components/checkbox";
 import { Input } from "@ui/components/input";
-import { useState } from "react";
-import { AttachmentStrip } from "./HandoffAttachments";
+import { type ClipboardEvent, useState } from "react";
+import { AttachmentStrip, renderWithFileChips } from "./HandoffAttachments";
 import { HandoffProofDialog } from "./HandoffDialogs";
+import { splitCriteria } from "./handoff-format";
 
-function CommitChip({ sha }: { sha: string }) {
+export function CommitChip({ sha, label }: { sha: string; label?: string }) {
     return (
         <button
             type="button"
@@ -13,10 +14,29 @@ function CommitChip({ sha }: { sha: string }) {
             onClick={() => {
                 navigator.clipboard.writeText(sha).catch((err) => console.error("copy SHA failed", err));
             }}
-            title="copy SHA"
+            title="click to copy full SHA"
         >
-            {sha}
+            {label ?? sha}
         </button>
+    );
+}
+
+function CriteriaList({ raw }: { raw: string }) {
+    const items = splitCriteria(raw);
+
+    if (items.length === 0) {
+        return null;
+    }
+
+    return (
+        <ul className="mt-0.5 flex flex-col gap-0.5 text-xs text-[var(--dd-text-muted)]">
+            {items.map((item, index) => (
+                <li key={`${index}-${item}`} className="flex items-start gap-1">
+                    <span className="dd-accent-text shrink-0">✓</span>
+                    <span>{item}</span>
+                </li>
+            ))}
+        </ul>
     );
 }
 
@@ -25,11 +45,13 @@ export function HandoffTaskRow({
     attachments,
     disabled,
     onActions,
+    onPasteFile,
 }: {
     task: HandoffTask;
     attachments: PublicHandoff["attachments"];
     disabled: boolean;
     onActions: (actions: HandoffActionInput[]) => void;
+    onPasteFile: (file: File) => Promise<string>;
 }) {
     const [proofOpen, setProofOpen] = useState(false);
     const [denyOpen, setDenyOpen] = useState(false);
@@ -38,15 +60,13 @@ export function HandoffTaskRow({
     const [editText, setEditText] = useState(task.text);
     const [editCriteria, setEditCriteria] = useState(task.acceptanceCriteria ?? "");
     const [proofExpanded, setProofExpanded] = useState(false);
+    const [pasteError, setPasteError] = useState<string | null>(null);
     const taskAttachments = attachments.filter((a) => a.taskId === task.id);
     const proofIds = task.proof?.attachmentIds ?? [];
 
     const onToggle = (): void => {
         if (task.checked) {
-            if (window.confirm("Uncheck this task? The current proof is cleared (history stays in the event log).")) {
-                onActions([{ action: "uncheck_task", taskId: task.id }]);
-            }
-
+            onActions([{ action: "uncheck_task", taskId: task.id }]);
             return;
         }
 
@@ -102,6 +122,28 @@ export function HandoffTaskRow({
         setEditing(false);
     };
 
+    /** Task 12: pasting a file while editing the task text inserts `[File#id]` at the cursor. */
+    const onEditTextPaste = (ev: ClipboardEvent<HTMLInputElement>): void => {
+        const files = [...ev.clipboardData.files];
+
+        if (files.length === 0) {
+            return;
+        }
+
+        ev.preventDefault();
+        ev.stopPropagation();
+        setPasteError(null);
+        const input = ev.target as HTMLInputElement;
+        const cursor = input.selectionStart ?? editText.length;
+
+        onPasteFile(files[0])
+            .then((attachmentId) => {
+                const token = `[File#${attachmentId}]`;
+                setEditText((prev) => `${prev.slice(0, cursor)}${token}${prev.slice(cursor)}`);
+            })
+            .catch((err) => setPasteError(err instanceof Error ? err.message : String(err)));
+    };
+
     return (
         <div
             data-task-id={task.id}
@@ -122,6 +164,7 @@ export function HandoffTaskRow({
                             <Input
                                 value={editText}
                                 onChange={(e) => setEditText(e.target.value)}
+                                onPaste={onEditTextPaste}
                                 className="border-[var(--dd-border)] bg-black/25 text-sm"
                             />
                             <Input
@@ -130,6 +173,9 @@ export function HandoffTaskRow({
                                 className="border-[var(--dd-border)] bg-black/15 text-xs"
                                 placeholder="acceptance criteria"
                             />
+                            {pasteError !== null ? (
+                                <p className="text-[11px] text-[var(--dd-danger)]">{pasteError}</p>
+                            ) : null}
                             <div className="flex gap-2 text-xs">
                                 <button type="button" className="dd-accent-text cursor-pointer" onClick={saveEdit}>
                                     save
@@ -151,13 +197,9 @@ export function HandoffTaskRow({
                                 <span className="mr-1.5 font-mono text-[10px] text-[var(--dd-text-muted)]">
                                     {task.id}
                                 </span>
-                                {task.text}
+                                {renderWithFileChips(task.text, attachments)}
                             </p>
-                            {task.acceptanceCriteria ? (
-                                <p className="mt-0.5 text-xs text-[var(--dd-text-muted)]">
-                                    ✓? {task.acceptanceCriteria}
-                                </p>
-                            ) : null}
+                            {task.acceptanceCriteria ? <CriteriaList raw={task.acceptanceCriteria} /> : null}
                         </>
                     )}
 
@@ -199,6 +241,23 @@ export function HandoffTaskRow({
                                     <AttachmentStrip attachments={attachments} ids={proofIds} />
                                 </div>
                             ) : null}
+                        </div>
+                    ) : null}
+
+                    {!task.checked && task.proof ? (
+                        <div className="mt-1 flex flex-col gap-1.5 rounded border border-[var(--dd-border)]/40 bg-black/15 p-2 text-xs text-[var(--dd-text-secondary)] opacity-60">
+                            <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--dd-text-muted)]">
+                                previous proof
+                            </span>
+                            <p className="whitespace-pre-wrap">{task.proof.answer}</p>
+                            {task.proof.commitIds !== undefined && task.proof.commitIds.length > 0 ? (
+                                <div className="flex flex-wrap gap-1.5">
+                                    {task.proof.commitIds.map((sha) => (
+                                        <CommitChip key={sha} sha={sha} />
+                                    ))}
+                                </div>
+                            ) : null}
+                            <AttachmentStrip attachments={attachments} ids={proofIds} />
                         </div>
                     ) : null}
 

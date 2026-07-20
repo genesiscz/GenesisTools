@@ -5,6 +5,7 @@ export type {
     HandoffActionInput,
     HandoffActionResult,
     HandoffAttachment,
+    HandoffClaim,
     HandoffComment,
     HandoffListRow,
     HandoffProof,
@@ -44,7 +45,32 @@ export interface HandoffPostResponse {
 }
 
 export interface HandoffStreamFrame {
+    type?: "handoff";
     id: string;
     ev: string;
     ts: string;
 }
+
+export interface HandoffEventsResponse {
+    events: HandoffPublicEvent[];
+    total: number;
+}
+
+/** editId-stripped event from GET /api/handoff/events */
+export type HandoffPublicEvent = {
+    uid: string;
+    id: string;
+    ts: string;
+    ev: string;
+    by: {
+        sessionId: string | null;
+        sessionTitle: string | null;
+        agent: string;
+        via?: string;
+        branch?: string | null;
+        cwd?: string | null;
+        repoRoot?: string | null;
+        commitSha?: string | null;
+    };
+    [key: string]: unknown;
+};

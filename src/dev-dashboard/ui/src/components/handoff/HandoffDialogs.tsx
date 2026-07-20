@@ -12,7 +12,8 @@ import {
 import { Input } from "@ui/components/input";
 import { Label } from "@ui/components/label";
 import { Textarea } from "@ui/components/textarea";
-import { useState } from "react";
+import { Trash2 } from "lucide-react";
+import { type KeyboardEvent, useState } from "react";
 import { useHandoffCreate } from "./useHandoffApi";
 
 const DIALOG_PANEL_CLASS =
@@ -147,6 +148,10 @@ export function HandoffCreateDialog({
         setTasks((prev) => prev.map((t, i) => (i === index ? { ...t, ...patch } : t)));
     };
 
+    const addTaskRow = (): void => {
+        setTasks((prev) => [...prev, { text: "", acceptanceCriteria: "" }]);
+    };
+
     const validTasks = tasks.filter((t) => t.text.trim().length > 0);
 
     const submit = (): void => {
@@ -199,9 +204,25 @@ export function HandoffCreateDialog({
         });
     };
 
+    const onDialogKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
+        if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+            e.preventDefault();
+
+            if (!create.isPending && title.trim().length > 0 && validTasks.length > 0) {
+                submit();
+            }
+        }
+    };
+
     return (
         <GlassDialogShell open={open} onOpenChange={onOpenChange}>
-            <GlassDialogContent size="lg" fixedHeight showCloseButton className={DIALOG_PANEL_CLASS}>
+            <GlassDialogContent
+                size="lg"
+                fixedHeight
+                showCloseButton
+                className={DIALOG_PANEL_CLASS}
+                onKeyDown={onDialogKeyDown}
+            >
                 <GlassDialogBody className="gap-0 p-0 sm:p-0">
                     <GlassDialogHeader className="shrink-0 border-b border-[var(--dd-border)]/80 px-5 py-4 text-left">
                         <GlassDialogTitle className="dd-accent-text text-lg font-bold">New handoff</GlassDialogTitle>
@@ -241,36 +262,50 @@ export function HandoffCreateDialog({
                                 {tasks.map((task, index) => (
                                     <div
                                         key={index}
-                                        className="flex flex-col gap-1 rounded border border-[var(--dd-border)]/70 bg-black/15 p-2"
+                                        className="flex flex-col gap-1.5 rounded border border-[var(--dd-border)]/70 bg-black/15 p-2"
                                     >
-                                        <div className="flex items-center gap-2">
-                                            <span className="font-mono text-[10px] text-[var(--dd-text-muted)]">
-                                                t{index + 1}
+                                        <div className="flex items-start gap-2">
+                                            <span className="mt-2 text-xs text-[var(--dd-text-muted)]">
+                                                #{index + 1}
                                             </span>
-                                            <Input
+                                            <Textarea
                                                 value={task.text}
                                                 onChange={(e) => setTask(index, { text: e.target.value })}
-                                                className="border-[var(--dd-border)] bg-black/20"
+                                                className="min-h-[2.25rem] border-[var(--dd-border)] bg-black/20"
+                                                rows={2}
                                                 placeholder="what to do"
                                             />
                                             {tasks.length > 1 ? (
                                                 <button
                                                     type="button"
-                                                    className="cursor-pointer text-[var(--dd-text-muted)] hover:text-[var(--dd-danger)]"
+                                                    className="mt-1.5 cursor-pointer text-[var(--dd-text-muted)] hover:text-[var(--dd-danger)]"
                                                     onClick={() =>
                                                         setTasks((prev) => prev.filter((_, i) => i !== index))
                                                     }
                                                     title="remove row"
                                                 >
-                                                    ×
+                                                    <Trash2 className="h-3.5 w-3.5" />
                                                 </button>
                                             ) : null}
                                         </div>
                                         <Input
                                             value={task.acceptanceCriteria}
                                             onChange={(e) => setTask(index, { acceptanceCriteria: e.target.value })}
-                                            className="border-[var(--dd-border)] bg-black/10 text-xs"
+                                            className="ml-6 border-[var(--dd-border)] bg-black/10 text-xs"
                                             placeholder="acceptance criteria (optional but recommended)"
+                                            onKeyDown={(e) => {
+                                                if (
+                                                    e.key !== "Enter" ||
+                                                    e.metaKey ||
+                                                    e.ctrlKey ||
+                                                    index !== tasks.length - 1
+                                                ) {
+                                                    return;
+                                                }
+
+                                                e.preventDefault();
+                                                addTaskRow();
+                                            }}
                                         />
                                     </div>
                                 ))}
@@ -279,7 +314,7 @@ export function HandoffCreateDialog({
                                     variant="outline"
                                     size="sm"
                                     className="self-start"
-                                    onClick={() => setTasks((prev) => [...prev, { text: "", acceptanceCriteria: "" }])}
+                                    onClick={addTaskRow}
                                 >
                                     + Add task row
                                 </Button>

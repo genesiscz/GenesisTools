@@ -21,6 +21,7 @@ import { QaSearchBox } from "@/components/QaSearchBox";
 import { QaSectionHeading } from "@/components/QaSectionHeading";
 import { QaSourceToggle, type QaViewMode } from "@/components/QaSourceToggle";
 import { QaTopBar } from "@/components/QaTopBar";
+import { useQaStream } from "@/hooks/useQaStream";
 import { prependQaLiveEntry } from "./qa-live-cap";
 
 const READ_PERSIST_DEBOUNCE_MS = 400;
@@ -591,44 +592,28 @@ function QaFeed() {
         readAtByIdRef.current = readAtById;
     }, [readAtById]);
 
-    useEffect(() => {
-        const es = new EventSource("/api/qa/stream");
-        es.onopen = () => setSseDown(false);
-        es.onmessage = (ev) => {
-            setSseDown(false);
-
-            try {
-                const entry = SafeJSON.parse(ev.data, { strict: true }) as QaRow;
-
-                if (seen.current.has(entry.id)) {
-                    return;
-                }
-
-                seen.current.add(entry.id);
-                setLive((prev) => {
-                    const evicted = prependQaLiveEntry(
-                        prev,
-                        entry,
-                        seenIdsRef.current,
-                        readAtByIdRef.current,
-                        Date.now()
-                    );
-                    setSeenIds(evicted.seen);
-                    setReadAtById(evicted.readAtById);
-                    return evicted.live;
-                });
-            } catch {
-                /* ignore malformed frame */
+    useQaStream(
+        (frame) => {
+            if (frame.type !== "qa") {
+                return;
             }
-        };
-        es.onerror = () => {
-            if (es.readyState === EventSource.CLOSED) {
-                setSseDown(true);
-            }
-        };
 
-        return () => es.close();
-    }, []);
+            const entry = frame as unknown as QaRow;
+
+            if (seen.current.has(entry.id)) {
+                return;
+            }
+
+            seen.current.add(entry.id);
+            setLive((prev) => {
+                const evicted = prependQaLiveEntry(prev, entry, seenIdsRef.current, readAtByIdRef.current, Date.now());
+                setSeenIds(evicted.seen);
+                setReadAtById(evicted.readAtById);
+                return evicted.live;
+            });
+        },
+        { onStatus: setSseDown }
+    );
 
     const persisted = (logQuery.data ?? []).filter((r) => !seen.current.has(r.id));
     const all = [...live, ...persisted];

@@ -1,11 +1,17 @@
-import type { HandoffActionInput, HandoffActionResult, PublicHandoff } from "@app/dev-dashboard/lib/handoff-types";
+import type {
+    HandoffActionInput,
+    HandoffActionResult,
+    HandoffClaim,
+    PublicHandoff,
+} from "@app/dev-dashboard/lib/handoff-types";
 import { renderMarkdown } from "@app/dev-dashboard/lib/obsidian/markdown";
 import { Button } from "@ui/components/button";
 import { Input } from "@ui/components/input";
 import { Textarea } from "@ui/components/textarea";
 import { type ClipboardEvent, type DragEvent, useMemo, useRef, useState } from "react";
-import { AttachmentStrip } from "./HandoffAttachments";
-import { HandoffTaskRow } from "./HandoffTaskRow";
+import { AttachmentStrip, renderWithFileChips } from "./HandoffAttachments";
+import { CommitChip, HandoffTaskRow } from "./HandoffTaskRow";
+import { actorChipLabel, basename, relativeTime, shortSha, truncateMiddle } from "./handoff-format";
 import { uploadHandoffAttachment, useHandoffAction, useHandoffDetail } from "./useHandoffApi";
 
 function md(text: string): string {
@@ -28,12 +34,47 @@ function statusBadgeClass(status: PublicHandoff["status"]): string {
     return "border-[var(--dd-danger)]/50 text-[var(--dd-danger)]";
 }
 
-function actorLabel(by: { sessionName: string | null; agent: string; via?: string }): string {
-    if (by.agent === "human") {
-        return "Martin · dashboard";
-    }
+function ClaimerRow({ claim }: { claim: HandoffClaim }) {
+    const [expanded, setExpanded] = useState(false);
+    const [cwdExpanded, setCwdExpanded] = useState(false);
 
-    return by.sessionName ?? by.agent;
+    return (
+        <div className="flex flex-col gap-1 rounded border border-[#4a3a5e]/40 bg-black/10 px-2 py-1.5">
+            <button
+                type="button"
+                className="flex w-full cursor-pointer items-center gap-1.5 text-left"
+                onClick={() => setExpanded((v) => !v)}
+            >
+                <span className="rounded-full border border-[#4a3a5e] px-2 py-px text-[11px] text-[#c792ea]">
+                    {claim.sessionName ?? claim.sessionId ?? "unnamed"}
+                </span>
+                <span className="text-[10px] text-[var(--dd-text-muted)]">{expanded ? "▴" : "▾"}</span>
+            </button>
+            {expanded ? (
+                <div className="flex flex-col gap-1 pl-1 font-mono text-[10px] text-[var(--dd-text-secondary)]">
+                    {claim.branch !== null ? <span>branch: {claim.branch}</span> : null}
+                    {claim.repoRoot !== null ? <span>repo: {basename(claim.repoRoot)}</span> : null}
+                    {claim.commitSha !== null ? (
+                        <span className="flex items-center gap-1.5">
+                            sha:
+                            <CommitChip sha={claim.commitSha} label={shortSha(claim.commitSha)} />
+                        </span>
+                    ) : null}
+                    {claim.cwd !== null ? (
+                        <button
+                            type="button"
+                            className="cursor-pointer text-left hover:text-[var(--dd-text-primary)]"
+                            onClick={() => setCwdExpanded((v) => !v)}
+                            title="click to expand"
+                        >
+                            cwd: {cwdExpanded ? claim.cwd : truncateMiddle(claim.cwd, 48)}
+                        </button>
+                    ) : null}
+                    <span>claimed {relativeTime(claim.claimedAt)}</span>
+                </div>
+            ) : null}
+        </div>
+    );
 }
 
 export function HandoffDetail({ id }: { id: string }) {
@@ -70,7 +111,15 @@ export function HandoffDetail({ id }: { id: string }) {
     const terminal = handoff.status === "done" || handoff.status === "cancelled";
     const resolved = handoff.tasks.filter((t) => t.checked || t.denied).length;
     const allResolved = handoff.tasks.length > 0 && resolved === handoff.tasks.length;
+    // Owner-claim detection mirrors fold G11: the human owner's claim identity is agent === "human".
+    const humanClaim = handoff.claimedBy.find((c) => c.agent === "human");
     const run = (actions: HandoffActionInput[]): void => action.mutate(actions);
+
+    const pasteFileIntoTask = async (file: File, taskId: string): Promise<string> => {
+        const res = await uploadHandoffAttachment({ id, file, taskId });
+        void detail.refetch();
+        return res.attachmentId;
+    };
 
     const uploadFiles = (files: File[], taskId?: string): void => {
         setUploadError(null);
@@ -263,25 +312,30 @@ export function HandoffDetail({ id }: { id: string }) {
             </div>
 
             {handoff.claimedBy.length > 0 ? (
-                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                <div className="flex flex-col gap-1.5">
                     <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--dd-text-muted)]">
                         claimed by
                     </span>
-                    {handoff.claimedBy.map((c) => (
-                        <span
-                            key={`${c.sessionId}-${c.claimedAt}`}
-                            className="rounded-full border border-[#4a3a5e] px-2 py-px text-[#c792ea]"
-                            title={`${c.sessionId ?? ""} · ${c.via} · ${new Date(c.claimedAt).toLocaleString()}`}
-                        >
-                            {c.sessionName ?? c.sessionId ?? "unnamed"}
-                        </span>
-                    ))}
+                    <div className="flex flex-wrap gap-1.5">
+                        {handoff.claimedBy.map((c) => (
+                            <ClaimerRow key={`${c.sessionId}-${c.claimedAt}`} claim={c} />
+                        ))}
+                    </div>
                 </div>
             ) : null}
 
             <div className="flex flex-wrap gap-2">
                 {!terminal ? (
                     <>
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={action.isPending}
+                            className="border-[#4a3a5e] text-[#c792ea] transition-[filter] hover:brightness-110"
+                            onClick={() => run([{ action: humanClaim !== undefined ? "unclaim" : "claim" }])}
+                        >
+                            {humanClaim !== undefined ? "Unclaim" : "Claim"}
+                        </Button>
                         <Button
                             size="sm"
                             disabled={action.isPending}
@@ -393,46 +447,72 @@ export function HandoffDetail({ id }: { id: string }) {
                         attachments={handoff.attachments}
                         disabled={terminal || action.isPending}
                         onActions={run}
+                        onPasteFile={(file) => pasteFileIntoTask(file, task.id)}
                     />
                 ))}
                 {!terminal ? (
-                    <div className="flex items-center gap-2 rounded border border-dashed border-[var(--dd-border)]/60 px-3 py-2">
-                        <Input
+                    <div className="flex flex-col gap-1.5 rounded border border-dashed border-[var(--dd-border)]/60 px-3 py-2">
+                        <Textarea
                             value={newTaskText}
                             onChange={(e) => setNewTaskText(e.target.value)}
-                            className="h-7 border-[var(--dd-border)] bg-black/15 text-sm"
+                            className="min-h-[2rem] border-[var(--dd-border)] bg-black/15 text-sm"
+                            rows={2}
                             placeholder="add a task…"
                         />
-                        <Input
-                            value={newTaskCriteria}
-                            onChange={(e) => setNewTaskCriteria(e.target.value)}
-                            className="h-7 border-[var(--dd-border)] bg-black/10 text-xs"
-                            placeholder="acceptance criteria (optional)"
-                        />
-                        <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={newTaskText.trim().length === 0 || action.isPending}
-                            onClick={() => {
-                                run([
-                                    {
-                                        action: "add_tasks",
-                                        tasks: [
-                                            {
-                                                text: newTaskText.trim(),
-                                                ...(newTaskCriteria.trim().length > 0
-                                                    ? { acceptanceCriteria: newTaskCriteria.trim() }
-                                                    : {}),
-                                            },
-                                        ],
-                                    },
-                                ]);
-                                setNewTaskText("");
-                                setNewTaskCriteria("");
-                            }}
-                        >
-                            Add
-                        </Button>
+                        <div className="flex items-center gap-2">
+                            <Input
+                                value={newTaskCriteria}
+                                onChange={(e) => setNewTaskCriteria(e.target.value)}
+                                className="h-7 border-[var(--dd-border)] bg-black/10 text-xs"
+                                placeholder="acceptance criteria (optional)"
+                                onKeyDown={(e) => {
+                                    if (e.key !== "Enter" || newTaskText.trim().length === 0) {
+                                        return;
+                                    }
+
+                                    e.preventDefault();
+                                    run([
+                                        {
+                                            action: "add_tasks",
+                                            tasks: [
+                                                {
+                                                    text: newTaskText.trim(),
+                                                    ...(newTaskCriteria.trim().length > 0
+                                                        ? { acceptanceCriteria: newTaskCriteria.trim() }
+                                                        : {}),
+                                                },
+                                            ],
+                                        },
+                                    ]);
+                                    setNewTaskText("");
+                                    setNewTaskCriteria("");
+                                }}
+                            />
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={newTaskText.trim().length === 0 || action.isPending}
+                                onClick={() => {
+                                    run([
+                                        {
+                                            action: "add_tasks",
+                                            tasks: [
+                                                {
+                                                    text: newTaskText.trim(),
+                                                    ...(newTaskCriteria.trim().length > 0
+                                                        ? { acceptanceCriteria: newTaskCriteria.trim() }
+                                                        : {}),
+                                                },
+                                            ],
+                                        },
+                                    ]);
+                                    setNewTaskText("");
+                                    setNewTaskCriteria("");
+                                }}
+                            >
+                                Add
+                            </Button>
+                        </div>
                     </div>
                 ) : null}
             </div>
@@ -450,10 +530,14 @@ export function HandoffDetail({ id }: { id: string }) {
                             className="rounded border border-[var(--dd-border)]/50 bg-black/10 px-3 py-2"
                         >
                             <div className="mb-1 flex items-center gap-2 font-mono text-[10px] text-[var(--dd-text-muted)]">
-                                <span className="text-[var(--dd-text-secondary)]">{actorLabel(comment.by)}</span>
+                                <span className="text-[var(--dd-text-secondary)]">{actorChipLabel(comment.by)}</span>
                                 <span>{new Date(comment.ts).toLocaleString()}</span>
                             </div>
-                            <p className="whitespace-pre-wrap text-sm text-[var(--dd-text-primary)]">{comment.text}</p>
+                            <div className="dd-markdown text-sm text-[var(--dd-text-primary)]">
+                                {renderWithFileChips(comment.text, handoff.attachments, (segment, key) => (
+                                    <span key={key} dangerouslySetInnerHTML={{ __html: md(segment) }} />
+                                ))}
+                            </div>
                             {comment.attachmentIds !== undefined && comment.attachmentIds.length > 0 ? (
                                 <div className="mt-1.5">
                                     <AttachmentStrip attachments={handoff.attachments} ids={comment.attachmentIds} />
@@ -492,7 +576,13 @@ export function HandoffDetail({ id }: { id: string }) {
                                 onChange={(e) => setCommentDraft(e.target.value)}
                                 className="min-h-[2.5rem] border-[var(--dd-border)] bg-black/15 text-sm"
                                 rows={2}
-                                placeholder="comment… (paste screenshots here to attach them)"
+                                placeholder="comment… (paste screenshots here to attach them, ⌘⏎ to send)"
+                                onKeyDown={(e) => {
+                                    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                                        e.preventDefault();
+                                        void submitComment();
+                                    }
+                                }}
                             />
                             <Button
                                 size="sm"
