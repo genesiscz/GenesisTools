@@ -4,6 +4,8 @@
  * capture-runner.ts).
  */
 
+import type { Annotation, PresetName } from "@genesiscz/utils/image";
+
 export const CAPTURE_HELP = `control capture — declarative peekaboo capture + timed UI actions
 
 USAGE
@@ -49,6 +51,12 @@ PLAN CONTRACT (TypeScript)
       capture: CaptureSpec;       // ignored in recrop mode
       actions: Action[];          // fired at atMs offsets from RECORDING START; ignored in recrop mode
       vitrinka?: VitrinkaSpec;    // optional: publish results to a vitrinka set/board directly
+      annotate?: { annotations: Annotation[]; preset?: string };
+          // one-shot capture+draw: render these annotations (tools control draw
+          // contract — highlight/box/ellipse/arrow/label/blur/crop/grid) onto
+          // EVERY kept frame -> <sessionDir>/annotated/<frame>.png, listed in
+          // result.annotated. Coordinates are FRAME pixels (crop-region space).
+          // CLI shortcut: \`capture run plan.json --annotate <json-or-path>\`.
       browser?: BrowserApp;       // default app for "url" actions (default "Brave Browser")
       focus?: { app: string; windowTitle?: string };
           // bring this app/window frontmost BEFORE recording starts (so frame 1
@@ -412,6 +420,13 @@ export interface Plan {
     vitrinka?: VitrinkaSpec;
     browser?: string;
     focus?: { app: string; windowTitle?: string };
+    /**
+     * One-shot capture+draw (spec §1.1): after the recording, render these
+     * annotations onto every kept frame → <sessionDir>/annotated/<frame>.png.
+     * Coordinates are FRAME pixels (same space as crop regions). The CLI
+     * `--annotate <json-or-path>` flag fills this field.
+     */
+    annotate?: { annotations: Annotation[]; preset?: PresetName };
 }
 
 export interface FrameInfo {

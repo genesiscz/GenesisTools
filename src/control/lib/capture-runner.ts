@@ -9,9 +9,11 @@
  * the recording misses the transition.
  */
 
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { renderAnnotationPlan } from "@genesiscz/utils/image";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { createCanvas, loadImage } from "@napi-rs/canvas";
 import {
     type Action,
     type CropOut,
@@ -66,6 +68,8 @@ export interface RunResult {
     crops: CropOut[];
     strip: string | null;
     stripReview: string | null;
+    /** plan.annotate outputs — one annotated copy per kept frame. */
+    annotated?: string[];
     vitrinka?: { ok: boolean; urls: string[]; error?: string };
     capture: unknown;
     captureFailed: boolean;
@@ -466,7 +470,28 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
     let stripReview: string | null = null;
     const cropSpecs = extractCropSpecs(plan.actions);
     if (cropSpecs.length > 0 && frames.length > 0) {
-        ({ crops, strip, stripReview } = applyCrops(sessionDir, frames, cropSpecs));
+        ({ crops, strip, stripReview } = await applyCrops(sessionDir, frames, cropSpecs));
+    }
+
+    let annotated: string[] | undefined;
+    if (plan.annotate?.annotations?.length && frames.length > 0) {
+        annotated = [];
+        const annotatedDir = join(sessionDir, "annotated");
+        mkdirSync(annotatedDir, { recursive: true });
+        for (const f of frames) {
+            try {
+                const r = await renderAnnotationPlan({
+                    input: f.path,
+                    annotations: plan.annotate.annotations,
+                    preset: plan.annotate.preset,
+                });
+                const outPath = join(annotatedDir, f.file);
+                await Bun.write(outPath, r.png);
+                annotated.push(outPath);
+            } catch (e) {
+                warnings.push(`annotate ${f.file}: ${e instanceof Error ? e.message : String(e)}`);
+            }
+        }
     }
 
     // "actions succeeded" != "pixels moved": scroll over dead UI, wrong screen, or
@@ -503,6 +528,7 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
         crops,
         strip,
         stripReview,
+        annotated,
         vitrinka,
         capture: captureResult,
         captureFailed,
@@ -544,7 +570,11 @@ export async function runRecrop(resultPath: string, planPath: string): Promise<R
         }
     }
 
-    const { crops, strip, stripReview } = applyCrops(prior.sessionDir, frames, extractCropSpecs(plan.actions ?? []));
+    const { crops, strip, stripReview } = await applyCrops(
+        prior.sessionDir,
+        frames,
+        extractCropSpecs(plan.actions ?? [])
+    );
     const vitrinka = plan.vitrinka ? publishVitrinka(plan.vitrinka, prior.sessionDir, frames, crops, strip) : undefined;
     return { sessionDir: prior.sessionDir, mode: "recrop", warnings, crops, strip, stripReview, vitrinka };
 }
@@ -718,7 +748,11 @@ export interface ClickmapResult {
 // retina scale is exactly where manual attempts burn 2-3 iterations per
 // target. clickmap bakes the arithmetic into the image: the grid labels
 // ARE global click points; no math left to get wrong.
-export function runClickmap(opts: ClickmapOptions): ClickmapResult {
+//
+// Thin wrapper over the draw engine (decision 13): capture window → run a
+// draw plan with one `grid` annotation whose originOffset is the window's
+// global origin, so gridlines land on absolute point multiples.
+export async function runClickmap(opts: ClickmapOptions): Promise<ClickmapResult> {
     const wins = listWindowBounds(opts.app);
     const match: WindowBounds | undefined = opts.windowTitle
         ? wins.find((w) => w.title.toLowerCase().includes(opts.windowTitle!.toLowerCase()))
@@ -744,49 +778,20 @@ export function runClickmap(opts: ClickmapOptions): ClickmapResult {
     // so 1 image px == 1 point and gridlines land exactly on labeled coords.
     const w = Math.round(match.w);
     const h = Math.round(match.h);
-    const lines: string[] = [];
-    const labels: string[] = [];
-    for (let gx = Math.ceil(match.x / opts.gridStep) * opts.gridStep; gx < match.x + match.w; gx += opts.gridStep) {
-        const lx = Math.round(gx - match.x);
-        lines.push(`line ${lx},0 ${lx},${h}`);
-        labels.push("-annotate", `+${lx + 3}+3`, String(gx));
-    }
+    const raw = await loadImage(rawPath);
+    const scaled = createCanvas(w, h);
+    const sctx = scaled.getContext("2d");
+    sctx.imageSmoothingEnabled = true;
+    sctx.imageSmoothingQuality = "high";
+    sctx.drawImage(raw, 0, 0, w, h);
 
-    for (let gy = Math.ceil(match.y / opts.gridStep) * opts.gridStep; gy < match.y + match.h; gy += opts.gridStep) {
-        const ly = Math.round(gy - match.y);
-        lines.push(`line 0,${ly} ${w},${ly}`);
-        labels.push("-annotate", `+3+${ly + 2}`, String(gy));
-    }
-
-    const r = Bun.spawnSync([
-        "magick",
-        rawPath,
-        "-resize",
-        `${w}x${h}!`,
-        "-stroke",
-        "#ff00ff90",
-        "-strokewidth",
-        "1",
-        "-fill",
-        "none",
-        "-draw",
-        lines.join(" "),
-        "-stroke",
-        "none",
-        "-fill",
-        "#ffff00",
-        "-undercolor",
-        "#000000B0",
-        "-pointsize",
-        "12",
-        "-gravity",
-        "NorthWest",
-        ...labels,
-        opts.outPath,
-    ]);
-    if (r.exitCode !== 0 || !existsSync(opts.outPath)) {
-        throw new CaptureRunError(`magick grid overlay failed: ${r.stderr.toString().slice(0, 300)}`);
-    }
+    const rendered = await renderAnnotationPlan({
+        input: scaled.toBuffer("image/png"),
+        annotations: [
+            { kind: "grid", step: opts.gridStep, originOffset: { x: Math.round(match.x), y: Math.round(match.y) } },
+        ],
+    });
+    await Bun.write(opts.outPath, rendered.png);
 
     return {
         out: opts.outPath,

@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { loadAnnotationPlanValue } from "@genesiscz/utils/image";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -39,7 +40,11 @@ export function registerCaptureCommands(program: Command): void {
     capture
         .command("run [plan]", { isDefault: true })
         .description("Record + act + crop + (optional) publish, driven by a plan.json — see `capture --help`")
-        .action(async (planPath: string | undefined) => {
+        .option(
+            "--annotate <json-or-path>",
+            "annotation plan (inline JSON or plan.json path) rendered onto every kept frame after the recording — one-shot capture+draw; coordinates in FRAME pixels"
+        )
+        .action(async (planPath: string | undefined, opts: { annotate?: string }) => {
             if (!planPath) {
                 out.println(CAPTURE_HELP);
                 process.exit(2);
@@ -50,6 +55,15 @@ export function registerCaptureCommands(program: Command): void {
                 plan = SafeJSON.parse(await Bun.file(planPath).text());
             } catch (e) {
                 fail(`cannot read plan ${planPath}: ${e instanceof Error ? e.message : String(e)}`);
+            }
+
+            if (opts.annotate) {
+                try {
+                    const annotatePlan = await loadAnnotationPlanValue(opts.annotate);
+                    plan.annotate = { annotations: annotatePlan.annotations, preset: annotatePlan.preset };
+                } catch (e) {
+                    fail(`--annotate: ${e instanceof Error ? e.message : String(e)}`);
+                }
             }
 
             try {
@@ -98,11 +112,11 @@ export function registerCaptureCommands(program: Command): void {
         .option("--window-title <t>", "target a specific window by title substring")
         .option("--grid <points>", "grid step in screen points (min 20)", "100")
         .option("--out <png>", "output path (default $TMPDIR/clickmap-<ts>.png)")
-        .action((opts: { app: string; windowTitle?: string; grid: string; out?: string }) => {
+        .action(async (opts: { app: string; windowTitle?: string; grid: string; out?: string }) => {
             const gridStep = Math.max(20, Number(opts.grid) || 100);
             const outPath = opts.out ?? join(process.env.TMPDIR ?? "/tmp/", `clickmap-${Date.now()}.png`);
             try {
-                const result = runClickmap({ app: opts.app, windowTitle: opts.windowTitle, gridStep, outPath });
+                const result = await runClickmap({ app: opts.app, windowTitle: opts.windowTitle, gridStep, outPath });
                 out.println(SafeJSON.stringify(result, null, 2));
             } catch (e) {
                 if (e instanceof CaptureRunError) {
