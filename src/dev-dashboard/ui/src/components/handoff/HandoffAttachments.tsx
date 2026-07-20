@@ -9,24 +9,51 @@ function isImage(a: AttachmentMeta): boolean {
 }
 
 function Lightbox({ attachment, onClose }: { attachment: AttachmentMeta; onClose: () => void }) {
+    const dialogRef = useRef<HTMLDivElement | null>(null);
     const closeRef = useRef<HTMLButtonElement | null>(null);
 
     useEffect(() => {
+        const previouslyFocused = document.activeElement as HTMLElement | null;
         closeRef.current?.focus();
 
         const onKeyDown = (ev: KeyboardEvent): void => {
             if (ev.key === "Escape") {
                 onClose();
+                return;
+            }
+
+            if (ev.key !== "Tab" || dialogRef.current === null) {
+                return;
+            }
+
+            const focusable = dialogRef.current.querySelectorAll<HTMLElement>("a[href], button");
+            if (focusable.length === 0) {
+                return;
+            }
+
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+
+            if (ev.shiftKey && document.activeElement === first) {
+                ev.preventDefault();
+                last.focus();
+            } else if (!ev.shiftKey && document.activeElement === last) {
+                ev.preventDefault();
+                first.focus();
             }
         };
 
         document.addEventListener("keydown", onKeyDown);
 
-        return () => document.removeEventListener("keydown", onKeyDown);
+        return () => {
+            document.removeEventListener("keydown", onKeyDown);
+            previouslyFocused?.focus();
+        };
     }, [onClose]);
 
     return (
         <div
+            ref={dialogRef}
             role="dialog"
             aria-modal="true"
             aria-label={`attachment preview: ${attachment.filename}`}

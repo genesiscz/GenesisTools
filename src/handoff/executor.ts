@@ -1092,7 +1092,13 @@ export function resolveAttachment(attachmentId: string, deps: HandoffDeps = {}):
             .all(`%${attachmentId}%`) as { id: string; attachments: string }[];
 
         for (const row of rows) {
-            const attachments = SafeJSON.parse(row.attachments, { strict: true }) as Handoff["attachments"];
+            let attachments: Handoff["attachments"];
+            try {
+                attachments = SafeJSON.parse(row.attachments, { strict: true }) as Handoff["attachments"];
+            } catch (err) {
+                log.warn({ err, handoffId: row.id }, "handoff.attachments column is not valid JSON — skipping");
+                continue;
+            }
 
             if (!Array.isArray(attachments)) {
                 log.warn({ handoffId: row.id }, "handoff.attachments column is not an array — skipping");
