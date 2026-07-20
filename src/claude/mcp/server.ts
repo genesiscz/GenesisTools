@@ -49,6 +49,24 @@ import {
 } from "./tools/boards/schemas";
 import { handleWaitForWork } from "./tools/boards/wait-for-work";
 import { handleAttachAfter, handleHighlight, handleReply, handleSetStatus } from "./tools/boards/work-tools";
+import {
+    HANDOFF_ACTION_DESCRIPTION,
+    HANDOFF_ACTION_INPUT_SCHEMA,
+    HANDOFF_GET_DESCRIPTION,
+    HANDOFF_GET_INPUT_SCHEMA,
+    HANDOFF_LIST_DESCRIPTION,
+    HANDOFF_LIST_INPUT_SCHEMA,
+    HANDOFF_POST_DESCRIPTION,
+    HANDOFF_POST_INPUT_SCHEMA,
+    type HandoffActionArgs,
+    type HandoffGetArgs,
+    type HandoffListArgs,
+    type HandoffPostArgs,
+    handleHandoffAction,
+    handleHandoffGet,
+    handleHandoffList,
+    handleHandoffPost,
+} from "./tools/handoff";
 import { handleQuestionAnswer, QUESTION_ANSWER_INPUT_SCHEMA, type QuestionAnswerArgs } from "./tools/question-answer";
 
 const log = logger.child({ component: "claude:mcp" });
@@ -74,6 +92,13 @@ const SERVER_INSTRUCTIONS =
     "`tools question log` / `tools question tail`.\n\n" +
     "DO NOT use for: routine task instructions you simply execute, pure acknowledgements " +
     '("ok", "thanks", "continue"), or trivial lookups not worth preserving.\n\n' +
+    "HANDOFFS (cross-agent task handoff): `handoff_post` creates. `handoff_get` reads. `handoff_list` lists. " +
+    "`handoff_action` changes. To delegate work, handoff_post {title, tasks} → copy the returned `paste` block " +
+    "into the receiving agent's chat. Receiving agent: handoff_get {id} → claim (claim: true) → work the tasks " +
+    "→ handoff_action check_task with proof per task (deny_task with reason for tasks you can't do) → " +
+    "finish_handoff when all resolved. Poster edits anytime from its own session via handoff_action " +
+    "(add_tasks/modify_task/modify_handoff/cancel_handoff); from other sessions pass the editId. Progress is " +
+    'live on the dev-dashboard /qa "Agent tasks" tab.\n\n' +
     "BOARDS (dev-dashboard annotation boards):\n" +
     "- Boards live on the DEV-DASHBOARD server (base auto-resolved from its config; default " +
     "http://127.0.0.1:3042, override BOARDS_BASE_URL). Other local dashboards on other ports (e.g. the " +
@@ -123,6 +148,26 @@ function buildToolRegistry(): Record<string, ToolEntry> {
                 const r = await handleQuestionAnswer(args as unknown as QuestionAnswerArgs);
                 return r.summary;
             },
+        },
+        handoff_post: {
+            description: HANDOFF_POST_DESCRIPTION,
+            inputSchema: HANDOFF_POST_INPUT_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleHandoffPost(args as unknown as HandoffPostArgs),
+        },
+        handoff_get: {
+            description: HANDOFF_GET_DESCRIPTION,
+            inputSchema: HANDOFF_GET_INPUT_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleHandoffGet(args as unknown as HandoffGetArgs),
+        },
+        handoff_list: {
+            description: HANDOFF_LIST_DESCRIPTION,
+            inputSchema: HANDOFF_LIST_INPUT_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleHandoffList(args as unknown as HandoffListArgs),
+        },
+        handoff_action: {
+            description: HANDOFF_ACTION_DESCRIPTION,
+            inputSchema: HANDOFF_ACTION_INPUT_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleHandoffAction(args as unknown as HandoffActionArgs),
         },
         boards_list_boards: {
             description:
@@ -356,6 +401,7 @@ function buildToolRegistry(): Record<string, ToolEntry> {
 const CAPABILITY_PREFIXES: Record<string, string> = {
     question_answer: "question_answer",
     boards: "boards_",
+    handoff: "handoff_",
 };
 
 /**
