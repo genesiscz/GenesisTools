@@ -10,7 +10,7 @@ describe("createQaStream", () => {
         const f = join(mkdtempSync(join(tmpdir(), "qa-sse-")), "2026-05-25.jsonl");
         appendFileSync(f, `${SafeJSON.stringify({ id: "old" })}\n`);
         const got: string[] = [];
-        const stream = createQaStream(f, (e) => got.push((e as { id: string }).id));
+        const stream = createQaStream((e) => got.push((e as { id: string }).id), { fileForNow: () => f });
         appendFileSync(f, `${SafeJSON.stringify({ id: "live" })}\n`);
         await Bun.sleep(500);
         stream.close();

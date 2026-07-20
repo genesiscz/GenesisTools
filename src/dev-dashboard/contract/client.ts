@@ -166,7 +166,17 @@ export function createDashboardClient(opts: DashboardClientOptions) {
                 const source = opts.eventSourceFactory(`${baseUrl}${QA_STREAM_PATH}`);
                 source.onmessage = (ev) => {
                     try {
-                        onEntry(SafeJSON.parse(ev.data, { strict: true }) as EnrichedQaEntry);
+                        const frame = SafeJSON.parse(ev.data, { strict: true }) as {
+                            type?: string;
+                        } & EnrichedQaEntry;
+
+                        // Multiplexed /api/qa/stream: only qa frames; ignore handoff.
+                        if (frame.type === "handoff") {
+                            return;
+                        }
+
+                        const { type: _type, ...entry } = frame;
+                        onEntry(entry as EnrichedQaEntry);
                     } catch {
                         // A malformed data frame is non-actionable client-side and must not kill the
                         // stream; keep-alive comment frames never reach onmessage. Skip and continue.

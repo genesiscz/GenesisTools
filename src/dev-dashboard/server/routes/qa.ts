@@ -1,8 +1,9 @@
 import { getConfig } from "@app/dev-dashboard/config";
+import { createHandoffStream } from "@app/dev-dashboard/lib/handoff-sse";
 import { saveToObsidianUnique } from "@app/dev-dashboard/lib/obsidian-save";
 import { formatQaAsMarkdown } from "@app/dev-dashboard/lib/qa-clipboard";
 import { enrichQaEntry } from "@app/dev-dashboard/lib/qa-render";
-import { createQaStream, todayLogFile } from "@app/dev-dashboard/lib/qa-sse";
+import { createQaStream } from "@app/dev-dashboard/lib/qa-sse";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
 import { defaultDbPath } from "@app/question/commands/log";
@@ -128,16 +129,25 @@ export function qaRoutes(): RouteDef[] {
             handler: () => ({
                 kind: "sse",
                 start: (emit) => {
-                    emit.comment(" qa stream open");
-                    const stream = createQaStream(todayLogFile(), (entry) =>
-                        emit.data(SafeJSON.stringify(enrichQaEntry(entry)))
+                    emit.comment(" qa+handoff multiplexed stream open");
+                    const qaStream = createQaStream((entry) =>
+                        emit.data(SafeJSON.stringify({ type: "qa", ...enrichQaEntry(entry) }, { strict: true }))
+                    );
+                    const handoffStream = createHandoffStream((event) =>
+                        emit.data(
+                            SafeJSON.stringify(
+                                { type: "handoff", id: event.id, ev: event.ev, ts: event.ts },
+                                { strict: true }
+                            )
+                        )
                     );
                     const keepAlive = setInterval(() => emit.comment(" ping"), 12_000);
 
                     return {
                         close: () => {
                             clearInterval(keepAlive);
-                            stream.close();
+                            qaStream.close();
+                            handoffStream.close();
                         },
                     };
                 },

@@ -1,17 +1,20 @@
 import { logFilePathFor } from "@app/question/lib/log-store";
 import type { QaEntry } from "@app/question/lib/types";
-import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
+import { createRollingJsonlStream, type RollingJsonlStream } from "./rolling-jsonl-stream";
 
 export function todayLogFile(): string {
     return logFilePathFor({ ts: Date.now() });
 }
 
-export interface QaStream {
-    close(): void;
-}
+export type QaStream = RollingJsonlStream;
 
-export function createQaStream(file: string, onEntry: (e: QaEntry) => void): QaStream {
-    const t = new FileTailer<QaEntry>(file, { onLine: (e) => onEntry(e) });
-    t.start();
-    return { close: () => t.stop() };
+/**
+ * Tail today's QA JSONL with midnight rollover. Pass `fileForNow` in tests to
+ * pin a fixed path (rollover never fires when the path is constant).
+ */
+export function createQaStream(onEntry: (e: QaEntry) => void, opts?: { fileForNow?: () => string }): QaStream {
+    return createRollingJsonlStream<QaEntry>({
+        fileForNow: opts?.fileForNow ?? todayLogFile,
+        onLine: onEntry,
+    });
 }

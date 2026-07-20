@@ -5,7 +5,7 @@ import type { LiveHub } from "@app/dev-dashboard/lib/live/hub";
 import type { LiveChannel } from "@app/dev-dashboard/lib/live/types";
 import { classifyListeningPorts, listListeningPorts } from "@app/dev-dashboard/lib/ports/scanner";
 import { enrichQaEntry } from "@app/dev-dashboard/lib/qa-render";
-import { createQaStream, todayLogFile } from "@app/dev-dashboard/lib/qa-sse";
+import { createQaStream } from "@app/dev-dashboard/lib/qa-sse";
 import { getCachedPulse, markPulseClientSeen } from "@app/dev-dashboard/lib/system/poller";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -104,7 +104,7 @@ export function startLiveProducers(hub: LiveHub): { stop: () => void } {
         }
 
         try {
-            qaStream = createQaStream(todayLogFile(), (entry) => {
+            qaStream = createQaStream((entry) => {
                 hub.publish({
                     v: 1,
                     channel: "qa",

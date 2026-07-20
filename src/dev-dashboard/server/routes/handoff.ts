@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { createHandoffStream } from "@app/dev-dashboard/lib/handoff-sse";
+import { getConfig } from "@app/dev-dashboard/config";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
 import { MAX_ATTACHMENT_BYTES } from "@app/handoff/attachments";
@@ -13,19 +13,37 @@ import {
     postHandoff,
     resolveAttachment,
 } from "@app/handoff/executor";
-import type { HandoffActionInput, HandoffTarget, HandoffTaskInput } from "@app/handoff/types";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { normalizeHandoffId } from "@app/handoff/ids";
+import { catchUpHandoffs, getHandoffById, listHandoffEvents, openHandoffModel } from "@app/handoff/read-model";
+import type { HandoffActionInput, HandoffEventBy, HandoffTarget, HandoffTaskInput } from "@app/handoff/types";
 
-/** Every UI-originated event runs with owner authority and is visibly attributed (§7.1). */
-const deps: HandoffDeps = { by: DASHBOARD_ACTOR };
+/**
+ * Dashboard actor (G7): sessionTitle = configured Basic Auth username;
+ * fallback "dev-dashboard" when auth is disabled. Keep agent/via for isHumanOwner.
+ */
+export function dashboardActor(sessionTitle?: string): HandoffEventBy {
+    return {
+        ...DASHBOARD_ACTOR,
+        sessionTitle:
+            sessionTitle !== undefined && sessionTitle.trim().length > 0 ? sessionTitle.trim() : "dev-dashboard",
+    };
+}
+
+async function dashboardDeps(): Promise<HandoffDeps> {
+    const config = await getConfig();
+    const title =
+        config.auth.enabled && config.auth.username.trim().length > 0 ? config.auth.username : "dev-dashboard";
+    return { by: dashboardActor(title) };
+}
 
 export function handoffRoutes(): RouteDef[] {
     return [
         {
             method: "GET",
             pattern: "/api/handoff/log",
-            handler: (ctx) => {
+            handler: async (ctx) => {
                 try {
+                    const deps = await dashboardDeps();
                     const limitRaw = ctx.query.get("limit");
                     const offsetRaw = ctx.query.get("offset");
                     const res = listHandoffs(
@@ -47,8 +65,9 @@ export function handoffRoutes(): RouteDef[] {
         {
             method: "GET",
             pattern: "/api/handoff/get",
-            handler: (ctx) => {
+            handler: async (ctx) => {
                 try {
+                    const deps = await dashboardDeps();
                     const id = ctx.query.get("id") ?? "";
                     const res = getHandoff({ id }, deps);
 
@@ -59,10 +78,48 @@ export function handoffRoutes(): RouteDef[] {
             },
         },
         {
+            method: "GET",
+            pattern: "/api/handoff/events",
+            handler: (ctx) => {
+                try {
+                    const id = normalizeHandoffId(ctx.query.get("id") ?? "");
+                    const limitRaw = ctx.query.get("limit");
+                    const limit = limitRaw !== null ? Number.parseInt(limitRaw, 10) : 200;
+                    const before = ctx.query.get("before") ?? undefined;
+
+                    if (id.length === 0) {
+                        return { kind: "json", status: 400, body: { error: "id query param required" } };
+                    }
+
+                    const db = openHandoffModel();
+
+                    try {
+                        catchUpHandoffs(db);
+
+                        if (getHandoffById(db, id) === null) {
+                            return {
+                                kind: "json",
+                                status: 404,
+                                body: { error: `No handoff ${id} — re-check the paste block or call handoff_list` },
+                            };
+                        }
+
+                        const body = listHandoffEvents({ db, handoffId: id, limit, before });
+                        return { kind: "json", status: 200, body };
+                    } finally {
+                        db.close();
+                    }
+                } catch (err) {
+                    return errorResult(err);
+                }
+            },
+        },
+        {
             method: "POST",
             pattern: "/api/handoff/action",
             handler: async (ctx) => {
                 try {
+                    const deps = await dashboardDeps();
                     const body = await ctx.readJson<{ id?: string; editId?: string; actions?: HandoffActionInput[] }>();
                     const res = executeHandoffActions(
                         { id: body.id ?? "", editId: body.editId, actions: body.actions ?? [] },
@@ -80,6 +137,7 @@ export function handoffRoutes(): RouteDef[] {
             pattern: "/api/handoff/post",
             handler: async (ctx) => {
                 try {
+                    const deps = await dashboardDeps();
                     const body = await ctx.readJson<{
                         title?: string;
                         description?: string;
@@ -109,6 +167,7 @@ export function handoffRoutes(): RouteDef[] {
             pattern: "/api/handoff/attach",
             handler: async (ctx) => {
                 try {
+                    const deps = await dashboardDeps();
                     const id = ctx.query.get("id") ?? "";
                     const filename = ctx.query.get("filename") ?? "pasted.bin";
                     const taskId = ctx.query.get("taskId") ?? undefined;
@@ -144,8 +203,9 @@ export function handoffRoutes(): RouteDef[] {
         {
             method: "GET",
             pattern: "/api/handoff/attachment",
-            handler: (ctx) => {
+            handler: async (ctx) => {
                 try {
+                    const deps = await dashboardDeps();
                     const attachmentId = ctx.query.get("id") ?? "";
                     const resolved = resolveAttachment(attachmentId, deps);
 
@@ -181,28 +241,6 @@ export function handoffRoutes(): RouteDef[] {
                     return errorResult(err);
                 }
             },
-        },
-        {
-            method: "GET",
-            pattern: "/api/handoff/stream",
-            longLived: true,
-            handler: () => ({
-                kind: "sse",
-                start: (emit) => {
-                    emit.comment(" handoff stream open");
-                    const stream = createHandoffStream((event) =>
-                        emit.data(SafeJSON.stringify({ id: event.id, ev: event.ev, ts: event.ts }, { strict: true }))
-                    );
-                    const keepAlive = setInterval(() => emit.comment(" ping"), 12_000);
-
-                    return {
-                        close: () => {
-                            clearInterval(keepAlive);
-                            stream.close();
-                        },
-                    };
-                },
-            }),
         },
     ];
 }
