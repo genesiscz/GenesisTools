@@ -1,0 +1,6 @@
+{
+  "app": "Finder",
+  "window": { "x": 498, "y": 334, "w": 920, "h": 436, "title": "plans" },
+  "gridStep": 100,
+  "note": "clickmap.png = CURRENT magick output for clickmap-raw.png with these window bounds; canvas reimplementation must reproduce geometry (text rasterization differs by design)"
+}
