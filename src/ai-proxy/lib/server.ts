@@ -272,7 +272,9 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
 
                     if (!provider) {
                         return new Response(
-                            SafeJSON.stringify({ error: { message: `Provider not loaded: ${routeProviderKey(route)}` } }),
+                            SafeJSON.stringify({
+                                error: { message: `Provider not loaded: ${routeProviderKey(route)}` },
+                            }),
                             {
                                 status: 500,
                                 headers: { "Content-Type": "application/json" },
