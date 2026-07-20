@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { renderAnnotationPlan } from "@genesiscz/utils/image";
+import { createCanvas, loadImage } from "@napi-rs/canvas";
 import pixelmatch from "pixelmatch";
 import { applyCrops } from "./crop-compositing";
 
