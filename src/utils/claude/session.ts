@@ -443,8 +443,9 @@ export class ClaudeSession {
                 // Match against query (id, name, or description)
                 if (lowerQuery) {
                     const idMatch = agentId.toLowerCase().includes(lowerQuery);
-                    const nameMatch = meta?.name?.toLowerCase().includes(lowerQuery) ?? false;
-                    const descMatch = meta?.description?.toLowerCase().includes(lowerQuery) ?? false;
+                    const nameMatch = typeof meta?.name === "string" && meta.name.toLowerCase().includes(lowerQuery);
+                    const descMatch =
+                        typeof meta?.description === "string" && meta.description.toLowerCase().includes(lowerQuery);
 
                     if (!idMatch && !nameMatch && !descMatch) {
                         continue;

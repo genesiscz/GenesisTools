@@ -1457,6 +1457,10 @@ function applyMetadataLine(line: string, state: MetadataScanState): void {
     try {
         const obj = SafeJSON.parse(line, { strict: true });
 
+        if (!obj || typeof obj !== "object") {
+            return;
+        }
+
         if (obj.type === "summary" && obj.summary) {
             state.summary = obj.summary;
         }
