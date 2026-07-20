@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -231,7 +231,9 @@ export function getEventOutcome(db: Database, uid: string): FoldOutcome | null {
  * transaction (compare-and-set): if another process already advanced it past
  * this batch's start, the whole batch is skipped — delta events can never
  * double-apply (§6.1 rule 2; deliberate divergence from the question store's
- * read-offset-outside-tx idiom).
+ * read-offset-outside-tx idiom). A CAS skip only proves *some* batch reached
+ * the offset it landed on, not that it reached THIS read's end, so each file
+ * is retried from the freshly committed offset until it is fully caught up.
  */
 export function catchUpHandoffs(db: Database, base?: string): void {
     const dir = handoffLogDir(base);
@@ -246,34 +248,75 @@ export function catchUpHandoffs(db: Database, base?: string): void {
         .filter((f) => f.endsWith(".jsonl"))
         .sort()) {
         const file = join(dir, name);
-        const size = statSync(file).size;
-        const prev = (getOff.get(file) as { byte_offset: number } | null)?.byte_offset ?? 0;
 
-        if (size <= prev) {
-            continue;
+        for (;;) {
+            let size: number;
+
+            try {
+                size = statSync(file).size;
+            } catch (err) {
+                log.warn({ err, file }, "skipping handoff log file — stat failed (likely removed concurrently)");
+                break;
+            }
+
+            const prev = (getOff.get(file) as { byte_offset: number } | null)?.byte_offset ?? 0;
+
+            if (size <= prev) {
+                break;
+            }
+
+            let buf: Buffer;
+
+            try {
+                buf = readSuffix(file, prev, size);
+            } catch (err) {
+                log.warn({ err, file }, "skipping handoff log file — read failed (likely removed concurrently)");
+                break;
+            }
+
+            let events: HandoffEvent[];
+            let remainder: Buffer;
+
+            try {
+                const parsed = parseJsonlChunk<HandoffEvent>(buf);
+                events = parsed.values;
+                remainder = parsed.remainder;
+            } catch (err) {
+                log.warn({ err, file }, "skipping unparseable handoff JSONL tail");
+                break;
+            }
+
+            const consumed = buf.length - remainder.length;
+
+            if (events.length === 0) {
+                break;
+            }
+
+            const applied = applyHandoffBatch({ db, file, prevOffset: prev, events, consumed, base });
+
+            if (applied) {
+                break;
+            }
+
+            // CAS skip: another process advanced the offset concurrently — loop and
+            // retry from wherever it landed instead of dropping the remainder.
         }
-
-        const buf = readFileSync(file).subarray(prev);
-        let events: HandoffEvent[];
-        let remainder: Buffer;
-
-        try {
-            const parsed = parseJsonlChunk<HandoffEvent>(buf);
-            events = parsed.values;
-            remainder = parsed.remainder;
-        } catch (err) {
-            log.warn({ err, file }, "skipping unparseable handoff JSONL tail");
-            continue;
-        }
-
-        const consumed = buf.length - remainder.length;
-
-        if (events.length === 0) {
-            continue;
-        }
-
-        applyHandoffBatch({ db, file, prevOffset: prev, events, consumed, base });
     }
+}
+
+/** Read only the unconsumed suffix of a file — avoids reloading the whole day-log on every fold. */
+function readSuffix(file: string, start: number, size: number): Buffer {
+    const length = size - start;
+    const buf = Buffer.allocUnsafe(length);
+    const fd = openSync(file, "r");
+
+    try {
+        readSync(fd, buf, 0, length, start);
+    } finally {
+        closeSync(fd);
+    }
+
+    return buf;
 }
 
 export interface ApplyBatchInput {

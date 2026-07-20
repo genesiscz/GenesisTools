@@ -113,6 +113,16 @@ export function handoffRoutes(): RouteDef[] {
                     const filename = ctx.query.get("filename") ?? "pasted.bin";
                     const taskId = ctx.query.get("taskId") ?? undefined;
                     const note = ctx.query.get("note") ?? undefined;
+                    const contentLength = ctx.headers["content-length"];
+
+                    if (contentLength !== undefined && Number.parseInt(contentLength, 10) > MAX_ATTACHMENT_BYTES) {
+                        return {
+                            kind: "json",
+                            status: 413,
+                            body: { error: `attachment declares ${contentLength} bytes — the cap is 10 MB` },
+                        };
+                    }
+
                     const bytes = await ctx.readRawBody();
 
                     if (bytes.byteLength > MAX_ATTACHMENT_BYTES) {
@@ -151,6 +161,9 @@ export function handoffRoutes(): RouteDef[] {
                         };
                     }
 
+                    const safeName = resolved.filename.replace(/"/g, "");
+                    const disposition = resolved.mime.startsWith("image/") ? "inline" : "attachment";
+
                     return {
                         kind: "binary",
                         status: 200,
@@ -158,7 +171,8 @@ export function handoffRoutes(): RouteDef[] {
                         body: readFileSync(resolved.path),
                         headers: {
                             "Cache-Control": "public, max-age=31536000, immutable",
-                            "Content-Disposition": `inline; filename="${resolved.filename.replace(/"/g, "")}"`,
+                            "Content-Disposition": `${disposition}; filename="${safeName}"`,
+                            "X-Content-Type-Options": "nosniff",
                         },
                     };
                 } catch (err) {

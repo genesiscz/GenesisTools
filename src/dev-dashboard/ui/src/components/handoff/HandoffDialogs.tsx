@@ -71,8 +71,11 @@ export function HandoffProofDialog({
                     </GlassDialogHeader>
                     <div className="flex flex-col gap-3">
                         <div>
-                            <Label className={LABEL_CLASS}>Proof / answer</Label>
+                            <Label className={LABEL_CLASS} htmlFor="handoff-proof-answer">
+                                Proof / answer
+                            </Label>
                             <Textarea
+                                id="handoff-proof-answer"
                                 value={answer}
                                 onChange={(e) => setAnswer(e.target.value)}
                                 className={INPUT_CLASS}
@@ -80,8 +83,11 @@ export function HandoffProofDialog({
                             />
                         </div>
                         <div>
-                            <Label className={LABEL_CLASS}>Commit SHAs (optional, space/comma separated)</Label>
+                            <Label className={LABEL_CLASS} htmlFor="handoff-proof-commits">
+                                Commit SHAs (optional, space/comma separated)
+                            </Label>
                             <Input
+                                id="handoff-proof-commits"
                                 value={commits}
                                 onChange={(e) => setCommits(e.target.value)}
                                 className={INPUT_CLASS}
@@ -89,8 +95,11 @@ export function HandoffProofDialog({
                             />
                         </div>
                         <div>
-                            <Label className={LABEL_CLASS}>Context (optional)</Label>
+                            <Label className={LABEL_CLASS} htmlFor="handoff-proof-context">
+                                Context (optional)
+                            </Label>
                             <Input
+                                id="handoff-proof-context"
                                 value={context}
                                 onChange={(e) => setContext(e.target.value)}
                                 className={INPUT_CLASS}
@@ -203,8 +212,11 @@ export function HandoffCreateDialog({
                     <GlassDialogScroll className="px-5 py-4">
                         <div className="flex flex-col gap-4">
                             <div>
-                                <Label className={LABEL_CLASS}>Title</Label>
+                                <Label className={LABEL_CLASS} htmlFor="handoff-create-title">
+                                    Title
+                                </Label>
                                 <Input
+                                    id="handoff-create-title"
                                     value={title}
                                     onChange={(e) => setTitle(e.target.value)}
                                     className={INPUT_CLASS}
@@ -212,8 +224,11 @@ export function HandoffCreateDialog({
                                 />
                             </div>
                             <div>
-                                <Label className={LABEL_CLASS}>Description (markdown, optional)</Label>
+                                <Label className={LABEL_CLASS} htmlFor="handoff-create-description">
+                                    Description (markdown, optional)
+                                </Label>
                                 <Textarea
+                                    id="handoff-create-description"
                                     value={description}
                                     onChange={(e) => setDescription(e.target.value)}
                                     className={INPUT_CLASS}
@@ -271,8 +286,11 @@ export function HandoffCreateDialog({
                             </div>
                             <div className="grid gap-4 sm:grid-cols-2">
                                 <div>
-                                    <Label className={LABEL_CLASS}>Target session name (optional)</Label>
+                                    <Label className={LABEL_CLASS} htmlFor="handoff-create-target">
+                                        Target session name (optional)
+                                    </Label>
                                     <Input
+                                        id="handoff-create-target"
                                         value={targetName}
                                         onChange={(e) => setTargetName(e.target.value)}
                                         className={INPUT_CLASS}
@@ -280,8 +298,11 @@ export function HandoffCreateDialog({
                                     />
                                 </div>
                                 <div>
-                                    <Label className={LABEL_CLASS}>Refs (one per line, optional)</Label>
+                                    <Label className={LABEL_CLASS} htmlFor="handoff-create-refs">
+                                        Refs (one per line, optional)
+                                    </Label>
                                     <Textarea
+                                        id="handoff-create-refs"
                                         value={refs}
                                         onChange={(e) => setRefs(e.target.value)}
                                         className={INPUT_CLASS}

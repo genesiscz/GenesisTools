@@ -1093,6 +1093,12 @@ export function resolveAttachment(attachmentId: string, deps: HandoffDeps = {}):
 
         for (const row of rows) {
             const attachments = SafeJSON.parse(row.attachments, { strict: true }) as Handoff["attachments"];
+
+            if (!Array.isArray(attachments)) {
+                log.warn({ handoffId: row.id }, "handoff.attachments column is not an array — skipping");
+                continue;
+            }
+
             const found = attachments.find((a) => a.attachmentId === attachmentId);
 
             if (found !== undefined) {

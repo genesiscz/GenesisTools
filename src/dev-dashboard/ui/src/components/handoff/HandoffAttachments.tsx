@@ -1,5 +1,5 @@
 import type { PublicHandoff } from "@app/dev-dashboard/lib/handoff-types";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { attachmentUrl } from "./useHandoffApi";
 
 type AttachmentMeta = PublicHandoff["attachments"][number];
@@ -9,8 +9,27 @@ function isImage(a: AttachmentMeta): boolean {
 }
 
 function Lightbox({ attachment, onClose }: { attachment: AttachmentMeta; onClose: () => void }) {
+    const closeRef = useRef<HTMLButtonElement | null>(null);
+
+    useEffect(() => {
+        closeRef.current?.focus();
+
+        const onKeyDown = (ev: KeyboardEvent): void => {
+            if (ev.key === "Escape") {
+                onClose();
+            }
+        };
+
+        document.addEventListener("keydown", onKeyDown);
+
+        return () => document.removeEventListener("keydown", onKeyDown);
+    }, [onClose]);
+
     return (
         <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`attachment preview: ${attachment.filename}`}
             className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-black/85 p-8"
             onClick={onClose}
         >
@@ -19,7 +38,10 @@ function Lightbox({ attachment, onClose }: { attachment: AttachmentMeta; onClose
                 alt={attachment.filename}
                 className="max-h-[80vh] max-w-[90vw] rounded border border-[var(--dd-border)] object-contain"
             />
-            <div className="flex items-center gap-3 font-mono text-xs text-[var(--dd-text-secondary)]">
+            <div
+                className="flex items-center gap-3 font-mono text-xs text-[var(--dd-text-secondary)]"
+                onClick={(ev) => ev.stopPropagation()}
+            >
                 <span>{attachment.filename}</span>
                 <span className="text-[var(--dd-text-muted)]">
                     {attachment.by.sessionName ?? attachment.by.agent} · {new Date(attachment.ts).toLocaleString()}
@@ -28,11 +50,15 @@ function Lightbox({ attachment, onClose }: { attachment: AttachmentMeta; onClose
                     href={attachmentUrl(attachment.attachmentId)}
                     download={attachment.filename}
                     className="dd-accent-text hover:opacity-80"
-                    onClick={(ev) => ev.stopPropagation()}
                 >
                     download
                 </a>
-                <button type="button" className="dd-accent-text cursor-pointer hover:opacity-80" onClick={onClose}>
+                <button
+                    ref={closeRef}
+                    type="button"
+                    className="dd-accent-text cursor-pointer hover:opacity-80"
+                    onClick={onClose}
+                >
                     close
                 </button>
             </div>

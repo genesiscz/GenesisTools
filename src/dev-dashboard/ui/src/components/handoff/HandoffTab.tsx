@@ -209,7 +209,11 @@ export function HandoffTab() {
                         <button
                             type="button"
                             className="cursor-pointer font-mono text-[10px] text-[var(--dd-text-secondary)] hover:text-[var(--dd-text-primary)]"
-                            onClick={() => void navigator.clipboard.writeText(editIdToast.editId)}
+                            onClick={() => {
+                                navigator.clipboard
+                                    .writeText(editIdToast.editId)
+                                    .catch((err) => console.error("copy editId failed", err));
+                            }}
                         >
                             copy
                         </button>

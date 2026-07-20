@@ -10,7 +10,9 @@ function CommitChip({ sha }: { sha: string }) {
         <button
             type="button"
             className="cursor-pointer rounded border border-[var(--dd-border)] bg-black/25 px-1.5 py-px font-mono text-[10px] text-[var(--dd-text-secondary)] hover:border-primary/60"
-            onClick={() => void navigator.clipboard.writeText(sha)}
+            onClick={() => {
+                navigator.clipboard.writeText(sha).catch((err) => console.error("copy SHA failed", err));
+            }}
             title="copy SHA"
         >
             {sha}

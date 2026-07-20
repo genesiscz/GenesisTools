@@ -75,11 +75,15 @@ export function HandoffDetail({ id }: { id: string }) {
     const uploadFiles = (files: File[], taskId?: string): void => {
         setUploadError(null);
 
-        for (const file of files) {
-            uploadHandoffAttachment({ id, file, taskId })
-                .then(() => detail.refetch())
-                .catch((err) => setUploadError(err instanceof Error ? err.message : String(err)));
-        }
+        Promise.allSettled(files.map((file) => uploadHandoffAttachment({ id, file, taskId }))).then((results) => {
+            const failure = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+
+            if (failure !== undefined) {
+                setUploadError(failure.reason instanceof Error ? failure.reason.message : String(failure.reason));
+            }
+
+            void detail.refetch();
+        });
     };
 
     /** Paste anywhere (§7.3): task-row focus → that task; comment composer → pending chip; else the handoff. */
@@ -237,7 +241,11 @@ export function HandoffDetail({ id }: { id: string }) {
                     <button
                         type="button"
                         className="dd-accent-text cursor-pointer hover:opacity-80"
-                        onClick={() => void navigator.clipboard.writeText(detail.data?.editId ?? "")}
+                        onClick={() => {
+                            navigator.clipboard
+                                .writeText(detail.data?.editId ?? "")
+                                .catch((err) => console.error("copy editId failed", err));
+                        }}
                         title="click to copy"
                     >
                         {detail.data.editId} ⧉

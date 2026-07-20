@@ -1,11 +1,19 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { HandoffEvent } from "./types";
 
+/** Handoffs share the question family's storage root (§6.2) — honor its override too. */
+function questionRoot(): string {
+    const logBase = env.question.getLogBase();
+
+    return logBase !== undefined ? dirname(logBase) : join(homedir(), ".genesis-tools", "question");
+}
+
 export function handoffLogDir(base?: string): string {
-    return base ?? join(homedir(), ".genesis-tools", "question", "handoff");
+    return base ?? join(questionRoot(), "handoff");
 }
 
 export function logFilePathForTs(tsIso: string, base?: string): string {
