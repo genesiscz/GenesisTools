@@ -1,4 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
+import { existsSync, mkdtempSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { execTool, getOutput } from "@genesiscz/utils/e2e/helpers";
 import { skip } from "@genesiscz/utils/test/skip";
 
@@ -18,7 +21,7 @@ describe.skipIf(skip.integration)("tools say", () => {
 
         it("--help shows all options", async () => {
             const r = await execTool(["say", "--help"]);
-            for (const flag of ["--volume", "--voice", "--rate", "--wait", "--app", "--mute", "--unmute"]) {
+            for (const flag of ["--volume", "--voice", "--rate", "--wait", "--app", "--mute", "--unmute", "--output"]) {
                 expect(r.stdout).toContain(flag);
             }
         });
@@ -114,6 +117,27 @@ describe.skipIf(skip.integration)("tools say", () => {
             const r = await execTool(["say", "--help"]);
             expect(r.stdout).toContain("--volume");
             expect(r.stdout).toContain("--rate");
+        });
+    });
+
+    describe("--output", () => {
+        // `say -o` writes AIFF without needing a speaker/TTY audio session.
+        it("writes AIFF to the given path and does not hang", async () => {
+            const dir = mkdtempSync(join(tmpdir(), "say-e2e-"));
+            const outPath = join(dir, "hello.aiff");
+            const r = await execTool(["say", "hello", "--output", outPath, "--provider", "macos", "--no-fallback"]);
+            expect(r.exitCode).toBe(0);
+            expect(getOutput(r).toLowerCase()).toContain("wrote");
+            expect(existsSync(outPath)).toBe(true);
+            expect(statSync(outPath).size).toBeGreaterThan(100);
+        });
+
+        it("appends .aiff when path has no extension (macos)", async () => {
+            const dir = mkdtempSync(join(tmpdir(), "say-e2e-"));
+            const base = join(dir, "noext");
+            const r = await execTool(["say", "hi", "--output", base, "--provider", "macos", "--no-fallback"]);
+            expect(r.exitCode).toBe(0);
+            expect(existsSync(`${base}.aiff`)).toBe(true);
         });
     });
 });

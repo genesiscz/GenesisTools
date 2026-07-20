@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, extname, resolve } from "node:path";
 import * as p from "@clack/prompts";
 import { AI } from "@genesiscz/utils/ai/index.ts";
 import { getModelsForTask } from "@genesiscz/utils/ai/ModelManager";
@@ -42,6 +42,7 @@ interface SayOptions {
     language?: string;
     format?: "mp3" | "wav";
     file?: string;
+    output?: string;
     stream?: boolean;
     noStream?: boolean;
     model?: string;
@@ -72,6 +73,10 @@ const program = new Command()
     .option("--language <bcp47>", "Language hint (xai only; defaults to 'auto')")
     .option("--format <codec>", "Output codec: mp3 or wav")
     .option("--file <path>", "Read text from a file instead of args")
+    .option(
+        "--output <path>",
+        "Write synthesized audio to a file instead of playing (macOS: AIFF; cloud: mp3/wav per --format). Blocks until written. Mute is ignored."
+    )
     .option("--stream", "Force streaming path")
     .option("--no-stream", "Force REST/non-streaming path")
     .option("--model <id>", "Provider-specific model (e.g. tts-1, gpt-4o-mini-tts for openai)")
@@ -133,9 +138,10 @@ const program = new Command()
         // If --save is requesting a mute change, don't short-circuit on the
         // existing mute state — otherwise --unmute --save / --unset mute --save
         // can never be persisted from a currently-muted profile.
+        // --output still synthesizes (mute only silences speaker playback).
         const wantsMuteWrite = opts.save === true && (opts.unmute === true || unsetList.includes("mute"));
 
-        if (!wantsMuteWrite && (await mgr.isMuted(opts.app))) {
+        if (!wantsMuteWrite && !opts.output && (await mgr.isMuted(opts.app))) {
             process.stderr.write("[say] muted\n");
             return;
         }
@@ -146,9 +152,9 @@ const program = new Command()
         // --wait so the child performs the (possibly network-bound for cloud
         // providers) synth + playback in its own process group, then return
         // immediately. --wait opts back into blocking; it is also the recursion
-        // guard since this branch only triggers without it. --save runs inline
-        // so its confirmation output is preserved.
-        if (!opts.wait && !opts.save) {
+        // guard since this branch only triggers without it. --save / --output
+        // run inline so confirmation text and the audio file are ready before exit.
+        if (!opts.wait && !opts.save && !opts.output) {
             spawnDetachedSpeaker();
             return;
         }
@@ -388,16 +394,22 @@ interface SpeakCachedArgs {
  * cloud providers, hash the request — on a hit, play the cached audio
  * directly; on a miss, synthesize, play, and record the miss so the Nth
  * occurrence persists.
+ *
+ * With `--output`, never plays: synthesizes (or serves cache), writes the
+ * full buffer to the path, then returns. Streaming is ignored because a
+ * complete file is required.
  */
 async function speakCached(args: SpeakCachedArgs): Promise<void> {
     const { mgr, text, provider, effective, opts, stream } = args;
+    const outputPath = opts.output ? resolve(opts.output) : undefined;
 
     // Bypass the cache when:
     //   - provider is macos (local & free)
     //   - the user explicitly asked for streaming — caching needs the whole
     //     buffer up front, which would silently negate `--stream` for cloud
     //     providers. Honor the flag instead.
-    if (provider === "macos" || stream === true) {
+    // `--output` needs a full buffer, so it never takes the stream-only path.
+    if ((provider === "macos" || stream === true) && !outputPath) {
         await AI.speak(text, {
             provider,
             voice: effective.voice ?? undefined,
@@ -409,6 +421,20 @@ async function speakCached(args: SpeakCachedArgs): Promise<void> {
             wait: opts.wait,
             model: effective.model ?? undefined,
         });
+        return;
+    }
+
+    // macos + --output, or cloud (with optional cache): need the buffer.
+    if (provider === "macos") {
+        const result = await AI.synthesize(text, {
+            provider,
+            voice: effective.voice ?? undefined,
+            language: effective.language ?? undefined,
+            format: effective.format ?? undefined,
+            rate: effective.rate ?? undefined,
+            model: effective.model ?? undefined,
+        });
+        writeAudioFile(outputPath as string, result.audio, result.contentType);
         return;
     }
 
@@ -443,6 +469,12 @@ async function speakCached(args: SpeakCachedArgs): Promise<void> {
 
     if (hit) {
         logger.debug(`[say] cache hit (${provider}, ${hit.audio.byteLength}B)`);
+
+        if (outputPath) {
+            writeAudioFile(outputPath, hit.audio, hit.contentType);
+            return;
+        }
+
         await playBuffer(hit.audio, hit.contentType, {
             volume: effective.volume ?? undefined,
             wait: opts.wait,
@@ -472,10 +504,60 @@ async function speakCached(args: SpeakCachedArgs): Promise<void> {
         logger.warn(`[say/cache] recordMiss() failed, audio not cached: ${err}`);
     }
 
+    if (outputPath) {
+        writeAudioFile(outputPath, result.audio, result.contentType);
+        return;
+    }
+
     await playBuffer(result.audio, result.contentType, {
         volume: effective.volume ?? undefined,
         wait: opts.wait,
     });
+}
+
+/** MIME → preferred extension when the user path has none. */
+const CONTENT_TYPE_EXT: Record<string, string> = {
+    "audio/mpeg": ".mp3",
+    "audio/mp3": ".mp3",
+    "audio/wav": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/wave": ".wav",
+    "audio/aiff": ".aiff",
+    "audio/x-aiff": ".aiff",
+};
+
+/**
+ * Write TTS bytes to disk. Creates parent directories. If `path` has no
+ * extension, appends one derived from `contentType`. Does not convert
+ * codecs — macos always yields AIFF; cloud yields mp3/wav per `--format`.
+ */
+function writeAudioFile(path: string, audio: Buffer, contentType: string): void {
+    let dest = path;
+    const preferred = CONTENT_TYPE_EXT[contentType.toLowerCase()];
+
+    if (!extname(dest) && preferred) {
+        dest = `${dest}${preferred}`;
+    }
+
+    const parent = dirname(dest);
+
+    if (parent && parent !== ".") {
+        mkdirSync(parent, { recursive: true });
+    }
+
+    writeFileSync(dest, audio);
+
+    const ext = extname(dest).toLowerCase();
+    if (preferred && ext && ext !== preferred) {
+        out.println(
+            pc.yellow(
+                `[say] wrote ${dest} (${audio.byteLength}B, ${contentType}) — extension ${ext} does not match payload; use ${preferred} for this provider/format`
+            )
+        );
+        return;
+    }
+
+    out.println(pc.green(`[say] wrote ${dest} (${audio.byteLength}B, ${contentType})`));
 }
 
 function isVoiceNotFoundError(message: string): boolean {
@@ -662,7 +744,10 @@ async function main(): Promise<void> {
     }
 }
 
-main();
+// Top-level await keeps the event loop alive for the full synth path.
+// A floating `main()` lets Bun exit early during `AI.synthesize` (Bun.spawn
+// for `say -o` does not always hold a process ref the way `say` playback does).
+await main();
 
 // ============================================
 // `tools say config` — unified app/profile manager
