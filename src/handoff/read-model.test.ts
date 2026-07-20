@@ -10,6 +10,7 @@ import {
     applyHandoffBatch,
     catchUpHandoffs,
     getHandoffById,
+    listHandoffEvents,
     listHandoffRows,
     openHandoffModel,
     rebuildHandoffModel,
@@ -217,5 +218,95 @@ describe("log layout", () => {
         const files = readdirSync(handoffLogDir(env.base)).filter((f) => f.endsWith(".jsonl"));
         expect(files).toHaveLength(1);
         expect(files[0]).toMatch(/^\d{4}-\d{2}-\d{2}\.jsonl$/);
+    });
+});
+
+describe("handoff_events read-model (G1/G3)", () => {
+    test("events land on ingest, uid-idempotent, payloads never contain editId", () => {
+        const env = freshEnv();
+        const posted = postHandoff({ title: "T", tasks: [{ text: "one" }] }, env.depsFor(A));
+        const db = openHandoffModel(env.dbPath);
+
+        try {
+            catchUpHandoffs(db, env.base);
+            const { events, total } = listHandoffEvents({ db, handoffId: posted.handoff.id });
+            expect(total).toBeGreaterThanOrEqual(1);
+            expect(events.some((e) => e.ev === "post")).toBe(true);
+
+            for (const event of events) {
+                expect("editId" in event).toBe(false);
+                const raw = SafeJSON.stringify(event, { strict: true });
+                expect(raw.includes('"editId"')).toBe(false);
+            }
+
+            const postRow = db
+                .query("SELECT payload FROM handoff_events WHERE handoff_id = ? AND ev = 'post'")
+                .get(posted.handoff.id) as { payload: string };
+            expect(postRow.payload.includes('"editId"')).toBe(false);
+
+            // Double-apply same batch via CAS-skipped path leaves uid count stable.
+            const countBefore = (
+                db.query("SELECT COUNT(*) AS n FROM handoff_events WHERE handoff_id = ?").get(posted.handoff.id) as {
+                    n: number;
+                }
+            ).n;
+            catchUpHandoffs(db, env.base);
+            const countAfter = (
+                db.query("SELECT COUNT(*) AS n FROM handoff_events WHERE handoff_id = ?").get(posted.handoff.id) as {
+                    n: number;
+                }
+            ).n;
+            expect(countAfter).toBe(countBefore);
+        } finally {
+            db.close();
+        }
+    });
+
+    test("rebuild produces identical handoff_events content", () => {
+        const env = freshEnv();
+        const posted = postHandoff({ title: "T", tasks: [{ text: "one" }, { text: "two" }] }, env.depsFor(A));
+        getHandoff({ id: posted.handoff.id, claim: true }, env.depsFor(B));
+        executeHandoffActions(
+            {
+                id: posted.handoff.id,
+                actions: [
+                    { action: "check_task", taskId: "t1", proof: { answer: "done" } },
+                    { action: "comment", text: "note" },
+                ],
+            },
+            env.depsFor(B)
+        );
+
+        const db = openHandoffModel(env.dbPath);
+
+        try {
+            catchUpHandoffs(db, env.base);
+            const before = (
+                db.query("SELECT uid, handoff_id, ts, ev, payload FROM handoff_events ORDER BY uid").all() as {
+                    uid: string;
+                    handoff_id: string;
+                    ts: string;
+                    ev: string;
+                    payload: string;
+                }[]
+            ).map((r) => ({ ...r }));
+            rebuildHandoffModel(db, env.base);
+            const after = (
+                db.query("SELECT uid, handoff_id, ts, ev, payload FROM handoff_events ORDER BY uid").all() as {
+                    uid: string;
+                    handoff_id: string;
+                    ts: string;
+                    ev: string;
+                    payload: string;
+                }[]
+            ).map((r) => ({ ...r }));
+            expect(after).toEqual(before);
+
+            for (const row of after) {
+                expect(row.payload.includes('"editId"')).toBe(false);
+            }
+        } finally {
+            db.close();
+        }
     });
 });

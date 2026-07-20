@@ -25,6 +25,22 @@ export function isHumanOwner(by: HandoffEventBy): boolean {
     return by.agent === "human" && by.via === "dashboard";
 }
 
+/**
+ * Claim identity (G11): sessionId match when non-null; else human-owner match
+ * (`agent === "human"` on the claim, mirrored by isHumanOwner on the event).
+ */
+export function claimMatches(claim: { sessionId: string | null; agent: string }, by: HandoffEventBy): boolean {
+    if (sessionIdMatches(claim.sessionId, by.sessionId)) {
+        return true;
+    }
+
+    if (by.sessionId == null && isHumanOwner(by) && claim.agent === "human") {
+        return true;
+    }
+
+    return false;
+}
+
 export function actorOf(by: HandoffEventBy): HandoffActor {
     const actor: HandoffActor = {
         sessionId: by.sessionId,
@@ -246,7 +262,7 @@ export function applyHandoffEvent(
                 };
             }
 
-            const mine = next.claimedBy.find((c) => sessionIdMatches(c.sessionId, event.by.sessionId));
+            const mine = next.claimedBy.find((c) => claimMatches(c, event.by));
 
             if (mine) {
                 mine.claimedAt = event.ts;
@@ -260,6 +276,9 @@ export function applyHandoffEvent(
                 cwd: event.by.cwd,
                 claimedAt: event.ts,
                 via: event.via,
+                repoRoot: event.by.repoRoot,
+                commitSha: event.by.commitSha,
+                agent: event.by.agent,
             });
 
             if (next.status === "open") {
@@ -271,7 +290,7 @@ export function applyHandoffEvent(
 
         case "unclaim": {
             const before = next.claimedBy.length;
-            next.claimedBy = next.claimedBy.filter((c) => !sessionIdMatches(c.sessionId, event.by.sessionId));
+            next.claimedBy = next.claimedBy.filter((c) => !claimMatches(c, event.by));
 
             if (next.claimedBy.length === before) {
                 return {
@@ -349,9 +368,9 @@ export function applyHandoffEvent(
                 };
             }
 
-            // Current-state proof cleared deliberately — the full trace survives in the event log (§2).
+            // Keep proof on uncheck (redesign G8) — activity trace shows the uncheck;
+            // UI renders surviving proof as a dimmed "previous proof" block.
             task.checked = false;
-            delete task.proof;
             delete task.checkedBy;
             delete task.checkedTs;
             return { state: next, outcome: { applied: true } };

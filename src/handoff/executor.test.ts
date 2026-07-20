@@ -503,3 +503,68 @@ describe("actions[] item shape errors", () => {
         );
     });
 });
+
+describe("fold redesign (G5/G8/G11)", () => {
+    test("uncheck keeps proof and clears checkedBy/checkedTs", () => {
+        const env = freshEnv();
+        const posted = postHandoff({ title: "T", tasks: [{ text: "one" }] }, env.depsFor(A));
+        getHandoff({ id: posted.handoff.id, claim: true }, env.depsFor(B));
+        executeHandoffActions(
+            { id: posted.handoff.id, actions: [{ action: "check_task", taskId: "t1", proof: { answer: "done" } }] },
+            env.depsFor(B)
+        );
+
+        const unchecked = executeHandoffActions(
+            { id: posted.handoff.id, actions: [{ action: "uncheck_task", taskId: "t1" }] },
+            env.depsFor(B)
+        );
+        expect(unchecked.results[0].ok).toBe(true);
+        expect(unchecked.handoff.tasks[0].checked).toBe(false);
+        expect(unchecked.handoff.tasks[0].proof?.answer).toBe("done");
+        expect(unchecked.handoff.tasks[0].checkedBy).toBeUndefined();
+        expect(unchecked.handoff.tasks[0].checkedTs).toBeUndefined();
+    });
+
+    test("claim copies repoRoot/commitSha/agent; dashboard claim/unclaim by human identity", () => {
+        const env = freshEnv();
+        const posted = postHandoff({ title: "T", tasks: [{ text: "one" }] }, env.depsFor(A));
+
+        const claimed = getHandoff({ id: posted.handoff.id, claim: true }, env.depsFor(B));
+        const agentClaim = claimed.handoff.claimedBy.find((c) => c.sessionId === B.sessionId);
+        expect(agentClaim?.repoRoot).toBe(B.repoRoot);
+        expect(agentClaim?.commitSha).toBe(B.commitSha);
+        expect(agentClaim?.agent).toBe(B.agent);
+
+        const dashClaim = executeHandoffActions(
+            { id: posted.handoff.id, actions: ["claim"] },
+            env.depsFor(DASHBOARD_ACTOR)
+        );
+        expect(dashClaim.results[0].ok).toBe(true);
+        expect(dashClaim.handoff.claimedBy.some((c) => c.agent === "human")).toBe(true);
+
+        const dashUnclaim = executeHandoffActions(
+            { id: posted.handoff.id, actions: ["unclaim"] },
+            env.depsFor(DASHBOARD_ACTOR)
+        );
+        expect(dashUnclaim.results[0].ok).toBe(true);
+        expect(dashUnclaim.handoff.claimedBy.some((c) => c.agent === "human")).toBe(false);
+        // Agent claim untouched.
+        expect(dashUnclaim.handoff.claimedBy.some((c) => c.sessionId === B.sessionId)).toBe(true);
+    });
+
+    test("two null-sessionId non-human claims never match each other", () => {
+        const env = freshEnv();
+        const posted = postHandoff({ title: "T", tasks: [{ text: "one" }] }, env.depsFor(A));
+        const nullA = byFor(null, "cron-a");
+        const nullB = byFor(null, "cron-b");
+
+        const aTry = executeHandoffActions({ id: posted.handoff.id, actions: ["claim"] }, env.depsFor(nullA));
+        expect(aTry.results[0].ok).toBe(false);
+        expect(aTry.results[0].error).toContain("sessionId");
+
+        const bTry = executeHandoffActions({ id: posted.handoff.id, actions: ["claim"] }, env.depsFor(nullB));
+        expect(bTry.results[0].ok).toBe(false);
+        expect(posted.handoff.claimedBy?.length ?? 0).toBe(0);
+        expect(bTry.handoff.claimedBy).toHaveLength(0);
+    });
+});

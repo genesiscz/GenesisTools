@@ -7,7 +7,7 @@ import { parseJsonlChunk } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
 import { applyHandoffEvent } from "./fold";
 import { handoffLogDir } from "./log-store";
-import type { FoldOutcome, Handoff, HandoffEvent } from "./types";
+import type { FoldOutcome, Handoff, HandoffEvent, HandoffPublicEvent } from "./types";
 
 const log = logger.child({ component: "handoff:read-model" });
 
@@ -24,7 +24,22 @@ function ensureColumn(db: Database, table: string, column: string, ddl: string):
     }
 }
 
-function createTables(db: Database): void {
+function tableExists(db: Database, name: string): boolean {
+    const row = db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) as {
+        name: string;
+    } | null;
+    return row != null;
+}
+
+/** Strip editId before any events read-model persistence or public return (G3). */
+export function toPublicEvent(event: HandoffEvent): HandoffPublicEvent {
+    const { editId: _editId, ...rest } = event;
+    return rest;
+}
+
+function createTables(db: Database): { eventsTableCreated: boolean } {
+    const hadEventsTable = tableExists(db, "handoff_events");
+
     db.exec(`CREATE TABLE IF NOT EXISTS handoffs (
         id                     TEXT PRIMARY KEY,
         title                  TEXT NOT NULL,
@@ -61,6 +76,14 @@ function createTables(db: Database): void {
         extra      TEXT,
         ts         TEXT
     );`);
+    db.exec(`CREATE TABLE IF NOT EXISTS handoff_events (
+        uid        TEXT PRIMARY KEY,
+        handoff_id TEXT NOT NULL,
+        ts         TEXT NOT NULL,
+        ev         TEXT NOT NULL,
+        payload    TEXT NOT NULL
+    );`);
+    db.exec("CREATE INDEX IF NOT EXISTS idx_handoff_events_handoff ON handoff_events(handoff_id, ts);");
     ensureColumn(
         db,
         "handoffs",
@@ -69,6 +92,8 @@ function createTables(db: Database): void {
     );
     // Who finished it — needed for the reopen-by-finisher credential (§2 reopen_handoff).
     ensureColumn(db, "handoffs", "finished_by", "ALTER TABLE handoffs ADD COLUMN finished_by TEXT");
+
+    return { eventsTableCreated: !hadEventsTable && tableExists(db, "handoff_events") };
 }
 
 export function openHandoffModel(dbPath?: string): Database {
@@ -77,7 +102,18 @@ export function openHandoffModel(dbPath?: string): Database {
     const db = new Database(path);
     db.exec("PRAGMA journal_mode = WAL;");
     db.exec("PRAGMA busy_timeout = 5000;");
-    createTables(db);
+    const { eventsTableCreated } = createTables(db);
+
+    // One-time migration: table born under a non-empty handoffs → backfill via rebuild (G1).
+    if (eventsTableCreated && tableExists(db, "handoffs")) {
+        const count = (db.query("SELECT COUNT(*) AS n FROM handoffs").get() as { n: number }).n;
+
+        if (count > 0) {
+            log.info({ count }, "handoff_events table created under existing handoffs — rebuilding to backfill");
+            rebuildHandoffModel(db);
+        }
+    }
+
     log.debug({ path }, "handoff read-model opened");
     return db;
 }
@@ -106,6 +142,28 @@ interface HandoffRow {
 
 function rowToHandoff(row: HandoffRow): Handoff {
     const postedByContext = SafeJSON.parse(row.posted_by_context, { strict: true }) as Handoff["postedByContext"];
+    const claimedRaw = SafeJSON.parse(row.claimed_by, { strict: true }) as Array<{
+        sessionId: string | null;
+        sessionName: string | null;
+        branch: string | null;
+        cwd: string | null;
+        claimedAt: string;
+        via: Handoff["claimedBy"][number]["via"];
+        repoRoot?: string | null;
+        commitSha?: string | null;
+        agent?: string;
+    }>;
+    const claimedBy = claimedRaw.map((c) => ({
+        sessionId: c.sessionId,
+        sessionName: c.sessionName,
+        branch: c.branch,
+        cwd: c.cwd,
+        claimedAt: c.claimedAt,
+        via: c.via,
+        repoRoot: c.repoRoot ?? null,
+        commitSha: c.commitSha ?? null,
+        agent: c.agent ?? "unknown",
+    }));
     const handoff: Handoff = {
         id: row.id,
         title: row.title,
@@ -119,7 +177,7 @@ function rowToHandoff(row: HandoffRow): Handoff {
         },
         postedByContext,
         project: row.project,
-        claimedBy: SafeJSON.parse(row.claimed_by, { strict: true }) as Handoff["claimedBy"],
+        claimedBy,
         comments: SafeJSON.parse(row.comments, { strict: true }) as Handoff["comments"],
         attachments: SafeJSON.parse(row.attachments, { strict: true }) as Handoff["attachments"],
         editId: row.edit_id ?? "",
@@ -222,6 +280,43 @@ export function getEventOutcome(db: Database, uid: string): FoldOutcome | null {
     }
 
     return outcome;
+}
+
+export function listHandoffEvents({
+    db,
+    handoffId,
+    limit = 200,
+    before,
+}: {
+    db: Database;
+    handoffId: string;
+    limit?: number;
+    before?: string;
+}): { events: HandoffPublicEvent[]; total: number } {
+    const clamped = Math.min(1000, Math.max(1, Math.floor(limit)));
+    const total = (
+        db.query("SELECT COUNT(*) AS n FROM handoff_events WHERE handoff_id = ?").get(handoffId) as { n: number }
+    ).n;
+
+    const rows =
+        before !== undefined
+            ? (db
+                  .query(
+                      `SELECT payload FROM handoff_events
+                       WHERE handoff_id = ? AND ts < ?
+                       ORDER BY ts DESC LIMIT ?`
+                  )
+                  .all(handoffId, before, clamped) as { payload: string }[])
+            : (db
+                  .query(
+                      `SELECT payload FROM handoff_events
+                       WHERE handoff_id = ?
+                       ORDER BY ts DESC LIMIT ?`
+                  )
+                  .all(handoffId, clamped) as { payload: string }[]);
+
+    const events = rows.map((row) => SafeJSON.parse(row.payload, { strict: true }) as HandoffPublicEvent);
+    return { events, total };
 }
 
 /**
@@ -350,6 +445,9 @@ export function applyHandoffBatch({ db, file, prevOffset, events, consumed, base
     const putOutcome = db.prepare(
         "INSERT OR REPLACE INTO handoff_event_results (uid, handoff_id, ev, ok, error, extra, ts) VALUES (?,?,?,?,?,?,?)"
     );
+    const putEvent = db.prepare(
+        "INSERT OR IGNORE INTO handoff_events (uid, handoff_id, ts, ev, payload) VALUES (?,?,?,?,?)"
+    );
     let applied = false;
 
     const tx = db.transaction(() => {
@@ -398,6 +496,15 @@ export function applyHandoffBatch({ db, file, prevOffset, events, consumed, base
                 Object.keys(extra).length > 0 ? SafeJSON.stringify(extra, { strict: true }) : null,
                 event.ts
             );
+
+            // editId stripped at insert — never stored in handoff_events (G3).
+            putEvent.run(
+                event.uid,
+                event.id,
+                event.ts,
+                event.ev,
+                SafeJSON.stringify(toPublicEvent(event), { strict: true })
+            );
         }
 
         for (const state of states.values()) {
@@ -418,11 +525,12 @@ export function applyHandoffBatch({ db, file, prevOffset, events, consumed, base
     return applied;
 }
 
-/** Drop + full re-fold (§6.1 rule 6). */
+/** Drop + full re-fold (§6.1 rule 6). Also clears + refills handoff_events (G1). */
 export function rebuildHandoffModel(db: Database, base?: string): void {
     db.exec("DROP TABLE IF EXISTS handoffs;");
     db.exec("DROP TABLE IF EXISTS handoff_ingest_offsets;");
     db.exec("DROP TABLE IF EXISTS handoff_event_results;");
+    db.exec("DROP TABLE IF EXISTS handoff_events;");
     createTables(db);
     catchUpHandoffs(db, base);
     log.info("handoff read-model rebuilt from JSONL");

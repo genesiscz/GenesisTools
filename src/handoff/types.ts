@@ -47,6 +47,11 @@ export interface HandoffClaim {
     cwd: string | null;
     claimedAt: string;
     via: "target-match" | "explicit";
+    /** Copied from claim event `by` at fold — null on historical rows until rebuild. */
+    repoRoot: string | null;
+    commitSha: string | null;
+    /** Copied from claim event `by` — enables human-owner claim identity (agent === "human"). */
+    agent: string;
 }
 
 export interface HandoffComment {
@@ -144,6 +149,9 @@ export type HandoffEvent =
 
 export type HandoffEventName = HandoffEvent["ev"];
 
+/** Event as returned to HTTP/MCP — `editId` never leaves the read path (G3). */
+export type HandoffPublicEvent = Omit<HandoffEvent, "editId">;
+
 /** Fully folded current state of one handoff (read-model row, deserialized). */
 export interface Handoff {
     id: string;
@@ -195,7 +203,13 @@ export interface HandoffListRow {
     progress?: string;
     target?: HandoffTarget;
     postedBy: { sessionName: string | null };
-    claimedBy?: { sessionId: string | null; sessionName: string | null }[];
+    claimedBy?: {
+        sessionId: string | null;
+        sessionName: string | null;
+        agent?: string;
+        repoRoot?: string | null;
+        commitSha?: string | null;
+    }[];
     project: string | null;
     ageHours: number;
 }
