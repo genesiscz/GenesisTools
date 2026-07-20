@@ -17,6 +17,7 @@ import { runTool } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { registerDiscoveryCommands } from "./commands/discovery";
+import { registerDrawCommand } from "./commands/draw";
 import { registerInteractCommands } from "./commands/interact";
 import { registerRecordPlanCommand } from "./commands/record-plan";
 import { registerRunCommand } from "./commands/run";
@@ -43,6 +44,7 @@ program
     .version("1.0.0");
 
 registerDiscoveryCommands(program);
+registerDrawCommand(program);
 registerInteractCommands(program);
 registerRecordPlanCommand(program);
 registerRunCommand(program);

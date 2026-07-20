@@ -3,6 +3,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { ANNOTATE_IMAGE_INPUT_SCHEMA, type AnnotateImageArgs, handleAnnotateImage } from "./tools/annotate-image";
 import {
     handleArrange,
     handleAskBoard,
@@ -168,6 +169,17 @@ function buildToolRegistry(): Record<string, ToolEntry> {
             description: HANDOFF_ACTION_DESCRIPTION,
             inputSchema: HANDOFF_ACTION_INPUT_SCHEMA as unknown as Record<string, unknown>,
             handler: async (args) => handleHandoffAction(args as unknown as HandoffActionArgs),
+        },
+        annotate_image: {
+            description:
+                "Draw annotations onto an EXISTING image from a JSON plan — rounded-rect highlights, boxes, " +
+                "ellipses, arrows, label chips, blur redaction, crop (applied last), and coordinate grids. " +
+                "Coordinates are natural image pixels; works on any capture source (playwright, peekaboo, " +
+                "screencapture) — annotation is capture-agnostic post-processing. Writes an annotated COPY " +
+                "(never mutates the input) and returns the output path — Read it to verify, then share or " +
+                "attach it.",
+            inputSchema: ANNOTATE_IMAGE_INPUT_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleAnnotateImage(args as unknown as AnnotateImageArgs),
         },
         boards_list_boards: {
             description:
@@ -402,6 +414,7 @@ const CAPABILITY_PREFIXES: Record<string, string> = {
     question_answer: "question_answer",
     boards: "boards_",
     handoff: "handoff_",
+    annotate: "annotate_",
 };
 
 /**
