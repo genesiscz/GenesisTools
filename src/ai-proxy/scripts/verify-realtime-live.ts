@@ -24,6 +24,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 
 const PROXY_KEY = `live-verify-${crypto.randomUUID()}`;
 const MODEL = "live/grok/grok-voice-latest";
+const OPENAI_MODEL = "live-oa/openai/gpt-realtime";
 
 function extractPcm(wavPath: string): Buffer {
     const wav = readFileSync(wavPath);
@@ -64,6 +65,13 @@ async function main() {
                 enabled: true,
                 apiKeyEnv: "XAI_API_KEY",
             },
+            {
+                name: "live-oa",
+                provider: "openai",
+                providerSlug: "openai",
+                enabled: true,
+                apiKeyEnv: "OPENAI_API_KEY",
+            },
         ],
     };
 
@@ -71,89 +79,100 @@ async function main() {
     await getAiProxyConfigStore().save(config);
 
     const proxy = startAiProxyServer(await createRuntime(config));
-    console.log(`throwaway proxy on 127.0.0.1:${proxy.port}\n--- 1. realtime WS tunnel ---`);
+    console.log(`throwaway proxy on 127.0.0.1:${proxy.port}`);
 
-    const eventCounts = new Map<string, number>();
-    let inputTranscript = "";
-    let outputTranscript = "";
-    let audioDeltaBytes = 0;
-    const done = Promise.withResolvers<string>();
+    async function runTunnel(model: string, transcriptionModel?: string) {
+        console.log(`--- realtime WS tunnel: ${model} ---`);
+        const eventCounts = new Map<string, number>();
+        let inputTranscript = "";
+        let outputTranscript = "";
+        let audioDeltaBytes = 0;
+        const done = Promise.withResolvers<string>();
 
-    const ws = new WebSocket(`ws://127.0.0.1:${proxy.port}/v1/realtime?model=${MODEL}`, {
-        headers: { Authorization: `Bearer ${PROXY_KEY}` },
-    } as never);
+        const ws = new WebSocket(`ws://127.0.0.1:${proxy.port}/v1/realtime?model=${encodeURIComponent(model)}`, {
+            headers: { Authorization: `Bearer ${PROXY_KEY}` },
+        } as never);
 
-    const deadline = setTimeout(() => done.resolve("timeout after 30s"), 30_000);
-    ws.onerror = () => done.resolve("client WS error");
-    ws.onclose = (event) => done.resolve(`closed code=${event.code} reason=${event.reason}`);
-    ws.onmessage = (event) => {
-        if (typeof event.data !== "string") {
-            return;
-        }
+        const deadline = setTimeout(() => done.resolve("timeout after 30s"), 30_000);
+        ws.onerror = () => done.resolve("client WS error");
+        ws.onclose = (event) => done.resolve(`closed code=${event.code} reason=${event.reason}`);
+        ws.onmessage = (event) => {
+            if (typeof event.data !== "string") {
+                return;
+            }
 
-        const parsed = SafeJSON.parse(event.data) as {
-            type?: string;
-            delta?: string;
-            transcript?: string;
-            error?: unknown;
-        };
-        const type = parsed.type ?? "?";
-        eventCounts.set(type, (eventCounts.get(type) ?? 0) + 1);
+            const parsed = SafeJSON.parse(event.data) as {
+                type?: string;
+                delta?: string;
+                transcript?: string;
+                error?: unknown;
+            };
+            const type = parsed.type ?? "?";
+            eventCounts.set(type, (eventCounts.get(type) ?? 0) + 1);
 
-        if (type === "error") {
-            console.log(`  upstream error event: ${event.data.slice(0, 400)}`);
-        }
+            if (type === "error") {
+                console.log(`  upstream error event: ${event.data.slice(0, 400)}`);
+            }
 
-        if (type === "session.created") {
-            ws.send(
-                SafeJSON.stringify({
-                    type: "session.update",
-                    session: {
-                        type: "realtime",
-                        instructions: "Reply with one short sentence.",
-                        audio: {
-                            input: {
-                                format: { type: "audio/pcm", rate: 24000 },
-                                turn_detection: null,
-                                transcription: { model: "grok-transcribe" },
+            if (type === "session.created") {
+                ws.send(
+                    SafeJSON.stringify({
+                        type: "session.update",
+                        session: {
+                            type: "realtime",
+                            instructions: "Reply with one short sentence.",
+                            audio: {
+                                input: {
+                                    format: { type: "audio/pcm", rate: 24000 },
+                                    turn_detection: null,
+                                    ...(transcriptionModel ? { transcription: { model: transcriptionModel } } : {}),
+                                },
                             },
                         },
-                    },
-                })
-            );
-        }
+                    })
+                );
+            }
 
-        if (type === "session.updated") {
-            ws.send(SafeJSON.stringify({ type: "input_audio_buffer.append", audio: pcm.toString("base64") }));
-            ws.send(SafeJSON.stringify({ type: "input_audio_buffer.commit" }));
-            ws.send(SafeJSON.stringify({ type: "response.create" }));
-        }
+            if (type === "session.updated") {
+                ws.send(SafeJSON.stringify({ type: "input_audio_buffer.append", audio: pcm.toString("base64") }));
+                ws.send(SafeJSON.stringify({ type: "input_audio_buffer.commit" }));
+                ws.send(SafeJSON.stringify({ type: "response.create" }));
+            }
 
-        if (type === "conversation.item.input_audio_transcription.completed") {
-            inputTranscript = parsed.transcript ?? "";
-        }
+            if (type === "conversation.item.input_audio_transcription.completed") {
+                inputTranscript = parsed.transcript ?? "";
+            }
 
-        if (type.endsWith("output_audio.delta") && typeof parsed.delta === "string") {
-            audioDeltaBytes += Buffer.from(parsed.delta, "base64").length;
-        }
+            if (type.endsWith("output_audio.delta") && typeof parsed.delta === "string") {
+                audioDeltaBytes += Buffer.from(parsed.delta, "base64").length;
+            }
 
-        if (type.endsWith("output_audio_transcript.delta") && typeof parsed.delta === "string") {
-            outputTranscript += parsed.delta;
-        }
+            if (type.endsWith("output_audio_transcript.delta") && typeof parsed.delta === "string") {
+                outputTranscript += parsed.delta;
+            }
 
-        if (type === "response.done") {
-            done.resolve("response.done");
-        }
-    };
+            if (type === "response.done") {
+                done.resolve("response.done");
+            }
+        };
 
-    const outcome = await done.promise;
-    clearTimeout(deadline);
-    ws.close(1000);
-    console.log(`outcome: ${outcome}`);
-    console.log(`events: ${[...eventCounts.entries()].map(([k, v]) => `${k}×${v}`).join(", ")}`);
-    console.log(`input transcript:  ${SafeJSON.stringify(inputTranscript)}`);
-    console.log(`output transcript: ${SafeJSON.stringify(outputTranscript)}`);
-    console.log(`output audio delta bytes: ${audioDeltaBytes}`);
+        const outcome = await done.promise;
+        clearTimeout(deadline);
+        ws.close(1000);
+        console.log(`outcome: ${outcome}`);
+        console.log(`events: ${[...eventCounts.entries()].map(([k, v]) => `${k}×${v}`).join(", ")}`);
+        console.log(`input transcript:  ${SafeJSON.stringify(inputTranscript)}`);
+        console.log(`output transcript: ${SafeJSON.stringify(outputTranscript)}`);
+        console.log(`output audio delta bytes: ${audioDeltaBytes}`);
+    }
+
+    await runTunnel(MODEL, "grok-transcribe");
+
+    if (process.env.OPENAI_API_KEY) {
+        await runTunnel(OPENAI_MODEL);
+    } else {
+        console.log("--- skipping OpenAI tunnel (no OPENAI_API_KEY) ---");
+    }
 
     console.log("--- 2. batch /v1/audio/transcriptions ---");
     const form = new FormData();
