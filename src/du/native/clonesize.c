@@ -55,7 +55,11 @@ static int    g_profile    = 0;
 // ---------------------------------------------------------------------------
 // Groups: each immediate child (dir or file) of the scan root is one group.
 // ---------------------------------------------------------------------------
-#define MAX_GROUPS 64                 // bitmask width; extra groups fold into bit 63
+// Upper bound on immediate-children groups. Cross-group sharing is computed by a
+// per-cluster distinct-group scan (not a 64-bit mask), so this is just the size of
+// the per-thread accumulator arrays — generous enough that no realistic scan root
+// (a dir with thousands of direct children is already pathological) ever folds.
+#define MAX_GROUPS 4096
 static char    *g_group_names[MAX_GROUPS];
 static int      g_ngroups = 0;
 static pthread_mutex_t g_group_mtx = PTHREAD_MUTEX_INITIALIZER;
@@ -358,39 +362,65 @@ static int run_scan(const char *target, Result *R) {
 
     double t2 = now_s();
 
-    // Sort by device offset, merge overlapping clusters, track group masks.
+    // Sort by device offset, merge overlapping clusters. For each merged cluster,
+    // collect its DISTINCT groups by scanning the cluster's own extents. This
+    // replaces the old uint64 group bitmask (which capped groups at 64 and made a
+    // scan root with >64 immediate children fold everything past the 63rd into one
+    // bogus overflow bucket) — there is no 64-group limit here.
     qsort(all, total_exts, sizeof(Ext), cmp_ext);
     for (int i = 0; i < MAX_GROUPS; i++) g_uf[i] = i;
 
     uint64_t unique_shared = 0, cross_shared = 0;
     uint64_t group_shared[MAX_GROUPS]; memset(group_shared, 0, sizeof group_shared);
 
+    // Per-cluster distinct-group dedup via epoch marks (O(cluster size), no reset).
+    int gcap = g_ngroups > 0 ? g_ngroups : 1;
+    int *seen_epoch = malloc((size_t)gcap * sizeof(int));
+    int *dg = malloc((size_t)gcap * sizeof(int));
+    if (!seen_epoch || !dg) { perror("malloc groups"); return 1; }
+    for (int g = 0; g < gcap; g++) seen_epoch[g] = -1;
+
     size_t i = 0;
+    int epoch = 0;
     while (i < total_exts) {
         uint64_t cs = all[i].dev, ce = all[i].dev + all[i].len;
-        uint64_t mask = (uint64_t)1 << all[i].group;
         size_t j = i + 1;
         while (j < total_exts && all[j].dev <= ce) {
             uint64_t en = all[j].dev + all[j].len;
             if (en > ce) ce = en;
-            mask |= (uint64_t)1 << all[j].group;
             j++;
         }
         uint64_t clen = ce - cs;
         unique_shared += clen;
-        int pc = __builtin_popcountll(mask);
-        if (pc > 1) {
-            cross_shared += clen;
-            int first = -1;
-            for (int g = 0; g < g_ngroups && g < MAX_GROUPS; g++) {
-                if (mask & ((uint64_t)1 << g)) {
-                    group_shared[g] += clen;
-                    if (first < 0) first = g; else uf_union(first, g);
-                }
+
+        // Distinct groups touching this cluster, in first-appearance order.
+        int ndg = 0;
+        for (size_t k = i; k < j; k++) {
+            int g = all[k].group;
+            if (g >= 0 && g < g_ngroups && seen_epoch[g] != epoch) {
+                seen_epoch[g] = epoch;
+                dg[ndg++] = g;
             }
         }
+        if (ndg > 1) {
+            // Ascending order → stable clone-cluster ids (parity with the old mask).
+            for (int a = 1; a < ndg; a++) {
+                int v = dg[a], b = a - 1;
+                while (b >= 0 && dg[b] > v) { dg[b + 1] = dg[b]; b--; }
+                dg[b + 1] = v;
+            }
+            cross_shared += clen;
+            int first = dg[0];
+            for (int m = 0; m < ndg; m++) {
+                group_shared[dg[m]] += clen;
+                if (m > 0) uf_union(first, dg[m]);
+            }
+        }
+        epoch++;
         i = j;
     }
+    free(seen_epoch);
+    free(dg);
     free(all);
 
     double t3 = now_s();

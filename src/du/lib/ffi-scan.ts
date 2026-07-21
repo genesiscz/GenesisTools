@@ -46,7 +46,7 @@ export interface ScanDirsResult {
     gPrivate: Float64Array;
 }
 
-const MAX_GROUPS = 64;
+const MAX_GROUPS = 4096; // mirrors native/clonesize.c; BigInt mask has no 64-bit limit
 
 export function scanDirs(input: ScanDirsInput): ScanDirsResult {
     const { shim, root, dirs, recurse, groupIndex, ngroups, minBytes } = input;

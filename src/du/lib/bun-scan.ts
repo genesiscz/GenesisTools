@@ -17,7 +17,10 @@ import { ensureShim } from "./engine";
 import { type ScanDirsInput, type ScanDirsResult, scanDirs } from "./ffi-scan";
 import type { ClonesizeResult, GroupResult, ScanOptions } from "./types";
 
-const MAX_GROUPS = 64;
+// Group-count cap (mirrors native/clonesize.c). Cross-group sharing uses a BigInt
+// mask (no 64-bit limit); this is just the intern ceiling — generous so a scan root
+// with many immediate children (>64) never folds into a bogus overflow bucket.
+const MAX_GROUPS = 4096;
 const prof = profiler.scope("du.bun");
 
 /**
