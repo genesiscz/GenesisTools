@@ -5,6 +5,7 @@ import { type ClipboardEvent, useState } from "react";
 import { AttachmentStrip, renderWithFileChips } from "./HandoffAttachments";
 import { HandoffProofDialog } from "./HandoffDialogs";
 import { splitCriteria } from "./handoff-format";
+import { insertAtCursor } from "./handoff-paste";
 
 export function CommitChip({ sha, label }: { sha: string; label?: string }) {
     return (
@@ -37,6 +38,31 @@ function CriteriaList({ raw }: { raw: string }) {
                 </li>
             ))}
         </ul>
+    );
+}
+
+function ProofBody({
+    proof,
+    attachments,
+    proofIds,
+}: {
+    proof: NonNullable<HandoffTask["proof"]>;
+    attachments: PublicHandoff["attachments"];
+    proofIds: string[];
+}) {
+    return (
+        <>
+            <p className="whitespace-pre-wrap">{proof.answer}</p>
+            {proof.commitIds !== undefined && proof.commitIds.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                    {proof.commitIds.map((sha) => (
+                        <CommitChip key={sha} sha={sha} />
+                    ))}
+                </div>
+            ) : null}
+            {proof.context ? <p className="text-[var(--dd-text-muted)]">{proof.context}</p> : null}
+            <AttachmentStrip attachments={attachments} ids={proofIds} />
+        </>
     );
 }
 
@@ -139,7 +165,7 @@ export function HandoffTaskRow({
         onPasteFile(files[0])
             .then((attachmentId) => {
                 const token = `[File#${attachmentId}]`;
-                setEditText((prev) => `${prev.slice(0, cursor)}${token}${prev.slice(cursor)}`);
+                setEditText((prev) => insertAtCursor(prev, token, cursor));
             })
             .catch((err) => setPasteError(err instanceof Error ? err.message : String(err)));
     };
@@ -197,7 +223,7 @@ export function HandoffTaskRow({
                                 <span className="mr-1.5 font-mono text-[10px] text-[var(--dd-text-muted)]">
                                     {task.id}
                                 </span>
-                                {renderWithFileChips(task.text, attachments)}
+                                {renderWithFileChips({ text: task.text, attachments })}
                             </p>
                             {task.acceptanceCriteria ? <CriteriaList raw={task.acceptanceCriteria} /> : null}
                         </>
@@ -227,18 +253,7 @@ export function HandoffTaskRow({
                             </button>
                             {proofExpanded ? (
                                 <div className="mt-1 flex flex-col gap-1.5 rounded border border-[var(--dd-border)]/50 bg-black/20 p-2 text-xs text-[var(--dd-text-secondary)]">
-                                    <p className="whitespace-pre-wrap">{task.proof.answer}</p>
-                                    {task.proof.commitIds !== undefined && task.proof.commitIds.length > 0 ? (
-                                        <div className="flex flex-wrap gap-1.5">
-                                            {task.proof.commitIds.map((sha) => (
-                                                <CommitChip key={sha} sha={sha} />
-                                            ))}
-                                        </div>
-                                    ) : null}
-                                    {task.proof.context ? (
-                                        <p className="text-[var(--dd-text-muted)]">{task.proof.context}</p>
-                                    ) : null}
-                                    <AttachmentStrip attachments={attachments} ids={proofIds} />
+                                    <ProofBody proof={task.proof} attachments={attachments} proofIds={proofIds} />
                                 </div>
                             ) : null}
                         </div>
@@ -249,15 +264,7 @@ export function HandoffTaskRow({
                             <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--dd-text-muted)]">
                                 previous proof
                             </span>
-                            <p className="whitespace-pre-wrap">{task.proof.answer}</p>
-                            {task.proof.commitIds !== undefined && task.proof.commitIds.length > 0 ? (
-                                <div className="flex flex-wrap gap-1.5">
-                                    {task.proof.commitIds.map((sha) => (
-                                        <CommitChip key={sha} sha={sha} />
-                                    ))}
-                                </div>
-                            ) : null}
-                            <AttachmentStrip attachments={attachments} ids={proofIds} />
+                            <ProofBody proof={task.proof} attachments={attachments} proofIds={proofIds} />
                         </div>
                     ) : null}
 

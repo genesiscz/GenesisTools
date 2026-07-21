@@ -1,6 +1,6 @@
 import type { HandoffPublicEvent } from "@app/dev-dashboard/lib/handoff-types";
 import { ChevronsRight } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useActivityPanel } from "@/hooks/useActivityPanel";
 import { fetchHandoffEvents, useHandoffEvents } from "@/hooks/useHandoffEvents";
 import { actorChipLabel, relativeTime } from "./handoff-format";
@@ -172,9 +172,12 @@ export function ActivityPanel({ id }: { id: string | null }) {
     const [olderEvents, setOlderEvents] = useState<HandoffPublicEvent[]>([]);
     const [loadingMore, setLoadingMore] = useState(false);
     const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+    const requestedIdRef = useRef<string | null>(id);
 
     useEffect(() => {
+        requestedIdRef.current = id;
         setOlderEvents([]);
+        setLoadingMore(false);
         setLoadMoreError(null);
     }, [id]);
 
@@ -190,13 +193,32 @@ export function ActivityPanel({ id }: { id: string | null }) {
         }
 
         const oldest = allEvents[allEvents.length - 1];
+        const reqId = id;
         setLoadingMore(true);
         setLoadMoreError(null);
 
-        fetchHandoffEvents({ id, before: oldest.ts })
-            .then((res) => setOlderEvents((prev) => [...prev, ...res.events]))
-            .catch((err) => setLoadMoreError(err instanceof Error ? err.message : String(err)))
-            .finally(() => setLoadingMore(false));
+        fetchHandoffEvents({ id, before: oldest.ts, beforeUid: oldest.uid })
+            .then((res) => {
+                if (requestedIdRef.current !== reqId) {
+                    return;
+                }
+
+                setOlderEvents((prev) => [...prev, ...res.events]);
+            })
+            .catch((err) => {
+                if (requestedIdRef.current !== reqId) {
+                    return;
+                }
+
+                setLoadMoreError(err instanceof Error ? err.message : String(err));
+            })
+            .finally(() => {
+                if (requestedIdRef.current !== reqId) {
+                    return;
+                }
+
+                setLoadingMore(false);
+            });
     };
 
     if (collapsed) {

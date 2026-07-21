@@ -1,16 +1,10 @@
+import type { HandoffStreamFrame } from "@app/dev-dashboard/lib/handoff-types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { useEffect, useRef } from "react";
 
 export type QaStreamQaFrame = { type: "qa"; id: string } & Record<string, unknown>;
 
-export type QaStreamHandoffFrame = {
-    type: "handoff";
-    id: string;
-    ev: string;
-    ts: string;
-};
-
-export type QaStreamFrame = QaStreamQaFrame | QaStreamHandoffFrame;
+export type QaStreamFrame = QaStreamQaFrame | HandoffStreamFrame;
 
 type FrameHandler = (frame: QaStreamFrame) => void;
 type StatusHandler = (down: boolean) => void;
@@ -48,14 +42,12 @@ function ensureSharedSource(): void {
             for (const handler of frameHandlers) {
                 handler(frame);
             }
-        } catch {
-            /* malformed frame — ignore */
+        } catch (err) {
+            console.debug("useQaStream: malformed frame", err);
         }
     };
     es.onerror = () => {
-        if (es.readyState === EventSource.CLOSED) {
-            notifyStatus(true);
-        }
+        notifyStatus(true);
     };
 }
 

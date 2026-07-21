@@ -13,6 +13,10 @@
     --dd-warning: #fbbf24;
     --dd-danger: #f87171;
     --dd-accent-glow: rgba(52, 211, 153, 0.35);
+    --dd-status-open-border: #3f5530;
+    --dd-status-open-text: #a3e635;
+    --dd-status-claimed-border: #4a3a5e;
+    --dd-status-claimed-text: #c792ea;
 }
 
 .dd-grid-bg {
@@ -1206,4 +1210,10 @@
 
 .dd-activity-entry {
     animation: dd-activity-fade-in 220ms ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .dd-activity-entry {
+        animation: none;
+    }
 }

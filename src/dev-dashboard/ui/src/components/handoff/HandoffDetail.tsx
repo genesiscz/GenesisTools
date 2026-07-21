@@ -12,6 +12,7 @@ import { type ClipboardEvent, type DragEvent, useMemo, useRef, useState } from "
 import { AttachmentStrip, renderWithFileChips } from "./HandoffAttachments";
 import { CommitChip, HandoffTaskRow } from "./HandoffTaskRow";
 import { actorChipLabel, basename, relativeTime, shortSha, truncateMiddle } from "./handoff-format";
+import { collectUploadTokens, insertAtCursor } from "./handoff-paste";
 import { uploadHandoffAttachment, useHandoffAction, useHandoffDetail } from "./useHandoffApi";
 
 function md(text: string): string {
@@ -20,11 +21,11 @@ function md(text: string): string {
 
 function statusBadgeClass(status: PublicHandoff["status"]): string {
     if (status === "open") {
-        return "border-[#3f5530] text-[#a3e635]";
+        return "border-[var(--dd-status-open-border)] text-[var(--dd-status-open-text)]";
     }
 
     if (status === "claimed") {
-        return "border-[#4a3a5e] text-[#c792ea]";
+        return "border-[var(--dd-status-claimed-border)] text-[var(--dd-status-claimed-text)]";
     }
 
     if (status === "done") {
@@ -39,13 +40,13 @@ function ClaimerRow({ claim }: { claim: HandoffClaim }) {
     const [cwdExpanded, setCwdExpanded] = useState(false);
 
     return (
-        <div className="flex flex-col gap-1 rounded border border-[#4a3a5e]/40 bg-black/10 px-2 py-1.5">
+        <div className="flex flex-col gap-1 rounded border border-[var(--dd-status-claimed-border)]/40 bg-black/10 px-2 py-1.5">
             <button
                 type="button"
                 className="flex w-full cursor-pointer items-center gap-1.5 text-left"
                 onClick={() => setExpanded((v) => !v)}
             >
-                <span className="rounded-full border border-[#4a3a5e] px-2 py-px text-[11px] text-[#c792ea]">
+                <span className="rounded-full border border-[var(--dd-status-claimed-border)] px-2 py-px text-[11px] text-[var(--dd-status-claimed-text)]">
                     {claim.sessionName ?? claim.sessionId ?? "unnamed"}
                 </span>
                 <span className="text-[10px] text-[var(--dd-text-muted)]">{expanded ? "▴" : "▾"}</span>
@@ -115,6 +116,22 @@ export function HandoffDetail({ id }: { id: string }) {
     const humanClaim = handoff.claimedBy.find((c) => c.agent === "human");
     const run = (actions: HandoffActionInput[]): void => action.mutate(actions);
 
+    const submitNewTask = (): void => {
+        run([
+            {
+                action: "add_tasks",
+                tasks: [
+                    {
+                        text: newTaskText.trim(),
+                        ...(newTaskCriteria.trim().length > 0 ? { acceptanceCriteria: newTaskCriteria.trim() } : {}),
+                    },
+                ],
+            },
+        ]);
+        setNewTaskText("");
+        setNewTaskCriteria("");
+    };
+
     const pasteFileIntoTask = async (file: File, taskId: string): Promise<string> => {
         const res = await uploadHandoffAttachment({ id, file, taskId });
         void detail.refetch();
@@ -157,14 +174,19 @@ export function HandoffDetail({ id }: { id: string }) {
         const el = ev.target as HTMLTextAreaElement;
         const cursor = el.selectionStart ?? el.value.length;
 
-        Promise.all(files.map((file) => uploadHandoffAttachment({ id, file }))).then(
-            (uploads) => {
-                const tokens = uploads.map((u) => `[File#${u.attachmentId}]`).join(" ");
-                setDraft((prev) => `${prev.slice(0, cursor)}${tokens}${prev.slice(cursor)}`);
-                void detail.refetch();
-            },
-            (err) => setUploadError(err instanceof Error ? err.message : String(err))
-        );
+        Promise.allSettled(files.map((file) => uploadHandoffAttachment({ id, file }))).then((results) => {
+            const { tokens, failure } = collectUploadTokens(results);
+
+            if (tokens.length > 0) {
+                setDraft((prev) => insertAtCursor(prev, tokens, cursor));
+            }
+
+            if (failure !== undefined) {
+                setUploadError(failure.reason instanceof Error ? failure.reason.message : String(failure.reason));
+            }
+
+            void detail.refetch();
+        });
     };
 
     /** Paste anywhere (§7.3): task-row focus → that task; comment composer → pending chip; else the handoff. */
@@ -363,7 +385,7 @@ export function HandoffDetail({ id }: { id: string }) {
                             size="sm"
                             variant="outline"
                             disabled={action.isPending}
-                            className="border-[#4a3a5e] text-[#c792ea] transition-[filter] hover:brightness-110"
+                            className="border-[var(--dd-status-claimed-border)] text-[var(--dd-status-claimed-text)] transition-[filter] hover:brightness-110"
                             onClick={() => run([{ action: humanClaim !== undefined ? "unclaim" : "claim" }])}
                         >
                             {humanClaim !== undefined ? "Unclaim" : "Claim"}
@@ -504,44 +526,14 @@ export function HandoffDetail({ id }: { id: string }) {
                                     }
 
                                     e.preventDefault();
-                                    run([
-                                        {
-                                            action: "add_tasks",
-                                            tasks: [
-                                                {
-                                                    text: newTaskText.trim(),
-                                                    ...(newTaskCriteria.trim().length > 0
-                                                        ? { acceptanceCriteria: newTaskCriteria.trim() }
-                                                        : {}),
-                                                },
-                                            ],
-                                        },
-                                    ]);
-                                    setNewTaskText("");
-                                    setNewTaskCriteria("");
+                                    submitNewTask();
                                 }}
                             />
                             <Button
                                 size="sm"
                                 variant="outline"
                                 disabled={newTaskText.trim().length === 0 || action.isPending}
-                                onClick={() => {
-                                    run([
-                                        {
-                                            action: "add_tasks",
-                                            tasks: [
-                                                {
-                                                    text: newTaskText.trim(),
-                                                    ...(newTaskCriteria.trim().length > 0
-                                                        ? { acceptanceCriteria: newTaskCriteria.trim() }
-                                                        : {}),
-                                                },
-                                            ],
-                                        },
-                                    ]);
-                                    setNewTaskText("");
-                                    setNewTaskCriteria("");
-                                }}
+                                onClick={submitNewTask}
                             >
                                 Add
                             </Button>
@@ -567,9 +559,13 @@ export function HandoffDetail({ id }: { id: string }) {
                                 <span>{new Date(comment.ts).toLocaleString()}</span>
                             </div>
                             <div className="dd-markdown text-sm text-[var(--dd-text-primary)]">
-                                {renderWithFileChips(comment.text, handoff.attachments, (segment, key) => (
-                                    <span key={key} dangerouslySetInnerHTML={{ __html: md(segment) }} />
-                                ))}
+                                {renderWithFileChips({
+                                    text: comment.text,
+                                    attachments: handoff.attachments,
+                                    renderSegment: (segment, key) => (
+                                        <span key={key} dangerouslySetInnerHTML={{ __html: md(segment) }} />
+                                    ),
+                                })}
                             </div>
                             {comment.attachmentIds !== undefined && comment.attachmentIds.length > 0 ? (
                                 <div className="mt-1.5">

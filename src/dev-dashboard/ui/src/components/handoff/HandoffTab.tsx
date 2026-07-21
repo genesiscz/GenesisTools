@@ -190,7 +190,7 @@ export function HandoffTab() {
 
             <div className="min-w-0">
                 {selectedId !== null ? (
-                    <HandoffDetail id={selectedId} />
+                    <HandoffDetail key={selectedId} id={selectedId} />
                 ) : (
                     <div className="dd-panel flex h-40 items-center justify-center text-sm text-[var(--dd-text-muted)]">
                         Select a handoff to inspect and edit it.

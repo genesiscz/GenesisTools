@@ -10,6 +10,7 @@ import { BlinkingBox } from "@ui/components/BlinkingBox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip";
 import { type KeyboardEvent, type MouseEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HandoffTab } from "@/components/handoff/HandoffTab";
+import { truncateMiddle } from "@/components/handoff/handoff-format";
 import { useHandoffList } from "@/components/handoff/useHandoffApi";
 import { QaClockProvider } from "@/components/QaClockProvider";
 import { QaCopyButtons } from "@/components/QaCopyButtons";
@@ -48,17 +49,6 @@ function tagClass(tag: string): string {
     }
 
     return "border-[var(--dd-border)] text-[var(--dd-text-secondary)]";
-}
-
-function truncateMiddle(text: string, maxLen: number): string {
-    if (text.length <= maxLen) {
-        return text;
-    }
-
-    const head = Math.ceil((maxLen - 1) / 2);
-    const tail = Math.floor((maxLen - 1) / 2);
-
-    return `${text.slice(0, head)}…${text.slice(text.length - tail)}`;
 }
 
 function shortSessionId(sessionId: string): string {

@@ -15,8 +15,8 @@ async function fetchJson<T>(url: string): Promise<T> {
             if (typeof body.error === "string") {
                 message = body.error;
             }
-        } catch {
-            /* non-JSON error body — use raw text */
+        } catch (err) {
+            console.debug("fetchJson: non-JSON error body", err);
         }
 
         throw new Error(message || `${res.status}`);
@@ -29,11 +29,16 @@ export async function fetchHandoffEvents(input: {
     id: string;
     limit?: number;
     before?: string;
+    beforeUid?: string;
 }): Promise<HandoffEventsResponse> {
     const params = new URLSearchParams({ id: input.id, limit: String(input.limit ?? 200) });
 
     if (input.before !== undefined) {
         params.set("before", input.before);
+    }
+
+    if (input.beforeUid !== undefined) {
+        params.set("beforeUid", input.beforeUid);
     }
 
     return fetchJson<HandoffEventsResponse>(`/api/handoff/events?${params.toString()}`);

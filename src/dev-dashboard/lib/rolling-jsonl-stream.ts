@@ -19,9 +19,11 @@ export interface RollingJsonlStream {
 export function createRollingJsonlStream<T>({
     fileForNow,
     onLine,
+    checkIntervalMs = ROLLOVER_CHECK_MS,
 }: {
     fileForNow: () => string;
     onLine: (value: T) => void;
+    checkIntervalMs?: number;
 }): RollingJsonlStream {
     let file = fileForNow();
     let tailer = new FileTailer<T>(file, { onLine });
@@ -53,7 +55,7 @@ export function createRollingJsonlStream<T>({
             tailer.start();
             replayFromStart(file);
         }
-    }, ROLLOVER_CHECK_MS);
+    }, checkIntervalMs);
 
     return {
         close: () => {

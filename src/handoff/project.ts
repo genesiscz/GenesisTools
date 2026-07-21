@@ -58,6 +58,7 @@ export type HandoffCoreProjection = {
     createdTs: string;
     updatedTs: string;
     finishedTs?: string;
+    finishedBy?: Handoff["finishedBy"];
 };
 
 export type ProjectedHandoff = HandoffCoreProjection & {
@@ -110,6 +111,10 @@ export function projectHandoff({
 
     if (handoff.finishedTs !== undefined) {
         core.finishedTs = handoff.finishedTs;
+    }
+
+    if (handoff.finishedBy !== undefined) {
+        core.finishedBy = handoff.finishedBy;
     }
 
     const want = new Set(sections);

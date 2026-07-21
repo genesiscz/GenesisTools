@@ -86,6 +86,7 @@ export function handoffRoutes(): RouteDef[] {
                     const limitRaw = ctx.query.get("limit");
                     const limit = limitRaw !== null ? Number.parseInt(limitRaw, 10) : 200;
                     const before = ctx.query.get("before") ?? undefined;
+                    const beforeUid = ctx.query.get("beforeUid") ?? undefined;
 
                     if (id.length === 0) {
                         return { kind: "json", status: 400, body: { error: "id query param required" } };
@@ -104,7 +105,7 @@ export function handoffRoutes(): RouteDef[] {
                             };
                         }
 
-                        const body = listHandoffEvents({ db, handoffId: id, limit, before });
+                        const body = listHandoffEvents({ db, handoffId: id, limit, before, beforeUid });
                         return { kind: "json", status: 200, body };
                     } finally {
                         db.close();

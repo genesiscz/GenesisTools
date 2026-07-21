@@ -16,11 +16,15 @@ const FILE_CHIP_PATTERN = /\[File#(a_[a-z0-9]+)\]/g;
  * leaving unknown ids as literal text. Plain-text segments render as-is
  * unless `renderSegment` (e.g. markdown) is supplied (G10).
  */
-export function renderWithFileChips(
-    text: string,
-    attachments: AttachmentMeta[],
-    renderSegment: (segment: string, key: string) => ReactNode = (segment) => segment
-): ReactNode[] {
+export function renderWithFileChips({
+    text,
+    attachments,
+    renderSegment = (segment) => segment,
+}: {
+    text: string;
+    attachments: AttachmentMeta[];
+    renderSegment?: (segment: string, key: string) => ReactNode;
+}): ReactNode[] {
     const byId = new Map(attachments.map((a) => [a.attachmentId, a]));
     const pattern = new RegExp(FILE_CHIP_PATTERN);
     const parts: ReactNode[] = [];

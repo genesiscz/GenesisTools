@@ -287,33 +287,49 @@ export function listHandoffEvents({
     handoffId,
     limit = 200,
     before,
+    beforeUid,
 }: {
     db: Database;
     handoffId: string;
     limit?: number;
     before?: string;
+    beforeUid?: string;
 }): { events: HandoffPublicEvent[]; total: number } {
-    const clamped = Math.min(1000, Math.max(1, Math.floor(limit)));
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? limit : 200;
+    const clamped = Math.min(1000, Math.max(1, Math.floor(safeLimit)));
     const total = (
         db.query("SELECT COUNT(*) AS n FROM handoff_events WHERE handoff_id = ?").get(handoffId) as { n: number }
     ).n;
 
-    const rows =
-        before !== undefined
-            ? (db
-                  .query(
-                      `SELECT payload FROM handoff_events
-                       WHERE handoff_id = ? AND ts < ?
-                       ORDER BY ts DESC LIMIT ?`
-                  )
-                  .all(handoffId, before, clamped) as { payload: string }[])
-            : (db
-                  .query(
-                      `SELECT payload FROM handoff_events
-                       WHERE handoff_id = ?
-                       ORDER BY ts DESC LIMIT ?`
-                  )
-                  .all(handoffId, clamped) as { payload: string }[]);
+    let rows: { payload: string }[];
+
+    if (before !== undefined && beforeUid !== undefined) {
+        // Composite (ts, uid) cursor: a same-ms group split across a page boundary
+        // keeps its remainder instead of being permanently skipped.
+        rows = db
+            .query(
+                `SELECT payload FROM handoff_events
+                 WHERE handoff_id = ? AND (ts < ? OR (ts = ? AND uid < ?))
+                 ORDER BY ts DESC, uid DESC LIMIT ?`
+            )
+            .all(handoffId, before, before, beforeUid, clamped) as { payload: string }[];
+    } else if (before !== undefined) {
+        rows = db
+            .query(
+                `SELECT payload FROM handoff_events
+                 WHERE handoff_id = ? AND ts < ?
+                 ORDER BY ts DESC, uid DESC LIMIT ?`
+            )
+            .all(handoffId, before, clamped) as { payload: string }[];
+    } else {
+        rows = db
+            .query(
+                `SELECT payload FROM handoff_events
+                 WHERE handoff_id = ?
+                 ORDER BY ts DESC, uid DESC LIMIT ?`
+            )
+            .all(handoffId, clamped) as { payload: string }[];
+    }
 
     const events = rows.map((row) => SafeJSON.parse(row.payload, { strict: true }) as HandoffPublicEvent);
     return { events, total };
