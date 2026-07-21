@@ -7,7 +7,7 @@ import { Command, Option } from "commander";
 import pc from "picocolors";
 import { scanWithBun } from "./lib/bun-scan";
 import { scanWithC, scanWithCFfi } from "./lib/engine";
-import { humanBytes, renderHuman } from "./lib/format";
+import { humanBytes, renderHuman, renderTree } from "./lib/format";
 import type { ClonesizeResult, Engine, ScanOptions } from "./lib/types";
 import { detectWorktreeExcludes } from "./lib/worktrees";
 
@@ -69,6 +69,8 @@ program
     .option("--threads <n>", "Worker threads (default: number of CPUs)", (v) => Number.parseInt(v, 10))
     .option("--freeable", "Also sum per-file ATTR_CMNEXT_PRIVATESIZE (C engine only)")
     .option("--min-bytes <n>", "Skip files whose allocated size < N bytes", (v) => Number.parseInt(v, 10))
+    .option("--depth <n>", "Per-directory tree down to depth N (du -d N style)", (v) => Number.parseInt(v, 10))
+    .option("--freeable-tree", "Per-node ATTR_CMNEXT_PRIVATESIZE in the --depth tree (implies --depth 1)")
     .option("--ignore-worktrees", "Auto-detect and exclude git worktrees + .worktrees/ dirs")
     .addHelpText(
         "after",
@@ -95,6 +97,8 @@ program
                 threads?: number;
                 freeable?: boolean;
                 minBytes?: number;
+                depth?: number;
+                freeableTree?: boolean;
                 ignoreWorktrees?: boolean;
             }
         ) => {
@@ -104,6 +108,16 @@ program
                 out.error("--freeable is only supported by the C engines (--engine c-ffi or c), not the Bun engine.");
                 process.exit(2);
             }
+
+            if ((o.depth !== undefined || o.freeableTree) && o.engine === "bun") {
+                out.error(
+                    "--depth / --freeable-tree are only supported by the C engines (--engine c-ffi or c). " +
+                        "The Bun engine is the grand-total cross-check and does not build the per-dir tree."
+                );
+                process.exit(2);
+            }
+
+            const depth = o.freeableTree && o.depth === undefined ? 1 : o.depth;
 
             const exclude = o.ignoreWorktrees ? await detectWorktreeExcludes(root) : [];
             if (o.ignoreWorktrees && exclude.length > 0) {
@@ -118,6 +132,8 @@ program
                 threads: o.threads,
                 freeable: o.freeable,
                 minBytes: o.minBytes,
+                depth,
+                freeableTree: o.freeableTree,
                 exclude,
             };
 
@@ -125,6 +141,8 @@ program
 
             if (o.format === "json") {
                 out.result({ ...result, engine: o.engine, elapsed_ms: Math.round(ms) });
+            } else if (result.nodes && result.nodes.length > 0) {
+                out.println(renderTree(result, o.engine, ms));
             } else {
                 out.println(renderHuman(result, o.engine, ms));
             }

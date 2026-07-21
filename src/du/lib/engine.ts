@@ -100,9 +100,19 @@ function openLib() {
     return dlopen(path, {
         // char* clonesize_run_json(const char* path, int threads, int freeable,
         //                          unsigned long long min_bytes,
-        //                          const char* const* excludes, int nexcludes)
+        //                          const char* const* excludes, int nexcludes,
+        //                          int depth, int freeable_tree)
         clonesize_run_json: {
-            args: [FFIType.ptr, FFIType.i32, FFIType.i32, FFIType.u64, FFIType.ptr, FFIType.i32],
+            args: [
+                FFIType.ptr,
+                FFIType.i32,
+                FFIType.i32,
+                FFIType.u64,
+                FFIType.ptr,
+                FFIType.i32,
+                FFIType.i32,
+                FFIType.i32,
+            ],
             returns: FFIType.ptr,
         },
         clonesize_free: { args: [FFIType.ptr], returns: FFIType.void },
@@ -143,7 +153,9 @@ export function scanWithCFfi(opts: ScanOptions): ClonesizeResult {
         opts.freeable ? 1 : 0,
         BigInt(opts.minBytes && opts.minBytes > 0 ? opts.minBytes : 0),
         exBufs.length > 0 ? ptr(exPtrs) : null,
-        exBufs.length
+        exBufs.length,
+        opts.depth !== undefined && opts.depth >= 0 ? opts.depth : -1,
+        opts.freeableTree ? 1 : 0
     );
     end();
 
@@ -170,6 +182,12 @@ export function scanWithC(opts: ScanOptions): ClonesizeResult {
     }
     if (opts.minBytes && opts.minBytes > 0) {
         args.push("--min-bytes", String(opts.minBytes));
+    }
+    if (opts.depth !== undefined && opts.depth >= 0) {
+        args.push("--depth", String(opts.depth));
+    }
+    if (opts.freeableTree) {
+        args.push("--freeable-tree");
     }
     for (const ex of opts.exclude ?? []) {
         args.push("--exclude", ex);

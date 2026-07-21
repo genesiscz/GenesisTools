@@ -52,6 +52,49 @@ static double g_clone_pct  = 0.30;   // group "clone-flagged" if >= this frac of
 // PROFILE: when the env var PROFILE is set (any value), phase timings go to stderr.
 static int    g_profile    = 0;
 
+// --depth N: when >= 0, build a per-directory tree (nodes[] down to depth N). -1 disables.
+static int    g_maxdepth   = -1;
+static int    g_freeable_tree = 0;   // --freeable-tree: per-node ATTR_CMNEXT_PRIVATESIZE
+
+// ---------------------------------------------------------------------------
+// Tree nodes (--depth): every directory from the scan root (depth 0) down to
+// g_maxdepth is a node; files/dirs deeper than g_maxdepth roll into their
+// depth-g_maxdepth ancestor. Each dir in the walk is visited exactly once, so
+// intern_node always appends a fresh node (no dedup needed).
+// ---------------------------------------------------------------------------
+typedef struct {
+    int      parent;      // parent node id (-1 for root)
+    int      depth;       // 0 = root
+    char    *name;        // basename (root uses the scan-root path)
+    uint64_t naive, files, priv;   // rolled up to whole subtree in the post-pass
+    uint64_t private_dlen;         // Σ dlen of fully-private files (their unique contribution)
+    uint64_t unique_shared;        // unique bytes from shared extents (post-pass)
+    uint64_t cross;                // bytes shared with dirs OUTSIDE this subtree
+} Node;
+static Node  *g_nodes = NULL;
+static int    g_nnodes = 0, g_node_cap = 0;
+static pthread_mutex_t g_node_mtx = PTHREAD_MUTEX_INITIALIZER;
+
+static int intern_node(int parent, const char *name, int depth) {
+    pthread_mutex_lock(&g_node_mtx);
+    if (g_nnodes == g_node_cap) {
+        g_node_cap = g_node_cap ? g_node_cap * 2 : 1024;
+        g_nodes = realloc(g_nodes, (size_t)g_node_cap * sizeof(Node));
+        if (!g_nodes) { perror("realloc nodes"); exit(1); }
+    }
+    int id = g_nnodes++;
+    memset(&g_nodes[id], 0, sizeof(Node));
+    g_nodes[id].parent = parent;
+    g_nodes[id].depth = depth;
+    g_nodes[id].name = strdup(name);
+    pthread_mutex_unlock(&g_node_mtx);
+    return id;
+}
+
+// Per-file record emitted by the parallel scan in --depth mode; node accounting
+// (naive/files/priv/private-unique) is done single-threaded in the post-pass.
+typedef struct { int node; uint64_t alloc, dlen, priv; int is_private; } FileRec;
+
 // ---------------------------------------------------------------------------
 // Groups: each immediate child (dir or file) of the scan root is one group.
 // ---------------------------------------------------------------------------
@@ -93,9 +136,10 @@ out:
 }
 
 // ---------------------------------------------------------------------------
-// Extent record (per thread, then merged globally)
+// Extent record (per thread, then merged globally). `node` is the file's leaf
+// tree-node (its directory clamped to --depth), used only in --depth tree mode.
 // ---------------------------------------------------------------------------
-typedef struct { uint64_t dev; uint64_t len; int group; } Ext;
+typedef struct { uint64_t dev; uint64_t len; int group; int node; } Ext;
 
 typedef struct {
     Ext     *exts;
@@ -109,9 +153,11 @@ typedef struct {
     uint64_t files_listed;              // all regular files seen
     uint64_t files_accounted;           // alloc>0 && >=min  (private + shared)
     uint64_t files_opened;              // shared files actually opened+scanned
+    FileRec *recs;                      // --depth mode: per-file node records
+    size_t   nrecs, rec_cap;
 } ThreadOut;
 
-static void ext_push(ThreadOut *t, uint64_t dev, uint64_t len, int group) {
+static void ext_push(ThreadOut *t, uint64_t dev, uint64_t len, int group, int node) {
     if (t->n == t->cap) {
         t->cap = t->cap ? t->cap * 2 : 8192;
         t->exts = realloc(t->exts, t->cap * sizeof(Ext));
@@ -120,13 +166,28 @@ static void ext_push(ThreadOut *t, uint64_t dev, uint64_t len, int group) {
     t->exts[t->n].dev = dev;
     t->exts[t->n].len = len;
     t->exts[t->n].group = group;
+    t->exts[t->n].node = node;
     t->n++;
+}
+
+static void rec_push(ThreadOut *t, int node, uint64_t alloc, uint64_t dlen, uint64_t priv, int is_private) {
+    if (t->nrecs == t->rec_cap) {
+        t->rec_cap = t->rec_cap ? t->rec_cap * 2 : 8192;
+        t->recs = realloc(t->recs, t->rec_cap * sizeof(FileRec));
+        if (!t->recs) { perror("realloc recs"); exit(1); }
+    }
+    t->recs[t->nrecs].node = node;
+    t->recs[t->nrecs].alloc = alloc;
+    t->recs[t->nrecs].dlen = dlen;
+    t->recs[t->nrecs].priv = priv;
+    t->recs[t->nrecs].is_private = is_private;
+    t->nrecs++;
 }
 
 // ---------------------------------------------------------------------------
 // Extent scan of ONE already-open shared file.
 // ---------------------------------------------------------------------------
-static void scan_shared_file(ThreadOut *t, int fd, off_t size, int group) {
+static void scan_shared_file(ThreadOut *t, int fd, off_t size, int group, int node) {
     off_t off = 0;
     while (off < size) {
         struct log2phys l2p;
@@ -137,23 +198,24 @@ static void scan_shared_file(ThreadOut *t, int fd, off_t size, int group) {
         off_t contig = l2p.l2p_contigbytes; // OUT: contiguous bytes at this offset
         if (contig <= 0) break;
         if ((uint64_t)l2p.l2p_devoffset != (uint64_t)-1) // (off_t)-1 => sparse hole, skip
-            ext_push(t, (uint64_t)l2p.l2p_devoffset, (uint64_t)contig, group);
+            ext_push(t, (uint64_t)l2p.l2p_devoffset, (uint64_t)contig, group, node);
         off += contig;
     }
 }
 
 // ---------------------------------------------------------------------------
-// Directory work queue (paths + inherited group). Parallelizes both the
-// getattrlistbulk walk AND the inline extent scan of shared files.
+// Directory work queue. Parallelizes both the getattrlistbulk walk AND the
+// inline extent scan of shared files. `node`/`depth` carry the --depth tree
+// position (node = the file's directory clamped to g_maxdepth).
 // ---------------------------------------------------------------------------
-typedef struct { char *path; int group; } DirJob;
+typedef struct { char *path; int group; int node; int depth; } DirJob;
 static DirJob *g_q = NULL;
 static size_t  g_qn = 0, g_qcap = 0, g_pending = 0;
 static int     g_done = 0;
 static pthread_mutex_t g_qmtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  g_qcv  = PTHREAD_COND_INITIALIZER;
 
-static void q_push(char *path, int group) {
+static void q_push(char *path, int group, int node, int depth) {
     pthread_mutex_lock(&g_qmtx);
     if (g_qn == g_qcap) {
         g_qcap = g_qcap ? g_qcap * 2 : 4096;
@@ -162,6 +224,8 @@ static void q_push(char *path, int group) {
     }
     g_q[g_qn].path = path;
     g_q[g_qn].group = group;
+    g_q[g_qn].node = node;
+    g_q[g_qn].depth = depth;
     g_qn++;
     g_pending++;
     pthread_cond_signal(&g_qcv);
@@ -174,7 +238,7 @@ static void q_push(char *path, int group) {
 static struct attrlist g_al;
 static uint64_t g_alopt;
 
-static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup) {
+static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup, int dirnode, int depth) {
     int dfd = open(dirpath, O_RDONLY | O_DIRECTORY | O_NONBLOCK);
     if (dfd < 0) return;
     char buf[64 * 1024];
@@ -203,7 +267,11 @@ static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup) {
                 char *sub = malloc(pl + 1 + nl + 1);
                 memcpy(sub, dirpath, pl); sub[pl] = '/'; memcpy(sub + pl + 1, name, nl + 1);
                 if (g_nexcludes && is_excluded(sub)) { free(sub); continue; }
-                q_push(sub, g);
+                // --depth: a child at depth<=maxdepth is its own node; deeper dirs
+                // inherit their depth-maxdepth ancestor's node.
+                int childnode = dirnode;
+                if (g_maxdepth >= 0 && depth + 1 <= g_maxdepth) childnode = intern_node(dirnode, name, depth + 1);
+                q_push(sub, g, childnode, depth + 1);
                 continue;
             }
             if (objtype != VREG) continue; // symlinks/others: skip (du doesn't follow either)
@@ -237,13 +305,15 @@ static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup) {
             //  - alloc<dlen: sparse file (holes); its mapped bytes < dlen, so scan it.
             if (!noskip && (uint64_t)priv >= a && nlink <= 1 && a >= (uint64_t)dlen) {
                 t->unique_private += (uint64_t)dlen;
+                if (g_maxdepth >= 0) rec_push(t, dirnode, a, (uint64_t)dlen, (uint64_t)priv, 1);
                 continue;
             }
             // Shares some blocks — open by leaf (dfd is the parent) and extent-scan.
             int ffd = openat(dfd, name, O_RDONLY | O_NONBLOCK);
             if (ffd < 0) continue;
             t->files_opened++;
-            scan_shared_file(t, ffd, dlen, g);
+            scan_shared_file(t, ffd, dlen, g, g_maxdepth >= 0 ? dirnode : -1);
+            if (g_maxdepth >= 0) rec_push(t, dirnode, a, (uint64_t)dlen, (uint64_t)priv, 0);
             close(ffd);
         }
     }
@@ -260,7 +330,7 @@ static void *worker(void *arg) {
         DirJob job = g_q[--g_qn];
         pthread_mutex_unlock(&g_qmtx);
 
-        process_dir(t, job.path, job.group);
+        process_dir(t, job.path, job.group, job.node, job.depth);
         free(job.path);
 
         pthread_mutex_lock(&g_qmtx);
@@ -324,7 +394,9 @@ static int run_scan(const char *target, Result *R) {
     // Fused parallel walk + shared-file extent scan.
     g_outs = calloc(nthreads, sizeof(ThreadOut));
     pthread_t *th = calloc(nthreads, sizeof(pthread_t));
-    q_push(strdup(target), -1);
+    // --depth: root is node 0 (depth 0). Files loose in the root belong to it.
+    int rootnode = (g_maxdepth >= 0) ? intern_node(-1, target, 0) : -1;
+    q_push(strdup(target), -1, rootnode, 0);
     for (int i = 0; i < nthreads; i++) pthread_create(&th[i], NULL, worker, &g_outs[i]);
     for (int i = 0; i < nthreads; i++) pthread_join(th[i], NULL);
 
@@ -347,6 +419,16 @@ static int run_scan(const char *target, Result *R) {
             g_group_files[g]   += g_outs[i].group_files[g];
             g_group_private[g] += g_outs[i].group_private[g];
         }
+        // --depth: accumulate per-leaf-node naive/files/priv/private-unique.
+        for (size_t r = 0; r < g_outs[i].nrecs; r++) {
+            FileRec *fr = &g_outs[i].recs[r];
+            Node *nd = &g_nodes[fr->node];
+            nd->naive += fr->alloc;
+            nd->files += 1;
+            nd->priv  += fr->priv;
+            if (fr->is_private) nd->private_dlen += fr->dlen;
+        }
+        free(g_outs[i].recs);
     }
 
     Ext *all = malloc((total_exts ? total_exts : 1) * sizeof(Ext));
@@ -379,6 +461,19 @@ static int run_scan(const char *target, Result *R) {
     int *dg = malloc((size_t)gcap * sizeof(int));
     if (!seen_epoch || !dg) { perror("malloc groups"); return 1; }
     for (int g = 0; g < gcap; g++) seen_epoch[g] = -1;
+
+    // --depth node accounting scratch (epoch-marked, no reset between clusters).
+    int   ncap = g_nnodes > 0 ? g_nnodes : 1;
+    int  *leaf_seen = NULL, *cov_epoch = NULL, *cov_count = NULL, *leaves = NULL, *touched = NULL;
+    if (g_maxdepth >= 0) {
+        leaf_seen = malloc((size_t)ncap * sizeof(int));
+        cov_epoch = malloc((size_t)ncap * sizeof(int));
+        cov_count = malloc((size_t)ncap * sizeof(int));
+        leaves    = malloc((size_t)ncap * sizeof(int));
+        touched   = malloc((size_t)ncap * sizeof(int));
+        if (!leaf_seen || !cov_epoch || !cov_count || !leaves || !touched) { perror("malloc nodes"); return 1; }
+        for (int a = 0; a < ncap; a++) { leaf_seen[a] = -1; cov_epoch[a] = -1; }
+    }
 
     size_t i = 0;
     int epoch = 0;
@@ -416,12 +511,50 @@ static int run_scan(const char *target, Result *R) {
                 if (m > 0) uf_union(first, dg[m]);
             }
         }
+
+        // --depth: credit clen to every tree node whose subtree touches this cluster.
+        // A node is "cross" if only SOME (not all) distinct leaves are under it.
+        if (g_maxdepth >= 0) {
+            int nleaf = 0, ntouch = 0;
+            for (size_t k = i; k < j; k++) {
+                int nd = all[k].node;
+                if (nd >= 0 && nd < g_nnodes && leaf_seen[nd] != epoch) {
+                    leaf_seen[nd] = epoch;
+                    leaves[nleaf++] = nd;
+                }
+            }
+            for (int li = 0; li < nleaf; li++) {
+                for (int a = leaves[li]; a >= 0; a = g_nodes[a].parent) {
+                    if (cov_epoch[a] != epoch) { cov_epoch[a] = epoch; cov_count[a] = 0; touched[ntouch++] = a; }
+                    cov_count[a]++;
+                }
+            }
+            for (int ti = 0; ti < ntouch; ti++) {
+                int a = touched[ti];
+                g_nodes[a].unique_shared += clen;
+                if (cov_count[a] < nleaf) g_nodes[a].cross += clen;
+            }
+        }
         epoch++;
         i = j;
     }
     free(seen_epoch);
     free(dg);
+    if (g_maxdepth >= 0) { free(leaf_seen); free(cov_epoch); free(cov_count); free(leaves); free(touched); }
     free(all);
+
+    // --depth: roll naive/files/priv/private-unique up to ancestors (child id > parent
+    // id, since a parent interns its children — so descending id = children first).
+    if (g_maxdepth >= 0) {
+        for (int a = g_nnodes - 1; a > 0; a--) {
+            int par = g_nodes[a].parent;
+            if (par < 0) continue;
+            g_nodes[par].naive        += g_nodes[a].naive;
+            g_nodes[par].files        += g_nodes[a].files;
+            g_nodes[par].priv         += g_nodes[a].priv;
+            g_nodes[par].private_dlen += g_nodes[a].private_dlen;
+        }
+    }
 
     double t3 = now_s();
 
@@ -452,11 +585,24 @@ static int run_scan(const char *target, Result *R) {
     return 0;
 }
 
+// Build a node's full path (root name + basenames of the ancestor chain) into buf.
+static void node_path(int a, char *buf, size_t cap) {
+    int chain[4096]; int n = 0;
+    for (int x = a; x >= 0 && n < 4096; x = g_nodes[x].parent) chain[n++] = x;
+    size_t len = 0;
+    for (int k = n - 1; k >= 0; k--) {
+        const char *nm = g_nodes[chain[k]].name;
+        int need = snprintf(buf + len, len < cap ? cap - len : 0,
+                            "%s%s", (k == n - 1) ? "" : "/", nm);
+        if (need > 0) len += (size_t)need;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // JSON output (used by the CLI --format json AND the bun:ffi dylib entry)
 // ---------------------------------------------------------------------------
 static char *format_json(const char *target, const Result *R) {
-    size_t cap = 4096 + (size_t)g_ngroups * 256;
+    size_t cap = 4096 + (size_t)g_ngroups * 256 + (size_t)g_nnodes * 320;
     char *out = malloc(cap);
     size_t len = 0;
     #define EMIT(...) do { \
@@ -503,7 +649,35 @@ static char *format_json(const char *target, const Result *R) {
         emitted++;
     }
     (void)emitted;
-    EMIT("  ]\n}\n");
+    EMIT("  ]");
+
+    // --depth: flat nodes[] tree (each dir to depth N). unique = shared-extent
+    // unique + rolled-up private bytes; cross = bytes shared OUTSIDE the subtree.
+    if (g_maxdepth >= 0) {
+        EMIT(",\n  \"depth\": %d,\n  \"nodes\": [\n", g_maxdepth);
+        char pbuf[8192];
+        int nfirst = 1;
+        for (int a = 0; a < g_nnodes; a++) {
+            Node *nd = &g_nodes[a];
+            if (nd->naive < g_min_blocks) continue;
+            uint64_t u = nd->unique_shared + nd->private_dlen;
+            double xpct = nd->naive ? 100.0 * (double)nd->cross / (double)nd->naive : 0.0;
+            int flagged = (nd->cross >= (uint64_t)(g_clone_pct * (double)nd->naive)) && nd->cross > 0;
+            node_path(a, pbuf, sizeof pbuf);
+            EMIT("%s    {\"path\": \"%s\", \"depth\": %d, \"parent\": %d, \"naive_bytes\": %llu, "
+                 "\"unique_bytes\": %llu, \"cross_shared_bytes\": %llu, \"shared_pct\": %.2f, "
+                 "\"files\": %llu, \"clone_flagged\": %s",
+                 nfirst ? "" : ",\n", pbuf, nd->depth, nd->parent, (unsigned long long)nd->naive,
+                 (unsigned long long)u, (unsigned long long)nd->cross, xpct,
+                 (unsigned long long)nd->files, flagged ? "true" : "false");
+            if (g_freeable_tree)
+                EMIT(", \"private_bytes\": %llu", (unsigned long long)nd->priv);
+            EMIT("}");
+            nfirst = 0;
+        }
+        EMIT("\n  ]");
+    }
+    EMIT("\n}\n");
     #undef EMIT
     return out;
 }
@@ -561,10 +735,14 @@ static void print_human(const char *target, const Result *R, int quiet) {
 __attribute__((visibility("default")))
 char *clonesize_run_json(const char *path, int threads, int freeable,
                          unsigned long long min_bytes,
-                         const char *const *excludes, int nexcludes) {
+                         const char *const *excludes, int nexcludes,
+                         int depth, int freeable_tree) {
     g_nthreads = threads;
     g_freeable = freeable;
     g_min_blocks = (size_t)min_bytes;
+    g_maxdepth = depth;                 // < 0 disables the tree
+    g_freeable_tree = freeable_tree;
+    if (g_freeable_tree && g_maxdepth < 0) g_maxdepth = 1;
     g_profile = getenv("PROFILE") ? 1 : 0;
     g_nexcludes = 0;
     for (int i = 0; i < nexcludes && i < MAX_EXCLUDES; i++) g_excludes[g_nexcludes++] = excludes[i];
@@ -575,6 +753,8 @@ char *clonesize_run_json(const char *path, int threads, int freeable,
     memset(g_group_naive, 0, sizeof g_group_naive);
     memset(g_group_files, 0, sizeof g_group_files);
     memset(g_group_private, 0, sizeof g_group_private);
+    for (int i = 0; i < g_nnodes; i++) free(g_nodes[i].name);
+    free(g_nodes); g_nodes = NULL; g_nnodes = 0; g_node_cap = 0;
     g_qn = 0; g_pending = 0; g_done = 0;
     Result R;
     if (run_scan(path, &R) != 0) return NULL;
@@ -608,6 +788,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--json"))                   json = 1;
         else if (!strcmp(a, "--threads") && i + 1 < argc) g_nthreads = atoi(argv[++i]);
         else if (!strcmp(a, "--freeable"))               g_freeable = 1;
+        else if (!strcmp(a, "--depth") && i + 1 < argc)  g_maxdepth = atoi(argv[++i]);
+        else if (!strcmp(a, "--freeable-tree"))          { g_freeable_tree = 1; if (g_maxdepth < 0) g_maxdepth = 1; }
         else if (!strcmp(a, "--min-bytes") && i + 1 < argc) g_min_blocks = strtoull(argv[++i], NULL, 10);
         else if (!strcmp(a, "--exclude") && i + 1 < argc) { if (g_nexcludes < MAX_EXCLUDES) g_excludes[g_nexcludes++] = argv[++i]; else i++; }
         else if (!strcmp(a, "--quiet"))                  quiet = 1;

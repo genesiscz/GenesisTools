@@ -96,3 +96,66 @@ export function renderHuman(r: ClonesizeResult, engine: Engine, elapsedMs?: numb
 
     return L.join("\n");
 }
+
+/**
+ * Indented per-directory tree (`--depth N`). Children sorted by unique desc;
+ * shows naive, unique (deduped within subtree), and x-shared (bytes shared with
+ * dirs OUTSIDE this subtree).
+ */
+export function renderTree(r: ClonesizeResult, engine: Engine, elapsedMs?: number): string {
+    const nodes = r.nodes ?? [];
+    const L: string[] = [];
+
+    L.push(pc.bold(`Clone-aware disk tree — ${r.path}`));
+    const meta = [
+        `${r.files_scanned.toLocaleString()} files`,
+        `${engine} engine`,
+        `depth ${r.depth}`,
+        `${r.threads} threads`,
+    ];
+    if (elapsedMs !== undefined) {
+        meta.push(`${(elapsedMs / 1000).toFixed(2)}s`);
+    }
+    L.push(pc.dim(meta.join("  •  ")));
+    L.push(pc.dim(`  ${pad("dir", 40)}${padStart("naive", 11)}${padStart("unique", 11)}${padStart("x-shared", 11)}`));
+
+    // Index children by parent for a depth-first, unique-desc walk.
+    const byParent = new Map<number, number[]>();
+    nodes.forEach((n, i) => {
+        const arr = byParent.get(n.parent);
+        if (arr) {
+            arr.push(i);
+        } else {
+            byParent.set(n.parent, [i]);
+        }
+    });
+
+    const rootIdx = nodes.findIndex((n) => n.parent < 0);
+    const emit = (idx: number, indent: number) => {
+        const n = nodes[idx]!;
+        const label = indent === 0 ? n.path : n.path.slice(n.path.lastIndexOf("/") + 1);
+        const name = `${"  ".repeat(indent)}${n.clone_flagged ? pc.yellow(label) : label}`;
+        const namePlain = `${"  ".repeat(indent)}${label}`;
+        L.push(
+            `  ${pad(name + " ".repeat(Math.max(0, 40 - namePlain.length)), 40 + (name.length - namePlain.length))}` +
+                `${padStart(humanBytes(n.naive_bytes), 11)}${padStart(humanBytes(n.unique_bytes), 11)}` +
+                `${padStart(n.cross_shared_bytes > 0 ? humanBytes(n.cross_shared_bytes) : "-", 11)}`
+        );
+        const kids = (byParent.get(idx) ?? []).slice().sort((a, b) => nodes[b]!.unique_bytes - nodes[a]!.unique_bytes);
+        for (const k of kids) {
+            emit(k, indent + 1);
+        }
+    };
+    if (rootIdx >= 0) {
+        emit(rootIdx, 0);
+    }
+
+    L.push("");
+    L.push(
+        pc.dim(
+            `  unique = clone-deduped bytes within the subtree · x-shared = bytes shared with dirs OUTSIDE it` +
+                ` · deleting a dir frees ~ (unique − x-shared).`
+        )
+    );
+    return L.join("\n");
+}

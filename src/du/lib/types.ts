@@ -13,12 +13,32 @@ export interface GroupResult {
     private_bytes?: number;
 }
 
+/** One directory in the `--depth N` tree (flat list; link via `parent`). */
+export interface NodeResult {
+    path: string;
+    depth: number;
+    parent: number;
+    naive_bytes: number;
+    /** Clone-deduped unique bytes WITHIN this subtree. */
+    unique_bytes: number;
+    /** Bytes this subtree shares with directories OUTSIDE it. */
+    cross_shared_bytes: number;
+    shared_pct: number;
+    files: number;
+    clone_flagged: boolean;
+    /** Σ per-file ATTR_CMNEXT_PRIVATESIZE in this subtree (only with --freeable-tree). */
+    private_bytes?: number;
+}
+
 export interface ClonesizeResult {
     path: string;
     files_scanned: number;
     files_listed: number;
     /** Files actually opened + extent-scanned (< files_scanned when clones are skipped). */
     files_opened?: number;
+    /** Present with --depth: the per-directory tree (flat, ordered root-first). */
+    depth?: number;
+    nodes?: NodeResult[];
     extents: number;
     threads: number;
     naive_bytes: number;
@@ -43,4 +63,8 @@ export interface ScanOptions {
     minBytes?: number;
     /** Absolute directory subtrees to prune from the walk. */
     exclude?: string[];
+    /** --depth N: emit a per-directory tree down to depth N (>=0). Undefined = off. */
+    depth?: number;
+    /** --freeable-tree: per-node ATTR_CMNEXT_PRIVATESIZE (implies depth>=1). */
+    freeableTree?: boolean;
 }
