@@ -216,6 +216,10 @@ static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup) {
             t->group_private[g] += (uint64_t)priv;
             t->files_accounted++;
 
+            // NOSKIP=1 (env) disables the skip optimization below — every file is
+            // opened + extent-scanned, matching the pre-skip engine. Intentional
+            // cross-check escape hatch: the skip must produce byte-identical output
+            // to NOSKIP, so it's the harness for proving the optimization exact.
             static int noskip = -1;
             if (noskip < 0) noskip = getenv("NOSKIP") ? 1 : 0;
             // Skip the open ONLY when the file shares nothing (priv==alloc), is not
