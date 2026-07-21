@@ -135,6 +135,38 @@ export function HandoffDetail({ id }: { id: string }) {
         });
     };
 
+    /**
+     * Paste into a text composer (new-task or comment) → upload the file(s) at handoff
+     * level and insert `[File#id]` at the cursor, so the ref renders as an inline chip
+     * (same pattern as editing an existing task's text). stopPropagation keeps the
+     * container paste handler from also grabbing the file.
+     */
+    const pasteFilesIntoDraft = (
+        ev: ClipboardEvent<HTMLTextAreaElement>,
+        setDraft: (updater: (prev: string) => string) => void
+    ): void => {
+        const files = [...ev.clipboardData.files];
+
+        if (files.length === 0) {
+            return;
+        }
+
+        ev.preventDefault();
+        ev.stopPropagation();
+        setUploadError(null);
+        const el = ev.target as HTMLTextAreaElement;
+        const cursor = el.selectionStart ?? el.value.length;
+
+        Promise.all(files.map((file) => uploadHandoffAttachment({ id, file }))).then(
+            (uploads) => {
+                const tokens = uploads.map((u) => `[File#${u.attachmentId}]`).join(" ");
+                setDraft((prev) => `${prev.slice(0, cursor)}${tokens}${prev.slice(cursor)}`);
+                void detail.refetch();
+            },
+            (err) => setUploadError(err instanceof Error ? err.message : String(err))
+        );
+    };
+
     /** Paste anywhere (§7.3): task-row focus → that task; comment composer → pending chip; else the handoff. */
     const onPaste = (ev: ClipboardEvent<HTMLDivElement>): void => {
         const files = [...ev.clipboardData.files];
@@ -455,9 +487,10 @@ export function HandoffDetail({ id }: { id: string }) {
                         <Textarea
                             value={newTaskText}
                             onChange={(e) => setNewTaskText(e.target.value)}
+                            onPaste={(e) => pasteFilesIntoDraft(e, setNewTaskText)}
                             className="min-h-[2rem] border-[var(--dd-border)] bg-black/15 text-sm"
                             rows={2}
-                            placeholder="add a task…"
+                            placeholder="add a task… (paste an image to insert a [File#id] ref)"
                         />
                         <div className="flex items-center gap-2">
                             <Input
@@ -574,9 +607,10 @@ export function HandoffDetail({ id }: { id: string }) {
                                 ref={composerRef}
                                 value={commentDraft}
                                 onChange={(e) => setCommentDraft(e.target.value)}
+                                onPaste={(e) => pasteFilesIntoDraft(e, setCommentDraft)}
                                 className="min-h-[2.5rem] border-[var(--dd-border)] bg-black/15 text-sm"
                                 rows={2}
-                                placeholder="comment… (paste screenshots here to attach them, ⌘⏎ to send)"
+                                placeholder="comment… (paste an image to insert a [File#id] ref, ⌘⏎ to send)"
                                 onKeyDown={(e) => {
                                     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                                         e.preventDefault();
