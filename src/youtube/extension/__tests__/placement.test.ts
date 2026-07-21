@@ -4,7 +4,6 @@ import {
     isInFlowPosition,
     isUsableLiveChatStyle,
     rectsOverlapSubstantially,
-    shouldUseFixedFallback,
 } from "@ext/placement";
 
 describe("isUsableLiveChatStyle", () => {
@@ -39,53 +38,6 @@ describe("rectsOverlapSubstantially / full-bleed", () => {
         expect(rectsOverlapSubstantially(rail, player)).toBe(false);
         expect(isFullBleedOverPlayer(over, player)).toBe(true);
         expect(isFullBleedOverPlayer(rail, player)).toBe(false);
-    });
-});
-
-describe("shouldUseFixedFallback", () => {
-    it("prefers fixed when secondary overlaps player and chat is unusable", () => {
-        expect(
-            shouldUseFixedFallback({
-                chatUsable: false,
-                secondaryInFlow: true,
-                secondaryOverlapsPlayer: true,
-                hostCoversPlayer: false,
-                hostFullBleed: false,
-            })
-        ).toBe(true);
-    });
-
-    it("allows inline when chat is usable", () => {
-        expect(
-            shouldUseFixedFallback({
-                chatUsable: true,
-                secondaryInFlow: false,
-                secondaryOverlapsPlayer: true,
-                hostCoversPlayer: false,
-                hostFullBleed: false,
-            })
-        ).toBe(false);
-    });
-
-    it("forces fixed on host cover / full-bleed", () => {
-        expect(
-            shouldUseFixedFallback({
-                chatUsable: false,
-                secondaryInFlow: true,
-                secondaryOverlapsPlayer: false,
-                hostCoversPlayer: true,
-                hostFullBleed: false,
-            })
-        ).toBe(true);
-        expect(
-            shouldUseFixedFallback({
-                chatUsable: false,
-                secondaryInFlow: true,
-                secondaryOverlapsPlayer: false,
-                hostCoversPlayer: false,
-                hostFullBleed: true,
-            })
-        ).toBe(true);
     });
 });
 

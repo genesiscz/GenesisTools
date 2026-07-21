@@ -59,13 +59,21 @@ export async function traceJobExternalCall<T>(opts: TraceJobExternalCallOpts<T>,
         const result = await fn();
 
         if (ctx) {
+            let response: string | null = null;
+
+            try {
+                response = truncateActivityText(opts.summarize?.(result) ?? null);
+            } catch (summarizeError) {
+                logger.debug({ error: summarizeError, action: opts.action }, "trace summarize failed (continuing)");
+            }
+
             recordSafe(ctx, {
                 kind: "api",
                 action: opts.action,
                 provider: opts.provider ?? null,
                 model: opts.model ?? null,
                 prompt: truncateActivityText(opts.prompt ?? null),
-                response: truncateActivityText(opts.summarize?.(result) ?? null),
+                response,
                 durationMs: Math.round(performance.now() - t0),
                 startedAt,
                 completedAt: new Date().toISOString(),
@@ -137,7 +145,7 @@ function recordSafe(
         );
     } catch (err) {
         logger.warn(
-            { err, action: fields.action, jobId: ctx.jobId },
+            { error: err, action: fields.action, jobId: ctx.jobId },
             "youtube job activity record failed (continuing)"
         );
     }

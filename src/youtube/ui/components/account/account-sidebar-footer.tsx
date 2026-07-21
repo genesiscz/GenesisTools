@@ -1,9 +1,15 @@
 import { formatDiamonds } from "@app/youtube/ui/components/shared/diamond";
 import { useLogout, useMe } from "@app/yt/api.hooks";
 import { useOptionalAuthGate } from "@app/yt/components/account/auth-gate";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from "@genesiscz/utils/ui/components/dropdown-menu";
 import { Link } from "@tanstack/react-router";
 import { ChevronUp, Loader2, LogIn, LogOut, Settings as SettingsIcon } from "lucide-react";
-import { useState } from "react";
 
 function initialsFromEmail(email: string): string {
     const local = email.split("@")[0] ?? email;
@@ -21,7 +27,6 @@ export function AccountSidebarFooter() {
     const me = useMe();
     const logout = useLogout();
     const auth = useOptionalAuthGate();
-    const [menuOpen, setMenuOpen] = useState(false);
 
     if (me.isPending) {
         return (
@@ -36,51 +41,42 @@ export function AccountSidebarFooter() {
         const email = me.data.user.email;
 
         return (
-            <div className="relative">
-                <button
-                    type="button"
-                    className="flex h-12 w-full items-center gap-2 rounded-lg px-2 text-left transition-colors hover:bg-sidebar-accent/10"
-                    onClick={() => setMenuOpen((open) => !open)}
-                    aria-expanded={menuOpen}
-                >
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full border border-sidebar-primary/30 bg-sidebar-primary/10 text-[11px] font-semibold text-sidebar-primary">
-                        {initialsFromEmail(email)}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                        <div className="truncate text-xs font-medium text-sidebar-foreground">{email}</div>
-                        <div className="font-mono text-[10px] tabular-nums text-sidebar-foreground/60">
-                            💎 {formatDiamonds(me.data.user.credits)}
+            <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                    <button
+                        type="button"
+                        className="flex h-12 w-full items-center gap-2 rounded-lg px-2 text-left transition-colors hover:bg-sidebar-accent/10"
+                    >
+                        <div className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full border border-sidebar-primary/30 bg-sidebar-primary/10 text-[11px] font-semibold text-sidebar-primary">
+                            {initialsFromEmail(email)}
                         </div>
-                    </div>
-                    <ChevronUp className="size-4 shrink-0 text-sidebar-foreground/50" />
-                </button>
-
-                {menuOpen ? (
-                    <div className="absolute bottom-full left-0 z-50 mb-2 w-full min-w-[14rem] rounded-md border border-border/50 bg-card p-1 shadow-lg">
-                        <Link
-                            to="/settings"
-                            className="relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground"
-                            onClick={() => setMenuOpen(false)}
-                        >
+                        <div className="min-w-0 flex-1">
+                            <div className="truncate text-xs font-medium text-sidebar-foreground">{email}</div>
+                            <div className="font-mono text-[10px] tabular-nums text-sidebar-foreground/60">
+                                💎 {formatDiamonds(me.data.user.credits)}
+                            </div>
+                        </div>
+                        <ChevronUp className="size-4 shrink-0 text-sidebar-foreground/50" />
+                    </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" side="top" className="w-[14rem]">
+                    <DropdownMenuItem asChild>
+                        <Link to="/settings">
                             <SettingsIcon className="mr-2 size-4" />
                             Account & settings
                         </Link>
-                        <div className="my-1 h-px bg-amber-500/10" />
-                        <button
-                            type="button"
-                            disabled={logout.isPending}
-                            onClick={() => {
-                                setMenuOpen(false);
-                                logout.mutate();
-                            }}
-                            className="relative flex w-full cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none transition-colors text-red-400 hover:bg-accent hover:text-accent-foreground"
-                        >
-                            <LogOut className="mr-2 size-4" />
-                            Sign out
-                        </button>
-                    </div>
-                ) : null}
-            </div>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                        disabled={logout.isPending}
+                        onSelect={() => logout.mutate()}
+                        className="text-destructive focus:text-destructive"
+                    >
+                        <LogOut className="mr-2 size-4" />
+                        Sign out
+                    </DropdownMenuItem>
+                </DropdownMenuContent>
+            </DropdownMenu>
         );
     }
 

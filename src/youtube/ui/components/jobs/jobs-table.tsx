@@ -84,9 +84,15 @@ export function JobsTable({ jobs }: { jobs: PipelineJob[] }) {
                                         <span className="font-mono text-sm font-semibold text-primary">#{job.id}</span>
                                     </TableCell>
                                     <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
-                                        <div title={job.createdAt}>
-                                            {formatDateTime(job.claimedAt ?? job.createdAt)}
-                                        </div>
+                                        <div title={job.createdAt}>created {formatDateTime(job.createdAt)}</div>
+                                        {job.claimedAt ? (
+                                            <div
+                                                className="mt-0.5 text-[0.65rem] text-muted-foreground/70"
+                                                title={job.claimedAt}
+                                            >
+                                                claimed {formatDateTime(job.claimedAt)}
+                                            </div>
+                                        ) : null}
                                         {job.completedAt ? (
                                             <div
                                                 className="mt-0.5 text-[0.65rem] text-muted-foreground/70"

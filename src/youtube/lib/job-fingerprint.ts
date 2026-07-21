@@ -7,25 +7,41 @@ export interface BuildJobFingerprintInput {
     target: string;
     stages: JobStage[];
     params?: Record<string, unknown> | null;
+    userId?: number | null;
 }
 
 /**
  * Deterministic identity for "this job would do the same work" — used to
  * coalesce duplicate enqueue calls (see `YoutubeDatabase.enqueueJob`).
- * Format: `targetKind|target|stagesJoined|sortedParamPairs`.
+ * Hashes a canonical structured form (sorted params, question pre-hashed) so
+ * free-text params can't collide via delimiter injection, and scopes user-owned
+ * work by `userId` so jobs never coalesce across users.
  */
-export function buildJobFingerprint({ targetKind, target, stages, params }: BuildJobFingerprintInput): string {
-    return `${targetKind}|${target}|${stages.join(",")}|${serializeParams(params)}`;
+export function buildJobFingerprint({ targetKind, target, stages, params, userId }: BuildJobFingerprintInput): string {
+    const canonical = SafeJSON.stringify(
+        {
+            targetKind,
+            target,
+            stages,
+            params: canonicalParams(params),
+            userId: userId ?? null,
+        },
+        { strict: true }
+    );
+
+    return createHash("sha1")
+        .update(canonical ?? "")
+        .digest("hex");
 }
 
-function serializeParams(params: Record<string, unknown> | null | undefined): string {
+function canonicalParams(params: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
     if (!params) {
-        return "";
+        return null;
     }
 
     // Ephemeral per-request fields must not participate in coalesce identity.
     const omit = new Set(["holdId", "creditCost"]);
-    const pairs: string[] = [];
+    const canonical: Record<string, unknown> = {};
 
     for (const key of Object.keys(params).sort()) {
         if (omit.has(key)) {
@@ -38,22 +54,10 @@ function serializeParams(params: Record<string, unknown> | null | undefined): st
             continue;
         }
 
-        pairs.push(`${key}=${serializeParamValue(key, value)}`);
+        canonical[key] = key === "question" && typeof value === "string" ? shortHash(value) : value;
     }
 
-    return pairs.join(",");
-}
-
-function serializeParamValue(key: string, value: unknown): string {
-    if (key === "question" && typeof value === "string") {
-        return shortHash(value);
-    }
-
-    if (typeof value === "string") {
-        return value;
-    }
-
-    return SafeJSON.stringify(value);
+    return canonical;
 }
 
 function shortHash(value: string): string {

@@ -40,19 +40,29 @@ export function registerPipelineCommand(program: Command): void {
                 yt.pipeline.setGlobalConcurrencyOverride(opts.concurrency);
             }
 
-            const jobs = splitTargets(targets).map((target) => {
-                const { job } = yt.pipeline.enqueue({
-                    targetKind: resolveTargetKind(target),
-                    target,
-                    stages,
-                });
+            const jobs = splitTargets(targets)
+                .map((target) => {
+                    const result = yt.pipeline.enqueue({
+                        targetKind: resolveTargetKind(target),
+                        target,
+                        stages,
+                    });
 
-                if (!job) {
-                    throw new Error(`pipeline enqueue returned no job for ${target}`);
-                }
+                    if (!result.job) {
+                        if (result.skipped === "artifact") {
+                            if (!cmd.optsWithGlobals().silent) {
+                                process.stderr.write(`${target}: artifact already cached, skipping.\n`);
+                            }
 
-                return job;
-            });
+                            return null;
+                        }
+
+                        throw new Error(`pipeline enqueue returned no job for ${target}`);
+                    }
+
+                    return result.job;
+                })
+                .filter((job): job is PipelineJob => job !== null);
             await yt.pipeline.start();
 
             const finalRows = opts.watch

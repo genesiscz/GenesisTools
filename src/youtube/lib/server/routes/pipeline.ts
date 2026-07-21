@@ -2,9 +2,41 @@ import { resolveUser } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
-import type { JobStage, JobStatus, JobTargetKind } from "@app/youtube/lib/types";
+import type { JobStage, JobStatus, JobTargetKind, PipelineJob } from "@app/youtube/lib/types";
 import type { Youtube } from "@app/youtube/lib/youtube";
 import { SafeJSON } from "@genesiscz/utils/json";
+
+/** Billing capability ids the server owns — never accepted from or echoed to clients. */
+const SERVER_OWNED_PARAM_KEYS = ["holdId", "creditCost"];
+
+/** Sensitive per-request params redacted from list/get job DTOs (worker keeps the full shape). */
+const SENSITIVE_PARAM_KEYS = new Set(["holdId", "creditCost", "question", "presetInstructions"]);
+
+function sanitizePipelineParams(params: Record<string, unknown> | null): Record<string, unknown> | null {
+    if (!params) {
+        return null;
+    }
+
+    const clean = { ...params };
+    for (const key of SERVER_OWNED_PARAM_KEYS) {
+        delete clean[key];
+    }
+
+    return clean;
+}
+
+function redactJobForApi(job: PipelineJob): PipelineJob {
+    if (!job.params) {
+        return job;
+    }
+
+    const params = { ...job.params };
+    for (const key of SENSITIVE_PARAM_KEYS) {
+        delete params[key];
+    }
+
+    return { ...job, params };
+}
 
 interface EnqueueBody {
     target: string;
@@ -26,14 +58,14 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
                 target: body.target,
                 stages: body.stages,
                 userId: user?.id ?? null,
-                params: body.params ?? null,
+                params: sanitizePipelineParams(body.params ?? null),
                 priority: body.priority,
                 force: body.force === true,
             });
 
             return Response.json(
                 {
-                    job: result.job,
+                    job: result.job ? redactJobForApi(result.job) : result.job,
                     reused: result.reused,
                     queuePosition: result.queuePosition,
                     skipped: result.skipped,
@@ -45,7 +77,7 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
         if (matchRoute(req, "GET", "/api/v1/jobs", url.pathname)) {
             const status = parseJobStatus(url.searchParams.get("status"));
             const limit = parseInt(url.searchParams.get("limit") ?? "100", 10);
-            const jobs = yt.pipeline.listJobs({ status: status ?? undefined, limit });
+            const jobs = yt.pipeline.listJobs({ status: status ?? undefined, limit }).map(redactJobForApi);
 
             return Response.json({ jobs }, { headers: CORS_HEADERS });
         }
@@ -64,7 +96,10 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
                 return jsonError("job not found", 404);
             }
 
-            return Response.json({ job, queuePosition: yt.db.getJobQueuePosition(id) }, { headers: CORS_HEADERS });
+            return Response.json(
+                { job: redactJobForApi(job), queuePosition: yt.db.getJobQueuePosition(id) },
+                { headers: CORS_HEADERS }
+            );
         }
 
         const activity = matchRoute(req, "GET", "/api/v1/jobs/:id/activity", url.pathname);

@@ -44,25 +44,3 @@ export function isFullBleedOverPlayer(host: RectLike, player: RectLike): boolean
 
     return widthRatio > 0.85 && leftDelta < 48 && rectsOverlapSubstantially(host, player, 20);
 }
-
-export function shouldUseFixedFallback(opts: {
-    chatUsable: boolean;
-    secondaryInFlow: boolean;
-    secondaryOverlapsPlayer: boolean;
-    hostCoversPlayer: boolean;
-    hostFullBleed: boolean;
-}): boolean {
-    if (opts.hostCoversPlayer || opts.hostFullBleed) {
-        return true;
-    }
-
-    if (opts.chatUsable) {
-        return false;
-    }
-
-    if (!opts.secondaryInFlow || opts.secondaryOverlapsPlayer) {
-        return true;
-    }
-
-    return false;
-}

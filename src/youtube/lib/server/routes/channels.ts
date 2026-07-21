@@ -54,7 +54,7 @@ export async function handleChannelsRoute(req: Request, url: URL, yt: Youtube): 
         if (sync) {
             const handle = normaliseHandle(sync.handle);
             const user = resolveUser(req, url, yt.db);
-            const { job } = yt.pipeline.enqueue({
+            const { job, reused } = yt.pipeline.enqueue({
                 targetKind: "channel",
                 target: handle,
                 stages: ["discover", "metadata"],
@@ -69,7 +69,7 @@ export async function handleChannelsRoute(req: Request, url: URL, yt: Youtube): 
                 {
                     enqueuedJobIds: [job.id],
                     enqueuedJobId: job.id,
-                    reused: false,
+                    reused,
                     queuePosition: yt.db.getJobQueuePosition(job.id),
                 },
                 { headers: CORS_HEADERS }

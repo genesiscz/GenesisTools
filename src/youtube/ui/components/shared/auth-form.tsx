@@ -106,11 +106,10 @@ export function AuthForm({
 
     return (
         <form className={className ? `space-y-3 ${className}` : "space-y-3"} onSubmit={submit}>
-            <div className="flex gap-1 rounded-lg border border-primary/15 bg-black/20 p-1" role="tablist">
+            <div className="flex gap-1 rounded-lg border border-primary/15 bg-black/20 p-1">
                 <button
                     type="button"
-                    role="tab"
-                    aria-selected={mode === "login"}
+                    aria-pressed={mode === "login"}
                     className={`${toggleBase} ${mode === "login" ? toggleActive : toggleIdle}`}
                     onClick={() => switchMode("login")}
                 >
@@ -118,8 +117,7 @@ export function AuthForm({
                 </button>
                 <button
                     type="button"
-                    role="tab"
-                    aria-selected={mode === "register"}
+                    aria-pressed={mode === "register"}
                     className={`${toggleBase} ${mode === "register" ? toggleActive : toggleIdle}`}
                     onClick={() => switchMode("register")}
                 >
@@ -153,7 +151,7 @@ export function AuthForm({
                     type="password"
                     autoComplete={mode === "login" ? "current-password" : "new-password"}
                     required
-                    minLength={8}
+                    minLength={mode === "register" ? 8 : undefined}
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
                     placeholder={

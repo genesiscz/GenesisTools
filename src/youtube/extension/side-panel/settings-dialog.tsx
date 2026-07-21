@@ -784,6 +784,12 @@ function AuthForm() {
                 createAccount: t("action.createAccount"),
                 email: t("auth.email"),
                 password: t("auth.password"),
+                emailPlaceholder: t("auth.emailPlaceholder"),
+                passwordLoginPlaceholder: t("auth.passwordLoginPlaceholder"),
+                passwordRegisterPlaceholder: t("auth.passwordRegisterPlaceholder"),
+                signingIn: t("action.signingIn"),
+                creatingAccount: t("action.creatingAccount"),
+                registerHint: t("auth.registerHint"),
             }}
             onLogin={(creds) => login.mutateAsync(creds).then(() => undefined)}
             onRegister={(creds) => register.mutateAsync(creds).then(() => undefined)}

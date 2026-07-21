@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import { grantArtifactAccess } from "@app/youtube/lib/artifact-access";
 import { audioPath, ensureBinaryDir, videoFilePath } from "@app/youtube/lib/cache";
 import type { ChannelEnsureResult, ChannelHandle, ChannelSyncStatus } from "@app/youtube/lib/channel.types";
@@ -474,7 +475,7 @@ export class Youtube {
                     const providerChoice = await resolveProviderChoice({
                         provider: typeof params.provider === "string" ? params.provider : undefined,
                         model: typeof params.model === "string" ? params.model : undefined,
-                        fallbackSpec: undefined,
+                        fallbackSpec: resolveAiSpecForTask(await this.config.getAll(), "summary"),
                     });
 
                     await this.summary.summarize({
@@ -564,7 +565,7 @@ export class Youtube {
                     const providerChoice = await resolveProviderChoice({
                         provider: typeof params.provider === "string" ? params.provider : undefined,
                         model: typeof params.model === "string" ? params.model : undefined,
-                        fallbackSpec: undefined,
+                        fallbackSpec: resolveAiSpecForTask(await this.config.getAll(), "qa"),
                     });
 
                     for (const memberId of videoIds) {

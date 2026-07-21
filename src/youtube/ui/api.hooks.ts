@@ -152,6 +152,10 @@ async function waitForJob(jobId: number, opts: { timeoutMs?: number; intervalMs?
     while (Date.now() - started < timeoutMs) {
         const { job } = await apiClient.getJob(jobId);
 
+        if (!job) {
+            throw new Error(`Job ${jobId} not found`);
+        }
+
         if (job.status === "completed") {
             return;
         }

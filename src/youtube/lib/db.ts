@@ -1379,17 +1379,14 @@ export class YoutubeDatabase extends BaseDatabase {
             target: input.target,
             stages: input.stages,
             params: input.params ?? null,
+            userId: input.userId ?? null,
         });
 
         if (!input.force) {
-            const existingRow = this.db
-                .query<JobRow, [string]>(
-                    "SELECT * FROM jobs WHERE fingerprint = ? AND status IN ('pending','running') ORDER BY id ASC LIMIT 1"
-                )
-                .get(fingerprint);
+            const active = this.findActiveJobByFingerprint(fingerprint);
 
-            if (existingRow) {
-                return { job: rowToJob(existingRow), reused: true };
+            if (active) {
+                return { job: active, reused: true };
             }
         }
 

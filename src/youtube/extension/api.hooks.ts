@@ -35,7 +35,11 @@ async function waitForExtensionJob(
     const started = Date.now();
 
     while (Date.now() - started < timeoutMs) {
-        const { job } = await send<{ job: PipelineJob }>({ type: "api:getJob", id: jobId });
+        const { job } = await send<{ job?: PipelineJob }>({ type: "api:getJob", id: jobId });
+
+        if (!job) {
+            throw new Error(`Job ${jobId} not found`);
+        }
 
         if (job.status === "completed") {
             return;
