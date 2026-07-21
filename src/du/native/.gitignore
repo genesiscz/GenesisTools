@@ -1,0 +1,4 @@
+# Compiled on demand by lib/engine.ts (platform-specific, never committed).
+clonesize
+*.dylib
+*.o
