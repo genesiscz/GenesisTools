@@ -22,6 +22,7 @@ function seed(
 }
 
 export const GROK_STATIC_CATALOG: GrokModelRecord[] = [
+    seed("grok-4.5", "high", "medium", "optional", "ok"),
     seed("grok-build", "high", "slow", "reasoning", "ok"),
     seed("grok-composer-2.5-fast", "high", "fast", "reasoning", "ok"),
     seed("grok-build-0.1", "medium", "slow", "reasoning", "ok"),

@@ -1,6 +1,6 @@
 {
-  "updatedAt": "2026-07-14T01:34:01.758Z",
-  "grokVersion": "0.2.99",
+  "updatedAt": "2026-07-21T17:58:05.989Z",
+  "grokVersion": "0.2.106",
   "accounts": [
     {
       "accountName": "martin",
@@ -8,20 +8,11 @@
       "baseUrl": "https://cli-chat-proxy.grok.com/v1",
       "pickerModels": [
         {
-          "id": "grok-build",
+          "id": "grok-4.5",
           "source": "picker",
           "visibility": "high",
-          "speed": "slow",
-          "thinking": "reasoning",
-          "probeStatus": "ok",
-          "httpCode": 200
-        },
-        {
-          "id": "grok-composer-2.5-fast",
-          "source": "picker",
-          "visibility": "high",
-          "speed": "fast",
-          "thinking": "reasoning",
+          "speed": "medium",
+          "thinking": "optional",
           "probeStatus": "ok",
           "httpCode": 200
         }
@@ -217,7 +208,25 @@
           "httpCode": 200
         },
         {
+          "id": "grok-build",
+          "source": "probe",
+          "visibility": "high",
+          "speed": "slow",
+          "thinking": "reasoning",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
           "id": "grok-build-0.1",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "slow",
+          "thinking": "reasoning",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-build-latest",
           "source": "probe",
           "visibility": "medium",
           "speed": "slow",
@@ -249,6 +258,24 @@
           "visibility": "medium",
           "speed": "fast",
           "thinking": "none",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-composer-2.5",
+          "source": "probe",
+          "visibility": "medium",
+          "speed": "fast",
+          "thinking": "reasoning",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-composer-2.5-fast",
+          "source": "probe",
+          "visibility": "high",
+          "speed": "fast",
+          "thinking": "reasoning",
           "probeStatus": "ok",
           "httpCode": 200
         },
