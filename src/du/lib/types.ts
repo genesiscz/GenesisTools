@@ -17,6 +17,7 @@ export interface GroupResult {
 export interface NodeResult {
     path: string;
     depth: number;
+    /** Parent node index in the `nodes` array; -1 for the root. */
     parent: number;
     naive_bytes: number;
     /** Clone-deduped unique bytes WITHIN this subtree. */

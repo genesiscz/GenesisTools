@@ -3,7 +3,7 @@ import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
-import { Command, Option } from "commander";
+import { Command, InvalidArgumentError, Option } from "commander";
 import pc from "picocolors";
 import { scanWithBun } from "./lib/bun-scan";
 import { scanWithC, scanWithCFfi } from "./lib/engine";
@@ -22,6 +22,25 @@ program
             "its full size even though clones share physical blocks."
     )
     .version("0.1.0");
+
+function intOpt(name: string, opts: { min?: number; max?: number } = {}) {
+    return (v: string): number => {
+        const n = Number.parseInt(v, 10);
+        if (!Number.isFinite(n) || String(n) !== v.trim()) {
+            throw new InvalidArgumentError(`${name} must be an integer (got "${v}").`);
+        }
+
+        if (opts.min !== undefined && n < opts.min) {
+            throw new InvalidArgumentError(`${name} must be >= ${opts.min}.`);
+        }
+
+        if (opts.max !== undefined && n > opts.max) {
+            throw new InvalidArgumentError(`${name} must be <= ${opts.max}.`);
+        }
+
+        return n;
+    };
+}
 
 function assertDir(dir: string): string {
     const root = resolve(dir);
@@ -66,10 +85,10 @@ program
             .choices(["c-ffi", "c", "bun"])
             .default("c-ffi")
     )
-    .option("--threads <n>", "Worker threads (default: number of CPUs)", (v) => Number.parseInt(v, 10))
+    .option("--threads <n>", "Worker threads (default: number of CPUs)", intOpt("--threads", { min: 1, max: 1024 }))
     .option("--freeable", "Also sum per-file ATTR_CMNEXT_PRIVATESIZE (C engine only)")
-    .option("--min-bytes <n>", "Skip files whose allocated size < N bytes", (v) => Number.parseInt(v, 10))
-    .option("--depth <n>", "Per-directory tree down to depth N (du -d N style)", (v) => Number.parseInt(v, 10))
+    .option("--min-bytes <n>", "Skip files whose allocated size < N bytes", intOpt("--min-bytes", { min: 0 }))
+    .option("--depth <n>", "Per-directory tree down to depth N (du -d N style)", intOpt("--depth", { min: 0 }))
     .option("--freeable-tree", "Per-node ATTR_CMNEXT_PRIVATESIZE in the --depth tree (implies --depth 1)")
     .option("--ignore-worktrees", "Auto-detect and exclude git worktrees + .worktrees/ dirs")
     .addHelpText(
@@ -156,7 +175,11 @@ program
     .command("bench")
     .description("Benchmark the C engine vs the Bun engine vs plain `du -sh`, with a byte-for-byte cross-check")
     .argument("[dir]", "Directory to benchmark", ".")
-    .option("--threads <n>", "Worker threads for both engines (default: CPUs)", (v) => Number.parseInt(v, 10))
+    .option(
+        "--threads <n>",
+        "Worker threads for both engines (default: CPUs)",
+        intOpt("--threads", { min: 1, max: 1024 })
+    )
     .action(async (dir: string, o: { threads?: number }) => {
         const root = assertDir(dir);
         const scanOpts: ScanOptions = { path: root, threads: o.threads };

@@ -23,6 +23,110 @@ import type { ClonesizeResult, GroupResult, ScanOptions } from "./types";
 const MAX_GROUPS = 4096;
 const prof = profiler.scope("du.bun");
 
+export interface ExtentClusters {
+    /** Σ of every merged-cluster length (deduped shared bytes). */
+    uniqueShared: bigint;
+    /** Σ of clusters that touch more than one group. */
+    crossShared: bigint;
+    /** Per-group cross-group shared bytes, indexed by group id. */
+    groupShared: bigint[];
+    /** Union-find representative for a group id (stable clone-cluster id). */
+    find: (g: number) => number;
+}
+
+/**
+ * Merge physical extents (half-open `[dev, dev+len)`) into clusters and account
+ * cross-group sharing. Extents are considered part of the same cluster only when
+ * they OVERLAP (`dev < ce`) — adjacent/touching extents (`dev === ce`) begin
+ * exactly where the previous cluster ends and are NOT shared. Mirrors the C
+ * engine's loop in native/clonesize.c so `bench` stays byte-for-byte.
+ */
+export function mergeExtentClusters(
+    idxArr: number[],
+    devs: BigUint64Array,
+    lens: BigUint64Array,
+    grps: Int32Array,
+    totalExts: number,
+    ngroups: number
+): ExtentClusters {
+    const uf = new Int32Array(MAX_GROUPS);
+    for (let i = 0; i < MAX_GROUPS; i++) {
+        uf[i] = i;
+    }
+
+    const find = (x: number): number => {
+        while (uf[x] !== x) {
+            uf[x] = uf[uf[x]!]!;
+            x = uf[x]!;
+        }
+
+        return x;
+    };
+    const union = (a: number, b: number) => {
+        a = find(a);
+        b = find(b);
+        if (a !== b) {
+            uf[a] = b;
+        }
+    };
+
+    let uniqueShared = 0n;
+    let crossShared = 0n;
+    const groupShared = new Array<bigint>(ngroups).fill(0n);
+
+    let i = 0;
+    while (i < totalExts) {
+        const e0 = idxArr[i]!;
+        const cs = devs[e0]!;
+        let ce = cs + lens[e0]!;
+        let mask = 1n << BigInt(grps[e0]!);
+        let j = i + 1;
+        while (j < totalExts) {
+            const ej = idxArr[j]!;
+            if (devs[ej]! >= ce) {
+                break;
+            }
+
+            const en = devs[ej]! + lens[ej]!;
+            if (en > ce) {
+                ce = en;
+            }
+
+            mask |= 1n << BigInt(grps[ej]!);
+            j++;
+        }
+
+        const clen = ce - cs;
+        uniqueShared += clen;
+
+        let pc = 0;
+        let m = mask;
+        while (m > 0n) {
+            pc += Number(m & 1n);
+            m >>= 1n;
+        }
+
+        if (pc > 1) {
+            crossShared += clen;
+            let first = -1;
+            for (let g = 0; g < ngroups && g < MAX_GROUPS; g++) {
+                if ((mask & (1n << BigInt(g))) !== 0n) {
+                    groupShared[g]! += clen;
+                    if (first < 0) {
+                        first = g;
+                    } else {
+                        union(first, g);
+                    }
+                }
+            }
+        }
+
+        i = j;
+    }
+
+    return { uniqueShared, crossShared, groupShared, find };
+}
+
 /**
  * A shallow, bounded breadth-first split of the tree. Intern the top-level groups,
  * then expand level by level until we have enough "frontier" directories to keep
@@ -222,73 +326,14 @@ export async function scanWithBun(opts: ScanOptions): Promise<ClonesizeResult> {
     });
 
     // merge overlapping clusters, track group bitmask
-    const uf = new Int32Array(MAX_GROUPS);
-    for (let i = 0; i < MAX_GROUPS; i++) {
-        uf[i] = i;
-    }
-    const find = (x: number): number => {
-        while (uf[x] !== x) {
-            uf[x] = uf[uf[x]!]!;
-            x = uf[x]!;
-        }
-        return x;
-    };
-    const union = (a: number, b: number) => {
-        a = find(a);
-        b = find(b);
-        if (a !== b) {
-            uf[a] = b;
-        }
-    };
-
-    let uniqueShared = 0n;
-    let crossShared = 0n;
-    const groupShared = new Array<bigint>(ngroups).fill(0n);
-
-    let i = 0;
-    while (i < totalExts) {
-        const e0 = idxArr[i]!;
-        const cs = devs[e0]!;
-        let ce = cs + lens[e0]!;
-        let mask = 1n << BigInt(grps[e0]!);
-        let j = i + 1;
-        while (j < totalExts) {
-            const ej = idxArr[j]!;
-            if (devs[ej]! > ce) {
-                break;
-            }
-            const en = devs[ej]! + lens[ej]!;
-            if (en > ce) {
-                ce = en;
-            }
-            mask |= 1n << BigInt(grps[ej]!);
-            j++;
-        }
-        const clen = ce - cs;
-        uniqueShared += clen;
-
-        let pc = 0;
-        let m = mask;
-        while (m > 0n) {
-            pc += Number(m & 1n);
-            m >>= 1n;
-        }
-        if (pc > 1) {
-            crossShared += clen;
-            let first = -1;
-            for (let g = 0; g < ngroups && g < MAX_GROUPS; g++) {
-                if ((mask & (1n << BigInt(g))) !== 0n) {
-                    groupShared[g]! += clen;
-                    if (first < 0) {
-                        first = g;
-                    } else {
-                        union(first, g);
-                    }
-                }
-            }
-        }
-        i = j;
-    }
+    const { uniqueShared, crossShared, groupShared, find } = mergeExtentClusters(
+        idxArr,
+        devs,
+        lens,
+        grps,
+        totalExts,
+        ngroups
+    );
 
     const naiveNum = Number(naive);
     const uniqueNum = Number(uniquePrivate + uniqueShared);

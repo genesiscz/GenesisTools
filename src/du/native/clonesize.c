@@ -87,6 +87,7 @@ static int intern_node(int parent, const char *name, int depth) {
     g_nodes[id].parent = parent;
     g_nodes[id].depth = depth;
     g_nodes[id].name = strdup(name);
+    if (!g_nodes[id].name) { perror("strdup node name"); exit(1); }
     pthread_mutex_unlock(&g_node_mtx);
     return id;
 }
@@ -128,6 +129,7 @@ static int intern_group(const char *name) {
     }
     if (g_ngroups < MAX_GROUPS) {
         g_group_names[g_ngroups] = strdup(name);
+        if (!g_group_names[g_ngroups]) { perror("strdup group name"); exit(1); }
         r = g_ngroups++;
     }
 out:
@@ -480,7 +482,7 @@ static int run_scan(const char *target, Result *R) {
     while (i < total_exts) {
         uint64_t cs = all[i].dev, ce = all[i].dev + all[i].len;
         size_t j = i + 1;
-        while (j < total_exts && all[j].dev <= ce) {
+        while (j < total_exts && all[j].dev < ce) {
             uint64_t en = all[j].dev + all[j].len;
             if (en > ce) ce = en;
             j++;
@@ -601,6 +603,33 @@ static void node_path(int a, char *buf, size_t cap) {
 // ---------------------------------------------------------------------------
 // JSON output (used by the CLI --format json AND the bun:ffi dylib entry)
 // ---------------------------------------------------------------------------
+
+// Escape a filesystem string into a JSON string body (no surrounding quotes).
+// Returns a malloc'd buffer the caller frees. macOS names may contain any byte
+// except '/' and NUL, so '"' / '\\' / control chars must be escaped or the
+// emitted JSON is invalid and SafeJSON.parse aborts the whole scan.
+static char *json_escape(const char *s) {
+    size_t n = strlen(s);
+    char *o = malloc(n * 6 + 1);   // worst case \u00XX per byte
+    if (!o) { perror("malloc json_escape"); exit(1); }
+    size_t k = 0;
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)s[i];
+        switch (c) {
+            case '"':  o[k++] = '\\'; o[k++] = '"';  break;
+            case '\\': o[k++] = '\\'; o[k++] = '\\'; break;
+            case '\n': o[k++] = '\\'; o[k++] = 'n';  break;
+            case '\r': o[k++] = '\\'; o[k++] = 'r';  break;
+            case '\t': o[k++] = '\\'; o[k++] = 't';  break;
+            default:
+                if (c < 0x20) { k += (size_t)snprintf(o + k, 7, "\\u%04x", c); }
+                else          { o[k++] = (char)c; }
+        }
+    }
+    o[k] = '\0';
+    return o;
+}
+
 static char *format_json(const char *target, const Result *R) {
     size_t cap = 4096 + (size_t)g_ngroups * 256 + (size_t)g_nnodes * 320;
     char *out = malloc(cap);
@@ -614,7 +643,9 @@ static char *format_json(const char *target, const Result *R) {
     } while (0)
 
     EMIT("{\n");
-    EMIT("  \"path\": \"%s\",\n", target);
+    char *tesc = json_escape(target);
+    EMIT("  \"path\": \"%s\",\n", tesc);
+    free(tesc);
     EMIT("  \"files_scanned\": %llu,\n", (unsigned long long)R->files_accounted);
     EMIT("  \"files_listed\": %llu,\n", (unsigned long long)R->files_listed);
     EMIT("  \"files_opened\": %llu,\n", (unsigned long long)R->files_opened);
@@ -636,13 +667,15 @@ static char *format_json(const char *target, const Result *R) {
         for (int h = g + 1; h < g_ngroups; h++) if (g_group_naive[h]) { more = 1; break; }
         double gsh = 100.0 * (double)R->group_shared[g] / (double)gn;
         int flagged = (R->group_shared[g] >= (uint64_t)(g_clone_pct * (double)gn)) && R->group_shared[g] > 0;
+        char *gesc = json_escape(g_group_names[g]);
         EMIT("    {\"name\": \"%s\", \"naive_bytes\": %llu, \"files\": %llu, "
              "\"cross_group_shared_bytes\": %llu, \"shared_pct\": %.2f, "
              "\"clone_cluster\": %d, \"clone_flagged\": %s",
-             g_group_names[g], (unsigned long long)gn,
+             gesc, (unsigned long long)gn,
              (unsigned long long)g_group_files[g],
              (unsigned long long)R->group_shared[g], gsh,
              uf_find(g), flagged ? "true" : "false");
+        free(gesc);
         if (g_freeable)
             EMIT(", \"private_bytes\": %llu", (unsigned long long)g_group_private[g]);
         EMIT("}%s\n", more ? "," : "");
@@ -664,12 +697,14 @@ static char *format_json(const char *target, const Result *R) {
             double xpct = nd->naive ? 100.0 * (double)nd->cross / (double)nd->naive : 0.0;
             int flagged = (nd->cross >= (uint64_t)(g_clone_pct * (double)nd->naive)) && nd->cross > 0;
             node_path(a, pbuf, sizeof pbuf);
+            char *pesc = json_escape(pbuf);
             EMIT("%s    {\"path\": \"%s\", \"depth\": %d, \"parent\": %d, \"naive_bytes\": %llu, "
                  "\"unique_bytes\": %llu, \"cross_shared_bytes\": %llu, \"shared_pct\": %.2f, "
                  "\"files\": %llu, \"clone_flagged\": %s",
-                 nfirst ? "" : ",\n", pbuf, nd->depth, nd->parent, (unsigned long long)nd->naive,
+                 nfirst ? "" : ",\n", pesc, nd->depth, nd->parent, (unsigned long long)nd->naive,
                  (unsigned long long)u, (unsigned long long)nd->cross, xpct,
                  (unsigned long long)nd->files, flagged ? "true" : "false");
+            free(pesc);
             if (g_freeable_tree)
                 EMIT(", \"private_bytes\": %llu", (unsigned long long)nd->priv);
             EMIT("}");

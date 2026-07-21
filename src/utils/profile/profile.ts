@@ -169,7 +169,16 @@ function makeScope(name: string): ProfilerScope {
         },
         section: (label) => {
             const end = start(label);
-            return { end, [Symbol.dispose]: () => void end() };
+            let done = false;
+            const stop = (): number => {
+                if (done) {
+                    return 0;
+                }
+
+                done = true;
+                return end();
+            };
+            return { end: stop, [Symbol.dispose]: () => void stop() };
         },
         entries: () =>
             [...stats.entries()].map(([label, s]) => ({
