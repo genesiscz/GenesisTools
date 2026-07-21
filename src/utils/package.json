@@ -267,6 +267,11 @@
             "types": "./prompts/index.ts",
             "default": "./prompts/index.ts"
         },
+        "./profile": {
+            "bun": "./profile/index.ts",
+            "types": "./profile/index.ts",
+            "default": "./profile/index.ts"
+        },
         "./qr": {
             "bun": "./qr.ts",
             "types": "./qr.ts",

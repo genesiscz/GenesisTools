@@ -17,6 +17,8 @@ export interface ClonesizeResult {
     path: string;
     files_scanned: number;
     files_listed: number;
+    /** Files actually opened + extent-scanned (< files_scanned when clones are skipped). */
+    files_opened?: number;
     extents: number;
     threads: number;
     naive_bytes: number;
@@ -28,7 +30,7 @@ export interface ClonesizeResult {
     groups: GroupResult[];
 }
 
-export type Engine = "c" | "bun";
+export type Engine = "c" | "c-ffi" | "bun";
 
 export interface ScanOptions {
     /** Absolute path to scan. */

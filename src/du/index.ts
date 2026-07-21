@@ -6,7 +6,7 @@ import { out } from "@genesiscz/utils/logger";
 import { Command, Option } from "commander";
 import pc from "picocolors";
 import { scanWithBun } from "./lib/bun-scan";
-import { scanWithC } from "./lib/engine";
+import { scanWithC, scanWithCFfi } from "./lib/engine";
 import { humanBytes, renderHuman } from "./lib/format";
 import type { ClonesizeResult, Engine, ScanOptions } from "./lib/types";
 import { detectWorktreeExcludes } from "./lib/worktrees";
@@ -40,7 +40,15 @@ function assertDir(dir: string): string {
 
 async function runScan(opts: ScanOptions, engine: Engine): Promise<{ result: ClonesizeResult; ms: number }> {
     const t0 = performance.now();
-    const result = engine === "bun" ? await scanWithBun(opts) : scanWithC(opts);
+    let result: ClonesizeResult;
+    if (engine === "bun") {
+        result = await scanWithBun(opts);
+    } else if (engine === "c") {
+        result = scanWithC(opts);
+    } else {
+        result = scanWithCFfi(opts);
+    }
+
     const ms = performance.now() - t0;
     return { result, ms };
 }
@@ -53,7 +61,11 @@ program
     .description("Report naive (du-style) vs REAL unique on-disk bytes for a tree, deduping APFS clones")
     .argument("<dir>", "Directory to measure")
     .addOption(new Option("--format <fmt>", "Output format").choices(["human", "json"]).default("human"))
-    .addOption(new Option("--engine <engine>", "Scan engine").choices(["c", "bun"]).default("c"))
+    .addOption(
+        new Option("--engine <engine>", "Scan engine (c-ffi = C core via bun:ffi, default)")
+            .choices(["c-ffi", "c", "bun"])
+            .default("c-ffi")
+    )
     .option("--threads <n>", "Worker threads (default: number of CPUs)", (v) => Number.parseInt(v, 10))
     .option("--freeable", "Also sum per-file ATTR_CMNEXT_PRIVATESIZE (C engine only)")
     .option("--min-bytes <n>", "Skip files whose allocated size < N bytes", (v) => Number.parseInt(v, 10))
@@ -89,7 +101,7 @@ program
             const root = assertDir(dir);
 
             if (o.freeable && o.engine === "bun") {
-                out.error("--freeable is only supported by the C engine (--engine c).");
+                out.error("--freeable is only supported by the C engines (--engine c-ffi or c), not the Bun engine.");
                 process.exit(2);
             }
 
@@ -148,18 +160,25 @@ program
         }
         const duMs = performance.now() - duT0;
 
-        // C engine
-        out.println(pc.dim("running C engine ..."));
+        // C engine via bun:ffi (the default/preferred native path)
+        out.println(pc.dim("running C engine (bun:ffi) ..."));
+        const cffi = await runScan(scanOpts, "c-ffi");
+
+        // C engine as subprocess (reference)
+        out.println(pc.dim("running C engine (subprocess) ..."));
         const c = await runScan(scanOpts, "c");
 
-        // Bun engine
-        out.println(pc.dim("running Bun engine ..."));
+        // Bun engine (bun:ffi + Workers)
+        out.println(pc.dim("running Bun engine (workers) ..."));
         const b = await runScan(scanOpts, "bun");
 
-        // ---- cross-check ----
-        const naiveMatch = c.result.naive_bytes === b.result.naive_bytes;
-        const uniqueMatch = c.result.unique_bytes === b.result.unique_bytes;
+        // ---- cross-check: the two engines that matter (C-ffi vs Bun) ----
+        const naiveMatch = cffi.result.naive_bytes === b.result.naive_bytes;
+        const uniqueMatch = cffi.result.unique_bytes === b.result.unique_bytes;
         const match = naiveMatch && uniqueMatch;
+
+        // ---- speed gap between engines (user wants a heads-up if C vs Bun > 20%) ----
+        const gapPct = cffi.ms > 0 && b.ms > 0 ? (Math.abs(cffi.ms - b.ms) / Math.min(cffi.ms, b.ms)) * 100 : 0;
 
         out.println("");
         const rows = [
@@ -170,7 +189,13 @@ program
                 size: duSize,
             },
             {
-                tool: "clonesize (C)",
+                tool: "clonesize (C ffi)",
+                ms: cffi.ms,
+                files: cffi.result.files_scanned,
+                size: humanBytes(cffi.result.unique_bytes),
+            },
+            {
+                tool: "clonesize (C proc)",
                 ms: c.ms,
                 files: c.result.files_scanned,
                 size: humanBytes(c.result.unique_bytes),
@@ -196,30 +221,33 @@ program
         }
 
         out.println("");
-        const speedup = c.ms > 0 ? (b.ms / c.ms).toFixed(2) : "?";
-        out.println(pc.dim(`  C engine is ${speedup}x faster than the Bun engine on wall time.`));
+        const speedup = cffi.ms > 0 ? (b.ms / cffi.ms).toFixed(2) : "?";
+        out.println(pc.dim(`  C (bun:ffi) is ${speedup}x faster than the Bun (workers) engine on wall time.`));
+        const faster = cffi.ms <= b.ms ? "C (ffi)" : "Bun";
+        const gapMsg = `  C-ffi vs Bun wall-time gap: ${gapPct.toFixed(0)}% (${faster} faster).`;
+        out.println(gapPct > 20 ? pc.yellow(`${gapMsg} > 20% — worth a look.`) : pc.dim(gapMsg));
         out.println(
             pc.dim(
-                `  naive: du-style ${humanBytes(c.result.naive_bytes)} → real unique ${humanBytes(
-                    c.result.unique_bytes
-                )} (${c.result.shared_pct.toFixed(1)}% shared).`
+                `  naive: du-style ${humanBytes(cffi.result.naive_bytes)} → real unique ${humanBytes(
+                    cffi.result.unique_bytes
+                )} (${cffi.result.shared_pct.toFixed(1)}% shared).`
             )
         );
 
         out.println("");
         if (match) {
-            out.println(pc.green(`  ✓ cross-check PASS — C and Bun agree byte-for-byte`));
-            out.println(pc.dim(`    naive=${c.result.naive_bytes}  unique=${c.result.unique_bytes}`));
+            out.println(pc.green(`  ✓ cross-check PASS — C (ffi) and Bun agree byte-for-byte`));
+            out.println(pc.dim(`    naive=${cffi.result.naive_bytes}  unique=${cffi.result.unique_bytes}`));
         } else {
             out.println(pc.yellow(`  ⚠ cross-check DIFF (a live tree can change between runs):`));
             out.println(
                 pc.dim(
-                    `    naive  C=${c.result.naive_bytes} Bun=${b.result.naive_bytes} (${naiveMatch ? "match" : "differ"})`
+                    `    naive  C=${cffi.result.naive_bytes} Bun=${b.result.naive_bytes} (${naiveMatch ? "match" : "differ"})`
                 )
             );
             out.println(
                 pc.dim(
-                    `    unique C=${c.result.unique_bytes} Bun=${b.result.unique_bytes} (${uniqueMatch ? "match" : "differ"})`
+                    `    unique C=${cffi.result.unique_bytes} Bun=${b.result.unique_bytes} (${uniqueMatch ? "match" : "differ"})`
                 )
             );
             out.println(pc.dim(`    Re-run on a quiesced/static tree for an exact byte match.`));
