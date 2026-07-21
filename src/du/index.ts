@@ -196,8 +196,8 @@ program
         }
 
         out.println("");
-        const speedup = b.ms > 0 ? (b.ms / c.ms).toFixed(2) : "?";
-        out.println(pc.dim(`  C engine is ${speedup}x the Bun engine on wall time.`));
+        const speedup = c.ms > 0 ? (b.ms / c.ms).toFixed(2) : "?";
+        out.println(pc.dim(`  C engine is ${speedup}x faster than the Bun engine on wall time.`));
         out.println(
             pc.dim(
                 `  naive: du-style ${humanBytes(c.result.naive_bytes)} → real unique ${humanBytes(
