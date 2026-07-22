@@ -8,10 +8,12 @@ export * from "./projects";
 export { extractToolInputSummary, extractToolResultText, isAssistantEndTurn } from "./session-helpers";
 export * from "./types";
 
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 /**
  * Parse a JSONL transcript file into an array of message objects.
@@ -62,10 +64,115 @@ export function _setFindClaudeCommandTestHooks(hooks: FindClaudeCommandTestHooks
     findClaudeCommandTestHooks = hooks;
 }
 
+/**
+ * Resolving the command probes an interactive shell (~350-480ms) to pick up the
+ * user's `ccc`/`cc`/`claude` wrapper functions from their rc file. The winner
+ * changes only when they edit that rc file, so cache it keyed on shell + rc mtime
+ * — editing the wrapper invalidates it, and a 7-day TTL is a belt-and-suspenders
+ * fallback. Every `tools claude start/run` launch would otherwise pay the probe.
+ */
+interface ResolvedCommandCache {
+    command: string;
+    shell: string;
+    rcPath: string | null;
+    rcMtimeMs: number | null;
+    cachedAt: number;
+}
+
+const RESOLVED_COMMAND_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function resolvedCommandCachePath(): string {
+    return join(env.paths.getHome(), ".genesis-tools", "claude", "resolved-command.json");
+}
+
+/** The interactive rc file that defines the wrapper functions, for cache invalidation. */
+function interactiveRcPath(shell: string): string | null {
+    const base = shell.split("/").pop() ?? "";
+    const home = env.paths.getHome();
+    if (base.includes("zsh")) {
+        return join(home, ".zshrc");
+    }
+
+    if (base.includes("bash")) {
+        return join(home, ".bashrc");
+    }
+
+    return null;
+}
+
+function rcMtimeMs(rcPath: string | null): number | null {
+    if (!rcPath) {
+        return null;
+    }
+
+    try {
+        return statSync(rcPath).mtimeMs;
+    } catch {
+        return null;
+    }
+}
+
+function readResolvedCommandCache(shell: string): string | null {
+    try {
+        const path = resolvedCommandCachePath();
+        if (!existsSync(path)) {
+            return null;
+        }
+
+        const cache = SafeJSON.parse(readFileSync(path, "utf8")) as ResolvedCommandCache;
+
+        if (cache.shell !== shell) {
+            return null;
+        }
+
+        if (Date.now() - cache.cachedAt > RESOLVED_COMMAND_CACHE_TTL_MS) {
+            return null;
+        }
+
+        const currentMtime = rcMtimeMs(interactiveRcPath(shell));
+        if (currentMtime !== cache.rcMtimeMs) {
+            return null;
+        }
+
+        logger.debug({ command: cache.command, shell }, "[findClaudeCommand] cache hit");
+        return cache.command;
+    } catch (error) {
+        logger.debug({ error }, "[findClaudeCommand] cache read failed");
+        return null;
+    }
+}
+
+function writeResolvedCommandCache(command: string, shell: string): void {
+    try {
+        const path = resolvedCommandCachePath();
+        mkdirSync(dirname(path), { recursive: true });
+        const rcPath = interactiveRcPath(shell);
+        const cache: ResolvedCommandCache = {
+            command,
+            shell,
+            rcPath,
+            rcMtimeMs: rcMtimeMs(rcPath),
+            cachedAt: Date.now(),
+        };
+        writeFileSync(path, SafeJSON.stringify(cache, null, 2));
+        logger.debug({ command, shell }, "[findClaudeCommand] cached resolved command");
+    } catch (error) {
+        logger.debug({ error }, "[findClaudeCommand] cache write failed");
+    }
+}
+
 export async function findClaudeCommand(): Promise<string> {
     const shell = env.paths.getShell("/bin/sh");
     const candidates = findClaudeCommandTestHooks?.candidates ?? ["ccc", "cc", "claude"];
     const timeoutMs = findClaudeCommandTestHooks?.timeoutMs ?? 3000;
+
+    // Test hooks force a live probe; production reads the mtime-keyed cache first.
+    if (!findClaudeCommandTestHooks) {
+        const cached = readResolvedCommandCache(shell);
+        if (cached) {
+            return cached;
+        }
+    }
 
     for (const candidate of candidates) {
         const proc = findClaudeCommandTestHooks?.spawnProbe
@@ -83,6 +190,10 @@ export async function findClaudeCommand(): Promise<string> {
             await proc.exited;
 
             if (proc.exitCode === 0 && stdout.includes("Claude Code")) {
+                if (!findClaudeCommandTestHooks) {
+                    writeResolvedCommandCache(candidate, shell);
+                }
+
                 return candidate;
             }
         } catch {
