@@ -68,6 +68,55 @@ function shellQuote(arg: string): string {
     return `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
+/** Headless launch (`-p`/`--print`): claude prints a result and exits, no TUI. */
+function isHeadlessPassthrough(passthrough: string[]): boolean {
+    return passthrough.some((arg) => arg === "-p" || arg === "--print");
+}
+
+/**
+ * The interactive shell (`-ic`) we spawn to pick up the user's ccc/claude wrappers
+ * emits `(eval):N: can't change option: zle` during rc init when a plugin toggles
+ * the ZLE option without a usable line editor. It's cosmetic. In headless mode the
+ * shell's stderr carries only diagnostics (no TUI), so drop just those benign lines
+ * and forward everything else through.
+ */
+async function forwardStderrDroppingZleNoise(stream: ReadableStream<Uint8Array>): Promise<void> {
+    const decoder = new TextDecoder();
+    const isZleNoise = (line: string) => /can't change option: zle/.test(line);
+    const reader = stream.getReader();
+    let buffer = "";
+
+    const flushLine = (line: string) => {
+        if (!isZleNoise(line)) {
+            process.stderr.write(line);
+        }
+    };
+
+    try {
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) {
+                break;
+            }
+
+            buffer += decoder.decode(value, { stream: true });
+            let newlineIndex = buffer.indexOf("\n");
+            while (newlineIndex !== -1) {
+                flushLine(buffer.slice(0, newlineIndex + 1));
+                buffer = buffer.slice(newlineIndex + 1);
+                newlineIndex = buffer.indexOf("\n");
+            }
+        }
+
+        buffer += decoder.decode();
+        if (buffer) {
+            flushLine(buffer);
+        }
+    } finally {
+        reader.releaseLock();
+    }
+}
+
 function modelOption(model: LaunchableModel) {
     return { value: model.id, label: model.id, hint: model.label };
 }
@@ -404,8 +453,12 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         .join(" ");
 
     const mode = opts.keychain ? "keychain login" : "long-lived token";
-    out.printlnErr(pc.dim(`Starting Claude as ${pc.cyan(accountName)} (${mode})${detail ? ` ${detail}` : ""}...`));
-    logger.debug({ cmd, accountName, modelId, resumeArgs, passthrough, mode }, "Spawning claude");
+    const headless = isHeadlessPassthrough(passthrough);
+    if (!headless) {
+        out.printlnErr(pc.dim(`Starting Claude as ${pc.cyan(accountName)} (${mode})${detail ? ` ${detail}` : ""}...`));
+    }
+
+    logger.debug({ cmd, accountName, modelId, resumeArgs, passthrough, mode, headless }, "Spawning claude");
 
     let launchEnv: Record<string, string | undefined>;
 
@@ -444,11 +497,16 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
 
     const proc = Bun.spawn({
         cmd: [shell, "-ic", `exec ${cmd}${suffix}`],
-        stdio: ["inherit", "inherit", "inherit"],
+        stdio: ["inherit", "inherit", headless ? "pipe" : "inherit"],
         env: launchEnv,
     });
 
+    const stderrPump = headless && proc.stderr ? forwardStderrDroppingZleNoise(proc.stderr) : null;
+
     const exitCode = await proc.exited;
+    if (stderrPump) {
+        await stderrPump;
+    }
 
     if (opts.keychain) {
         try {
