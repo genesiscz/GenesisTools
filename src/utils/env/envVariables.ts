@@ -141,6 +141,8 @@ export const env = {
         getHome: () => getTrimmed("HOME") ?? homedir(),
         getUserProfile: () => getTrimmed("USERPROFILE"),
         getShell: (fallback = "/bin/sh") => getWithDefault("SHELL", fallback),
+        /** Claude Code's config dir override; when set, `.claude.json` lives at `<dir>/.claude.json`. */
+        getClaudeConfigDir: () => getTrimmed("CLAUDE_CONFIG_DIR"),
         getHistfile: () => getTrimmed("HISTFILE"),
         getClarityProjectCwd: () => getTrimmed("CLARITY_PROJECT_CWD") ?? cwd(),
         getAppData: () => getTrimmed("APPDATA"),
