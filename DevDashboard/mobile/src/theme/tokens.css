@@ -1,0 +1,19 @@
+/* DevDashboard --dd-* design tokens, ported from the web dashboard
+   (src/dev-dashboard/ui/src/slate-grid.css). The web dashboard ships a single
+   dark "Obsidian Terminal" palette; these values mirror it 1:1. The token NAMES
+   are the contract — keep them stable so the later NativeWind v5 (`@theme`)
+   migration is config-only. Consumed via Tailwind utilities (e.g. `bg-dd-bg-panel`)
+   wired in tailwind.config.js. */
+:root {
+    --dd-bg-base: #0c0e10;
+    --dd-bg-panel: #101316;
+    --dd-border: #1e2428;
+    --dd-grid: rgba(52, 211, 153, 0.04);
+    --dd-accent-from: #34d399;
+    --dd-accent-to: #2dd4bf;
+    --dd-accent-glow: rgba(52, 211, 153, 0.35);
+    --dd-text-primary: #e6edf3;
+    --dd-text-secondary: #8b96a0;
+    --dd-text-muted: #5b6670;
+    --dd-danger: #f87171;
+}
