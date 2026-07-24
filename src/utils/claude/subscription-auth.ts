@@ -235,6 +235,7 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
                 accessToken: newTokens.accessToken,
                 refreshToken: newTokens.refreshToken,
                 expiresAt: newTokens.expiresAt,
+                refreshExpiresAt: newTokens.refreshExpiresAt ?? diskAccount.tokens.refreshExpiresAt,
             },
         };
 

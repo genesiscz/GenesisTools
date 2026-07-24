@@ -64,9 +64,62 @@ const REDIRECT_URI = "https://platform.claude.com/oauth/code/callback";
 const FULL_SCOPES =
     "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 
-// Claude Code sends expires_in=31536000 (1 year) on its setup-token and
-// login-from-refresh-token exchanges; we request the same on login.
-const ONE_YEAR_SECONDS = 31536000;
+/**
+ * The single scope Claude Code requests for `setup-token`. A custom `expires_in`
+ * is only accepted when the grant carries THIS scope alone — any of the normal
+ * login scopes alongside it and the server answers "Invalid expiry for scope".
+ * Inference-only: such a token cannot call the usage or profile endpoints.
+ */
+export const INFERENCE_SCOPE = "user:inference";
+
+/** What Claude Code asks for on a setup-token exchange. */
+export const ONE_YEAR_SECONDS = 365 * 24 * 60 * 60;
+
+// We do NOT send a custom `expires_in` on the normal login exchange. Claude Code's setup-token
+// flow does, but the server refuses it for the scopes a normal login requests —
+// first "Custom expires_in not allowed for scope 'user:mcp_servers'", then, with
+// that scope dropped, "Invalid expiry for scope" (verified 2026-07-24). Every
+// attempt fell back to the server default anyway, so asking only cost a round
+// trip and a scary log line. Access tokens land at 8h and the refresh loop
+// renews them; `refresh_token_expires_in` governs the grant itself.
+
+/**
+ * Redacted shape of a token-endpoint response, logged so the lifetime the server
+ * actually grants is answerable from logs alone — `expires_in` for the access
+ * token, `refresh_token_expires_in` for the grant behind it. Never logs a token
+ * value: only lengths and the non-secret `sk-ant-oatNN-` style prefix.
+ */
+function describeTokenResponse(data: Record<string, unknown>): Record<string, unknown> {
+    const describeToken = (value: unknown) => {
+        if (typeof value !== "string") {
+            return value === undefined ? "absent" : `non-string(${typeof value})`;
+        }
+
+        const prefix = value.match(/^sk-ant-[a-z0-9]+-/)?.[0] ?? `${value.slice(0, 4)}…`;
+        return `${prefix}[len ${value.length}]`;
+    };
+
+    const expiresIn = data.expires_in;
+    const grantedFor =
+        typeof expiresIn === "number" ? `${(expiresIn / 3600).toFixed(1)}h (${(expiresIn / 86400).toFixed(1)}d)` : null;
+
+    const refreshExpiresIn = data.refresh_token_expires_in;
+
+    return {
+        keys: Object.keys(data).sort(),
+        expires_in: expiresIn,
+        expires_in_human: grantedFor,
+        // Separate server-side field: proof that the request-side expires_in
+        // governs the ACCESS token only, never the grant's own lifetime.
+        refresh_token_expires_in: refreshExpiresIn,
+        refresh_token_expires_in_human:
+            typeof refreshExpiresIn === "number" ? `${(refreshExpiresIn / 86400).toFixed(1)}d` : null,
+        token_type: data.token_type,
+        scope: data.scope,
+        access_token: describeToken(data.access_token),
+        refresh_token: describeToken(data.refresh_token),
+    };
+}
 
 export interface PKCEChallenge {
     verifier: string;
@@ -78,6 +131,12 @@ export interface OAuthTokens {
     accessToken: string;
     refreshToken: string;
     expiresAt: number; // Unix timestamp in ms
+    /**
+     * When the REFRESH grant itself dies (Unix ms), from the server's
+     * `refresh_token_expires_in`. Independent of `expiresAt` — this is the one
+     * that turns an account into `invalid_grant` and forces a browser re-login.
+     */
+    refreshExpiresAt?: number;
     scopes: string[];
     account?: { uuid: string; email: string };
     organization?: { uuid: string; name: string };
@@ -116,13 +175,14 @@ export class ClaudeOAuthClient {
      * Exchange the authorization code for tokens.
      * Call this after the user authorizes and pastes the code.
      */
-    async exchangeCode(codeInput: string): Promise<OAuthTokens> {
+    async exchangeCode(codeInput: string, opts: { expiresIn?: number } = {}): Promise<OAuthTokens> {
         if (!this.pendingSession) {
             throw new Error("No pending OAuth session. Call startLogin() first.");
         }
 
+        // Kept until the exchange SUCCEEDS: a mistyped/mis-pasted code must not
+        // burn the PKCE session and force the whole browser flow again.
         const { verifier } = this.pendingSession;
-        this.pendingSession = null; // Clear session after use
 
         // Claude returns "code#state" format
         const [code, state] = codeInput.includes("#") ? codeInput.split("#") : [codeInput, ""];
@@ -134,41 +194,36 @@ export class ClaudeOAuthClient {
             state,
             redirect_uri: REDIRECT_URI,
             code_verifier: verifier,
-            expires_in: ONE_YEAR_SECONDS,
         };
 
-        let res = await fetch(TOKEN_URL, {
+        // Only ever set for an INFERENCE_SCOPE grant — see the note above.
+        if (opts.expiresIn !== undefined) {
+            body.expires_in = opts.expiresIn;
+        }
+
+        const res = await fetch(TOKEN_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: SafeJSON.stringify(body),
         });
-
-        if (!res.ok && res.status >= 400 && res.status < 500) {
-            // Server may reject the 1-year expires_in for this grant type —
-            // retry once without it rather than failing the whole login.
-            const text = await res.text();
-            logger.warn(
-                `[oauth] exchange with expires_in failed (${res.status} ${text.slice(0, 200)}), retrying without`
-            );
-            delete body.expires_in;
-            res = await fetch(TOKEN_URL, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: SafeJSON.stringify(body),
-            });
-        }
 
         if (!res.ok) {
             const text = await res.text();
             throw new Error(`Token exchange failed: ${res.status} ${text}`);
         }
 
+        this.pendingSession = null;
+
         const data = await res.json();
+        logger.info({ response: describeTokenResponse(data) }, "[oauth] authorization_code exchange response");
         const expiresIn = typeof data.expires_in === "number" ? data.expires_in : 3600;
+        const refreshExpiresIn =
+            typeof data.refresh_token_expires_in === "number" ? data.refresh_token_expires_in : undefined;
         return {
             accessToken: data.access_token,
             refreshToken: data.refresh_token,
             expiresAt: Date.now() + expiresIn * 1000,
+            refreshExpiresAt: refreshExpiresIn === undefined ? undefined : Date.now() + refreshExpiresIn * 1000,
             scopes: (data.scope ?? "").split(" ").filter(Boolean),
             account: data.account ? { uuid: data.account.uuid, email: data.account.email_address } : undefined,
             organization: data.organization
@@ -198,11 +253,15 @@ export class ClaudeOAuthClient {
         }
 
         const data = await res.json();
+        logger.debug({ response: describeTokenResponse(data) }, "[oauth] refresh_token exchange response");
         const expiresIn = typeof data.expires_in === "number" ? data.expires_in : 3600;
+        const refreshExpiresIn =
+            typeof data.refresh_token_expires_in === "number" ? data.refresh_token_expires_in : undefined;
         return {
             accessToken: data.access_token,
             refreshToken: data.refresh_token,
             expiresAt: Date.now() + expiresIn * 1000,
+            refreshExpiresAt: refreshExpiresIn === undefined ? undefined : Date.now() + refreshExpiresIn * 1000,
             scopes: (data.scope ?? "").split(" ").filter(Boolean),
         };
     }

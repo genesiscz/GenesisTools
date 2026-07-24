@@ -20,8 +20,12 @@ export interface AIAccountTokens {
     authFile?: string;
     accessToken?: string; // OAuth access token
     refreshToken?: string; // OAuth refresh token
-    expiresAt?: number; // Token expiry (Unix ms)
+    expiresAt?: number; // Access token expiry (Unix ms)
+    /** Refresh-grant expiry (Unix ms) from `refresh_token_expires_in` — when this passes, the account needs a browser re-login. */
+    refreshExpiresAt?: number;
     longLivedToken?: string; // Long-lived OAuth token from `claude setup-token` (sk-ant-oat01-...); passed via CLAUDE_CODE_OAUTH_TOKEN
+    /** Expiry of `longLivedToken` (Unix ms) — known only when we minted it ourselves (`login-long --setup-token`), never for a pasted one. */
+    longLivedTokenExpiresAt?: number;
 }
 
 /**
@@ -49,6 +53,8 @@ export interface AIAccountEntry {
     secondary?: AISecondaryLogin;
     label?: string; // e.g. "max 20x", "pro"
     apps?: string[]; // which tools use this: ["ask", "claude"]
+    /** Stripe billing-cycle anchor from the OAuth profile; drives the renewal date. */
+    subscriptionCreatedAt?: string;
 }
 
 // ── Task types (from types.ts) ──
