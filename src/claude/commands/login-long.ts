@@ -1,6 +1,7 @@
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { INFERENCE_SCOPE, ONE_YEAR_SECONDS } from "@genesiscz/utils/claude/auth";
+import { LONG_TOKEN_MIN_LENGTH, verifyLongLivedToken } from "@genesiscz/utils/claude/token-verify";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { out } from "@genesiscz/utils/logger";
@@ -204,11 +205,20 @@ export function registerLoginLongCommand(program: Command): void {
             const token = await p.password({
                 message: `Paste the long-lived token (${TOKEN_PREFIX}...):`,
                 validate: (val) => {
-                    if (!val?.trim()) {
+                    const trimmed = val?.trim();
+
+                    if (!trimmed) {
                         return "Token is required";
                     }
-                    if (!val.trim().startsWith(TOKEN_PREFIX)) {
+
+                    if (!trimmed.startsWith(TOKEN_PREFIX)) {
                         return `Token must start with "${TOKEN_PREFIX}"`;
+                    }
+
+                    // A truncated paste authenticates as nobody, and Claude Code
+                    // silently falls back to the keychain account instead of failing.
+                    if (trimmed.length < LONG_TOKEN_MIN_LENGTH) {
+                        return `Token looks truncated (${trimmed.length} chars, expected ~108). Copy the whole line.`;
                     }
                 },
             });
@@ -219,6 +229,24 @@ export function registerLoginLongCommand(program: Command): void {
             }
 
             const trimmed = (token as string).trim();
+
+            const spinner = p.spinner();
+            spinner.start("Verifying the token against the API...");
+            const verdict = await verifyLongLivedToken(trimmed);
+
+            if (verdict === "invalid") {
+                spinner.stop(pc.red("Token rejected by the API (401/403) — nothing saved."));
+                out.println(pc.dim("Re-run `claude setup-token` and copy the whole line."));
+                process.exit(1);
+            }
+
+            if (verdict === "unreachable") {
+                spinner.stop(pc.yellow("Could not reach the API to verify — saving unverified."));
+            } else if (verdict === "limited") {
+                spinner.stop("Token authenticates (rate-limited, which still proves the login).");
+            } else {
+                spinner.stop("Token verified.");
+            }
 
             await aiConfig.updateAccount(accountName, {
                 tokens: { ...account.tokens, longLivedToken: trimmed },
