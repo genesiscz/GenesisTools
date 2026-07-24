@@ -51,8 +51,8 @@ if rg -l "sessionid=|sessionid_sign=" src/tradingview/lib/__fixtures__/ >/dev/nu
 else record V0.5 "$CMD_LABEL" PASS ""; fi
 
 echo "=== V1 Static ==="
-CMD_LABEL="bun test src/tradingview"
-if bun test src/tradingview 2>&1 | tee /tmp/tv-verify-V1.1.log | tail -5 | rg -q "0 fail"; then
+CMD_LABEL="bun scripts/test.ts src/tradingview"
+if bun scripts/test.ts src/tradingview 2>&1 | tee /tmp/tv-verify-V1.1.log | tail -5 | rg -q "0 fail"; then
   record V1.1 "$CMD_LABEL" PASS ""
 else record V1.1 "$CMD_LABEL" FAIL ""; fi
 
@@ -138,7 +138,7 @@ else
 fi
 
 CMD_LABEL="notify.test.ts"
-if bun test src/tradingview/lib/notify.test.ts 2>&1 | tail -3 | rg -q "0 fail"; then record V2.11 "$CMD_LABEL" PASS ""
+if bun scripts/test.ts src/tradingview/lib/notify.test.ts 2>&1 | tail -3 | rg -q "0 fail"; then record V2.11 "$CMD_LABEL" PASS ""
 else record V2.11 "$CMD_LABEL" FAIL ""; fi
 
 CMD_LABEL="quotes regression"
@@ -215,7 +215,7 @@ else record V5.3 "$CMD_LABEL" FAIL ""; fi
 
 echo "=== V6 Final ==="
 # V6.1 re-run V1 subset
-if bun test src/tradingview 2>&1 | tail -3 | rg -q "0 fail" && ! tsgo --noEmit 2>&1 | rg -q "src/tradingview"; then record V6.1 "re-run V1" PASS ""
+if bun scripts/test.ts src/tradingview 2>&1 | tail -3 | rg -q "0 fail" && ! tsgo --noEmit 2>&1 | rg -q "src/tradingview"; then record V6.1 "re-run V1" PASS ""
 else record V6.1 "re-run V1" FAIL ""; fi
 
 COMMITS=$(git log --oneline master..feat/tradingview 2>/dev/null | wc -l | tr -d ' ')

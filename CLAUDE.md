@@ -30,6 +30,12 @@ tools <tool-name> --readme
 
 So when you write the end-of-task notification, you can typically rely on a saved `claude` profile and just call `tools say "<xxx> done" --app claude` — voice etc. come from the profile.
 
+### Running Tests
+
+**Use `bun run test` (or `bun scripts/test.ts <paths>`), never bare `bun test`.** The wrapper stat-checks the dependency tree first (~1ms) and reinstalls when it is missing, partial or stale, then hands off to `bun test` with argv, output and exit code untouched.
+
+This exists because inside a **git worktree** any `bunx` call creates a partial `node_modules/` that shadows the parent checkout's complete one. Bare `bun test` then fails across a hundred unrelated files with errors like `Cannot find module 'parse5/lib/common/doctype'`, which looks exactly like the branch broke the world. Logic lives in `scripts/test-deps.ts` (`diagnose()` / `lockStamp()`), covered by `scripts/test-deps.test.ts`.
+
 ### Installation & Setup
 
 ```bash
