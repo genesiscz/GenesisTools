@@ -3,6 +3,7 @@ import { BUCKET_LABELS, BUCKET_PERIODS_MS, colorForPct } from "@app/claude/lib/u
 import { formatSpendBalance } from "@app/claude/lib/usage/display";
 import type { NormalizedLimit, NormalizedSpend, Severity } from "@app/claude/lib/usage/limits";
 import { normalizeLimits, normalizeSpend } from "@app/claude/lib/usage/limits";
+import { formatCoarseSpan, formatRenewsAt } from "@app/claude/lib/usage/subscription";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { useTerminalSize } from "@genesiscz/utils/ink/hooks/use-terminal-size";
 import { Box, Text } from "ink";
@@ -272,6 +273,16 @@ function staleHeaderText(account: AccountUsage): string | null {
     return `⚠ stale ${ago} · ${shortStaleReason(account.stale.reason)}`;
 }
 
+/** Rendered width of the header: dot + name + label, plus the stale marker when shown. */
+function headerLength(account: AccountUsage, staleText: string | null): number {
+    return (
+        2 +
+        account.accountName.length +
+        (account.label ? 2 + account.label.length : 0) +
+        (staleText ? 2 + staleText.length : 0)
+    );
+}
+
 /** Whether the stale marker fits on the header line next to name + label. */
 function staleFitsHeader(account: AccountUsage, width: number): boolean {
     const stale = staleHeaderText(account);
@@ -280,8 +291,65 @@ function staleFitsHeader(account: AccountUsage, width: number): boolean {
         return false;
     }
 
-    const headerLen = 2 + account.accountName.length + (account.label ? 2 + account.label.length : 0);
-    return headerLen + 2 + stale.length <= width;
+    return headerLength(account, null) + 2 + stale.length <= width;
+}
+
+/** Within this window the refresh grant's death is worth shouting about. */
+const GRANT_WARNING_MS = 14 * 24 * 3_600_000;
+
+/**
+ * The refresh grant dying is what forces a browser re-login, so it is surfaced
+ * only when it is imminent (or already gone) — a grant with months left is noise.
+ * Shares the header line with the renewal marker; both are dropped when narrow.
+ */
+function grantWarningText(account: AccountUsage, now: number): string | null {
+    if (!account.refreshExpiresAt) {
+        return null;
+    }
+
+    if (account.refreshExpiresAt <= now) {
+        return "⚠ login expired";
+    }
+
+    if (account.refreshExpiresAt - now > GRANT_WARNING_MS) {
+        return null;
+    }
+
+    return `⚠ login ends in ${formatCoarseSpan(new Date(now), new Date(account.refreshExpiresAt))}`;
+}
+
+/**
+ * The renewal marker only ever rides the header line — it is nice-to-know, so a
+ * narrow column drops it rather than spending a whole extra line on it (which
+ * would also desync estimateAccountHeight).
+ */
+/**
+ * The two header extras, each dropped once the line is full. The grant warning
+ * is placed first because it is actionable (re-login) where the renewal date is
+ * trivia, so on a tight line the warning is what survives.
+ */
+function headerExtras(
+    account: AccountUsage,
+    staleText: string | null,
+    width: number,
+    now: number = Date.now()
+): { renewsText: string | null; grantText: string | null } {
+    let used = headerLength(account, staleText);
+
+    const grant = grantWarningText(account, now);
+    const grantFits = grant !== null && used + 2 + grant.length <= width;
+
+    if (grantFits) {
+        used += 2 + grant.length;
+    }
+
+    const renews = formatRenewsAt(account.subscriptionCreatedAt);
+    const renewsFits = renews !== null && used + 2 + renews.length <= width;
+
+    return {
+        grantText: grantFits ? grant : null,
+        renewsText: renewsFits ? renews : null,
+    };
 }
 
 function worstSeverity(limits: NormalizedLimit[], spend: NormalizedSpend | null): Severity {
@@ -302,9 +370,11 @@ interface AccountHeaderProps {
     account: AccountUsage;
     dotColor: string | undefined;
     staleText?: string | null;
+    renewsText?: string | null;
+    grantText?: string | null;
 }
 
-function AccountHeader({ account, dotColor, staleText }: AccountHeaderProps) {
+function AccountHeader({ account, dotColor, staleText, renewsText, grantText }: AccountHeaderProps) {
     return (
         <Box>
             <Text color={dotColor} dimColor={dotColor === undefined}>
@@ -315,6 +385,8 @@ function AccountHeader({ account, dotColor, staleText }: AccountHeaderProps) {
             </Text>
             {account.label ? <Text dimColor>{`  ${account.label}`}</Text> : null}
             {staleText ? <Text color="yellow">{`  ${staleText}`}</Text> : null}
+            {grantText ? <Text color="red">{`  ${grantText}`}</Text> : null}
+            {renewsText ? <Text dimColor>{`  ${renewsText}`}</Text> : null}
         </Box>
     );
 }
@@ -334,7 +406,7 @@ export function AccountSection({ account, prominentBuckets, width }: AccountSect
     if (account.error && !account.usage) {
         return (
             <Box flexDirection="column" marginBottom={1}>
-                <AccountHeader account={account} dotColor="red" />
+                <AccountHeader account={account} dotColor="red" {...headerExtras(account, null, sectionWidth)} />
                 <Text color="red">{`  ${account.error}`}</Text>
             </Box>
         );
@@ -343,7 +415,7 @@ export function AccountSection({ account, prominentBuckets, width }: AccountSect
     if (!account.usage) {
         return (
             <Box flexDirection="column" marginBottom={1}>
-                <AccountHeader account={account} dotColor={undefined} />
+                <AccountHeader account={account} dotColor={undefined} {...headerExtras(account, null, sectionWidth)} />
                 <Text dimColor>{"  No usage data"}</Text>
             </Box>
         );
@@ -362,6 +434,7 @@ export function AccountSection({ account, prominentBuckets, width }: AccountSect
                 account={account}
                 dotColor={account.stale ? "yellow" : dotColor}
                 staleText={staleInline ? staleText : null}
+                {...headerExtras(account, staleInline ? staleText : null, sectionWidth)}
             />
             {staleText && !staleInline ? <Text color="yellow">{`  ${staleText}`}</Text> : null}
             {visibleLimits.map((limit) => (

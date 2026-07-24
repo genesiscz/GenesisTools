@@ -1,6 +1,7 @@
 import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
+import { ensureSubscriptionAnchors } from "./subscription";
 
 export type { AccountInfo, KeychainCredentials } from "@genesiscz/utils/claude/auth";
 
@@ -85,6 +86,10 @@ export interface AccountStaleInfo {
 export interface AccountUsage {
     accountName: string;
     label?: string;
+    /** Stripe billing-cycle anchor (ISO) — renders as the next renewal date. */
+    subscriptionCreatedAt?: string;
+    /** Refresh-grant expiry (Unix ms) — past this the account needs a browser re-login. */
+    refreshExpiresAt?: number;
     usage?: UsageResponse;
     error?: string;
     /**
@@ -177,6 +182,10 @@ export async function fetchAllAccountsUsage(
 
     logger.debug(`[usage] polling ${accounts.length} account(s): ${accounts.map((a) => a.name).join(", ")}`);
 
+    // One-time per account, then free forever — the anchor rides along with usage
+    // so every consumer (TUI, picker, cache) can render the renewal date.
+    await ensureSubscriptionAnchors(config, accounts);
+
     const results = await Promise.allSettled(
         accounts.map(async (account: AIAccountEntry) => {
             const tag = `[usage:${account.name}]`;
@@ -191,7 +200,13 @@ export async function fetchAllAccountsUsage(
 
             try {
                 const usage = await fetchUsage(token, signal, account.name);
-                return { accountName: account.name, label: account.label, usage } satisfies AccountUsage;
+                return {
+                    accountName: account.name,
+                    label: account.label,
+                    subscriptionCreatedAt: account.subscriptionCreatedAt,
+                    refreshExpiresAt: account.tokens.refreshExpiresAt,
+                    usage,
+                } satisfies AccountUsage;
             } catch (err) {
                 if (!(err instanceof RetryableApiError)) {
                     logger.error(`${tag} fetch failed: ${err instanceof Error ? err.message : err}`);
@@ -232,7 +247,13 @@ export async function fetchAllAccountsUsage(
 
                 logger.info(`${tag} retrying with refreshed token`);
                 const usage = await fetchUsage(freshToken, signal, account.name);
-                return { accountName: account.name, label: account.label, usage } satisfies AccountUsage;
+                return {
+                    accountName: account.name,
+                    label: account.label,
+                    subscriptionCreatedAt: account.subscriptionCreatedAt,
+                    refreshExpiresAt: account.tokens.refreshExpiresAt,
+                    usage,
+                } satisfies AccountUsage;
             }
         })
     );
@@ -243,6 +264,12 @@ export async function fetchAllAccountsUsage(
         }
 
         logger.error(`[usage:${accounts[i].name}] final error: ${r.reason}`);
-        return { accountName: accounts[i].name, label: accounts[i].label, error: String(r.reason) };
+        return {
+            accountName: accounts[i].name,
+            label: accounts[i].label,
+            subscriptionCreatedAt: accounts[i].subscriptionCreatedAt,
+            refreshExpiresAt: accounts[i].tokens.refreshExpiresAt,
+            error: String(r.reason),
+        };
     });
 }
