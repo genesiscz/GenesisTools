@@ -1,10 +1,14 @@
 import type { PollResult } from "@app/claude/commands/usage/types";
+import { scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
 import type { AccountUsage } from "@app/claude/lib/usage/api";
 import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { useTerminalSize } from "@genesiscz/utils/ink/hooks/use-terminal-size";
 import { Box, Text } from "ink";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AccountSection, estimateAccountHeight, MIN_ACCOUNT_COLUMN_WIDTH } from "./account-section";
+
+/** `config` keeps the account order from the config file; `urgency` applies grouped scoring. */
+export type OverviewSortMode = "config" | "urgency";
 
 // Frame chrome around the account list: TabBar(1) + StatusBar(2) +
 // paddingY(2) + height clamp margin(1).
@@ -18,6 +22,20 @@ const COLUMN_GAP = 2;
 interface OverviewViewProps {
     results: PollResult | null;
     config: UsageDashboardConfig;
+    sortMode?: OverviewSortMode;
+}
+
+/** Reorder by the shared grouped-urgency scoring (`s` in the TUI); same lib the cc run picker uses. */
+function applySort(accounts: AccountUsage[], mode: OverviewSortMode): AccountUsage[] {
+    if (mode === "config") {
+        return accounts;
+    }
+
+    const byName = new Map(accounts.map((a) => [a.accountName, a]));
+
+    return sortGrouped(scoreAccounts(accounts))
+        .map((scored) => byName.get(scored.accountName))
+        .filter((account): account is AccountUsage => account !== undefined);
 }
 
 /** Split accounts into two columns balanced by rendered height, order kept. */
@@ -43,9 +61,11 @@ function splitByHeight(
     return [accounts.slice(0, Math.max(1, splitAt)), accounts.slice(Math.max(1, splitAt))];
 }
 
-export function OverviewView({ results, config }: OverviewViewProps) {
+export function OverviewView({ results, config, sortMode = "config" }: OverviewViewProps) {
     const { columns: termWidth, rows: termHeight } = useTerminalSize();
     const [, setTick] = useState(0);
+
+    const accounts = useMemo(() => applySort(results?.accounts ?? [], sortMode), [results?.accounts, sortMode]);
 
     // Countdowns and projections are time-derived; a single coarse tick keeps
     // them fresh without a 1s interval per bucket row.
@@ -75,7 +95,7 @@ export function OverviewView({ results, config }: OverviewViewProps) {
         );
     }
 
-    if (results.accounts.length === 0) {
+    if (accounts.length === 0) {
         return (
             <Box paddingX={1}>
                 <Text dimColor>{"No accounts configured. Run: tools claude config"}</Text>
@@ -84,19 +104,19 @@ export function OverviewView({ results, config }: OverviewViewProps) {
     }
 
     const singleColumnWidth = termWidth - 2;
-    const totalHeight = results.accounts.reduce(
+    const totalHeight = accounts.reduce(
         (sum, a) => sum + estimateAccountHeight(a, config.prominentBuckets, singleColumnWidth),
         0
     );
     const availableRows = termHeight - CHROME_LINES - (results.error ? 1 : 0);
     const columnWidth = Math.floor((termWidth - 2 - COLUMN_GAP) / 2);
-    const useTwoColumns = results.accounts.length > 1 && totalHeight > availableRows && columnWidth >= MIN_COLUMN_WIDTH;
+    const useTwoColumns = accounts.length > 1 && totalHeight > availableRows && columnWidth >= MIN_COLUMN_WIDTH;
 
     if (!useTwoColumns) {
         return (
             <Box flexDirection="column" flexShrink={0} paddingX={1} paddingY={1}>
                 {results.error ? <Text color="yellow">{`  ⚠ Last poll failed: ${results.error}`}</Text> : null}
-                {results.accounts.map((account) => (
+                {accounts.map((account) => (
                     <AccountSection
                         key={account.accountName}
                         account={account}
@@ -107,7 +127,7 @@ export function OverviewView({ results, config }: OverviewViewProps) {
         );
     }
 
-    const [leftAccounts, rightAccounts] = splitByHeight(results.accounts, config.prominentBuckets, columnWidth);
+    const [leftAccounts, rightAccounts] = splitByHeight(accounts, config.prominentBuckets, columnWidth);
 
     return (
         <Box flexDirection="column" flexShrink={0} paddingX={1} paddingY={1}>

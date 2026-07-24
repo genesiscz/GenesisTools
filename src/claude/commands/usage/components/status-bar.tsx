@@ -7,6 +7,8 @@ interface StatusBarProps {
     paused: boolean;
     pollingLabel: string | null;
     pollInterval: number;
+    /** Shown only when the Overview tab is active — the `s` toggle is scoped to it. */
+    sortMode?: "config" | "urgency";
 }
 
 function formatTime(date: Date): string {
@@ -23,10 +25,11 @@ const SHORTCUTS: Array<[string, string]> = [
     ["r", "refresh"],
     ["p", "pause"],
     ["i", "interval"],
+    ["s", "sort"],
     ["?", "help"],
 ];
 
-export function StatusBar({ lastRefresh, nextRefresh, paused, pollingLabel, pollInterval }: StatusBarProps) {
+export function StatusBar({ lastRefresh, nextRefresh, paused, pollingLabel, pollInterval, sortMode }: StatusBarProps) {
     const [, setTick] = useState(0);
 
     useEffect(() => {
@@ -60,6 +63,7 @@ export function StatusBar({ lastRefresh, nextRefresh, paused, pollingLabel, poll
                 <Text dimColor>{` · every ${pollInterval}s`}</Text>
                 {pollingLabel && <Text color="yellow">{`  ● polling ${pollingLabel}`}</Text>}
                 {paused && <Text color="red">{"  ⏸ paused"}</Text>}
+                {sortMode && <Text dimColor>{`  · sort ${sortMode === "urgency" ? "urgency" : "config"}`}</Text>}
             </Box>
             <Box>
                 {SHORTCUTS.map(([key, label]) => (

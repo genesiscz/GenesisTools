@@ -11,6 +11,7 @@ const KEYBINDINGS = [
     ["r", "Force refresh now"],
     ["p", "Pause/resume polling"],
     ["i", "Cycle poll interval (5/10/15/30/60s)"],
+    ["s", "Overview: config order ↔ grouped urgency"],
     ["?", "Toggle this help"],
     ["", ""],
     ["", "Timeline tab:"],

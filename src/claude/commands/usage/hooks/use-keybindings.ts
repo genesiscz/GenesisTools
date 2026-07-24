@@ -6,9 +6,16 @@ interface KeybindingsOptions {
     onDismissAlert: () => void;
     onCycleInterval: () => void;
     onTogglePause: () => void;
+    onToggleSort: () => void;
 }
 
-export function useKeybindings({ onForceRefresh, onDismissAlert, onCycleInterval, onTogglePause }: KeybindingsOptions) {
+export function useKeybindings({
+    onForceRefresh,
+    onDismissAlert,
+    onCycleInterval,
+    onTogglePause,
+    onToggleSort,
+}: KeybindingsOptions) {
     const { exit } = useApp();
     const [showHelp, setShowHelp] = useState(false);
 
@@ -31,6 +38,10 @@ export function useKeybindings({ onForceRefresh, onDismissAlert, onCycleInterval
 
         if (input === "x") {
             onDismissAlert();
+        }
+
+        if (input === "s") {
+            onToggleSort();
         }
 
         if (input === "?") {

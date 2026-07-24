@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertBanner } from "./components/alert-banner";
 import { HelpOverlay } from "./components/help-overlay";
 import { HistoryView } from "./components/history/history-view";
-import { OverviewView } from "./components/overview/overview-view";
+import { type OverviewSortMode, OverviewView } from "./components/overview/overview-view";
 import { RatesView } from "./components/rates/rates-view";
 import { SessionsView } from "./components/sessions/sessions-view";
 import { StatusBar } from "./components/status-bar";
@@ -48,6 +48,7 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
     );
 
     const [paused, setPaused] = useState(false);
+    const [sortMode, setSortMode] = useState<OverviewSortMode>("config");
     const [, forceUpdate] = useState(0);
 
     const cycleInterval = useCallback(() => {
@@ -76,6 +77,7 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
         },
         onCycleInterval: cycleInterval,
         onTogglePause: () => setPaused((p) => !p),
+        onToggleSort: () => setSortMode((mode) => (mode === "config" ? "urgency" : "config")),
     });
 
     if (showHelp) {
@@ -90,7 +92,7 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
         <Box flexDirection="column" height={Math.max(1, rows - 1)} overflow="hidden">
             <TabBar tabs={tabs} activeIndex={activeIndex} />
             <Box flexDirection="column" flexGrow={1} overflowY="hidden">
-                {activeTab === "overview" && <OverviewView results={results} config={config} />}
+                {activeTab === "overview" && <OverviewView results={results} config={config} sortMode={sortMode} />}
                 {activeTab === "timeline" && <TimelineView db={db} results={results} config={config} />}
                 {activeTab === "rates" && <RatesView db={db} results={results} dbVersion={dbVersion} />}
                 {activeTab === "history" && <HistoryView db={db} dbVersion={dbVersion} />}
@@ -109,6 +111,7 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
                 paused={paused}
                 pollingLabel={pollingLabel}
                 pollInterval={pollInterval}
+                sortMode={activeTab === "overview" ? sortMode : undefined}
             />
         </Box>
     );
