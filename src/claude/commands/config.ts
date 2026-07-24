@@ -22,10 +22,10 @@ function maskToken(token: string): string {
     return `${token.slice(0, 20)}...`;
 }
 
-export async function generateAuthUrl(): Promise<string> {
+export async function generateAuthUrl(scopes?: string): Promise<string> {
     const spinner = p.spinner();
     spinner.start("Generating authorization URL...");
-    const authUrl = await claudeOAuth.startLogin();
+    const authUrl = await claudeOAuth.startLogin(scopes);
     spinner.stop("Authorization URL ready.");
     return authUrl;
 }
@@ -46,30 +46,79 @@ export async function presentAuthUrl(authUrl: string): Promise<void> {
     out.println(`  ${pc.cyan(authUrl)}`);
     out.println();
 
-    const openBrowser = await p.confirm({
-        message: "Open URL in browser?",
-        initialValue: true,
+    // Never copy the URL unasked: whoever already opened it by hand is holding the
+    // CODE in their clipboard, and clobbering that costs them the whole round-trip.
+    const action = await p.select({
+        message: "How do you want to open it?",
+        options: [
+            { value: "open", label: "Open in browser now" },
+            { value: "copy", label: "Copy the URL to my clipboard", hint: "overwrites whatever is in it" },
+            { value: "none", label: "Neither — I already have the code", hint: "clipboard untouched" },
+        ],
     });
 
-    if (p.isCancel(openBrowser)) {
+    if (p.isCancel(action)) {
         return;
     }
 
-    if (openBrowser) {
+    if (action === "open") {
         Bun.spawn(["open", authUrl], { stdio: ["ignore", "ignore", "ignore"] });
-    } else {
+    } else if (action === "copy") {
         await copyToClipboard(authUrl, { silent: true });
-        p.log.info("URL copied to clipboard.");
+        p.log.info("URL copied. After authorizing, copy the CODE from the callback page — that is what to paste next.");
     }
 }
 
-export async function promptAndExchangeCode(): Promise<Awaited<ReturnType<typeof claudeOAuth.exchangeCode>> | null> {
+/**
+ * Accept what the user actually has in the clipboard: the bare `code#state`, or
+ * the whole callback URL (its `code`/`state` params are pulled out). Declining
+ * the browser-open puts the AUTHORIZE url on the clipboard, so that exact
+ * mis-paste is caught here instead of failing as "Invalid request format".
+ */
+export function normalizeAuthorizationCode(input: string): { code: string } | { error: string } {
+    const trimmed = input.trim();
+
+    if (!trimmed.startsWith("http")) {
+        return { code: trimmed };
+    }
+
+    let url: URL;
+    try {
+        url = new URL(trimmed);
+    } catch {
+        return { error: "That looks like a URL but could not be parsed. Paste the code shown after authorizing." };
+    }
+
+    if (url.pathname.includes("/oauth/authorize")) {
+        return {
+            error: "That is the authorization URL (what we copied to your clipboard), not the code. Open it, click Authorize, then paste the code from the callback page.",
+        };
+    }
+
+    const code = url.searchParams.get("code");
+
+    if (!code) {
+        return { error: "No `code` parameter in that URL. Paste the code shown after authorizing." };
+    }
+
+    const state = url.searchParams.get("state");
+    return { code: state ? `${code}#${state}` : code };
+}
+
+export async function promptAndExchangeCode(
+    opts: { expiresIn?: number } = {}
+): Promise<Awaited<ReturnType<typeof claudeOAuth.exchangeCode>> | null> {
     const code = await p.text({
         message: "Paste the authorization code:",
         placeholder: "code#state",
         validate: (val) => {
             if (!val?.trim()) {
                 return "Code is required";
+            }
+
+            const normalized = normalizeAuthorizationCode(val);
+            if ("error" in normalized) {
+                return normalized.error;
             }
         },
     });
@@ -78,10 +127,17 @@ export async function promptAndExchangeCode(): Promise<Awaited<ReturnType<typeof
         return null;
     }
 
+    const normalized = normalizeAuthorizationCode(code as string);
+
+    if ("error" in normalized) {
+        p.log.error(normalized.error);
+        return null;
+    }
+
     const spinner = p.spinner();
     spinner.start("Exchanging code for tokens...");
     try {
-        const tokens = await claudeOAuth.exchangeCode(code as string);
+        const tokens = await claudeOAuth.exchangeCode(normalized.code, opts);
         spinner.stop("Tokens received.");
         return tokens;
     } catch (err) {
@@ -189,6 +245,7 @@ async function addAccountViaOAuth(aiConfig: AIConfig): Promise<void> {
             accessToken: tokens.accessToken,
             refreshToken: tokens.refreshToken,
             expiresAt: tokens.expiresAt,
+            refreshExpiresAt: tokens.refreshExpiresAt,
         },
         label: determineAccountLabel(profile),
         apps: ["claude", "ask"],
@@ -877,6 +934,7 @@ export function registerConfigCommand(program: Command): void {
                     accessToken: tokens.accessToken,
                     refreshToken: tokens.refreshToken,
                     expiresAt: tokens.expiresAt,
+                    refreshExpiresAt: tokens.refreshExpiresAt,
                 },
                 label,
                 apps: ["claude", "ask"],
