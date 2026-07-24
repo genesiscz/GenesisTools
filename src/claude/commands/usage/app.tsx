@@ -7,11 +7,9 @@ import { AlertBanner } from "./components/alert-banner";
 import { HelpOverlay } from "./components/help-overlay";
 import { HistoryView } from "./components/history/history-view";
 import { type OverviewSortMode, OverviewView } from "./components/overview/overview-view";
-import { RatesView } from "./components/rates/rates-view";
 import { SessionsView } from "./components/sessions/sessions-view";
 import { StatusBar } from "./components/status-bar";
 import { TabBar } from "./components/tab-bar";
-import { TimelineView } from "./components/timeline/timeline-view";
 import { useKeybindings } from "./hooks/use-keybindings";
 import { useTabNavigation } from "./hooks/use-tab-navigation";
 import { useUsagePoller } from "./hooks/use-usage-poller";
@@ -93,8 +91,6 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
             <TabBar tabs={tabs} activeIndex={activeIndex} />
             <Box flexDirection="column" flexGrow={1} overflowY="hidden">
                 {activeTab === "overview" && <OverviewView results={results} config={config} sortMode={sortMode} />}
-                {activeTab === "timeline" && <TimelineView db={db} results={results} config={config} />}
-                {activeTab === "rates" && <RatesView db={db} results={results} dbVersion={dbVersion} />}
                 {activeTab === "history" && <HistoryView db={db} dbVersion={dbVersion} />}
                 {activeTab === "sessions" && <SessionsView notifications={notifications} />}
             </Box>

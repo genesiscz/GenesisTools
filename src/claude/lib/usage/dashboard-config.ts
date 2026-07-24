@@ -7,7 +7,6 @@ export interface UsageDashboardConfig {
     hiddenBuckets: string[];
     hiddenAccounts: string[];
     defaultTab: number;
-    defaultTimelineZoom: string;
     historyLayout: "stacked" | "side-by-side";
     notifications: {
         enabled: boolean;
@@ -34,7 +33,6 @@ const DEFAULTS: UsageDashboardConfig = {
     hiddenBuckets: [],
     hiddenAccounts: [],
     defaultTab: 0,
-    defaultTimelineZoom: "30m",
     historyLayout: "stacked",
     notifications: {
         enabled: true,
