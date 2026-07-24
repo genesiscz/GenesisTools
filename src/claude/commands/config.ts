@@ -30,8 +30,21 @@ export async function generateAuthUrl(scopes?: string): Promise<string> {
     return authUrl;
 }
 
-/** Returns false when the user cancelled — callers MUST abort the login rather than fall through to the code prompt. */
-export async function presentAuthUrl(authUrl: string): Promise<boolean> {
+/**
+ * THROWS `Cancelled` when the user aborts the browser-choice prompt.
+ *
+ * It returned a boolean before, and a caller that forgot to check it fell
+ * straight through to the code prompt — which happened twice while this PR was
+ * in review. `claude/index.ts` already maps a `Cancelled` message to a clean
+ * exit 0, so throwing makes the abort impossible to ignore instead of relying
+ * on every present and future caller remembering to test a return value.
+ *
+ * The signature IS the regression test: with `Promise<void>` there is no value
+ * left to drop. A behavioural test was written and then removed — `mock.module`
+ * is process-global in Bun, so stubbing `@clack/prompts` here broke
+ * `src/utils/logger/out.test.ts`, which asserts on the REAL clack sentinel.
+ */
+export async function presentAuthUrl(authUrl: string): Promise<void> {
     p.note(
         [
             "1. Open the URL below in your browser",
@@ -59,7 +72,7 @@ export async function presentAuthUrl(authUrl: string): Promise<boolean> {
     });
 
     if (p.isCancel(action)) {
-        return false;
+        throw new Error("Cancelled");
     }
 
     if (action === "open") {
@@ -68,8 +81,6 @@ export async function presentAuthUrl(authUrl: string): Promise<boolean> {
         await copyToClipboard(authUrl, { silent: true });
         p.log.info("URL copied. After authorizing, copy the CODE from the callback page — that is what to paste next.");
     }
-
-    return true;
 }
 
 /**
@@ -228,10 +239,7 @@ async function promptAccountName(aiConfig: AIConfig, suggestedName: string): Pro
 async function addAccountViaOAuth(aiConfig: AIConfig): Promise<void> {
     const authUrl = await generateAuthUrl();
 
-    if (!(await presentAuthUrl(authUrl))) {
-        p.cancel("Login cancelled.");
-        return;
-    }
+    await presentAuthUrl(authUrl);
 
     const tokens = await promptAndExchangeCode();
     if (!tokens) {
@@ -865,10 +873,7 @@ export function registerConfigCommand(program: Command): void {
             // a paste prompt that accepts the callback URL.
             const authUrl = await generateAuthUrl();
 
-            if (!(await presentAuthUrl(authUrl))) {
-                out.println(pc.dim("Login cancelled."));
-                process.exit(0);
-            }
+            await presentAuthUrl(authUrl);
 
             const tokens = await promptAndExchangeCode();
 

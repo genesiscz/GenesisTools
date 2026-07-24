@@ -38,9 +38,7 @@ async function mintLongLivedToken(accountName: string): Promise<{ token: string;
 
     const authUrl = await generateAuthUrl(INFERENCE_SCOPE);
 
-    if (!(await presentAuthUrl(authUrl))) {
-        return null;
-    }
+    await presentAuthUrl(authUrl);
 
     // The PKCE session survives a failed exchange, so a fumbled paste costs one
     // retry rather than the whole browser round-trip.

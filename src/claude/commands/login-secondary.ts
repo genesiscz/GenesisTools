@@ -94,10 +94,7 @@ export function registerLoginSecondaryCommand(program: Command): void {
 
             const authUrl = await generateAuthUrl();
 
-            if (!(await presentAuthUrl(authUrl))) {
-                p.cancel("Cancelled — nothing saved.");
-                process.exit(0);
-            }
+            await presentAuthUrl(authUrl);
 
             const tokens = await promptAndExchangeCode();
             if (!tokens) {
