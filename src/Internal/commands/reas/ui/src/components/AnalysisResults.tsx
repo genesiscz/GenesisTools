@@ -15,7 +15,6 @@ import {
     VerdictTab,
 } from "./analysis/AnalysisSections";
 import { buildAnalysisCompareQuery } from "./compare/compare-query";
-import { ExportButton } from "./ExportButton";
 import { StalenessIndicator } from "./StalenessIndicator";
 
 interface AnalysisResultsProps {
@@ -73,7 +72,6 @@ export function AnalysisResults({ data }: AnalysisResultsProps) {
                                 Compare District
                             </Link>
                         </Button>
-                        <ExportButton data={data} />
                     </div>
                 </div>
             </div>

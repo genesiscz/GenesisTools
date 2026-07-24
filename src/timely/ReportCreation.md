@@ -201,22 +201,22 @@ After creating the table:
 Once the markdown table is complete, convert it to PDF:
 
 ```bash
-md-to-pdf entries-<year-month>-table.md
+bunx md-to-pdf entries-<year-month>-table.md
 ```
 
 **Example:**
 
 ```bash
-md-to-pdf entries-2025-09-table.md
+bunx md-to-pdf entries-2025-09-table.md
 ```
 
 This will generate `entries-<year-month>-table.pdf` which can be used for reporting.
 
-> `md-to-pdf` renders through puppeteer, and this repo skips puppeteer's Chromium
-> download at install time (see `.puppeteerrc.cjs`). If the command fails with
-> "Could not find Chrome", install the browser once with
-> `bunx puppeteer browsers install chrome`, or point `PUPPETEER_EXECUTABLE_PATH`
-> at a browser you already have.
+> `md-to-pdf` is intentionally NOT a project dependency: it pulls in puppeteer,
+> whose postinstall downloads a Chromium build and fails the whole `bun install`
+> when that cache is incomplete. `bunx` fetches it only when this report is
+> actually generated. The first run may also need
+> `bunx puppeteer browsers install chrome`.
 
 ## Complete Example Workflow
 
@@ -238,7 +238,7 @@ tools timely export-month 2025-09 --format detailed-summary --silent
 #    - Use single <br> between items
 
 # 4. Convert to PDF
-md-to-pdf entries-2025-09-table.md
+bunx md-to-pdf entries-2025-09-table.md
 ```
 
 ## Key Principles

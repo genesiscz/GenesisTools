@@ -23,7 +23,6 @@ import { Route as ApiPropertiesRouteImport } from './routes/api/properties'
 import { Route as ApiMapClustersRouteImport } from './routes/api/map-clusters'
 import { Route as ApiListingsRouteImport } from './routes/api/listings'
 import { Route as ApiHistoryRouteImport } from './routes/api/history'
-import { Route as ApiExportPdfRouteImport } from './routes/api/export-pdf'
 import { Route as ApiDistrictsRouteImport } from './routes/api/districts'
 import { Route as ApiDistrictSnapshotsRouteImport } from './routes/api/district-snapshots'
 import { Route as ApiDistrictComparisonRouteImport } from './routes/api/district-comparison'
@@ -101,11 +100,6 @@ const ApiHistoryRoute = ApiHistoryRouteImport.update({
   path: '/api/history',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiExportPdfRoute = ApiExportPdfRouteImport.update({
-  id: '/api/export-pdf',
-  path: '/api/export-pdf',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiDistrictsRoute = ApiDistrictsRouteImport.update({
   id: '/api/districts',
   path: '/api/districts',
@@ -149,7 +143,6 @@ export interface FileRoutesByFullPath {
   '/api/district-comparison': typeof ApiDistrictComparisonRoute
   '/api/district-snapshots': typeof ApiDistrictSnapshotsRoute
   '/api/districts': typeof ApiDistrictsRoute
-  '/api/export-pdf': typeof ApiExportPdfRoute
   '/api/history': typeof ApiHistoryRoute
   '/api/listings': typeof ApiListingsRouteWithChildren
   '/api/map-clusters': typeof ApiMapClustersRoute
@@ -172,7 +165,6 @@ export interface FileRoutesByTo {
   '/api/district-comparison': typeof ApiDistrictComparisonRoute
   '/api/district-snapshots': typeof ApiDistrictSnapshotsRoute
   '/api/districts': typeof ApiDistrictsRoute
-  '/api/export-pdf': typeof ApiExportPdfRoute
   '/api/history': typeof ApiHistoryRoute
   '/api/listings': typeof ApiListingsRouteWithChildren
   '/api/map-clusters': typeof ApiMapClustersRoute
@@ -196,7 +188,6 @@ export interface FileRoutesById {
   '/api/district-comparison': typeof ApiDistrictComparisonRoute
   '/api/district-snapshots': typeof ApiDistrictSnapshotsRoute
   '/api/districts': typeof ApiDistrictsRoute
-  '/api/export-pdf': typeof ApiExportPdfRoute
   '/api/history': typeof ApiHistoryRoute
   '/api/listings': typeof ApiListingsRouteWithChildren
   '/api/map-clusters': typeof ApiMapClustersRoute
@@ -221,7 +212,6 @@ export interface FileRouteTypes {
     | '/api/district-comparison'
     | '/api/district-snapshots'
     | '/api/districts'
-    | '/api/export-pdf'
     | '/api/history'
     | '/api/listings'
     | '/api/map-clusters'
@@ -244,7 +234,6 @@ export interface FileRouteTypes {
     | '/api/district-comparison'
     | '/api/district-snapshots'
     | '/api/districts'
-    | '/api/export-pdf'
     | '/api/history'
     | '/api/listings'
     | '/api/map-clusters'
@@ -267,7 +256,6 @@ export interface FileRouteTypes {
     | '/api/district-comparison'
     | '/api/district-snapshots'
     | '/api/districts'
-    | '/api/export-pdf'
     | '/api/history'
     | '/api/listings'
     | '/api/map-clusters'
@@ -291,7 +279,6 @@ export interface RootRouteChildren {
   ApiDistrictComparisonRoute: typeof ApiDistrictComparisonRoute
   ApiDistrictSnapshotsRoute: typeof ApiDistrictSnapshotsRoute
   ApiDistrictsRoute: typeof ApiDistrictsRoute
-  ApiExportPdfRoute: typeof ApiExportPdfRoute
   ApiHistoryRoute: typeof ApiHistoryRoute
   ApiListingsRoute: typeof ApiListingsRouteWithChildren
   ApiMapClustersRoute: typeof ApiMapClustersRoute
@@ -400,13 +387,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiHistoryRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/export-pdf': {
-      id: '/api/export-pdf'
-      path: '/api/export-pdf'
-      fullPath: '/api/export-pdf'
-      preLoaderRoute: typeof ApiExportPdfRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/districts': {
       id: '/api/districts'
       path: '/api/districts'
@@ -500,7 +480,6 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDistrictComparisonRoute: ApiDistrictComparisonRoute,
   ApiDistrictSnapshotsRoute: ApiDistrictSnapshotsRoute,
   ApiDistrictsRoute: ApiDistrictsRoute,
-  ApiExportPdfRoute: ApiExportPdfRoute,
   ApiHistoryRoute: ApiHistoryRoute,
   ApiListingsRoute: ApiListingsRouteWithChildren,
   ApiMapClustersRoute: ApiMapClustersRoute,

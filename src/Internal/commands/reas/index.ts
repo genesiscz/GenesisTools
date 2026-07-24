@@ -405,14 +405,6 @@ async function outputAnalysis(analysis: FullAnalysis, format: string, outputPath
         return;
     }
 
-    if (format === "pdf") {
-        const { exportToPdf } = await import("@app/Internal/commands/reas/lib/pdf-export");
-        const path = outputPath ?? `reas-report-${analysis.target.district}-${Date.now()}.pdf`;
-        await exportToPdf(analysis, path);
-        out.println(pc.green(`PDF report written to ${path}`));
-        return;
-    }
-
     const report = renderReport(analysis);
     out.println(report);
 
@@ -548,7 +540,7 @@ export function registerReasCommand(program: Command): void {
         .option("--area-min <m2>", "Minimum area filter")
         .option("--area-max <m2>", "Maximum area filter")
         .option("--providers <list>", "Comma-separated providers (reas,sreality,mf)")
-        .option("--format <format>", "Output format: terminal (default), json, pdf", "terminal")
+        .option("--format <format>", "Output format: terminal (default), json", "terminal")
         .option("-o, --output <path>", "Write report to file")
         .option("--refresh", "Force re-fetch (ignore cache)")
         .option("--server", "Start dashboard API server")

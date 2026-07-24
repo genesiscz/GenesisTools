@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { DashboardExport } from "@app/Internal/commands/reas/lib/api-export";
-import { buildMarkdownReportFromExport } from "@app/Internal/commands/reas/lib/pdf-export";
+import { buildMarkdownReportFromExport } from "@app/Internal/commands/reas/lib/markdown-report";
 
 describe("buildMarkdownReportFromExport", () => {
     test("produces valid markdown", () => {

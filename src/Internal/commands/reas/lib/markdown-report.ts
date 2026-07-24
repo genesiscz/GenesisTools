@@ -1,6 +1,5 @@
 import { buildDashboardExport, type DashboardExport } from "@app/Internal/commands/reas/lib/api-export";
 import type { FullAnalysis } from "@app/Internal/commands/reas/types";
-import { mdToPdf } from "md-to-pdf";
 
 function fmt(value: number): string {
     return Math.round(value).toLocaleString("cs-CZ");
@@ -77,42 +76,4 @@ export function buildMarkdownReport(analysis: FullAnalysis): string {
 
 export function buildMarkdownReportFromExport(data: DashboardExport): string {
     return buildMarkdownFromExport(data);
-}
-
-export async function exportToPdf(analysis: FullAnalysis, outputPath: string): Promise<void> {
-    const markdown = buildMarkdownReport(analysis);
-    const pdf = await mdToPdf(
-        { content: markdown },
-        {
-            pdf_options: {
-                format: "A4",
-                margin: { top: "20mm", bottom: "20mm", left: "15mm", right: "15mm" },
-            },
-        }
-    );
-
-    if (!pdf?.content) {
-        throw new Error("PDF generation failed");
-    }
-
-    await Bun.write(outputPath, pdf.content);
-}
-
-export async function exportDashboardToPdf(data: DashboardExport): Promise<Uint8Array> {
-    const markdown = buildMarkdownReportFromExport(data);
-    const pdf = await mdToPdf(
-        { content: markdown },
-        {
-            pdf_options: {
-                format: "A4",
-                margin: { top: "20mm", bottom: "20mm", left: "15mm", right: "15mm" },
-            },
-        }
-    );
-
-    if (!pdf?.content) {
-        throw new Error("PDF generation failed");
-    }
-
-    return new Uint8Array(pdf.content);
 }

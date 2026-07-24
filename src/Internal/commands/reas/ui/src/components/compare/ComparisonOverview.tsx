@@ -4,7 +4,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { cn } from "@ui/lib/utils";
 import { ArrowDownRight, ArrowUpRight, BarChart3, Clock3, Percent } from "lucide-react";
 import { GRADE_COLORS, getScoreCardModel } from "../analysis/display-model";
-import { ExportButton } from "../ExportButton";
 import type { DistrictComparison } from "./types";
 
 interface ComparisonOverviewProps {
@@ -47,7 +46,6 @@ export function ComparisonOverview({ comparisons }: ComparisonOverviewProps) {
                                     {exportData.meta.target.constructionType} · {exportData.meta.target.disposition}
                                 </p>
                             </div>
-                            <ExportButton data={exportData} />
                         </CardHeader>
                         <CardContent className="space-y-4">
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
