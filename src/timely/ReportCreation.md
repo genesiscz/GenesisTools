@@ -212,6 +212,12 @@ md-to-pdf entries-2025-09-table.md
 
 This will generate `entries-<year-month>-table.pdf` which can be used for reporting.
 
+> `md-to-pdf` renders through puppeteer, and this repo skips puppeteer's Chromium
+> download at install time (see `.puppeteerrc.cjs`). If the command fails with
+> "Could not find Chrome", install the browser once with
+> `bunx puppeteer browsers install chrome`, or point `PUPPETEER_EXECUTABLE_PATH`
+> at a browser you already have.
+
 ## Complete Example Workflow
 
 ```bash
