@@ -170,12 +170,19 @@ export function registerLoginLongCommand(program: Command): void {
                     process.exit(0);
                 }
 
-                await aiConfig.updateAccount(accountName, {
-                    tokens: {
-                        ...account.tokens,
-                        longLivedToken: minted.token,
-                        longLivedTokenExpiresAt: minted.expiresAt,
-                    },
+                // Mutate the entry in place under the config lock: spreading the
+                // in-memory `account.tokens` would write back a stale access /
+                // refresh token and clobber whatever the poll daemon rotated
+                // while the browser flow was open.
+                await aiConfig.mutate((data) => {
+                    const entry = data.accounts.find((a) => a.name === accountName);
+
+                    if (!entry) {
+                        throw new Error(`Account "${accountName}" disappeared while minting the token`);
+                    }
+
+                    entry.tokens.longLivedToken = minted.token;
+                    entry.tokens.longLivedTokenExpiresAt = minted.expiresAt;
                 });
 
                 p.log.success(
@@ -248,8 +255,18 @@ export function registerLoginLongCommand(program: Command): void {
                 spinner.stop("Token verified.");
             }
 
-            await aiConfig.updateAccount(accountName, {
-                tokens: { ...account.tokens, longLivedToken: trimmed },
+            await aiConfig.mutate((data) => {
+                const entry = data.accounts.find((a) => a.name === accountName);
+
+                if (!entry) {
+                    throw new Error(`Account "${accountName}" disappeared while saving the token`);
+                }
+
+                entry.tokens.longLivedToken = trimmed;
+                // A PASTED token's lifetime is unknowable — drop any expiry left
+                // over from a previously minted token rather than mislabelling
+                // the new one with the old one's date.
+                delete entry.tokens.longLivedTokenExpiresAt;
             });
 
             p.log.success(

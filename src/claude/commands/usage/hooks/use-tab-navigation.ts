@@ -4,7 +4,11 @@ import { TABS, type TabId } from "../types";
 import { isModalOpen } from "./input-scope";
 
 export function useTabNavigation(defaultTab: number = 0) {
-    const [activeIndex, setActiveIndex] = useState(defaultTab);
+    // `defaultTab` is a PERSISTED index: a config written when the dashboard had
+    // five tabs can point past the end, and TABS[activeIndex].id would throw.
+    const [activeIndex, setActiveIndex] = useState(() =>
+        Math.min(Math.max(0, Math.trunc(defaultTab) || 0), TABS.length - 1)
+    );
 
     useInput((input, key) => {
         // A modal (Sessions action menu) owns digits/arrows while open —

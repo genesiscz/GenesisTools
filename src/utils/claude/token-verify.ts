@@ -25,6 +25,8 @@ export function hasValidLongLivedToken(tokens: { longLivedToken?: string }): boo
 }
 
 const MESSAGES_URL = "https://api.anthropic.com/v1/messages";
+/** A blackholed connection must not hang an interactive login forever. */
+const VERIFY_TIMEOUT_MS = 15_000;
 
 /** One-token call: proves the token authenticates. 429 means authenticated but rate-limited. */
 export async function verifyLongLivedToken(token: string): Promise<TokenVerdict> {
@@ -43,6 +45,7 @@ export async function verifyLongLivedToken(token: string): Promise<TokenVerdict>
                 max_tokens: 1,
                 messages: [{ role: "user", content: "hi" }],
             }),
+            signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
         });
 
         if (res.status === 401 || res.status === 403) {
@@ -56,7 +59,11 @@ export async function verifyLongLivedToken(token: string): Promise<TokenVerdict>
         }
 
         if (!res.ok) {
-            logger.debug(`[token-verify] unexpected status ${res.status}`);
+            // A retired probe model or a rejected UA answers 4xx here. That is
+            // NOT an auth verdict, so it degrades to "unreachable" — but log the
+            // body so a silently-degraded probe is diagnosable from the log.
+            const body = await res.text().catch(() => "");
+            logger.warn(`[token-verify] probe returned ${res.status}, treating as unreachable: ${body.slice(0, 200)}`);
             return "unreachable";
         }
 

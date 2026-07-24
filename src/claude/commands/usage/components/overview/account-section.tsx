@@ -325,22 +325,23 @@ function grantWarningText(account: AccountUsage, now: number): string | null {
     return `⚠ login ends in ${formatCoarseSpan(new Date(now), new Date(account.refreshExpiresAt))}`;
 }
 
+interface HeaderExtrasInput {
+    account: AccountUsage;
+    staleText: string | null;
+    width: number;
+    now?: number;
+}
+
 /**
- * The renewal marker only ever rides the header line — it is nice-to-know, so a
- * narrow column drops it rather than spending a whole extra line on it (which
- * would also desync estimateAccountHeight).
+ * The two header extras, each dropped once the line is full — they never spend a
+ * whole extra line, which would also desync estimateAccountHeight. The grant
+ * warning is placed first because it is actionable (re-login) where the renewal
+ * date is trivia, so on a tight line the warning is what survives.
  */
-/**
- * The two header extras, each dropped once the line is full. The grant warning
- * is placed first because it is actionable (re-login) where the renewal date is
- * trivia, so on a tight line the warning is what survives.
- */
-function headerExtras(
-    account: AccountUsage,
-    staleText: string | null,
-    width: number,
-    now: number = Date.now()
-): { renewsText: string | null; grantText: string | null } {
+function headerExtras({ account, staleText, width, now = Date.now() }: HeaderExtrasInput): {
+    renewsText: string | null;
+    grantText: string | null;
+} {
     let used = headerLength(account, staleText);
 
     const grant = grantWarningText(account, now);
@@ -419,7 +420,11 @@ export function AccountSection({ account, prominentBuckets, width }: AccountSect
     if (account.error && !account.usage) {
         return (
             <Box flexDirection="column" marginBottom={1}>
-                <AccountHeader account={account} dotColor="red" {...headerExtras(account, null, sectionWidth)} />
+                <AccountHeader
+                    account={account}
+                    dotColor="red"
+                    {...headerExtras({ account, staleText: null, width: sectionWidth })}
+                />
                 <Text color="red">{`  ${account.error}`}</Text>
             </Box>
         );
@@ -428,7 +433,11 @@ export function AccountSection({ account, prominentBuckets, width }: AccountSect
     if (!account.usage) {
         return (
             <Box flexDirection="column" marginBottom={1}>
-                <AccountHeader account={account} dotColor={undefined} {...headerExtras(account, null, sectionWidth)} />
+                <AccountHeader
+                    account={account}
+                    dotColor={undefined}
+                    {...headerExtras({ account, staleText: null, width: sectionWidth })}
+                />
                 <Text dimColor>{"  No usage data"}</Text>
             </Box>
         );
@@ -447,7 +456,7 @@ export function AccountSection({ account, prominentBuckets, width }: AccountSect
                 account={account}
                 dotColor={account.stale ? "yellow" : dotColor}
                 staleText={staleInline ? staleText : null}
-                {...headerExtras(account, staleInline ? staleText : null, sectionWidth)}
+                {...headerExtras({ account, staleText: staleInline ? staleText : null, width: sectionWidth })}
             />
             {staleText && !staleInline ? <Text color="yellow">{`  ${staleText}`}</Text> : null}
             {visibleLimits.map((limit) => (

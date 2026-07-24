@@ -95,7 +95,9 @@ function describeTokenResponse(data: Record<string, unknown>): Record<string, un
             return value === undefined ? "absent" : `non-string(${typeof value})`;
         }
 
-        const prefix = value.match(/^sk-ant-[a-z0-9]+-/)?.[0] ?? `${value.slice(0, 4)}…`;
+        // ONLY the recognized non-secret prefix is ever echoed. An unrecognized
+        // shape must not fall back to slicing raw characters off a real secret.
+        const prefix = value.match(/^sk-ant-[a-z0-9]+-/)?.[0] ?? "<unrecognized-prefix>";
         return `${prefix}[len ${value.length}]`;
     };
 

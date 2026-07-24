@@ -2,7 +2,7 @@ import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import type { AIAccountEntry, AIAccountTokens } from "@genesiscz/utils/config/ai.types";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -200,7 +200,8 @@ export function registerLogoutCommand(program: Command): void {
                 }
 
                 await aiConfig.removeAccount(accountName);
-                p.log.success(`Account "${accountName}" removed from the config.`);
+                logger.info(`[logout] removed tokenless account entry "${accountName}" from the AI config`);
+                out.println(pc.green(`Account "${accountName}" removed from the config.`));
                 process.exit(0);
             }
 

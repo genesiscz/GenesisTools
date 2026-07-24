@@ -360,6 +360,39 @@ describe("grouped urgency", () => {
         expect(sortGrouped(scored)[1].accountName).toBe("cooling");
     });
 
+    test("a stale invalid_grant account is expired even though usage data survives", () => {
+        const [scored] = scoreAccounts(
+            [
+                {
+                    accountName: "stale-dead",
+                    usage: usage({ seven_day: { utilization: 10, resets_at: hoursFromNow(50) } }),
+                    stale: {
+                        lastSuccessAt: NOW.getTime() - 3_600_000,
+                        reason: "Token expired (invalid_grant). Run: tools claude login stale-dead",
+                    },
+                },
+            ],
+            { now: NOW }
+        );
+
+        expect(scored.group).toBe("expired");
+    });
+
+    test("a stale account with a benign reason is not expired", () => {
+        const [scored] = scoreAccounts(
+            [
+                {
+                    accountName: "stale-429",
+                    usage: usage({ seven_day: { utilization: 10, resets_at: hoursFromNow(50) } }),
+                    stale: { lastSuccessAt: NOW.getTime() - 3_600_000, reason: "Usage API 429: rate limited" },
+                },
+            ],
+            { now: NOW }
+        );
+
+        expect(scored.group).not.toBe("expired");
+    });
+
     test("scoreAccounts itself still returns tier order", () => {
         const ranked = scoreAccounts(
             [

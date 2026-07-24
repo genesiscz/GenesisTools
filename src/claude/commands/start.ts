@@ -181,8 +181,12 @@ async function scoreTokenAccounts(
         return null;
     });
     const cachedAccounts = cached?.accounts.filter((a) => wanted.has(a.accountName)) ?? [];
+    // A PARTIAL cache (e.g. an account added since the last poll) must not
+    // silently drop the missing accounts from the picker — fall through to the
+    // live fetch so every requested account is offered.
+    const cacheCoversAll = cachedAccounts.length === names.length;
 
-    if (cachedAccounts.length > 0) {
+    if (cacheCoversAll && cachedAccounts.length > 0) {
         const age = Math.round((Date.now() - cached!.fetchedAt) / 1000);
         logger.debug({ age, accounts: cachedAccounts.length }, "picker painting from the warm usage cache");
 

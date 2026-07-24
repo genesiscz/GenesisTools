@@ -11,7 +11,7 @@ import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { claudeOAuth, fetchOAuthProfile, getClaudeJsonAccount } from "@genesiscz/utils/claude/auth";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { formatLocalDate } from "@genesiscz/utils/date";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -85,7 +85,8 @@ export function normalizeAuthorizationCode(input: string): { code: string } | { 
     let url: URL;
     try {
         url = new URL(trimmed);
-    } catch {
+    } catch (error) {
+        logger.debug({ error }, "[oauth] pasted value starts with http but is not a parseable URL");
         return { error: "That looks like a URL but could not be parsed. Paste the code shown after authorizing." };
     }
 
@@ -852,69 +853,17 @@ export function registerConfigCommand(program: Command): void {
         .action(async (name?: string) => {
             const aiConfig = await AIConfig.load();
 
-            // Generate auth URL
-            out.println(pc.dim("Generating authorization URL..."));
-            const authUrl = await claudeOAuth.startLogin();
+            // Same helpers the other login paths use: three-way browser choice
+            // (so declining never clobbers a clipboard that holds the code) and
+            // a paste prompt that accepts the callback URL.
+            const authUrl = await generateAuthUrl();
+            await presentAuthUrl(authUrl);
 
-            out.println();
-            out.println(pc.bold("OAuth Login"));
-            out.println(pc.dim("─".repeat(50)));
-            out.println();
-            out.println("1. Open this URL in your browser:");
-            out.println();
-            out.println(`   ${pc.cyan(authUrl)}`);
-            out.println();
-            out.println("2. Log in and click 'Authorize'");
-            out.println("3. Copy the code from the callback page");
-            out.println();
-            out.println(pc.dim("─".repeat(50)));
+            const tokens = await promptAndExchangeCode();
 
-            const openBrowser = await p.confirm({
-                message: "Open URL in browser?",
-                initialValue: true,
-            });
-
-            if (p.isCancel(openBrowser)) {
+            if (!tokens) {
                 out.println(pc.dim("Login cancelled."));
                 process.exit(0);
-            }
-
-            if (openBrowser) {
-                Bun.spawn(["open", authUrl], { stdio: ["ignore", "ignore", "ignore"] });
-            } else {
-                await copyToClipboard(authUrl, { silent: true });
-                out.println(pc.dim("URL copied to clipboard."));
-            }
-            out.println();
-
-            // clack's confirm above pauses stdin on completion — a manual
-            // Bun.stdin.stream() read after it returns instant EOF and kills
-            // the flow. Stay on clack for the code paste.
-            const codeInput = await p.text({
-                message: "Paste authorization code:",
-                placeholder: "code#state",
-                validate: (val) => {
-                    if (!val?.trim()) {
-                        return "Code is required";
-                    }
-                },
-            });
-
-            if (p.isCancel(codeInput)) {
-                out.println(pc.dim("Login cancelled."));
-                process.exit(0);
-            }
-
-            const code = (codeInput as string).trim();
-
-            // Exchange code
-            out.println(pc.dim("Exchanging code for tokens..."));
-            let tokens: Awaited<ReturnType<typeof claudeOAuth.exchangeCode>>;
-            try {
-                tokens = await claudeOAuth.exchangeCode(code);
-            } catch (err) {
-                out.error(pc.red(`Token exchange failed: ${err}`));
-                process.exit(1);
             }
 
             // Determine account name

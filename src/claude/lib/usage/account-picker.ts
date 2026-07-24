@@ -173,9 +173,14 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
 
     const scored = accounts.map((account): ScoredAccount => {
         const base = { accountName: account.accountName, label: account.label };
+        // A dead login usually arrives as STALE data, not absent data:
+        // shared-cache backfills the last good payload and records the
+        // invalid_grant in `stale.reason`, so both places must be checked.
+        const expiredError = account.error ?? account.stale?.reason;
+        const loginExpired = expiredError !== undefined && EXPIRED_ERROR_RE.test(expiredError);
 
         if (!account.usage) {
-            const expired = account.error !== undefined && EXPIRED_ERROR_RE.test(account.error);
+            const expired = loginExpired;
 
             return {
                 ...base,
@@ -238,7 +243,7 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
 
         const dead = binding.headroomPct <= DEAD_HEADROOM_PCT;
         const cooling = !dead && session.headroomPct <= COOLING_HEADROOM_PCT;
-        const group: AccountGroup = dead ? "dead" : fableAvailable ? "fable" : "opus";
+        const group: AccountGroup = loginExpired ? "expired" : dead ? "dead" : fableAvailable ? "fable" : "opus";
         const bindingRate = group === "fable" ? Math.min(fableRate, weeklyRate) : weeklyRate;
         const score = bindingRate * usableFraction;
         const grouped = { group, score, cooling };

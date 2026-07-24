@@ -80,9 +80,20 @@ export function nextRenewalDate(subscriptionCreatedAt: string, now: Date = new D
 
     const anchorDay = created.getDate();
 
+    // Seconds and milliseconds are preserved: truncating them makes a renewal
+    // that is still seconds away look already-passed, which rolls the date to
+    // next month.
     const candidate = (year: number, month: number): Date => {
         const daysInMonth = new Date(year, month + 1, 0).getDate();
-        return new Date(year, month, Math.min(anchorDay, daysInMonth), created.getHours(), created.getMinutes());
+        return new Date(
+            year,
+            month,
+            Math.min(anchorDay, daysInMonth),
+            created.getHours(),
+            created.getMinutes(),
+            created.getSeconds(),
+            created.getMilliseconds()
+        );
     };
 
     const thisMonth = candidate(now.getFullYear(), now.getMonth());

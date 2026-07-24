@@ -1,4 +1,5 @@
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
+import { logger } from "@genesiscz/utils/logger";
 import { type TableSelectOptions, tableSelect } from "@genesiscz/utils/prompts/p";
 import type { ScoredAccount } from "./account-picker";
 import { atYourPace, type PaceScope } from "./burn-pace";
@@ -28,8 +29,11 @@ function pacesFor(accountName: string, acc: ScoredAccount, now: Date, scope: Pac
             weekly: limits?.weekly ? pace("seven_day", limits.weekly.leftPct) : undefined,
             fable: limits?.fable ? pace("seven_day_fable", limits.fable.leftPct) : undefined,
         };
-    } catch {
-        // Pace is a nice-to-have annotation — a DB hiccup must not break the picker.
+    } catch (error) {
+        // Pace is a nice-to-have annotation — a DB hiccup must not break the
+        // picker, but it must not vanish silently either: a schema/query failure
+        // would otherwise be indistinguishable from "not enough history yet".
+        logger.debug({ error, accountName }, "[usage] pace lookup failed; rendering without it");
         return {};
     }
 }
