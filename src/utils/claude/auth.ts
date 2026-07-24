@@ -83,14 +83,14 @@ export const ONE_YEAR_SECONDS = 365 * 24 * 60 * 60;
 // trip and a scary log line. Access tokens land at 8h and the refresh loop
 // renews them; `refresh_token_expires_in` governs the grant itself.
 
+const KNOWN_TOKEN_PREFIXES = ["sk-ant-oat01-", "sk-ant-ort01-", "sk-ant-api03-", "sk-ant-sid01-"] as const;
+
 /**
  * Redacted shape of a token-endpoint response, logged so the lifetime the server
  * actually grants is answerable from logs alone — `expires_in` for the access
  * token, `refresh_token_expires_in` for the grant behind it. Never logs a token
  * value: only lengths and the non-secret `sk-ant-oatNN-` style prefix.
  */
-const KNOWN_TOKEN_PREFIXES = ["sk-ant-oat01-", "sk-ant-ort01-", "sk-ant-api03-", "sk-ant-sid01-"] as const;
-
 function describeTokenResponse(data: Record<string, unknown>): Record<string, unknown> {
     const describeToken = (value: unknown) => {
         if (typeof value !== "string") {

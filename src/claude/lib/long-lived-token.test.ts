@@ -1,14 +1,23 @@
 import { describe, expect, test } from "bun:test";
-import type { AIConfigData } from "@genesiscz/utils/config/ai.types";
+import type { AIAccountTokens, AIConfigData } from "@genesiscz/utils/config/ai.types";
 import { applyLongLivedToken } from "./long-lived-token";
 
-function configWith(tokens: Record<string, unknown>): AIConfigData {
+/**
+ * Built from the REAL types, no cast: a rename in AIAccountTokens must break this
+ * fixture, since catching exactly that kind of drift is why the lib was extracted.
+ */
+function configWith(tokens: AIAccountTokens): AIConfigData {
     return {
+        _schemaVersion: 1,
         accounts: [
             { name: "foltyn", provider: "anthropic-sub", tokens },
             { name: "other", provider: "anthropic-sub", tokens: {} },
         ],
-    } as unknown as AIConfigData;
+        defaultAccounts: {},
+        tasks: {},
+        apps: {},
+        providers: {},
+    };
 }
 
 describe("applyLongLivedToken", () => {
