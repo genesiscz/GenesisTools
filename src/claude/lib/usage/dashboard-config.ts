@@ -1,4 +1,5 @@
 import { Storage } from "@genesiscz/utils/storage/storage";
+import type { PaceScope } from "./burn-pace";
 
 export interface UsageDashboardConfig {
     refreshInterval: number;
@@ -19,6 +20,12 @@ export interface UsageDashboardConfig {
         };
     };
     dataRetentionDays: number;
+    /**
+     * Whose history the "at pace" estimate is built from. `pooled` reads every
+     * account's samples (your working rhythm, survives a fresh account);
+     * `per-account` uses only the account in question.
+     */
+    paceScope: PaceScope;
 }
 
 const DEFAULTS: UsageDashboardConfig = {
@@ -40,6 +47,7 @@ const DEFAULTS: UsageDashboardConfig = {
         },
     },
     dataRetentionDays: 30,
+    paceScope: "pooled",
 };
 
 const storage = new Storage("claude-usage-dashboard");

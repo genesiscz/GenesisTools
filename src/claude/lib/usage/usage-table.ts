@@ -112,8 +112,8 @@ function barCell(limit: CompactLimit | undefined, now: Date = new Date()): strin
     return `${colorByPct(pct, bar)} ${colorByPct(pct, `${pct}%`)}`;
 }
 
-/** `in 2h 5m` / `in 4d 10h` / `—` for a limit's reset. */
-function resetCell(limit: CompactLimit | undefined, now: Date): string {
+/** `in 2h 5m` / `in 4d 10h` / `—` for a limit's reset, plus `· ≈35m at pace` when known. */
+function resetCell(limit: CompactLimit | undefined, now: Date, pace?: string): string {
     if (!limit?.resetsAt) {
         return "—";
     }
@@ -123,7 +123,8 @@ function resetCell(limit: CompactLimit | undefined, now: Date): string {
         return "—";
     }
 
-    return `in ${fmtRelative(now, reset)}`;
+    const base = `in ${fmtRelative(now, reset)}`;
+    return pace ? `${base} ${pc.dim(`· ${pace} at pace`)}` : base;
 }
 
 /** Same reset moment at minute granularity (the API's timestamps differ by µs). */
@@ -157,10 +158,17 @@ function limitRow(label: string, limit: CompactLimit | undefined, reset: string,
  *   2. subscription plan · ranking explanation (why this position)
  *   3-5. one row per limit: full name, headroom bar, reset countdown.
  */
+export interface DetailBlockPace {
+    session?: string;
+    weekly?: string;
+    fable?: string;
+}
+
 export function detailBlock(
     scored: ScoredAccount,
     account: AIAccountEntry | undefined,
-    now: Date = new Date()
+    now: Date = new Date(),
+    pace?: DetailBlockPace
 ): string[] {
     const identity = [accent(scored.accountName)];
 
@@ -188,13 +196,13 @@ export function detailBlock(
     }
 
     const fableSameAsWeekly = sameResetMoment(limits.fable?.resetsAt, limits.weekly?.resetsAt);
-    const fableReset = fableSameAsWeekly ? "= weekly" : resetCell(limits.fable, now);
+    const fableReset = fableSameAsWeekly ? "= weekly" : resetCell(limits.fable, now, pace?.fable);
 
     return [
         identity.join(" · "),
         subscription,
-        limitRow("5 Hour", limits.session, resetCell(limits.session, now), now),
-        limitRow("Weekly", limits.weekly, resetCell(limits.weekly, now), now),
+        limitRow("5 Hour", limits.session, resetCell(limits.session, now, pace?.session), now),
+        limitRow("Weekly", limits.weekly, resetCell(limits.weekly, now, pace?.weekly), now),
         limitRow("Fable", limits.fable, fableReset, now),
     ];
 }

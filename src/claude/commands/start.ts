@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { type LaunchableModel, modelFamilyOf, resolveModelSpec } from "@app/claude/lib/models";
 import { type ScoredAccount, scoreAccounts } from "@app/claude/lib/usage/account-picker";
+import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
 import { tableSelectAccount } from "@app/claude/lib/usage/table-select";
 import { TIER_BADGE } from "@app/claude/lib/usage/usage-table";
@@ -259,10 +260,16 @@ async function pickAccount(
         return plainSelect(withToken, defaultName);
     }
 
+    const dashboardConfig = await loadDashboardConfig().catch((error) => {
+        logger.debug({ error }, "Could not load dashboard config for pace scope; using the default");
+        return null;
+    });
+
     const picked = await tableSelectAccount({
         message: "Launch Claude Code as which account?",
         scored,
         accountsByName: new Map(withToken.map((a) => [a.name, a])),
+        paceScope: dashboardConfig?.paceScope,
     });
 
     if (picked === null) {
