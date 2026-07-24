@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { type LaunchableModel, modelFamilyOf, resolveModelSpec } from "@app/claude/lib/models";
 import { type ScoredAccount, scoreAccounts } from "@app/claude/lib/usage/account-picker";
 import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
-import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
+import { fableCapableAccounts, fableStatusForAccount } from "@app/claude/lib/usage/fable-guard";
+import { getSharedAccountsUsage, peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
 import { tableSelectAccount } from "@app/claude/lib/usage/table-select";
 import { TIER_BADGE } from "@app/claude/lib/usage/usage-table";
 import * as p from "@clack/prompts";
@@ -161,29 +162,122 @@ async function resolveModel(spec: string): Promise<string> {
     return picked as string;
 }
 
+/**
+ * Instant picker: the warm cache paints the table immediately and the live
+ * fetch only runs when the cache is missing or the caller forces it. The
+ * daemon refreshes every minute anyway, so waiting on the network before
+ * drawing anything was pure latency.
+ */
 async function scoreTokenAccounts(
     withToken: AIAccountEntry[],
     modelId: string | undefined
 ): Promise<ScoredAccount[] | null> {
+    const names = withToken.map((a) => a.name);
+    const wanted = new Set(names);
+    const scoreOpts = { modelFamily: modelId ? modelFamilyOf(modelId) : undefined };
+
+    const cached = await peekSharedUsage().catch((error) => {
+        logger.debug({ error }, "usage cache peek failed; falling back to a live fetch");
+        return null;
+    });
+    const cachedAccounts = cached?.accounts.filter((a) => wanted.has(a.accountName)) ?? [];
+
+    if (cachedAccounts.length > 0) {
+        const age = Math.round((Date.now() - cached!.fetchedAt) / 1000);
+        logger.debug({ age, accounts: cachedAccounts.length }, "picker painting from the warm usage cache");
+
+        // Revalidate in the background: the next launch gets fresher numbers
+        // without this one paying for it. Failures are the daemon's problem.
+        void getSharedAccountsUsage({ accountFilter: names }).catch((error) => {
+            logger.debug({ error }, "background usage revalidation failed");
+        });
+
+        return scoreAccounts(cachedAccounts, scoreOpts);
+    }
+
     const spinner = p.spinner();
     spinner.start("Checking usage across accounts...");
 
     try {
-        const usage = await getSharedAccountsUsage({ accountFilter: withToken.map((a) => a.name) });
+        const usage = await getSharedAccountsUsage({ accountFilter: names });
         if (usage.length === 0) {
             spinner.stop(pc.yellow("No usage data available"));
             return null;
         }
 
-        const scored = scoreAccounts(usage, {
-            modelFamily: modelId ? modelFamilyOf(modelId) : undefined,
-        });
+        const scored = scoreAccounts(usage, scoreOpts);
         spinner.stop(`Ranked ${scored.length} account${scored.length === 1 ? "" : "s"} by usage headroom`);
         return scored;
     } catch (error) {
         spinner.stop(pc.yellow("Usage check failed"));
         logger.warn({ error }, "Account scoring failed, falling back to plain selection");
         return null;
+    }
+}
+
+/**
+ * Warn before launching an account whose Fable weekly bucket is spent, and offer
+ * the Opus fallback. Deliberately narrow:
+ *  - only when the launch would actually use Fable (no `--model`, or `--model fable`);
+ *  - never during `--resume`/`--continue`, where interrupting to renegotiate the
+ *    model would derail resuming the session the user asked for;
+ *  - an EXPLICIT `--model` is honored — the warning is informational, never a veto.
+ * Reads the warm cache only; a cache miss means UNKNOWN, which never blocks.
+ */
+async function guardFableHeadroom(accountName: string, modelId: string | undefined, resuming: boolean): Promise<void> {
+    if (resuming || !isInteractive()) {
+        return;
+    }
+
+    const explicitFamily = modelId ? modelFamilyOf(modelId) : undefined;
+
+    if (explicitFamily && explicitFamily !== "fable") {
+        return;
+    }
+
+    const cached = await peekSharedUsage().catch((error) => {
+        logger.debug({ error }, "fable guard: cache peek failed, skipping the check");
+        return null;
+    });
+
+    if (!cached) {
+        return;
+    }
+
+    const status = fableStatusForAccount(cached.accounts, accountName);
+
+    if (status.available) {
+        return;
+    }
+
+    const left = status.leftPct <= 0 ? "spent" : `${status.leftPct.toFixed(1)}% left`;
+    const alternatives = fableCapableAccounts(cached.accounts).filter((name) => name !== accountName);
+
+    // An explicit --model fable is the user's decision; say the number and move on.
+    if (explicitFamily === "fable") {
+        out.printlnErr(pc.yellow(`⚠ Fable weekly on "${accountName}" is ${left} — launching anyway (--model fable).`));
+
+        if (alternatives.length > 0) {
+            out.printlnErr(pc.dim(`  Accounts with Fable headroom: ${alternatives.join(", ")}`));
+        }
+
+        return;
+    }
+
+    out.printlnErr(pc.yellow(`⚠ Fable weekly on "${accountName}" is ${left}.`));
+
+    if (alternatives.length > 0) {
+        out.printlnErr(pc.dim(`  Accounts with Fable headroom: ${alternatives.join(", ")}`));
+    }
+
+    const proceed = await p.confirm({
+        message: "Launch anyway? (No cancels so you can pick another account or model)",
+        initialValue: true,
+    });
+
+    if (p.isCancel(proceed) || !proceed) {
+        p.cancel("Cancelled — nothing launched.");
+        process.exit(0);
     }
 }
 
@@ -391,6 +485,8 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     const account = withToken.find((a) => a.name === accountName)!;
 
     const resumeArgs = await resolveResumeArgs(opts);
+
+    await guardFableHeadroom(accountName, modelId, resumeArgs.length > 0);
 
     let injectedUuid: string | undefined;
     let foreignBackupPath: string | undefined;
