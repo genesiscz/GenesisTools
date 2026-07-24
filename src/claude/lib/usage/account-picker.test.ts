@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { scoreAccounts } from "./account-picker";
+import { scoreAccounts, sortGrouped } from "./account-picker";
 import type { AccountUsage, UsageResponse } from "./api";
 
 const NOW = new Date("2026-07-10T12:00:00Z");
@@ -222,5 +222,153 @@ describe("scoreAccounts — tiers and edge cases", () => {
 
         const ranked = scoreAccounts([lowSession, highSession], { now: NOW });
         expect(ranked[0].accountName).toBe("high-session");
+    });
+});
+
+describe("grouped urgency", () => {
+    function fableLimit(percentUsed: number, resetsAt: string | null) {
+        return {
+            kind: "weekly_scoped",
+            percent: percentUsed,
+            severity: "normal",
+            resets_at: resetsAt,
+            scope: { model: { id: "claude-fable-5", display_name: "Fable" }, surface: null },
+            is_active: true,
+        } as const;
+    }
+
+    test("a Fable-exhausted account lands in the opus group", () => {
+        const [scored] = scoreAccounts(
+            [
+                account(
+                    "spent",
+                    usage({
+                        seven_day: { utilization: 20, resets_at: hoursFromNow(50) },
+                        limits: [fableLimit(99.5, hoursFromNow(50))],
+                    })
+                ),
+            ],
+            { now: NOW }
+        );
+
+        expect(scored.group).toBe("opus");
+    });
+
+    test("a Fable-capable account stays in the fable group", () => {
+        const [scored] = scoreAccounts(
+            [
+                account(
+                    "fresh",
+                    usage({
+                        seven_day: { utilization: 20, resets_at: hoursFromNow(50) },
+                        limits: [fableLimit(10, hoursFromNow(50))],
+                    })
+                ),
+            ],
+            { now: NOW }
+        );
+
+        expect(scored.group).toBe("fable");
+    });
+
+    test("an exhausted weekly bucket is the dead group", () => {
+        const [scored] = scoreAccounts(
+            [account("dead", usage({ seven_day: { utilization: 99, resets_at: hoursFromNow(20) } }))],
+            { now: NOW }
+        );
+
+        expect(scored.group).toBe("dead");
+    });
+
+    test("invalid_grant is the expired group, a plain fetch error is not", () => {
+        const [dead, flaky] = scoreAccounts(
+            [
+                account("dead-login", undefined, "Token expired (invalid_grant). Run: tools claude login x"),
+                account("flaky", undefined, "Usage API 500: upstream boom"),
+            ],
+            { now: NOW }
+        );
+
+        expect(dead.group).toBe("expired");
+        expect(flaky.group).toBe("fable");
+    });
+
+    test("a nearly spent 5h window marks the account cooling", () => {
+        const [scored] = scoreAccounts(
+            [
+                account(
+                    "cooling",
+                    usage({
+                        five_hour: { utilization: 99, resets_at: hoursFromNow(1) },
+                        seven_day: { utilization: 20, resets_at: hoursFromNow(50) },
+                    })
+                ),
+            ],
+            { now: NOW }
+        );
+
+        expect(scored.cooling).toBe(true);
+    });
+
+    test("sortGrouped puts fable before opus before dead before expired", () => {
+        const scored = scoreAccounts(
+            [
+                account("dead", usage({ seven_day: { utilization: 99, resets_at: hoursFromNow(20) } })),
+                account("expired", undefined, "Token expired (invalid_grant)"),
+                account(
+                    "opus-only",
+                    usage({
+                        seven_day: { utilization: 20, resets_at: hoursFromNow(50) },
+                        limits: [fableLimit(99.9, hoursFromNow(50))],
+                    })
+                ),
+                account(
+                    "fable-ok",
+                    usage({
+                        seven_day: { utilization: 20, resets_at: hoursFromNow(50) },
+                        limits: [fableLimit(5, hoursFromNow(50))],
+                    })
+                ),
+            ],
+            { now: NOW }
+        );
+
+        expect(sortGrouped(scored).map((s) => s.accountName)).toEqual(["fable-ok", "opus-only", "dead", "expired"]);
+    });
+
+    test("sortGrouped sinks cooling accounts to their group's bottom", () => {
+        const scored = scoreAccounts(
+            [
+                account(
+                    "cooling",
+                    usage({
+                        five_hour: { utilization: 99, resets_at: hoursFromNow(1) },
+                        seven_day: { utilization: 10, resets_at: hoursFromNow(10) },
+                    })
+                ),
+                account(
+                    "hot",
+                    usage({
+                        five_hour: { utilization: 10, resets_at: hoursFromNow(4) },
+                        seven_day: { utilization: 50, resets_at: hoursFromNow(100) },
+                    })
+                ),
+            ],
+            { now: NOW }
+        );
+
+        expect(sortGrouped(scored)[1].accountName).toBe("cooling");
+    });
+
+    test("scoreAccounts itself still returns tier order", () => {
+        const ranked = scoreAccounts(
+            [
+                account("dead", usage({ seven_day: { utilization: 99, resets_at: hoursFromNow(20) } })),
+                account("ready", usage({ seven_day: { utilization: 10, resets_at: hoursFromNow(20) } })),
+            ],
+            { now: NOW }
+        );
+
+        expect(ranked[0].accountName).toBe("ready");
     });
 });

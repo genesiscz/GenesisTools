@@ -1,6 +1,6 @@
 import type { ClaudeModelFamily } from "@app/claude/lib/models";
 import type { AccountUsage, UsageBucket } from "./api";
-import { type CompactLimits, extractCompactLimits } from "./compact-limits";
+import { type CompactLimits, effectiveLeftPct, extractCompactLimits } from "./compact-limits";
 
 /**
  * Account-picking heuristic for `tools claude start --pick/--autopick`.
@@ -23,19 +23,43 @@ import { type CompactLimits, extractCompactLimits } from "./compact-limits";
  *
  * The only numbers involved are the buckets' own periods (5h, 7d) and the
  * majority-stall factor (1/2).
+ *
+ * GROUPED URGENCY (the `group`/`score`/`cooling` fields) is the alternative
+ * ordering: accounts partition into fable / opus / dead / expired, and inside a
+ * group rank by capacity that evaporates soonest. `sortGrouped` applies it;
+ * `scoreAccounts` still returns tier order so existing callers are unchanged.
  */
 
 const SESSION_PERIOD_HOURS = 5;
 const WEEKLY_PERIOD_HOURS = 168;
 const MS_PER_HOUR = 3_600_000;
+/** weekly_all at/below this headroom ⇒ the account can't serve any model. */
+const DEAD_HEADROOM_PCT = 2;
+/** 5h window at/below this ⇒ "cooling": sinks to its group's bottom until the reset. */
+const COOLING_HEADROOM_PCT = 2;
+/** Fable weekly at/below this ⇒ effectively exhausted, the account is Opus-only. */
+export const FABLE_EXHAUSTED_PCT = 1;
+/** Fable weekly at/below this ⇒ low enough that a launcher should confirm first. */
+export const FABLE_LOW_PCT = 3;
+
+/** A dead LOGIN, not a spent bucket — no refresh will fix it. */
+const EXPIRED_ERROR_RE = /invalid_grant|Usage API 401/i;
 
 export type AccountTier = "ready" | "session-starved" | "weekly-blocked" | "no-data";
+export type AccountGroup = "fable" | "opus" | "dead" | "expired";
 
 const TIER_ORDER: Record<AccountTier, number> = {
     ready: 0,
     "session-starved": 1,
     "weekly-blocked": 2,
     "no-data": 3,
+};
+
+const GROUP_ORDER: Record<AccountGroup, number> = {
+    fable: 0,
+    opus: 1,
+    dead: 2,
+    expired: 3,
 };
 
 interface BucketView {
@@ -52,6 +76,12 @@ export interface ScoredAccount {
     accountName: string;
     label?: string;
     tier: AccountTier;
+    /** Grouped-urgency partition: fable → opus → dead → expired. */
+    group: AccountGroup;
+    /** Grouped-urgency rank inside the group (bindingRate × usable5h), higher first. */
+    score: number;
+    /** 5h window nearly spent — sinks to the group bottom until its reset passes. */
+    cooling: boolean;
     /** Weekly scarcity rate in %/h of the binding weekly bucket. 0 for no-data. */
     weeklyRatePctPerHour: number;
     sessionHeadroomPct: number;
@@ -99,6 +129,17 @@ function viewBucket(bucket: UsageBucket | null | undefined, periodHours: number,
     return { headroomPct, hoursToReset, hasScheduledReset: true, resetsAt };
 }
 
+/** Hours until a compact limit's reset; the bucket period when none is scheduled or it already passed. */
+function hoursToReset(resetsAt: string | null | undefined, periodHours: number, now: Date): number {
+    if (!resetsAt) {
+        return periodHours;
+    }
+
+    const hours = (new Date(resetsAt).getTime() - now.getTime()) / MS_PER_HOUR;
+
+    return Number.isFinite(hours) && hours > 0 ? hours : periodHours;
+}
+
 function fmtHours(hours: number): string {
     if (hours < 1) {
         return `${Math.max(1, Math.round(hours * 60))}m`;
@@ -134,15 +175,24 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
         const base = { accountName: account.accountName, label: account.label };
 
         if (!account.usage) {
+            const expired = account.error !== undefined && EXPIRED_ERROR_RE.test(account.error);
+
             return {
                 ...base,
                 tier: "no-data",
+                // Unknown is NOT Opus-only: an un-pollable account keeps its place
+                // in the fable group's tail (score 0) instead of being demoted.
+                group: expired ? "expired" : "fable",
+                score: 0,
+                cooling: false,
                 weeklyRatePctPerHour: 0,
                 sessionHeadroomPct: 0,
                 weeklyHeadroomPct: 0,
                 sessionUsableFraction: 0,
-                why: `usage unavailable${account.error ? `: ${account.error.slice(0, 80)}` : ""}`,
-                dataNote: "no data",
+                why: expired
+                    ? `login dead — run tools claude login ${account.accountName}`
+                    : `usage unavailable${account.error ? `: ${account.error.slice(0, 80)}` : ""}`,
+                dataNote: expired ? "expired" : "no data",
             };
         }
 
@@ -177,9 +227,27 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
         const paceLine = session.hasScheduledReset ? 100 * (session.hoursToReset / SESSION_PERIOD_HOURS) : 0;
         const usableFraction = paceLine > 0 ? Math.min(1, session.headroomPct / paceLine) : 1;
 
+        // Grouped urgency. Fable burns BOTH its own weekly bucket and weekly_all,
+        // so the fable group is ruled by whichever sustains the LOWER rate; the
+        // opus group runs on the binding weekly bucket alone.
+        const fableLeft = effectiveLeftPct(limits.fable, now);
+        const fableAvailable = !limits.fable || fableLeft > FABLE_EXHAUSTED_PCT;
+        const fableRate = limits.fable
+            ? fableLeft / hoursToReset(limits.fable.resetsAt, WEEKLY_PERIOD_HOURS, now)
+            : Number.POSITIVE_INFINITY;
+
+        const dead = binding.headroomPct <= DEAD_HEADROOM_PCT;
+        const cooling = !dead && session.headroomPct <= COOLING_HEADROOM_PCT;
+        const group: AccountGroup = dead ? "dead" : fableAvailable ? "fable" : "opus";
+        const bindingRate = group === "fable" ? Math.min(fableRate, weeklyRate) : weeklyRate;
+        const score = bindingRate * usableFraction;
+        const grouped = { group, score, cooling };
+
         if (binding.headroomPct < 1) {
             return {
                 ...base,
+                ...grouped,
+                cooling: false,
                 tier: "weekly-blocked",
                 weeklyRatePctPerHour: weeklyRate,
                 sessionHeadroomPct: session.headroomPct,
@@ -194,6 +262,7 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
         if (paceLine > 0 && session.headroomPct < paceLine / 2) {
             return {
                 ...base,
+                ...grouped,
                 tier: "session-starved",
                 weeklyRatePctPerHour: weeklyRate,
                 sessionHeadroomPct: session.headroomPct,
@@ -208,6 +277,7 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
         const usableNote = usableFraction < 0.99 ? `, ~${Math.round(usableFraction * 100)}% usable` : "";
         return {
             ...base,
+            ...grouped,
             tier: "ready",
             weeklyRatePctPerHour: weeklyRate,
             sessionHeadroomPct: session.headroomPct,
@@ -234,4 +304,17 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
 
         return b.sessionHeadroomPct - a.sessionHeadroomPct;
     });
+}
+
+/**
+ * Grouped-urgency ordering: fable → opus → dead → expired, cooling accounts at
+ * each group's bottom, then highest urgency score first. Stable, so ties keep
+ * the order they came in with (config order, since `scoreAccounts` preserves it
+ * for equal keys). Sorts a COPY — callers may keep the tier-ordered array.
+ */
+export function sortGrouped(scored: ScoredAccount[]): ScoredAccount[] {
+    return [...scored].sort(
+        (a, b) =>
+            GROUP_ORDER[a.group] - GROUP_ORDER[b.group] || Number(a.cooling) - Number(b.cooling) || b.score - a.score
+    );
 }

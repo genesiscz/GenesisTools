@@ -13,6 +13,9 @@ function scoredAccount(name: string, tier: ScoredAccount["tier"], limits: Scored
     return {
         accountName: name,
         tier,
+        group: "fable",
+        score: 1,
+        cooling: false,
         weeklyRatePctPerHour: 1,
         sessionHeadroomPct: 50,
         weeklyHeadroomPct: 50,
