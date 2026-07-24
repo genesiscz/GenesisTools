@@ -17,6 +17,28 @@ function fromUsed(percentUsed: number, resetsAt: string | null): CompactLimit {
     return { leftPct: Math.min(100, Math.max(0, 100 - percentUsed)), resetsAt };
 }
 
+/**
+ * Headroom with a PASSED reset treated as a fresh bucket. A slightly stale cache
+ * showing "0% left" whose window has already rolled over must read as available —
+ * we know the reset moment, so compute it instead of rendering a false red.
+ * A missing limit is unconstrained (100).
+ */
+export function effectiveLeftPct(limit: CompactLimit | undefined, now: Date = new Date()): number {
+    if (!limit) {
+        return 100;
+    }
+
+    if (limit.resetsAt) {
+        const resetMs = new Date(limit.resetsAt).getTime();
+
+        if (Number.isFinite(resetMs) && resetMs <= now.getTime()) {
+            return 100;
+        }
+    }
+
+    return limit.leftPct;
+}
+
 function fromBucket(bucket: UsageBucket | null | undefined): CompactLimit | undefined {
     if (!bucket || typeof bucket.utilization !== "number") {
         return undefined;

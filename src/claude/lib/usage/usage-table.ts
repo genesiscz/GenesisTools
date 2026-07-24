@@ -2,7 +2,7 @@ import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { accent, padVisible } from "@genesiscz/utils/prompts/clack/table-select";
 import pc from "picocolors";
 import type { ScoredAccount } from "./account-picker";
-import type { CompactLimit } from "./compact-limits";
+import { type CompactLimit, effectiveLeftPct } from "./compact-limits";
 
 export const TIER_BADGE: Record<ScoredAccount["tier"], string> = {
     ready: pc.green("●"),
@@ -23,12 +23,12 @@ function colorByPct(pct: number, text: string): string {
     return pc.green(text);
 }
 
-function pctCell(limit: CompactLimit | undefined): string {
+function pctCell(limit: CompactLimit | undefined, now: Date = new Date()): string {
     if (!limit) {
         return pc.dim("—");
     }
 
-    const pct = Math.round(limit.leftPct);
+    const pct = Math.round(effectiveLeftPct(limit, now));
     return colorByPct(pct, `${pct}%`);
 }
 
@@ -89,9 +89,9 @@ export function accountCells(scored: ScoredAccount, now: Date = new Date()): str
 
     return [
         scored.accountName,
-        pctCell(limits?.session),
-        pctCell(limits?.weekly),
-        pctCell(limits?.fable),
+        pctCell(limits?.session, now),
+        pctCell(limits?.weekly, now),
+        pctCell(limits?.fable, now),
         pc.dim(resets),
     ];
 }
@@ -101,12 +101,12 @@ const BAR_W = 10;
 const WHY_MAX_W = 66;
 
 /** `████████░░ 78%` — colored by headroom. */
-function barCell(limit: CompactLimit | undefined): string {
+function barCell(limit: CompactLimit | undefined, now: Date = new Date()): string {
     if (!limit) {
         return pc.dim("—");
     }
 
-    const pct = Math.round(limit.leftPct);
+    const pct = Math.round(effectiveLeftPct(limit, now));
     const filled = Math.round((pct / 100) * BAR_W);
     const bar = "█".repeat(filled) + pc.dim("░".repeat(BAR_W - filled));
     return `${colorByPct(pct, bar)} ${colorByPct(pct, `${pct}%`)}`;
@@ -146,8 +146,8 @@ function truncateWhy(why: string): string {
 }
 
 /** `Weekly   ████░░░░░░  20%  in 7h 29m` — one narrow row per limit. */
-function limitRow(label: string, limit: CompactLimit | undefined, reset: string): string {
-    return `${pc.dim(padVisible(label, DETAIL_LABEL_W))} ${padVisible(barCell(limit), BAR_W + 5, "left")} ${pc.dim(reset)}`;
+function limitRow(label: string, limit: CompactLimit | undefined, reset: string, now: Date): string {
+    return `${pc.dim(padVisible(label, DETAIL_LABEL_W))} ${padVisible(barCell(limit, now), BAR_W + 5, "left")} ${pc.dim(reset)}`;
 }
 
 /**
@@ -181,9 +181,9 @@ export function detailBlock(
         return [
             identity.join(" · "),
             subscription,
-            limitRow("5 Hour", undefined, "—"),
-            limitRow("Weekly", undefined, "—"),
-            limitRow("Fable", undefined, "—"),
+            limitRow("5 Hour", undefined, "—", now),
+            limitRow("Weekly", undefined, "—", now),
+            limitRow("Fable", undefined, "—", now),
         ];
     }
 
@@ -193,8 +193,8 @@ export function detailBlock(
     return [
         identity.join(" · "),
         subscription,
-        limitRow("5 Hour", limits.session, resetCell(limits.session, now)),
-        limitRow("Weekly", limits.weekly, resetCell(limits.weekly, now)),
-        limitRow("Fable", limits.fable, fableReset),
+        limitRow("5 Hour", limits.session, resetCell(limits.session, now), now),
+        limitRow("Weekly", limits.weekly, resetCell(limits.weekly, now), now),
+        limitRow("Fable", limits.fable, fableReset, now),
     ];
 }
