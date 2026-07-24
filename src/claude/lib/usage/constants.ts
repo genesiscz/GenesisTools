@@ -55,3 +55,52 @@ export function colorForPct(pct: number): "red" | "yellow" | "green" {
 
     return "green";
 }
+
+/**
+ * How close a reset has to be before a spent bucket stops reading as a problem.
+ * A 5h window refilling in 20 minutes is not worth a red bar; a weekly one
+ * refilling tonight isn't either.
+ */
+const IMMINENT_RESET_MS: Record<"session" | "weekly", number> = {
+    session: 30 * 60 * 1000,
+    weekly: 6 * 60 * 60 * 1000,
+};
+
+/** Whether a bucket's reset is close enough that being spent no longer matters. */
+export function isResetImminent(bucket: string, resetsAt: string | null, now: Date = new Date()): boolean {
+    if (!resetsAt) {
+        return false;
+    }
+
+    const resetMs = new Date(resetsAt).getTime();
+
+    if (!Number.isFinite(resetMs)) {
+        return false;
+    }
+
+    const remaining = resetMs - now.getTime();
+
+    if (remaining <= 0) {
+        // Already rolled over — the cache just hasn't caught up.
+        return true;
+    }
+
+    return remaining <= IMMINENT_RESET_MS[BUCKET_THRESHOLD_MAP[bucket] ?? "weekly"];
+}
+
+/**
+ * Utilization color that accounts for the refill: low-but-about-to-reset reads
+ * green instead of red, which is what "resets now" rows should look like.
+ */
+export function colorForPctWithReset(
+    pct: number,
+    bucket: string,
+    resetsAt: string | null,
+    now: Date = new Date()
+): "red" | "yellow" | "green" {
+    if (isResetImminent(bucket, resetsAt, now)) {
+        return "green";
+    }
+
+    return colorForPct(pct);
+}

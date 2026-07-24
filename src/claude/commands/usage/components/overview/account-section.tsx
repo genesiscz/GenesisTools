@@ -1,5 +1,5 @@
 import type { AccountUsage } from "@app/claude/lib/usage/api";
-import { BUCKET_LABELS, BUCKET_PERIODS_MS, colorForPct } from "@app/claude/lib/usage/constants";
+import { BUCKET_LABELS, BUCKET_PERIODS_MS, colorForPct, isResetImminent } from "@app/claude/lib/usage/constants";
 import { formatSpendBalance } from "@app/claude/lib/usage/display";
 import type { NormalizedLimit, NormalizedSpend, Severity } from "@app/claude/lib/usage/limits";
 import { normalizeLimits, normalizeSpend } from "@app/claude/lib/usage/limits";
@@ -154,7 +154,9 @@ function BucketRow({ limit, layout }: BucketRowProps) {
     const notUsed = !limit.resets_at && limit.percent === 0;
     const projected = calcProjection(limit.percent, limit.resets_at, limit.bucket);
     const pct = Math.round(Math.max(0, Math.min(limit.percent, 100)));
-    const color = severityColor(limit.severity);
+    // A bucket about to refill is not a problem, however spent it is.
+    const imminent = isResetImminent(limit.bucket, limit.resets_at);
+    const color = imminent ? "green" : severityColor(limit.severity);
 
     const projStr = projected !== null && projected >= 100 ? (projected > 999 ? "(≥999%)" : `(~${projected}%)`) : "";
     const projColor = projected !== null ? colorForPct(projected) : undefined;
@@ -175,9 +177,15 @@ function BucketRow({ limit, layout }: BucketRowProps) {
                 ) : (
                     <Text>{" ".repeat(PCT_PROJ_WIDTH - 5)}</Text>
                 )}
-                {layout.inlineCountdown && tail ? <Text dimColor>{` ${tail}`}</Text> : null}
+                {layout.inlineCountdown && tail ? (
+                    <Text dimColor={!imminent} color={imminent ? "green" : undefined}>{` ${tail}`}</Text>
+                ) : null}
             </Box>
-            {!layout.inlineCountdown && tail ? <Text dimColor>{`${" ".repeat(layout.nameWidth)}${tail}`}</Text> : null}
+            {!layout.inlineCountdown && tail ? (
+                <Text dimColor={!imminent} color={imminent ? "green" : undefined}>
+                    {`${" ".repeat(layout.nameWidth)}${tail}`}
+                </Text>
+            ) : null}
         </Box>
     );
 }
@@ -273,14 +281,13 @@ function staleHeaderText(account: AccountUsage): string | null {
     return `⚠ stale ${ago} · ${shortStaleReason(account.stale.reason)}`;
 }
 
-/** Rendered width of the header: dot + name + label, plus the stale marker when shown. */
+/**
+ * Rendered width of the header's fixed part: dot + name, plus the stale marker
+ * when shown. The label is NOT counted here — it rides with the renewal
+ * countdown in `headerExtras` (`max 20x · renews in 28d`).
+ */
 function headerLength(account: AccountUsage, staleText: string | null): number {
-    return (
-        2 +
-        account.accountName.length +
-        (account.label ? 2 + account.label.length : 0) +
-        (staleText ? 2 + staleText.length : 0)
-    );
+    return 2 + account.accountName.length + (staleText ? 2 + staleText.length : 0);
 }
 
 /** Whether the stale marker fits on the header line next to name + label. */
@@ -343,13 +350,20 @@ function headerExtras(
         used += 2 + grant.length;
     }
 
+    // Plan and renewal read as one fact ("max 20x · renews in 28d"); on a tight
+    // line the countdown is dropped first and the plan label alone survives.
     const renews = formatRenewsAt(account.subscriptionCreatedAt);
-    const renewsFits = renews !== null && used + 2 + renews.length <= width;
+    const both = [account.label, renews].filter(Boolean).join(" · ");
 
-    return {
-        grantText: grantFits ? grant : null,
-        renewsText: renewsFits ? renews : null,
-    };
+    if (both && used + 2 + both.length <= width) {
+        return { grantText: grantFits ? grant : null, renewsText: both };
+    }
+
+    if (account.label && used + 2 + account.label.length <= width) {
+        return { grantText: grantFits ? grant : null, renewsText: account.label };
+    }
+
+    return { grantText: grantFits ? grant : null, renewsText: null };
 }
 
 function worstSeverity(limits: NormalizedLimit[], spend: NormalizedSpend | null): Severity {
@@ -383,7 +397,6 @@ function AccountHeader({ account, dotColor, staleText, renewsText, grantText }: 
             <Text bold color="cyan">
                 {account.accountName}
             </Text>
-            {account.label ? <Text dimColor>{`  ${account.label}`}</Text> : null}
             {staleText ? <Text color="yellow">{`  ${staleText}`}</Text> : null}
             {grantText ? <Text color="red">{`  ${grantText}`}</Text> : null}
             {renewsText ? <Text dimColor>{`  ${renewsText}`}</Text> : null}
