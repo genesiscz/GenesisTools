@@ -181,6 +181,26 @@ export function registerLogoutCommand(program: Command): void {
 
             if (!hasOAuthPair(account) && !account.tokens.longLivedToken) {
                 p.log.warn(`Account "${accountName}" has no tokens to remove.`);
+
+                // A tokenless entry is usually a typo'd or abandoned account, so offer the
+                // only remaining action — but default to no: the entry may still carry a
+                // label and the subscription anchor, and deleting it is not undoable.
+                if (!isInteractive()) {
+                    process.exit(0);
+                }
+
+                const removeEntry = await p.confirm({
+                    message: `Remove the account entry "${accountName}" from the config entirely?`,
+                    initialValue: false,
+                });
+
+                if (p.isCancel(removeEntry) || !removeEntry) {
+                    p.cancel("Cancelled — account kept.");
+                    process.exit(0);
+                }
+
+                await aiConfig.removeAccount(accountName);
+                p.log.success(`Account "${accountName}" removed from the config.`);
                 process.exit(0);
             }
 
