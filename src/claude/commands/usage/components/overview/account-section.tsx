@@ -309,7 +309,7 @@ const GRANT_WARNING_MS = 14 * 24 * 3_600_000;
  * only when it is imminent (or already gone) — a grant with months left is noise.
  * Shares the header line with the renewal marker; both are dropped when narrow.
  */
-function grantWarningText(account: AccountUsage, now: number): string | null {
+export function grantWarningText(account: AccountUsage, now: number): string | null {
     if (!account.refreshExpiresAt) {
         return null;
     }
@@ -338,7 +338,7 @@ interface HeaderExtrasInput {
  * warning is placed first because it is actionable (re-login) where the renewal
  * date is trivia, so on a tight line the warning is what survives.
  */
-function headerExtras({ account, staleText, width, now = Date.now() }: HeaderExtrasInput): {
+export function headerExtras({ account, staleText, width, now = Date.now() }: HeaderExtrasInput): {
     renewsText: string | null;
     grantText: string | null;
 } {

@@ -30,7 +30,8 @@ export async function generateAuthUrl(scopes?: string): Promise<string> {
     return authUrl;
 }
 
-export async function presentAuthUrl(authUrl: string): Promise<void> {
+/** Returns false when the user cancelled — callers MUST abort the login rather than fall through to the code prompt. */
+export async function presentAuthUrl(authUrl: string): Promise<boolean> {
     p.note(
         [
             "1. Open the URL below in your browser",
@@ -58,7 +59,7 @@ export async function presentAuthUrl(authUrl: string): Promise<void> {
     });
 
     if (p.isCancel(action)) {
-        return;
+        return false;
     }
 
     if (action === "open") {
@@ -67,6 +68,8 @@ export async function presentAuthUrl(authUrl: string): Promise<void> {
         await copyToClipboard(authUrl, { silent: true });
         p.log.info("URL copied. After authorizing, copy the CODE from the callback page — that is what to paste next.");
     }
+
+    return true;
 }
 
 /**
@@ -224,7 +227,11 @@ async function promptAccountName(aiConfig: AIConfig, suggestedName: string): Pro
 
 async function addAccountViaOAuth(aiConfig: AIConfig): Promise<void> {
     const authUrl = await generateAuthUrl();
-    await presentAuthUrl(authUrl);
+
+    if (!(await presentAuthUrl(authUrl))) {
+        p.cancel("Login cancelled.");
+        return;
+    }
 
     const tokens = await promptAndExchangeCode();
     if (!tokens) {
@@ -857,7 +864,11 @@ export function registerConfigCommand(program: Command): void {
             // (so declining never clobbers a clipboard that holds the code) and
             // a paste prompt that accepts the callback URL.
             const authUrl = await generateAuthUrl();
-            await presentAuthUrl(authUrl);
+
+            if (!(await presentAuthUrl(authUrl))) {
+                out.println(pc.dim("Login cancelled."));
+                process.exit(0);
+            }
 
             const tokens = await promptAndExchangeCode();
 

@@ -1,3 +1,4 @@
+import { applyLongLivedToken } from "@app/claude/lib/long-lived-token";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { INFERENCE_SCOPE, ONE_YEAR_SECONDS } from "@genesiscz/utils/claude/auth";
@@ -36,7 +37,10 @@ async function mintLongLivedToken(accountName: string): Promise<{ token: string;
     );
 
     const authUrl = await generateAuthUrl(INFERENCE_SCOPE);
-    await presentAuthUrl(authUrl);
+
+    if (!(await presentAuthUrl(authUrl))) {
+        return null;
+    }
 
     // The PKCE session survives a failed exchange, so a fumbled paste costs one
     // retry rather than the whole browser round-trip.
@@ -174,16 +178,13 @@ export function registerLoginLongCommand(program: Command): void {
                 // in-memory `account.tokens` would write back a stale access /
                 // refresh token and clobber whatever the poll daemon rotated
                 // while the browser flow was open.
-                await aiConfig.mutate((data) => {
-                    const entry = data.accounts.find((a) => a.name === accountName);
-
-                    if (!entry) {
-                        throw new Error(`Account "${accountName}" disappeared while minting the token`);
-                    }
-
-                    entry.tokens.longLivedToken = minted.token;
-                    entry.tokens.longLivedTokenExpiresAt = minted.expiresAt;
-                });
+                await aiConfig.mutate((data) =>
+                    applyLongLivedToken(data, {
+                        accountName,
+                        token: minted.token,
+                        expiresAt: minted.expiresAt,
+                    })
+                );
 
                 p.log.success(
                     `Long-lived token saved to "${accountName}" (${maskToken(minted.token)}), ` +
@@ -255,19 +256,9 @@ export function registerLoginLongCommand(program: Command): void {
                 spinner.stop("Token verified.");
             }
 
-            await aiConfig.mutate((data) => {
-                const entry = data.accounts.find((a) => a.name === accountName);
-
-                if (!entry) {
-                    throw new Error(`Account "${accountName}" disappeared while saving the token`);
-                }
-
-                entry.tokens.longLivedToken = trimmed;
-                // A PASTED token's lifetime is unknowable — drop any expiry left
-                // over from a previously minted token rather than mislabelling
-                // the new one with the old one's date.
-                delete entry.tokens.longLivedTokenExpiresAt;
-            });
+            // No expiresAt: a pasted token's lifetime is unknowable, and passing
+            // undefined clears any expiry a previously minted token left behind.
+            await aiConfig.mutate((data) => applyLongLivedToken(data, { accountName, token: trimmed }));
 
             p.log.success(
                 `Long-lived token saved to "${accountName}" (${maskToken(trimmed)}). ` +

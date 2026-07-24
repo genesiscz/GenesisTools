@@ -89,15 +89,18 @@ export const ONE_YEAR_SECONDS = 365 * 24 * 60 * 60;
  * token, `refresh_token_expires_in` for the grant behind it. Never logs a token
  * value: only lengths and the non-secret `sk-ant-oatNN-` style prefix.
  */
+const KNOWN_TOKEN_PREFIXES = ["sk-ant-oat01-", "sk-ant-ort01-", "sk-ant-api03-", "sk-ant-sid01-"] as const;
+
 function describeTokenResponse(data: Record<string, unknown>): Record<string, unknown> {
     const describeToken = (value: unknown) => {
         if (typeof value !== "string") {
             return value === undefined ? "absent" : `non-string(${typeof value})`;
         }
 
-        // ONLY the recognized non-secret prefix is ever echoed. An unrecognized
-        // shape must not fall back to slicing raw characters off a real secret.
-        const prefix = value.match(/^sk-ant-[a-z0-9]+-/)?.[0] ?? "<unrecognized-prefix>";
+        // A FIXED whitelist, not a pattern: `sk-ant-[a-z0-9]+-` would happily echo
+        // an arbitrarily long segment of credential material if the shape ever
+        // changes. Anything unrecognized is reported as a shape, never a value.
+        const prefix = KNOWN_TOKEN_PREFIXES.find((known) => value.startsWith(known)) ?? "<unrecognized-prefix>";
         return `${prefix}[len ${value.length}]`;
     };
 
