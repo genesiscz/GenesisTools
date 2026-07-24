@@ -20,21 +20,37 @@ const CACHE_STATUS_COLOR: Record<string, string> = {
     COLD: "gray",
 };
 
+/** A dot carries the state at a glance; the word is there for the colorblind case. */
 const CACHE_STATUS_LABEL: Record<string, string> = {
-    HOT: "HOT    ",
-    COOLING: "COOLING",
-    CRITICAL: "CRIT   ",
-    COLD: "COLD   ",
+    HOT: "● hot",
+    COOLING: "● cooling",
+    CRITICAL: "● crit",
+    COLD: "○ cold",
 };
+
+/**
+ * ONE source of truth for the row layout — the column header and every cell pad
+ * from this, so a width change can't desync them.
+ */
+const COL = {
+    session: 40,
+    model: 7,
+    lastMsg: 10,
+    cache: 10,
+    ttl: 7,
+    tokens: 8,
+    cacheRead: 8,
+    cacheWrite: 8,
+} as const;
 
 function formatTtl(sec: number): string {
     if (sec <= 0) {
-        return "—      ";
+        return "—";
     }
 
     const m = Math.floor(sec / 60);
     const s = sec % 60;
-    return `${m}:${s.toString().padStart(2, "0")}  `;
+    return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 function abbreviateModel(model: string | null): string {
@@ -318,22 +334,35 @@ export function SessionsView({ notifications }: SessionsViewProps) {
 
     const rangeStart = flatRows.length > 0 ? offset + 1 : 0;
     const rangeEnd = Math.min(offset + pageSize, flatRows.length);
-    const hint = `Showing last ${timeFilter}  [f] filter  [↑/↓] select  [Enter] actions  [j/k] scroll  (${rangeStart}-${rangeEnd} of ${flatRows.length})`;
+    const hint = `last ${timeFilter} · ${rangeStart}-${rangeEnd} of ${flatRows.length}   [f] filter  [↑/↓] select  [Enter] actions  [j/k] scroll`;
 
-    const colHeader = `${"Session".padEnd(42)}${"Model".padEnd(7)}${"Last Msg".padEnd(11)}${"Cache".padEnd(10)}${"TTL".padEnd(8)}${"Tokens".padEnd(9)}${"CacheR".padEnd(9)}CacheW`;
+    // Numeric columns right-align so magnitudes line up; text columns pad left.
+    const colHeader =
+        `  ${"SESSION".padEnd(COL.session)}` +
+        `${"MODEL".padEnd(COL.model)}` +
+        `${"LAST".padEnd(COL.lastMsg)}` +
+        `${"CACHE".padEnd(COL.cache)}` +
+        `${"TTL".padStart(COL.ttl)}` +
+        `${"TOKENS".padStart(COL.tokens)}` +
+        `${"CACHE R".padStart(COL.cacheRead)}` +
+        `${"CACHE W".padStart(COL.cacheWrite)}`;
 
     return (
         <Box flexDirection="column" paddingX={1} paddingY={1} height={maxHeight} overflow="hidden">
             <Text dimColor>{hint}</Text>
-            <Text bold>{colHeader}</Text>
+            <Text bold dimColor>
+                {colHeader}
+            </Text>
 
             {filteredEntries.map((entry, i) => {
                 if (entry.type === "header") {
                     return (
                         <Box key={`header-${entry.groupLabel}`} marginTop={i > 0 ? 1 : 0}>
-                            <Text
-                                bold
-                            >{`── ${entry.groupLabel} ${"─".repeat(Math.max(2, 50 - (entry.groupLabel?.length ?? 0)))}`}</Text>
+                            <Text dimColor>{"  "}</Text>
+                            <Text bold color="blue">
+                                {entry.groupLabel}
+                            </Text>
+                            <Text dimColor>{` ${"─".repeat(Math.max(2, 52 - (entry.groupLabel?.length ?? 0)))}`}</Text>
                         </Box>
                     );
                 }
@@ -345,8 +374,8 @@ export function SessionsView({ notifications }: SessionsViewProps) {
                 // Control chars / newlines in titles break Ink's row layout.
                 const cleanTitle = s.title?.replace(/\p{Cc}+/gu, " ").trim();
                 const sessionLabel = cleanTitle
-                    ? `${cleanTitle.slice(0, 32)} (${s.sessionId.slice(0, 8)})`
-                    : `(unnamed) (${s.sessionId.slice(0, 8)})`;
+                    ? `${cleanTitle.slice(0, 28)} ${s.sessionId.slice(0, 8)}`
+                    : `(unnamed) ${s.sessionId.slice(0, 8)}`;
 
                 let pingIndicator = "";
 
@@ -375,14 +404,18 @@ export function SessionsView({ notifications }: SessionsViewProps) {
                             </Text>
                         )}
                         {!isSelected && <Text>{"  "}</Text>}
-                        <Text color={isSelected ? "cyan" : undefined}>{sessionLabel.padEnd(40).slice(0, 40)}</Text>
-                        <Text color={s.modelSwitched ? "red" : "magenta"}>{`${modelLabel.padEnd(7)}`}</Text>
-                        <Text dimColor>{lastMsg.padEnd(11)}</Text>
-                        <Text color={cacheColor}>{CACHE_STATUS_LABEL[s.cacheStatus].padEnd(10)}</Text>
-                        <Text color={cacheColor}>{formatTtl(s.cacheTtlSec).padEnd(8)}</Text>
-                        <Text dimColor>{formatTokens(s.totalTokens).padEnd(9)}</Text>
-                        <Text dimColor>{formatTokens(s.cacheReadTokens).padEnd(9)}</Text>
-                        <Text dimColor>{formatTokens(s.cacheCreateTokens)}</Text>
+                        <Text color={isSelected ? "cyan" : undefined} bold={isSelected}>
+                            {sessionLabel.padEnd(COL.session).slice(0, COL.session)}
+                        </Text>
+                        <Text color={s.modelSwitched ? "red" : "magenta"}>{modelLabel.padEnd(COL.model)}</Text>
+                        <Text dimColor>{lastMsg.padEnd(COL.lastMsg)}</Text>
+                        <Text color={cacheColor}>
+                            {(CACHE_STATUS_LABEL[s.cacheStatus] ?? s.cacheStatus).padEnd(COL.cache)}
+                        </Text>
+                        <Text color={cacheColor}>{formatTtl(s.cacheTtlSec).padStart(COL.ttl)}</Text>
+                        <Text dimColor={!isSelected}>{formatTokens(s.totalTokens).padStart(COL.tokens)}</Text>
+                        <Text dimColor>{formatTokens(s.cacheReadTokens).padStart(COL.cacheRead)}</Text>
+                        <Text dimColor>{formatTokens(s.cacheCreateTokens).padStart(COL.cacheWrite)}</Text>
                         {pingIndicator && (
                             <Text color={pingState === "done" ? "green" : pingState === "error" ? "red" : "yellow"}>
                                 {pingIndicator}
