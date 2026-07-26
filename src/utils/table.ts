@@ -121,16 +121,18 @@ export function truncateDisplay(value: string | null | undefined, max: number): 
  */
 export function renderCliHeader(title: string, subtitle: string): void {
     const border = pc.cyan(pc.bold(" │"));
+    // 2-space gutter on both sides of the padded text.
+    const rule = "─".repeat(CLI_HEADER_TEXT_MAX_WIDTH + 4);
 
     out.println();
-    out.println(pc.cyan(pc.bold(" ┌─────────────────────────────────────┐")));
+    out.println(pc.cyan(pc.bold(` ┌${rule}┐`)));
     out.println(
-        `${border}${pc.white(pc.bold(`  ${truncateDisplay(title, CLI_HEADER_TEXT_MAX_WIDTH).padEnd(CLI_HEADER_TEXT_MAX_WIDTH)}`))}${pc.cyan(pc.bold("│"))}`
+        `${border}${pc.white(pc.bold(`  ${truncateDisplay(title, CLI_HEADER_TEXT_MAX_WIDTH).padEnd(CLI_HEADER_TEXT_MAX_WIDTH)}  `))}${pc.cyan(pc.bold("│"))}`
     );
     out.println(
-        `${border}${pc.dim(`  ${truncateDisplay(subtitle, CLI_HEADER_TEXT_MAX_WIDTH).padEnd(CLI_HEADER_TEXT_MAX_WIDTH)}`)}${pc.cyan(pc.bold("│"))}`
+        `${border}${pc.dim(`  ${truncateDisplay(subtitle, CLI_HEADER_TEXT_MAX_WIDTH).padEnd(CLI_HEADER_TEXT_MAX_WIDTH)}  `)}${pc.cyan(pc.bold("│"))}`
     );
-    out.println(pc.cyan(pc.bold(" └─────────────────────────────────────┘")));
+    out.println(pc.cyan(pc.bold(` └${rule}┘`)));
     out.println();
 }
 

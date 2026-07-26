@@ -3,10 +3,12 @@
 import {
     runAccountsList,
     runAccountsRemove,
+    runAccountsSetEnabled,
     runAccountsStatus,
     runAccountsTest,
 } from "@app/ai-proxy/commands/accounts";
 import { runAccountsLogin } from "@app/ai-proxy/commands/accounts-login";
+import { runCallsCommand } from "@app/ai-proxy/commands/calls";
 import { clientsAdd, clientsList, clientsUsage } from "@app/ai-proxy/commands/clients";
 import { runConfigDetect, runConfigInit, runConfigSet, runConfigShow } from "@app/ai-proxy/commands/config";
 import { runConfigMenu, runSetupCloudflaredTunnel } from "@app/ai-proxy/commands/config-wizard";
@@ -92,6 +94,47 @@ program
     .action(async (options) => {
         await runModelsCommand(options);
     });
+
+program
+    .command("calls")
+    .description("Query proxied calls (session/stage/label/model/slow) and open full transcripts")
+    .option("--session <id>", "Filter by x-gt-session (substring)")
+    .option("--stage <name>", "Filter by x-gt-stage (exact)")
+    .option("--label <text>", "Filter by x-gt-label (substring)")
+    .option("--model <text>", "Filter by proxy model id (substring)")
+    .option("--slower-than <secs>", "Only calls at least this slow", Number.parseFloat)
+    .option("--since <minutes>", "Only calls from the last N minutes", Number.parseFloat)
+    .option("--limit <n>", "Max rows (newest kept)", "40")
+    .option("--show", "Print the full prompt + response of each match")
+    .option("--timeline", "Show per-call phase breakdown (dispatch, TTFB, thinking, text)")
+    .option("--json", "Machine-readable output")
+    .action(
+        (options: {
+            session?: string;
+            stage?: string;
+            label?: string;
+            model?: string;
+            slowerThan?: number;
+            since?: number;
+            limit: string;
+            show?: boolean;
+            timeline?: boolean;
+            json?: boolean;
+        }) => {
+            runCallsCommand({
+                session: options.session,
+                stage: options.stage,
+                label: options.label,
+                model: options.model,
+                slowerThan: options.slowerThan,
+                sinceMinutes: options.since,
+                limit: Number(options.limit),
+                show: options.show,
+                timeline: options.timeline,
+                json: options.json,
+            });
+        }
+    );
 
 const clientsCmd = program.command("clients").description("Manage per-user client keys + usage ledger");
 
@@ -246,6 +289,20 @@ accountsCmd
     .description("Ping upstream for an account")
     .action(async (name: string) => {
         await runAccountsTest(name);
+    });
+
+accountsCmd
+    .command("disable <name>")
+    .description("Disable an account (kept in config, skipped at runtime)")
+    .action(async (name: string) => {
+        await runAccountsSetEnabled(name, false);
+    });
+
+accountsCmd
+    .command("enable <name>")
+    .description("Re-enable a disabled account")
+    .action(async (name: string) => {
+        await runAccountsSetEnabled(name, true);
     });
 
 accountsCmd

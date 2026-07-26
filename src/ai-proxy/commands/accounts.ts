@@ -146,6 +146,27 @@ export async function runAccountsStatus(): Promise<void> {
     }
 }
 
+export async function runAccountsSetEnabled(name: string, enabled: boolean): Promise<void> {
+    const config = await loadConfig();
+    const account = config.accounts.find((item) => item.name === name);
+
+    if (!account) {
+        out.log.warn(`Account not found: ${name}`);
+        out.log.info(cmd(["accounts", "list"]));
+        return;
+    }
+
+    if (account.enabled === enabled) {
+        out.log.info(`Account "${name}" is already ${enabled ? "enabled" : "disabled"}`);
+        return;
+    }
+
+    account.enabled = enabled;
+    await saveConfig(config);
+    out.log.success(`${enabled ? "Enabled" : "Disabled"} account: ${name} (${account.provider})`);
+    out.log.info("Restart the proxy to apply: tools ai-proxy down && tools ai-proxy up");
+}
+
 export async function runAccountsRemove(name: string): Promise<void> {
     const config = await loadConfig();
     const before = config.accounts.length;
