@@ -159,4 +159,26 @@ describe("trackCompletedRequest", () => {
         expect(errored.rateLimited).toBe(false);
         expect(errored.error).toBe(true);
     });
+
+    it("records a row for an exchange that never completed, so aborted calls stay visible", () => {
+        recordUsageRequest.mockClear();
+
+        trackCompletedRequest({
+            route,
+            client: "alice",
+            proxyModel: "genesiscz/grok/grok-composer-2.5-fast",
+            path: "/v1/chat/completions",
+            // headers said 200 — the stream died afterwards
+            status: 200,
+            elapsedMs: 1200,
+            bodyText: SafeJSON.stringify({ model: "genesiscz/grok/grok-composer-2.5-fast", stream: true }),
+            responseBody: "",
+            failure: "The socket connection was closed unexpectedly",
+        });
+
+        const dropped = recordUsageRequest.mock.calls[0][0] as UsageRequestRecord;
+        expect(dropped.error).toBe(true);
+        expect(dropped.failure).toContain("socket connection was closed");
+        expect(dropped.status).toBe(200);
+    });
 });

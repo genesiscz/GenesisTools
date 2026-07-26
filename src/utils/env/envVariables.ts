@@ -75,6 +75,21 @@ export const env = {
     aiProxy: {
         /** Save the last failing WHAM request/response (redacted, no tokens) under ~/.genesis-tools/ai-proxy/debug/. */
         getDebugCapture: () => isFlag("AI_PROXY_DEBUG_CAPTURE"),
+        /**
+         * Save every exchange's full prompt + response under
+         * ~/.genesis-tools/ai-proxy/transcripts/. On by default (this is a local
+         * proxy and the transcripts are the only post-hoc debugging evidence);
+         * set AI_PROXY_TRANSCRIPTS=0 to turn it off.
+         *
+         * Unlike the debug capture above, transcripts are NOT redacted: whatever
+         * a prompt carried (file contents, keys pasted into a message, tool
+         * arguments) lands on disk verbatim. The directory is created 0700 and
+         * the files 0600, so this stays readable only by the running user.
+         */
+        getTranscripts: () => {
+            const raw = getTrimmed("AI_PROXY_TRANSCRIPTS")?.toLowerCase();
+            return raw !== "0" && raw !== "false" && raw !== "off";
+        },
     },
 
     github: {
@@ -146,6 +161,8 @@ export const env = {
         getHistfile: () => getTrimmed("HISTFILE"),
         getClarityProjectCwd: () => getTrimmed("CLARITY_PROJECT_CWD") ?? cwd(),
         getAppData: () => getTrimmed("APPDATA"),
+        /** Where `tools learn-from-fable bootstrap` proposes to put the pack repo. */
+        getFablePackPath: () => getTrimmed("GT_FABLE_PACK_PATH"),
     },
 
     device: {

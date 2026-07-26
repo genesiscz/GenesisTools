@@ -10,6 +10,16 @@ export interface TokenUsage {
     source?: "estimated";
 }
 
+import type { CallTimeline } from "./call-timeline";
+
+/** Caller-supplied request tags, mirrored from the `x-gt-*` headers. */
+export interface RequestTags {
+    session?: string;
+    stage?: string;
+    run?: string;
+    label?: string;
+}
+
 export interface UsageRequestRecord {
     ts: string;
     account: string;
@@ -27,6 +37,19 @@ export interface UsageRequestRecord {
     usage?: TokenUsage;
     rateLimited?: boolean;
     error?: boolean;
+    /**
+     * Why the exchange never completed (client abort, upstream reset). Set on calls
+     * whose body capture failed: those used to be logged and then dropped, so a
+     * stalled or reset call left NO row at all and `tools ai-proxy calls` could not
+     * see the very failures worth investigating.
+     */
+    failure?: string;
+    /** Caller-supplied `x-gt-*` tags (session/stage/run/label) — how a call maps back to its job. */
+    tags?: RequestTags;
+    /** Where the full exchange was logged: JSONL file + the assistant entry's uuid. */
+    transcript?: { file: string; uuid: string };
+    /** Phase timings (dispatch, TTFB, thinking span, text span) for this call. */
+    timeline?: CallTimeline;
 }
 
 export interface AccountBillingSnapshot {
