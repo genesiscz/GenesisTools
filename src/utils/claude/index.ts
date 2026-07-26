@@ -15,16 +15,30 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
+export interface ParseJsonlTranscriptOptions {
+    /**
+     * Skip lines whose `uuid` was already seen (first occurrence wins).
+     * Session files can carry duplicated message lines around compaction/resume
+     * (measured 2026-07-24: 18 of 324 fable-corpus files, worst 538 dup lines
+     * in one session), which silently inflates message counts downstream.
+     */
+    dedupeUuids?: boolean;
+}
+
 /**
  * Parse a JSONL transcript file into an array of message objects.
  * Skips invalid JSON lines silently.
  */
-export async function parseJsonlTranscript<T = Record<string, unknown>>(filePath: string): Promise<T[]> {
+export async function parseJsonlTranscript<T = Record<string, unknown>>(
+    filePath: string,
+    options: ParseJsonlTranscriptOptions = {}
+): Promise<T[]> {
     if (!existsSync(filePath)) {
         return [];
     }
 
     const messages: T[] = [];
+    const seenUuids = options.dedupeUuids ? new Set<string>() : undefined;
 
     const fileStream = createReadStream(filePath);
     const rl = createInterface({
@@ -35,7 +49,20 @@ export async function parseJsonlTranscript<T = Record<string, unknown>>(filePath
     for await (const line of rl) {
         if (line.trim()) {
             try {
-                messages.push(SafeJSON.parse(line) as T);
+                const parsed = SafeJSON.parse(line) as T;
+
+                if (seenUuids) {
+                    const uuid = (parsed as { uuid?: unknown }).uuid;
+                    if (typeof uuid === "string" && uuid) {
+                        if (seenUuids.has(uuid)) {
+                            continue;
+                        }
+
+                        seenUuids.add(uuid);
+                    }
+                }
+
+                messages.push(parsed);
             } catch {
                 // Skip invalid JSON lines
             }
