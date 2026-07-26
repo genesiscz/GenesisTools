@@ -43,6 +43,7 @@ export async function handleChatCompletions({
     proxyModel,
     req,
     bodyText,
+    startedAt,
 }: {
     mode: CursorTranslationMode;
     thinkingMode: ThinkingPresentationMode;
@@ -51,6 +52,8 @@ export async function handleChatCompletions({
     proxyModel: string;
     req: Request;
     bodyText: string;
+    /** performance.now() taken when the proxy received the request (timeline anchor). */
+    startedAt?: number;
 }): Promise<PipelineResult> {
     if (shouldTranslateChatRequest({ mode, req, bodyText, providerId: provider.id })) {
         return responsesToChat({
@@ -60,10 +63,12 @@ export async function handleChatCompletions({
             req,
             bodyText,
             thinkingMode,
+            startedAt,
         });
     }
 
     return identityPipeline({
+        startedAt,
         provider,
         upstreamModel,
         proxyModel,

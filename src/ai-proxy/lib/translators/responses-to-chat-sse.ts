@@ -7,6 +7,7 @@ import {
     translateResponsesStreamEvent,
 } from "@app/ai-proxy/lib/translators/responses-stream-translator";
 import type { ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
+import { type CallTimeline, TimelineCollector } from "@app/ai-proxy/lib/usage/call-timeline";
 import { type PipelineResult, pipelineResult } from "@app/ai-proxy/lib/usage/pipeline-result";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -65,6 +66,7 @@ export async function responsesToChatSse({
     req,
     bodyText,
     thinkingMode = "raw",
+    startedAt,
 }: {
     provider: ProxyProvider;
     upstreamModel: string;
@@ -72,8 +74,12 @@ export async function responsesToChatSse({
     req: Request;
     bodyText: string;
     thinkingMode?: ThinkingPresentationMode;
+    /** performance.now() taken when the proxy received the request (timeline anchor). */
+    startedAt?: number;
 }): Promise<PipelineResult> {
+    const collector = new TimelineCollector(startedAt ?? performance.now());
     const upstream = await provider.responses(req, upstreamModel, bodyText);
+    collector.markUpstreamHeaders();
 
     if (!upstream.ok || !upstream.body) {
         return pipelineResult(upstream);
@@ -89,11 +95,24 @@ export async function responsesToChatSse({
         resolveBody = resolve;
     });
 
+    let resolveTimeline: (timeline: CallTimeline) => void = () => {};
+    const timeline = new Promise<CallTimeline>((resolve) => {
+        resolveTimeline = resolve;
+    });
+
     const stream = new ReadableStream({
         async start(controller) {
             const encoder = new TextEncoder();
             const reader = upstream.body?.getReader();
             let outboundBuffer = "";
+
+            // Every outbound frame goes through here so the buffer, the timeline
+            // and the client all see exactly the same bytes.
+            const emit = (chunk: string): void => {
+                outboundBuffer += chunk;
+                collector.push(chunk);
+                controller.enqueue(encoder.encode(chunk));
+            };
 
             if (!reader) {
                 resolveBody("");
@@ -158,22 +177,22 @@ export async function responsesToChatSse({
 
                             if (translated.delta && Object.keys(translated.delta).length > 0) {
                                 const delta = withAssistantRole(translated.delta, roleSent);
-                                const chunk = `data: ${chatChunk({
-                                    model: proxyModel,
-                                    delta,
-                                    usage: translated.usage,
-                                })}\n\n`;
-                                outboundBuffer += chunk;
-                                controller.enqueue(encoder.encode(chunk));
+                                emit(
+                                    `data: ${chatChunk({
+                                        model: proxyModel,
+                                        delta,
+                                        usage: translated.usage,
+                                    })}\n\n`
+                                );
                             } else if (translated.finishReason !== undefined) {
-                                const chunk = `data: ${chatChunk({
-                                    model: proxyModel,
-                                    delta: {},
-                                    finishReason: translated.finishReason,
-                                    usage: translated.usage,
-                                })}\n\n`;
-                                outboundBuffer += chunk;
-                                controller.enqueue(encoder.encode(chunk));
+                                emit(
+                                    `data: ${chatChunk({
+                                        model: proxyModel,
+                                        delta: {},
+                                        finishReason: translated.finishReason,
+                                        usage: translated.usage,
+                                    })}\n\n`
+                                );
                                 sentFinishReason = true;
                             }
                         } catch (err) {
@@ -185,17 +204,16 @@ export async function responsesToChatSse({
                 buffer += decoder.decode();
 
                 if (!sentFinishReason) {
-                    const finalChunk = `data: ${chatChunk({
-                        model: proxyModel,
-                        delta: {},
-                        finishReason: finishReason ?? "stop",
-                    })}\n\n`;
-                    outboundBuffer += finalChunk;
-                    controller.enqueue(encoder.encode(finalChunk));
+                    emit(
+                        `data: ${chatChunk({
+                            model: proxyModel,
+                            delta: {},
+                            finishReason: finishReason ?? "stop",
+                        })}\n\n`
+                    );
                 }
 
-                outboundBuffer += "data: [DONE]\n\n";
-                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                emit("data: [DONE]\n\n");
                 streamSucceeded = true;
             } catch (err) {
                 logger.warn({ err, model: proxyModel }, "ai-proxy: SSE stream failed");
@@ -208,6 +226,7 @@ export async function responsesToChatSse({
                 }
             } finally {
                 resolveBody(outboundBuffer);
+                resolveTimeline(collector.finish());
 
                 if (streamSucceeded) {
                     try {
@@ -238,6 +257,8 @@ export async function responsesToChatSse({
                 ...(droppedHeader ? { "x-ai-proxy-dropped": droppedHeader } : {}),
             },
         }),
-        responseBody
+        responseBody,
+        startedAt,
+        timeline
     );
 }

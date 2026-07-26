@@ -11,6 +11,7 @@ export async function identityPipeline({
     path,
     req,
     bodyText,
+    startedAt,
 }: {
     provider: ProxyProvider;
     upstreamModel: string;
@@ -19,16 +20,18 @@ export async function identityPipeline({
     path: "chat/completions" | "responses";
     req: Request;
     bodyText: string;
+    /** performance.now() at request receipt — anchors the call timeline. */
+    startedAt?: number;
 }): Promise<PipelineResult> {
     if (path === "responses") {
-        return pipelineResult(await provider.responses(req, upstreamModel, bodyText));
+        return pipelineResult(await provider.responses(req, upstreamModel, bodyText), undefined, startedAt);
     }
 
     const upstream = await provider.chatCompletions(req, upstreamModel, bodyText);
 
     if (!proxyModel || provider.id !== "grok-subscription") {
-        return pipelineResult(upstream);
+        return pipelineResult(upstream, undefined, startedAt);
     }
 
-    return pipelineResult(await enrichGrokChatResponse(upstream, proxyModel, thinkingMode));
+    return pipelineResult(await enrichGrokChatResponse(upstream, proxyModel, thinkingMode), undefined, startedAt);
 }

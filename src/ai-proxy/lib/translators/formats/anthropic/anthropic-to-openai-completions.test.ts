@@ -97,6 +97,31 @@ describe("anthropicMessageToOpenAiCompletion", () => {
 });
 
 describe("anthropicSseToOpenAiChatStream", () => {
+    it("forwards extended thinking as reasoning_content, separate from the answer", async () => {
+        // Dropped on the floor until 2026-07-26: a claude-sub call that reasoned for
+        // minutes looked completely silent downstream (first byte 1.6s, first TEXT
+        // 60s, nothing in between), so clients timing out on silence killed healthy
+        // streams and the model was blamed for "sending nothing".
+        const anthropicSse = [
+            'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1","model":"claude-haiku-4-5-20251001","usage":{"input_tokens":4}}}\n',
+            'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}\n',
+            'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"weighing it up"}}\n',
+            'event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Answer"}}\n',
+            'event: message_stop\ndata: {"type":"message_stop"}\n',
+        ].join("\n");
+
+        const chunks = parseChunks(
+            await collect(anthropicSseToOpenAiChatStream(streamFrom(anthropicSse), { model: MODEL }))
+        );
+        const deltas = chunks.flatMap(
+            (c) => c.choices as Array<{ delta: { content?: string; reasoning_content?: string } }>
+        );
+
+        expect(deltas.map((d) => d.delta.reasoning_content ?? "").join("")).toBe("weighing it up");
+        // thinking never leaks into the answer
+        expect(deltas.map((d) => d.delta.content ?? "").join("")).toBe("Answer");
+    });
+
     it("streams text deltas as chat.completion.chunk events ending in [DONE]", async () => {
         const anthropicSse = [
             'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1","model":"claude-haiku-4-5-20251001","usage":{"input_tokens":4}}}\n',

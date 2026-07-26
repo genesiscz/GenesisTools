@@ -1,4 +1,5 @@
 import { accountConfigFingerprint, resolveGithubCopilotDataDir } from "@app/ai-proxy/lib/account-config";
+import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { rewriteBodyModel } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import { prepareCopilotRequest } from "@app/ai-proxy/lib/translators/providers/github-copilot/prepare-request";
@@ -135,7 +136,7 @@ export class GithubCopilotSubscriptionProvider implements ProxyProvider {
 
             return new Response(upstream.body, {
                 status: upstream.status,
-                headers: upstream.headers,
+                headers: relayHeaders(upstream),
             });
         } catch (err) {
             if (err instanceof CopilotAuthExpiredError) {

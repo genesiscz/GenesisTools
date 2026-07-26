@@ -12,6 +12,7 @@ export async function responsesToChat({
     req,
     bodyText,
     thinkingMode = "raw",
+    startedAt,
 }: {
     provider: ProxyProvider;
     upstreamModel: string;
@@ -19,6 +20,8 @@ export async function responsesToChat({
     req: Request;
     bodyText: string;
     thinkingMode?: ThinkingPresentationMode;
+    /** performance.now() taken when the proxy received the request (timeline anchor). */
+    startedAt?: number;
 }): Promise<PipelineResult> {
     if (bodyWantsStream(bodyText)) {
         return responsesToChatSse({
@@ -28,6 +31,7 @@ export async function responsesToChat({
             req,
             bodyText,
             thinkingMode,
+            startedAt,
         });
     }
 
@@ -38,5 +42,6 @@ export async function responsesToChat({
         req,
         bodyText,
         thinkingMode,
+        startedAt,
     });
 }

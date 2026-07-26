@@ -14,8 +14,11 @@ import { handleChatCompletions } from "@app/ai-proxy/lib/translators";
 import { identityPipeline } from "@app/ai-proxy/lib/translators/identity-pipeline";
 import type { AiProxyConfig, ResolvedRoute, ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
 import { scheduleBillingSync } from "@app/ai-proxy/lib/usage/billing-sync";
+import type { CallTimeline } from "@app/ai-proxy/lib/usage/call-timeline";
 import { checkClientQuota } from "@app/ai-proxy/lib/usage/client-ledger";
 import { scheduleUsageTracking } from "@app/ai-proxy/lib/usage/track-response";
+import { readRequestTags } from "@app/ai-proxy/lib/usage/transcripts";
+import type { RequestTags } from "@app/ai-proxy/lib/usage/types";
 import { CopilotAuthExpiredError } from "@genesiscz/utils/ai/github-copilot";
 import { GrokAuthExpiredError } from "@genesiscz/utils/ai/grok";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -86,8 +89,11 @@ function trackProxyRequest(input: {
     elapsedMs: number;
     bodyText: string;
     responseBody: Promise<string>;
+    timeline?: Promise<CallTimeline>;
+    captureFailure?: Promise<string | undefined>;
     translate?: string;
     thinking?: string;
+    tags?: RequestTags;
 }): void {
     scheduleUsageTracking({
         route: input.route,
@@ -98,8 +104,11 @@ function trackProxyRequest(input: {
         elapsedMs: input.elapsedMs,
         bodyText: input.bodyText,
         responseBody: input.responseBody,
+        timeline: input.timeline,
+        captureFailure: input.captureFailure,
         translate: input.translate,
         thinking: input.thinking,
+        tags: input.tags,
     });
     scheduleBillingSync(input.route.account, input.runtime.providers);
 }
@@ -116,7 +125,10 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
     return Bun.serve({
         hostname: listen.host,
         port: listen.port,
-        idleTimeout: 120,
+        // Bun's max (255s). Keepalive frames (see sse-keepalive.ts) normally keep
+        // streams well under this; the high ceiling covers non-streaming replies
+        // from reasoning models, which send nothing at all until they are done.
+        idleTimeout: 255,
         websocket: realtimeWebsocket,
         async fetch(req, server) {
             const url = new URL(req.url);
@@ -288,7 +300,8 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                     }
 
                     if (path === "/v1/responses") {
-                        const { response, responseBody } = await identityPipeline({
+                        const { response, responseBody, timeline, captureFailure } = await identityPipeline({
+                            startedAt: requestStarted,
                             provider,
                             upstreamModel: route.upstreamId,
                             path: "responses",
@@ -307,7 +320,10 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                             elapsedMs,
                             bodyText,
                             responseBody,
+                            timeline,
+                            captureFailure,
                             translate: "off",
+                            tags: readRequestTags(req.headers),
                         });
 
                         logger.info(
@@ -317,6 +333,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                                 upstreamModel: route.upstreamId,
                                 status: response.status,
                                 elapsedMs,
+                                ...readRequestTags(req.headers),
                                 userAgent: req.headers.get("User-Agent") ?? undefined,
                             },
                             "ai-proxy: request"
@@ -338,7 +355,8 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         headerMode: req.headers.get("x-ai-proxy-thinking"),
                     });
 
-                    const { response, responseBody } = await handleChatCompletions({
+                    const { response, responseBody, timeline, captureFailure } = await handleChatCompletions({
+                        startedAt: requestStarted,
                         mode,
                         thinkingMode,
                         provider,
@@ -359,8 +377,11 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         elapsedMs,
                         bodyText,
                         responseBody,
+                        timeline,
+                        captureFailure,
                         translate: mode,
                         thinking: thinkingMode,
+                        tags: readRequestTags(req.headers),
                     });
 
                     logger.info(
@@ -372,6 +393,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                             translate: mode,
                             thinking: thinkingMode,
                             elapsedMs,
+                            ...readRequestTags(req.headers),
                             userAgent: req.headers.get("User-Agent") ?? undefined,
                         },
                         "ai-proxy: request"

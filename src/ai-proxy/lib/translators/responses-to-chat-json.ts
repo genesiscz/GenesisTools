@@ -7,6 +7,7 @@ import {
     transformResponsesUsage,
 } from "@app/ai-proxy/lib/translators/reasoning";
 import type { ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
+import { TimelineCollector } from "@app/ai-proxy/lib/usage/call-timeline";
 import { type PipelineResult, pipelineResult } from "@app/ai-proxy/lib/usage/pipeline-result";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -161,6 +162,7 @@ export async function responsesToChatJson({
     req,
     bodyText,
     thinkingMode = "raw",
+    startedAt,
 }: {
     provider: ProxyProvider;
     upstreamModel: string;
@@ -168,14 +170,21 @@ export async function responsesToChatJson({
     req: Request;
     bodyText: string;
     thinkingMode?: ThinkingPresentationMode;
+    /** performance.now() taken when the proxy received the request (timeline anchor). */
+    startedAt?: number;
 }): Promise<PipelineResult> {
+    const collector = new TimelineCollector(startedAt ?? performance.now());
     const upstream = await provider.responses(req, upstreamModel, bodyText);
+    collector.markUpstreamHeaders();
 
     if (!upstream.ok) {
         return pipelineResult(upstream);
     }
 
     const rawText = await upstream.text();
+    collector.push(rawText);
+    // No stream to segment, so this timeline carries dispatch/TTFB/completion only.
+    const timeline = Promise.resolve(collector.finish());
     const droppedHeader = upstream.headers.get("x-ai-proxy-dropped");
 
     try {
@@ -191,7 +200,9 @@ export async function responsesToChatJson({
                     ...(droppedHeader ? { "x-ai-proxy-dropped": droppedHeader } : {}),
                 },
             }),
-            responseText
+            responseText,
+            startedAt,
+            timeline
         );
     } catch (err) {
         logger.warn(
@@ -203,7 +214,9 @@ export async function responsesToChatJson({
                 status: upstream.status,
                 headers: { "Content-Type": upstream.headers.get("Content-Type") ?? "application/json" },
             }),
-            rawText
+            rawText,
+            startedAt,
+            timeline
         );
     }
 }

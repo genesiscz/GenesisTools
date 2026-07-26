@@ -5,6 +5,31 @@ import { resolveTranslationMode } from "@app/ai-proxy/lib/translation-config";
 import type { CursorTranslationMode, ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
 import { logger, out } from "@genesiscz/utils/logger";
 
+/**
+ * A single upstream socket reset used to kill the whole proxy.
+ *
+ * Observed twice on 2026-07-25: grok reset a streamed connection mid-response
+ * (`ECONNRESET` from cli-chat-proxy.grok.com), the enrich and capture paths each
+ * logged it as a warning, but the rejection was still unhandled at the top level
+ * and Bun exited the process — taking every other in-flight request with it. A
+ * 98-session mining run lost 83 sessions to that. One dropped upstream stream is
+ * a per-request failure; it must never be a server outage.
+ *
+ * That incident was an unhandled REJECTION, which is what this survives. An
+ * uncaught exception is a different animal: it can come from config, persistence
+ * or server internals, and the runtime's state is not trustworthy afterwards, so
+ * it is logged and the process exits rather than serving from a broken state.
+ */
+function keepServingThroughUpstreamFaults(): void {
+    process.on("unhandledRejection", (reason) => {
+        logger.error({ error: reason }, "ai-proxy: unhandled rejection — request failed, server staying up");
+    });
+    process.on("uncaughtException", (error) => {
+        logger.error({ error }, "ai-proxy: uncaught exception — shutting down, state is no longer trustworthy");
+        process.exit(1);
+    });
+}
+
 export async function runServeCommand(options: {
     port?: number;
     host?: string;
@@ -12,6 +37,8 @@ export async function runServeCommand(options: {
     thinking?: ThinkingPresentationMode;
     noTranslate?: boolean;
 }): Promise<void> {
+    keepServingThroughUpstreamFaults();
+
     const config = await loadConfig();
 
     if (options.port !== undefined) {

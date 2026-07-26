@@ -1,6 +1,7 @@
 import { accountConfigFingerprint, resolveGrokAuthPath } from "@app/ai-proxy/lib/account-config";
 import { listGrokProxyModels } from "@app/ai-proxy/lib/model-meta";
 import { mapGrokError } from "@app/ai-proxy/lib/providers/grok-errors";
+import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { parseRetryAfterSeconds } from "@app/ai-proxy/lib/providers/wham-errors";
 import { prepareGrokUpstreamBody } from "@app/ai-proxy/lib/rewrite-upstream-body";
@@ -164,7 +165,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
 
             return new Response(upstream.body, {
                 status: upstream.status,
-                headers: upstream.headers,
+                headers: relayHeaders(upstream),
             });
         } catch (err) {
             if (err instanceof GrokAuthExpiredError) {

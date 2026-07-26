@@ -111,6 +111,8 @@ export function anthropicMessageToOpenAiCompletion(
 interface ChunkDelta {
     role?: "assistant";
     content?: string;
+    /** Extended-thinking text, in the field name OpenAI-shaped clients read. */
+    reasoning_content?: string;
     tool_calls?: OpenAiToolCall[];
 }
 
@@ -214,6 +216,20 @@ export function anthropicSseToOpenAiChatStream(
             if (delta.type === "text_delta" && typeof delta.text === "string") {
                 controller.enqueue(
                     encoder.encode(chunk({ id, model, created, delta: { content: delta.text }, finishReason: null }))
+                );
+                return;
+            }
+
+            // Extended thinking was dropped on the floor here, so a claude-sub call
+            // that reasoned for minutes looked completely silent downstream: usage
+            // rows showed first-byte at 1.6s and first TEXT at 60s with nothing in
+            // between, and clients timing out on silence killed healthy streams.
+            // Forward it under the name every OpenAI-shaped reader already knows.
+            if (delta.type === "thinking_delta" && typeof delta.thinking === "string") {
+                controller.enqueue(
+                    encoder.encode(
+                        chunk({ id, model, created, delta: { reasoning_content: delta.thinking }, finishReason: null })
+                    )
                 );
                 return;
             }
