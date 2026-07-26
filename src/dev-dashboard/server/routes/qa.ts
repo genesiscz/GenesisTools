@@ -35,7 +35,7 @@ export function qaRoutes(): RouteDef[] {
                         limit: Number.parseInt(ctx.query.get("limit") ?? "100", 10),
                     });
 
-                    return { kind: "json", status: 200, body: { entries: rows.map((row) => enrichQaEntry(row)) } };
+                    return { kind: "json", status: 200, body: { entries: rows } };
                 } catch (err) {
                     return errorResult(err);
                 } finally {

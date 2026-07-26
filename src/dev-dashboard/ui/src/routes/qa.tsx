@@ -1,4 +1,5 @@
-import { isQaAnswerTruncated } from "@app/dev-dashboard/lib/qa-preview";
+import { isQaAnswerTruncated, QA_ANSWER_PREVIEW_LINES } from "@app/dev-dashboard/lib/qa-preview";
+import { renderQaAnswerHtml, renderQaQuestionHtml } from "@app/dev-dashboard/lib/qa-render";
 import { searchQa } from "@app/dev-dashboard/lib/qa-search";
 import type { QaRow } from "@app/dev-dashboard/lib/qa-types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -36,7 +37,7 @@ async function fetchQaLog(): Promise<QaRow[]> {
 
     const body = SafeJSON.parse(await res.text(), { strict: true }) as { entries: QaRow[] };
 
-    return body.entries;
+    return body.entries.reverse();
 }
 
 function tagClass(tag: string): string {
@@ -179,21 +180,43 @@ const QaCard = memo(function QaCard({
     }, [unread, pinned]);
     const [saveDialogOpen, setSaveDialogOpen] = useState(false);
     const truncated = isQaAnswerTruncated(entry.answerMd);
-    const answerBase = open || !truncated ? entry.answerHtml : entry.answerHtmlPreview;
+
+    const renderedAnswerHtml = useMemo(
+        () => entry.answerHtml ?? renderQaAnswerHtml(entry.answerMd),
+        [entry.answerHtml, entry.answerMd]
+    );
+
+    const renderedAnswerPreview = useMemo(() => {
+        if (!truncated) {
+            return renderedAnswerHtml;
+        }
+
+        if (entry.answerHtmlPreview) {
+            return entry.answerHtmlPreview;
+        }
+
+        const previewMd = `${entry.answerMd.split("\n").slice(0, QA_ANSWER_PREVIEW_LINES).join("\n")}\n…`;
+        return renderQaAnswerHtml(previewMd);
+    }, [entry.answerHtmlPreview, entry.answerMd, renderedAnswerHtml, truncated]);
+
+    const renderedQuestionHtml = useMemo(
+        () => entry.questionHtml ?? renderQaQuestionHtml(entry.question),
+        [entry.questionHtml, entry.question]
+    );
+
+    const answerBase = open || !truncated ? renderedAnswerHtml : renderedAnswerPreview;
 
     const questionHtml = useMemo(() => {
         if (viewMode === "source") {
             return "";
         }
 
-        const html = entry.questionHtml;
-
         if (highlightTokens.length === 0) {
-            return html;
+            return renderedQuestionHtml;
         }
 
-        return highlightMatchesInHtml(html, highlightTokens);
-    }, [entry.questionHtml, highlightTokens, viewMode]);
+        return highlightMatchesInHtml(renderedQuestionHtml, highlightTokens);
+    }, [renderedQuestionHtml, highlightTokens, viewMode]);
 
     const answerHtml = useMemo(() => {
         if (viewMode === "source") {

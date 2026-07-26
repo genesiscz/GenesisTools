@@ -6,7 +6,7 @@ export interface EnrichedQaEntry {
     questionHtml: string;
 }
 
-export interface QaRow extends QaEntry, EnrichedQaEntry {
+export interface QaRow extends QaEntry, Partial<EnrichedQaEntry> {
     supersededBy: string | null;
     readAt: number | null;
 }
