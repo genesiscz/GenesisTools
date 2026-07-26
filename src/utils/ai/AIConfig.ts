@@ -42,6 +42,39 @@ function applyDefaults(raw: Partial<AIConfigData> | null): AIConfigData {
     };
 }
 
+/** Keys the caller actually supplied — an explicit `undefined` must not overwrite a stored value. */
+function definedOnly<T extends object>(value: T): Partial<T> {
+    const result: Partial<T> = {};
+
+    for (const key of Object.keys(value) as Array<keyof T>) {
+        if (value[key] !== undefined) {
+            result[key] = value[key];
+        }
+    }
+
+    return result;
+}
+
+/**
+ * Merge an incoming account onto the stored one of the same name.
+ *
+ * Re-login flows build an entry from just the credentials they obtained
+ * (`{ accessToken, refreshToken, expiresAt }`), so a plain overwrite silently dropped
+ * everything else the account carried — `longLivedToken`, `secondary`, `label`, `apps`.
+ * A provider switch still replaces wholesale: the stored credentials mean nothing to it.
+ */
+export function mergeAccountEntry(existing: AIAccountEntry, incoming: AIAccountEntry): AIAccountEntry {
+    if (existing.provider !== incoming.provider) {
+        return incoming;
+    }
+
+    return {
+        ...existing,
+        ...definedOnly(incoming),
+        tokens: { ...existing.tokens, ...definedOnly(incoming.tokens) },
+    };
+}
+
 export class AIConfig {
     private static instance: AIConfig | null = null;
     private storage: Storage;
@@ -152,7 +185,7 @@ export class AIConfig {
             const existing = data.accounts.findIndex((a) => a.name === entry.name);
 
             if (existing >= 0) {
-                data.accounts[existing] = entry;
+                data.accounts[existing] = mergeAccountEntry(data.accounts[existing], entry);
             } else {
                 data.accounts.push(entry);
             }
@@ -170,7 +203,7 @@ export class AIConfig {
             const existing = data.accounts.findIndex((a) => a.name === entry.name);
 
             if (existing >= 0) {
-                data.accounts[existing] = entry;
+                data.accounts[existing] = mergeAccountEntry(data.accounts[existing], entry);
             } else {
                 data.accounts.push(entry);
             }

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { AIConfig } from "../AIConfig";
+import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
+import { AIConfig, mergeAccountEntry } from "../AIConfig";
 
 describe("AIConfig", () => {
     afterEach(() => {
@@ -74,5 +75,59 @@ describe("AIConfig", () => {
         } else {
             expect(account).toBeUndefined();
         }
+    });
+});
+
+describe("mergeAccountEntry", () => {
+    const stored: AIAccountEntry = {
+        name: "lukas.pribik96",
+        provider: "anthropic-sub",
+        tokens: {
+            accessToken: "sk-ant-oat01-old",
+            refreshToken: "sk-ant-ort01-old",
+            expiresAt: 1000,
+            longLivedToken: "sk-ant-oat01-long-lived",
+        },
+        secondary: { accessToken: "keychain-old", refreshToken: "keychain-refresh-old" },
+        label: "max 20x",
+        apps: ["claude", "ask"],
+    };
+
+    it("keeps the long-lived token when a re-login only supplies the OAuth pair", () => {
+        const merged = mergeAccountEntry(stored, {
+            name: "lukas.pribik96",
+            provider: "anthropic-sub",
+            tokens: { accessToken: "sk-ant-oat01-new", refreshToken: "sk-ant-ort01-new", expiresAt: 2000 },
+            apps: ["claude", "ask"],
+        });
+
+        expect(merged.tokens.longLivedToken).toBe("sk-ant-oat01-long-lived");
+        expect(merged.tokens.accessToken).toBe("sk-ant-oat01-new");
+        expect(merged.tokens.expiresAt).toBe(2000);
+        expect(merged.secondary?.accessToken).toBe("keychain-old");
+        expect(merged.label).toBe("max 20x");
+    });
+
+    it("does not let an explicitly undefined label erase the stored one", () => {
+        const merged = mergeAccountEntry(stored, {
+            name: "lukas.pribik96",
+            provider: "anthropic-sub",
+            tokens: { accessToken: "sk-ant-oat01-new" },
+            label: undefined,
+        });
+
+        expect(merged.label).toBe("max 20x");
+    });
+
+    it("replaces wholesale when the provider changes", () => {
+        const merged = mergeAccountEntry(stored, {
+            name: "lukas.pribik96",
+            provider: "openai-sub",
+            tokens: { accessToken: "openai-token" },
+        });
+
+        expect(merged.provider).toBe("openai-sub");
+        expect(merged.tokens.longLivedToken).toBeUndefined();
+        expect(merged.secondary).toBeUndefined();
     });
 });
