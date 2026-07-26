@@ -79,8 +79,11 @@ describe("pricing", () => {
         expect(priceFor("claude-sonnet-4-6", DEFAULT_PRICING)).not.toBeNull();
     });
 
-    it("matches by longest known prefix so versioned ids resolve", () => {
+    it("folds dated variant ids onto their base model, never open-ended prefixes", () => {
         expect(priceFor("claude-opus-4-8-20260101", DEFAULT_PRICING)).not.toBeNull();
+        expect(priceFor("claude-3-5-haiku-20241022", DEFAULT_PRICING)).not.toBeNull();
+        // no family-prefix bleed: unknown sibling ids stay unpriced
+        expect(priceFor("claude-opus-4-85", DEFAULT_PRICING)).toBeNull();
     });
 
     it("returns null for genuinely unknown models", () => {
@@ -157,10 +160,10 @@ describe("aggregate", () => {
             }),
         ];
         const report = aggregate({ events, pricing: DEFAULT_PRICING, now });
-        // opus: 15+75+18.75+1.5 = 110.25 ; sonnet: 3 ; total 113.25
-        expect(report.total.cost).toBeCloseTo(113.25, 6);
+        // opus: 5+25+6.25+0.5 = 36.75 ; sonnet: 3 ; total 39.75
+        expect(report.total.cost).toBeCloseTo(39.75, 6);
         expect(report.days.map((d) => d.day)).toEqual(["2026-06-01", "2026-06-02"]);
-        expect(report.models.find((m) => m.model === "claude-opus-4-8")?.cost).toBeCloseTo(110.25, 6);
+        expect(report.models.find((m) => m.model === "claude-opus-4-8")?.cost).toBeCloseTo(36.75, 6);
     });
 
     it("computes cache-hit rate = cacheRead / (input + cacheRead)", () => {
@@ -260,7 +263,7 @@ describe("loadPricing", () => {
             });
             const pricing = await loadPricing(storage);
             expect(pricing["glm-4.6"]).toEqual({ input: 1, output: 2, cacheWrite: 1, cacheRead: 0.1 });
-            expect(pricing["claude-opus-4"]).toBeDefined();
+            expect(pricing["claude-opus-4-8"]).toBeDefined();
         } finally {
             process.env.GENESIS_TOOLS_HOME = prev;
         }

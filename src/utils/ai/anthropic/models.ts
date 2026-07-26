@@ -1,3 +1,4 @@
+import { aliasMapFor, byId, byProvider, inputModalitiesFor } from "@genesiscz/utils/ai/models/registry";
 import { logger } from "@genesiscz/utils/logger";
 import { fetchDirect } from "@genesiscz/utils/net/fetch-direct";
 
@@ -6,30 +7,21 @@ export interface AnthropicSubModelRecord {
     displayName: string;
     contextWindow: number;
     thinking: "reasoning" | "none";
+    inputModalities?: string[];
 }
 
 /**
- * Claude models served to subscription (OAuth) tokens, newest first. Verified
- * live against GET api.anthropic.com/v1/models (2026-07-12); refresh via
- * fetchAnthropicSubModels() when Anthropic ships a new family.
+ * Claude models served to subscription (OAuth) tokens, newest first — derived
+ * from the curated registry (`@genesiscz/utils/ai/models/registry`). Add new
+ * models there, not here.
  */
-export const ANTHROPIC_SUB_STATIC_CATALOG: AnthropicSubModelRecord[] = [
-    { id: "claude-sonnet-5", displayName: "Claude Sonnet 5", contextWindow: 1_000_000, thinking: "reasoning" },
-    { id: "claude-fable-5", displayName: "Claude Fable 5", contextWindow: 1_000_000, thinking: "reasoning" },
-    { id: "claude-opus-4-8", displayName: "Claude Opus 4.8", contextWindow: 1_000_000, thinking: "reasoning" },
-    { id: "claude-opus-4-7", displayName: "Claude Opus 4.7", contextWindow: 1_000_000, thinking: "reasoning" },
-    { id: "claude-sonnet-4-6", displayName: "Claude Sonnet 4.6", contextWindow: 1_000_000, thinking: "reasoning" },
-    { id: "claude-opus-4-6", displayName: "Claude Opus 4.6", contextWindow: 1_000_000, thinking: "reasoning" },
-    { id: "claude-opus-4-5-20251101", displayName: "Claude Opus 4.5", contextWindow: 200_000, thinking: "reasoning" },
-    { id: "claude-haiku-4-5-20251001", displayName: "Claude Haiku 4.5", contextWindow: 200_000, thinking: "none" },
-    {
-        id: "claude-sonnet-4-5-20250929",
-        displayName: "Claude Sonnet 4.5",
-        contextWindow: 200_000,
-        thinking: "reasoning",
-    },
-    { id: "claude-opus-4-1-20250805", displayName: "Claude Opus 4.1", contextWindow: 200_000, thinking: "reasoning" },
-];
+export const ANTHROPIC_SUB_STATIC_CATALOG: AnthropicSubModelRecord[] = byProvider("anthropic").map((model) => ({
+    id: model.id,
+    displayName: model.displayName,
+    contextWindow: model.contextWindow,
+    thinking: model.thinking === "none" ? "none" : "reasoning",
+    inputModalities: inputModalitiesFor(model),
+}));
 
 /**
  * Short aliases advertised alongside the concrete ids — always tracking the
@@ -40,24 +32,29 @@ export const ANTHROPIC_SUB_ALIASES = ["sonnet", "opus", "haiku", "fable"] as con
 
 export type AnthropicSubAlias = (typeof ANTHROPIC_SUB_ALIASES)[number];
 
-const ANTHROPIC_SUB_ALIAS_MAP: Record<AnthropicSubAlias, string> = {
-    sonnet: "claude-sonnet-5",
-    opus: "claude-opus-4-8",
-    haiku: "claude-haiku-4-5-20251001",
-    fable: "claude-fable-5",
-};
+const ANTHROPIC_SUB_ALIAS_MAP = aliasMapFor("anthropic");
 
 /**
  * Resolve an alias to its concrete Anthropic model id. Unknown values pass
  * through unchanged so a caller can also request a concrete id directly.
  */
 export function resolveAnthropicSubModel(alias: string): string {
-    return ANTHROPIC_SUB_ALIAS_MAP[alias as AnthropicSubAlias] ?? alias;
+    return ANTHROPIC_SUB_ALIAS_MAP[alias] ?? alias;
 }
 
-/** The models list endpoint returns no context size — infer from the family. */
+/**
+ * The models list endpoint returns no context size — take it from the registry,
+ * falling back to a family pattern for ids the registry does not carry yet
+ * (dated variants, models newer than the catalog).
+ */
 export function inferAnthropicContextWindow(id: string): number {
-    return /sonnet-5|fable-5|opus-4-[678]|sonnet-4-6/.test(id) ? 1_000_000 : 200_000;
+    const known = byId(id);
+
+    if (known) {
+        return known.contextWindow;
+    }
+
+    return /sonnet-5|fable-5|opus-5|opus-4-[678]|sonnet-4-6/.test(id) ? 1_000_000 : 200_000;
 }
 
 interface AnthropicModelsResponse {

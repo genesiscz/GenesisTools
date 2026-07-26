@@ -1,10 +1,14 @@
 /**
- * Static registry of Claude models launchable via `claude --model`, plus
- * alias/substring resolution for the `tools claude start --model` flag.
- * Ordered newest-first; picker order follows registry order.
+ * Claude models launchable via `claude --model`, plus alias/substring
+ * resolution for the `tools claude start --model` flag. Derived from the
+ * curated registry (`@genesiscz/utils/ai/models/registry`) — a model appears
+ * here only when it carries a `cli` entry there. Grouped by family, newest
+ * first within each family; picker order follows this order.
  */
 
-export type ClaudeModelFamily = "fable" | "opus" | "sonnet" | "haiku";
+import { byProvider, type ModelFamily } from "@genesiscz/utils/ai/models/registry";
+
+export type ClaudeModelFamily = ModelFamily;
 
 export interface ClaudeModel {
     id: string;
@@ -14,17 +18,18 @@ export interface ClaudeModel {
     supports1m?: boolean;
 }
 
-export const CLAUDE_MODELS: ClaudeModel[] = [
-    { id: "claude-fable-5", family: "fable", label: "Fable 5 (1M native)" },
-    { id: "claude-opus-4-8", family: "opus", label: "Opus 4.8", supports1m: true },
-    { id: "claude-opus-4-7", family: "opus", label: "Opus 4.7", supports1m: true },
-    { id: "claude-opus-4-6", family: "opus", label: "Opus 4.6", supports1m: true },
-    { id: "claude-opus-4-5", family: "opus", label: "Opus 4.5" },
-    { id: "claude-sonnet-5", family: "sonnet", label: "Sonnet 5", supports1m: true },
-    { id: "claude-sonnet-4-6", family: "sonnet", label: "Sonnet 4.6", supports1m: true },
-    { id: "claude-sonnet-4-5", family: "sonnet", label: "Sonnet 4.5" },
-    { id: "claude-haiku-4-5", family: "haiku", label: "Haiku 4.5" },
-];
+const FAMILY_ORDER: ClaudeModelFamily[] = ["fable", "opus", "sonnet", "haiku"];
+
+export const CLAUDE_MODELS: ClaudeModel[] = FAMILY_ORDER.flatMap((family) =>
+    byProvider("anthropic")
+        .filter((model) => model.family === family && model.cli)
+        .map((model) => ({
+            id: model.cli?.id ?? model.id,
+            family: model.family,
+            label: model.cli?.label ?? model.displayName,
+            supports1m: model.flags?.supports1m,
+        }))
+);
 
 export interface LaunchableModel {
     /** Exact string passed to `claude --model`, e.g. `claude-opus-4-8[1m]`. */

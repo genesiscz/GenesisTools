@@ -21,6 +21,49 @@ function seed(
     };
 }
 
+/**
+ * Curation for advertised model lists (2026-07-24): retired/legacy families
+ * and low-value variants stay OUT of pickers. Unlisted ids remain callable by
+ * exact id — this only trims what clients see.
+ */
+const EXCLUDED_GROK_LIST_PATTERNS: RegExp[] = [
+    /^grok-4\.20/,
+    /^grok-3/,
+    /^grok-4$/,
+    /^grok-4-0709$/,
+    /^grok-4[.-]1-fast/,
+    /^grok-build/,
+    /^grok-code-fast/,
+    /^grok-composer-(?!2\.5-fast$)/,
+];
+
+export function isCuratedGrokModelId(id: string): boolean {
+    return !EXCLUDED_GROK_LIST_PATTERNS.some((pattern) => pattern.test(id));
+}
+
+export interface GrokModelSpecs {
+    contextWindow?: number;
+    inputModalities: string[];
+}
+
+/**
+ * Context window + input modalities per curated grok id (xAI docs / LiteLLM,
+ * 2026-07). The subscription catalog carries neither; the xAI API catalog
+ * carries context but not modalities.
+ */
+const GROK_MODEL_SPECS: Record<string, GrokModelSpecs> = {
+    "grok-4.5": { contextWindow: 500_000, inputModalities: ["text", "image"] },
+    "grok-4.3": { contextWindow: 1_000_000, inputModalities: ["text", "image"] },
+    "grok-4-fast": { contextWindow: 2_000_000, inputModalities: ["text"] },
+    "grok-4-fast-reasoning": { contextWindow: 2_000_000, inputModalities: ["text"] },
+    "grok-4-fast-non-reasoning": { contextWindow: 2_000_000, inputModalities: ["text"] },
+};
+
+/** Specs for a grok id; `-latest` / dated variants fold onto the base id. */
+export function grokModelSpecs(id: string): GrokModelSpecs | undefined {
+    return GROK_MODEL_SPECS[id] ?? GROK_MODEL_SPECS[id.replace(/-(?:\d{8}|latest)$/, "")];
+}
+
 export const GROK_STATIC_CATALOG: GrokModelRecord[] = [
     seed("grok-4.5", "high", "medium", "optional", "ok"),
     seed("grok-build", "high", "slow", "reasoning", "ok"),

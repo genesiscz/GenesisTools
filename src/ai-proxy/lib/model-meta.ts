@@ -16,7 +16,15 @@ import { toProxyId as toCopilotProxyId } from "@genesiscz/utils/ai/github-copilo
 import { COPILOT_INDIVIDUAL_API } from "@genesiscz/utils/ai/github-copilot/paths";
 import type { CopilotModelRecord } from "@genesiscz/utils/ai/github-copilot/types";
 import type { GrokModelRecord } from "@genesiscz/utils/ai/grok";
-import { GROK_STATIC_CATALOG, inferModelSpeed, inferModelThinking, toProxyId } from "@genesiscz/utils/ai/grok";
+import {
+    GROK_STATIC_CATALOG,
+    grokModelSpecs,
+    inferModelSpeed,
+    inferModelThinking,
+    isCuratedGrokModelId,
+    toProxyId,
+} from "@genesiscz/utils/ai/grok";
+import { isDatedModelId } from "@genesiscz/utils/ai/models/registry";
 import { WHAM_BASE_URL } from "@genesiscz/utils/ai/openai/codex-auth";
 import {
     OPENAI_SUB_BUILTIN_ALIAS_NAMES,
@@ -66,7 +74,8 @@ export function grokRecordToProxyMeta(
         visibility: record.visibility,
         speed: record.speed,
         thinking: record.thinking,
-        contextWindow: record.context_window,
+        contextWindow: record.context_window ?? grokModelSpecs(record.id)?.contextWindow,
+        inputModalities: grokModelSpecs(record.id)?.inputModalities,
         agentType: record.agent_type,
         apiBackend: record.api_backend,
         supportsTools: true,
@@ -127,7 +136,7 @@ export function listGrokProxyModels(account: AiProxyAccountConfig, baseUrl: stri
     const records = loadGrokCatalogRecords(account) ?? GROK_STATIC_CATALOG;
 
     return records
-        .filter((record) => record.probeStatus !== "fail")
+        .filter((record) => record.probeStatus !== "fail" && isCuratedGrokModelId(record.id))
         .map((record) => grokRecordToProxyMeta(account, record, baseUrl));
 }
 
@@ -200,6 +209,8 @@ export async function listAnthropicSubProxyModels(account: AiProxyAccountConfig)
         baseUrl: ANTHROPIC_MESSAGES_BASE_URL,
         visibility: "high" as const,
         speed: "medium" as const,
+        // Every current Claude model accepts text + images.
+        inputModalities: ["text", "image"],
         supportsTools: true,
         billingPlane: "subscription" as const,
         source,
@@ -221,12 +232,14 @@ export async function listAnthropicSubProxyModels(account: AiProxyAccountConfig)
         };
     });
 
-    const concrete: ProxyModelMeta[] = records.map((record) => ({
-        ...shared(record.id),
-        thinking: record.thinking,
-        contextWindow: record.contextWindow,
-        description: `${record.displayName} via subscription`,
-    }));
+    const concrete: ProxyModelMeta[] = records
+        .filter((record) => !isDatedModelId(record.id))
+        .map((record) => ({
+            ...shared(record.id),
+            thinking: record.thinking,
+            contextWindow: record.contextWindow,
+            description: `${record.displayName} via subscription`,
+        }));
 
     return [...aliases, ...concrete];
 }
@@ -396,7 +409,8 @@ function xaiRecordToProxyMeta(
         visibility: /grok-4\.5|grok-4\.3|grok-build/i.test(record.id) ? "high" : "medium",
         speed: inferModelSpeed(record.id),
         thinking: inferModelThinking(record.id),
-        contextWindow: record.contextWindow,
+        contextWindow: record.contextWindow ?? grokModelSpecs(record.id)?.contextWindow,
+        inputModalities: grokModelSpecs(record.id)?.inputModalities,
         supportsTools: true,
         billingPlane: "api-key",
         source: record.source,
@@ -409,7 +423,7 @@ function xaiRecordToProxyMeta(
 }
 
 function listXaiStaticProxyModels(account: AiProxyAccountConfig, baseUrl: string): ProxyModelMeta[] {
-    return XAI_STATIC_CHAT_MODELS.map((record) =>
+    return XAI_STATIC_CHAT_MODELS.filter((record) => isCuratedGrokModelId(record.id)).map((record) =>
         xaiRecordToProxyMeta(
             account,
             {
@@ -461,7 +475,8 @@ export async function listXaiProxyModels(account: AiProxyAccountConfig): Promise
 
         const records = payload.data
             .filter((item): item is XaiApiModelRecord => isObject(item) && typeof item.id === "string")
-            .filter(isChatXaiModel);
+            .filter(isChatXaiModel)
+            .filter((record) => isCuratedGrokModelId(record.id));
 
         if (records.length === 0) {
             return listXaiStaticProxyModels(account, baseUrl);

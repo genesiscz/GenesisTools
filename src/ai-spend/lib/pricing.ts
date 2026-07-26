@@ -1,32 +1,56 @@
+import { byProvider, stripModelVariantSuffix } from "@genesiscz/utils/ai/models/registry";
 import type { ModelPrice, PricingTable, TokenTotals } from "./types";
 
 /**
- * $/Mtok. cacheWrite ≈ 1.25× input, cacheRead ≈ 0.1× input (Anthropic public ratios).
- * Keys are model-id prefixes; priceFor() resolves by longest matching prefix so
- * versioned ids (claude-opus-4-8-20260101) hit the family entry.
+ * EXACT id match, with one boundary-safe fallback: a trailing `-YYYYMMDD` /
+ * `-latest` suffix is stripped and the exact lookup retried. Never an
+ * open-ended prefix match — an unlisted id reports unpriced rather than
+ * costing at a guessed family rate. Rates come from the curated registry
+ * (`@genesiscz/utils/ai/models/registry`); update them there.
  */
-export const DEFAULT_PRICING: PricingTable = {
-    "claude-opus-4": { input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.5 },
-    "claude-sonnet-4": { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },
-    "claude-haiku-3-5": { input: 0.8, output: 4, cacheWrite: 1.0, cacheRead: 0.08 },
-    "claude-3-5-haiku": { input: 0.8, output: 4, cacheWrite: 1.0, cacheRead: 0.08 },
-};
 
-export function priceFor(model: string, pricing: PricingTable): ModelPrice | null {
-    if (pricing[model]) {
-        return pricing[model];
-    }
+/** $/Mtok. cacheWrite ≈ 1.25× input, cacheRead ≈ 0.1× input (Anthropic public ratios). */
+function fromRegistry(): PricingTable {
+    const table: PricingTable = {};
 
-    let best: ModelPrice | null = null;
-    let bestLen = -1;
-    for (const [prefix, price] of Object.entries(pricing)) {
-        if (model.startsWith(prefix) && prefix.length > bestLen) {
-            best = price;
-            bestLen = prefix.length;
+    for (const model of byProvider("anthropic")) {
+        if (!model.pricing) {
+            continue;
+        }
+
+        const price: ModelPrice = {
+            input: model.pricing.inputPerMTok,
+            output: model.pricing.outputPerMTok,
+            cacheWrite: model.pricing.cacheWritePerMTok ?? model.pricing.inputPerMTok * 1.25,
+            cacheRead: model.pricing.cacheReadPerMTok ?? model.pricing.inputPerMTok * 0.1,
+        };
+
+        for (const id of [model.id, model.cli?.id]) {
+            if (id) {
+                table[id] = price;
+            }
         }
     }
 
-    return best;
+    return table;
+}
+
+/** Claude 3.5 Haiku predates the curated registry — kept literal here (exact ids). */
+const LEGACY_PRICING: PricingTable = {
+    "claude-3-5-haiku": { input: 0.8, output: 4, cacheWrite: 1.0, cacheRead: 0.08 },
+};
+
+export const DEFAULT_PRICING: PricingTable = { ...fromRegistry(), ...LEGACY_PRICING };
+
+export function priceFor(model: string, pricing: PricingTable): ModelPrice | null {
+    const exact = pricing[model];
+
+    if (exact) {
+        return exact;
+    }
+
+    const base = stripModelVariantSuffix(model);
+    return (base && pricing[base]) || null;
 }
 
 export function costOf(tokens: TokenTotals, price: ModelPrice): number {
