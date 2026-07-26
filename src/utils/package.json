@@ -267,6 +267,11 @@
             "types": "./prompts/index.ts",
             "default": "./prompts/index.ts"
         },
+        "./pipeline": {
+            "bun": "./pipeline/index.ts",
+            "types": "./pipeline/index.ts",
+            "default": "./pipeline/index.ts"
+        },
         "./profile": {
             "bun": "./profile/index.ts",
             "types": "./profile/index.ts",
