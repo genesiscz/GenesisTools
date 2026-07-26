@@ -8,8 +8,8 @@
  * Usage: bun scripts/learn-from-fable/replay-tighten-guards.ts <transcript.jsonl>
  */
 import { readFileSync } from "node:fs";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { parseTightenReply } from "@app/learn-from-fable/lib/stages/spec";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const CAP = 420;
 const path = process.argv[2];

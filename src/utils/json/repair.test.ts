@@ -45,6 +45,6 @@ describe("stripToJson", () => {
     });
 
     test("keeps unclosed value from opening bracket", () => {
-        expect(stripToJson('prefix [1, 2')).toBe("[1, 2");
+        expect(stripToJson("prefix [1, 2")).toBe("[1, 2");
     });
 });
