@@ -261,6 +261,11 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
         // Always stamp records — the file sink needs `time` for forensics;
         // console visibility is controlled via pino-pretty's ignore list above.
         timestamp: pino.stdTimeFunctions.isoTime,
+        // An Error's own properties are non-enumerable, so `logger.warn({ error: err })`
+        // serialized to a useless `error: {}` (observed while triaging a failed
+        // consolidate vote batch). The house convention is to pass the raw error, so
+        // both key spellings get pino's error serializer; non-Errors pass through.
+        serializers: { err: pino.stdSerializers.err, error: pino.stdSerializers.err },
         ...(showPid && { base: { pid: process.pid } }),
     };
 
