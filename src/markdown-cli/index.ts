@@ -12,6 +12,7 @@ interface MarkdownCLIOptions {
     width?: number;
     theme?: string;
     color?: boolean;
+    tableEngine?: string;
 }
 
 const program = new Command();
@@ -27,12 +28,21 @@ program
             .choices(["dark", "light", "minimal"])
             .default("dark")
     )
+    .addOption(
+        new Option(
+            "--table-engine <name>",
+            "Table renderer: auto (box, cards when too narrow), ascii (width-fitted box), cards (stacked label/value), cli-table3 (port-style box), plain (padded, no borders), html (cli-html's own)"
+        )
+            .choices(["auto", "ascii", "cards", "cli-table3", "plain", "html"])
+            .default("auto")
+    )
     .option("--no-color", "Strip ANSI color codes from output")
     .action((file?: string, opts?: MarkdownCLIOptions) => {
         const renderOpts: MarkdownRenderOptions = {
             width: opts?.width && !Number.isNaN(opts.width) ? opts.width : undefined,
             theme: (opts?.theme as MarkdownRenderOptions["theme"]) || "dark",
             color: opts?.color !== false,
+            tableEngine: (opts?.tableEngine as MarkdownRenderOptions["tableEngine"]) || "auto",
         };
 
         if (!process.stdin.isTTY) {

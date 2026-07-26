@@ -37,7 +37,19 @@ tools markdown-cli README.md --no-color > plain.txt
 | `--watch` | `-w` | Watch the file and re-render on change | off |
 | `--width <n>` | — | Max output width in columns | terminal |
 | `--theme <name>` | — | `dark`, `light`, or `minimal` | `dark` |
+| `--table-engine <name>` | — | `auto`, `ascii`, `cards`, `cli-table3`, `plain`, or `html` | `auto` |
 | `--no-color` | — | Strip ANSI color codes | off |
+
+### Table engines
+
+| Engine | Renderer | Behaviour |
+|--------|----------|-----------|
+| `auto` | ascii or cards | Box while the table fits the terminal, stacked cards once it doesn't |
+| `ascii` | this tool's own | Fits `--width`/terminal, wraps long cells over multiple lines |
+| `cards` | this tool's own | One `● title` block per row with `label  value` lines, wrapped with a hanging indent |
+| `cli-table3` | `createBoxTable` (`tools port` look) | Row separators everywhere, columns sized to content, can overflow the terminal |
+| `plain` | `formatTable` | Padded columns, no borders, cells truncated at 50 chars |
+| `html` | `cli-html` | cli-html renders the `<table>` itself, hard-cut at its own width |
 
 ---
 

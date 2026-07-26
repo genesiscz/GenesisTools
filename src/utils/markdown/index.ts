@@ -1,4 +1,5 @@
 import { stripAnsi } from "@genesiscz/utils/string.js";
+import { createBoxTable, formatTable } from "@genesiscz/utils/table";
 import { alert } from "@mdit/plugin-alert";
 import chalk, { type ChalkInstance } from "chalk";
 import cliHtml from "cli-html";
@@ -245,6 +246,107 @@ function getDisplayWidth(str: string): number {
     return width;
 }
 
+/** Break a cell into lines that fit `width`, splitting over-long words (ids, paths). */
+function wrapCell(content: string, width: number): string[] {
+    if (getDisplayWidth(content) <= width) {
+        return [content];
+    }
+
+    const lines: string[] = [];
+    let current = "";
+
+    const flush = () => {
+        if (current.length > 0) {
+            lines.push(current);
+            current = "";
+        }
+    };
+
+    for (const word of content.split(/\s+/).filter(Boolean)) {
+        let token = word;
+
+        while (getDisplayWidth(token) > width) {
+            flush();
+            lines.push(token.slice(0, width));
+            token = token.slice(width);
+        }
+
+        if (current.length === 0) {
+            current = token;
+        } else if (getDisplayWidth(current) + 1 + getDisplayWidth(token) <= width) {
+            current += ` ${token}`;
+        } else {
+            flush();
+            current = token;
+        }
+    }
+
+    flush();
+    return lines.length > 0 ? lines : [""];
+}
+
+/**
+ * Tables are rendered outside cli-html: it re-wraps its own output at a fixed
+ * width and would break the box drawing. We emit a marker, then splice the
+ * finished table back in after cli-html is done.
+ */
+const tablePlaceholders: string[] = [];
+const TABLE_MARKER = /^([ \t]*)GTMDTABLE(\d+)GTMDTABLE/gm;
+
+/**
+ * Table renderers selectable at render time:
+ * - `auto`: box while it fits the terminal, stacked cards once it doesn't
+ * - `ascii`: this module's own box renderer (width-fitted, wraps inside cells)
+ * - `cards`: one stacked label/value block per row (readable on narrow terminals)
+ * - `cli-table3`: the shared port-style box (`createBoxTable`), truncates instead of wrapping
+ * - `plain`: padded columns, no borders (`formatTable`)
+ * - `html`: let cli-html render the `<table>` itself
+ */
+export type TableEngine = "auto" | "ascii" | "cards" | "cli-table3" | "plain" | "html";
+
+let tableEngine: TableEngine = "auto";
+
+/** Terminal width available for a table, leaving one column of slack. */
+let tableWidthOverride: number | undefined;
+
+function terminalWidth(): number {
+    if (tableWidthOverride) {
+        return tableWidthOverride;
+    }
+
+    const columns = process.stdout.columns;
+    return columns && columns > 20 ? columns - 2 : 100;
+}
+
+/**
+ * Shrink columns (widest first) until the rendered table fits the terminal.
+ * Columns never drop below MIN_COL_WIDTH; content is wrapped instead.
+ */
+function fitColumnWidths(natural: number[], available: number): number[] {
+    const MIN_COL_WIDTH = 8;
+    const widths = [...natural];
+    const chrome = 3 * widths.length + 1;
+    let total = widths.reduce((sum, w) => sum + w, 0) + chrome;
+
+    while (total > available) {
+        let widest = 0;
+        for (let i = 1; i < widths.length; i++) {
+            if (widths[i] > widths[widest]) {
+                widest = i;
+            }
+        }
+
+        if (widths[widest] <= MIN_COL_WIDTH) {
+            break;
+        }
+
+        widths[widest] -= 1;
+        total -= 1;
+    }
+
+    return widths;
+}
+
 function renderAsciiTable(data: TableData): string {
     const { headers, alignments, rows } = data;
     if (headers.length === 0) {
@@ -252,10 +354,11 @@ function renderAsciiTable(data: TableData): string {
     }
 
     // Calculate column widths using display width
-    const colWidths = headers.map((h, i) => {
+    const naturalWidths = headers.map((h, i) => {
         const cellWidths = [getDisplayWidth(h), ...rows.map((row) => getDisplayWidth(row[i] || ""))];
         return Math.max(...cellWidths);
     });
+    const colWidths = fitColumnWidths(naturalWidths, terminalWidth());
 
     // Pad cell content based on alignment using display width
     const padCell = (content: string, width: number, align: "left" | "center" | "right"): string => {
@@ -284,26 +387,124 @@ function renderAsciiTable(data: TableData): string {
     const topBorder = `┌${colWidths.map((w) => "─".repeat(w + 2)).join("┬")}┐`;
     lines.push(p.tableBorder(topBorder));
 
-    // Header row
-    const headerCells = headers.map((h, i) => padCell(h, colWidths[i], alignments[i] || "left"));
-    lines.push(p.tableBorder("│ ") + p.tableHeader(headerCells.join(p.tableBorder(" │ "))) + p.tableBorder(" │"));
+    /** One logical row rendered as N physical lines (wrapped cells stay column-aligned). */
+    const pushRow = (row: string[], style: (text: string) => string) => {
+        const wrapped = colWidths.map((w, i) => wrapCell(row[i] || "", w));
+        const height = Math.max(...wrapped.map((cell) => cell.length));
+
+        for (let line = 0; line < height; line++) {
+            const cells = colWidths.map((w, i) => padCell(wrapped[i][line] || "", w, alignments[i] || "left"));
+            lines.push(p.tableBorder("│ ") + style(cells.join(p.tableBorder(" │ "))) + p.tableBorder(" │"));
+        }
+    };
+
+    pushRow(headers, (text) => p.tableHeader(text));
 
     // Header separator
     const headerSep = `├${colWidths.map((w) => "─".repeat(w + 2)).join("┼")}┤`;
     lines.push(p.tableBorder(headerSep));
 
-    // Data rows
     for (const row of rows) {
-        const cells = colWidths.map((w, i) => padCell(row[i] || "", w, alignments[i] || "left"));
-        lines.push(p.tableBorder("│ ") + cells.join(p.tableBorder(" │ ")) + p.tableBorder(" │"));
+        pushRow(row, (text) => text);
     }
 
     // Bottom border
     const bottomBorder = `└${colWidths.map((w) => "─".repeat(w + 2)).join("┴")}┘`;
     lines.push(p.tableBorder(bottomBorder));
 
-    // Wrap in <pre> to prevent cli-html from wrapping the table
-    return `\n<pre>${lines.join("\n")}</pre>\n`;
+    return storeTable(lines.join("\n"));
+}
+
+/** Store a finished table and return the marker cli-html will carry through. */
+function storeTable(table: string): string {
+    const index = tablePlaceholders.push(table) - 1;
+    return `\n<p>GTMDTABLE${index}GTMDTABLE</p>\n`;
+}
+
+/** Port-style box via the shared `createBoxTable` (same look as `tools port`). */
+function renderCliTable3(data: TableData): string {
+    const table = createBoxTable(data.headers);
+    for (const row of data.rows) {
+        table.push(data.headers.map((_, i) => row[i] || ""));
+    }
+
+    return storeTable(table.toString());
+}
+
+/** Padded columns, no borders — the `formatTable` look. */
+function renderPlainTable(data: TableData): string {
+    const rows = data.rows.map((row) => data.headers.map((_, i) => row[i] || ""));
+    const alignRight = data.alignments.flatMap((align, i) => (align === "right" ? [i] : []));
+
+    return storeTable(formatTable(rows, data.headers, { alignRight }));
+}
+
+/**
+ * Stacked layout for narrow terminals: each row becomes a titled block of
+ * `label  value` lines (first column is the title), values wrapped with a
+ * hanging indent. Same idea as Claude Code collapsing a table to a list.
+ */
+function renderCardsTable(data: TableData): string {
+    const { headers, rows } = data;
+    const width = terminalWidth();
+    const p = currentPalette;
+    const labels = headers.slice(1);
+    const labelWidth = Math.max(0, ...labels.map((label) => getDisplayWidth(label)));
+    const valueWidth = Math.max(20, width - labelWidth - 5);
+    const lines: string[] = [];
+
+    for (const [index, row] of rows.entries()) {
+        if (index > 0) {
+            lines.push("");
+        }
+
+        lines.push(p.tableHeader(`● ${row[0] || ""}`));
+
+        for (const [column, label] of labels.entries()) {
+            const value = row[column + 1] || "";
+            if (!value) {
+                continue;
+            }
+
+            const wrapped = wrapCell(value, valueWidth);
+            const gutter = " ".repeat(labelWidth + 4);
+            lines.push(`  ${p.dim(label.padEnd(labelWidth))}  ${wrapped[0]}`);
+            for (const extra of wrapped.slice(1)) {
+                lines.push(gutter + extra);
+            }
+        }
+    }
+
+    return storeTable(lines.join("\n"));
+}
+
+/** Width the box renderer would need before any column is squeezed. */
+function naturalBoxWidth(data: TableData): number {
+    const widths = data.headers.map((header, i) =>
+        Math.max(getDisplayWidth(header), ...data.rows.map((row) => getDisplayWidth(row[i] || "")))
+    );
+
+    return widths.reduce((sum, w) => sum + w, 0) + 3 * widths.length + 1;
+}
+
+function renderTableWithEngine(data: TableData): string {
+    if (tableEngine === "cards") {
+        return renderCardsTable(data);
+    }
+
+    if (tableEngine === "auto") {
+        return naturalBoxWidth(data) <= terminalWidth() ? renderAsciiTable(data) : renderCardsTable(data);
+    }
+
+    if (tableEngine === "cli-table3") {
+        return renderCliTable3(data);
+    }
+
+    if (tableEngine === "plain") {
+        return renderPlainTable(data);
+    }
+
+    return renderAsciiTable(data);
 }
 
 function createTablePlugin(md: MarkdownIt): void {
@@ -313,9 +514,9 @@ function createTablePlugin(md: MarkdownIt): void {
         let html = "";
 
         for (let i = 0; i < tokens.length; i++) {
-            if (tokens[i].type === "table_open") {
+            if (tokens[i].type === "table_open" && tableEngine !== "html") {
                 const { data, endIdx } = parseTableTokens(tokens, i);
-                html += renderAsciiTable(data);
+                html += renderTableWithEngine(data);
                 i = endIdx;
             } else {
                 html += md.renderer.render([tokens[i]], md.options, env || {});
@@ -382,6 +583,8 @@ export interface MarkdownRenderOptions {
     theme?: "dark" | "light" | "minimal";
     /** Whether to include ANSI colors. Defaults to true. */
     color?: boolean;
+    /** Table renderer. Defaults to "auto" (box when it fits, stacked cards when it doesn't). */
+    tableEngine?: TableEngine;
 }
 
 function wrapToWidth(str: string, width: number): string {
@@ -436,6 +639,10 @@ export function renderMarkdownToCli(markdown: string, options?: MarkdownRenderOp
     const themeName: ThemeName = options?.theme ?? "dark";
     currentPalette = themes[themeName];
 
+    tablePlaceholders.length = 0;
+    tableWidthOverride = options?.width;
+    tableEngine = options?.tableEngine ?? "auto";
+
     const html = mdInstance.render(markdown);
     let output = cliHtml(html);
 
@@ -443,6 +650,19 @@ export function renderMarkdownToCli(markdown: string, options?: MarkdownRenderOp
     if (options?.width) {
         output = wrapToWidth(output, options.width);
     }
+
+    // Splice tables back in, un-wrapped by cli-html
+    output = output.replace(TABLE_MARKER, (match, indent: string, index: string) => {
+        const table = tablePlaceholders[Number(index)];
+        if (table === undefined) {
+            return match;
+        }
+
+        return table
+            .split("\n")
+            .map((line) => indent + line)
+            .join("\n");
+    });
 
     // Strip colors if requested
     if (options?.color === false) {
