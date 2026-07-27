@@ -1,4 +1,6 @@
 @import 'tailwindcss';
+/* Same enter/exit utilities the panel needs — see side-panel.css. */
+@import 'tw-animate-css';
 @source '..';
 @source '../../../utils/ui/components';
 /* Shared youtube panel components live outside the extension dir; unscanned,

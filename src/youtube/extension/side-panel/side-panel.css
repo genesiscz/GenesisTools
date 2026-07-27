@@ -1,4 +1,9 @@
 @import 'tailwindcss';
+/* Radix-driven enter/exit utilities (animate-in, fade-out-0, zoom-out-95, the
+   data-[state=…] variants). Every other dashboard imports this; the extension
+   did not, so its dialogs and popovers snapped in and out with no transition
+   while still carrying the animation classes. */
+@import 'tw-animate-css';
 @source '..';
 @source '../../../utils/ui/components';
 /* The panel renders ~29 components from youtube/ui/components (tabs, summary,
