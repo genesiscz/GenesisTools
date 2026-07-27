@@ -3,6 +3,7 @@ import {
     isFullBleedOverPlayer,
     isInFlowPosition,
     isUsableLiveChatStyle,
+    isUsableRailStyle,
     rectsOverlapSubstantially,
     shouldRecoverInline,
 } from "@ext/placement";
@@ -39,6 +40,26 @@ describe("rectsOverlapSubstantially / full-bleed", () => {
         expect(rectsOverlapSubstantially(rail, player)).toBe(false);
         expect(isFullBleedOverPlayer(over, player)).toBe(true);
         expect(isFullBleedOverPlayer(rail, player)).toBe(false);
+    });
+});
+
+describe("isUsableRailStyle", () => {
+    const visible = { display: "block", visibility: "visible" };
+
+    it("accepts a normal painted rail", () => {
+        expect(isUsableRailStyle(visible, rect(1376, 68, 528, 900))).toBe(true);
+    });
+
+    it("rejects the rail YouTube hides on narrow layouts", () => {
+        // Below ~1000px #secondary becomes display:none. The panel is its
+        // child, so it inherited the hidden box and vanished at 0×0 rather
+        // than falling back to the fixed host.
+        expect(isUsableRailStyle({ display: "none", visibility: "visible" }, rect(0, 0, 0, 0))).toBe(false);
+        expect(isUsableRailStyle({ display: "block", visibility: "hidden" }, rect(1376, 68, 528, 900))).toBe(false);
+    });
+
+    it("rejects a hairline rail too narrow to hold the panel", () => {
+        expect(isUsableRailStyle(visible, rect(1376, 68, 40, 900))).toBe(false);
     });
 });
 

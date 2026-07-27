@@ -3,6 +3,7 @@ import {
     isFullBleedOverPlayer,
     isInFlowPosition,
     isUsableLiveChatStyle,
+    isUsableRailStyle,
     rectsOverlapSubstantially,
     shouldRecoverInline,
 } from "@ext/placement";
@@ -89,8 +90,10 @@ function isInFlowRail(el: HTMLElement): boolean {
     // width), so inserting our panel as its child paints it over the video.
     // Only flow inline when #secondary is a normal in-flow rail; otherwise the
     // caller uses the fixed host fallback, which pins us to the right clear of
-    // the player.
-    return isInFlowPosition(getComputedStyle(el).position);
+    // the player. It must also be painted — below ~1000px YouTube hides the
+    // rail outright, which used to take the panel down with it.
+    const style = getComputedStyle(el);
+    return isInFlowPosition(style.position) && isUsableRailStyle(style, el.getBoundingClientRect());
 }
 
 function findLiveChatFrame(): HTMLElement | null {
@@ -409,6 +412,12 @@ function scheduleMount(): void {
         window.clearTimeout(mountRetryTimer);
         mountRetryTimer = null;
     }
+
+    // Fresh recovery budget per navigation. Without this the counter only ever
+    // reset on a successful inline mount, so a few pages that legitimately fell
+    // back (narrow window, hidden rail) permanently exhausted it — every later
+    // video then stayed on the fixed overlay even with a perfectly good rail.
+    inlineRecoveryAttempts = 0;
 
     let attempts = 0;
     const tryMount = (): void => {

@@ -188,8 +188,9 @@ export function InsightsTab({
 
     return (
         <div className="space-y-4">
-            <div className="flex items-center justify-between gap-3">
-                <h3 className="min-w-0 truncate text-base font-semibold">Key insights</h3>
+            {/* Same wrap-don't-truncate rule as the summary tab header. */}
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                <h3 className="min-w-0 grow basis-40 text-base font-semibold">Key insights</h3>
                 <Button
                     size="sm"
                     className="shrink-0"

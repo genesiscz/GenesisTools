@@ -22,6 +22,23 @@ export function isInFlowPosition(position: string): boolean {
     return position === "static" || position === "relative";
 }
 
+/**
+ * A rail is only usable if it is actually painted.
+ *
+ * On narrow layouts YouTube sets `#secondary` to `display: none` and stacks the
+ * rail's content elsewhere. Our host is a child of that rail, so it inherited
+ * the hidden box and the panel silently disappeared at 0×0 — visible in neither
+ * placement, with nothing to signal it had gone. Treat a hidden or hairline
+ * rail as unusable so the caller falls back to the fixed host.
+ */
+export function isUsableRailStyle(style: { display: string; visibility: string }, rect: RectLike): boolean {
+    if (style.display === "none" || style.visibility === "hidden") {
+        return false;
+    }
+
+    return rect.width >= 120;
+}
+
 /** True when `a` substantially overlaps `b` (same idea as coversPlayer). */
 export function rectsOverlapSubstantially(a: RectLike, b: RectLike, minPx = 40): boolean {
     if (a.width === 0 || b.width === 0) {
