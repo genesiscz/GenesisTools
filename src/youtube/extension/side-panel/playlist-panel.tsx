@@ -7,29 +7,52 @@ import { Header } from "@ext/side-panel/header";
 import { Button } from "@genesiscz/utils/ui/components/button";
 import { Markdown } from "@genesiscz/utils/ui/components/markdown";
 import { ChevronLeft, FileText, ListVideo, Loader2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { playlistVideoIdsFromHrefs, sameIds } from "@ext/playlist-members";
+import { useEffect, useState } from "react";
 
 const MAX_REPORT_MEMBERS = 20;
 
 /** Scrape the playlist page's member video ids (content-script context — the
  *  shadow-DOM panel shares the page's document). Capped at the report limit. */
-function collectPlaylistVideoIds(): string[] {
-    const anchors = document.querySelectorAll<HTMLAnchorElement>(
-        'ytd-playlist-video-renderer a[href*="watch?v="], ytd-playlist-panel-video-renderer a[href*="watch?v="]'
+function collectPlaylistVideoIds(listId: string): string[] {
+    const anchors = document.querySelectorAll<HTMLAnchorElement>('a[href*="list="]');
+    return playlistVideoIdsFromHrefs(
+        Array.from(anchors, (a) => a.getAttribute("href") ?? ""),
+        listId,
+        MAX_REPORT_MEMBERS
     );
-    const ids: string[] = [];
+}
 
-    for (const anchor of anchors) {
-        const id = new URL(anchor.href, location.origin).searchParams.get("v");
+/**
+ * Playlist rows stream in after first paint and as the user scrolls, so the
+ * original one-shot `useMemo(…, [])` almost always measured an empty list —
+ * hence the old "reopen the panel" instruction. Re-scrape as the page fills in.
+ */
+function usePlaylistVideoIds(listId: string): string[] {
+    const [ids, setIds] = useState<string[]>(() => collectPlaylistVideoIds(listId));
 
-        if (id && !ids.includes(id)) {
-            ids.push(id);
-        }
+    useEffect(() => {
+        let timer = 0;
 
-        if (ids.length >= MAX_REPORT_MEMBERS) {
-            break;
-        }
-    }
+        const rescan = (): void => {
+            window.clearTimeout(timer);
+            timer = window.setTimeout(() => {
+                const next = collectPlaylistVideoIds(listId);
+                // Only swap identity when the set really changed, otherwise
+                // YouTube's constant DOM churn would re-render every 250ms.
+                setIds((prev) => (sameIds(prev, next) ? prev : next));
+            }, 250);
+        };
+
+        const observer = new MutationObserver(rescan);
+        observer.observe(document.body, { childList: true, subtree: true });
+        rescan();
+
+        return () => {
+            window.clearTimeout(timer);
+            observer.disconnect();
+        };
+    }, [listId]);
 
     return ids;
 }
@@ -38,7 +61,7 @@ export function PlaylistPanel({ listId }: { listId: string }) {
     const [collapsed, setCollapsed] = useState(false);
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [reportId, setReportId] = useState<number | null>(null);
-    const memberIds = useMemo(() => collectPlaylistVideoIds(), []);
+    const memberIds = usePlaylistVideoIds(listId);
     const estimate = useReportEstimate(memberIds, confirmOpen);
     const create = useCreateReport();
     const report = useReport(reportId);
@@ -103,8 +126,8 @@ export function PlaylistPanel({ listId }: { listId: string }) {
                                 <div className="flex items-start gap-3 rounded-2xl border border-dashed border-primary/25 p-5">
                                     <ListVideo className="mt-0.5 size-5 shrink-0 text-primary" />
                                     <p className="text-sm text-muted-foreground">
-                                        Reports need at least 2 videos. Scroll the playlist so its entries render, then
-                                        reopen the panel.
+                                        Reports need at least 2 videos. Scroll the playlist so more entries load — the
+                                        count updates as they appear.
                                     </p>
                                 </div>
                             ) : (
