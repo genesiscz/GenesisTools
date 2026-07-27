@@ -4,6 +4,7 @@ import {
     isInFlowPosition,
     isUsableLiveChatStyle,
     rectsOverlapSubstantially,
+    shouldRecoverInline,
 } from "@ext/placement";
 
 describe("isUsableLiveChatStyle", () => {
@@ -38,6 +39,31 @@ describe("rectsOverlapSubstantially / full-bleed", () => {
         expect(rectsOverlapSubstantially(rail, player)).toBe(false);
         expect(isFullBleedOverPlayer(over, player)).toBe(true);
         expect(isFullBleedOverPlayer(rail, player)).toBe(false);
+    });
+});
+
+describe("shouldRecoverInline", () => {
+    const base = { placement: "fixed", slotAvailable: true, attempts: 0, maxAttempts: 3 } as const;
+
+    it("re-attempts inline once the rail becomes usable again", () => {
+        // The bug this pins: the fixed fallback had no watcher, so a panel that
+        // retreated during a theater toggle floated over the rail until the
+        // next navigation even after the rail was healthy.
+        expect(shouldRecoverInline(base)).toBe(true);
+    });
+
+    it("leaves a healthy inline panel alone", () => {
+        expect(shouldRecoverInline({ ...base, placement: "inline" })).toBe(false);
+    });
+
+    it("waits while the rail is still unusable", () => {
+        expect(shouldRecoverInline({ ...base, slotAvailable: false })).toBe(false);
+    });
+
+    it("stops once the attempt budget is spent, so a failing slot cannot remount forever", () => {
+        expect(shouldRecoverInline({ ...base, attempts: 2 })).toBe(true);
+        expect(shouldRecoverInline({ ...base, attempts: 3 })).toBe(false);
+        expect(shouldRecoverInline({ ...base, attempts: 9 })).toBe(false);
     });
 });
 

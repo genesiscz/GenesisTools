@@ -4,6 +4,7 @@ import {
     isInFlowPosition,
     isUsableLiveChatStyle,
     rectsOverlapSubstantially,
+    shouldRecoverInline,
 } from "@ext/placement";
 import { type ChapterTicksHandle, mountChapterTicks } from "@ext/player-chapters";
 import type { PlayerChaptersMessage, PlayerTimeMessage } from "@ext/shared/messages";
@@ -257,6 +258,9 @@ function attachHost(target: PanelTarget): { host: HTMLElement; placement: Placem
 let layoutWatchTimer: number | null = null;
 let layoutResizeObserver: ResizeObserver | null = null;
 let layoutMutationObserver: MutationObserver | null = null;
+/** Bounds fixed→inline recovery so a slot that keeps failing can't remount forever. */
+const MAX_INLINE_RECOVERY_ATTEMPTS = 3;
+let inlineRecoveryAttempts = 0;
 
 function stopLayoutWatch(): void {
     if (layoutWatchTimer !== null) {
@@ -288,10 +292,25 @@ function inlinePlacementStillValid(host: HTMLElement): boolean {
     return true;
 }
 
+/** Mirrors attachHost's inline conditions, but measures only — never inserts. */
+function inlineSlotAvailable(): boolean {
+    if (location.pathname !== "/watch") {
+        return false;
+    }
+
+    const chat = findLiveChatFrame();
+    if (chat?.parentElement && isUsableLiveChat(chat)) {
+        return true;
+    }
+
+    const secondary = findWatchSecondaryColumn();
+    return secondary !== null && isInFlowRail(secondary) && !secondaryOverlapsPlayer(secondary);
+}
+
 function startLayoutWatch(host: HTMLElement, placement: Placement): void {
     stopLayoutWatch();
 
-    if (placement !== "inline" || location.pathname !== "/watch") {
+    if (location.pathname !== "/watch") {
         return;
     }
 
@@ -308,7 +327,27 @@ function startLayoutWatch(host: HTMLElement, placement: Placement): void {
                 return;
             }
 
-            if (!inlinePlacementStillValid(liveHost)) {
+            if (placement === "inline") {
+                if (!inlinePlacementStillValid(liveHost)) {
+                    ensureSidePanel();
+                }
+
+                return;
+            }
+
+            // The fixed fallback used to be terminal: whatever made the rail
+            // unusable (theater mode, a mid-navigation reflow, a resize) kept
+            // the panel floating over the rail until the next navigation, even
+            // once the rail was healthy again. Watch that direction too.
+            const recover = shouldRecoverInline({
+                placement,
+                slotAvailable: inlineSlotAvailable(),
+                attempts: inlineRecoveryAttempts,
+                maxAttempts: MAX_INLINE_RECOVERY_ATTEMPTS,
+            });
+
+            if (recover) {
+                inlineRecoveryAttempts += 1;
                 ensureSidePanel();
             }
         }, 200);
@@ -334,6 +373,13 @@ function ensureSidePanel(): void {
     }
 
     const { host, placement } = attachHost(target);
+
+    // Landing inline is the goal state — give any later fallback a fresh
+    // recovery budget instead of spending the page's one allowance forever.
+    if (placement === "inline") {
+        inlineRecoveryAttempts = 0;
+    }
+
     const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
     mountSidePanel(shadow, target, placement);
     startLayoutWatch(host, placement);

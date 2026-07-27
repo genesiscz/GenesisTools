@@ -1,6 +1,11 @@
 @import 'tailwindcss';
 @source '..';
 @source '../../../utils/ui/components';
+/* The panel renders ~29 components from youtube/ui/components (tabs, summary,
+   the LLM confirm dialog, …). Without this, every class string that appears
+   ONLY in that tree is dropped from the bundle — which is why the confirm
+   dialog rendered full-bleed: its max-w-[min(94vw,560px)] was never generated. */
+@source '../../ui/components';
 
 /* Phase 5: the user's theme choice (system→resolved to light/dark by JS) sets
    data-theme on the extension roots. Light overrides the dark token defaults +

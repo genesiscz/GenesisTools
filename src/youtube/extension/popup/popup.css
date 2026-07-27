@@ -1,6 +1,9 @@
 @import 'tailwindcss';
 @source '..';
 @source '../../../utils/ui/components';
+/* Shared youtube panel components live outside the extension dir; unscanned,
+   their unique class strings never reach the bundle. Same gap as side-panel.css. */
+@source '../../ui/components';
 
 :root,
 .cyberpunk {
