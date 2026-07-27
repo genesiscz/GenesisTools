@@ -377,6 +377,8 @@ footer.dd-share-footer .dd-share-source {
     top: 16px;
     right: 16px;
     z-index: 100;
+    display: flex;
+    gap: 8px;
 }
 
 .dd-share-view-btn {
@@ -468,11 +470,14 @@ const FILE_CODE_ICON =
 const BOOK_OPEN_ICON =
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>';
 
+const DOWNLOAD_ICON =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>';
+
 function embedSourceJson(source: string): string {
     return SafeJSON.stringify(source).replace(/</g, "\\u003c");
 }
 
-function buildViewToggleScript(): string {
+function buildViewToggleScript(downloadName: string): string {
     return `<script>
 (function () {
     var btn = document.getElementById("dd-share-view-btn");
@@ -483,6 +488,21 @@ function buildViewToggleScript(): string {
     }
 
     panel.textContent = JSON.parse(dataEl.textContent);
+
+    var downloadBtn = document.getElementById("dd-share-download-btn");
+    if (downloadBtn) {
+        downloadBtn.addEventListener("click", function () {
+            var blob = new Blob([panel.textContent], { type: "text/markdown;charset=utf-8" });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement("a");
+            a.href = url;
+            a.download = ${SafeJSON.stringify(downloadName)};
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        });
+    }
 
     var fileCodeIcon = ${SafeJSON.stringify(FILE_CODE_ICON)};
     var bookOpenIcon = ${SafeJSON.stringify(BOOK_OPEN_ICON)};
@@ -529,7 +549,10 @@ export function renderSharePage(options: ShareTemplateOptions): string {
         bodyExtras.push(buildMermaidScript());
     }
 
-    bodyExtras.push(buildViewToggleScript());
+    const baseName = sourcePath?.split("/").pop()?.replace(/\.md$/i, "") || title;
+    const downloadName = `${baseName.replace(/[\\/:*?"<>|]/g, "_")}.md`;
+
+    bodyExtras.push(buildViewToggleScript(downloadName));
 
     const sourceLine = sourcePath ? `<span class="dd-share-source">${escapeHtml(sourcePath)}</span>` : "";
 
@@ -546,6 +569,7 @@ ${headExtras.join("\n")}
 <body>
 <div class="dd-share-toolbar">
 <button type="button" class="dd-share-view-btn" id="dd-share-view-btn" aria-label="Show raw markdown source" title="Show raw markdown source">${FILE_CODE_ICON}</button>
+<button type="button" class="dd-share-view-btn" id="dd-share-download-btn" aria-label="Download raw markdown" title="Download raw markdown">${DOWNLOAD_ICON}</button>
 </div>
 <main>
 <article>${rendered.html}</article>
