@@ -1,9 +1,9 @@
-import { appendFileSync, chmodSync } from "node:fs";
+import { appendFileSync, chmodSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { retry } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { OAuthTokens } from "./auth";
 import { claudeOAuth } from "./auth";
@@ -76,8 +76,7 @@ const invalidGrantAt = new Map<string, number>();
  */
 function journalTokenRotation(account: string, oldTokens: Partial<OAuthTokens>, newTokens: OAuthTokens): void {
     try {
-        const dir = join(env.tools.getHome() || homedir(), ".genesis-tools", "ai");
-        const path = join(dir, "token-journal.jsonl");
+        const path = journalPath();
         appendFileSync(
             path,
             `${SafeJSON.stringify({
@@ -96,6 +95,59 @@ function journalTokenRotation(account: string, oldTokens: Partial<OAuthTokens>, 
     } catch (err) {
         logger.warn({ err, account }, "[token-refresh] journal append failed");
     }
+}
+
+function journalPath(): string {
+    return join(env.tools.getHome() || homedir(), ".genesis-tools", "ai", "token-journal.jsonl");
+}
+
+/**
+ * When a refresh dies with invalid_grant, the config's refresh token may be a
+ * stale, already-consumed one that a concurrent writer reverted (this bricked
+ * an account for 3 days on 2026-07-24 — the journal held the live pair the
+ * whole time). Returns the newest journaled pair for the account IF its
+ * refresh token differs from the one that just failed; one recovery attempt
+ * with it is safe because a journaled-but-unpersisted token was never sent to
+ * the server again.
+ */
+export function readJournalRecovery(
+    account: string,
+    consumedRefreshToken: string
+): { accessToken: string; refreshToken: string; expiresAt: number } | null {
+    let raw: string;
+    try {
+        raw = readFileSync(journalPath(), "utf8");
+    } catch (err) {
+        logger.debug({ err, account }, "[token-refresh] journal unreadable, no recovery candidate");
+        return null;
+    }
+
+    const lines = raw.trim().split("\n");
+
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const entry = parseJSON<{
+            account?: string;
+            newAccessToken?: string;
+            newRefreshToken?: string;
+            newExpiresAt?: number;
+        }>(lines[i]);
+
+        if (!entry || entry.account !== account) {
+            continue;
+        }
+
+        if (!entry.newRefreshToken || entry.newRefreshToken === consumedRefreshToken) {
+            return null;
+        }
+
+        return {
+            accessToken: entry.newAccessToken ?? "",
+            refreshToken: entry.newRefreshToken,
+            expiresAt: entry.newExpiresAt ?? 0,
+        };
+    }
+
+    return null;
 }
 
 /**
@@ -214,14 +266,36 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
             });
         } catch (err) {
             if (String(err).includes("invalid_grant")) {
-                invalidGrantAt.set(name, Date.now());
-                throw new Error(`Token expired (invalid_grant). Run: tools claude login ${name}`);
-            }
+                // The consumed token may be a stale revert of a journaled rotation —
+                // try the journal's newest pair once before declaring the grant dead.
+                const recovery = readJournalRecovery(name, diskAccount.tokens.refreshToken);
 
-            throw new Error(
-                `Failed to refresh token for "${name}": ${err instanceof Error ? err.message : err}. ` +
-                    `Run \`tools claude login ${name}\` if this persists.`
-            );
+                if (recovery) {
+                    logger.warn(
+                        `[token-refresh] ${name}: invalid_grant on stored token, ` +
+                            `attempting recovery with newer journaled refresh token`
+                    );
+                    try {
+                        newTokens = await claudeOAuth.refresh(recovery.refreshToken);
+                        logger.info(`[token-refresh] ${name}: journal recovery succeeded`);
+                    } catch (recoveryErr) {
+                        invalidGrantAt.set(name, Date.now());
+                        logger.warn(
+                            `[token-refresh] ${name}: journal recovery failed: ` +
+                                `${recoveryErr instanceof Error ? recoveryErr.message : recoveryErr}`
+                        );
+                        throw new Error(`Token expired (invalid_grant). Run: tools claude login ${name}`);
+                    }
+                } else {
+                    invalidGrantAt.set(name, Date.now());
+                    throw new Error(`Token expired (invalid_grant). Run: tools claude login ${name}`);
+                }
+            } else {
+                throw new Error(
+                    `Failed to refresh token for "${name}": ${err instanceof Error ? err.message : err}. ` +
+                        `Run \`tools claude login ${name}\` if this persists.`
+                );
+            }
         }
 
         journalTokenRotation(name, diskAccount.tokens, newTokens);

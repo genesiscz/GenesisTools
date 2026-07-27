@@ -10,6 +10,12 @@ import { Box, Text } from "ink";
 import { UsageBar } from "./usage-bar";
 
 function shortStaleReason(reason: string): string {
+    // 403 permission_error from an org whose subscription lapsed — the OAuth
+    // tokens are still perfectly valid, only the plan needs renewing.
+    if (reason.includes("not allowed for this organization")) {
+        return "plan expired";
+    }
+
     if (reason.includes("429")) {
         return "rate limited";
     }
