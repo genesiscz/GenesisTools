@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import type { EnqueuePipelineResult } from "@app/youtube/lib/pipeline.types";
 import type { JobStage, PipelineJob } from "@app/youtube/lib/types";
 import { Command } from "commander";
 
@@ -13,7 +14,11 @@ const calls = {
 mock.module("@app/youtube/commands/_shared/ensure-pipeline", () => ({
     getYoutube: async () => ({
         pipeline: {
-            enqueue: (input: unknown) => {
+            // Typed as the real return so this mock can't silently drift from
+            // `Pipeline.enqueue` again — it used to hand back a bare job, while
+            // production destructures `{ job }`, so every command test threw
+            // "enqueue returned no job".
+            enqueue: (input: unknown): EnqueuePipelineResult => {
                 calls.enqueue.push(input);
                 const job: PipelineJob = {
                     id: jobs.length + 1,
@@ -38,7 +43,7 @@ mock.module("@app/youtube/commands/_shared/ensure-pipeline", () => ({
                 };
                 jobs.push(job);
 
-                return job;
+                return { job, reused: false, queuePosition: jobs.length };
             },
             setGlobalConcurrencyOverride: (value: number | null) => {
                 calls.concurrency.push(value);
