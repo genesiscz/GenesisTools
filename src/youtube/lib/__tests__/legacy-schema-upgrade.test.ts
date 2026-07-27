@@ -62,7 +62,10 @@ describe("opening a database written by an older build", () => {
 
         try {
             const raw = db.getDb();
-            const columns = raw.query<{ name: string }, []>("PRAGMA table_info(jobs)").all().map((c) => c.name);
+            const columns = raw
+                .query<{ name: string }, []>("PRAGMA table_info(jobs)")
+                .all()
+                .map((c) => c.name);
 
             expect(columns).toContain("fingerprint");
             expect(columns).toContain("priority");
