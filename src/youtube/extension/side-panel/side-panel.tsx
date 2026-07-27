@@ -106,6 +106,7 @@ function useApplyAppearance(settings: UserSettings | undefined, anchorRef: RefOb
 function VideoPanel({ videoId, placement }: { videoId: string; placement: Placement }) {
     const [active, setActive] = useState<VideoDetailTab>("summary");
     const [collapsed, setCollapsed] = useState(false);
+    const hostRef = useRef<HTMLDivElement>(null);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [adminOpen, setAdminOpen] = useState(false);
     const [view, setView] = useState<"tabs" | "account">("tabs");
@@ -164,6 +165,17 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
             return next;
         });
     }, [settings.data, updateSettings]);
+
+    // Mirror the collapsed flag onto the shadow host so `:host([data-collapsed])`
+    // can drop the min-height floor. Without it the body collapses but the host
+    // stays 120px tall, leaving an empty box hanging under the header.
+    useEffect(() => {
+        const host = hostRef.current?.getRootNode();
+
+        if (host instanceof ShadowRoot) {
+            host.host.setAttribute("data-collapsed", String(collapsed));
+        }
+    }, [collapsed]);
 
     // Login-gated action retry: a 401'd action registers itself here before
     // the settings dialog opens; the moment `useMe` reports a user, the dialog
@@ -470,7 +482,7 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
             : `flex h-auto max-h-[min(70vh,720px)] min-h-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-card shadow-2xl shadow-black/40 ${heightAnim}`;
 
     return (
-        <div className={containerClass}>
+        <div ref={hostRef} className={containerClass}>
             <Header
                 collapsed={collapsed}
                 onToggleCollapse={toggleCollapse}

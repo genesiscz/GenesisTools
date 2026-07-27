@@ -226,9 +226,24 @@
 }
 
 .yt-body-collapsible[data-collapsed="true"] {
+    /* The body is a `flex-1` item, so flex-grow reclaimed exactly the space
+       `height: 0` freed and the panel never shrank — it just went blank at
+       full height. Stop it growing and the card collapses to its header. */
+    flex: 0 0 auto;
     height: 0;
     opacity: 0;
     pointer-events: none;
+}
+
+/* Floor lives here, not in the content script's inline style, so the collapsed
+   state can drop below it — an inline min-height would win over :host and hold
+   a ~120px empty box open under the header. */
+:host {
+    min-height: 120px;
+}
+
+:host([data-collapsed="true"]) {
+    min-height: 0;
 }
 
 /* Themed prose for LLM markdown (Ask answers). Rendered by the shared

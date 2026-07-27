@@ -193,7 +193,7 @@ function applyInlineStyles(host: HTMLElement): void {
         // non-flex rail parent.
         "flex: 0 0 auto",
         "height: auto",
-        "min-height: 120px",
+        // min-height lives in side-panel.css (:host) so collapsing can drop it.
         // Cap well below the viewport so recommendations stay visible; the
         // panel body scrolls inside. `overflow: hidden` so content can never
         // paint past the cap over the rail below.
@@ -215,7 +215,7 @@ function applyFixedStyles(host: HTMLElement): void {
         "top: 72px",
         "width: 400px",
         "height: auto",
-        "min-height: 120px",
+        // min-height lives in side-panel.css (:host) so collapsing can drop it.
         "max-height: min(calc(100vh - 96px), 900px)",
         "z-index: 2147483647",
         "pointer-events: auto",
