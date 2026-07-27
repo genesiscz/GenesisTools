@@ -216,7 +216,12 @@ export class YoutubeDatabase extends BaseDatabase {
             CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, current_stage);
             CREATE INDEX IF NOT EXISTS idx_jobs_target ON jobs(target_kind, target);
             CREATE INDEX IF NOT EXISTS idx_jobs_parent ON jobs(parent_job_id);
-            CREATE INDEX IF NOT EXISTS idx_jobs_fingerprint_active ON jobs(fingerprint) WHERE status IN ('pending','running');
+            /* No fingerprint index here: on a DB created before that column
+               existed, CREATE TABLE IF NOT EXISTS is a no-op, so indexing
+               jobs(fingerprint) throws "no such column" and takes the whole
+               server down at startup. The add-jobs-fingerprint-priority
+               migration below adds the column first, then creates this index
+               for legacy and fresh databases alike. */
 
             CREATE TABLE IF NOT EXISTS qa_chunks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
