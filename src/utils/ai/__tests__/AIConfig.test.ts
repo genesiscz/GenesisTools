@@ -1,9 +1,22 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { AIConfig, mergeAccountEntry } from "../AIConfig";
 
 describe("AIConfig", () => {
+    // Without this sandbox these tests load and WRITE the user's real
+    // ~/.genesis-tools/ai/config.json — `setAppDefaults("test-app", …)` below had
+    // been persisting a `test-app` block into live config on every run.
+    beforeEach(() => {
+        env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "gt-aiconfig-")));
+        AIConfig.invalidate();
+    });
+
     afterEach(() => {
+        env.testing.unset("GENESIS_TOOLS_HOME");
         AIConfig.invalidate();
     });
 
