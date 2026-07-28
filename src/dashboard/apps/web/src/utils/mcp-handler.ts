@@ -1,5 +1,5 @@
+import type { JSONRPCMessage, McpServer } from "@modelcontextprotocol/server";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
-import type { McpServer, JSONRPCMessage } from "@modelcontextprotocol/server";
 
 export async function handleMcpRequest(request: Request, server: McpServer): Promise<Response> {
     try {

@@ -2,8 +2,14 @@
 
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import {
+    type CallToolResult,
+    type ListToolsResult,
+    ProtocolError,
+    ProtocolErrorCode,
+    Server,
+} from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import { Server, ProtocolError, ProtocolErrorCode, type CallToolResult, type ListToolsResult } from "@modelcontextprotocol/server";
 import axios, { type AxiosInstance } from "axios";
 import { createClient, readEnvAuth } from "./lib/client";
 import { extractErrors } from "./lib/errors";
@@ -92,7 +98,10 @@ function parseArgs<T>(raw: unknown, schema: ArgSchema, toolName: string): T {
         const value = args[field];
 
         if (type === "string" && (typeof value !== "string" || value === "")) {
-            throw new ProtocolError(ProtocolErrorCode.InvalidParams, `${toolName}: '${field}' must be a non-empty string`);
+            throw new ProtocolError(
+                ProtocolErrorCode.InvalidParams,
+                `${toolName}: '${field}' must be a non-empty string`
+            );
         }
 
         if (type !== "string" && typeof value !== type) {
@@ -142,197 +151,200 @@ class JenkinsServer {
     }
 
     private setupToolHandlers() {
-        this.server.setRequestHandler('tools/list', async (): Promise<ListToolsResult> => ({
-            tools: [
-                {
-                    name: "get_build_status",
-                    description: "Get the status of a Jenkins build",
-                    inputSchema: {
-                        type: "object" as const,
-                        properties: {
-                            jobPath: { type: "string", description: JOB_PATH_DESC },
-                            buildNumber: { type: "string", description: 'Build number (or "lastBuild")' },
-                        },
-                        required: ["jobPath"],
-                    },
-                },
-                {
-                    name: "trigger_build",
-                    description: "Trigger a new Jenkins build",
-                    inputSchema: {
-                        type: "object" as const,
-                        properties: {
-                            jobPath: { type: "string", description: JOB_PATH_DESC },
-                            parameters: {
-                                type: "object" as const,
-                                description: "Build parameters (optional)",
-                                additionalProperties: true,
+        this.server.setRequestHandler(
+            "tools/list",
+            async (): Promise<ListToolsResult> => ({
+                tools: [
+                    {
+                        name: "get_build_status",
+                        description: "Get the status of a Jenkins build",
+                        inputSchema: {
+                            type: "object" as const,
+                            properties: {
+                                jobPath: { type: "string", description: JOB_PATH_DESC },
+                                buildNumber: { type: "string", description: 'Build number (or "lastBuild")' },
                             },
+                            required: ["jobPath"],
                         },
-                        required: ["jobPath"],
                     },
-                },
-                {
-                    name: "get_build_log",
-                    description:
-                        "Fetch a build's console log (or a single node's log when nodeId is set), strip HTML timestamp wrappers, and save to /tmp/jenkins-mcp/. Returns the file path + summary. If `grep` is set, also returns matching lines formatted as 'L<lineno>: <text>' (caps at 200 matches). Token-efficient: bytes never enter the response unless you grep.",
-                    inputSchema: {
-                        type: "object" as const,
-                        properties: {
-                            jobPath: { type: "string", description: JOB_PATH_DESC },
-                            buildNumber: { type: "string", description: 'Build number (or "lastBuild")' },
-                            nodeId: {
-                                type: "string",
-                                description: "Pipeline node id (selected-node) — fetch just this node's log",
+                    {
+                        name: "trigger_build",
+                        description: "Trigger a new Jenkins build",
+                        inputSchema: {
+                            type: "object" as const,
+                            properties: {
+                                jobPath: { type: "string", description: JOB_PATH_DESC },
+                                parameters: {
+                                    type: "object" as const,
+                                    description: "Build parameters (optional)",
+                                    additionalProperties: true,
+                                },
                             },
-                            grep: {
-                                type: "string",
-                                description:
-                                    "Regex to filter lines. Returns up to 200 matches as 'L<n>: <text>' strings.",
+                            required: ["jobPath"],
+                        },
+                    },
+                    {
+                        name: "get_build_log",
+                        description:
+                            "Fetch a build's console log (or a single node's log when nodeId is set), strip HTML timestamp wrappers, and save to /tmp/jenkins-mcp/. Returns the file path + summary. If `grep` is set, also returns matching lines formatted as 'L<lineno>: <text>' (caps at 200 matches). Token-efficient: bytes never enter the response unless you grep.",
+                        inputSchema: {
+                            type: "object" as const,
+                            properties: {
+                                jobPath: { type: "string", description: JOB_PATH_DESC },
+                                buildNumber: { type: "string", description: 'Build number (or "lastBuild")' },
+                                nodeId: {
+                                    type: "string",
+                                    description: "Pipeline node id (selected-node) — fetch just this node's log",
+                                },
+                                grep: {
+                                    type: "string",
+                                    description:
+                                        "Regex to filter lines. Returns up to 200 matches as 'L<n>: <text>' strings.",
+                                },
                             },
+                            required: ["jobPath"],
                         },
-                        required: ["jobPath"],
                     },
-                },
-                {
-                    name: "list_jobs",
-                    description: "List Jenkins jobs in a folder or at root",
-                    inputSchema: {
-                        type: "object" as const,
-                        properties: {
-                            folderPath: {
-                                type: "string",
-                                description: 'Folder path (e.g. "job/Foo"); empty for root',
+                    {
+                        name: "list_jobs",
+                        description: "List Jenkins jobs in a folder or at root",
+                        inputSchema: {
+                            type: "object" as const,
+                            properties: {
+                                folderPath: {
+                                    type: "string",
+                                    description: 'Folder path (e.g. "job/Foo"); empty for root',
+                                },
+                                limit: { type: "number", description: "Max jobs to return" },
                             },
-                            limit: { type: "number", description: "Max jobs to return" },
+                            required: [],
                         },
-                        required: [],
                     },
-                },
-                {
-                    name: "get_build_history",
-                    description:
-                        "Get build history for a Jenkins job. With expand=true (default), each entry also has displayName, causes (who/what triggered), parameters, branch, SCM revision, and estimatedDuration.",
-                    inputSchema: {
-                        type: "object" as const,
-                        properties: {
-                            jobPath: { type: "string", description: JOB_PATH_DESC },
-                            limit: { type: "number", description: "Number of recent builds (default 10)" },
-                            expand: {
-                                type: "boolean",
-                                description:
-                                    "Include richer per-build fields (default true). Pass false for a minimal status-only listing.",
+                    {
+                        name: "get_build_history",
+                        description:
+                            "Get build history for a Jenkins job. With expand=true (default), each entry also has displayName, causes (who/what triggered), parameters, branch, SCM revision, and estimatedDuration.",
+                        inputSchema: {
+                            type: "object" as const,
+                            properties: {
+                                jobPath: { type: "string", description: JOB_PATH_DESC },
+                                limit: { type: "number", description: "Number of recent builds (default 10)" },
+                                expand: {
+                                    type: "boolean",
+                                    description:
+                                        "Include richer per-build fields (default true). Pass false for a minimal status-only listing.",
+                                },
                             },
+                            required: ["jobPath"],
                         },
-                        required: ["jobPath"],
                     },
-                },
-                {
-                    name: "stop_build",
-                    description: "Stop a running Jenkins build",
-                    inputSchema: {
-                        type: "object" as const,
-                        properties: {
-                            jobPath: { type: "string", description: JOB_PATH_DESC },
-                            buildNumber: { type: "string", description: 'Build number (or "lastBuild")' },
-                        },
-                        required: ["jobPath", "buildNumber"],
-                    },
-                },
-                {
-                    name: "get_queue",
-                    description: "Get the current Jenkins build queue",
-                    inputSchema: {
-                        type: "object" as const,
-                        properties: {
-                            limit: { type: "number", description: "Max queue items to return" },
-                        },
-                        required: [],
-                    },
-                },
-                {
-                    name: "get_job_config",
-                    description: "Get the configuration of a Jenkins job",
-                    inputSchema: {
-                        type: "object" as const,
-                        properties: {
-                            jobPath: { type: "string", description: JOB_PATH_DESC },
-                        },
-                        required: ["jobPath"],
-                    },
-                },
-                {
-                    name: "get_pipeline_stages",
-                    description:
-                        "Get the pipeline stage tree for a build (wfapi/describe). With expand=true, includes parallel branch flow nodes. Answers 'what is ?selected-node=N?'.",
-                    inputSchema: {
-                        type: "object" as const,
-                        properties: {
-                            jobPath: { type: "string", description: JOB_PATH_DESC },
-                            buildNumber: { type: "string", description: "Build number" },
-                            expand: {
-                                type: "boolean",
-                                description: "Include stageFlowNodes (parallel branches inside each stage)",
+                    {
+                        name: "stop_build",
+                        description: "Stop a running Jenkins build",
+                        inputSchema: {
+                            type: "object" as const,
+                            properties: {
+                                jobPath: { type: "string", description: JOB_PATH_DESC },
+                                buildNumber: { type: "string", description: 'Build number (or "lastBuild")' },
                             },
+                            required: ["jobPath", "buildNumber"],
                         },
-                        required: ["jobPath"],
                     },
-                },
-                {
-                    name: "get_failing_node",
-                    description:
-                        "Find the failing stage (and innermost failing flow node) for a build, fetch its log, and return regex-extracted error windows. One-shot 'what failed and why'.",
-                    inputSchema: {
-                        type: "object" as const,
-                        properties: {
-                            jobPath: { type: "string", description: JOB_PATH_DESC },
-                            buildNumber: { type: "string", description: "Build number" },
+                    {
+                        name: "get_queue",
+                        description: "Get the current Jenkins build queue",
+                        inputSchema: {
+                            type: "object" as const,
+                            properties: {
+                                limit: { type: "number", description: "Max queue items to return" },
+                            },
+                            required: [],
                         },
-                        required: ["jobPath"],
                     },
-                },
-                {
-                    name: "get_build_info",
-                    description:
-                        "Extended build info: parameters, causes (who/what triggered), builtOn (agent), executor, estimated duration.",
-                    inputSchema: {
-                        type: "object" as const,
-                        properties: {
-                            jobPath: { type: "string", description: JOB_PATH_DESC },
-                            buildNumber: { type: "string", description: "Build number" },
+                    {
+                        name: "get_job_config",
+                        description: "Get the configuration of a Jenkins job",
+                        inputSchema: {
+                            type: "object" as const,
+                            properties: {
+                                jobPath: { type: "string", description: JOB_PATH_DESC },
+                            },
+                            required: ["jobPath"],
                         },
-                        required: ["jobPath"],
                     },
-                },
-                {
-                    name: "get_build_changes",
-                    description: "SCM changeSet (commits, authors) + build trigger causes for a build.",
-                    inputSchema: {
-                        type: "object" as const,
-                        properties: {
-                            jobPath: { type: "string", description: JOB_PATH_DESC },
-                            buildNumber: { type: "string", description: "Build number" },
+                    {
+                        name: "get_pipeline_stages",
+                        description:
+                            "Get the pipeline stage tree for a build (wfapi/describe). With expand=true, includes parallel branch flow nodes. Answers 'what is ?selected-node=N?'.",
+                        inputSchema: {
+                            type: "object" as const,
+                            properties: {
+                                jobPath: { type: "string", description: JOB_PATH_DESC },
+                                buildNumber: { type: "string", description: "Build number" },
+                                expand: {
+                                    type: "boolean",
+                                    description: "Include stageFlowNodes (parallel branches inside each stage)",
+                                },
+                            },
+                            required: ["jobPath"],
                         },
-                        required: ["jobPath"],
                     },
-                },
-                {
-                    name: "wait_for_build",
-                    description:
-                        "Snapshot current build state with full stage list + durations, then suggest the CLI 'monitor' command to background via Bash for live JSONL events and click-to-Brave notifications. Does NOT poll itself.",
-                    inputSchema: {
-                        type: "object" as const,
-                        properties: {
-                            jobPath: { type: "string", description: JOB_PATH_DESC },
-                            buildNumber: { type: "string", description: "Build number" },
+                    {
+                        name: "get_failing_node",
+                        description:
+                            "Find the failing stage (and innermost failing flow node) for a build, fetch its log, and return regex-extracted error windows. One-shot 'what failed and why'.",
+                        inputSchema: {
+                            type: "object" as const,
+                            properties: {
+                                jobPath: { type: "string", description: JOB_PATH_DESC },
+                                buildNumber: { type: "string", description: "Build number" },
+                            },
+                            required: ["jobPath"],
                         },
-                        required: ["jobPath"],
                     },
-                },
-            ],
-        }));
+                    {
+                        name: "get_build_info",
+                        description:
+                            "Extended build info: parameters, causes (who/what triggered), builtOn (agent), executor, estimated duration.",
+                        inputSchema: {
+                            type: "object" as const,
+                            properties: {
+                                jobPath: { type: "string", description: JOB_PATH_DESC },
+                                buildNumber: { type: "string", description: "Build number" },
+                            },
+                            required: ["jobPath"],
+                        },
+                    },
+                    {
+                        name: "get_build_changes",
+                        description: "SCM changeSet (commits, authors) + build trigger causes for a build.",
+                        inputSchema: {
+                            type: "object" as const,
+                            properties: {
+                                jobPath: { type: "string", description: JOB_PATH_DESC },
+                                buildNumber: { type: "string", description: "Build number" },
+                            },
+                            required: ["jobPath"],
+                        },
+                    },
+                    {
+                        name: "wait_for_build",
+                        description:
+                            "Snapshot current build state with full stage list + durations, then suggest the CLI 'monitor' command to background via Bash for live JSONL events and click-to-Brave notifications. Does NOT poll itself.",
+                        inputSchema: {
+                            type: "object" as const,
+                            properties: {
+                                jobPath: { type: "string", description: JOB_PATH_DESC },
+                                buildNumber: { type: "string", description: "Build number" },
+                            },
+                            required: ["jobPath"],
+                        },
+                    },
+                ],
+            })
+        );
 
-        this.server.setRequestHandler('tools/call', async (request): Promise<CallToolResult> => {
+        this.server.setRequestHandler("tools/call", async (request): Promise<CallToolResult> => {
             try {
                 const raw = request.params.arguments ?? {};
                 const name = request.params.name;
@@ -430,7 +442,10 @@ class JenkinsServer {
                     );
                 }
 
-                throw new ProtocolError(ProtocolErrorCode.InternalError, error instanceof Error ? error.message : "Unknown error");
+                throw new ProtocolError(
+                    ProtocolErrorCode.InternalError,
+                    error instanceof Error ? error.message : "Unknown error"
+                );
             }
         });
     }

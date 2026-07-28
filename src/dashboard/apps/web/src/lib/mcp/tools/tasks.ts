@@ -13,12 +13,12 @@ export function registerTaskTools(server: McpServer, userId: string) {
         {
             description: "List the owner's assistant tasks. Optionally filter by status.",
             inputSchema: z.object({
-                            status: z
-                                .enum(["backlog", "in-progress", "blocked", "completed"])
-                                .optional()
-                                .describe("Filter by task status"),
-                            limit: z.number().min(1).max(200).default(50),
-                        }),
+                status: z
+                    .enum(["backlog", "in-progress", "blocked", "completed"])
+                    .optional()
+                    .describe("Filter by task status"),
+                limit: z.number().min(1).max(200).default(50),
+            }),
         },
         async ({ status, limit }) => {
             const tasks = db
@@ -45,11 +45,11 @@ export function registerTaskTools(server: McpServer, userId: string) {
         {
             description: "Create a new assistant task for the owner.",
             inputSchema: z.object({
-                            title: z.string().describe("Task title"),
-                            description: z.string().optional().describe("Task description"),
-                            status: z.enum(["backlog", "in-progress", "blocked", "completed"]).default("backlog"),
-                            urgencyLevel: z.enum(["critical", "important", "nice-to-have"]).default("nice-to-have"),
-                        }),
+                title: z.string().describe("Task title"),
+                description: z.string().optional().describe("Task description"),
+                status: z.enum(["backlog", "in-progress", "blocked", "completed"]).default("backlog"),
+                urgencyLevel: z.enum(["critical", "important", "nice-to-have"]).default("nice-to-have"),
+            }),
         },
         async ({ title, description, status, urgencyLevel }) => {
             const now = new Date().toISOString();
@@ -81,12 +81,12 @@ export function registerTaskTools(server: McpServer, userId: string) {
         {
             description: "Update one of the owner's assistant tasks.",
             inputSchema: z.object({
-                            id: z.string().describe("Task ID to update"),
-                            title: z.string().optional(),
-                            description: z.string().optional(),
-                            status: z.enum(["backlog", "in-progress", "blocked", "completed"]).optional(),
-                            urgencyLevel: z.enum(["critical", "important", "nice-to-have"]).optional(),
-                        }),
+                id: z.string().describe("Task ID to update"),
+                title: z.string().optional(),
+                description: z.string().optional(),
+                status: z.enum(["backlog", "in-progress", "blocked", "completed"]).optional(),
+                urgencyLevel: z.enum(["critical", "important", "nice-to-have"]).optional(),
+            }),
         },
         async ({ id, ...patch }) => {
             const result = db
@@ -108,8 +108,8 @@ export function registerTaskTools(server: McpServer, userId: string) {
         {
             description: "Delete one of the owner's assistant tasks by ID.",
             inputSchema: z.object({
-                            id: z.string().describe("Task ID to delete"),
-                        }),
+                id: z.string().describe("Task ID to delete"),
+            }),
         },
         async ({ id }) => {
             const result = db

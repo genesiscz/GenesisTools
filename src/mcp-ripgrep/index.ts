@@ -5,8 +5,8 @@ import { wrapArray } from "@genesiscz/utils/array";
 import { logger } from "@genesiscz/utils/logger";
 import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { escapeShellArg, stripAnsi } from "@genesiscz/utils/string";
+import { type CallToolResult, type ListToolsResult, Server } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import { Server, type CallToolResult, type ListToolsResult } from "@modelcontextprotocol/server";
 
 // stdio MCP server: stdout carries JSON-RPC frames, so all diagnostics MUST go
 // to the logger (file + stderr via the gated stream), never console.log.
@@ -139,7 +139,7 @@ if (rootArgIndex !== -1 && process.argv.length > rootArgIndex + 1) {
 }
 
 // List available tools
-server.setRequestHandler('tools/list', async (): Promise<ListToolsResult> => {
+server.setRequestHandler("tools/list", async (): Promise<ListToolsResult> => {
     return {
         tools: [
             {
@@ -227,7 +227,7 @@ server.setRequestHandler('tools/list', async (): Promise<ListToolsResult> => {
 });
 
 // Handle tool calls
-server.setRequestHandler('tools/call', async (request, _ctx): Promise<CallToolResult> => {
+server.setRequestHandler("tools/call", async (request, _ctx): Promise<CallToolResult> => {
     const toolName = request.params.name;
 
     if (!["search", "advanced-search", "count-matches", "list-files", "list-file-types"].includes(toolName)) {

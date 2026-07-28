@@ -8,8 +8,8 @@ import type { EntryFilter, HarFile, HarSession } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
 import { formatBytes, formatDuration } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
+import { type CallToolResult, type ListToolsResult, Server } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import { Server, type CallToolResult, type ListToolsResult } from "@modelcontextprotocol/server";
 
 export async function startMcpServer(): Promise<void> {
     const sm = new SessionManager();
@@ -31,104 +31,107 @@ export async function startMcpServer(): Promise<void> {
 
     const server = new Server({ name: "har-analyzer", version: "1.0.0" }, { capabilities: { tools: {} } });
 
-    server.setRequestHandler('tools/list', async (): Promise<ListToolsResult> => ({
-        tools: [
-            {
-                name: "har_load",
-                description: "Load a HAR file and show the dashboard overview",
-                inputSchema: {
-                    type: "object" as const,
-                    properties: { file: { type: "string", description: "Path to the HAR file" } },
-                    required: ["file"],
-                },
-            },
-            {
-                name: "har_overview",
-                description: "Show dashboard overview of the currently loaded HAR",
-                inputSchema: { type: "object" as const, properties: {} },
-            },
-            {
-                name: "har_list",
-                description: "List entries with optional filters",
-                inputSchema: {
-                    type: "object" as const,
-                    properties: {
-                        domain: { type: "string", description: "Filter by domain" },
-                        status: { type: "string", description: "Filter by status (e.g. 4xx, 200)" },
-                        method: { type: "string", description: "Filter by HTTP method" },
-                        url: { type: "string", description: "Filter by URL pattern" },
-                        limit: { type: "number", description: "Max entries to show" },
+    server.setRequestHandler(
+        "tools/list",
+        async (): Promise<ListToolsResult> => ({
+            tools: [
+                {
+                    name: "har_load",
+                    description: "Load a HAR file and show the dashboard overview",
+                    inputSchema: {
+                        type: "object" as const,
+                        properties: { file: { type: "string", description: "Path to the HAR file" } },
+                        required: ["file"],
                     },
                 },
-            },
-            {
-                name: "har_detail",
-                description: "Show detail for a specific entry",
-                inputSchema: {
-                    type: "object" as const,
-                    properties: {
-                        entry: { type: "number", description: "Entry index" },
-                        raw: { type: "boolean", description: "Show full body/headers" },
-                        section: { type: "string", description: "Filter section: body, headers, cookies" },
-                        full: { type: "boolean", description: "Bypass ref system" },
-                    },
-                    required: ["entry"],
+                {
+                    name: "har_overview",
+                    description: "Show dashboard overview of the currently loaded HAR",
+                    inputSchema: { type: "object" as const, properties: {} },
                 },
-            },
-            {
-                name: "har_expand",
-                description: "Expand a reference to see full content",
-                inputSchema: {
-                    type: "object" as const,
-                    properties: { ref: { type: "string", description: "Reference ID (e.g. e14.rs.body)" } },
-                    required: ["ref"],
-                },
-            },
-            {
-                name: "har_search",
-                description: "Search across entries",
-                inputSchema: {
-                    type: "object" as const,
-                    properties: {
-                        query: { type: "string", description: "Search query" },
-                        scope: { type: "string", description: "Search scope: url, body, header, all" },
-                        domain: { type: "string", description: "Filter by domain" },
-                    },
-                    required: ["query"],
-                },
-            },
-            {
-                name: "har_analyze",
-                description: "Run analysis: errors, security",
-                inputSchema: {
-                    type: "object" as const,
-                    properties: {
-                        type: {
-                            type: "string",
-                            enum: ["errors", "security"],
-                            description: "Analysis type: errors, security",
+                {
+                    name: "har_list",
+                    description: "List entries with optional filters",
+                    inputSchema: {
+                        type: "object" as const,
+                        properties: {
+                            domain: { type: "string", description: "Filter by domain" },
+                            status: { type: "string", description: "Filter by status (e.g. 4xx, 200)" },
+                            method: { type: "string", description: "Filter by HTTP method" },
+                            url: { type: "string", description: "Filter by URL pattern" },
+                            limit: { type: "number", description: "Max entries to show" },
                         },
                     },
-                    required: ["type"],
                 },
-            },
-            {
-                name: "har_export",
-                description: "Export filtered/sanitized HAR subset",
-                inputSchema: {
-                    type: "object" as const,
-                    properties: {
-                        domain: { type: "string", description: "Filter by domain" },
-                        status: { type: "string", description: "Filter by status" },
-                        sanitize: { type: "boolean", description: "Redact sensitive data" },
-                        stripBodies: { type: "boolean", description: "Remove body content" },
+                {
+                    name: "har_detail",
+                    description: "Show detail for a specific entry",
+                    inputSchema: {
+                        type: "object" as const,
+                        properties: {
+                            entry: { type: "number", description: "Entry index" },
+                            raw: { type: "boolean", description: "Show full body/headers" },
+                            section: { type: "string", description: "Filter section: body, headers, cookies" },
+                            full: { type: "boolean", description: "Bypass ref system" },
+                        },
+                        required: ["entry"],
                     },
                 },
-            },
-        ],
-    }));
+                {
+                    name: "har_expand",
+                    description: "Expand a reference to see full content",
+                    inputSchema: {
+                        type: "object" as const,
+                        properties: { ref: { type: "string", description: "Reference ID (e.g. e14.rs.body)" } },
+                        required: ["ref"],
+                    },
+                },
+                {
+                    name: "har_search",
+                    description: "Search across entries",
+                    inputSchema: {
+                        type: "object" as const,
+                        properties: {
+                            query: { type: "string", description: "Search query" },
+                            scope: { type: "string", description: "Search scope: url, body, header, all" },
+                            domain: { type: "string", description: "Filter by domain" },
+                        },
+                        required: ["query"],
+                    },
+                },
+                {
+                    name: "har_analyze",
+                    description: "Run analysis: errors, security",
+                    inputSchema: {
+                        type: "object" as const,
+                        properties: {
+                            type: {
+                                type: "string",
+                                enum: ["errors", "security"],
+                                description: "Analysis type: errors, security",
+                            },
+                        },
+                        required: ["type"],
+                    },
+                },
+                {
+                    name: "har_export",
+                    description: "Export filtered/sanitized HAR subset",
+                    inputSchema: {
+                        type: "object" as const,
+                        properties: {
+                            domain: { type: "string", description: "Filter by domain" },
+                            status: { type: "string", description: "Filter by status" },
+                            sanitize: { type: "boolean", description: "Redact sensitive data" },
+                            stripBodies: { type: "boolean", description: "Remove body content" },
+                        },
+                    },
+                },
+            ],
+        })
+    );
 
-    server.setRequestHandler('tools/call', async (request): Promise<CallToolResult> => {
+    server.setRequestHandler("tools/call", async (request): Promise<CallToolResult> => {
         const { name, arguments: args } = request.params;
         const a = (args ?? {}) as Record<string, unknown>;
 
@@ -142,13 +145,17 @@ export async function startMcpServer(): Promise<void> {
                     sm.cleanExpiredSessions().catch((err) =>
                         logger.debug({ err }, "[har-analyzer] expired-session cleanup failed")
                     );
-                    return { content: [{ type: "text" as const, text: formatDashboard(session.stats, session.sourceFile) }] };
+                    return {
+                        content: [{ type: "text" as const, text: formatDashboard(session.stats, session.sourceFile) }],
+                    };
                 }
 
                 case "har_overview": {
                     const ctx = await ensureSession();
                     return {
-                        content: [{ type: "text" as const, text: formatDashboard(ctx.session.stats, ctx.session.sourceFile) }],
+                        content: [
+                            { type: "text" as const, text: formatDashboard(ctx.session.stats, ctx.session.sourceFile) },
+                        ],
                     };
                 }
 
@@ -272,7 +279,9 @@ export async function startMcpServer(): Promise<void> {
                             break;
                     }
 
-                    return { content: [{ type: "text" as const, text: content ?? `No content found for ref "${refId}".` }] };
+                    return {
+                        content: [{ type: "text" as const, text: content ?? `No content found for ref "${refId}".` }],
+                    };
                 }
 
                 case "har_search": {
@@ -369,7 +378,10 @@ export async function startMcpServer(): Promise<void> {
 
                     return {
                         content: [
-                            { type: "text" as const, text: `Unknown analysis type: ${type}. Supported: errors, security` },
+                            {
+                                type: "text" as const,
+                                text: `Unknown analysis type: ${type}. Supported: errors, security`,
+                            },
                         ],
                     };
                 }

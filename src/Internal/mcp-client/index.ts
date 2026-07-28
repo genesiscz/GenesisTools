@@ -3,8 +3,8 @@
  */
 
 import { out } from "@genesiscz/utils/logger";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 const transport = new StdioClientTransport({
     command: "bunx",

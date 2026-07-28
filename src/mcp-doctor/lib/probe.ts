@@ -1,8 +1,8 @@
 import { withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { Client, SSEClientTransport, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import type { Transport } from "@modelcontextprotocol/client";
+import { Client, SSEClientTransport, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { classifyResult } from "./report";
 import type { NormalizedServer, ProbeResult, StdioServer } from "./types";
 import { isInvalidServer } from "./types";

@@ -31,11 +31,11 @@ export function registerTimerTools(server: McpServer, userId: string) {
         {
             description: "Create or update a timer for the owner. Omit id to let the server generate one.",
             inputSchema: z.object({
-                            id: z.string().optional().describe("Timer ID (omit to create new)"),
-                            label: z.string().describe("Timer label / name"),
-                            duration: z.number().optional().describe("Target duration in seconds (for countdown)"),
-                            mode: z.enum(["stopwatch", "countdown", "pomodoro"]).default("stopwatch"),
-                        }),
+                id: z.string().optional().describe("Timer ID (omit to create new)"),
+                label: z.string().describe("Timer label / name"),
+                duration: z.number().optional().describe("Target duration in seconds (for countdown)"),
+                mode: z.enum(["stopwatch", "countdown", "pomodoro"]).default("stopwatch"),
+            }),
         },
         async ({ id: inputId, label, duration, mode }) => {
             const timerId = inputId ?? crypto.randomUUID();
@@ -95,8 +95,8 @@ export function registerTimerTools(server: McpServer, userId: string) {
         {
             description: "Delete one of the owner's timers by ID.",
             inputSchema: z.object({
-                            timerId: z.string().describe("Timer ID to delete"),
-                        }),
+                timerId: z.string().describe("Timer ID to delete"),
+            }),
         },
         async ({ timerId }) => {
             const result = db

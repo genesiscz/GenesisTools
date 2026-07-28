@@ -6,8 +6,8 @@ import { filterByTsconfig, resolveFiles } from "@app/mcp-tsc/utils/FileResolver.
 import { normalizeFilePaths } from "@app/mcp-tsc/utils/normalize-file-paths.js";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { type CallToolResult, type ListToolsResult, Server } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import { Server, type CallToolResult, type ListToolsResult } from "@modelcontextprotocol/server";
 import ts from "typescript";
 
 export interface McpAdapterOptions {
@@ -52,7 +52,7 @@ export class McpAdapter {
 
     private setupHandlers(): void {
         // Register tool list
-        this.mcpServer.setRequestHandler('tools/list', async (): Promise<ListToolsResult> => {
+        this.mcpServer.setRequestHandler("tools/list", async (): Promise<ListToolsResult> => {
             return {
                 tools: [
                     {
@@ -130,7 +130,7 @@ export class McpAdapter {
         });
 
         // Register tool call handler
-        this.mcpServer.setRequestHandler('tools/call', async (request): Promise<CallToolResult> => {
+        this.mcpServer.setRequestHandler("tools/call", async (request): Promise<CallToolResult> => {
             const toolName = request.params.name;
             const args = request.params.arguments || {};
 
@@ -309,7 +309,10 @@ Please retry with a lower timeout (e.g., timeout=${retryTimeoutSeconds}) to get 
                 return {
                     isError: true,
                     content: [
-                        { type: "text" as const, text: `Error: Line ${line} is out of range (file has ${lines.length} lines)` },
+                        {
+                            type: "text" as const,
+                            text: `Error: Line ${line} is out of range (file has ${lines.length} lines)`,
+                        },
                     ],
                 };
             }

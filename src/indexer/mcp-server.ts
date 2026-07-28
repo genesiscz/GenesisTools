@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { out } from "@genesiscz/utils/logger";
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { McpServer } from "@modelcontextprotocol/server";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { shutdownManager } from "./mcp/shared";
 import { registerGraphTools } from "./mcp/tools/graph";
 import { registerIndexTools } from "./mcp/tools/index";
