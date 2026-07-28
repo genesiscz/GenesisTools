@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
+import { env } from "@genesiscz/utils/env";
 import { AIConfig, mergeAccountEntry } from "../AIConfig";
 
 describe("AIConfig", () => {

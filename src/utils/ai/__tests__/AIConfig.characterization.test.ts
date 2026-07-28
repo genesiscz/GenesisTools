@@ -221,7 +221,10 @@ describe("AIConfig mutations (characterization)", () => {
         const config = await AIConfig.load();
         expect(config.getAccount("late-arrival")).toBeUndefined();
 
-        const external = { ...V3_CONFIG, accounts: [...V3_CONFIG.accounts, { name: "late-arrival", provider: "groq", tokens: {} }] };
+        const external = {
+            ...V3_CONFIG,
+            accounts: [...V3_CONFIG.accounts, { name: "late-arrival", provider: "groq", tokens: {} }],
+        };
         writeFileSync(join(home, ".genesis-tools", "ai", "config.json"), SafeJSON.stringify(external, null, 2));
 
         const same = await AIConfig.load();
