@@ -1,5 +1,5 @@
-import { Entry } from "@napi-rs/keyring";
 import { logger } from "@genesiscz/utils/logger";
+import { Entry } from "@napi-rs/keyring";
 import { decodeMasterKey, KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, type MasterKeyProvider } from "./types";
 
 /**

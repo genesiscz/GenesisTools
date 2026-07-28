@@ -91,6 +91,27 @@ export function invalidateMasterKeyCache(): void {
     cached = null;
 }
 
+/** Persist a new master key on the first writable rung (never the env rung). */
+export async function writeMasterKey(key: Buffer): Promise<void> {
+    if (key.length !== MASTER_KEY_BYTES) {
+        throw new Error(`Master key must be ${MASTER_KEY_BYTES} bytes, got ${key.length}.`);
+    }
+
+    for (const provider of providers) {
+        if (provider.id === "env") {
+            continue;
+        }
+
+        if (await provider.available()) {
+            await provider.set(key);
+            cached = { key, source: provider.id };
+            return;
+        }
+    }
+
+    throw new MasterKeyUnavailableError();
+}
+
 /** Test seam: swap the ladder for fakes. Production code never calls this. */
 export function _setMasterKeyProvidersForTest(next: MasterKeyProvider[]): void {
     providers = next;

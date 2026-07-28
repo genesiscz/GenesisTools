@@ -5,7 +5,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
 import { masterKey } from "./MasterKey";
-import { isSecretPath, isSecureRef, type MaybeSecret, secureRef, type SecureRef } from "./SecureRef";
+import { isSecretPath, isSecureRef, type MaybeSecret, type SecureRef, secureRef } from "./SecureRef";
 import { emptyVault, VAULT_HKDF_SALT, VAULT_VERSION, type VaultEntry, type VaultFile } from "./vault-format";
 
 const KEY_BYTES = 32;
@@ -26,8 +26,30 @@ export interface SecretStore {
  * with write access to the vault file cannot swap one account's key into
  * another account's slot.
  */
-function entryKey(master: Buffer, path: string): Buffer {
+export function entryKey(master: Buffer, path: string): Buffer {
     return Buffer.from(hkdfSync("sha256", master, Buffer.from(VAULT_HKDF_SALT), Buffer.from(path), KEY_BYTES));
+}
+
+export function encryptEntry(master: Buffer, path: string, value: string): VaultEntry {
+    const key = entryKey(master, path);
+    const iv = randomBytes(IV_BYTES);
+    const cipher = createCipheriv("aes-256-gcm", key, iv);
+    cipher.setAAD(Buffer.from(path, "utf8"));
+    const ct = Buffer.concat([cipher.update(Buffer.from(value, "utf8")), cipher.final()]);
+
+    return {
+        iv: iv.toString("base64"),
+        ct: ct.toString("base64"),
+        tag: cipher.getAuthTag().toString("base64"),
+        updatedAt: Date.now(),
+    };
+}
+
+export function decryptEntry(master: Buffer, path: string, entry: VaultEntry): string {
+    const decipher = createDecipheriv("aes-256-gcm", entryKey(master, path), Buffer.from(entry.iv, "base64"));
+    decipher.setAAD(Buffer.from(path, "utf8"));
+    decipher.setAuthTag(Buffer.from(entry.tag, "base64"));
+    return Buffer.concat([decipher.update(Buffer.from(entry.ct, "base64")), decipher.final()]).toString("utf8");
 }
 
 class FileSecretStore implements SecretStore {
@@ -35,6 +57,22 @@ class FileSecretStore implements SecretStore {
 
     private vaultPath(): string {
         return `${this.storage.getBaseDir()}/vault.json`;
+    }
+
+    vaultFilePath(): string {
+        return this.vaultPath();
+    }
+
+    readVault(): VaultFile {
+        return this.read();
+    }
+
+    writeVault(vault: VaultFile): void {
+        this.write(vault);
+    }
+
+    lockVault<T>(fn: () => Promise<T>): Promise<T> {
+        return this.storage.withFileLock({ file: this.vaultPath(), fn });
     }
 
     private read(): VaultFile {
@@ -49,7 +87,9 @@ class FileSecretStore implements SecretStore {
         }
 
         if (parsed.version !== VAULT_VERSION) {
-            throw new Error(`Vault version ${parsed.version} is not supported by this build (expected ${VAULT_VERSION}).`);
+            throw new Error(
+                `Vault version ${parsed.version} is not supported by this build (expected ${VAULT_VERSION}).`
+            );
         }
 
         return parsed;
@@ -71,27 +111,12 @@ class FileSecretStore implements SecretStore {
             return undefined;
         }
 
-        const key = entryKey(await masterKey(), path);
-        const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(entry.iv, "base64"));
-        decipher.setAAD(Buffer.from(path, "utf8"));
-        decipher.setAuthTag(Buffer.from(entry.tag, "base64"));
-        const plain = Buffer.concat([decipher.update(Buffer.from(entry.ct, "base64")), decipher.final()]);
-        return plain.toString("utf8");
+        return decryptEntry(await masterKey(), path, entry);
     }
 
     async set(path: string, value: string): Promise<SecureRef> {
         const ref = secureRef(path);
-        const key = entryKey(await masterKey(), path);
-        const iv = randomBytes(IV_BYTES);
-        const cipher = createCipheriv("aes-256-gcm", key, iv);
-        cipher.setAAD(Buffer.from(path, "utf8"));
-        const ct = Buffer.concat([cipher.update(Buffer.from(value, "utf8")), cipher.final()]);
-        const entry: VaultEntry = {
-            iv: iv.toString("base64"),
-            ct: ct.toString("base64"),
-            tag: cipher.getAuthTag().toString("base64"),
-            updatedAt: Date.now(),
-        };
+        const entry = encryptEntry(await masterKey(), path, value);
 
         await this.storage.withFileLock({
             file: this.vaultPath(),
@@ -136,6 +161,27 @@ class FileSecretStore implements SecretStore {
         return this.read().entries[path] !== undefined;
     }
 }
+
+/**
+ * Raw vault access for administrative operations (rotation, export, import).
+ * Kept internal to this module's exports so ordinary callers can only reach
+ * secrets through the get/set API, which always goes through the master key.
+ */
+export const vaultAdmin = {
+    path(): string {
+        return new FileSecretStore().vaultFilePath();
+    },
+    read(): VaultFile {
+        return new FileSecretStore().readVault();
+    },
+    async withLock<T>(fn: () => Promise<T>): Promise<T> {
+        const store = new FileSecretStore();
+        return store.lockVault(fn);
+    },
+    write(vault: VaultFile): void {
+        new FileSecretStore().writeVault(vault);
+    },
+};
 
 let instance: SecretStore | null = null;
 
@@ -207,5 +253,5 @@ function redactValue(value: unknown, keyName: string | undefined): unknown {
     return value;
 }
 
-export { isSecretPath, isSecureRef, secureRef };
 export type { MaybeSecret, SecureRef };
+export { isSecretPath, isSecureRef, secureRef };

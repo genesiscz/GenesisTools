@@ -98,9 +98,7 @@ describe("SecretStore", () => {
 
     test("concurrent writes all survive the lock", async () => {
         const store = await secrets();
-        await Promise.all(
-            Array.from({ length: 8 }, (_, i) => store.set(`ai/acc_${i}/apiKey`, `value-${i}`))
-        );
+        await Promise.all(Array.from({ length: 8 }, (_, i) => store.set(`ai/acc_${i}/apiKey`, `value-${i}`)));
 
         expect((await store.list()).length).toBe(8);
         expect(await store.get("ai/acc_7/apiKey")).toBe("value-7");
