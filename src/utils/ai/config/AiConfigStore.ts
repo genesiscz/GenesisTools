@@ -1,7 +1,7 @@
 import { statSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { accountRef, type AccountRef, referrersOf, type Referrer } from "./refs";
+import { type AccountRef, accountRef, type Referrer, referrersOf } from "./refs";
 import { type AccountEntry, type AiConfigData, aiConfigSchema, emptyConfig } from "./schema";
 
 export interface AccountFilter {

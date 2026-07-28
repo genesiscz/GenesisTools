@@ -102,9 +102,7 @@ describe("AiConfigStore lookup", () => {
     });
 
     test("referrers() reaches registered external scanners", async () => {
-        registerExternalRefScanner("ai-proxy", async () => [
-            { path: "providers[0].account", ref: "@account/acc_xai" },
-        ]);
+        registerExternalRefScanner("ai-proxy", async () => [{ path: "providers[0].account", ref: "@account/acc_xai" }]);
         const store = await AiConfigStore.load();
 
         expect((await store.referrers("acc_max")).map((r) => r.path)).toEqual(["defaults.account.chat"]);
