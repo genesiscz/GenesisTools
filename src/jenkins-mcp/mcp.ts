@@ -2,9 +2,8 @@
 
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { Server, ProtocolError, ProtocolErrorCode, type CallToolResult, type ListToolsResult } from "@modelcontextprotocol/server";
 import axios, { type AxiosInstance } from "axios";
 import { createClient, readEnvAuth } from "./lib/client";
 import { extractErrors } from "./lib/errors";
@@ -84,7 +83,7 @@ function buildRef(raw: unknown, toolName: string): BuildRefArgs {
 
 function parseArgs<T>(raw: unknown, schema: ArgSchema, toolName: string): T {
     if (raw === null || typeof raw !== "object") {
-        throw new McpError(ErrorCode.InvalidParams, `${toolName}: arguments must be an object`);
+        throw new ProtocolError(ProtocolErrorCode.InvalidParams, `${toolName}: arguments must be an object`);
     }
 
     const args = raw as Record<string, unknown>;
@@ -93,11 +92,11 @@ function parseArgs<T>(raw: unknown, schema: ArgSchema, toolName: string): T {
         const value = args[field];
 
         if (type === "string" && (typeof value !== "string" || value === "")) {
-            throw new McpError(ErrorCode.InvalidParams, `${toolName}: '${field}' must be a non-empty string`);
+            throw new ProtocolError(ProtocolErrorCode.InvalidParams, `${toolName}: '${field}' must be a non-empty string`);
         }
 
         if (type !== "string" && typeof value !== type) {
-            throw new McpError(ErrorCode.InvalidParams, `${toolName}: '${field}' must be a ${type}`);
+            throw new ProtocolError(ProtocolErrorCode.InvalidParams, `${toolName}: '${field}' must be a ${type}`);
         }
     }
 
@@ -109,7 +108,7 @@ function parseArgs<T>(raw: unknown, schema: ArgSchema, toolName: string): T {
         }
 
         if (typeof value !== type) {
-            throw new McpError(ErrorCode.InvalidParams, `${toolName}: '${field}' must be a ${type}`);
+            throw new ProtocolError(ProtocolErrorCode.InvalidParams, `${toolName}: '${field}' must be a ${type}`);
         }
     }
 
@@ -143,13 +142,13 @@ class JenkinsServer {
     }
 
     private setupToolHandlers() {
-        this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+        this.server.setRequestHandler('tools/list', async (): Promise<ListToolsResult> => ({
             tools: [
                 {
                     name: "get_build_status",
                     description: "Get the status of a Jenkins build",
                     inputSchema: {
-                        type: "object",
+                        type: "object" as const,
                         properties: {
                             jobPath: { type: "string", description: JOB_PATH_DESC },
                             buildNumber: { type: "string", description: 'Build number (or "lastBuild")' },
@@ -161,11 +160,11 @@ class JenkinsServer {
                     name: "trigger_build",
                     description: "Trigger a new Jenkins build",
                     inputSchema: {
-                        type: "object",
+                        type: "object" as const,
                         properties: {
                             jobPath: { type: "string", description: JOB_PATH_DESC },
                             parameters: {
-                                type: "object",
+                                type: "object" as const,
                                 description: "Build parameters (optional)",
                                 additionalProperties: true,
                             },
@@ -178,7 +177,7 @@ class JenkinsServer {
                     description:
                         "Fetch a build's console log (or a single node's log when nodeId is set), strip HTML timestamp wrappers, and save to /tmp/jenkins-mcp/. Returns the file path + summary. If `grep` is set, also returns matching lines formatted as 'L<lineno>: <text>' (caps at 200 matches). Token-efficient: bytes never enter the response unless you grep.",
                     inputSchema: {
-                        type: "object",
+                        type: "object" as const,
                         properties: {
                             jobPath: { type: "string", description: JOB_PATH_DESC },
                             buildNumber: { type: "string", description: 'Build number (or "lastBuild")' },
@@ -199,7 +198,7 @@ class JenkinsServer {
                     name: "list_jobs",
                     description: "List Jenkins jobs in a folder or at root",
                     inputSchema: {
-                        type: "object",
+                        type: "object" as const,
                         properties: {
                             folderPath: {
                                 type: "string",
@@ -215,7 +214,7 @@ class JenkinsServer {
                     description:
                         "Get build history for a Jenkins job. With expand=true (default), each entry also has displayName, causes (who/what triggered), parameters, branch, SCM revision, and estimatedDuration.",
                     inputSchema: {
-                        type: "object",
+                        type: "object" as const,
                         properties: {
                             jobPath: { type: "string", description: JOB_PATH_DESC },
                             limit: { type: "number", description: "Number of recent builds (default 10)" },
@@ -232,7 +231,7 @@ class JenkinsServer {
                     name: "stop_build",
                     description: "Stop a running Jenkins build",
                     inputSchema: {
-                        type: "object",
+                        type: "object" as const,
                         properties: {
                             jobPath: { type: "string", description: JOB_PATH_DESC },
                             buildNumber: { type: "string", description: 'Build number (or "lastBuild")' },
@@ -244,7 +243,7 @@ class JenkinsServer {
                     name: "get_queue",
                     description: "Get the current Jenkins build queue",
                     inputSchema: {
-                        type: "object",
+                        type: "object" as const,
                         properties: {
                             limit: { type: "number", description: "Max queue items to return" },
                         },
@@ -255,7 +254,7 @@ class JenkinsServer {
                     name: "get_job_config",
                     description: "Get the configuration of a Jenkins job",
                     inputSchema: {
-                        type: "object",
+                        type: "object" as const,
                         properties: {
                             jobPath: { type: "string", description: JOB_PATH_DESC },
                         },
@@ -267,7 +266,7 @@ class JenkinsServer {
                     description:
                         "Get the pipeline stage tree for a build (wfapi/describe). With expand=true, includes parallel branch flow nodes. Answers 'what is ?selected-node=N?'.",
                     inputSchema: {
-                        type: "object",
+                        type: "object" as const,
                         properties: {
                             jobPath: { type: "string", description: JOB_PATH_DESC },
                             buildNumber: { type: "string", description: "Build number" },
@@ -284,7 +283,7 @@ class JenkinsServer {
                     description:
                         "Find the failing stage (and innermost failing flow node) for a build, fetch its log, and return regex-extracted error windows. One-shot 'what failed and why'.",
                     inputSchema: {
-                        type: "object",
+                        type: "object" as const,
                         properties: {
                             jobPath: { type: "string", description: JOB_PATH_DESC },
                             buildNumber: { type: "string", description: "Build number" },
@@ -297,7 +296,7 @@ class JenkinsServer {
                     description:
                         "Extended build info: parameters, causes (who/what triggered), builtOn (agent), executor, estimated duration.",
                     inputSchema: {
-                        type: "object",
+                        type: "object" as const,
                         properties: {
                             jobPath: { type: "string", description: JOB_PATH_DESC },
                             buildNumber: { type: "string", description: "Build number" },
@@ -309,7 +308,7 @@ class JenkinsServer {
                     name: "get_build_changes",
                     description: "SCM changeSet (commits, authors) + build trigger causes for a build.",
                     inputSchema: {
-                        type: "object",
+                        type: "object" as const,
                         properties: {
                             jobPath: { type: "string", description: JOB_PATH_DESC },
                             buildNumber: { type: "string", description: "Build number" },
@@ -322,7 +321,7 @@ class JenkinsServer {
                     description:
                         "Snapshot current build state with full stage list + durations, then suggest the CLI 'monitor' command to background via Bash for live JSONL events and click-to-Brave notifications. Does NOT poll itself.",
                     inputSchema: {
-                        type: "object",
+                        type: "object" as const,
                         properties: {
                             jobPath: { type: "string", description: JOB_PATH_DESC },
                             buildNumber: { type: "string", description: "Build number" },
@@ -333,7 +332,7 @@ class JenkinsServer {
             ],
         }));
 
-        this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+        this.server.setRequestHandler('tools/call', async (request): Promise<CallToolResult> => {
             try {
                 const raw = request.params.arguments ?? {};
                 const name = request.params.name;
@@ -417,21 +416,21 @@ class JenkinsServer {
                     case "wait_for_build":
                         return await this.waitForBuild(buildRef(raw, name));
                     default:
-                        throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
+                        throw new ProtocolError(ProtocolErrorCode.MethodNotFound, `Unknown tool: ${name}`);
                 }
             } catch (error) {
-                if (error instanceof McpError) {
+                if (error instanceof ProtocolError) {
                     throw error;
                 }
 
                 if (axios.isAxiosError(error)) {
-                    throw new McpError(
-                        ErrorCode.InternalError,
+                    throw new ProtocolError(
+                        ProtocolErrorCode.InternalError,
                         `Jenkins API error: ${error.response?.data?.message || error.message}`
                     );
                 }
 
-                throw new McpError(ErrorCode.InternalError, error instanceof Error ? error.message : "Unknown error");
+                throw new ProtocolError(ProtocolErrorCode.InternalError, error instanceof Error ? error.message : "Unknown error");
             }
         });
     }
@@ -440,7 +439,7 @@ class JenkinsServer {
         return {
             content: [
                 {
-                    type: "text",
+                    type: "text" as const,
                     text: typeof value === "string" ? value : SafeJSON.stringify(value, null, 2),
                 },
             ],

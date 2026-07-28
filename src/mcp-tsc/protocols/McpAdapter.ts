@@ -6,9 +6,8 @@ import { filterByTsconfig, resolveFiles } from "@app/mcp-tsc/utils/FileResolver.
 import { normalizeFilePaths } from "@app/mcp-tsc/utils/normalize-file-paths.js";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { Server, type CallToolResult, type ListToolsResult } from "@modelcontextprotocol/server";
 import ts from "typescript";
 
 export interface McpAdapterOptions {
@@ -53,7 +52,7 @@ export class McpAdapter {
 
     private setupHandlers(): void {
         // Register tool list
-        this.mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
+        this.mcpServer.setRequestHandler('tools/list', async (): Promise<ListToolsResult> => {
             return {
                 tools: [
                     {
@@ -61,7 +60,7 @@ export class McpAdapter {
                         description:
                             "Get TypeScript diagnostics for files matching the specified patterns. Use instead of running any 'tsc' command which isnt for the full project",
                         inputSchema: {
-                            type: "object",
+                            type: "object" as const,
                             properties: {
                                 files: {
                                     oneOf: [
@@ -93,7 +92,7 @@ export class McpAdapter {
                         description:
                             "Get TypeScript hover information (type definitions, documentation) for a specific location in a TypeScript file. Useful for introspecting types, function signatures, and variable definitions. Returns JSDoc comments, parameter descriptions, return types, and examples.",
                         inputSchema: {
-                            type: "object",
+                            type: "object" as const,
                             properties: {
                                 file: {
                                     type: "string",
@@ -131,7 +130,7 @@ export class McpAdapter {
         });
 
         // Register tool call handler
-        this.mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
+        this.mcpServer.setRequestHandler('tools/call', async (request): Promise<CallToolResult> => {
             const toolName = request.params.name;
             const args = request.params.arguments || {};
 
@@ -145,7 +144,7 @@ export class McpAdapter {
 
             return {
                 isError: true,
-                content: [{ type: "text", text: `Unknown tool: ${toolName}` }],
+                content: [{ type: "text" as const, text: `Unknown tool: ${toolName}` }],
             };
         });
     }
@@ -162,7 +161,7 @@ export class McpAdapter {
             if (filePatterns.length === 0) {
                 return {
                     isError: true,
-                    content: [{ type: "text", text: "Error: files parameter is required" }],
+                    content: [{ type: "text" as const, text: "Error: files parameter is required" }],
                 };
             }
 
@@ -173,7 +172,7 @@ export class McpAdapter {
                     isError: true,
                     content: [
                         {
-                            type: "text",
+                            type: "text" as const,
                             text: `No files found matching the specified patterns.\nSearched in: ${
                                 this.cwd
                             }\nPatterns: ${SafeJSON.stringify(filePatterns)}`,
@@ -189,7 +188,7 @@ export class McpAdapter {
                     isError: true,
                     content: [
                         {
-                            type: "text",
+                            type: "text" as const,
                             text: `None of the matched files are included in tsconfig.json.\nFound ${
                                 targetFiles.length
                             } file(s) but they are not in the TypeScript project.\nFiles found: ${targetFiles
@@ -217,7 +216,7 @@ export class McpAdapter {
                         isError: true,
                         content: [
                             {
-                                type: "text",
+                                type: "text" as const,
                                 text: `Timeout waiting for diagnostics (${timeoutMs}ms).
 
 Missing diagnostics for the following file(s):
@@ -252,7 +251,7 @@ Please retry with a lower timeout (e.g., timeout=${retryTimeoutSeconds}) to get 
             return {
                 content: [
                     {
-                        type: "text",
+                        type: "text" as const,
                         text: summary + diagnosticsText,
                     },
                 ],
@@ -262,7 +261,7 @@ Please retry with a lower timeout (e.g., timeout=${retryTimeoutSeconds}) to get 
                 isError: true,
                 content: [
                     {
-                        type: "text",
+                        type: "text" as const,
                         text: `Error: ${error instanceof Error ? error.message : String(error)}`,
                     },
                 ],
@@ -284,14 +283,14 @@ Please retry with a lower timeout (e.g., timeout=${retryTimeoutSeconds}) to get 
             if (!filePath) {
                 return {
                     isError: true,
-                    content: [{ type: "text", text: "Error: file parameter is required" }],
+                    content: [{ type: "text" as const, text: "Error: file parameter is required" }],
                 };
             }
 
             if (!line) {
                 return {
                     isError: true,
-                    content: [{ type: "text", text: "Error: line parameter is required" }],
+                    content: [{ type: "text" as const, text: "Error: line parameter is required" }],
                 };
             }
 
@@ -299,7 +298,7 @@ Please retry with a lower timeout (e.g., timeout=${retryTimeoutSeconds}) to get 
             if (!ts.sys.fileExists(absolutePath)) {
                 return {
                     isError: true,
-                    content: [{ type: "text", text: `Error: File not found: ${filePath}` }],
+                    content: [{ type: "text" as const, text: `Error: File not found: ${filePath}` }],
                 };
             }
 
@@ -310,7 +309,7 @@ Please retry with a lower timeout (e.g., timeout=${retryTimeoutSeconds}) to get 
                 return {
                     isError: true,
                     content: [
-                        { type: "text", text: `Error: Line ${line} is out of range (file has ${lines.length} lines)` },
+                        { type: "text" as const, text: `Error: Line ${line} is out of range (file has ${lines.length} lines)` },
                     ],
                 };
             }
@@ -324,7 +323,7 @@ Please retry with a lower timeout (e.g., timeout=${retryTimeoutSeconds}) to get 
                 if (index === -1) {
                     return {
                         isError: true,
-                        content: [{ type: "text", text: `Error: Text "${text}" not found on line ${line}` }],
+                        content: [{ type: "text" as const, text: `Error: Text "${text}" not found on line ${line}` }],
                     };
                 }
                 character = index + 1;
@@ -356,7 +355,7 @@ Please retry with a lower timeout (e.g., timeout=${retryTimeoutSeconds}) to get 
             return {
                 content: [
                     {
-                        type: "text",
+                        type: "text" as const,
                         text: `\`\`\`json\n${SafeJSON.stringify(response, null, 2)}\n\`\`\``,
                     },
                 ],
@@ -366,7 +365,7 @@ Please retry with a lower timeout (e.g., timeout=${retryTimeoutSeconds}) to get 
                 isError: true,
                 content: [
                     {
-                        type: "text",
+                        type: "text" as const,
                         text: `Error: ${error instanceof Error ? error.message : String(error)}`,
                     },
                 ],

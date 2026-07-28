@@ -1,8 +1,7 @@
 import { env } from "@genesiscz/utils/env/envVariables";
 import { logger } from "@genesiscz/utils/logger";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { Server, type CallToolResult, type ListToolsResult } from "@modelcontextprotocol/server";
 import { ANNOTATE_IMAGE_INPUT_SCHEMA, type AnnotateImageArgs, handleAnnotateImage } from "./tools/annotate-image";
 import {
     handleArrange,
@@ -450,27 +449,27 @@ export async function startMcpServer(): Promise<void> {
         { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS }
     );
 
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    server.setRequestHandler('tools/list', async (): Promise<ListToolsResult> => ({
         tools: Object.entries(registry).map(([name, t]) => ({
             name,
             description: t.description,
-            inputSchema: t.inputSchema,
+            inputSchema: t.inputSchema as ListToolsResult["tools"][number]["inputSchema"],
         })),
     }));
 
-    server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    server.setRequestHandler('tools/call', async (request): Promise<CallToolResult> => {
         const entry = registry[request.params.name];
         if (!entry) {
-            return { content: [{ type: "text", text: `Unknown tool: ${request.params.name}` }], isError: true };
+            return { content: [{ type: "text" as const, text: `Unknown tool: ${request.params.name}` }], isError: true };
         }
 
         try {
             const text = await entry.handler((request.params.arguments ?? {}) as Record<string, unknown>);
-            return { content: [{ type: "text", text }] };
+            return { content: [{ type: "text" as const, text }] };
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             log.warn({ err, tool: request.params.name }, "mcp tool handler failed");
-            return { content: [{ type: "text", text: `${request.params.name} failed: ${message}` }], isError: true };
+            return { content: [{ type: "text" as const, text: `${request.params.name} failed: ${message}` }], isError: true };
         }
     });
 

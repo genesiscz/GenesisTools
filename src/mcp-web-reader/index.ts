@@ -7,11 +7,10 @@ import { Command } from "commander";
 handleReadmeFlag(import.meta.url);
 
 import { runTool } from "@genesiscz/utils/cli";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { Server, type CallToolResult, type ListToolsResult } from "@modelcontextprotocol/server";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { checkLLMModel, downloadLLMModel } from "@nanocollective/get-md";
 import { type EngineName, getEngine, listEngines } from "./engines/index.js";
 import {
@@ -138,17 +137,17 @@ const server = new Server(
     { capabilities: { tools: {} } }
 );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => {
+server.setRequestHandler('tools/list', async (): Promise<ListToolsResult> => {
     return {
         tools: [
             {
                 name: "FetchWebRaw",
                 description: "Fetch raw HTML of a URL (depth, save_tokens, tokens)",
                 inputSchema: {
-                    type: "object",
+                    type: "object" as const,
                     properties: {
                         url: { type: "string" },
-                        headers: { type: "object", description: "Optional headers" },
+                        headers: { type: "object" as const, description: "Optional headers" },
                         depth: { type: "string", enum: ["basic", "advanced"], description: "Extraction depth" },
                         save_tokens: {
                             type: "number",
@@ -165,7 +164,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description:
                     "Fetch Markdown via Jina Reader (https://r.jina.ai/http://...) (depth, save_tokens, tokens)",
                 inputSchema: {
-                    type: "object",
+                    type: "object" as const,
                     properties: {
                         url: { type: "string" },
                         depth: {
@@ -188,7 +187,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description:
                     "Extract Markdown locally using pluggable engines (turndown, mdream, readerlm). Supports depth, engine selection, save_tokens, and token limits.",
                 inputSchema: {
-                    type: "object",
+                    type: "object" as const,
                     properties: {
                         url: { type: "string", description: "URL to fetch and convert" },
                         engine: {
@@ -216,29 +215,29 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     };
 });
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+server.setRequestHandler('tools/call', async (request): Promise<CallToolResult> => {
     const name = request.params.name;
     const args = (request.params.arguments || {}) as Record<string, unknown>;
 
     try {
         if (name === "FetchWebRaw") {
-            return await handleFetchWebRaw(args);
+            return (await handleFetchWebRaw(args)) as CallToolResult;
         }
 
         if (name === "FetchJina") {
-            return await handleFetchJina(args);
+            return (await handleFetchJina(args)) as CallToolResult;
         }
 
         if (name === "FetchWebMarkdown") {
-            return await handleFetchWebMarkdown(args);
+            return (await handleFetchWebMarkdown(args)) as CallToolResult;
         }
 
-        return Object.create(null);
+        return { content: [{ type: "text" as const, text: `Unknown tool: ${name}` }], isError: true };
     } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
         return {
             isError: true,
-            content: [{ type: "text", text: `Error: ${message}` }],
+            content: [{ type: "text" as const, text: `Error: ${message}` }],
         };
     }
 });

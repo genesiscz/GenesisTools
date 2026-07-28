@@ -8,8 +8,8 @@ import { tarGz } from "@app/dev-dashboard/lib/boards/tar";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { findFreePort } from "@genesiscz/utils/net/free-port";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { Client } from "@modelcontextprotocol/client";
 
 // A minimal valid 1x1 transparent PNG — importSet only creates cards for files that
 // parse as images (width > 0 && height > 0), so a real PNG header is required.

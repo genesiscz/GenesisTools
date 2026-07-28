@@ -14,8 +14,8 @@
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { out } from "@genesiscz/utils/logger";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { Client } from "@modelcontextprotocol/client";
 
 // Configuration
 const CONFIG = {
