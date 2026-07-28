@@ -8,9 +8,8 @@ import type { EntryFilter, HarFile, HarSession } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
 import { formatBytes, formatDuration } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { Server, type CallToolResult, type ListToolsResult } from "@modelcontextprotocol/server";
 
 export async function startMcpServer(): Promise<void> {
     const sm = new SessionManager();
@@ -32,7 +31,7 @@ export async function startMcpServer(): Promise<void> {
 
     const server = new Server({ name: "har-analyzer", version: "1.0.0" }, { capabilities: { tools: {} } });
 
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    server.setRequestHandler('tools/list', async (): Promise<ListToolsResult> => ({
         tools: [
             {
                 name: "har_load",
@@ -129,7 +128,7 @@ export async function startMcpServer(): Promise<void> {
         ],
     }));
 
-    server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    server.setRequestHandler('tools/call', async (request): Promise<CallToolResult> => {
         const { name, arguments: args } = request.params;
         const a = (args ?? {}) as Record<string, unknown>;
 
@@ -143,13 +142,13 @@ export async function startMcpServer(): Promise<void> {
                     sm.cleanExpiredSessions().catch((err) =>
                         logger.debug({ err }, "[har-analyzer] expired-session cleanup failed")
                     );
-                    return { content: [{ type: "text", text: formatDashboard(session.stats, session.sourceFile) }] };
+                    return { content: [{ type: "text" as const, text: formatDashboard(session.stats, session.sourceFile) }] };
                 }
 
                 case "har_overview": {
                     const ctx = await ensureSession();
                     return {
-                        content: [{ type: "text", text: formatDashboard(ctx.session.stats, ctx.session.sourceFile) }],
+                        content: [{ type: "text" as const, text: formatDashboard(ctx.session.stats, ctx.session.sourceFile) }],
                     };
                 }
 
@@ -164,14 +163,14 @@ export async function startMcpServer(): Promise<void> {
                     };
                     const entries = filterEntries(ctx.session.entries, filter);
                     const lines = entries.map(formatEntryLine);
-                    return { content: [{ type: "text", text: lines.join("\n") || "No entries match." }] };
+                    return { content: [{ type: "text" as const, text: lines.join("\n") || "No entries match." }] };
                 }
 
                 case "har_detail": {
                     const ctx = await ensureSession();
                     const idx = a.entry as number;
                     if (idx < 0 || idx >= ctx.session.entries.length) {
-                        return { content: [{ type: "text", text: `Entry e${idx} not found.` }] };
+                        return { content: [{ type: "text" as const, text: `Entry e${idx} not found.` }] };
                     }
                     const entry = ctx.harFile.log.entries[idx];
                     const ie = ctx.session.entries[idx];
@@ -215,7 +214,7 @@ export async function startMcpServer(): Promise<void> {
                             }
                         }
 
-                        return { content: [{ type: "text", text: lines.join("\n") }] };
+                        return { content: [{ type: "text" as const, text: lines.join("\n") }] };
                     }
 
                     // L2 detail
@@ -236,7 +235,7 @@ export async function startMcpServer(): Promise<void> {
                         `Response Body: ${formatBytes(entry.response.content.size)} (${entry.response.content.mimeType})`
                     );
 
-                    return { content: [{ type: "text", text: lines.join("\n") }] };
+                    return { content: [{ type: "text" as const, text: lines.join("\n") }] };
                 }
 
                 case "har_expand": {
@@ -244,11 +243,11 @@ export async function startMcpServer(): Promise<void> {
                     const refId = a.ref as string;
                     const match = refId.match(/^e(\d+)\./);
                     if (!match) {
-                        return { content: [{ type: "text", text: `Invalid ref format: "${refId}"` }] };
+                        return { content: [{ type: "text" as const, text: `Invalid ref format: "${refId}"` }] };
                     }
                     const entryIdx = Number.parseInt(match[1], 10);
                     if (entryIdx < 0 || entryIdx >= ctx.session.entries.length) {
-                        return { content: [{ type: "text", text: `Entry e${entryIdx} not found.` }] };
+                        return { content: [{ type: "text" as const, text: `Entry e${entryIdx} not found.` }] };
                     }
 
                     const entry = ctx.harFile.log.entries[entryIdx];
@@ -273,7 +272,7 @@ export async function startMcpServer(): Promise<void> {
                             break;
                     }
 
-                    return { content: [{ type: "text", text: content ?? `No content found for ref "${refId}".` }] };
+                    return { content: [{ type: "text" as const, text: content ?? `No content found for ref "${refId}".` }] };
                 }
 
                 case "har_search": {
@@ -319,7 +318,7 @@ export async function startMcpServer(): Promise<void> {
                     return {
                         content: [
                             {
-                                type: "text",
+                                type: "text" as const,
                                 text: results.length > 0 ? results.join("\n") : `No matches for "${a.query}".`,
                             },
                         ],
@@ -333,14 +332,14 @@ export async function startMcpServer(): Promise<void> {
                     if (type === "errors") {
                         const errors = ctx.session.entries.filter((e) => e.isError);
                         if (errors.length === 0) {
-                            return { content: [{ type: "text", text: "No errors found." }] };
+                            return { content: [{ type: "text" as const, text: "No errors found." }] };
                         }
                         const lines = errors.map((e) => {
                             const raw = ctx.harFile.log.entries[e.index];
                             const body = raw.response.content.text?.slice(0, 80) ?? "";
                             return `e${e.index}  ${e.status}  ${e.method}  ${truncatePath(e.path, 40)}  ${formatDuration(e.timeMs)}${body ? `\n  ${body}` : ""}`;
                         });
-                        return { content: [{ type: "text", text: lines.join("\n") }] };
+                        return { content: [{ type: "text" as const, text: lines.join("\n") }] };
                     }
 
                     if (type === "security") {
@@ -361,7 +360,7 @@ export async function startMcpServer(): Promise<void> {
                         return {
                             content: [
                                 {
-                                    type: "text",
+                                    type: "text" as const,
                                     text: findings.length > 0 ? findings.join("\n") : "No security findings.",
                                 },
                             ],
@@ -370,7 +369,7 @@ export async function startMcpServer(): Promise<void> {
 
                     return {
                         content: [
-                            { type: "text", text: `Unknown analysis type: ${type}. Supported: errors, security` },
+                            { type: "text" as const, text: `Unknown analysis type: ${type}. Supported: errors, security` },
                         ],
                     };
                 }
@@ -385,7 +384,7 @@ export async function startMcpServer(): Promise<void> {
                     return {
                         content: [
                             {
-                                type: "text",
+                                type: "text" as const,
                                 text: `Would export ${filtered.length} entries. Use CLI: tools har-analyzer export [--domain X] [--sanitize] [-o file]`,
                             },
                         ],
@@ -393,11 +392,11 @@ export async function startMcpServer(): Promise<void> {
                 }
 
                 default:
-                    return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
+                    return { content: [{ type: "text" as const, text: `Unknown tool: ${name}` }], isError: true };
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            return { content: [{ type: "text", text: `Error: ${message}` }], isError: true };
+            return { content: [{ type: "text" as const, text: `Error: ${message}` }], isError: true };
         }
     });
 

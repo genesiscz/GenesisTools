@@ -5,9 +5,8 @@ import { wrapArray } from "@genesiscz/utils/array";
 import { logger } from "@genesiscz/utils/logger";
 import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { escapeShellArg, stripAnsi } from "@genesiscz/utils/string";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { Server, type CallToolResult, type ListToolsResult } from "@modelcontextprotocol/server";
 
 // stdio MCP server: stdout carries JSON-RPC frames, so all diagnostics MUST go
 // to the logger (file + stderr via the gated stream), never console.log.
@@ -140,14 +139,14 @@ if (rootArgIndex !== -1 && process.argv.length > rootArgIndex + 1) {
 }
 
 // List available tools
-server.setRequestHandler(ListToolsRequestSchema, async () => {
+server.setRequestHandler('tools/list', async (): Promise<ListToolsResult> => {
     return {
         tools: [
             {
                 name: "search",
                 description: "Search files for patterns using ripgrep (rg)",
                 inputSchema: {
-                    type: "object",
+                    type: "object" as const,
                     properties: {
                         pattern: schemaProperties.pattern,
                         path: schemaProperties.path,
@@ -164,7 +163,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "advanced-search",
                 description: "Advanced search with ripgrep with more options",
                 inputSchema: {
-                    type: "object",
+                    type: "object" as const,
                     properties: {
                         pattern: schemaProperties.pattern,
                         path: schemaProperties.path,
@@ -189,7 +188,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "count-matches",
                 description: "Count matches in files using ripgrep",
                 inputSchema: {
-                    type: "object",
+                    type: "object" as const,
                     properties: {
                         pattern: schemaProperties.pattern,
                         path: schemaProperties.path,
@@ -205,7 +204,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "list-files",
                 description: "List files that would be searched by ripgrep without actually searching them",
                 inputSchema: {
-                    type: "object",
+                    type: "object" as const,
                     properties: {
                         path: schemaProperties.pathForListing,
                         filePattern: schemaProperties.filePattern,
@@ -219,21 +218,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "list-file-types",
                 description: "List all supported file types in ripgrep",
                 inputSchema: {
-                    type: "object",
+                    type: "object" as const,
                     properties: {},
                 },
             },
         ],
-    };
+    } as ListToolsResult;
 });
 
 // Handle tool calls
-server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
+server.setRequestHandler('tools/call', async (request, _ctx): Promise<CallToolResult> => {
     const toolName = request.params.name;
 
     if (!["search", "advanced-search", "count-matches", "list-files", "list-file-types"].includes(toolName)) {
-        // Return ServerResult.NEXT to allow the next handler to process the request
-        return Object.create(null);
+        return {
+            content: [{ type: "text" as const, text: `Unknown tool: ${toolName}` }],
+            isError: true,
+        };
     }
 
     try {
@@ -252,7 +253,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
                 if (!pattern) {
                     return {
                         isError: true,
-                        content: [{ type: "text", text: "Error: Pattern is required" }],
+                        content: [{ type: "text" as const, text: "Error: Pattern is required" }],
                     };
                 }
 
@@ -306,11 +307,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
                 return {
                     content: [
                         {
-                            type: "text",
+                            type: "text" as const,
                             text: command,
                         },
                         {
-                            type: "text",
+                            type: "text" as const,
                             text: processOutput(stdout, false) || "No matches found",
                         },
                     ],
@@ -338,7 +339,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
                 if (!pattern) {
                     return {
                         isError: true,
-                        content: [{ type: "text", text: "Error: Pattern is required" }],
+                        content: [{ type: "text" as const, text: "Error: Pattern is required" }],
                     };
                 }
 
@@ -434,7 +435,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
                 return {
                     content: [
                         {
-                            type: "text",
+                            type: "text" as const,
                             text: processOutput(stdout, useColors) || "No matches found",
                         },
                     ],
@@ -452,7 +453,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
                 if (!pattern) {
                     return {
                         isError: true,
-                        content: [{ type: "text", text: "Error: Pattern is required" }],
+                        content: [{ type: "text" as const, text: "Error: Pattern is required" }],
                     };
                 }
 
@@ -500,7 +501,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
                 return {
                     content: [
                         {
-                            type: "text",
+                            type: "text" as const,
                             text: processOutput(stdout, useColors) || "No matches found",
                         },
                     ],
@@ -553,7 +554,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
                 return {
                     content: [
                         {
-                            type: "text",
+                            type: "text" as const,
                             text: stripAnsi(stdout) || "No files found",
                         },
                     ],
@@ -575,7 +576,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
                 return {
                     content: [
                         {
-                            type: "text",
+                            type: "text" as const,
                             text: stripAnsi(stdout) || "Failed to get file types",
                         },
                     ],
@@ -586,7 +587,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
                 // This shouldn't happen due to the initial check, but TypeScript doesn't know that
                 return {
                     isError: true,
-                    content: [{ type: "text", text: `Unknown tool: ${toolName}` }],
+                    content: [{ type: "text" as const, text: `Unknown tool: ${toolName}` }],
                 };
         }
     } catch (error) {
@@ -598,7 +599,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
             return {
                 content: [
                     {
-                        type: "text",
+                        type: "text" as const,
                         text: "No matches found.",
                     },
                 ],
@@ -610,7 +611,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
             isError: true,
             content: [
                 {
-                    type: "text",
+                    type: "text" as const,
                     text: stripAnsi(`Error: ${execError.message}\n${execError.stderr || ""}`),
                 },
             ],

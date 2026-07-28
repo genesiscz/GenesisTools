@@ -29,6 +29,7 @@
     "devDependencies": {
         "@anthropic-ai/claude-code": "^2.1.45",
         "@biomejs/biome": "^2.5.0",
+        "@modelcontextprotocol/codemod": "2.0.0",
         "@playwright/test": "1.57.0",
         "@radix-ui/react-dialog": "^1.1.15",
         "@radix-ui/react-scroll-area": "^1.2.10",
@@ -109,7 +110,9 @@
         "@jmespath-community/jmespath": "^1.3.0",
         "@lancedb/lancedb": "^0.27.1",
         "@mdit/plugin-alert": "^0.22.4",
-        "@modelcontextprotocol/sdk": "^1.25.2",
+        "@modelcontextprotocol/client": "2.0.0",
+        "@modelcontextprotocol/core": "2.0.0",
+        "@modelcontextprotocol/server": "2.0.0",
         "@modelcontextprotocol/server-github": "^2025.4.8",
         "@mozilla/readability": "^0.6.0",
         "@nanocollective/get-md": "1.1.0-beta.1",

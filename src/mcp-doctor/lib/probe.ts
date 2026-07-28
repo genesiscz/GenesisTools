@@ -1,10 +1,8 @@
 import { withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { Client, SSEClientTransport, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import type { Transport } from "@modelcontextprotocol/client";
 import { classifyResult } from "./report";
 import type { NormalizedServer, ProbeResult, StdioServer } from "./types";
 import { isInvalidServer } from "./types";

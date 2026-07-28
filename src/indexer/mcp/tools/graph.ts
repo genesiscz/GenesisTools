@@ -1,5 +1,5 @@
 import { buildCodeGraph, getGraphStats, toMermaidDiagram } from "@app/indexer/lib/code-graph";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { formatError, getManager, registerTool } from "../shared";
 

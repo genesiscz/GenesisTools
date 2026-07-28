@@ -1,5 +1,5 @@
 import { SafeJSON } from "@dashboard/shared";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { assistantTasks, db } from "@/drizzle";
@@ -12,13 +12,13 @@ export function registerTaskTools(server: McpServer, userId: string) {
         "list_tasks",
         {
             description: "List the owner's assistant tasks. Optionally filter by status.",
-            inputSchema: {
-                status: z
-                    .enum(["backlog", "in-progress", "blocked", "completed"])
-                    .optional()
-                    .describe("Filter by task status"),
-                limit: z.number().min(1).max(200).default(50),
-            },
+            inputSchema: z.object({
+                            status: z
+                                .enum(["backlog", "in-progress", "blocked", "completed"])
+                                .optional()
+                                .describe("Filter by task status"),
+                            limit: z.number().min(1).max(200).default(50),
+                        }),
         },
         async ({ status, limit }) => {
             const tasks = db
@@ -44,12 +44,12 @@ export function registerTaskTools(server: McpServer, userId: string) {
         "create_task",
         {
             description: "Create a new assistant task for the owner.",
-            inputSchema: {
-                title: z.string().describe("Task title"),
-                description: z.string().optional().describe("Task description"),
-                status: z.enum(["backlog", "in-progress", "blocked", "completed"]).default("backlog"),
-                urgencyLevel: z.enum(["critical", "important", "nice-to-have"]).default("nice-to-have"),
-            },
+            inputSchema: z.object({
+                            title: z.string().describe("Task title"),
+                            description: z.string().optional().describe("Task description"),
+                            status: z.enum(["backlog", "in-progress", "blocked", "completed"]).default("backlog"),
+                            urgencyLevel: z.enum(["critical", "important", "nice-to-have"]).default("nice-to-have"),
+                        }),
         },
         async ({ title, description, status, urgencyLevel }) => {
             const now = new Date().toISOString();
@@ -80,13 +80,13 @@ export function registerTaskTools(server: McpServer, userId: string) {
         "update_task",
         {
             description: "Update one of the owner's assistant tasks.",
-            inputSchema: {
-                id: z.string().describe("Task ID to update"),
-                title: z.string().optional(),
-                description: z.string().optional(),
-                status: z.enum(["backlog", "in-progress", "blocked", "completed"]).optional(),
-                urgencyLevel: z.enum(["critical", "important", "nice-to-have"]).optional(),
-            },
+            inputSchema: z.object({
+                            id: z.string().describe("Task ID to update"),
+                            title: z.string().optional(),
+                            description: z.string().optional(),
+                            status: z.enum(["backlog", "in-progress", "blocked", "completed"]).optional(),
+                            urgencyLevel: z.enum(["critical", "important", "nice-to-have"]).optional(),
+                        }),
         },
         async ({ id, ...patch }) => {
             const result = db
@@ -107,9 +107,9 @@ export function registerTaskTools(server: McpServer, userId: string) {
         "delete_task",
         {
             description: "Delete one of the owner's assistant tasks by ID.",
-            inputSchema: {
-                id: z.string().describe("Task ID to delete"),
-            },
+            inputSchema: z.object({
+                            id: z.string().describe("Task ID to delete"),
+                        }),
         },
         async ({ id }) => {
             const result = db

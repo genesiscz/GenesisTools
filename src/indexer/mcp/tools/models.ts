@@ -1,5 +1,5 @@
 import { getModelsForType, MODEL_REGISTRY } from "@app/indexer/lib/model-registry";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { registerTool } from "../shared";
 

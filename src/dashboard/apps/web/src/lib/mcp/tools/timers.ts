@@ -1,5 +1,5 @@
 import { SafeJSON } from "@dashboard/shared";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, timers } from "@/drizzle";
@@ -10,7 +10,7 @@ export function registerTimerTools(server: McpServer, userId: string) {
         "list_timers",
         {
             description: "List the owner's timers.",
-            inputSchema: {},
+            inputSchema: z.object({}),
         },
         async () => {
             const timerList = db.select().from(timers).where(eq(timers.userId, userId)).all();
@@ -30,12 +30,12 @@ export function registerTimerTools(server: McpServer, userId: string) {
         "upsert_timer",
         {
             description: "Create or update a timer for the owner. Omit id to let the server generate one.",
-            inputSchema: {
-                id: z.string().optional().describe("Timer ID (omit to create new)"),
-                label: z.string().describe("Timer label / name"),
-                duration: z.number().optional().describe("Target duration in seconds (for countdown)"),
-                mode: z.enum(["stopwatch", "countdown", "pomodoro"]).default("stopwatch"),
-            },
+            inputSchema: z.object({
+                            id: z.string().optional().describe("Timer ID (omit to create new)"),
+                            label: z.string().describe("Timer label / name"),
+                            duration: z.number().optional().describe("Target duration in seconds (for countdown)"),
+                            mode: z.enum(["stopwatch", "countdown", "pomodoro"]).default("stopwatch"),
+                        }),
         },
         async ({ id: inputId, label, duration, mode }) => {
             const timerId = inputId ?? crypto.randomUUID();
@@ -94,9 +94,9 @@ export function registerTimerTools(server: McpServer, userId: string) {
         "delete_timer",
         {
             description: "Delete one of the owner's timers by ID.",
-            inputSchema: {
-                timerId: z.string().describe("Timer ID to delete"),
-            },
+            inputSchema: z.object({
+                            timerId: z.string().describe("Timer ID to delete"),
+                        }),
         },
         async ({ timerId }) => {
             const result = db

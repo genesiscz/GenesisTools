@@ -2,14 +2,8 @@ import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabas
 import { buildRegistry, getAdvertisedTools, getHandler, type ToolEntry } from "@app/shops/mcp/registry";
 import { listResources, readResource } from "@app/shops/mcp/resources";
 import { logger } from "@genesiscz/utils/logger";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-    CallToolRequestSchema,
-    ListResourcesRequestSchema,
-    ListToolsRequestSchema,
-    ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { Server, type CallToolResult, type ListToolsResult, type ListResourcesResult, type ReadResourceResult } from "@modelcontextprotocol/server";
 
 const log = logger.child({ component: "shops:mcp-server" });
 
@@ -25,20 +19,20 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
 
     const server = new Server({ name: "shops", version: "1.0.0" }, { capabilities: { tools: {}, resources: {} } });
 
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    server.setRequestHandler('tools/list', async (): Promise<ListToolsResult> => ({
         tools: getAdvertisedTools(registry, allowWrite).map((t: ToolEntry) => ({
             name: t.name,
             description: t.description,
-            inputSchema: t.inputSchema,
+            inputSchema: t.inputSchema as unknown as ListToolsResult["tools"][number]["inputSchema"],
         })),
     }));
 
-    server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    server.setRequestHandler('tools/call', async (request): Promise<CallToolResult> => {
         const name = request.params.name;
         const lookup = getHandler(registry, name, allowWrite);
         if (lookup.kind === "notFound") {
             return {
-                content: [{ type: "text", text: `Unknown tool: ${name}` }],
+                content: [{ type: "text" as const, text: `Unknown tool: ${name}` }],
                 isError: true,
             };
         }
@@ -47,7 +41,7 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
             return {
                 content: [
                     {
-                        type: "text",
+                        type: "text" as const,
                         text: `Tool ${name} requires --allow-write flag. Re-run server with --allow-write to enable.`,
                     },
                 ],
@@ -60,7 +54,7 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
         return { content: result.content, isError: result.isError };
     });
 
-    server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    server.setRequestHandler('resources/list', async (): Promise<ListResourcesResult> => ({
         resources: listResources().map((r) => ({
             uri: r.uri,
             name: r.name,
@@ -68,7 +62,7 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
         })),
     }));
 
-    server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    server.setRequestHandler('resources/read', async (request): Promise<ReadResourceResult> => {
         const uri = request.params.uri;
         try {
             const content = await readResource(uri, shopsDb);
