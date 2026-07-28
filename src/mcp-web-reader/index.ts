@@ -7,10 +7,10 @@ import { Command } from "commander";
 handleReadmeFlag(import.meta.url);
 
 import { runTool } from "@genesiscz/utils/cli";
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import { Server, type CallToolResult, type ListToolsResult } from "@modelcontextprotocol/server";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { type CallToolResult, type ListToolsResult, Server } from "@modelcontextprotocol/server";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { checkLLMModel, downloadLLMModel } from "@nanocollective/get-md";
 import { type EngineName, getEngine, listEngines } from "./engines/index.js";
 import {
@@ -137,7 +137,7 @@ const server = new Server(
     { capabilities: { tools: {} } }
 );
 
-server.setRequestHandler('tools/list', async (): Promise<ListToolsResult> => {
+server.setRequestHandler("tools/list", async (): Promise<ListToolsResult> => {
     return {
         tools: [
             {
@@ -215,7 +215,7 @@ server.setRequestHandler('tools/list', async (): Promise<ListToolsResult> => {
     };
 });
 
-server.setRequestHandler('tools/call', async (request): Promise<CallToolResult> => {
+server.setRequestHandler("tools/call", async (request): Promise<CallToolResult> => {
     const name = request.params.name;
     const args = (request.params.arguments || {}) as Record<string, unknown>;
 
