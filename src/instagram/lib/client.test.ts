@@ -1,0 +1,207 @@
+import { afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { __testing as __clientTesting, getJson } from "./client";
+import type { InstagramError } from "./types";
+
+const realFetch = globalThis.fetch;
+
+beforeAll(() => {
+    // Otherwise the module-level limiter sleeps for real (jitter runs to 15s).
+    __clientTesting.useInstantLimiter();
+});
+
+beforeEach(() => {
+    __clientTesting.resetWwwClaim();
+});
+
+afterEach(() => {
+    globalThis.fetch = realFetch;
+});
+
+function mockResponse(body: string, status: number, headers?: Record<string, string>): void {
+    globalThis.fetch = mock(async () => new Response(body, { status, headers })) as unknown as typeof fetch;
+}
+
+describe("getJson error classification", () => {
+    test("reads Instagram's `login_required` as session-required, not a generic 403", async () => {
+        // Verified against i.instagram.com on 2026-07-27: this exact body is what
+        // the mobile endpoints return for gated story content.
+        mockResponse(
+            '{"message":"login_required","logout_reason":33,"logout_expectedness":"logged_out","status":"fail"}',
+            403
+        );
+
+        const error = (await getJson("/x", { label: "test" }).catch((err) => err)) as InstagramError;
+
+        expect(error.kind).toBe("session-required");
+        expect(error.status).toBe(403);
+    });
+
+    test("separates checkpoint (account-level) from rate limiting (IP-level)", async () => {
+        mockResponse('{"message":"checkpoint_required"}', 403);
+        const checkpoint = (await getJson("/x", { label: "test" }).catch((err) => err)) as InstagramError;
+        expect(checkpoint.kind).toBe("checkpoint");
+
+        // Deliberately NOT the "please wait a few minutes" body — that is a
+        // caller-scoped throttle with its own kind, not an IP-level rate limit.
+        mockResponse('{"message":"rate_limit_error","status":"fail"}', 429);
+        const limited = (await getJson("/x", { label: "test" }).catch((err) => err)) as InstagramError;
+        expect(limited.kind).toBe("rate-limited");
+        expect(limited.isTerminal).toBe(false);
+    });
+
+    test("treats the logged-out HTML shell as an auth failure rather than parsing it", async () => {
+        // A 200 carrying ~600KB of SPA shell is Instagram's anonymous response for
+        // gated pages. Feeding that to a JSON parser would throw something useless.
+        mockResponse("<!DOCTYPE html><html><head></head><body></body></html>", 200);
+
+        const error = (await getJson("/x", { label: "test" }).catch((err) => err)) as InstagramError;
+
+        expect(error.kind).toBe("session-required");
+    });
+
+    test("blames the session when the HTML shell comes back despite a cookie", async () => {
+        mockResponse("<!DOCTYPE html><html></html>", 200);
+
+        const error = (await getJson("/x", { label: "test", sessionId: "c" }).catch((err) => err)) as InstagramError;
+
+        expect(error.kind).toBe("session-invalid");
+    });
+
+    test("classifies the login redirect that several endpoints use instead of an error", async () => {
+        mockResponse("", 302, { location: "https://www.instagram.com/accounts/login/" });
+
+        const error = (await getJson("/x", { label: "test" }).catch((err) => err)) as InstagramError;
+
+        expect(error.kind).toBe("session-required");
+    });
+
+    test("returns parsed JSON and reports which auth mode produced it", async () => {
+        mockResponse('{"ok":true}', 200, { "content-type": "application/json" });
+
+        const anonymous = await getJson<{ ok: boolean }>("/x", { label: "test" });
+        expect(anonymous.data.ok).toBe(true);
+        expect(anonymous.authMode).toBe("anonymous");
+
+        const authenticated = await getJson<{ ok: boolean }>("/x", { label: "test", sessionId: "c" });
+        expect(authenticated.authMode).toBe("session");
+    });
+});
+
+describe("request headers", () => {
+    test("omits the cookie entirely when anonymous, and sends it when not", async () => {
+        const seen: Array<Record<string, string>> = [];
+        globalThis.fetch = mock(async (_url: string, init?: RequestInit) => {
+            seen.push((init?.headers ?? {}) as Record<string, string>);
+            return new Response('{"ok":true}', { status: 200 });
+        }) as unknown as typeof fetch;
+
+        await getJson("/x", { label: "test" });
+        await getJson("/x", { label: "test", sessionId: "abc123" });
+
+        expect(seen[0].cookie).toBeUndefined();
+        expect(seen[1].cookie).toBe("sessionid=abc123");
+        expect(seen[0]["x-ig-app-id"]).toBe("936619743392459");
+    });
+});
+
+describe("enforcement classification (post-research)", () => {
+    test("detects feedback_required — an account-level flag, not a rate limit", async () => {
+        // Instagram's "that looked automated" response. Backing off does not clear
+        // it, so it must not be classified as rate-limited.
+        mockResponse('{"message":"feedback_required","spam":true,"status":"fail"}', 400);
+
+        const error = (await getJson("/x", { label: "test" }).catch((err) => err)) as InstagramError;
+
+        expect(error.kind).toBe("feedback-required");
+        expect(error.isTerminal).toBe(true);
+    });
+
+    test("classifies HTTP 400 enforcement, which a 401/403-only classifier misses", async () => {
+        mockResponse(
+            '{"message":"challenge_required","challenge":{"url":"https://i.instagram.com/challenge/123/abc/"}}',
+            400
+        );
+
+        const error = (await getJson("/x", { label: "test", sessionId: "c" }).catch((err) => err)) as InstagramError;
+
+        expect(error.kind).toBe("checkpoint");
+        expect(error.challengeUrl).toContain("/challenge/");
+    });
+
+    test("separates a suspension from a clearable challenge via the URL", async () => {
+        // "/suspended/" means an SMS code will not fix it — it needs an appeal.
+        mockResponse(
+            '{"message":"challenge_required","challenge":{"url":"https://www.instagram.com/challenge/suspended/?next=1"}}',
+            400
+        );
+
+        const error = (await getJson("/x", { label: "test", sessionId: "c" }).catch((err) => err)) as InstagramError;
+
+        expect(error.kind).toBe("suspended");
+        expect(error.isTerminal).toBe(true);
+    });
+
+    test("treats sentry_block as IP-level rate limiting, which IS worth backing off from", async () => {
+        mockResponse('{"message":"sentry_block","status":"fail"}', 403);
+
+        const error = (await getJson("/x", { label: "test" }).catch((err) => err)) as InstagramError;
+
+        expect(error.kind).toBe("rate-limited");
+        expect(error.isTerminal).toBe(false);
+    });
+
+    test("sends x-csrftoken matching the cookie, and warns when it is missing", async () => {
+        const seen: Array<Record<string, string>> = [];
+        globalThis.fetch = mock(async (_url: string, init?: RequestInit) => {
+            seen.push((init?.headers ?? {}) as Record<string, string>);
+            return new Response('{"ok":true}', { status: 200 });
+        }) as unknown as typeof fetch;
+
+        await getJson("/x", { label: "test", sessionId: "abc", csrfToken: "tok123" });
+
+        expect(seen[0]["x-csrftoken"]).toBe("tok123");
+        expect(seen[0].cookie).toBe("sessionid=abc; csrftoken=tok123");
+        expect(seen[0]["x-asbd-id"]).toBeDefined();
+    });
+
+    test("replays the server's x-ig-set-www-claim on subsequent requests", async () => {
+        __clientTesting.resetWwwClaim();
+        const seen: Array<Record<string, string>> = [];
+        let call = 0;
+        globalThis.fetch = mock(async (_url: string, init?: RequestInit) => {
+            seen.push((init?.headers ?? {}) as Record<string, string>);
+            call += 1;
+            return new Response('{"ok":true}', {
+                status: 200,
+                headers: call === 1 ? { "x-ig-set-www-claim": "hmac.AR1234" } : {},
+            });
+        }) as unknown as typeof fetch;
+
+        await getJson("/x", { label: "first" });
+        await getJson("/x", { label: "second" });
+
+        // Starts at "0", then echoes what the server handed back. Not replaying it
+        // marks the client as not-a-browser for the rest of the session.
+        expect(seen[0]["x-ig-www-claim"]).toBe("0");
+        expect(seen[1]["x-ig-www-claim"]).toBe("hmac.AR1234");
+        __clientTesting.resetWwwClaim();
+    });
+});
+
+describe("please-wait throttle", () => {
+    test("does not mistake the 401 + require_login throttle for an auth failure", async () => {
+        // Encountered live on 2026-07-27 while developing this tool: Instagram
+        // answers the soft throttle with HTTP 401 and `require_login: true`, which
+        // a naive classifier reads as "your cookie is bad" and sends the user
+        // chasing a credential problem that does not exist.
+        mockResponse(
+            '{"message":"Please wait a few minutes before you try again.","require_login":true,"igweb_rollout":true,"status":"fail"}',
+            401
+        );
+
+        const error = (await getJson("/x", { label: "test" }).catch((err) => err)) as InstagramError;
+
+        expect(error.kind).toBe("please-wait");
+        expect(error.isTerminal).toBe(true);
+    });
+});
