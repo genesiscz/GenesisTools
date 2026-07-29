@@ -1,10 +1,11 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { MASTER_KEY_BYTES } from "./keyring/types";
-import { invalidateMasterKeyCache, masterKey, writeMasterKey } from "./MasterKey";
+import { invalidateMasterKeyCache, masterKey, masterKeySource, writeMasterKey } from "./MasterKey";
 import { decryptEntry, encryptEntry, TAG_BYTES, vaultAdmin } from "./SecretStore";
 import type { VaultFile } from "./vault-format";
 
@@ -51,6 +52,20 @@ export function rotationBackupPath(): string {
  * of anything current.
  */
 export async function rotateMasterKey(): Promise<{ rotated: number }> {
+    // The env rung is read-only (writeMasterKey skips it) AND outranks every
+    // other rung on read. Rotating from it therefore stores the new key on the
+    // keychain, where the unchanged variable permanently shadows it, and every
+    // re-encrypted entry becomes undecryptable — the exact "vault nothing can
+    // read" outcome this function's abort-on-failure logic exists to prevent.
+    if ((await masterKeySource()) === "env") {
+        const variable = env.security.getMasterKeyEnvKey();
+        throw new Error(
+            `The master key currently comes from ${variable}, which cannot be written back to. ` +
+                `A rotated key would land on the keychain rung, ${variable} would keep outranking it, and every vault entry would stop decrypting. ` +
+                `Unset ${variable} and re-run: the new key is then stored on the keychain (or key file) rung.`
+        );
+    }
+
     const current = await masterKey();
 
     return vaultAdmin.withLock(async () => {

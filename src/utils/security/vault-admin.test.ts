@@ -67,6 +67,37 @@ describe("rotateMasterKey", () => {
         expect(stored.equals(oldKey)).toBe(false);
     });
 
+    /**
+     * The env rung is read-only and outranks every other rung. Rotating from it
+     * used to store the new key on the keychain, where the unchanged variable
+     * kept shadowing it, so every re-encrypted entry stopped decrypting with
+     * "Unsupported state or unable to authenticate data" — silent, total loss.
+     */
+    test("refuses to rotate while the key comes from the environment", async () => {
+        const envKey = randomBytes(32);
+        _setMasterKeyProvidersForTest([
+            {
+                id: "env" as const,
+                available: async () => true,
+                get: async () => envKey,
+                getSync: () => envKey,
+                set: async () => {
+                    throw new Error("the env rung is not writable");
+                },
+            },
+            ...mutableKeyring(),
+        ]);
+
+        const store = await secrets();
+        await store.set("ai/acc_x/apiKey", "value-of-x");
+        const beforeVault = readFileSync(vaultPath(), "utf8");
+
+        await expect(rotateMasterKey()).rejects.toThrow("GENESIS_TOOLS_MASTER_KEY");
+
+        expect(readFileSync(vaultPath(), "utf8")).toBe(beforeVault);
+        expect(await store.get("ai/acc_x/apiKey")).toBe("value-of-x");
+    });
+
     test("a successful rotation leaves no key escrow behind", async () => {
         const store = await secrets();
         await store.set("ai/acc_x/apiKey", "value-of-x");
