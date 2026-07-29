@@ -5,6 +5,7 @@ import type { Command } from "commander";
 import { registerAccountCommands } from "./account";
 import { registerDefaultCommands } from "./defaults";
 import { registerLinkCommands } from "./link";
+import { registerSecretCommands } from "./secret";
 
 /**
  * Mount `tools ai config` and its subtree.
@@ -33,4 +34,5 @@ export function registerConfigCommands(command: Command, onInteractive: () => Pr
     registerAccountCommands(config);
     registerDefaultCommands(config);
     registerLinkCommands(config);
+    registerSecretCommands(config);
 }
