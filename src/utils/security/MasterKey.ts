@@ -58,14 +58,12 @@ export async function masterKey(): Promise<Buffer> {
     }
 
     const generated = randomBytes(MASTER_KEY_BYTES);
-    const writable = providers.find((p) => p.id !== "env");
-    if (!writable) {
-        throw new MasterKeyUnavailableError();
-    }
-
-    await writable.set(generated);
-    cached = { key: generated, source: writable.id };
-    logger.info({ source: writable.id }, "generated a new vault master key");
+    // writeMasterKey picks the first AVAILABLE non-env rung. The old inline
+    // version here grabbed the first non-env provider without asking, which on
+    // a box without a keychain threw from the keychain rung instead of falling
+    // through to an enabled key file.
+    const source = await writeMasterKey(generated);
+    logger.info({ source }, "generated a new vault master key");
     return generated;
 }
 
@@ -113,7 +111,7 @@ export function invalidateMasterKeyCache(): void {
 }
 
 /** Persist a new master key on the first writable rung (never the env rung). */
-export async function writeMasterKey(key: Buffer): Promise<void> {
+export async function writeMasterKey(key: Buffer): Promise<MasterKeySource> {
     if (key.length !== MASTER_KEY_BYTES) {
         throw new Error(`Master key must be ${MASTER_KEY_BYTES} bytes, got ${key.length}.`);
     }
@@ -126,7 +124,7 @@ export async function writeMasterKey(key: Buffer): Promise<void> {
         if (await provider.available()) {
             await provider.set(key);
             cached = { key, source: provider.id };
-            return;
+            return provider.id;
         }
     }
 

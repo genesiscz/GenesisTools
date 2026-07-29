@@ -10,6 +10,7 @@ import { emptyVault, VAULT_HKDF_SALT, VAULT_VERSION, type VaultEntry, type Vault
 
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
+export const TAG_BYTES = 16;
 
 export interface SecretStore {
     get(path: string): Promise<string | undefined>;
@@ -48,9 +49,19 @@ export function encryptEntry(master: Buffer, path: string, value: string): Vault
 }
 
 export function decryptEntry(master: Buffer, path: string, entry: VaultEntry): string {
+    const tag = Buffer.from(entry.tag, "base64");
+
+    // Node's GCM decipher accepts NIST-truncated tags (down to 32 bits) when no
+    // authTagLength is pinned, which would let an attacker with write access to
+    // the vault file shrink the forgery space from 2^128 to 2^32. Every tag this
+    // store ever wrote is 16 bytes, so anything else is tampering.
+    if (tag.length !== TAG_BYTES) {
+        throw new Error(`Vault entry "${path}" has a ${tag.length}-byte auth tag (expected ${TAG_BYTES}); refusing.`);
+    }
+
     const decipher = createDecipheriv("aes-256-gcm", entryKey(master, path), Buffer.from(entry.iv, "base64"));
     decipher.setAAD(Buffer.from(path, "utf8"));
-    decipher.setAuthTag(Buffer.from(entry.tag, "base64"));
+    decipher.setAuthTag(tag);
     return Buffer.concat([decipher.update(Buffer.from(entry.ct, "base64")), decipher.final()]).toString("utf8");
 }
 

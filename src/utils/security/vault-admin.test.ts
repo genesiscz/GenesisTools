@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { _resetMasterKeyProviders, _setMasterKeyProvidersForTest } from "./MasterKey";
 import { _resetSecretsForTest, secrets } from "./SecretStore";
-import { exportVault, importVault, rotateMasterKey } from "./vault-admin";
+import { exportVault, importVault, rotateMasterKey, rotationBackupPath } from "./vault-admin";
 
 let home: string;
 let stored: Buffer;
@@ -65,6 +65,47 @@ describe("rotateMasterKey", () => {
 
         expect((await rotateMasterKey()).rotated).toBe(0);
         expect(stored.equals(oldKey)).toBe(false);
+    });
+
+    test("a successful rotation leaves no key escrow behind", async () => {
+        const store = await secrets();
+        await store.set("ai/acc_x/apiKey", "value-of-x");
+
+        await rotateMasterKey();
+
+        expect(existsSync(rotationBackupPath())).toBe(false);
+    });
+
+    /**
+     * The crash window this pins: storing the new key and rewriting the vault
+     * cannot be atomic together. If the key store succeeds and the process dies
+     * before the vault rewrite, the ONLY copy of the old key used to be gone
+     * while every vault entry still needed it. The escrow file is written
+     * before either step, so the failure leaves the old key on disk (0600) and
+     * the vault fully readable.
+     */
+    test("a rotation that dies mid-way leaves the vault readable and the old key escrowed", async () => {
+        const store = await secrets();
+        await store.set("ai/acc_x/apiKey", "value-of-x");
+        const oldKey = stored;
+
+        _setMasterKeyProvidersForTest([
+            {
+                id: "keychain" as const,
+                available: async () => true,
+                get: async () => oldKey,
+                set: async () => {
+                    throw new Error("simulated crash while storing the new key");
+                },
+            },
+        ]);
+
+        expect(rotateMasterKey()).rejects.toThrow("simulated crash");
+
+        // Old key still works: nothing was rewritten.
+        expect(await store.get("ai/acc_x/apiKey")).toBe("value-of-x");
+        // And the escrow holds the outgoing key, the recovery material.
+        expect(Buffer.from(readFileSync(rotationBackupPath(), "utf8"), "base64").equals(oldKey)).toBe(true);
     });
 });
 

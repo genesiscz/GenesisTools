@@ -75,6 +75,26 @@ describe("SecretStore", () => {
         expect(await reopened.get("ai/acc_x/apiKey")).toBe("value-of-x");
     });
 
+    /**
+     * Node's GCM decipher accepts NIST-truncated tags (32-128 bits) unless the
+     * length is pinned. A truncation of the REAL tag is a valid short tag, so
+     * without the length check this read would succeed while shrinking the
+     * forgery space to 2^32 for an attacker with vault write access.
+     */
+    test("rejects a truncated auth tag even when the truncation is genuine", async () => {
+        const store = await secrets();
+        await store.set("ai/acc_x/apiKey", "value-of-x");
+
+        const vault: VaultFile = SafeJSON.parse(readFileSync(vaultPath(), "utf8"), { strict: true });
+        const entry = vault.entries["ai/acc_x/apiKey"];
+        entry.tag = Buffer.from(entry.tag, "base64").subarray(0, 4).toString("base64");
+        writeFileSync(vaultPath(), SafeJSON.stringify(vault, null, 2));
+        _resetSecretsForTest();
+
+        const reopened = await secrets();
+        expect(reopened.get("ai/acc_x/apiKey")).rejects.toThrow("auth tag");
+    });
+
     test("missing paths read as undefined, delete reports whether it removed anything", async () => {
         const store = await secrets();
 
