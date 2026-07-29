@@ -21,6 +21,8 @@ const XAI_API_KEYS = ["XAI_API_KEY", "X_AI_API_KEY"] as const;
 const HF_TOKEN_KEYS = ["HUGGINGFACE_TOKEN", "HF_TOKEN"] as const;
 // GitHub CLI and apps disagree on the canonical name — never use `gh auth token` here.
 const GITHUB_TOKEN_KEYS = ["GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"] as const;
+// Instaloader and instagrapi both use IG_SESSIONID; INSTAGRAM_SESSIONID reads clearer.
+const INSTAGRAM_SESSION_KEYS = ["IG_SESSIONID", "INSTAGRAM_SESSIONID"] as const;
 const EDITOR_KEYS = ["VISUAL", "EDITOR"] as const;
 const LOCALE_PREFERENCE_KEYS = ["LC_TIME", "LANG", "LC_ALL"] as const;
 
@@ -99,6 +101,18 @@ export const env = {
         // Copilot CLI uses this name explicitly — separate from generic GITHUB_TOKEN.
         getCopilotToken: () => getTrimmed("COPILOT_GITHUB_TOKEN"),
         getCopilotTokenEnvKey: () => (isNonEmpty("COPILOT_GITHUB_TOKEN") ? "COPILOT_GITHUB_TOKEN" : undefined),
+    },
+
+    instagram: {
+        // Session cookie for the story/highlight endpoints. Instagram gates story
+        // media on viewer identity, so the anonymous surface (profile, posts,
+        // highlight ids) needs none of this and must keep working without it.
+        getSessionId: () => getFirstValue(INSTAGRAM_SESSION_KEYS),
+        getSessionIdEnvKey: () => getFirstEnvKey(INSTAGRAM_SESSION_KEYS),
+        hasSessionId: () => getFirstValue(INSTAGRAM_SESSION_KEYS) !== undefined,
+        // Instagram expects x-csrftoken to match the csrftoken cookie sitting next
+        // to sessionid — a mismatch is a fingerprint signal, so fetch both.
+        getCsrfToken: () => getTrimmed("IG_CSRFTOKEN"),
     },
 
     brave: createApiKeyAccessor(["BRAVE_API_KEY"]),
