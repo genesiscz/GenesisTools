@@ -2,15 +2,15 @@ import { execFileSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
-import { parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
-import { Command, InvalidArgumentError, Option } from "commander";
+import { Command, Option } from "commander";
 import pc from "picocolors";
 import { scanWithBun } from "./lib/bun-scan";
 import { readVolumeInfo, scanPartners, scanWithC, scanWithCFfi } from "./lib/engine";
 import { diffScans, humanBytes, renderDiff, renderHuman, renderPartners, renderTree, renderVolume } from "./lib/format";
+import { durationToCutoff, intOpt } from "./lib/options";
 import type { ClonesizeResult, Engine, ScanOptions } from "./lib/types";
 import { detectWorktreeExcludes } from "./lib/worktrees";
 
@@ -35,37 +35,6 @@ program
             "its full size even though clones share physical blocks."
     )
     .version("0.1.0");
-
-function intOpt(name: string, opts: { min?: number; max?: number } = {}) {
-    return (v: string): number => {
-        const n = Number.parseInt(v, 10);
-        if (!Number.isFinite(n) || String(n) !== v.trim()) {
-            throw new InvalidArgumentError(`${name} must be an integer (got "${v}").`);
-        }
-
-        if (opts.min !== undefined && n < opts.min) {
-            throw new InvalidArgumentError(`${name} must be >= ${opts.min}.`);
-        }
-
-        if (opts.max !== undefined && n > opts.max) {
-            throw new InvalidArgumentError(`${name} must be <= ${opts.max}.`);
-        }
-
-        return n;
-    };
-}
-
-/** `--changed-within 7d` → the epoch-second cutoff the native core filters on. */
-function durationToCutoff(name: string) {
-    return (v: string): number => {
-        const ms = parseDuration(v);
-        if (ms <= 0) {
-            throw new InvalidArgumentError(`${name} must be a duration like 24h, 7d or 30m (got "${v}").`);
-        }
-
-        return Math.floor((Date.now() - ms) / 1000);
-    };
-}
 
 function assertDir(dir: string): string {
     const root = resolve(dir);
