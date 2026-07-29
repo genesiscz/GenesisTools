@@ -1,5 +1,6 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { assertApiKeySourceAllowed, resolveAccountApiKey } from "@app/ai-proxy/lib/providers/api-key-guard";
+import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
 import { relayHeaders, rewriteSessionModel, toWsBase } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider, RealtimeConnectTarget } from "@app/ai-proxy/lib/providers/types";
 import { rewriteBodyModel } from "@app/ai-proxy/lib/rewrite-upstream-body";
@@ -41,14 +42,15 @@ export class OpenAiApiKeyProvider implements ProxyProvider {
     }
 
     static async create(account: AiProxyAccountConfig): Promise<OpenAiApiKeyProvider> {
-        const envName = account.apiKeyEnv ?? "OPENAI_API_KEY";
-        const resolved = resolveAccountApiKey({
-            account,
-            defaultEnvKey: () => env.getTrimmed("OPENAI_API_KEY" as never),
-        });
+        const envName = defaultApiKeyEnvName(account);
+        const resolved = resolveAccountApiKey({ account, defaultEnvKey: () => env.ai.openai.getKey() });
 
         if (!resolved) {
-            throw new Error(`No OpenAI API key found (checked config apiKey, ${envName}).`);
+            // Name both: the fallback is always consulted, so an account with a
+            // custom `apiKeyEnv` would otherwise be told only half of what failed.
+            const checked = envName === "OPENAI_API_KEY" ? envName : `${envName} / OPENAI_API_KEY`;
+
+            throw new Error(`No OpenAI API key found (checked config apiKey, ${checked}).`);
         }
 
         assertApiKeySourceAllowed({ account, source: resolved.source, envName });

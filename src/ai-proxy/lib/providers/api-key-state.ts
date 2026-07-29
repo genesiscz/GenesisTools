@@ -31,12 +31,24 @@ export interface ApiKeyStatus {
     maskedOverride?: string;
 }
 
+/**
+ * The env var to NAME in guards, errors and status output.
+ *
+ * Alias-aware on purpose: xAI resolves through `XAI_API_KEY` or the legacy
+ * `X_AI_API_KEY`, so an account relying on the alias must be told the variable
+ * that was actually read. Every site that reports an env var goes through here,
+ * or the name in the message disagrees with the key that was resolved.
+ */
 export function defaultApiKeyEnvName(account: AiProxyAccountConfig): string {
     if (account.apiKeyEnv) {
         return account.apiKeyEnv;
     }
 
-    return account.provider === "openai" ? "OPENAI_API_KEY" : "XAI_API_KEY";
+    if (account.provider === "openai") {
+        return "OPENAI_API_KEY";
+    }
+
+    return env.x.getApiEnvKey() ?? "XAI_API_KEY";
 }
 
 export function maskApiKey(key: string): string {

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { copilotDataDir } from "@genesiscz/utils/ai/github-copilot/paths";
 import type { CopilotAccountType } from "@genesiscz/utils/ai/github-copilot/types";
@@ -34,7 +35,7 @@ export interface AccountCredentialDescription {
  */
 export function describeAccountCredential(account: AiProxyAccountConfig): AccountCredentialDescription {
     if (account.provider === "xai-api-key" || account.provider === "openai") {
-        const envName = account.apiKeyEnv ?? (account.provider === "openai" ? "OPENAI_API_KEY" : "XAI_API_KEY");
+        const envName = defaultApiKeyEnvName(account);
         // Trimmed, because that is what the resolvers do: a whitespace-only
         // `apiKey` falls through to the env var, and this log must say so.
         const configured = account.apiKey?.trim();
