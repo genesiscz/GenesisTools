@@ -120,7 +120,7 @@
             }
         },
         {
-            "includes": ["plugins/*/skills/*/scripts/**"],
+            "includes": ["plugins/genesis-tools/skills/wrap-up/scripts/**"],
             "linter": {
                 "rules": {
                     "style": {
