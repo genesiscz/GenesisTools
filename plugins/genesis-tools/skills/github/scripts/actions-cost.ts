@@ -158,6 +158,7 @@ async function ghJson<T>(args: string[]): Promise<T> {
         throw new Error(`Empty response from: gh ${args[0]}`);
     }
 
+    // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
     return JSON.parse(raw) as T;
 }
 
@@ -462,6 +463,7 @@ function formatJson(
         failureWaste,
     };
 
+    // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
     console.log(JSON.stringify(output, null, 2));
 }
 
