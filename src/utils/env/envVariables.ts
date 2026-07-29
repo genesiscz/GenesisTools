@@ -126,7 +126,11 @@ export const env = {
     brave: createApiKeyAccessor(["BRAVE_API_KEY"]),
 
     google: {
-        ...createApiKeyAccessor(["GOOGLE_API_KEY"]),
+        // GOOGLE_GENERATIVE_AI_API_KEY is what the bare @ai-sdk/google singleton
+        // read on its own. It was therefore invisible to this facade and to every
+        // config-based audit — and would have stopped working the moment the
+        // singleton path went away. Naming it here keeps it alive and visible.
+        ...createApiKeyAccessor(["GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"]),
         getRateLimitMs: () => parseIntEnv("GOOGLE_RATE_LIMIT_MS", 0),
     },
 

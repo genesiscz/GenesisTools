@@ -68,9 +68,11 @@ export class ProviderManager {
                 continue;
             }
 
-            // Env var first, then an AIConfig account of this provider type
-            // (whose key may itself be an `apiKeyEnv` reference).
-            const apiKey = env.ai.getByEnvKey(config.envKey) ?? aiConfig.getProviderApiKey(config.name);
+            // Configured account first, environment second. The old order was the
+            // reverse, so an ambient variable silently outranked the account the
+            // user had configured and you could not tell which key was spent.
+            // The environment still resolves keys — it is just no longer the winner.
+            const apiKey = aiConfig.getProviderApiKey(config.name) ?? env.ai.getByEnvKey(config.envKey);
             if (!apiKey) {
                 continue;
             }
@@ -324,31 +326,41 @@ export class ProviderManager {
     }
 
     private async createProvider(config: ProviderConfig, apiKey?: string): Promise<AiSdkProvider> {
-        // Explicit key (env var or AIConfig account, possibly env-referenced via
-        // `apiKeyEnv`) — the bare SDK singletons only read their own env vars,
-        // so account-sourced keys need the create* factories.
+        // Account key first, then the variable this provider declares. What is
+        // gone is the third path: the bare SDK singletons, which read their own
+        // environment variables internally. Those made a key's origin
+        // unauditable, and for openai-compatible providers they were an outright
+        // bug — with no key resolved, the SDK fell back to OPENAI_API_KEY and
+        // sent it to openrouter.ai / api.x.ai / api.jina.ai.
         const key = apiKey ?? env.ai.getByEnvKey(config.envKey);
+
+        if (!key) {
+            throw new Error(
+                `No API key for ${config.name}. Set ${config.envKey}, or configure an account: ` +
+                    `tools ai config account add --provider ${config.name}`
+            );
+        }
 
         try {
             switch (config.type) {
                 case "openai": {
-                    const { createOpenAI, openai } = await import("@ai-sdk/openai");
-                    return key ? createOpenAI({ apiKey: key }) : openai;
+                    const { createOpenAI } = await import("@ai-sdk/openai");
+                    return createOpenAI({ apiKey: key });
                 }
 
                 case "anthropic": {
-                    const { anthropic, createAnthropic } = await import("@ai-sdk/anthropic");
-                    return key ? createAnthropic({ apiKey: key }) : anthropic;
+                    const { createAnthropic } = await import("@ai-sdk/anthropic");
+                    return createAnthropic({ apiKey: key });
                 }
 
                 case "google": {
-                    const { createGoogleGenerativeAI, google } = await import("@ai-sdk/google");
-                    return key ? createGoogleGenerativeAI({ apiKey: key }) : google;
+                    const { createGoogleGenerativeAI } = await import("@ai-sdk/google");
+                    return createGoogleGenerativeAI({ apiKey: key });
                 }
 
                 case "groq": {
-                    const { createGroq, groq } = await import("@ai-sdk/groq");
-                    return key ? createGroq({ apiKey: key }) : groq;
+                    const { createGroq } = await import("@ai-sdk/groq");
+                    return createGroq({ apiKey: key });
                 }
 
                 case "openai-compatible": {

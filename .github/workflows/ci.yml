@@ -151,6 +151,11 @@ jobs:
         timeout-minutes: 1
         run: bash scripts/ci/logging-guard.sh
 
+      - name: AI credential resolution guard
+        if: runner.os == 'Linux'
+        timeout-minutes: 1
+        run: bash scripts/ci/ai-credentials-guard.sh
+
       - name: Package boundary guard
         if: runner.os == 'Linux'
         timeout-minutes: 1
