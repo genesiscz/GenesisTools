@@ -220,6 +220,21 @@ describe("marker scanning is gated on a failure envelope", () => {
     });
 });
 
+describe("malformed JSON", () => {
+    test("wraps an unparseable body in an InstagramError instead of a raw SyntaxError", async () => {
+        // `startsWith("{")` only rules out the HTML shell. A truncated body still
+        // reaches the parser, and a raw SyntaxError escapes explainError's
+        // InstagramError branch to print a parser message at the user.
+        mockResponse('{"reels": {"123": {"items": [', 200);
+
+        const error = (await getJson("/x", { label: "test" }).catch((err) => err)) as InstagramError;
+
+        expect(error.name).toBe("InstagramError");
+        expect(error.kind).toBe("network");
+        expect(error.message).toContain("malformed JSON");
+    });
+});
+
 describe("www-claim isolation between auth modes", () => {
     test("never replays the session's claim on a later anonymous request", async () => {
         // The claim is minted against the caller Instagram answered. Echoing the
