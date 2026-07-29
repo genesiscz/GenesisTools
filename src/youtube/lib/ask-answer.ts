@@ -117,7 +117,11 @@ export async function answerOverVideos(opts: AnswerOverVideosOpts): Promise<Answ
         indexedNow += result.indexed;
     }
 
-    const searchedVideoIds = withTranscript.filter((videoId) => !skippedUnindexed.includes(videoId));
+    // Set, not `Array.includes`: with the budget above defaulting to
+    // MAX_LAZY_INDEX_PER_ASK, a channel ask leaves nearly everything it found in
+    // `skippedUnindexed`, so both sides of this filter carry thousands of ids.
+    const skipped = new Set(skippedUnindexed);
+    const searchedVideoIds = withTranscript.filter((videoId) => !skipped.has(videoId));
     const videos = yt.db.getVideosByIds(searchedVideoIds);
     const metaById = new Map(videos.map((video) => [video.id, video]));
     const crossVideo =
