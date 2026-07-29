@@ -1,6 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { extractBearerToken } from "@app/ai-proxy/lib/auth-middleware";
 import type { AiProxyClientConfig, AiProxyConfig, AiProxyProviderType } from "@app/ai-proxy/lib/types";
+import { logger } from "@genesiscz/utils/logger";
+import { isSecureRef, resolveSecret } from "@genesiscz/utils/security";
 
 export const OWNER_CLIENT_NAME = "owner";
 
@@ -60,15 +62,27 @@ export function validateClients(clients: AiProxyClientConfig[] | undefined): str
 
         names.add(client.name);
 
-        if (typeof client.key !== "string" || client.key.length < MIN_KEY_LENGTH) {
-            problems.push(`client "${client.name}": key must be a string of at least ${MIN_KEY_LENGTH} characters`);
-        }
+        // A SecureRef is validated by its shape; its length lives in the vault
+        // and reading it here would need the master key at config-validation time.
+        if (isSecureRef(client.key)) {
+            const identity = client.key.path;
 
-        if (keys.has(client.key)) {
-            problems.push(`duplicate client key (client "${client.name}")`);
-        }
+            if (keys.has(identity)) {
+                problems.push(`duplicate client key (client "${client.name}")`);
+            }
 
-        keys.add(client.key);
+            keys.add(identity);
+        } else if (typeof client.key !== "string" || client.key.length < MIN_KEY_LENGTH) {
+            problems.push(
+                `client "${client.name}": key must be a vault reference or a string of at least ${MIN_KEY_LENGTH} characters`
+            );
+        } else {
+            if (keys.has(client.key)) {
+                problems.push(`duplicate client key (client "${client.name}")`);
+            }
+
+            keys.add(client.key);
+        }
 
         if (client.allowedProviders !== undefined && !Array.isArray(client.allowedProviders)) {
             problems.push(`client "${client.name}": allowedProviders must be an array`);
@@ -108,8 +122,12 @@ function digestsEqual(a: string, b: string): boolean {
  * Resolve the presented Bearer to a client identity. The legacy proxyApiKey is
  * the implicit "owner". No early exit: every candidate is compared so a match's
  * list position is not observable via timing.
+ *
+ * Async because a client key may be a vault pointer rather than a literal. A
+ * pointer that will not resolve (no master key, entry deleted) is skipped like
+ * any non-matching key — the request gets a 401, never someone else's identity.
  */
-export function resolveClient(req: Request, config: AiProxyConfig): ResolvedClient | null {
+export async function resolveClient(req: Request, config: AiProxyConfig): Promise<ResolvedClient | null> {
     const token = extractBearerToken(req);
 
     if (!token) {
@@ -123,11 +141,13 @@ export function resolveClient(req: Request, config: AiProxyConfig): ResolvedClie
     }
 
     for (const client of Array.isArray(config.clients) ? config.clients : []) {
-        if (typeof client.key !== "string") {
+        const key = await clientKey(client);
+
+        if (key === undefined) {
             continue;
         }
 
-        const matches = digestsEqual(token, client.key);
+        const matches = digestsEqual(token, key);
 
         if (matches && !client.disabled && resolved === null) {
             resolved = { name: client.name, isOwner: false, config: client };
@@ -135,6 +155,27 @@ export function resolveClient(req: Request, config: AiProxyConfig): ResolvedClie
     }
 
     return resolved;
+}
+
+async function clientKey(client: AiProxyClientConfig): Promise<string | undefined> {
+    if (typeof client.key === "string") {
+        return client.key;
+    }
+
+    if (!isSecureRef(client.key)) {
+        return undefined;
+    }
+
+    const value = await resolveSecret(client.key);
+
+    if (value === undefined) {
+        logger.warn(
+            { client: client.name, path: client.key.path },
+            "ai-proxy: client key is a vault reference that did not resolve — that client cannot authenticate"
+        );
+    }
+
+    return value;
 }
 
 /**
