@@ -1,5 +1,5 @@
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -107,11 +107,20 @@ async function runWatch(all?: boolean): Promise<void> {
 
     out.printlnErr(pc.dim("watch · every 2s · Ctrl+C to stop"));
     for (;;) {
-        clear();
-        const teams = discoverTeams({ all });
-        out.println(`${pc.dim(new Date().toLocaleTimeString())}  tools claude teams${all ? " --all" : ""}`);
-        out.println("");
-        printTeamsList(teams);
+        try {
+            clear();
+            const teams = discoverTeams({ all });
+            out.println(`${pc.dim(new Date().toLocaleTimeString())}  tools claude teams${all ? " --all" : ""}`);
+            out.println("");
+            printTeamsList(teams);
+        } catch (error) {
+            // One bad tick must not end the watch: the usual causes are transient
+            // (a team config being rewritten, a transcript truncated mid-scan) and
+            // the next tick recovers. Report it and keep the screen alive.
+            logger.warn({ error, all }, "[teams] watch tick failed; retrying on the next tick");
+            out.printlnErr(pc.red(`watch tick failed: ${error instanceof Error ? error.message : String(error)}`));
+        }
+
         await Bun.sleep(2000);
     }
 }
