@@ -120,6 +120,12 @@ export interface CoreChatOptions {
      * per account and reused, while tags change from one request to the next.
      */
     headers?: Record<string, string | undefined>;
+    /**
+     * Cancels the call. A streamed call that is aborted mid-flight ends its
+     * stream rather than throwing, so whatever `onChunk` already emitted is the
+     * partial answer — that is what `MiniAgent.interject` keeps in history.
+     */
+    abortSignal?: AbortSignal;
     stream?: boolean;
     /** Required when `stream` is set: where text deltas go. */
     onChunk?: (text: string) => void;
@@ -166,6 +172,7 @@ export async function coreChat(options: CoreChatOptions): Promise<CoreChatResult
         system: effectiveSystemPrompt(target.systemPromptPrefix, options.system),
         providerOptions: buildProviderOptions(target.providerType),
         ...(options.headers ? { headers: options.headers } : {}),
+        ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
         ...(options.maxTokens ? { maxOutputTokens: options.maxTokens } : {}),
         ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
         ...(hasTools && tools ? { tools, stopWhen: stepCountIs(options.maxSteps ?? DEFAULT_MAX_STEPS) } : {}),
@@ -206,6 +213,14 @@ export async function coreChat(options: CoreChatOptions): Promise<CoreChatResult
         } else if (part.type === "tool-result") {
             options.onToolResult?.(part.toolName, "output" in part ? part.output : undefined);
         }
+    }
+
+    if (options.abortSignal?.aborted) {
+        // `result.usage` / `result.response` never settle for a cancelled call.
+        // The text collected so far is the answer the caller gets.
+        log.debug({ model: target.label, chars: content.length }, "stream aborted — returning partial text");
+
+        return { content };
     }
 
     const usage = await result.usage;
