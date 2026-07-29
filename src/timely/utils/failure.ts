@@ -1,4 +1,4 @@
-import { isAuthStatus, TimelyHttpError } from "@app/timely/api/errors";
+import { isCredentialRejection, TimelyHttpError } from "@app/timely/api/errors";
 import type { TimelyService } from "@app/timely/api/service";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
@@ -24,7 +24,7 @@ export async function reportTimelyFailure(err: unknown, service: SessionProbe): 
         return;
     }
 
-    if (!isAuthStatus(err.status)) {
+    if (!isCredentialRejection(err.status)) {
         logger.error(`Timely request failed (HTTP ${err.status}): ${err.message}`);
         return;
     }

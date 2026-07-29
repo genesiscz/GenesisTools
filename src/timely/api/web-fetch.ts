@@ -1,10 +1,32 @@
 import { webSessionHeaders } from "@app/timely/utils/cookie";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { TimelyHttpError, type TimelyRequestScope } from "./errors";
+import { isSessionRedirect, TimelyHttpError, type TimelyRequestScope } from "./errors";
 
 /** Without a deadline a stalled app.timelyapp.com leaves the CLI waiting forever with no output. */
 const WEB_REQUEST_TIMEOUT_MS = 30_000;
+
+export interface TimelyWebRequestOptions {
+    url: string;
+    headers: Record<string, string>;
+    timeoutMs: number;
+}
+
+/**
+ * Every request to a Timely web host goes through here, so the redirect policy is
+ * decided once. Following redirects is what turns a rejected session into a 200
+ * sign-in page, which then reads as an ordinary (empty, or malformed) result. Both
+ * the login probe and the runtime fetches need that not to happen, and a rule that
+ * has to be remembered at two call sites is a rule that gets remembered at one.
+ */
+export function fetchTimelyWebResponse(options: TimelyWebRequestOptions): Promise<Response> {
+    return fetch(options.url, {
+        method: "GET",
+        headers: options.headers,
+        redirect: "manual",
+        signal: AbortSignal.timeout(options.timeoutMs),
+    });
+}
 
 export interface TimelyWebJsonOptions {
     url: string;
@@ -28,11 +50,21 @@ export interface TimelyWebJsonOptions {
 export async function fetchTimelyWebJson(options: TimelyWebJsonOptions): Promise<unknown> {
     const { url, accessToken, cookie, scope, label } = options;
 
-    const response = await fetch(url, {
-        method: "GET",
+    const response = await fetchTimelyWebResponse({
+        url,
         headers: webSessionHeaders({ accessToken, cookie }),
-        signal: AbortSignal.timeout(options.timeoutMs ?? WEB_REQUEST_TIMEOUT_MS),
+        timeoutMs: options.timeoutMs ?? WEB_REQUEST_TIMEOUT_MS,
     });
+
+    if (isSessionRedirect(response.status)) {
+        // Kept as the real 3xx rather than a fabricated 401, because isTimelyAuthFailure
+        // now treats it as a refused session either way: the loop aborts on the first
+        // date and reportTimelyFailure names the cookie, instead of thirty empty days.
+        throw new TimelyHttpError(
+            `${label} was redirected to a sign-in page (${response.status}), so the session was not accepted`,
+            { status: response.status, scope, usedCookie: Boolean(cookie) }
+        );
+    }
 
     const body = await response.text();
 

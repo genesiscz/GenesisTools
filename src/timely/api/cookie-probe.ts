@@ -2,6 +2,8 @@ import { type SaveCookieResult, saveCookie } from "@app/timely/utils/cookie";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { Storage } from "@genesiscz/utils/storage";
+import { isSessionRedirect } from "./errors";
+import { fetchTimelyWebResponse } from "./web-fetch";
 
 /** Never let a stalled network leave `login cookies` waiting with no output. */
 const PROBE_TIMEOUT_MS = 15_000;
@@ -53,11 +55,11 @@ export async function probeAndSaveCookie(options: ProbeAndSaveCookieOptions): Pr
     let response: Response;
 
     try {
-        response = await fetch(url, {
+        // Shared with every runtime fetch, so the no-follow policy is decided once.
+        response = await fetchTimelyWebResponse({
+            url,
             headers: { accept: "application/json", Cookie: cookie },
-            // Following the bounce to sign-in would turn a dead cookie into a 200.
-            redirect: "manual",
-            signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+            timeoutMs: PROBE_TIMEOUT_MS,
         });
     } catch (error) {
         logger.debug({ error, url }, "[login] the cookie probe could not reach Timely; nothing saved");
@@ -82,7 +84,7 @@ export async function probeAndSaveCookie(options: ProbeAndSaveCookieOptions): Pr
 
 /** Undefined only when the response is a genuine, authenticated suggested_entries payload. */
 async function rejectionFor(response: Response): Promise<CookieRejection | undefined> {
-    if (response.status >= 300 && response.status < 400) {
+    if (isSessionRedirect(response.status)) {
         return "redirected";
     }
 
