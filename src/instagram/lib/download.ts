@@ -29,6 +29,23 @@ function safeSegment(value: string): string {
     return cleaned.length > 0 ? cleaned : "unknown";
 }
 
+/**
+ * `mediaUrl` is remote input handed straight to `fetch`, and Bun's `fetch`
+ * resolves `file://` as happily as `https://` — it answers 200 with the file's
+ * contents. A media URL that is not https would therefore copy something off
+ * this machine into the output directory wearing a story's file name, so the
+ * scheme is checked before the request rather than trusted because of where the
+ * JSON came from.
+ */
+function isDownloadableUrl(value: string): boolean {
+    try {
+        return new URL(value).protocol === "https:";
+    } catch (error) {
+        log.debug({ error, value }, "story item carried a media url that will not parse");
+        return false;
+    }
+}
+
 function fileNameFor(item: StoryItem, prefix: string): string {
     const stamp = item.takenAt.toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const ext = item.isVideo ? "mp4" : "jpg";
@@ -96,6 +113,12 @@ export async function downloadReels(
     // parallel bursts against Instagram are what trips account-level blocks.
     for (const [index, job] of jobs.entries()) {
         const target = join(outputDir, fileNameFor(job.item, job.prefix));
+
+        if (!isDownloadableUrl(job.item.mediaUrl)) {
+            log.warn({ id: job.item.id }, "refusing a non-https media url");
+            onProgress?.(index + 1, jobs.length);
+            continue;
+        }
 
         try {
             const response = await fetch(job.item.mediaUrl);

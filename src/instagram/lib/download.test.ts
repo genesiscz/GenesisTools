@@ -74,6 +74,25 @@ describe("downloadReels", () => {
         expect(basename(results[0].path)).not.toContain("..");
     });
 
+    test("refuses a file:// media url instead of copying a local file into the output", async () => {
+        // Bun's fetch resolves file:// and answers 200 with the contents, so an
+        // unvalidated media url out of Instagram's JSON is a local-file read.
+        let requested = 0;
+        globalThis.fetch = mock(async () => {
+            requested += 1;
+            return new Response("secret", { status: 200 });
+        }) as unknown as typeof fetch;
+        const dir = await scratchDir();
+
+        const failure = await downloadReels(
+            [reelWith(storyItem({ mediaUrl: "file:///etc/hosts" }), "someone")],
+            dir
+        ).catch((error) => error);
+
+        expect(requested).toBe(0);
+        expect(failure).toBeInstanceOf(Error);
+    });
+
     test("reports every-download-failed rather than returning an empty success", async () => {
         globalThis.fetch = mock(async () => new Response("nope", { status: 404 })) as unknown as typeof fetch;
         const dir = await scratchDir();

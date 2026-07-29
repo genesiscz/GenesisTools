@@ -221,6 +221,14 @@ async function emitReels(
     });
 
     spinner.stop(`Downloaded ${results.length} file${results.length === 1 ? "" : "s"} to ${dir}`);
+
+    // downloadReels only throws when EVERY item failed, so a partial failure would
+    // otherwise read as a complete download that happened to be short.
+    const expected = reels.reduce((sum, reel) => sum + reel.items.length, 0);
+    if (results.length < expected) {
+        out.log.warn(`${expected - results.length} of ${expected} items failed to download.`);
+        log.warn({ expected, downloaded: results.length, dir }, "partial story download");
+    }
 }
 
 enhanceHelp(program);
