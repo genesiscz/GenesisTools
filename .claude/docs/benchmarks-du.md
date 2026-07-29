@@ -614,7 +614,7 @@ left 2.
 
 ---
 
-## 2026-07-29 05:10 — Review round 2 (PR #302): the eviction gap, answered
+## 2026-07-29 07:05 — Review round 2 (PR #302): the eviction gap, answered
 
 Still no C change, so still no benchmark owed (`clonesize.c` byte-identical since
 `03a7ded22`).
