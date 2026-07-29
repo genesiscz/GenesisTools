@@ -1,6 +1,7 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { listXaiProxyModels } from "@app/ai-proxy/lib/model-meta";
 import { assertApiKeySourceAllowed } from "@app/ai-proxy/lib/providers/api-key-guard";
+import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
 import { relayHeaders, rewriteSessionModel, toWsBase } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider, RealtimeConnectTarget } from "@app/ai-proxy/lib/providers/types";
 import { resolveXaiApiKey, XAI_API_BASE_URL } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
@@ -42,7 +43,7 @@ export class XaiApiKeyProvider implements ProxyProvider {
 
     static async create(account: AiProxyAccountConfig): Promise<XaiApiKeyProvider> {
         const resolved = resolveXaiApiKey(account);
-        const envName = account.apiKeyEnv ?? env.x.getApiEnvKey() ?? "XAI_API_KEY";
+        const envName = defaultApiKeyEnvName(account);
 
         if (!resolved) {
             throw new Error(
