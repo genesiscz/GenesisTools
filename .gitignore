@@ -231,3 +231,6 @@ vercel-skills
 .repowise/
 .repowise-workspace.yaml
 .claude/plans/sweep-p6/
+
+# skillopt scratch
+.skillopt-sleep/
