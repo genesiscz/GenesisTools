@@ -18,6 +18,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { finishKeychainSession, injectSecondaryLogin, inspectKeychainBeforeInject } from "../lib/keychain-session";
+import { shellSingleQuote } from "../lib/shell-quote";
 import {
     installTeammateWrapper,
     removeTeammateWrapper,
@@ -77,10 +78,6 @@ async function ensureOnboardingSkippedForOAuthToken(): Promise<void> {
     }
 }
 
-function shellQuote(arg: string): string {
-    return `'${arg.replace(/'/g, `'\\''`)}'`;
-}
-
 /** Same bound findClaudeCommand uses — an rc file that blocks must not hang the launch. */
 const CMUX_PROBE_TIMEOUT_MS = 3000;
 
@@ -126,7 +123,7 @@ async function findCmuxTeamsCommand(shell: string): Promise<string> {
     }
 
     logger.debug({ path, shell }, "[start] resolved cmux for claude-teams launch");
-    return `${shellQuote(path)} claude-teams`;
+    return `${shellSingleQuote(path)} claude-teams`;
 }
 
 /**
@@ -652,7 +649,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
 
     const extraArgs = buildLaunchArgs({ modelId, resumeArgs, passthrough, cmux: opts.cmux === true });
 
-    const suffix = extraArgs.length > 0 ? ` ${extraArgs.map(shellQuote).join(" ")}` : "";
+    const suffix = extraArgs.length > 0 ? ` ${extraArgs.map(shellSingleQuote).join(" ")}` : "";
     const detail = [
         account.label ? `(${account.label})` : "",
         modelId ? `model ${pc.magenta(modelId)}` : "",
