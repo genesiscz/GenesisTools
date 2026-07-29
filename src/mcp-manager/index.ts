@@ -156,10 +156,12 @@ program
 program
     .command("list")
     .description("List all MCP servers across all providers")
-    .action(async () => {
+    .option("--json", "Output servers as JSON incl. transport/connection details (machine-readable)")
+    .option("--enabled-only", "With --json, only include servers enabled in at least one provider")
+    .action(async (cmdOptions) => {
         const opts = program.opts();
         const providers = parseProviderArg(opts.provider, getProviders());
-        await listServers(providers);
+        await listServers(providers, { json: cmdOptions.json, enabledOnly: cmdOptions.enabledOnly });
     });
 
 // enable command
