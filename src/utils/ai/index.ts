@@ -5,6 +5,7 @@ export type { AccountResolver } from "./resolvers";
 export { ensureResolversInitialized, getResolver, registerResolver, resetResolvers } from "./resolvers";
 
 import { Embedder } from "./tasks/Embedder";
+import { ai } from "./tasks/facade";
 import { Summarizer } from "./tasks/Summarizer";
 import type { SpeakOptions } from "./tasks/Synthesizer";
 import { Synthesizer } from "./tasks/Synthesizer";
@@ -49,6 +50,7 @@ export {
     getTaskPrefix,
 } from "./ModelRegistry";
 export { Embedder } from "./tasks/Embedder";
+export { ai, type TaskCommonOptions } from "./tasks/facade";
 export { Summarizer } from "./tasks/Summarizer";
 export type { ProviderSelector, SpeakOptions, VoicesByProvider } from "./tasks/Synthesizer";
 export { Synthesizer } from "./tasks/Synthesizer";
@@ -57,6 +59,14 @@ export { Translator } from "./tasks/Translator";
 export { TranscriptionManager, transcriptionManager } from "./transcription/TranscriptionManager";
 export * from "./types";
 
+/**
+ * @deprecated Use `ai.*` (`./tasks/facade`). Every member here forwards to it.
+ *
+ * The two objects differ in exactly one place: `AI.embed` takes one string and
+ * returns one result, while `ai.embed` is batch-first. That arity change is why
+ * this alias still exists rather than being a re-export — it keeps the ~20 call
+ * sites that embed a single string compiling until they are moved.
+ */
 export const AI = {
     Embedder,
     Synthesizer,
@@ -66,13 +76,13 @@ export const AI = {
     TranscriptionManager,
 
     async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult> {
-        const e = await Embedder.create();
+        const [result] = await ai.embed([text], options);
 
-        try {
-            return await e.embed(text, options);
-        } finally {
-            e.dispose();
+        if (!result) {
+            throw new Error("Embedding provider returned no vector");
         }
+
+        return result;
     },
 
     async transcribe(audio: Buffer | string, options?: TranscribeOptions): Promise<TranscriptionResult> {
@@ -85,21 +95,11 @@ export const AI = {
     },
 
     async translate(text: string, options: TranslateOptions): Promise<TranslationResult> {
-        const t = await Translator.create();
-        try {
-            return await t.translate(text, options);
-        } finally {
-            t.dispose();
-        }
+        return ai.translate(text, options);
     },
 
     async summarize(text: string, options?: SummarizeOptions): Promise<SummarizationResult> {
-        const s = await Summarizer.create();
-        try {
-            return await s.summarize(text, options);
-        } finally {
-            s.dispose();
-        }
+        return ai.summarize(text, options);
     },
 
     async speak(text: string, options?: SpeakOptions): Promise<void> {

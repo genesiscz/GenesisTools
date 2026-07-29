@@ -35,6 +35,12 @@ export function registerBuiltInPlugins(): void {
     registered = true;
 }
 
-export function _resetBuiltInPluginsForTest(): void {
-    registered = false;
+/**
+ * `state = true` claims the built-ins are already registered, which is how a
+ * test substitutes fakes for real plugins under the SAME ids (the chain in
+ * `tasks/resolve-task.ts` is ordered by real provider ids, so renaming the fakes
+ * would test a different order than the one that ships).
+ */
+export function _resetBuiltInPluginsForTest(state = false): void {
+    registered = state;
 }

@@ -116,7 +116,8 @@ export async function resolveModelTarget(
         );
     }
 
-    const modelId = request.modelId ?? defaultModelIdFor(account.provider, capability);
+    const fromFallbackTable = opts.fallbackModelId?.(account.provider, capability);
+    const modelId = request.modelId ?? defaultModelIdFor(account.provider, capability) ?? fromFallbackTable;
 
     if (!modelId) {
         throw new ModelResolutionError(
@@ -126,7 +127,10 @@ export async function resolveModelTarget(
         );
     }
 
-    const model = lookupModel(modelId, account.provider);
+    // A model the caller's own default table named is expected to be absent from
+    // the catalog (that is why the hook exists), so warning about it would fire
+    // on every ASR/TTS call and say nothing new.
+    const model = lookupModel(modelId, account.provider, { warnUnlisted: modelId !== fromFallbackTable });
     const via = request.modelId ? request.via : `${request.via} + catalog default`;
 
     log.debug(
@@ -327,7 +331,7 @@ function defaultModelIdFor(providerId: string, capability: Capability): string |
     return undefined;
 }
 
-function lookupModel(modelId: string, providerId: string): ResolvedModel {
+function lookupModel(modelId: string, providerId: string, opts: { warnUnlisted: boolean }): ResolvedModel {
     const entry = byId(modelId);
 
     if (entry) {
@@ -335,10 +339,13 @@ function lookupModel(modelId: string, providerId: string): ResolvedModel {
     }
 
     const { log } = logger.scoped("ai-core");
-    log.warn(
-        { model: modelId, provider: providerId },
-        "model is not in the static catalog; context window and pricing are unknown for this call"
-    );
+    const message = "model is not in the static catalog; context window and pricing are unknown for this call";
+
+    if (opts.warnUnlisted) {
+        log.warn({ model: modelId, provider: providerId }, message);
+    } else {
+        log.debug({ model: modelId, provider: providerId }, message);
+    }
 
     return { id: modelId, provider: providerId, unlisted: true };
 }
