@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
     accessSync,
+    chmodSync,
     constants,
     existsSync,
     mkdtempSync,
     readdirSync,
+    readFileSync,
     statSync,
     utimesSync,
     writeFileSync,
@@ -65,6 +67,25 @@ describe("installTeammateWrapper / removeTeammateWrapper", () => {
         accessSync(path, constants.X_OK);
         // The file holds the OAuth token in plaintext — group/other must see nothing.
         expect(statSync(path).mode & 0o077).toBe(0);
+    });
+
+    test("a wrapper dir inherited with a loose mode is tightened before the token is written", () => {
+        const dir = freshDir();
+        chmodSync(dir, 0o755);
+
+        installTeammateWrapper({ dir, id: "tighten", claudeBin: "/bin/claude", env: AUTH });
+
+        expect(statSync(dir).mode & 0o077).toBe(0);
+    });
+
+    test("refuses to write the token into a pre-created file, whose mode would be its own", () => {
+        const dir = freshDir();
+        const squatted = join(dir, "wrapper-squat.sh");
+        writeFileSync(squatted, "", { mode: 0o666 });
+
+        expect(() => installTeammateWrapper({ dir, id: "squat", claudeBin: "/bin/claude", env: AUTH })).toThrow();
+        // The token never reached the file the attacker could read.
+        expect(readFileSync(squatted, "utf8")).toBe("");
     });
 
     test("remove unlinks the token file, and tolerates unknown/undefined paths", () => {

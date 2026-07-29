@@ -14,6 +14,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { shellSingleQuote } from "./shell-quote";
 
 /**
  * Claude Code's tmux teammate spawn only forwards a hard-coded env allowlist
@@ -54,11 +55,6 @@ export interface InstalledTeammateWrapper {
     path: string;
 }
 
-/** POSIX single-quote, same as start.ts shellQuote. */
-export function shellSingleQuote(value: string): string {
-    return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
 export function teammateWrappersDir(): string {
     return join(env.paths.getHome() ?? homedir(), ".genesis-tools", "claude", "teammate-wrappers");
 }
@@ -83,8 +79,8 @@ export function resolveClaudeBinaryForTeammates(): string {
 
             accessSync(candidate, constants.X_OK);
             return realpathSync(candidate);
-        } catch {
-            // try next
+        } catch (error) {
+            logger.debug({ error, candidate }, "[teammate-wrapper] candidate claude binary not usable; trying next");
         }
     }
 
@@ -130,9 +126,17 @@ exec ${shellSingleQuote(claudeBin)} "$@"
 `;
 }
 
+/** The wrapper holds the OAuth token in plaintext — owner-only, never group/other. */
+const WRAPPER_MODE = 0o700;
+
 export function installTeammateWrapper(input: InstallTeammateWrapperInput): InstalledTeammateWrapper {
     const dir = input.dir ?? teammateWrappersDir();
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    mkdirSync(dir, { recursive: true, mode: WRAPPER_MODE });
+
+    // mkdirSync's mode applies only when it CREATES the directory. A dir inherited
+    // from an older build (or a looser umask) keeps its own mode, so re-assert it
+    // before writing a token inside.
+    chmodSync(dir, WRAPPER_MODE);
 
     const id = input.id ?? `${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
     const path = join(dir, `wrapper-${id}.sh`);
@@ -141,13 +145,21 @@ export function installTeammateWrapper(input: InstallTeammateWrapperInput): Inst
         env: input.env,
     });
 
-    writeFileSync(path, script, { mode: 0o700, flag: "w" });
+    // "wx" (exclusive create) rather than "w": open(2) ignores the creation mode
+    // when the file already exists, so writing into a pre-created wrapper would
+    // silently inherit ITS mode and put the OAuth token there. Failing is correct —
+    // the caller degrades to teammates without OAuth instead of leaking a token.
+    writeFileSync(path, script, { mode: WRAPPER_MODE, flag: "wx" });
 
-    // writeFileSync mode is umask-masked on some systems; force 0700.
-    try {
-        chmodSync(path, 0o700);
-    } catch {
-        // best-effort
+    // umask can only clear permission bits, never add them, so the mode above is an
+    // upper bound on any POSIX filesystem. Verify anyway and fail closed: a mount
+    // that ignores creation modes must not silently hand out a readable token.
+    chmodSync(path, WRAPPER_MODE);
+    const mode = statSync(path).mode & 0o777;
+
+    if ((mode & 0o077) !== 0) {
+        unlinkSync(path);
+        throw new Error(`teammate wrapper ${path} landed with mode ${mode.toString(8)}; refusing to store the token`);
     }
 
     logger.debug(
@@ -195,8 +207,8 @@ export function sweepStaleTeammateWrappers(maxAgeMs = 7 * 24 * 60 * 60 * 1000, d
                     unlinkSync(full);
                     removed++;
                 }
-            } catch {
-                // skip
+            } catch (error) {
+                logger.debug({ error, full }, "[teammate-wrapper] could not sweep wrapper; leaving it in place");
             }
         }
     } catch (error) {
