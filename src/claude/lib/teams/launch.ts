@@ -6,6 +6,7 @@ import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
+import { shellSingleQuote } from "../shell-quote";
 import type { TeamMemberView, TeamView } from "./types";
 
 export type LaunchMode = "focus" | "attach" | "split";
@@ -28,10 +29,6 @@ export interface LaunchResult {
     action: "focused" | "launched" | "split" | "noop";
     detail: string;
     command?: string;
-}
-
-function shellQuote(arg: string): string {
-    return `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
 /**
@@ -78,9 +75,9 @@ export function buildTeammateClaudeArgs(team: TeamView, teammate: TeamMemberView
  */
 export function buildToolsCcTeammateCommand(account: string, team: TeamView, teammate: TeamMemberView): string {
     const args = buildTeammateClaudeArgs(team, teammate);
-    const quoted = args.map(shellQuote).join(" ");
+    const quoted = args.map(shellSingleQuote).join(" ");
     const cwd = teammate.member.cwd || team.cwd || process.cwd();
-    return `cd ${shellQuote(cwd)} && tools cc run ${shellQuote(account)} -- ${quoted}`;
+    return `cd ${shellSingleQuote(cwd)} && tools cc run ${shellSingleQuote(account)} -- ${quoted}`;
 }
 
 async function resolveAccount(preferred?: string): Promise<string> {
