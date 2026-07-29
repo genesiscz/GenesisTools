@@ -31,6 +31,9 @@ export interface TimelyConfig {
     selectedProjectId?: number; // Default project ID (optional)
     accounts?: TimelyAccount[]; // Cached list of accounts
     projects?: TimelyProject[]; // Cached list of projects
+    cookie?: string; // Legacy location of the browser session Cookie header; now its own 0600 file, read once to migrate
+    cookieUpdatedAt?: number; // Unix seconds, when the cookie was last stored
+    authenticatedAt?: number; // Unix seconds of the last authorization-code exchange (NOT bumped by refreshes)
     user?: {
         id: number;
         email: string;

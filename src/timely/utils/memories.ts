@@ -1,4 +1,7 @@
+import { isTimelyAuthFailure } from "@app/timely/api/errors";
+import { fetchTimelyWebJson } from "@app/timely/api/web-fetch";
 import type { TimelyEntry } from "@app/timely/types";
+import { readStoredCookie } from "@app/timely/utils/cookie";
 import { logger } from "@genesiscz/utils/logger";
 import type { Storage } from "@genesiscz/utils/storage";
 
@@ -31,11 +34,17 @@ export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Prom
     const today = new Date().toISOString().slice(0, 10);
     const sortedDates = [...dates].sort();
 
-    logger.debug(`[memories] Fetching memories for ${sortedDates.length} date(s) (today=${today})`);
+    // app.timelyapp.com only honours the browser session cookie; the bearer alone 401s.
+    const cookie = await readStoredCookie(storage);
+
+    logger.debug(
+        `[memories] Fetching memories for ${sortedDates.length} date(s) (today=${today}, browser cookie ${cookie ? "present" : "absent"})`
+    );
 
     const entries: TimelyEntry[] = [];
     const byDate = new Map<string, TimelyEntry[]>();
     const stats = { fetched: 0, cached: 0, failed: 0 };
+    const failedDates: string[] = [];
 
     for (let i = 0; i < sortedDates.length; i++) {
         const date = sortedDates[i];
@@ -47,7 +56,7 @@ export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Prom
             let memories: TimelyEntry[];
 
             if (isToday || force) {
-                memories = await fetchFromApi(accountId, accessToken, date);
+                memories = await fetchFromApi({ accountId, accessToken, cookie, date });
                 if (!isToday) {
                     await storage.putCacheFile(cacheKey, memories, CACHE_TTL);
                 }
@@ -62,7 +71,7 @@ export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Prom
                     stats.cached++;
                     logger.debug(`[memories] ${progress} ${date}: ${memories.length} memories (cached)`);
                 } else {
-                    memories = await fetchFromApi(accountId, accessToken, date);
+                    memories = await fetchFromApi({ accountId, accessToken, cookie, date });
                     await storage.putCacheFile(cacheKey, memories, CACHE_TTL);
                     stats.fetched++;
                     logger.debug(`[memories] ${progress} ${date}: ${memories.length} memories (fetched)`);
@@ -72,10 +81,25 @@ export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Prom
             entries.push(...memories);
             byDate.set(date, memories);
         } catch (err) {
+            if (isTimelyAuthFailure(err)) {
+                // Credentials, not this date: every remaining date fails identically.
+                // Let the caller report it instead of returning a misleading empty list.
+                logger.debug(`[memories] ${progress} ${date}: auth failure, aborting the run`);
+                throw err;
+            }
+
             stats.failed++;
-            logger.debug(`[memories] Failed to fetch memories for ${date}: ${err}`);
-            logger.debug(`[memories] ${progress} ${date}: FAILED`);
+            failedDates.push(date);
+            logger.error(
+                `[memories] ${progress} ${date}: FAILED - ${err instanceof Error ? err.message : String(err)}`
+            );
         }
+    }
+
+    if (stats.failed > 0) {
+        logger.warn(
+            `[memories] ${stats.failed} of ${sortedDates.length} date(s) could not be fetched (${failedDates.join(", ")}); the totals below are incomplete.`
+        );
     }
 
     logger.debug(
@@ -85,15 +109,22 @@ export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Prom
     return { entries, byDate, stats };
 }
 
-async function fetchFromApi(accountId: number, accessToken: string, date: string): Promise<TimelyEntry[]> {
+async function fetchFromApi(options: {
+    accountId: number;
+    accessToken: string;
+    cookie?: string;
+    date: string;
+}): Promise<TimelyEntry[]> {
+    const { accountId, accessToken, cookie, date } = options;
     const url = `https://app.timelyapp.com/${accountId}/suggested_entries.json?date=${date}&spam=true`;
-    const res = await fetch(url, {
-        headers: { accept: "application/json", Authorization: `Bearer ${accessToken}` },
-    });
-    if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-    }
-    return (await res.json()) as TimelyEntry[];
+
+    return (await fetchTimelyWebJson({
+        url,
+        accessToken,
+        cookie,
+        scope: "memories",
+        label: `Memories request for ${date}`,
+    })) as TimelyEntry[];
 }
 
 /**

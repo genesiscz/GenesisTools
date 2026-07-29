@@ -6,9 +6,12 @@ import type {
     TimelyProject,
     TimelyUser,
 } from "@app/timely/types";
+import { readStoredCookie } from "@app/timely/utils/cookie";
 import { logger } from "@genesiscz/utils/logger";
 import type { Storage } from "@genesiscz/utils/storage";
 import type { TimelyApiClient } from "./client";
+import { isTimelyAuthFailure } from "./errors";
+import { fetchTimelyWebJson } from "./web-fetch";
 
 export interface GetEventsParams {
     since?: string; // YYYY-MM-DD
@@ -29,6 +32,14 @@ export class TimelyService {
         private client: TimelyApiClient,
         private storage: Storage
     ) {}
+
+    /**
+     * A guaranteed-fresh access token, for callers that hit a Timely host the client
+     * does not wrap (memories live on app.timelyapp.com, not the 1.1 API host).
+     */
+    async getValidAccessToken(): Promise<string> {
+        return this.client.getValidAccessToken();
+    }
 
     // ============================================
     // Accounts
@@ -148,40 +159,43 @@ export class TimelyService {
             const entries = await this.storage.getFileOrPut<TimelyEntry[]>(
                 cacheKey,
                 async () => {
+                    // Entries live on the web host, which needs the browser session cookie.
+                    const cookie = await readStoredCookie(this.storage);
                     // Try different possible endpoints for entries
                     const endpoints = [`https://app.timelyapp.com/${accountId}/entries.json?id=${entryId}`];
 
                     for (const url of endpoints) {
                         try {
                             logger.debug(`[entry] Trying to fetch ${entryId} from ${url}...`);
-                            const response = await fetch(url, {
-                                method: "GET",
-                                headers: {
-                                    accept: "application/json",
-                                    "content-type": "application/json",
-                                    Authorization: `Bearer ${accessToken}`,
-                                },
+                            const data = await fetchTimelyWebJson({
+                                url,
+                                accessToken,
+                                cookie,
+                                scope: "memories",
+                                label: `Entry request for ${entryId}`,
                             });
 
-                            if (response.ok) {
-                                const data = await response.json();
-                                logger.debug(`[entry] Successfully fetched ${entryId}`);
-                                // Handle both direct data array and wrapped response format
-                                if (Array.isArray(data)) {
-                                    return data;
-                                }
-                                // If wrapped in { data: [...] }, unwrap it
-                                if (data && typeof data === "object" && "data" in data && Array.isArray(data.data)) {
-                                    return data.data;
-                                }
-                                // If it's a single entry object, wrap in array
-                                if (data && typeof data === "object" && "id" in data) {
-                                    return [data as TimelyEntry];
-                                }
-                                return [];
+                            logger.debug(`[entry] Successfully fetched ${entryId}`);
+                            // Handle both direct data array and wrapped response format
+                            if (Array.isArray(data)) {
+                                return data;
                             }
+                            // If wrapped in { data: [...] }, unwrap it
+                            if (data && typeof data === "object" && "data" in data && Array.isArray(data.data)) {
+                                return data.data;
+                            }
+                            // If it's a single entry object, wrap in array
+                            if (data && typeof data === "object" && "id" in data) {
+                                return [data as TimelyEntry];
+                            }
+
+                            return [];
                         } catch (error) {
-                            logger.debug(
+                            if (isTimelyAuthFailure(error)) {
+                                throw error;
+                            }
+
+                            logger.warn(
                                 `[entry] Failed to fetch from ${url}: ${error instanceof Error ? error.message : String(error)}`
                             );
                         }
@@ -197,6 +211,10 @@ export class TimelyService {
             // Storage.getFileOrPut always returns unwrapped data (array of TimelyEntry)
             return entries;
         } catch (error) {
+            if (isTimelyAuthFailure(error)) {
+                throw error;
+            }
+
             logger.debug(
                 `[entry] Error fetching entry ${entryId}: ${error instanceof Error ? error.message : String(error)}`
             );

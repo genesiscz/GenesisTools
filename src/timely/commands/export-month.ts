@@ -1,5 +1,8 @@
+import { isTimelyAuthFailure } from "@app/timely/api/errors";
 import type { TimelyService } from "@app/timely/api/service";
+import { fetchTimelyWebJson } from "@app/timely/api/web-fetch";
 import type { TimelyEvent } from "@app/timely/types";
+import { readStoredCookie } from "@app/timely/utils/cookie";
 import { formatDuration, getDatesInMonth, getMonthDateRange } from "@app/timely/utils/date";
 import { generateReportMarkdown } from "@app/timely/utils/entry-processor";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -59,10 +62,17 @@ async function exportMonthAction(
         process.exit(1);
     }
 
+    // Through the service so an aged-out token is refreshed first; the stored one
+    // may be months stale and would 401 every download below.
+    const accessToken = await service.getValidAccessToken();
+    const cookie = await readStoredCookie(storage);
+
     const dates = getDatesInMonth(monthArg);
     const today = new Date().toISOString().split("T")[0];
 
     logger.info(chalk.yellow(`Downloading suggested_entries.json for ${dates.length} date(s) in ${monthArg}...`));
+
+    const failedDates: string[] = [];
 
     for (const date of dates) {
         const cacheKey = `suggested_entries/suggested_entries-${date}.json`;
@@ -77,26 +87,14 @@ async function exportMonthAction(
                     const url = `https://app.timelyapp.com/${accountId}/suggested_entries.json?date=${date}&spam=true`;
                     logger.debug(`[suggested_entries] Fetching ${date}...`);
 
-                    const response = await fetch(url, {
-                        method: "GET",
-                        headers: {
-                            accept: "application/json",
-                            "content-type": "application/json",
-                            Authorization: `Bearer ${tokens.access_token}`,
-                        },
+                    const data = await fetchTimelyWebJson({
+                        url,
+                        accessToken,
+                        cookie,
+                        scope: "memories",
+                        label: `Suggested entries for ${date}`,
                     });
 
-                    if (!response.ok) {
-                        const errorText = await response.text();
-                        logger.debug(
-                            `[suggested_entries] Failed for ${date}: ${response.status} ${response.statusText}`
-                        );
-                        throw new Error(
-                            `Failed to fetch suggested_entries for ${date}: ${response.status} ${errorText}`
-                        );
-                    }
-
-                    const data = await response.json();
                     logger.debug(
                         `[suggested_entries] Success for ${date}: ${
                             Array.isArray(data) ? `array[${data.length}]` : typeof data
@@ -107,10 +105,23 @@ async function exportMonthAction(
                 ttl
             );
         } catch (error: unknown) {
+            if (isTimelyAuthFailure(error)) {
+                // Credentials, not this date: the remaining 30 downloads would print the
+                // same 401. Stop so the caller can explain it once, with a remedy.
+                throw error;
+            }
+
             const errorMessage = error instanceof Error ? error.message : String(error);
+            failedDates.push(date);
             logger.error(`Failed to download suggested_entries for ${date}: ${errorMessage}`);
             // Continue with other dates even if one fails
         }
+    }
+
+    if (failedDates.length > 0) {
+        logger.warn(
+            `${failedDates.length} of ${dates.length} suggested_entries download(s) failed (${failedDates.join(", ")}); the report below is missing their memories.`
+        );
     }
 
     // Calculate date range
@@ -147,7 +158,7 @@ async function exportMonthAction(
             exportAsCsv(events);
             break;
         case "raw":
-            await exportAsRaw(events, monthArg, accountId, tokens.access_token, service);
+            await exportAsRaw(events, monthArg, accountId, accessToken, service);
             break;
         case "summary":
             await exportAsReport(monthArg, storage, silent, false);
