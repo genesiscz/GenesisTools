@@ -20,6 +20,15 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
     try {
         if (matchRoute(req, "POST", "/api/v1/pipeline", url.pathname)) {
             const body = (await req.json()) as EnqueueBody;
+
+            // The cast above is a claim, not a check. Without this guard a missing or
+            // mistyped `stages` reached `toJobStages` as a non-array and surfaced to
+            // the client as a 500 (`body.stages.map is not a function`) — a bad
+            // request reported as a server fault.
+            if (typeof body.target !== "string" || !Array.isArray(body.stages)) {
+                return jsonError("target (string) and stages (array of stage names) are required", 400);
+            }
+
             const user = resolveUser(req, url, yt.db);
             const result = yt.queue.enqueue({
                 target: body.target,
@@ -85,6 +94,10 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
         if (cancel) {
             const id = parseInt(cancel.id, 10);
             const job = yt.queue.cancel(id);
+
+            if (!job) {
+                return jsonError("job not found", 404);
+            }
 
             return Response.json({ job }, { headers: CORS_HEADERS });
         }
