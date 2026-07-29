@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import { YoutubeConfig } from "@app/youtube/lib/config";
 
 let dir: string;
@@ -17,12 +18,22 @@ afterEach(() => {
 });
 
 describe("config foundations (powerUsers / ai / referrals)", () => {
-    it("defaults to empty powerUsers, empty ai, disabled referrals", async () => {
+    it("defaults to empty powerUsers, grok for the LLM tasks, disabled referrals", async () => {
         const all = await config.getAll();
 
         expect(all.powerUsers).toEqual([]);
-        expect(all.ai).toEqual([]);
         expect(all.referrals).toEqual({ enabled: false, offers: [] });
+        expect(all.ai).toEqual([{ provider: "grok", model: "grok-4.5", for: ["summary", "insights", "qa"] }]);
+    });
+
+    it("leaves embed and transcribe unmapped so they keep their local providers", async () => {
+        // A `for: ["all"]` default would route `embed` to grok, and grok has no
+        // embedding endpoint — `Embedder.create` would throw on every index run.
+        const all = await config.getAll();
+
+        expect(resolveAiSpecForTask(all, "embed")).toBeNull();
+        expect(resolveAiSpecForTask(all, "transcribe")).toBeNull();
+        expect(resolveAiSpecForTask(all, "qa")).toBe("grok/grok-4.5");
     });
 
     it("round-trips ai mappings and powerUsers through update()", async () => {

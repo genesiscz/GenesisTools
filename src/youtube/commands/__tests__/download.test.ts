@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { consoleUserDbFake } from "@app/youtube/commands/__tests__/console-user-fake";
+import type { YoutubeDatabase } from "@app/youtube/lib/db";
+import type { Pipeline } from "@app/youtube/lib/pipeline";
 import type { EnqueuePipelineResult } from "@app/youtube/lib/pipeline.types";
+import { QueueService } from "@app/youtube/lib/queue";
 import type { JobStage, PipelineJob } from "@app/youtube/lib/types";
 import { Command } from "commander";
 
@@ -11,51 +15,58 @@ const calls = {
 
 const pinned: Array<{ id: string; pinned: boolean }> = [];
 
+const fakeDb = {
+    getJob: (id: number) => jobs.find((job) => job.id === id) ?? null,
+    setVideoPinned: (id: string, pin: boolean) => {
+        pinned.push({ id, pinned: pin });
+    },
+    ...consoleUserDbFake(),
+};
+const fakePipeline = {
+    // Typed as the real return so this mock can't silently drift from
+    // `Pipeline.enqueue` again. It used to hand back a bare job, while
+    // production destructures `{ job }`, so every command test threw
+    // "enqueue returned no job".
+    enqueue: (input: unknown): EnqueuePipelineResult => {
+        calls.enqueue.push(input);
+        const job: PipelineJob = {
+            id: jobs.length + 1,
+            targetKind: "video",
+            target: (input as { target: string }).target,
+            stages: (input as { stages: JobStage[] }).stages,
+            currentStage: null,
+            status: "completed",
+            error: null,
+            progress: 1,
+            progressMessage: null,
+            parentJobId: null,
+            userId: null,
+            workerId: null,
+            claimedAt: null,
+            createdAt: "2026-04-01",
+            updatedAt: "2026-04-01",
+            completedAt: "2026-04-01",
+            priority: 50,
+            params: null,
+            fingerprint: null,
+        };
+        jobs.push(job);
+
+        return { job, reused: false, queuePosition: 1 };
+    },
+    start: async () => {
+        calls.start++;
+    },
+    getJob: (id: number) => jobs.find((job) => job.id === id) ?? null,
+    on: () => () => undefined,
+};
+const queue = new QueueService(fakePipeline as unknown as Pipeline, fakeDb as unknown as YoutubeDatabase);
+
 mock.module("@app/youtube/commands/_shared/ensure-pipeline", () => ({
     getYoutube: async () => ({
-        db: {
-            setVideoPinned: (id: string, pin: boolean) => {
-                pinned.push({ id, pinned: pin });
-            },
-        },
-        pipeline: {
-            // Typed as the real return so this mock can't silently drift from
-            // `Pipeline.enqueue` again — it used to hand back a bare job, while
-            // production destructures `{ job }`, so every command test threw
-            // "enqueue returned no job".
-            enqueue: (input: unknown): EnqueuePipelineResult => {
-                calls.enqueue.push(input);
-                const job: PipelineJob = {
-                    id: jobs.length + 1,
-                    targetKind: "video",
-                    target: (input as { target: string }).target,
-                    stages: (input as { stages: JobStage[] }).stages,
-                    currentStage: null,
-                    status: "completed",
-                    error: null,
-                    progress: 1,
-                    progressMessage: null,
-                    parentJobId: null,
-                    userId: null,
-                    workerId: null,
-                    claimedAt: null,
-                    createdAt: "2026-04-01",
-                    updatedAt: "2026-04-01",
-                    completedAt: "2026-04-01",
-                    priority: 50,
-                    params: null,
-                    fingerprint: null,
-                };
-                jobs.push(job);
-
-                return { job, reused: false, queuePosition: 1 };
-            },
-            start: async () => {
-                calls.start++;
-            },
-            getJob: (id: number) => jobs.find((job) => job.id === id) ?? null,
-            on: () => () => undefined,
-        },
+        db: fakeDb,
+        pipeline: fakePipeline,
+        queue,
     }),
 }));
 
@@ -101,7 +112,11 @@ describe("youtube download command", () => {
 
         await program.parseAsync(["node", "test", "download", "dQw4w9WgXcQ"]);
 
-        expect(calls.enqueue[0]).toEqual({ targetKind: "video", target: "dQw4w9WgXcQ", stages: ["metadata", "audio"] });
+        expect(calls.enqueue[0]).toMatchObject({
+            targetKind: "video",
+            target: "dQw4w9WgXcQ",
+            stages: ["metadata", "audio"],
+        });
         expect(calls.start).toBe(1);
         expect(stdout).toContain("completed");
     });
@@ -119,9 +134,9 @@ describe("youtube download command", () => {
             "1080p",
         ]);
 
-        expect(calls.enqueue[0]).toEqual({
-            targetKind: "url",
-            target: "https://youtu.be/dQw4w9WgXcQ",
+        expect(calls.enqueue[0]).toMatchObject({
+            targetKind: "video",
+            target: "dQw4w9WgXcQ",
             stages: ["metadata", "audio", "video"],
         });
     });

@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import { withJobActivity } from "@app/youtube/lib/job-activity";
-import type { JobEvent, JobStage, PipelineJob } from "@app/youtube/lib/jobs.types";
+import { JOB_STAGES, type JobEvent, type JobStage, type PipelineJob } from "@app/youtube/lib/jobs.types";
 import type {
     EnqueuePipelineJobInput,
     EnqueuePipelineResult,
@@ -192,8 +192,15 @@ export class Pipeline {
                 },
             };
 
-            await withJobActivity({ jobId: job.id, stage: claimedStage, db: this.db, userId: job.userId }, () =>
-                handler(ctx)
+            await withJobActivity(
+                {
+                    jobId: job.id,
+                    stage: claimedStage,
+                    db: this.db,
+                    userId: job.userId,
+                    emit: this.emitExternal.bind(this),
+                },
+                () => handler(ctx)
             );
             logger.debug(
                 { jobId: job.id, stage: claimedStage, targetKind: job.targetKind, target: job.target },
@@ -281,6 +288,7 @@ export class Pipeline {
                 return Math.max(1, concurrency.download);
             case "transcribe":
                 return Math.max(1, Math.max(concurrency.localTranscribe, concurrency.cloudTranscribe));
+            case "qaIndex":
             case "summarize":
             case "qa":
             case "reportSynthesize":
@@ -326,19 +334,6 @@ export class Pipeline {
         this.emitter.emit(event.type, event);
     }
 }
-
-const JOB_STAGES: JobStage[] = [
-    "discover",
-    "metadata",
-    "comments",
-    "captions",
-    "audio",
-    "video",
-    "transcribe",
-    "summarize",
-    "qa",
-    "reportSynthesize",
-];
 
 function remainingStagesAfter(job: PipelineJob, claimedStage: JobStage): JobStage[] {
     if (job.targetKind === "channel" && claimedStage === "discover") {

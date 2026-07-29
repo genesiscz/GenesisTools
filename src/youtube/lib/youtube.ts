@@ -13,6 +13,8 @@ import { Pipeline } from "@app/youtube/lib/pipeline";
 import type { PipelineHandlerMap, StageHandlerCtx } from "@app/youtube/lib/pipeline.types";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
 import { QaService } from "@app/youtube/lib/qa";
+import type { QaSource } from "@app/youtube/lib/qa.types";
+import { QueueService } from "@app/youtube/lib/queue";
 import { type ReportMember, SummaryService } from "@app/youtube/lib/summarize";
 import { TranscriptService } from "@app/youtube/lib/transcripts";
 import { CREDIT_COSTS } from "@app/youtube/lib/users.types";
@@ -60,6 +62,7 @@ export class Youtube {
     private _summary?: SummaryService;
     private _qa?: QaService;
     private _pipeline?: Pipeline;
+    private _queue?: QueueService;
     readonly channels: {
         add: (handle: ChannelHandle) => Promise<void>;
         list: () => ReturnType<YoutubeDatabase["listChannels"]>;
@@ -380,6 +383,14 @@ export class Youtube {
         return this._pipeline;
     }
 
+    get queue(): QueueService {
+        if (!this._queue) {
+            this._queue = new QueueService(this.pipeline, this.db);
+        }
+
+        return this._queue;
+    }
+
     async dispose(): Promise<void> {
         await this._pipeline?.stop();
         this._db?.close();
@@ -392,7 +403,30 @@ export class Youtube {
                     return;
                 }
 
-                await this.channels.sync(ctx.job.target as ChannelHandle, { signal: ctx.signal });
+                const params = ctx.job.params ?? {};
+                const limit = typeof params.limit === "number" ? params.limit : undefined;
+
+                if (params.limit !== undefined && limit === undefined) {
+                    logger.warn(
+                        { jobId: ctx.job.id, valueType: typeof params.limit },
+                        "youtube discover ignoring invalid channel sync limit"
+                    );
+                }
+
+                const includeShorts = typeof params.includeShorts === "boolean" ? params.includeShorts : undefined;
+
+                if (params.includeShorts !== undefined && includeShorts === undefined) {
+                    logger.warn(
+                        { jobId: ctx.job.id, valueType: typeof params.includeShorts },
+                        "youtube discover ignoring invalid channel sync includeShorts"
+                    );
+                }
+
+                await this.channels.sync(ctx.job.target as ChannelHandle, {
+                    limit,
+                    includeShorts,
+                    signal: ctx.signal,
+                });
 
                 const remainingStages = stagesAfter(ctx.job.stages, "discover");
 
@@ -417,6 +451,10 @@ export class Youtube {
                         target: video.id,
                         stages: remainingStages,
                         parentJobId: ctx.job.id,
+                        // Child jobs inherit the discovering job's owner; otherwise a
+                        // channel sync fans out into dozens of unowned video jobs whose
+                        // activity and AI usage attribute to nobody.
+                        userId: ctx.job.userId,
                     });
                 }
             },
@@ -435,7 +473,19 @@ export class Youtube {
                 await this.comments.fetch(ctx.job.target as VideoId, { signal: ctx.signal });
             },
             captions: async (ctx) => {
-                await this.runGatedTranscribe(ctx, { forceTranscribe: false });
+                const params = ctx.job.params ?? {};
+                const captionsOnly = params.captionsOnly;
+                if ("captionsOnly" in params && typeof captionsOnly !== "boolean") {
+                    logger.warn(
+                        { jobId: ctx.job.id, captionsOnly },
+                        "youtube captions stage ignored non-boolean captionsOnly parameter"
+                    );
+                }
+
+                await this.runGatedTranscribe(ctx, {
+                    forceTranscribe: false,
+                    captionsOnly: typeof captionsOnly === "boolean" ? captionsOnly : undefined,
+                });
             },
             audio: async (ctx) => {
                 const video = await this.videos.ensureMetadata(ctx.job.target as VideoId, { signal: ctx.signal });
@@ -535,6 +585,64 @@ export class Youtube {
 
                     throw error;
                 }
+            },
+            qaIndex: async (ctx) => {
+                const params = ctx.job.params ?? {};
+                const rawSources = params.sources;
+                const sources =
+                    Array.isArray(rawSources) &&
+                    rawSources.every(
+                        (source: unknown): source is QaSource => source === "transcript" || source === "comments"
+                    )
+                        ? (rawSources as QaSource[])
+                        : undefined;
+
+                if ("sources" in params && sources === undefined) {
+                    logger.warn(
+                        { jobId: ctx.job.id, sources: rawSources },
+                        "youtube qaIndex stage ignored invalid sources parameter"
+                    );
+                }
+
+                const rawForceReindex = params.forceReindex;
+                const forceReindex = typeof rawForceReindex === "boolean" ? rawForceReindex : undefined;
+
+                if ("forceReindex" in params && forceReindex === undefined) {
+                    logger.warn(
+                        { jobId: ctx.job.id, forceReindex: rawForceReindex },
+                        "youtube qaIndex stage ignored invalid forceReindex parameter"
+                    );
+                }
+
+                const rawProvider = params.provider;
+                const provider = typeof rawProvider === "string" ? rawProvider : undefined;
+
+                if ("provider" in params && provider === undefined) {
+                    logger.warn(
+                        { jobId: ctx.job.id, provider: rawProvider },
+                        "youtube qaIndex stage ignored invalid provider parameter"
+                    );
+                }
+
+                const rawModel = params.model;
+                const model = typeof rawModel === "string" ? rawModel : undefined;
+
+                if ("model" in params && model === undefined) {
+                    logger.warn(
+                        { jobId: ctx.job.id, model: rawModel },
+                        "youtube qaIndex stage ignored invalid model parameter"
+                    );
+                }
+
+                ctx.onProgress(0.05, "Indexing QA content");
+                await this.qa.index({
+                    videoId: ctx.job.target as VideoId,
+                    sources,
+                    forceReindex,
+                    provider,
+                    model,
+                    signal: ctx.signal,
+                });
             },
             qa: async (ctx) => {
                 const params = ctx.job.params ?? {};
@@ -690,7 +798,10 @@ export class Youtube {
 
     /** Shared captions/transcribe stage body: metadata ensure → free captions
      *  tier → diamond-gated ASR fallback, with progress + hold semantics. */
-    private async runGatedTranscribe(ctx: StageHandlerCtx, opts: { forceTranscribe: boolean }): Promise<void> {
+    private async runGatedTranscribe(
+        ctx: StageHandlerCtx,
+        opts: { forceTranscribe: boolean; captionsOnly?: boolean }
+    ): Promise<void> {
         const videoId = ctx.job.target as VideoId;
         // Queue path previously skipped metadata → "unknown video" job failures
         // on fresh videos (POST /pipeline does not ingest, unlike POST /summary).
@@ -706,6 +817,7 @@ export class Youtube {
                 videoId,
                 signal: ctx.signal,
                 forceTranscribe: opts.forceTranscribe,
+                captionsOnly: opts.captionsOnly,
                 beforeAiTranscription: () => {
                     if (userId === null) {
                         return;

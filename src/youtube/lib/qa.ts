@@ -8,6 +8,7 @@ import { englishLanguageName } from "@app/youtube/lib/languages";
 import { buildPresetBlock } from "@app/youtube/lib/presets";
 import { parseProviderSpec } from "@app/youtube/lib/provider-choice";
 import type {
+    AskHistoryTurn,
     AskOpts,
     AskResult,
     ChunkedTranscript,
@@ -27,7 +28,8 @@ import { logger } from "@genesiscz/utils/logger";
 const TARGET_TOKENS_PER_CHUNK = 1500;
 const TARGET_CHARS = TARGET_TOKENS_PER_CHUNK * 4;
 const TOP_K_DEFAULT = 8;
-const DEFAULT_MODEL_ID = "default";
+/** Embedding bucket `index()` writes to and `ask()` retrieves from when no model is pinned. */
+export const DEFAULT_MODEL_ID = "default";
 /** Both-scope retrieval favors the transcript — it is the authority; comments add sentiment. */
 const BOTH_SCOPE_TRANSCRIPT_BOOST = 1.15;
 /**
@@ -38,9 +40,30 @@ const BOTH_SCOPE_TRANSCRIPT_BOOST = 1.15;
 const COMMENT_CHUNK_IDX_BASE = 100_000;
 /** Channel-scope asks lazily embed at most this many unindexed candidates. */
 export const MAX_LAZY_INDEX_PER_ASK = 5;
-const CANDIDATE_LIMIT_DEFAULT = 20;
+export const CANDIDATE_LIMIT_DEFAULT = 20;
 const COMMENT_ATTRIBUTION_PROMPT =
     "Claims sourced from comments must be attributed ('commenters point out…', 'one viewer disagrees…') — never present viewer opinions as statements made in the video.";
+
+/** Newest turns only, each truncated — history must not crowd the retrieved context out. */
+const HISTORY_MAX_TURNS = 8;
+const HISTORY_MAX_CHARS_PER_TURN = 1200;
+
+function formatAskHistory(history: AskHistoryTurn[] | undefined): string {
+    if (!history?.length) {
+        return "";
+    }
+
+    const lines = history.slice(-HISTORY_MAX_TURNS).map((turn) => {
+        const text =
+            turn.content.length > HISTORY_MAX_CHARS_PER_TURN
+                ? `${turn.content.slice(0, HISTORY_MAX_CHARS_PER_TURN)}…`
+                : turn.content;
+
+        return `${turn.role}: ${text}`;
+    });
+
+    return `Earlier turns in this conversation (oldest first):\n${lines.join("\n\n")}\n\n`;
+}
 
 function languageInstruction(lang: string): string {
     const name = englishLanguageName(lang);
@@ -178,6 +201,8 @@ export class QaService {
         }
 
         const provider = await this.config.get("provider");
+        // Provider resolution is asymmetric: index() uses resolveAiSpecForTask(),
+        // while ask() reads config.provider.embed directly.
         const embedder = await this.deps.createEmbedder({ provider: provider.embed });
 
         try {
@@ -202,8 +227,9 @@ export class QaService {
             const scored = opts.videoIds
                 // Scope retrieval to the embedder model ask() embeds the question
                 // with — same-dimension vectors from a different embedding model
-                // would otherwise silently mix incompatible spaces.
-                .flatMap((videoId) => this.db.listQaChunks(videoId, DEFAULT_MODEL_ID))
+                // would otherwise silently mix incompatible spaces. The selected
+                // bucket must match the model bucket used by index().
+                .flatMap((videoId) => this.db.listQaChunks(videoId, opts.model ?? DEFAULT_MODEL_ID))
                 .filter((chunk) => sources.includes(chunk.source))
                 .filter((chunk) => chunk.embedding && chunk.embedding.length === qVec.length)
                 .map((chunk) => ({ chunk, score: cosine(qVec, chunk.embedding!) }));
@@ -263,7 +289,11 @@ export class QaService {
             const contextHeading = sources.includes("comments")
                 ? "Context from video transcripts and viewer comments"
                 : "Context from transcripts";
-            const userPrompt = `Question: ${opts.question}\n\n${contextHeading}:\n${context}`;
+            // Prior turns go in the user prompt rather than a message array: callLLM is
+            // single-turn (systemPrompt + userPrompt), and a session follow-up like
+            // "expand on the second point" is meaningless without them.
+            const historyBlock = formatAskHistory(opts.history);
+            const userPrompt = `${historyBlock}Question: ${opts.question}\n\n${contextHeading}:\n${context}`;
             const startedAt = new Date();
             const result = await this.deps.callLLM({
                 systemPrompt,
@@ -366,7 +396,7 @@ export function chunkTranscript(transcript: TranscriptChunkSource): ChunkedTrans
  */
 export function selectCandidateVideos(
     db: YoutubeDatabase,
-    opts: { channel: ChannelHandle; question: string; limit?: number }
+    opts: { channel: ChannelHandle; question: string; limit?: number; maxLazyIndex?: number }
 ): { videoIds: VideoId[]; skippedUnindexed: number } {
     const limit = opts.limit ?? CANDIDATE_LIMIT_DEFAULT;
     const videos = db.listVideos({ channel: opts.channel, includeShorts: true, limit: 1000 });
@@ -410,7 +440,7 @@ export function selectCandidateVideos(
         .slice(0, limit);
 
     const videoIds: VideoId[] = [];
-    let lazyBudget = MAX_LAZY_INDEX_PER_ASK;
+    let lazyBudget = opts.maxLazyIndex ?? MAX_LAZY_INDEX_PER_ASK;
     let skippedUnindexed = 0;
 
     for (const video of ranked) {

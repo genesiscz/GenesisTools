@@ -1,6 +1,7 @@
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import { extractVideoId, formatTimestamp } from "@app/youtube/commands/_shared/utils";
+import { renderTranscriptSrt as toSRT, renderTranscriptVtt as toVTT } from "@app/youtube/lib/transcript-export";
 import type { Transcript, TranscriptSegment, VideoId } from "@app/youtube/lib/types";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
@@ -20,31 +21,7 @@ interface TranscribeOptions {
 
 export type CaptionSegment = TranscriptSegment;
 
-export { extractVideoId, formatTimestamp };
-
-export function toSRT(segments: CaptionSegment[]): string {
-    return segments
-        .map((segment, index) => {
-            const start = formatTimestamp(segment.start).replace(".", ",");
-            const end = formatTimestamp(segment.end).replace(".", ",");
-
-            return `${index + 1}\n${start} --> ${end}\n${segment.text}`;
-        })
-        .join("\n\n");
-}
-
-export function toVTT(segments: CaptionSegment[]): string {
-    const cues = segments
-        .map((segment) => {
-            const start = formatTimestamp(segment.start);
-            const end = formatTimestamp(segment.end);
-
-            return `${start} --> ${end}\n${segment.text}`;
-        })
-        .join("\n\n");
-
-    return `WEBVTT\n\n${cues}`;
-}
+export { extractVideoId, formatTimestamp, toSRT, toVTT };
 
 export function registerTranscribeCommand(program: Command): void {
     const cmd = program

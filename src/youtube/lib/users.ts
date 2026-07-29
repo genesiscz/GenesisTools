@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
+import { CONSOLE_USER_EMAIL } from "@app/youtube/lib/service-user";
 import type { YtUser } from "@app/youtube/lib/users.types";
 import { STARTING_CREDITS } from "@app/youtube/lib/users.types";
 import { logger } from "@genesiscz/utils/logger";
@@ -35,7 +36,11 @@ export async function registerUser(
     const email = normalizeEmail(input.email);
     assertPassword(input.password);
 
-    if (db.getUserByEmail(email)) {
+    // The console service account is identified by its email alone, so registering
+    // it would hand a browser user every job and ask session the CLI/MCP attributes
+    // to the console. Reserved whether or not the row exists yet; the message is the
+    // taken-email one so registration still can't enumerate accounts.
+    if (email === CONSOLE_USER_EMAIL || db.getUserByEmail(email)) {
         throw new Error("An account with this email already exists");
     }
 

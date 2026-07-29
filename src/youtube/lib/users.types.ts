@@ -42,6 +42,7 @@ export type CreditReason =
     | "transcript:translate"
     | "transcribe:ai"
     | "dev-topup"
+    | "service-grant"
     | `stripe:${string}`
     | `stripe-refund:${string}`
     | `refund:${string}`

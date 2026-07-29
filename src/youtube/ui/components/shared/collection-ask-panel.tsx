@@ -1,11 +1,11 @@
-import type { AskMessageRecord } from "@app/youtube/lib/types";
+import type { AskSessionMessageRecord } from "@app/youtube/lib/types";
 import { Button } from "@genesiscz/utils/ui/components/button";
 import { Card, CardContent } from "@genesiscz/utils/ui/components/card";
 import { Input } from "@genesiscz/utils/ui/components/input";
 import { useState } from "react";
 
 export interface CollectionAskPanelProps {
-    messages: AskMessageRecord[];
+    messages: AskSessionMessageRecord[];
     busy: boolean;
     error?: string | null;
     onSend: (question: string) => void;

@@ -15,9 +15,10 @@ export type {
     YtRole,
 } from "@app/youtube/lib/config.types";
 export type {
-    AskMessageRecord,
-    AskMessageRole,
-    AskThreadRecord,
+    AskSessionMessageRecord,
+    AskSessionMessageRole,
+    AskSessionRecord,
+    AskSessionScopeKind,
     CollectionKind,
     CollectionRecord,
     QueueStats,

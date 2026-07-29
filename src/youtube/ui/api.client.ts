@@ -2,8 +2,8 @@ import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import type {
     ActionHistoryGroup,
     AskCitation,
-    AskMessageRecord,
-    AskThreadRecord,
+    AskSessionMessageRecord,
+    AskSessionRecord,
     Channel,
     ChannelHandle,
     CollectionKind,
@@ -387,9 +387,9 @@ export const apiClient = {
         api<{ removed: boolean }>(`/collections/${id}/videos/${encodeURIComponent(videoId)}`, { method: "DELETE" }),
     askCollection: (id: number, body: { question: string; threadId?: number; provider?: string; model?: string }) =>
         api<CollectionAskResponse>(`/collections/${id}/ask`, { method: "POST", body: SafeJSON.stringify(body) }),
-    listThreads: (id: number) => api<{ threads: AskThreadRecord[] }>(`/collections/${id}/threads`),
+    listThreads: (id: number) => api<{ threads: AskSessionRecord[] }>(`/collections/${id}/threads`),
     getThread: (threadId: number) =>
-        api<{ thread: AskThreadRecord; messages: AskMessageRecord[] }>(`/collections/threads/${threadId}`),
+        api<{ thread: AskSessionRecord; messages: AskSessionMessageRecord[] }>(`/collections/threads/${threadId}`),
 
     getHistory: (groupBy: "video" | "action", limit?: number) =>
         api<HistoryResponse>(

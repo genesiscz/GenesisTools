@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
+import { CONSOLE_USER_EMAIL } from "@app/youtube/lib/service-user";
 import { loginUser, registerUser } from "@app/youtube/lib/users";
 import { STARTING_CREDITS } from "@app/youtube/lib/users.types";
 
@@ -31,6 +32,20 @@ describe("registerUser", () => {
             .all(user.id) as Array<{ delta: number; reason: string }>;
 
         expect(ledger).toEqual([{ delta: STARTING_CREDITS, reason: "register-grant" }]);
+    });
+
+    it("reserves the console service account's email", async () => {
+        // The console identity is resolved by email alone (`getOrCreateConsoleUser`),
+        // so registering it would hand the registrant every job and ask session the
+        // CLI/MCP attributes to the console — including before its row exists.
+        expect(db.getUserByEmail(CONSOLE_USER_EMAIL)).toBeNull();
+        await expect(registerUser(db, { email: CONSOLE_USER_EMAIL, password: "password123" })).rejects.toThrow(
+            "already exists"
+        );
+        await expect(
+            registerUser(db, { email: ` ${CONSOLE_USER_EMAIL.toUpperCase()} `, password: "password123" })
+        ).rejects.toThrow("already exists");
+        expect(db.getUserByEmail(CONSOLE_USER_EMAIL)).toBeNull();
     });
 
     it("rejects invalid emails and short passwords", async () => {

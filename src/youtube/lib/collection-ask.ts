@@ -1,6 +1,6 @@
 import { resolveCollectionVideoIds } from "@app/youtube/lib/collection-rules";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
-import type { AskMessageRecord, CollectionRecord } from "@app/youtube/lib/db.types";
+import type { AskSessionMessageRecord, CollectionRecord } from "@app/youtube/lib/db.types";
 import { identifyProviderChoice, recordYoutubeUsage } from "@app/youtube/lib/usage";
 import type { ProviderChoice } from "@ask/types";
 import type { CallLLMStructuredOptions, CallLLMStructuredResult } from "@genesiscz/utils/ai/call-llm";
@@ -54,10 +54,11 @@ export interface CollectionAskResult {
 export async function askCollection(input: CollectionAskInput): Promise<CollectionAskResult> {
     const deps: CollectionAskDeps = input.deps ?? { callLLMStructured };
     const thread = input.threadId
-        ? input.db.getAskThread(input.userId, input.threadId)
-        : input.db.createAskThread({
+        ? input.db.getAskSession(input.userId, input.threadId)
+        : input.db.createAskSession({
               userId: input.userId,
               collectionId: input.collection.id,
+              scopeKind: "collection",
               title: input.question.slice(0, 80),
           });
 
@@ -69,11 +70,11 @@ export async function askCollection(input: CollectionAskInput): Promise<Collecti
         throw new Error("unknown ask thread: belongs to a different collection");
     }
 
-    input.db.appendAskMessage({ threadId: thread.id, role: "user", content: input.question });
+    input.db.appendAskSessionMessage({ sessionId: thread.id, role: "user", content: input.question });
     let toolCalls = 0;
 
     for (;;) {
-        const conversation = renderConversation(input.db.listAskMessages(thread.id));
+        const conversation = renderConversation(input.db.listAskSessionMessages(thread.id));
         const budgetNote = toolCalls >= MAX_TOOL_CALLS ? "\n\nTOOL BUDGET EXHAUSTED — you MUST answer now." : "";
         const result = await deps.callLLMStructured({
             systemPrompt: SYSTEM_PROMPT,
@@ -92,8 +93,8 @@ export async function askCollection(input: CollectionAskInput): Promise<Collecti
         const step = result.object;
 
         if (step.action === "answer") {
-            input.db.appendAskMessage({ threadId: thread.id, role: "assistant", content: step.text });
-            input.db.touchAskThread(thread.id);
+            input.db.appendAskSessionMessage({ sessionId: thread.id, role: "assistant", content: step.text });
+            input.db.touchAskSession(thread.id);
             logger.info(
                 { threadId: thread.id, collectionId: input.collection.id, toolCalls },
                 "youtube collection-ask: answered"
@@ -108,8 +109,8 @@ export async function askCollection(input: CollectionAskInput): Promise<Collecti
 
         toolCalls += 1;
         const toolResult = executeTool(input, step);
-        input.db.appendAskMessage({
-            threadId: thread.id,
+        input.db.appendAskSessionMessage({
+            sessionId: thread.id,
             role: "tool",
             content: toolResult,
             toolName: step.action,
@@ -157,7 +158,7 @@ function executeTool(input: CollectionAskInput, step: Exclude<AgentStep, { actio
     return `TRANSCRIPT of ${step.videoId}:\n${text}`;
 }
 
-function renderConversation(messages: AskMessageRecord[]): string {
+function renderConversation(messages: AskSessionMessageRecord[]): string {
     return messages
         .map((message) => {
             if (message.role === "tool") {

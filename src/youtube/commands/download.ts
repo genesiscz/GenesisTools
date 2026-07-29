@@ -1,7 +1,7 @@
 import { renderColumns } from "@app/youtube/commands/_shared/columns";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
-import { resolveTargetKind } from "@app/youtube/commands/_shared/utils";
+import { withConsoleContext } from "@app/youtube/lib/service-user";
 import type { JobStage, PipelineJob, VideoId } from "@app/youtube/lib/types";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -29,26 +29,26 @@ export function registerDownloadCommand(program: Command): void {
         .action(async (target: string, opts: DownloadOpts) => {
             const yt = await getYoutube();
             const stages = downloadStages(opts);
-            const { job } = yt.pipeline.enqueue({
-                targetKind: resolveTargetKind(target),
-                target,
-                stages,
-            });
+            // Console context so the job and its AI usage get a real owner instead of
+            // a NULL user_id — `QueueService.enqueue` reads the owner from this ALS.
+            const final = await withConsoleContext(yt.db, async () => {
+                const { job } = yt.queue.enqueue({ target, stages });
 
-            if (!job) {
-                throw new Error("download enqueue returned no job");
-            }
-
-            await yt.pipeline.start();
-            if (opts.keep && resolveTargetKind(target) === "video") {
-                yt.db.setVideoPinned(target as VideoId, true);
-
-                if (!cmd.optsWithGlobals().silent) {
-                    process.stderr.write(`--keep applied: ${target} pinned (cache prune will skip it).\n`);
+                if (!job) {
+                    throw new Error("download enqueue returned no job");
                 }
-            }
 
-            const final = await waitForJob(yt, job.id);
+                await yt.pipeline.start();
+                if (opts.keep && job.targetKind === "video") {
+                    yt.db.setVideoPinned(job.target as VideoId, true);
+
+                    if (!cmd.optsWithGlobals().silent) {
+                        process.stderr.write(`--keep applied: ${job.target} pinned (cache prune will skip it).\n`);
+                    }
+                }
+
+                return yt.queue.waitForJob(job.id);
+            });
             await renderOrEmit({
                 text: renderDownloadResult(final),
                 json: final,
@@ -72,57 +72,6 @@ function downloadStages(opts: DownloadOpts): JobStage[] {
     }
 
     return stages;
-}
-
-async function waitForJob(yt: Awaited<ReturnType<typeof getYoutube>>, jobId: number): Promise<PipelineJob> {
-    const immediate = yt.pipeline.getJob(jobId);
-
-    if (
-        immediate &&
-        (immediate.status === "completed" || immediate.status === "failed" || immediate.status === "cancelled")
-    ) {
-        return immediate;
-    }
-
-    return new Promise((resolve, reject) => {
-        const cleanup: Array<() => void> = [];
-        const timer = setInterval(() => {
-            const job = yt.pipeline.getJob(jobId);
-
-            if (!job) {
-                return;
-            }
-
-            if (job.status === "completed" || job.status === "failed" || job.status === "cancelled") {
-                clearInterval(timer);
-                for (const dispose of cleanup) {
-                    dispose();
-                }
-                resolve(job);
-            }
-        }, 100);
-
-        cleanup.push(
-            yt.pipeline.on("job:completed", (event) => {
-                if (event.job.id === jobId) {
-                    clearInterval(timer);
-                    for (const dispose of cleanup) {
-                        dispose();
-                    }
-                    resolve(event.job);
-                }
-            }),
-            yt.pipeline.on("job:failed", (event) => {
-                if (event.job.id === jobId) {
-                    clearInterval(timer);
-                    for (const dispose of cleanup) {
-                        dispose();
-                    }
-                    reject(new Error(event.error));
-                }
-            })
-        );
-    });
 }
 
 function renderDownloadResult(job: PipelineJob): string {

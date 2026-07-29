@@ -84,7 +84,7 @@ describe("selectCandidateVideos", () => {
         expect(result.videoIds[0]).toBe(titled);
     });
 
-    it("lazy-indexes at most MAX_LAZY_INDEX_PER_ASK unindexed candidates and counts the rest", () => {
+    it("honours maxLazyIndex while preserving the default lazy-index cap", () => {
         for (let i = 0; i < 8; i++) {
             seedVideo(`ccccccccc0${i}`, {
                 transcript: `dopamine talk number ${i}`,
@@ -92,10 +92,17 @@ describe("selectCandidateVideos", () => {
             });
         }
 
-        const result = selectCandidateVideos(db, { channel: HANDLE, question: "dopamine" });
+        const explicit = selectCandidateVideos(db, {
+            channel: HANDLE,
+            question: "dopamine",
+            maxLazyIndex: 2,
+        });
+        const defaults = selectCandidateVideos(db, { channel: HANDLE, question: "dopamine" });
 
-        expect(result.videoIds).toHaveLength(MAX_LAZY_INDEX_PER_ASK);
-        expect(result.skippedUnindexed).toBe(8 - MAX_LAZY_INDEX_PER_ASK);
+        expect(explicit.videoIds).toHaveLength(2);
+        expect(explicit.skippedUnindexed).toBe(6);
+        expect(defaults.videoIds).toHaveLength(MAX_LAZY_INDEX_PER_ASK);
+        expect(defaults.skippedUnindexed).toBe(8 - MAX_LAZY_INDEX_PER_ASK);
     });
 
     it("candidates without transcripts are skipped, indexed ones always pass", () => {
