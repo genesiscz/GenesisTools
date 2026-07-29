@@ -4,6 +4,7 @@ import type { ConfigMigration } from "@genesiscz/utils/config/migration";
 import { logger, out } from "@genesiscz/utils/logger";
 import { isSecureRef, masterKeySync, secrets } from "@genesiscz/utils/security";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { migrationAllowedHere } from "../migration-guard";
 import { type AccountCredentials, type AccountEntry, type AiConfigData, CONFIG_VERSION } from "../schema";
 
 /** Credential fields whose values are secrets. `authFile` and `dataDir` are paths, not secrets. */
@@ -57,6 +58,10 @@ export const migrateSecretsToVault: ConfigMigration = {
     shouldRun: async () => {
         const raw = await aiStorage().getConfig<AiConfigData>();
         if (!raw || raw.version !== CONFIG_VERSION) {
+            return false;
+        }
+
+        if (!migrationAllowedHere()) {
             return false;
         }
 

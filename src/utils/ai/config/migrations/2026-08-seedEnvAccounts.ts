@@ -1,6 +1,7 @@
 import type { ConfigMigration } from "@genesiscz/utils/config/migration";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { migrationAllowedHere } from "../migration-guard";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "../schema";
 
 /**
@@ -64,6 +65,10 @@ export const migrateSeedEnvAccounts: ConfigMigration = {
     shouldRun: async () => {
         const config = await aiStorage().getConfig<AiConfigData>();
         if (!config || config.version !== CONFIG_VERSION) {
+            return false;
+        }
+
+        if (!migrationAllowedHere()) {
             return false;
         }
 

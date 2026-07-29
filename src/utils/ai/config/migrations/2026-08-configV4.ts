@@ -2,6 +2,7 @@ import type { AIAccountEntry, AIConfigData as V3ConfigData } from "@genesiscz/ut
 import type { ConfigMigration } from "@genesiscz/utils/config/migration";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { migrationAllowedHere } from "../migration-guard";
 import { accountRef } from "../refs";
 import {
     type AccountEntry,
@@ -241,6 +242,10 @@ export const migrateConfigV4: ConfigMigration = {
     shouldRun: async () => {
         const raw = await aiStorage().getConfig<{ version?: number; _schemaVersion?: number }>();
         if (!raw || Object.keys(raw).length === 0) {
+            return false;
+        }
+
+        if (!migrationAllowedHere()) {
             return false;
         }
 
