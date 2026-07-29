@@ -133,7 +133,11 @@ export function registerQueueCommand(program: Command): void {
 
             if (opts.watch && jobs.length > 0) {
                 for await (const event of yt.queue.watch({ actor: CLI_ACTOR, jobIds: jobs.map((job) => job.id) })) {
-                    out.println(watchLine(event, false));
+                    // stderr: `renderOrEmit` already put this command's result on stdout,
+                    // and appending human-formatted lines after it left `--json --watch`
+                    // emitting neither one JSON document nor JSONL. Same split the
+                    // pipeline command uses for its progress lines.
+                    out.printlnErr(watchLine(event, false));
                 }
             }
         });
@@ -206,7 +210,18 @@ export function registerQueueCommand(program: Command): void {
         .option("--no-children", "Do not follow jobs spawned by the watched ones")
         .action(async (ids: string[], opts: WatchOpts) => {
             const yt = await getYoutube();
-            const jobIds = ids.map((id) => Number.parseInt(id, 10)).filter((id) => Number.isFinite(id));
+            // Strict, because dropping an unparseable id silently widens the command:
+            // with no ids left, `watch` means "every active job", so `queue watch typo`
+            // would quietly stream the whole queue instead of failing.
+            const invalid = ids.filter((id) => !/^\d+$/.test(id.trim()));
+
+            if (invalid.length > 0) {
+                out.error(`Not a job id: ${invalid.join(", ")}. Pass numeric ids, or none to watch everything active.`);
+                process.exitCode = 1;
+                return;
+            }
+
+            const jobIds = ids.map((id) => Number.parseInt(id, 10));
 
             for await (const event of yt.queue.watch({
                 actor: CLI_ACTOR,
