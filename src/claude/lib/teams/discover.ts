@@ -7,7 +7,14 @@ import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { listLiveTeammateProcesses, matchLeadPane, matchLiveProcess } from "./status";
 import { indexProjectTranscripts } from "./transcripts";
-import type { TeamConfigFile, TeamMemberConfig, TeamMemberView, TeammateTranscriptRef, TeamView } from "./types";
+import type {
+    LiveTeammateProcess,
+    TeamConfigFile,
+    TeamMemberConfig,
+    TeamMemberView,
+    TeammateTranscriptRef,
+    TeamView,
+} from "./types";
 
 const prof = profiler.scope("teams");
 
@@ -98,11 +105,14 @@ function activityLine(view: Omit<TeamMemberView, "activity">): string {
     return "—";
 }
 
-function statusOf(opts: {
+/** Exported for tests: the scan-failed vs nothing-running distinction lives here. */
+export function statusOf(opts: {
     isLead: boolean;
     live?: ReturnType<typeof matchLiveProcess>;
     transcript?: TeammateTranscriptRef;
     member: TeamMemberConfig;
+    /** The process scan failed, so the absence of a live match proves nothing. */
+    scanFailed?: boolean;
 }): TeamMemberView["status"] {
     if (opts.isLead) {
         return opts.live ? "running" : opts.member.isActive === false ? "dead" : "unknown";
@@ -117,6 +127,7 @@ function statusOf(opts: {
         return "running";
     }
 
+    // Config-derived, so it stands on its own even when the scan failed.
     if (opts.member.isActive === false) {
         return "dead";
     }
@@ -126,7 +137,9 @@ function statusOf(opts: {
         return "not-logged-in";
     }
 
-    if (opts.transcript) {
+    // Only a SUCCESSFUL scan turns "has a transcript but no live process" into
+    // dead. After a failed scan that inference is unsupported.
+    if (opts.transcript && !opts.scanFailed) {
         return "dead";
     }
 
@@ -153,8 +166,9 @@ export interface DiscoverTeamsOptions {
 function buildMemberViews(
     config: TeamConfigFile,
     teamName: string,
-    live: ReturnType<typeof listLiveTeammateProcesses>,
-    transcriptIndex: Map<string, TeammateTranscriptRef>
+    live: LiveTeammateProcess[],
+    transcriptIndex: Map<string, TeammateTranscriptRef>,
+    scanFailed: boolean
 ): TeamMemberView[] {
     return config.members.map((member) => {
         const isLead = member.name === "team-lead" || member.agentType === "team-lead";
@@ -172,7 +186,7 @@ function buildMemberViews(
             member,
             isLead,
             backend: backendOf(member),
-            status: statusOf({ isLead, live: liveProc, transcript, member }),
+            status: statusOf({ isLead, live: liveProc, transcript, member, scanFailed }),
             live: liveProc,
             transcript,
         };
@@ -197,7 +211,7 @@ function teamMatchesProjectFilter(
     config: TeamConfigFile,
     teamName: string,
     projectFilter: string,
-    live: ReturnType<typeof listLiveTeammateProcesses>,
+    live: LiveTeammateProcess[],
     cwd?: string
 ): boolean {
     const cwdFromMembers =
@@ -231,7 +245,8 @@ function teamMatchesProjectFilter(
  */
 export function discoverTeams(opts: DiscoverTeamsOptions = {}): TeamView[] {
     return prof.measure("discoverTeams", () => {
-        const live = prof.measure("live-processes", () => listLiveTeammateProcesses());
+        const scan = prof.measure("live-processes", () => listLiveTeammateProcesses());
+        const live = scan.processes;
         const cwd = opts.cwd ?? process.cwd();
         const currentEncoded = encodedProjectDir(cwd);
 
@@ -314,7 +329,7 @@ export function discoverTeams(opts: DiscoverTeamsOptions = {}): TeamView[] {
                 (p.projectDir && projectIndexes.get(p.projectDir)?.get(teamKey)) ||
                 new Map<string, TeammateTranscriptRef>();
 
-            const members = buildMemberViews(p.config, p.teamName, live, transcriptIndex);
+            const members = buildMemberViews(p.config, p.teamName, live, transcriptIndex, scan.failed);
             const teammates = members.filter((m) => !m.isLead);
             const lead = members.find((m) => m.isLead);
             const layout = matchLeadPane({
