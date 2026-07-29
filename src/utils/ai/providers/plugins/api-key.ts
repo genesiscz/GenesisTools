@@ -22,8 +22,18 @@ interface ApiKeyProviderSpec {
 }
 
 const SPECS: ApiKeyProviderSpec[] = [
-    { id: "openai", envKeys: ["OPENAI_API_KEY"], capabilities: ["chat", "embed", "transcribe", "tts"], create: createOpenAI },
-    { id: "anthropic", envKeys: ["ANTHROPIC_API_KEY"], capabilities: ["chat", "summarize", "translate"], create: createAnthropic },
+    {
+        id: "openai",
+        envKeys: ["OPENAI_API_KEY"],
+        capabilities: ["chat", "embed", "transcribe", "tts"],
+        create: createOpenAI,
+    },
+    {
+        id: "anthropic",
+        envKeys: ["ANTHROPIC_API_KEY"],
+        capabilities: ["chat", "summarize", "translate"],
+        create: createAnthropic,
+    },
     { id: "groq", envKeys: ["GROQ_API_KEY"], capabilities: ["chat", "transcribe"], create: createGroq },
     {
         id: "google",

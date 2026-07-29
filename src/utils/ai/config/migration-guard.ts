@@ -15,7 +15,11 @@ import { logger } from "@genesiscz/utils/logger";
  * opts in explicitly.
  */
 export function migrationAllowedHere(): boolean {
-    if (env.tools.getHome()) {
+    // NOTE: env.tools.getHome() falls back to homedir(), so it is NEVER falsy —
+    // using it here made this guard a no-op and let worktree runs migrate the real
+    // config anyway. getHomeEnvKey() returns undefined when the variable is unset,
+    // which is the actual question being asked.
+    if (env.tools.getHomeEnvKey()) {
         // A sandboxed root (tests, rehearsals) is always safe to migrate.
         return true;
     }

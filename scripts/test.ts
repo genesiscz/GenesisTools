@@ -71,6 +71,82 @@ if (broken) {
     await install("dependencies are stale");
 }
 
+/**
+ * Opt-in gates are silent by design: a suite can be green while whole categories
+ * (real APIs, e2e, native models, Apple Mail) never ran. Printing the skipped set
+ * once per run makes that visible instead of folklore, and names the variable that
+ * turns each one on.
+ */
+/**
+ * Mirrors the opt-in gates in src/utils/test/skip.ts.
+ *
+ * Deliberately duplicated rather than imported: this runner executes BEFORE
+ * `bun install` has repaired the dependency tree, and inside a worktree the
+ * @genesiscz/utils alias resolves to the main checkout, so importing app code
+ * here is exactly the fragility the runner exists to work around.
+ * skip.test.ts asserts the two lists stay in step.
+ */
+const GATE_ENV_VARS: Record<string, string> = {
+    network: "RUN_NETWORK_TESTS",
+    live: "RUN_LIVE",
+    liveSmoke: "RUN_LIVE_SMOKE",
+    e2e: "RUN_E2E",
+    notifyE2E: "RUN_NOTIFY_E2E",
+    wip: "RUN_WIP_E2E",
+    darwinkit: "RUN_DARWINKIT",
+    solid: "RUN_SOLID",
+    mailInfra: "RUN_MAIL_INFRA",
+    integration: "RUN_INTEGRATION",
+    agentsE2E: "RUN_AGENTS_E2E",
+    aiAccounts: "RUN_AI_ACCOUNTS",
+    claudeData: "RUN_CLAUDE_DATA",
+    localModels: "RUN_LOCAL_MODELS",
+    audioDevice: "RUN_AUDIO_DEVICE",
+    realApis: "RUN_REAL_APIS",
+};
+
+function describeGates(): { enabled: string[]; disabled: string[] } {
+    const enabled: string[] = [];
+    const disabled: string[] = [];
+
+    for (const [gate, variable] of Object.entries(GATE_ENV_VARS)) {
+        const value = process.env[variable];
+        const on = value != null && value !== "" && value !== "0" && value.toLowerCase() !== "false";
+        (on ? enabled : disabled).push(gate);
+    }
+
+    return { enabled: enabled.sort(), disabled: disabled.sort() };
+}
+
+function reportGates(): void {
+    if (process.env.GENESIS_TOOLS_TEST_QUIET_GATES === "1") {
+        return;
+    }
+
+    const { enabled, disabled } = describeGates();
+
+    if (enabled.length > 0) {
+        process.stderr.write(`\x1b[32m[test] gates ON: ${enabled.join(", ")}\x1b[0m\n`);
+    }
+
+    if (disabled.length > 0) {
+        const hints = disabled.map((gate) => GATE_ENV_VARS[gate]).join(" ");
+        process.stderr.write(
+            `\x1b[90m[test] skipped gates (${disabled.length}): ${disabled.join(", ")}\n` +
+                `[test] enable with: ${hints
+                    .split(" ")
+                    .map((v) => `${v}=1`)
+                    .join(" ")}\x1b[0m\n`
+        );
+    }
+
+    process.stderr.write(
+        `\x1b[90m[test] e2e suites are excluded from this run — use \`bun run test:e2e\`\x1b[0m\n`
+    );
+}
+
+reportGates();
+
 const proc = Bun.spawn(["bun", "test", ...process.argv.slice(2)], {
     cwd: ROOT,
     stdio: ["inherit", "inherit", "inherit"],

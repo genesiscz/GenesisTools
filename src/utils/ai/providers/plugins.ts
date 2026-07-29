@@ -1,6 +1,6 @@
-import { registerPlugin } from "./registry";
 import { anthropicSubPlugin } from "./plugins/anthropic-sub";
 import { apiKeyPlugins } from "./plugins/api-key";
+import { registerPlugin } from "./registry";
 
 /**
  * The barrel every provider must appear in.

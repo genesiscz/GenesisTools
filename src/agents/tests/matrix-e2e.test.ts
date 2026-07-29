@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
+import { optIn } from "@genesiscz/utils/test/skip";
 
-// Default-on, opt-out via explicit "0" — route through the env facade (dynamic-key
-// lookup, same helper used for ask ProviderConfig.envKey) so env.testing
-// overrides stay the single mechanism for controlling env-gated behavior.
-const ENABLED = env.ai.getByEnvKey("AGENTS_E2E") !== "0";
+// Was opt-OUT via AGENTS_E2E, which meant one 89s bash matrix ran in every
+// ordinary suite and blew the parallel run's timeout. It now uses the shared
+// harness like every other heavy suite: `bun run test:e2e`, or RUN_AGENTS_E2E=1.
+const ENABLED = optIn.agentsE2E || optIn.e2e;
 const SCRIPT = join(import.meta.dir, "matrix.sh");
 
 describe.if(ENABLED)("agents matrix e2e", () => {
