@@ -132,11 +132,11 @@ describe.skipIf(!isDarwin)("extent cache", () => {
     }, 60_000);
 
     it("rejects a record count the file is too small to hold", () => {
-        // cache_open multiplies the header's counts back out and drops the cache when
-        // they exceed the file, so an inconsistent or truncated file can never be
-        // trusted into an out-of-bounds read. Note this is a CONSISTENCY check, not a
-        // ceiling on the count itself — see the eviction test below for a header that
-        // claims just as much and is padded to back it up.
+        // cache_open bounds each count by DIVIDING the space that is actually there,
+        // so an inconsistent or truncated file is dropped. This is a CONSISTENCY
+        // check, not a ceiling on the count itself — see the eviction test below for
+        // a header that claims just as much and is padded to back it up. For counts
+        // large enough to overflow the arithmetic, see the overflow tests after it.
         const fixture = makeCloneFixture();
         const cacheDir = makeTmp("du-cache-dir-");
 
@@ -185,6 +185,42 @@ describe.skipIf(!isDarwin)("extent cache", () => {
         // 1,999,999 carried over + 3 fresh = 2,000,002, truncated back to the cap.
         expect(readFileSync(cacheFile).readBigUInt64LE(NRECS_OFFSET)).toBe(BigInt(CACHE_MAX_RECS));
     }, 60_000);
+
+    // Counts big enough to wrap the size arithmetic. Before cache_open validated by
+    // division, `nrecs * sizeof(CacheEnt)` was computed first and wrapped a 64-bit
+    // size_t, so these headers passed the check and cache_lookup binary-searched far
+    // past the end of the mapping — `nrecs = 2^60` segfaulted the scan (exit 139).
+    // Each case must now be rejected, leaving the scan to read the filesystem.
+    const OVERFLOW_HEADERS: [name: string, nrecs: bigint, nexts: bigint][] = [
+        // 48 * 2^60 == 3 * 2^64, i.e. the record term wraps to EXACTLY zero.
+        ["record count wrapping to zero", 1n << 60n, 0n],
+        ["record count at UINT64_MAX", (1n << 64n) - 1n, 0n],
+        ["extent count at UINT64_MAX", 3n, (1n << 64n) - 1n],
+        ["both counts oversized", 1n << 60n, (1n << 64n) - 1n],
+    ];
+
+    for (const [name, nrecs, nexts] of OVERFLOW_HEADERS) {
+        it(`rejects a ${name} instead of reading past the mapping`, () => {
+            const fixture = makeCloneFixture();
+            const cacheDir = makeTmp("du-cache-dir-");
+
+            scan(fixture, cacheDir, true);
+            const cacheFile = join(cacheDir, readdirSync(cacheDir).find((f) => f.startsWith("extents-"))!);
+
+            const buf = readFileSync(cacheFile);
+            buf.writeBigUInt64LE(nrecs, NRECS_OFFSET);
+            buf.writeBigUInt64LE(nexts, NEXTS_OFFSET);
+            writeFileSync(cacheFile, buf);
+
+            // Reaching this line at all is most of the assertion: the pre-fix binary
+            // died with SIGSEGV here rather than returning a result.
+            const after = scan(fixture, cacheDir);
+
+            expect(after.files_cached).toBe(0);
+            expect(after.files_opened).toBe(3);
+            expect(after.unique_bytes).toBe(CLONE_BYTES);
+        }, 60_000);
+    }
 
     it("keeps records for files outside the scanned subtree when it rewrites", () => {
         // The cache is per VOLUME, so a scan of one subtree must merge its records
