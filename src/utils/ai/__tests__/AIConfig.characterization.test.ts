@@ -1,9 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import {
+    _resetMasterKeyProviders,
+    _resetSecretsForTest,
+    _setMasterKeyProvidersForTest,
+} from "@genesiscz/utils/security";
 import { AIConfig } from "../AIConfig";
 
 /**
@@ -235,5 +241,51 @@ describe("AIConfig mutations (characterization)", () => {
 
         AIConfig.invalidate();
         expect((await AIConfig.load()).getAccount("late-arrival")).toBeDefined();
+    });
+});
+
+/**
+ * VAULTED MODE — not a v3 characterization. On a machine where a master key is
+ * reachable, the secretsToVault migration moves credentials into the vault and
+ * the facade must still hand back VALUES through the v3 projection. This block
+ * pins that path with a deterministic fake keyring; the blocks above run with
+ * no key reachable (the OS keychain rung is blocked under bun test), where the
+ * migration defers and credentials stay literal.
+ */
+describe("AIConfig key resolution through the vault", () => {
+    const VAULT_KEY = randomBytes(32);
+
+    beforeEach(() => {
+        _setMasterKeyProvidersForTest([
+            {
+                id: "keychain",
+                available: async () => true,
+                get: async () => VAULT_KEY,
+                getSync: () => VAULT_KEY,
+                set: async () => {},
+            },
+        ]);
+        _resetSecretsForTest();
+    });
+
+    afterEach(() => {
+        _resetMasterKeyProviders();
+        _resetSecretsForTest();
+    });
+
+    test("literal keys survive the round trip into the vault and back", async () => {
+        const config = await AIConfig.load();
+
+        const onDisk = SafeJSON.parse(
+            readFileSync(join(home, ".genesis-tools", "ai", "config.json"), "utf8"),
+            { strict: true }
+        ) as { accounts: Array<{ credentials?: Record<string, unknown> }> };
+        const apiKeyField = onDisk.accounts.find((a) => "apiKey" in (a.credentials ?? {}))?.credentials?.apiKey;
+        expect(apiKeyField).toEqual({ type: "secure", path: expect.stringMatching(/^ai\/.+\/apiKey$/) });
+
+        expect(AIConfig.resolveApiKey(config.getAccount("openai-key")!)).toBe("sk-literal-openai");
+        expect(config.getProviderApiKey("openai")).toBe("sk-literal-openai");
+        expect(config.getHfToken()).toBe("hf_characterization");
+        expect(config.getAccount("max-primary")?.tokens.accessToken).toBe("sk-ant-oat01-primary");
     });
 });

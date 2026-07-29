@@ -1,6 +1,20 @@
+import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { Entry } from "@napi-rs/keyring";
 import { decodeMasterKey, KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, type MasterKeyProvider } from "./types";
+
+/**
+ * The OS keychain is MACHINE-GLOBAL state: it ignores GENESIS_TOOLS_HOME, so a
+ * master key stored by any process changes what every later test observes (the
+ * secretsToVault migration stops deferring the moment a key is reachable).
+ * Under `bun test` (NODE_ENV=test) the rung is therefore unavailable unless
+ * RUN_KEYCHAIN=1 opts in; tests that need a key fake the ladder with
+ * `_setMasterKeyProvidersForTest`, and CLI smokes in agent runs should set
+ * GENESIS_TOOLS_MASTER_KEY instead of writing the real keychain.
+ */
+function blockedUnderTest(): boolean {
+    return env.get("NODE_ENV") === "test" && !env.isFlag("RUN_KEYCHAIN");
+}
 
 /**
  * OS keychain rung, via `@napi-rs/keyring` on every platform (macOS Keychain,
@@ -18,6 +32,10 @@ class OsKeyring implements MasterKeyProvider {
     readonly id = "keychain" as const;
 
     async available(): Promise<boolean> {
+        if (blockedUnderTest()) {
+            return false;
+        }
+
         try {
             this.entry();
             return true;
@@ -32,6 +50,10 @@ class OsKeyring implements MasterKeyProvider {
     }
 
     getSync(): Buffer | undefined {
+        if (blockedUnderTest()) {
+            return undefined;
+        }
+
         try {
             return decodeMasterKey(this.entry().getPassword(), "keychain");
         } catch (err) {
@@ -41,6 +63,10 @@ class OsKeyring implements MasterKeyProvider {
     }
 
     async set(key: Buffer): Promise<void> {
+        if (blockedUnderTest()) {
+            throw new Error("Refusing to write the real OS keychain under bun test. Set RUN_KEYCHAIN=1 to allow.");
+        }
+
         this.entry().setPassword(key.toString("base64"));
         logger.info({ service: KEYCHAIN_SERVICE, account: KEYCHAIN_ACCOUNT }, "stored vault master key in OS keyring");
     }
