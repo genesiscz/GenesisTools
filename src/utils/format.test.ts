@@ -110,12 +110,23 @@ describe("parseDuration", () => {
             expect(parseDuration("2hr")).toBe(7200000);
             expect(parseDuration("2hours")).toBe(7200000);
         });
+
+        it("parses days", () => {
+            expect(parseDuration("1d")).toBe(86400000);
+            expect(parseDuration("7d")).toBe(604800000);
+            expect(parseDuration("7days")).toBe(604800000);
+        });
     });
 
     describe("compound durations", () => {
         it("parses hours and minutes", () => {
             expect(parseDuration("1h30m")).toBe(5400000);
             expect(parseDuration("2h15min")).toBe(8100000);
+        });
+
+        it("parses days with smaller units", () => {
+            expect(parseDuration("2d6h")).toBe(2 * 86400000 + 6 * 3600000);
+            expect(parseDuration("1d 2h 30m")).toBe(86400000 + 2 * 3600000 + 30 * 60000);
         });
 
         it("parses minutes and seconds", () => {

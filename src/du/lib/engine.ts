@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
-import type { ClonesizeResult, ScanOptions } from "./types";
+import type { ClonesizeResult, PartnersResult, ScanOptions, VolumeInfo } from "./types";
 
 const prof = profiler.scope("du.engine");
 
@@ -101,7 +101,9 @@ function openLib() {
         // char* clonesize_run_json(const char* path, int threads, int freeable,
         //                          unsigned long long min_bytes,
         //                          const char* const* excludes, int nexcludes,
-        //                          int depth, int freeable_tree)
+        //                          int depth, int freeable_tree,
+        //                          unsigned long long changed_since,
+        //                          const char* cache_dir, int cache_read, int include_cloud)
         clonesize_run_json: {
             args: [
                 FFIType.ptr,
@@ -112,7 +114,18 @@ function openLib() {
                 FFIType.i32,
                 FFIType.i32,
                 FFIType.i32,
+                FFIType.u64,
+                FFIType.ptr,
+                FFIType.i32,
+                FFIType.i32,
             ],
+            returns: FFIType.ptr,
+        },
+        // char* clonesize_volume_json(const char* mount)
+        clonesize_volume_json: { args: [FFIType.ptr], returns: FFIType.ptr },
+        // char* clonesize_partners_json(const char* target, const char* root, int threads, int topn)
+        clonesize_partners_json: {
+            args: [FFIType.ptr, FFIType.ptr, FFIType.i32, FFIType.i32],
             returns: FFIType.ptr,
         },
         clonesize_free: { args: [FFIType.ptr], returns: FFIType.void },
@@ -145,6 +158,7 @@ export function scanWithCFfi(opts: ScanOptions): ClonesizeResult {
     }
 
     const pathBuf = Buffer.from(`${opts.path}\0`, "utf8");
+    const cacheBuf = opts.cacheDir ? Buffer.from(`${opts.cacheDir}\0`, "utf8") : null;
 
     const end = prof.start("c-ffi.run");
     const resPtr = symbols.clonesize_run_json(
@@ -155,7 +169,11 @@ export function scanWithCFfi(opts: ScanOptions): ClonesizeResult {
         exBufs.length > 0 ? ptr(exPtrs) : null,
         exBufs.length,
         opts.depth !== undefined && opts.depth >= 0 ? opts.depth : -1,
-        opts.freeableTree ? 1 : 0
+        opts.freeableTree ? 1 : 0,
+        BigInt(opts.changedSince && opts.changedSince > 0 ? opts.changedSince : 0),
+        cacheBuf ? ptr(cacheBuf) : null,
+        opts.noCache ? 0 : 1,
+        opts.includeCloud ? 1 : 0
     );
     end();
 
@@ -165,9 +183,51 @@ export function scanWithCFfi(opts: ScanOptions): ClonesizeResult {
 
     const json = new CString(resPtr).toString();
     symbols.clonesize_free(resPtr);
-    // keep exBufs alive until here
+    // keep the arg buffers alive until here
     void exBufs;
+    void cacheBuf;
     return SafeJSON.parse(json) as ClonesizeResult;
+}
+
+/** Read the volume's authoritative used/free bytes (ATTR_VOL_*) for a mount point. */
+export function readVolumeInfo(mount: string): VolumeInfo {
+    const { symbols } = getLib();
+    const buf = Buffer.from(`${mount}\0`, "utf8");
+    const resPtr = symbols.clonesize_volume_json(ptr(buf));
+    if (!resPtr) {
+        throw new Error(`Could not read volume attributes for ${mount} (is it a mount point?)`);
+    }
+
+    const json = new CString(resPtr).toString();
+    symbols.clonesize_free(resPtr);
+    return SafeJSON.parse(json) as VolumeInfo;
+}
+
+/**
+ * Two-phase clone-partner query: scan `target` for the blocks it shares, then
+ * scan `root` for every other file holding those same blocks.
+ */
+export function scanPartners(opts: { target: string; root: string; threads?: number; top?: number }): PartnersResult {
+    const { symbols } = getLib();
+    const targetBuf = Buffer.from(`${opts.target}\0`, "utf8");
+    const rootBuf = Buffer.from(`${opts.root}\0`, "utf8");
+
+    const end = prof.start("c-ffi.partners");
+    const resPtr = symbols.clonesize_partners_json(
+        ptr(targetBuf),
+        ptr(rootBuf),
+        opts.threads && opts.threads > 0 ? opts.threads : 0,
+        opts.top && opts.top > 0 ? opts.top : 30
+    );
+    end();
+
+    if (!resPtr) {
+        throw new Error("clonesize dylib returned NULL (partner scan failed)");
+    }
+
+    const json = new CString(resPtr).toString();
+    symbols.clonesize_free(resPtr);
+    return SafeJSON.parse(json) as PartnersResult;
 }
 
 /** Run the C engine as a subprocess and return the parsed result. */
@@ -188,6 +248,18 @@ export function scanWithC(opts: ScanOptions): ClonesizeResult {
     }
     if (opts.freeableTree) {
         args.push("--freeable-tree");
+    }
+    if (opts.changedSince && opts.changedSince > 0) {
+        args.push("--changed-since", String(opts.changedSince));
+    }
+    if (opts.cacheDir) {
+        args.push("--cache-dir", opts.cacheDir);
+    }
+    if (opts.noCache) {
+        args.push("--no-cache");
+    }
+    if (opts.includeCloud) {
+        args.push("--include-cloud");
     }
     for (const ex of opts.exclude ?? []) {
         args.push("--exclude", ex);

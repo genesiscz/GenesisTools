@@ -1,17 +1,30 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
-import { out } from "@genesiscz/utils/logger";
+import { parseDuration } from "@genesiscz/utils/format";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger, out } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage";
 import { Command, InvalidArgumentError, Option } from "commander";
 import pc from "picocolors";
 import { scanWithBun } from "./lib/bun-scan";
-import { scanWithC, scanWithCFfi } from "./lib/engine";
-import { humanBytes, renderHuman, renderTree } from "./lib/format";
+import { readVolumeInfo, scanPartners, scanWithC, scanWithCFfi } from "./lib/engine";
+import { diffScans, humanBytes, renderDiff, renderHuman, renderPartners, renderTree, renderVolume } from "./lib/format";
 import type { ClonesizeResult, Engine, ScanOptions } from "./lib/types";
 import { detectWorktreeExcludes } from "./lib/worktrees";
 
 const program = new Command();
+const storage = new Storage("du");
+
+/**
+ * Extent-cache directory. One file per volume lives here, keyed by fsid, so a
+ * single cache serves every scan root on that volume (fileids are volume-wide).
+ */
+async function cacheDir(): Promise<string> {
+    await storage.ensureDirs();
+    return storage.getCacheDir();
+}
 
 program
     .name("tools du")
@@ -39,6 +52,18 @@ function intOpt(name: string, opts: { min?: number; max?: number } = {}) {
         }
 
         return n;
+    };
+}
+
+/** `--changed-within 7d` → the epoch-second cutoff the native core filters on. */
+function durationToCutoff(name: string) {
+    return (v: string): number => {
+        const ms = parseDuration(v);
+        if (ms <= 0) {
+            throw new InvalidArgumentError(`${name} must be a duration like 24h, 7d or 30m (got "${v}").`);
+        }
+
+        return Math.floor((Date.now() - ms) / 1000);
     };
 }
 
@@ -91,6 +116,18 @@ program
     .option("--depth <n>", "Per-directory tree down to depth N (du -d N style)", intOpt("--depth", { min: 0 }))
     .option("--freeable-tree", "Per-node ATTR_CMNEXT_PRIVATESIZE in the --depth tree (implies --depth 1)")
     .option("--ignore-worktrees", "Auto-detect and exclude git worktrees + .worktrees/ dirs")
+    .option(
+        "--changed-within <duration>",
+        "Only count files modified within this window (7d, 24h, 30m) — 'what grew', not 'what is big'",
+        durationToCutoff("--changed-within")
+    )
+    .option("--no-cache", "Ignore the extent cache when reading. It is still written, so the NEXT run is warm.")
+    .option(
+        "--include-cloud",
+        "Also walk ~/Library/CloudStorage and iCloud Drive. Slow, and reading a placeholder can download it."
+    )
+    .option("--save <file>", "Write the raw JSON result to a file (pairs with --diff on a later run)")
+    .option("--diff <file>", "Compare against a previously --saved scan and print the per-directory delta")
     .addHelpText(
         "after",
         [
@@ -100,6 +137,13 @@ program
             "  tools du clonesize ~/repo --ignore-worktrees  # skip sibling worktrees",
             "  tools du clonesize ~/repo --format json       # machine-readable",
             "  tools du clonesize ~/repo --engine bun        # independent Bun impl",
+            "  tools du clonesize ~ --depth 1 --changed-within 7d   # what actually grew this week",
+            "  tools du clonesize ~ --depth 2 --save mon.json       # ... then, days later:",
+            "  tools du clonesize ~ --depth 2 --diff mon.json       # per-dir grown/shrunk/new/gone",
+            "",
+            "Repeat scans are served from an extent cache in ~/.genesis-tools/du/cache: a file",
+            "whose (id, mtime, size, allocation) is unchanged cannot have moved blocks, so its",
+            "extent map is reused instead of re-opened. On this repo that is ~3x faster.",
             "",
             "Point it at the PARENT of several worktrees to see how much they clone-share.",
             "Key truth: deleting a worktree frees only its *unique* blocks — blocks it",
@@ -119,6 +163,11 @@ program
                 depth?: number;
                 freeableTree?: boolean;
                 ignoreWorktrees?: boolean;
+                changedWithin?: number;
+                cache: boolean;
+                includeCloud?: boolean;
+                save?: string;
+                diff?: string;
             }
         ) => {
             const root = assertDir(dir);
@@ -136,7 +185,13 @@ program
                 process.exit(2);
             }
 
-            const depth = o.freeableTree && o.depth === undefined ? 1 : o.depth;
+            if (o.changedWithin !== undefined && o.engine === "bun") {
+                out.error("--changed-within is only supported by the C engines (--engine c-ffi or c).");
+                process.exit(2);
+            }
+
+            // A diff is per-directory, so it needs the tree on both sides.
+            const depth = (o.freeableTree || o.diff !== undefined) && o.depth === undefined ? 1 : o.depth;
 
             const exclude = o.ignoreWorktrees ? await detectWorktreeExcludes(root) : [];
             if (o.ignoreWorktrees && exclude.length > 0) {
@@ -154,9 +209,53 @@ program
                 depth,
                 freeableTree: o.freeableTree,
                 exclude,
+                changedSince: o.changedWithin,
+                cacheDir: o.engine === "bun" ? undefined : await cacheDir(),
+                noCache: !o.cache,
+                includeCloud: o.includeCloud,
             };
 
             const { result, ms } = await runScan(scanOpts, o.engine);
+
+            if (o.save) {
+                const savePath = resolve(o.save);
+                await Bun.write(savePath, SafeJSON.stringify(result, null, 2));
+                logger.debug({ savePath, nodes: result.nodes?.length ?? 0 }, "du: saved scan snapshot");
+                out.log.success(`Saved scan to ${savePath}`);
+            }
+
+            if (o.diff) {
+                const diffPath = resolve(o.diff);
+                if (!existsSync(diffPath)) {
+                    out.error(`No such snapshot: ${diffPath}`);
+                    process.exit(1);
+                }
+
+                const before = SafeJSON.parse(await Bun.file(diffPath).text()) as ClonesizeResult;
+
+                // Rows are matched on absolute node path, so a snapshot of another root
+                // (or one saved without --depth) diffs to "everything is new", not to an
+                // error. Both are meaningless numbers presented as a real delta.
+                if (before.path !== result.path) {
+                    out.error(
+                        `${diffPath} is a scan of ${before.path}, not ${result.path}. A diff needs the same root on both sides.`
+                    );
+                    process.exit(2);
+                }
+
+                if (!before.nodes || before.nodes.length === 0) {
+                    out.error(`${diffPath} has no per-directory tree. Re-save it with --depth N to diff against it.`);
+                    process.exit(2);
+                }
+
+                const rows = diffScans(before, result);
+                if (o.format === "json") {
+                    out.result({ before: before.path, after: result.path, rows });
+                } else {
+                    out.println(renderDiff(before, result, rows));
+                }
+                return;
+            }
 
             if (o.format === "json") {
                 out.result({ ...result, engine: o.engine, elapsed_ms: Math.round(ms) });
@@ -167,6 +266,113 @@ program
             }
         }
     );
+
+// ---------------------------------------------------------------------------
+// volume
+// ---------------------------------------------------------------------------
+program
+    .command("volume")
+    .description("Reconcile a whole volume: APFS used-bytes vs what a scan can actually see")
+    .argument("[mount]", "Volume mount point", "/System/Volumes/Data")
+    .addOption(new Option("--format <fmt>", "Output format").choices(["human", "json"]).default("human"))
+    .option("--threads <n>", "Worker threads (default: number of CPUs)", intOpt("--threads", { min: 1, max: 1024 }))
+    .option("--depth <n>", "Also print a per-directory tree down to depth N", intOpt("--depth", { min: 0 }))
+    .option("--include-cloud", "Also walk cloud-provider roots (slow; reading a placeholder can download it)")
+    .addHelpText(
+        "after",
+        [
+            "",
+            "Answers 'my disk says 97% full — where is it?'. The scan is compared against",
+            "ATTR_VOL_SPACEUSED, the same number diskutil prints as 'Volume Used Space',",
+            "so anything the walk could not read shows up as an explicit UNACCOUNTED line",
+            "instead of silently vanishing from the total.",
+            "",
+            "  tools du volume                       # the Data volume",
+            "  sudo tools du volume                  # ... including root-only subtrees",
+        ].join("\n")
+    )
+    .action(
+        async (
+            mount: string,
+            o: { format: "human" | "json"; threads?: number; depth?: number; includeCloud?: boolean }
+        ) => {
+            const root = assertDir(mount);
+            const vol = readVolumeInfo(root);
+            logger.debug({ mount: root, used: vol.used_bytes }, "du: read volume attributes");
+
+            out.log.info(`Scanning ${root} — a whole volume takes minutes, not seconds.`);
+            const { result, ms } = await runScan(
+                {
+                    path: root,
+                    threads: o.threads,
+                    depth: o.depth,
+                    cacheDir: await cacheDir(),
+                    includeCloud: o.includeCloud,
+                },
+                "c-ffi"
+            );
+
+            if (o.format === "json") {
+                const scanned = result.unique_allocated_bytes ?? result.unique_bytes;
+                out.result({ volume: vol, scan: result, unaccounted_bytes: vol.used_bytes - scanned });
+                return;
+            }
+
+            out.println(renderVolume(vol, result, ms));
+            if (o.depth !== undefined && result.nodes && result.nodes.length > 0) {
+                out.println("");
+                out.println(renderTree(result, "c-ffi", ms));
+            }
+        }
+    );
+
+// ---------------------------------------------------------------------------
+// clones
+// ---------------------------------------------------------------------------
+program
+    .command("clones")
+    .description("Find WHERE ELSE a directory's blocks live — the concrete clone partners")
+    .argument("<dir>", "Directory whose shared blocks to trace")
+    .option("--against <root>", "Where to search for partners (default: the dir's parent)")
+    .addOption(new Option("--format <fmt>", "Output format").choices(["human", "json"]).default("human"))
+    .option("--threads <n>", "Worker threads (default: number of CPUs)", intOpt("--threads", { min: 1, max: 1024 }))
+    .option("--top <n>", "Rows to show (default 30)", intOpt("--top", { min: 1 }))
+    .addHelpText(
+        "after",
+        [
+            "",
+            "`clonesize` tells you a dir shares N bytes with something. This tells you WITH WHAT.",
+            "That is the question that decides whether a package-manager cache is safe to delete:",
+            "blocks a live node_modules still references are not freed by deleting the cache.",
+            "",
+            "  tools du clones ~/.bun --against ~/Projects",
+            "  tools du clones ~/repo/.worktrees/feat-x --against ~/repo",
+        ].join("\n")
+    )
+    .action(async (dir: string, o: { against?: string; format: "human" | "json"; threads?: number; top?: number }) => {
+        const target = assertDir(dir);
+        const searchRoot = assertDir(o.against ?? resolve(target, ".."));
+
+        // Not a prefix compare: /tmp/root is a prefix of the unrelated /tmp/root-other.
+        const rel = relative(searchRoot, target);
+        const contained = rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
+        if (!contained) {
+            out.error(`--against ${searchRoot} does not contain ${target}.`);
+            process.exit(2);
+        }
+
+        const t0 = performance.now();
+        const result = scanPartners({ target, root: searchRoot, threads: o.threads, top: o.top });
+        const ms = performance.now() - t0;
+        logger.debug({ target, searchRoot, partners: result.partner_files_total }, "du: partner scan complete");
+
+        if (o.format === "json") {
+            out.result({ ...result, elapsed_ms: Math.round(ms) });
+            return;
+        }
+
+        out.println(renderPartners(result, ms));
+    });
 
 // ---------------------------------------------------------------------------
 // bench
