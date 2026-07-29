@@ -1872,24 +1872,27 @@ export class YoutubeDatabase extends BaseDatabase {
         return rows.map(rowToAiCall);
     }
 
-    getQueueStats(): QueueStats {
+    /** Queue-wide by default; pass `userId` to count only that owner's jobs. */
+    getQueueStats(opts: { userId?: number } = {}): QueueStats {
+        const owner = opts.userId === undefined ? "" : " AND user_id = ?";
+        const params = opts.userId === undefined ? [] : [opts.userId];
         const pendingRows = this.db
-            .query<{ stage: string | null; count: number }, []>(
+            .query<{ stage: string | null; count: number }, number[]>(
                 `SELECT json_extract(stages, '$[0]') AS stage, COUNT(*) AS count
-                 FROM jobs WHERE status = 'pending' GROUP BY stage`
+                 FROM jobs WHERE status = 'pending'${owner} GROUP BY stage`
             )
-            .all();
+            .all(...params);
         const runningRows = this.db
-            .query<{ stage: string | null; count: number }, []>(
+            .query<{ stage: string | null; count: number }, number[]>(
                 `SELECT COALESCE(current_stage, json_extract(stages, '$[0]')) AS stage, COUNT(*) AS count
-                 FROM jobs WHERE status = 'running' GROUP BY stage`
+                 FROM jobs WHERE status = 'running'${owner} GROUP BY stage`
             )
-            .all();
+            .all(...params);
         const oldest = this.db
-            .query<{ created_at: string }, []>(
-                "SELECT created_at FROM jobs WHERE status = 'pending' ORDER BY id ASC LIMIT 1"
+            .query<{ created_at: string }, number[]>(
+                `SELECT created_at FROM jobs WHERE status = 'pending'${owner} ORDER BY id ASC LIMIT 1`
             )
-            .get();
+            .get(...params);
         const perStage: Record<string, { queued: number; running: number }> = {};
         let queued = 0;
         let running = 0;
