@@ -939,9 +939,10 @@ function buildPaths(): Record<string, OpenApiPathItem> {
                 responses: {
                     "200": jsonResponse("Cancelled job", {
                         type: "object",
-                        properties: { job: { oneOf: [ref("PipelineJob"), { type: "null" }] } },
+                        properties: { job: ref("PipelineJob") },
                         required: ["job"],
                     }),
+                    "404": errorResponse,
                 },
             },
         },
