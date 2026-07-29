@@ -49,6 +49,13 @@ export interface EditAccountPatch {
     rename?: string;
     endpoint?: string;
     useEnvApiKey?: UseEnvApiKey;
+    /**
+     * Both were settable at `account add` time and nowhere else, so an account
+     * whose auth file moved could not be repaired through the CLI at all, and the
+     * repair hint for a missing one had no command to name.
+     */
+    authFile?: string;
+    dataDir?: string;
 }
 
 export class AccountNotFoundError extends Error {
@@ -192,6 +199,14 @@ export async function editAccount(idOrName: string, patch: EditAccountPatch): Pr
 
         if (patch.useEnvApiKey !== undefined) {
             account.useEnvApiKey = patch.useEnvApiKey;
+        }
+
+        if (patch.authFile !== undefined) {
+            account.credentials.authFile = patch.authFile.length > 0 ? patch.authFile : undefined;
+        }
+
+        if (patch.dataDir !== undefined) {
+            account.credentials.dataDir = patch.dataDir.length > 0 ? patch.dataDir : undefined;
         }
 
         logger.info({ id: account.id }, "edited AI account");

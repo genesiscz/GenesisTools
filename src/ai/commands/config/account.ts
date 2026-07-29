@@ -56,6 +56,8 @@ interface EditFlags {
     rename?: string;
     endpoint?: string;
     useEnv?: string;
+    authFile?: string;
+    dataDir?: string;
 }
 
 /** `--use-env A,B` names variables; `true`/`false` switch the provider defaults on and off. */
@@ -372,6 +374,8 @@ export async function cmdAccountEdit(idOrName: string, flags: EditFlags): Promis
         ...(flags.rename !== undefined ? { rename: flags.rename } : {}),
         ...(flags.endpoint !== undefined ? { endpoint: flags.endpoint } : {}),
         ...(flags.useEnv !== undefined ? { useEnvApiKey: parseUseEnv(flags.useEnv) } : {}),
+        ...(flags.authFile !== undefined ? { authFile: flags.authFile } : {}),
+        ...(flags.dataDir !== undefined ? { dataDir: flags.dataDir } : {}),
     });
 
     out.log.success(`Updated ${pc.bold(account.name)} (${account.id}).`);
@@ -504,6 +508,8 @@ export function registerAccountCommands(config: Command): void {
         .option("--rename <newName>", "Rename it; the id and every reference stay valid")
         .option("--endpoint <url>", "Set the base URL")
         .option("--use-env <vars>", "Comma-separated env vars to allow, or true/false")
+        .option("--auth-file <path>", "Path to a subscription CLI's auth file")
+        .option("--data-dir <path>", "Path to a provider data directory")
         .action(async (idOrName: string, flags: EditFlags) => {
             await cmdAccountEdit(idOrName, flags);
         });

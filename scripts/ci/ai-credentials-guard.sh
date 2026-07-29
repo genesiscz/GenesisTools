@@ -20,13 +20,28 @@ set -euo pipefail
 
 fail=0
 
+# Roots default to the repo's own trees. Passing them in is what lets the guard's
+# own test point it at a fixture directory of known violations.
+roots=("$@")
+if [ ${#roots[@]} -eq 0 ]; then
+    roots=(src apps scripts)
+fi
+
 # 1. No argless provider factories. Matches `createOpenAI()` and friends with an
-#    empty argument list only — an explicit `createOpenAI({ apiKey })` is the
-#    whole point and must pass. The `=`/`return` prefix keeps prose that NAMES the
-#    banned pattern (this file, and the comments explaining why) out of the match.
-if rg -n --glob '!node_modules' --glob '!**/*.md' --glob '!scripts/ci/ai-credentials-guard.sh' \
-        '(=|return)\s*(await\s+)?create(OpenAI|Groq|Anthropic|GoogleGenerativeAI|OpenAICompatible)\(\s*\)' \
-        src apps scripts ; then
+#    empty argument list only; an explicit `createOpenAI({ apiKey })` is the whole
+#    point and must pass.
+#
+#    The match is position-independent. It used to require a `=` or `return`
+#    immediately before the call, which let `consume(createOpenAI())`,
+#    `const p = (createOpenAI())` and a bare `createOpenAI();` statement through
+#    while they performed exactly the same hidden env read. That prefix was really
+#    there to skip prose that NAMES the pattern, so prose is now skipped directly:
+#    comment lines and backticked mentions are dropped from the results.
+argless=$(rg -n --glob '!node_modules' --glob '!**/*.md' --glob '!scripts/ci/ai-credentials-guard.sh' --glob '!scripts/ci/ai-credentials-guard.test.ts' \
+        '(await\s+)?create(OpenAI|Groq|Anthropic|GoogleGenerativeAI|OpenAICompatible)\(\s*\)' \
+        "${roots[@]}" | rg -v ':[[:space:]]*(//|\*|#)' | rg -v '`create' || true)
+if [ -n "$argless" ]; then
+    echo "$argless"
     echo "::error:: argless provider factory — the SDK would read the API key from its own env var, unauditably. Pass an explicit apiKey from resolveCredential()/resolveProviderApiKey()."
     fail=1
 fi
@@ -36,8 +51,8 @@ fi
 #    explicit.
 singleton_re='^\s*import\s+\{[^}]*\b(openai|groq|anthropic|google)\b[^}]*\}\s+from\s+["'"'"']@ai-sdk/'
 if rg -n --glob '!node_modules' --glob '!**/*.md' \
-        --glob '!src/utils/ai/providers/**' --glob '!scripts/ci/ai-credentials-guard.sh' \
-        "$singleton_re" src apps scripts ; then
+        --glob '!src/utils/ai/providers/**' --glob '!scripts/ci/ai-credentials-guard.sh' --glob '!scripts/ci/ai-credentials-guard.test.ts' \
+        "$singleton_re" "${roots[@]}" ; then
     echo "::error:: bare @ai-sdk singleton imported outside src/utils/ai/providers/ — use a provider plugin (registry.ts) so the credential is resolved through one auditable path."
     fail=1
 fi
@@ -50,10 +65,10 @@ fi
 #      - `AIConfig.ts`, the deprecated v3 facade, deleted once its last consumer
 #        moves to AiConfigStore (Phase 8).
 if rg -n --glob '!node_modules' --glob '!**/*.md' \
-        --glob '!src/utils/ai/config/**' --glob '!scripts/ci/ai-credentials-guard.sh' \
+        --glob '!src/utils/ai/config/**' --glob '!scripts/ci/ai-credentials-guard.sh' --glob '!scripts/ci/ai-credentials-guard.test.ts' \
         --glob '!src/utils/config/migrations/2026-04-07-migrateAI.ts' \
         --glob '!src/utils/ai/AIConfig.ts' \
-        'new Storage\(\s*["'"'"']ai["'"'"']\s*\)' src apps scripts ; then
+        'new Storage\(\s*["'"'"']ai["'"'"']\s*\)' "${roots[@]}" ; then
     echo "::error:: new Storage(\"ai\") outside src/utils/ai/config/ — go through AiConfigStore, which owns the lock order (config first, vault second) and the migration chain."
     fail=1
 fi

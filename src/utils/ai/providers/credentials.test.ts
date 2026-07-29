@@ -144,6 +144,37 @@ describe("resolveCredential", () => {
         }
     });
 
+    /**
+     * The hint used to be the same sentence whatever was missing, so a
+     * subscription account with no auth file was told to store an API key: a
+     * command that cannot repair it, aimed at the wrong credential.
+     */
+    test("the fix names the missing field, not always an API key", async () => {
+        const spec: CredentialSpec = { fields: ["authFile"], envKeys: [], required: ["authFile"] };
+
+        try {
+            await resolveCredential(account({ provider: "grok-sub" }), spec);
+            throw new Error("expected a CredentialUnavailableError");
+        } catch (err) {
+            const message = (err as Error).message;
+            expect(message).toContain("--auth-file <path>");
+            expect(message).not.toContain("secret set");
+            // The environment cannot supply an auth file, so it must not be offered.
+            expect(message).not.toContain("--use-env");
+        }
+    });
+
+    test("a missing access token is repaired at its own vault path", async () => {
+        const spec: CredentialSpec = { fields: ["accessToken"], envKeys: [], required: ["accessToken"] };
+
+        try {
+            await resolveCredential(account({ provider: "anthropic-sub" }), spec);
+            throw new Error("expected a CredentialUnavailableError");
+        } catch (err) {
+            expect((err as Error).message).toContain("tools ai config secret set ai/acc_xai/accessToken");
+        }
+    });
+
     test("auth-file providers resolve a path, not a secret", async () => {
         const spec: CredentialSpec = { fields: ["authFile"], envKeys: [], required: ["authFile"] };
 

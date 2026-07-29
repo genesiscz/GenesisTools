@@ -30,18 +30,35 @@ export class CredentialUnavailableError extends Error {
     }
 }
 
-function fixHint(account: AccountEntry, spec: CredentialSpec): string {
-    // Comma-joined, not prose: this string is pasted straight into a shell, and
-    // `--use-env A or B` is not a command anyone can run.
-    const vars = spec.envKeys.join(",");
-    return [
-        `Set one with: tools ai config secret set ai/${account.id}/apiKey`,
-        spec.envKeys.length > 0
-            ? `or allow the environment: tools ai config account edit ${account.name} --use-env ${vars}`
-            : "",
-    ]
-        .filter(Boolean)
-        .join(", ");
+/**
+ * Repair instructions for the fields that are ACTUALLY missing.
+ *
+ * A plugin may require `accessToken`, `authFile` or `dataDir` instead of an API
+ * key, and telling the user to store an `apiKey` in those cases is a command
+ * that cannot help and, for a subscription account, points at the wrong
+ * credential entirely.
+ */
+function fixHint(account: AccountEntry, spec: CredentialSpec, missing: readonly string[]): string {
+    const hints = missing.map((field) => {
+        if (field === "authFile" || field === "dataDir") {
+            const flag = field === "authFile" ? "--auth-file" : "--data-dir";
+            return `Set it with: tools ai config account edit ${account.name} ${flag} <path>`;
+        }
+
+        return `Store it with: tools ai config secret set ai/${account.id}/${field}`;
+    });
+
+    // Only an API key can come from the environment (`resolveCredential` consults
+    // it for that field alone), so this alternative is offered only when that is
+    // what is missing. Comma-joined, not prose: the string is pasted straight
+    // into a shell, and `--use-env A or B` is not a command anyone can run.
+    if (missing.includes("apiKey") && spec.envKeys.length > 0) {
+        hints.push(
+            `or allow the environment: tools ai config account edit ${account.name} --use-env ${spec.envKeys.join(",")}`
+        );
+    }
+
+    return hints.join(", ");
 }
 
 /**
@@ -98,7 +115,7 @@ export async function resolveCredential(account: AccountEntry, spec: CredentialS
         throw new CredentialUnavailableError(
             account.name,
             account.provider,
-            `missing ${missing.join(", ")}. ${fixHint(account, spec)}`
+            `missing ${missing.join(", ")}. ${fixHint(account, spec, missing)}`
         );
     }
 

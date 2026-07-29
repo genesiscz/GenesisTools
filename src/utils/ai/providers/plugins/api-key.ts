@@ -23,7 +23,19 @@ interface ApiKeyProviderSpec {
     envKeys: readonly string[];
     capabilities: Capability[];
     baseURL?: string;
-    create: (options: { apiKey: string; baseURL?: string }) => { languageModel: (id: string) => never } | unknown;
+    /**
+     * `fetch` is part of this because `BindContext` promises it and something
+     * already supplies it: `core/resolve.ts` forwards `opts.fetch` into the bind
+     * context, and the ai-proxy plugin honours it. Every installed SDK factory
+     * takes the same option, so dropping it here was the one gap that made the
+     * promised transport (a proxy, tracing, an isolated test) silently not apply
+     * to any API-key provider.
+     */
+    create: (options: {
+        apiKey: string;
+        baseURL?: string;
+        fetch?: typeof fetch;
+    }) => { languageModel: (id: string) => never } | unknown;
 }
 
 const SPECS: ApiKeyProviderSpec[] = [
@@ -112,7 +124,11 @@ function buildPlugin(spec: ApiKeyProviderSpec): ProviderPlugin {
                 throw new Error(`No API key resolved for ${spec.id}`);
             }
 
-            const provider = spec.create({ apiKey, ...(spec.baseURL ? { baseURL: spec.baseURL } : {}) }) as {
+            const provider = spec.create({
+                apiKey,
+                ...(spec.baseURL ? { baseURL: spec.baseURL } : {}),
+                ...(ctx.fetch ? { fetch: ctx.fetch } : {}),
+            }) as {
                 languageModel?: (id: string) => never;
                 textEmbeddingModel?: (id: string) => never;
                 transcriptionModel?: (id: string) => never;
