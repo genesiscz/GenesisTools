@@ -103,6 +103,10 @@ export async function sh(cmd: string[]): Promise<string> {
             // non-fatal, but a swallowed failure is indistinguishable from a
             // legitimately empty result — say which one happened.
             console.error(`wrap-up: \`${cmd.join(" ")}\` exited ${code}${err.trim() ? `: ${err.trim()}` : ""}`);
+            // Discard whatever landed on stdout: a failed `git rev-parse` can
+            // still print, and passing that through would be taken for a real
+            // toplevel or branch name.
+            return "";
         }
 
         return out.trim();
