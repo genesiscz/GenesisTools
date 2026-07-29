@@ -19,6 +19,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { decodeJwt } from "@genesiscz/utils/jwt";
 import { logger } from "@genesiscz/utils/logger";
 import { decodeJwtClaims, isAuthEntry, isTokenExpired, readAuthFileAsync } from "./auth";
+import { GrokAuthExpiredError } from "./auth-errors";
 import { grokAuthPath } from "./paths";
 import type { GrokAuthEntry } from "./types";
 
@@ -77,20 +78,29 @@ async function resolveTokenEndpoint(issuer: string): Promise<string> {
  * file from that map would delete all of it, so the rewrite patches the raw
  * document and the map is used only to reason about entries.
  */
-async function readAuthDocument(authPath: string): Promise<Record<string, unknown>> {
+async function readAuthDocument(
+    authPath: string,
+    knownEntries: Map<string, GrokAuthEntry>
+): Promise<Record<string, unknown>> {
     try {
-        const parsed = SafeJSON.parse(await Bun.file(authPath).text(), { strict: true });
+        // Lenient, matching `readAuthFileAsync`. A stricter parse here would
+        // reject files the reader accepted (a trailing comma is enough), fall
+        // through to the fallback, and drop everything this function exists to
+        // keep — the exact data loss it was written to prevent.
+        const parsed = SafeJSON.parse(await Bun.file(authPath).text());
 
         if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
             return parsed as Record<string, unknown>;
         }
 
-        logger.warn({ authPath }, "grok refresh: auth file is not a JSON object, rewriting it with entries only");
+        logger.warn({ authPath }, "grok refresh: auth file is not a JSON object, rewriting it from known entries");
     } catch (err) {
-        logger.warn({ err, authPath }, "grok refresh: auth file unreadable before rewrite, keeping entries only");
+        logger.warn({ err, authPath }, "grok refresh: auth file unreadable before rewrite, keeping known entries");
     }
 
-    return {};
+    // Still every entry the initial read saw, rather than an empty document:
+    // losing the non-entry fields is bad, losing the other accounts is worse.
+    return Object.fromEntries(knownEntries);
 }
 
 async function writeAuthFileAtomically(authPath: string, document: Record<string, unknown>): Promise<void> {
@@ -204,7 +214,7 @@ async function performRefresh(authPath: string, force: boolean): Promise<string 
 
     // Re-read right before writing: whatever the CLI wrote in the meantime keeps
     // its other entries, and only this entry's tokens are replaced.
-    const document = await readAuthDocument(authPath);
+    const document = await readAuthDocument(authPath, entries);
     const onDisk = document[id];
     const target = isAuthEntry(onDisk) ? onDisk : entry;
 
@@ -245,6 +255,35 @@ async function performRefresh(authPath: string, force: boolean): Promise<string 
     );
 
     return payload.access_token;
+}
+
+/**
+ * Refresh and insist on a usable result: the shared "a refresh that cannot be
+ * attempted or that the issuer rejects is fatal" contract.
+ *
+ * Both callers (`resolveGrokSubToken` and `GrokSubscriptionClient`) need exactly
+ * this and only differ in what they log and what they do with the token, so the
+ * rule about when an expired token becomes a `GrokAuthExpiredError` lives here
+ * rather than in two places that can disagree.
+ */
+export async function refreshGrokAuthOrThrow(options: {
+    authPath: string;
+    force?: boolean;
+    /** Included in both log lines so a caller's context survives into the log. */
+    context: Record<string, unknown>;
+    onSuccess: string;
+    onFailure: string;
+}): Promise<string> {
+    const refreshed = await refreshGrokAuth({ path: options.authPath, force: options.force });
+
+    if (!refreshed || isTokenExpired(decodeJwtClaims(refreshed))) {
+        logger.warn({ authPath: options.authPath, ...options.context }, options.onFailure);
+        throw new GrokAuthExpiredError(options.authPath);
+    }
+
+    logger.info({ authPath: options.authPath, ...options.context }, options.onSuccess);
+
+    return refreshed;
 }
 
 export interface RefreshGrokAuthOptions {
