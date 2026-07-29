@@ -26,6 +26,7 @@
  *   Resolution order: registry match > docDir > vaultDir > found:false.
  */
 
+import { rename } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 
@@ -123,8 +124,18 @@ async function loadRegistry(): Promise<Registry> {
     }
 }
 
+// Write via temp file + rename so an interrupted write can never leave a
+// truncated file behind. Both targets are append-only records whose partial
+// loss is unrecoverable: the registry holds every project's wrap-up target,
+// and the wrap-up doc's log is the only permanent session history.
+async function writeAtomic(path: string, body: string): Promise<void> {
+    const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
+    await Bun.write(tmp, body);
+    await rename(tmp, path);
+}
+
 async function saveRegistry(reg: Registry): Promise<void> {
-    await Bun.write(await registryPath(), `${JSON.stringify(reg, null, 2)}\n`);
+    await writeAtomic(await registryPath(), `${JSON.stringify(reg, null, 2)}\n`);
 }
 
 export function slug(s: string): string {
@@ -442,7 +453,7 @@ async function cmdLog(file: string) {
         failLog(`${built.problem} in ${file} — is this a wrap-up file created from the template?`);
     }
 
-    await Bun.write(file, built.body);
+    await writeAtomic(file, built.body);
     console.log(JSON.stringify({ logged: file, stamp }, null, 2));
 }
 
