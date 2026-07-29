@@ -6,8 +6,9 @@ import { splitTargets } from "@app/youtube/commands/_shared/utils";
 import { type JobActor, parseJobStatus, type QueueWatchEvent, toJobStages } from "@app/youtube/lib/queue";
 import { withConsoleContext } from "@app/youtube/lib/service-user";
 import type { PipelineJob } from "@app/youtube/lib/types";
+import { parseNonNegativeInt } from "@genesiscz/utils/cli/parse";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -65,15 +66,23 @@ interface WatchOpts {
  * `12` and a bare word as `NaN`, and the NaN then reaches a SQLite `LIMIT ?` or
  * silently disables a timeout (`Date.now() - startedAt >= NaN` is never true)
  * rather than failing where the user can see it.
+ *
+ * Delegates the digit and `Number.isSafeInteger` checks to the shared
+ * `parseNonNegativeInt` rather than repeating them — a hand-rolled version here
+ * admitted `999999999999999999999`, which loses id precision and overflows
+ * `timeoutSec * 1000`. Only the zero rejection and the throw-to-null conversion
+ * are local, because these call sites report the error themselves.
  */
 function positiveInt(value: string): number | null {
-    if (!/^\d+$/.test(value.trim())) {
+    try {
+        const parsed = parseNonNegativeInt(value.trim(), "value");
+
+        return parsed > 0 ? parsed : null;
+    } catch (err) {
+        logger.debug({ err, value }, "youtube queue: rejected a non-numeric CLI argument");
+
         return null;
     }
-
-    const parsed = Number.parseInt(value, 10);
-
-    return parsed > 0 ? parsed : null;
 }
 
 function jobRows(jobs: PipelineJob[]): string {
@@ -129,7 +138,9 @@ export function registerQueueCommand(program: Command): void {
                     .filter(Boolean),
             ["metadata", "captions", "transcribe", "summarize"]
         )
-        .option("--priority <n>", "Higher runs first", (value) => Number.parseInt(value, 10))
+        // Same strictness as the other numeric arguments: `--priority 12abc` silently
+        // became 12, and a bare word became NaN on the enqueued row.
+        .option("--priority <n>", "Higher runs first", (value) => parseNonNegativeInt(value, "--priority"))
         .option("--force", "Enqueue even when an identical job is already active")
         .option("--watch", "Follow the enqueued jobs until they finish")
         .option("--json", "Machine-readable output")
@@ -271,8 +282,10 @@ export function registerQueueCommand(program: Command): void {
                 followChildren: opts.noChildren !== true,
                 ...(timeoutSec === null ? {} : { timeoutMs: timeoutSec * 1000 }),
             })) {
-                // stdout, because `--jsonl` output is meant to be piped.
-                process.stdout.write(`${watchLine(event, opts.jsonl === true)}\n`);
+                // stdout, because here the events ARE the result and `--jsonl` is meant
+                // to be piped — but through `out.print`, which is the sanctioned stdout
+                // writer and keeps the global silent/output handling in one place.
+                out.print(`${watchLine(event, opts.jsonl === true)}\n`);
             }
         });
 
