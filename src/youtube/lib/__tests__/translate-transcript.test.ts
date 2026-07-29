@@ -15,7 +15,7 @@ beforeEach(() => {
     responses = [];
 });
 
-function stubCallLLM(opts: { systemPrompt: string; userPrompt: string; providerChoice: unknown }) {
+function stubCallLLM(opts: { systemPrompt: string; userPrompt: string; providerChoice?: unknown }) {
     callLlmCalls.push(opts);
 
     return Promise.resolve({ content: responses.shift() ?? "" });

@@ -1,6 +1,6 @@
 import type { CatalogEntry } from "../catalog";
-import type { AccountEntry, TaskName } from "../config/schema";
 import type { AiConfigStore } from "../config/AiConfigStore";
+import type { AccountEntry, TaskName } from "../config/schema";
 import type { ProviderBinding, ProviderPlugin } from "../providers/plugin-types";
 
 /**
