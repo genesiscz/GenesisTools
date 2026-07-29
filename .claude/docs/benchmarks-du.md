@@ -567,3 +567,47 @@ reached the line after the pipe. **Every `bench.sh` run since the extent-cache
 section was added therefore skipped that section entirely.** Both pipes now
 capture into a variable first and truncate from a herestring, verified to run
 through to the end.
+
+---
+
+## 2026-07-29 06:57 — Review round (PR #302): tests only, native core untouched
+
+**No benchmark was run, and none was needed.** This round changed no C: `git diff`
+touches `src/du/lib/options.ts` (new), `src/du/lib/options.test.ts` (new),
+`src/du/lib/cache.test.ts` (new), `src/du/index.ts` (imports), `src/du/lib/engine.ts`
+(comment) and `src/utils/format.ts` (comment). `clonesize.c` is byte-identical, so
+the hot loop cannot have moved. The rule in CLAUDE.md exists to catch unmeasured
+*features*; recording the absence here keeps the log honest either way.
+
+### What the new cache tests actually pin
+
+eve's review thread t3 was right that the extent cache had ~200 lines of C and a
+performance harness but no correctness suite. `src/du/lib/cache.test.ts` closes
+that, darwin-gated (the fixture needs `cp -c`/clonefile(2)). Measured on a fixture
+of one 4 MB file plus two clones:
+
+| step | files_opened | files_cached | unique_bytes |
+|---|---|---|---|
+| cold (`--no-cache`, writes) | 3 | 0 | 4,194,304 |
+| warm | 0 | 3 | 4,194,304 |
+| after rewriting one clone in place | 0 | 2 | 8,388,608 |
+| ground truth for that state (cache read off) | 2 | 0 | 8,388,608 |
+| after corrupting the cache file | 3 | 0 | 4,194,304 |
+
+Two things worth knowing for anyone extending these tests:
+
+- **The rewritten clone is not re-opened, it is skipped.** Once it stops sharing
+  blocks it becomes fully private, and the private-file skip
+  (`priv >= alloc && nlink <= 1 && alloc >= dlen`) means it never gets opened at
+  all. So the invalidation assertion has to be "totals track the no-cache ground
+  truth", not "the file was re-opened".
+- **A fully-warm scan skips the cache rewrite entirely** (`opened == 0` early
+  return in `cache_write`). A carryover test that scans a subtree whose files are
+  all already cached therefore never exercises the merge and passes vacuously. The
+  test forces a miss by adding an unseen file first, then asserts
+  `files_opened > 0` before checking the parent's records survived.
+
+Carryover verified directly against the file header rather than inferred: `nrecs`
+at offset 24 read **4** after a cold parent scan of 4 files, then **5** after a
+scan of only the 2-file subdirectory. Truncation to the scanned subtree would have
+left 2.
