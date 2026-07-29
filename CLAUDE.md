@@ -153,6 +153,15 @@ See `.claude/docs/tool-template.md` for complete templates (@inquirer + @clack/p
 
 **Before touching ANYTHING under `src/du/`, read `.claude/docs/benchmarks-du.md`, and append a new dated section to it for every feature you add.** The native core (`src/du/native/clonesize.c`) is syscall-bound and runs in the hot loop of multi-million-file scans, so an unmeasured feature is a silent regression. Measure with `src/du/native/bench.sh <label>` (fixed target matrix + hyperfine), record system CPU time as the primary metric (wall time on this machine swings with load average — always note `uptime`), and diff the `--json` byte totals. **Identical totals are required only when the change is meant to preserve scan semantics** (refactors, performance work, validation hardening). Features that deliberately change what is counted — `--changed-within` filtering, cloud-boundary pruning, allocation-vs-mapped reporting — must instead state which totals move, by how much, and why. Unexplained movement is a bug either way.
 
+## Code Style: Biome formatting gotchas (write it right the first time)
+
+- **Imports are auto-sorted by module specifier** (`bun:` / `node:` builtins first, then packages and `@genesiscz/...` aliases alphabetically), and named imports inside braces are sorted case-insensitively — write them pre-sorted or the hook churns your diff.
+- **Line width is 120, 4-space indent.** Don't hand-wrap below that; biome unwraps your "pretty" 3-line call back onto one line.
+- **Long call: biome keeps args inline and expands only the trailing object/array** (`fn(a, b, {\n ... \n})`), not one-arg-per-line.
+- **Long `if`: parenthesized multiline, one clause per line** — `if (\n  a ||\n  b\n ) {`.
+- **`// biome-ignore` must name a rule that actually fires there**, else it becomes a `suppressions/unused` warning itself.
+- **The pre-commit hook runs `biome check --write --staged`**: it can fix the staged copy while leaving a reflow residue in the working tree of the SAME file. After committing, glance at `git status` and commit the residue as `style:` — don't leave it to pollute the next person's diff.
+
 ## Code Style Rules
 
 - **Fix bugs at the root, not at every call site.** When the same issue appears in multiple places because of a shared function, fix the shared function — don't patch each caller individually. One fix at the source beats N fixes at the edges.
