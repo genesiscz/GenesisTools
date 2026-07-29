@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import { grantArtifactAccess } from "@app/youtube/lib/artifact-access";
+import { answerOverVideos } from "@app/youtube/lib/ask-answer";
 import { audioPath, ensureBinaryDir, videoFilePath } from "@app/youtube/lib/cache";
 import type { ChannelEnsureResult, ChannelHandle, ChannelSyncStatus } from "@app/youtube/lib/channel.types";
 import type { VideoComment } from "@app/youtube/lib/comments.types";
@@ -676,12 +677,13 @@ export class Youtube {
                         fallbackSpec: resolveAiSpecForTask(await this.config.getAll(), "qa"),
                     });
 
-                    for (const memberId of videoIds) {
-                        await this.qa.index({ videoId: memberId, sources });
-                    }
-
+                    // Through the one answering path rather than index-then-ask
+                    // inline: it owns the same indexing loop plus citation
+                    // enrichment, so a stage answer and a CLI answer stop
+                    // differing in shape for the same question.
                     ctx.onProgress(0.5, "Answering question");
-                    const result = await this.qa.ask({
+                    const result = await answerOverVideos({
+                        yt: this,
                         videoIds,
                         question,
                         topK,

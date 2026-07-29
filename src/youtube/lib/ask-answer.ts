@@ -29,6 +29,8 @@ export interface AnswerOverVideosOpts {
     maxIndex?: number | null;
     /** Prior turns of an ask session, oldest first. Omitted for one-shot asks. */
     history?: AskHistoryTurn[];
+    /** Extra system-prompt instructions from a saved preset (the `qa` pipeline stage passes these). */
+    presetInstructions?: string;
 }
 
 export interface EnrichedCitation extends AskCitation {
@@ -136,6 +138,7 @@ export async function answerOverVideos(opts: AnswerOverVideosOpts): Promise<Answ
         streamTarget: opts.streamTarget,
         sources: opts.sources,
         lang: opts.lang,
+        presetInstructions: opts.presetInstructions,
         crossVideo,
         history: opts.history,
     });

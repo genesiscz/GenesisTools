@@ -2,6 +2,7 @@ import { loadAskProviderChoice } from "@app/youtube/commands/_shared/ask-provide
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import { formatSummary, resolveTargetsToVideoIds } from "@app/youtube/commands/_shared/utils";
+import { answerOverVideos, formatCitationLines } from "@app/youtube/lib/ask-answer";
 import type { TimestampedSummaryEntry, VideoId } from "@app/youtube/lib/types";
 import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli/executor";
@@ -74,11 +75,13 @@ export function registerAnalyzeCommand(program: Command): void {
             }
 
             if (opts.ask) {
-                for (const id of ids) {
-                    await yt.qa.index({ videoId: id });
-                }
-
-                const result = await yt.qa.ask({
+                // `answerOverVideos` is the one answering path (indexing, retrieval,
+                // citation enrichment). Calling `qa.ask` directly here was a second
+                // one: it skipped enrichment, so human output could only print
+                // `videoId#chunkIdx` while the --json branch already carried the
+                // timestamps and deep links this now shows.
+                const result = await answerOverVideos({
+                    yt,
                     videoIds: ids,
                     question: opts.ask,
                     topK: opts.topK,
@@ -86,12 +89,11 @@ export function registerAnalyzeCommand(program: Command): void {
                     providerChoice: await loadAskProviderChoice({ provider: opts.provider, model: opts.model }),
                     streamTarget: opts.stream ? process.stdout : undefined,
                 });
-                const citations = result.citations
-                    .map((citation) => `${citation.videoId}#${citation.chunkIdx}`)
-                    .join(", ");
 
                 await renderOrEmit({
-                    text: opts.stream ? "" : `${result.answer}\n\n${pc.dim("Citations:")} ${citations}`,
+                    text: opts.stream
+                        ? ""
+                        : `${result.answer}\n\n${pc.dim("Citations:")}\n${formatCitationLines(result.citations).join("\n")}`,
                     json: result,
                     flags: cmd.optsWithGlobals(),
                 });
