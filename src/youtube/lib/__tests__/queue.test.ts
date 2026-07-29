@@ -9,6 +9,7 @@ import { Pipeline } from "@app/youtube/lib/pipeline";
 import type { PipelineHandlerMap } from "@app/youtube/lib/pipeline.types";
 import type { IndexOpts } from "@app/youtube/lib/qa.types";
 import { QueueService, toJobStages } from "@app/youtube/lib/queue";
+import { withRequestContext } from "@app/youtube/lib/request-context";
 import { Youtube } from "@app/youtube/lib/youtube";
 
 describe("QueueService", () => {
@@ -115,6 +116,46 @@ describe("QueueService", () => {
             });
 
             expect(result.job?.params).toEqual({ question: "kept for the worker" });
+        } finally {
+            await disposeFixture(fixture);
+        }
+    });
+
+    it("owns a job by the ambient request user when the caller passes none", async () => {
+        const fixture = await makeFixture();
+
+        try {
+            const owned = await withRequestContext({ db: fixture.db, userId: 42 }, async () =>
+                fixture.queue.enqueue({ target: "ambient-owner", stages: ["metadata"] })
+            );
+
+            expect(owned.job?.userId).toBe(42);
+        } finally {
+            await disposeFixture(fixture);
+        }
+    });
+
+    it("prefers an explicit userId over the ambient one", async () => {
+        const fixture = await makeFixture();
+
+        try {
+            const owned = await withRequestContext({ db: fixture.db, userId: 42 }, async () =>
+                fixture.queue.enqueue({ target: "explicit-owner", stages: ["metadata"], userId: 7 })
+            );
+
+            expect(owned.job?.userId).toBe(7);
+        } finally {
+            await disposeFixture(fixture);
+        }
+    });
+
+    it("still enqueues, unowned, when there is no user anywhere in scope", async () => {
+        const fixture = await makeFixture();
+
+        try {
+            const result = fixture.queue.enqueue({ target: "unowned", stages: ["metadata"] });
+
+            expect(result.job?.userId).toBeNull();
         } finally {
             await disposeFixture(fixture);
         }
