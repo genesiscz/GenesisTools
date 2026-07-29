@@ -189,3 +189,38 @@ describe("composeAuthFetch — retry policy", () => {
         expect(pending).rejects.toThrow();
     });
 });
+
+describe("composeAuthFetch — refresh and retry together", () => {
+    /**
+     * The two policies used to be tested only in isolation, and they interact:
+     * the refresh branch lives inside the retry loop, so a retryable status
+     * between two 401s produced a SECOND refresh. A subscription refresh token is
+     * single-use, so that second call spends the grant the first one replaced.
+     */
+    test("refreshes at most once even when a retry brings back another 401", async () => {
+        const { transport, attempts } = fakeFetch([401, 500, 401, 200]);
+        const issued: string[] = [];
+
+        const authed = composeAuthFetch({
+            getToken: async () => "stale",
+            refresh: async () => {
+                const token = `fresh-${issued.length + 1}`;
+                issued.push(token);
+                return token;
+            },
+            fetch: transport,
+            maxRetries: 3,
+            ...FAST,
+        });
+
+        const response = await authed("https://example.invalid/v1/messages");
+
+        expect(issued).toEqual(["fresh-1"]);
+        // Attempt 3 is the retry after the 500. It carries the stale token again
+        // because getToken is the source of truth, it comes back 401, and 401 is
+        // not retryable, so the caller is handed that 401 rather than having a
+        // second grant spent behind its back.
+        expect(attempts.map((a) => a.authorization)).toEqual(["Bearer stale", "Bearer fresh-1", "Bearer stale"]);
+        expect(response.status).toBe(401);
+    });
+});

@@ -1,5 +1,5 @@
 import type { PricingInfo } from "@ask/types";
-import { clearPricingCache, pricingCacheSize, pricingFor } from "@genesiscz/utils/ai/catalog/pricing";
+import { clearPricingCache, pricingCacheSize, pricingForCall } from "@genesiscz/utils/ai/catalog/pricing";
 import { calculateCallCostUsd } from "@genesiscz/utils/ai/llm-cost";
 import { logger } from "@genesiscz/utils/logger";
 import type { LanguageModelUsage } from "ai";
@@ -18,7 +18,10 @@ import type { LanguageModelUsage } from "ai";
  */
 export class DynamicPricingManager {
     async getPricing(provider: string, modelId: string): Promise<PricingInfo | null> {
-        return (await pricingFor(provider, modelId)) ?? null;
+        // Resolved, not raw. `pricingFor` answers with the catalog's rules still
+        // unapplied, so this shim used to bill a model at its list rate while the
+        // usage ledger recorded the dated rate for the same call.
+        return (await pricingForCall(provider, modelId, { at: new Date() })) ?? null;
     }
 
     async calculateCost(provider: string, model: string, usage: LanguageModelUsage): Promise<number> {

@@ -96,6 +96,17 @@ export function createMiniAgent(options: MiniAgentOptions): MiniAgent {
     const messages: ModelMessage[] = [];
     const queued: string[] = [];
     let inflight: AbortController | undefined;
+    /**
+     * The turn in flight, assigned SYNCHRONOUSLY at the top of `send`.
+     *
+     * Busy used to be read off `inflight`, which `runOnce` does not assign until
+     * after an awaited session lookup and transport resolution. Two `send()` calls
+     * made in the same tick therefore both passed the guard, both appended to the
+     * shared `messages` array and ran against the model concurrently. `inflight`
+     * stays because `interject` needs the AbortController itself, not merely the
+     * knowledge that something is running.
+     */
+    let turn: Promise<AgentTurn> | undefined;
     let transport = options.transport;
     let record: SessionRecord | undefined;
     let hydrated = false;
@@ -158,10 +169,21 @@ export function createMiniAgent(options: MiniAgentOptions): MiniAgent {
     }
 
     async function send(text: string, sendOptions?: { callbacks?: AgentCallbacks }): Promise<AgentTurn> {
-        if (inflight) {
+        if (turn) {
             throw new SessionBusyError(record?.id ?? options.session?.title ?? "mini-agent");
         }
 
+        // Assigned before the first await, so a second synchronous call sees it.
+        turn = runTurn(text, sendOptions);
+
+        try {
+            return await turn;
+        } finally {
+            turn = undefined;
+        }
+    }
+
+    async function runTurn(text: string, sendOptions?: { callbacks?: AgentCallbacks }): Promise<AgentTurn> {
         const session = await ensureSession();
         let pending = text;
         let toolCalls = 0;
@@ -227,7 +249,7 @@ export function createMiniAgent(options: MiniAgentOptions): MiniAgent {
         },
 
         get busy(): boolean {
-            return inflight !== undefined;
+            return turn !== undefined;
         },
 
         get messages(): ModelMessage[] {

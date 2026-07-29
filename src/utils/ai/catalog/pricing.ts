@@ -147,6 +147,26 @@ export async function pricingFor(provider: string, modelId: string): Promise<Mod
     return resolved;
 }
 
+/**
+ * The rate an actual call bills: the ladder's published rates, with every rule
+ * that matches this call resolved.
+ *
+ * `pricingFor` answers unresolved on purpose, and for a while NOTHING in
+ * production performed the second step, so a dated rule (Sonnet 5's
+ * introductory rate) was declared in the catalog and never charged. Production
+ * reads go through here. `pricingFor` stays raw for callers that want to inspect
+ * or display the rules themselves.
+ */
+export async function pricingForCall(
+    provider: string,
+    modelId: string,
+    context: PricingContext = {}
+): Promise<ModelPricing | undefined> {
+    const pricing = await pricingFor(provider, modelId);
+
+    return pricing ? effectivePricing(pricing, context) : undefined;
+}
+
 export interface PricingContext {
     /** When the call happens. Omit and dated rules simply do not apply. */
     at?: Date;

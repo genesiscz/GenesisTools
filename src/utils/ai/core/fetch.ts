@@ -63,10 +63,18 @@ export function composeAuthFetch(options: AuthFetchOptions): typeof fetch {
             return transport(input, { ...init, headers });
         };
 
+        // Once per invocation, not once per attempt. The refresh branch sits
+        // INSIDE the retry loop, so a 401 -> refresh -> 500 -> 401 sequence called
+        // `refresh()` twice even though the contract says once. That is not a
+        // wasted round trip: a subscription refresh token is single-use, so the
+        // second call spends the grant the first one just replaced.
+        let refreshed = false;
+
         for (let attempt = 0; ; attempt++) {
             let response = await send(await getToken());
 
-            if (response.status === 401 && refresh) {
+            if (response.status === 401 && refresh && !refreshed) {
+                refreshed = true;
                 log.debug({ url: String(input) }, "upstream rejected the token; forcing a refresh and retrying once");
                 await discard(response);
                 response = await send(await refresh());

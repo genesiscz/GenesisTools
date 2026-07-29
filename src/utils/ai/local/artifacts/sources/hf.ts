@@ -87,34 +87,36 @@ export class HfSource {
         return [...new Set(all)];
     }
 
+    /** `cachedPath` with the path thrown away, so the two can never disagree. */
     isCached(modelId: string): boolean {
-        const dirName = `models--${modelId.replace(/\//g, "--")}`;
+        return this.cachedPath(modelId) !== null;
+    }
 
-        if (existsSync(join(this.hubDir, dirName))) {
-            return true;
+    /**
+     * Where this model actually is, across BOTH cache layouts, or null.
+     *
+     * This used to answer for the hub layout only while `isCached` answered for
+     * both, so a model living in the transformers.js cache made
+     * `ArtifactStore.ensure` report `cached: true` next to a hub path that did
+     * not exist, breaking the contract that `ResolvedArtifact.path` points at the
+     * cached artifact.
+     */
+    cachedPath(modelId: string): string | null {
+        const hubPath = this.expectedPath(modelId);
+
+        if (existsSync(hubPath)) {
+            return hubPath;
         }
 
         if (this.transformersCacheDir) {
             const localPath = join(this.transformersCacheDir, modelId);
 
-            if (existsSync(localPath)) {
-                return isModelDir(localPath);
+            if (existsSync(localPath) && isModelDir(localPath)) {
+                return localPath;
             }
         }
 
-        return false;
-    }
-
-    /** Hub-layout path for a model, or null when it isn't in the hub cache. */
-    cachedPath(modelId: string): string | null {
-        const dirName = `models--${modelId.replace(/\//g, "--")}`;
-        const modelPath = join(this.hubDir, dirName);
-
-        if (!existsSync(modelPath)) {
-            return null;
-        }
-
-        return modelPath;
+        return null;
     }
 
     /** Where a model would live if it were cached, hub layout, whether or not it is. */

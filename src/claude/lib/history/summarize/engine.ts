@@ -11,7 +11,7 @@ import { modelSelector } from "@ask/providers/ModelSelector";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { ProviderChoice } from "@ask/types";
 import { type CallLLMResult, callLLM as sharedCallLLM } from "@genesiscz/utils/ai/call-llm";
-import { pricingFor } from "@genesiscz/utils/ai/catalog/pricing";
+import { pricingForCall } from "@genesiscz/utils/ai/catalog/pricing";
 import { calculateCallCostUsd } from "@genesiscz/utils/ai/llm-cost";
 import type { ClaudeSession, PreparedContent } from "@genesiscz/utils/claude/session";
 import { applySystemPromptPrefix } from "@genesiscz/utils/claude/subscription-billing";
@@ -533,10 +533,13 @@ export class SummarizeEngine {
         let cost: number | undefined;
         if (llmResult.usage) {
             // Straight to the catalog + the one cost implementation, rather than
-            // through ask's deprecated pricing shim. `pricingFor` walks the full
+            // through ask's deprecated pricing shim. `pricingForCall` walks the full
             // ladder (static, then LiteLLM, then OpenRouter), which is what a
             // one-shot summarize wants: it runs once per command, not per token.
-            const pricing = await pricingFor(providerChoice.provider.name, providerChoice.model.id);
+            const pricing = await pricingForCall(providerChoice.provider.name, providerChoice.model.id, {
+                at: new Date(),
+                contextTokens: llmResult.usage.inputTokens ?? 0,
+            });
 
             if (pricing) {
                 cost = calculateCallCostUsd(pricing, llmResult.usage) ?? undefined;

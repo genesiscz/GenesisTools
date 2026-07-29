@@ -76,3 +76,41 @@ describe("HfSource.list", () => {
         expect(new HfSource(hub, hub).list().map((a) => a.id)).toEqual(["Xenova/all-MiniLM-L6-v2"]);
     });
 });
+
+describe("HfSource.cachedPath", () => {
+    test("returns the hub path when the model is in the hub layout", () => {
+        const { hub, transformers } = roots();
+        const path = modelDir(hub, "models--Xenova--all-MiniLM-L6-v2");
+
+        expect(new HfSource(hub, transformers).cachedPath("Xenova/all-MiniLM-L6-v2")).toBe(path);
+    });
+
+    /**
+     * `isCached` accepted this layout while `cachedPath` did not, so
+     * `ArtifactStore.ensure` reported the model cached and handed back a hub path
+     * that did not exist.
+     */
+    test("returns the transformers.js path for a model only in that layout", () => {
+        const { hub, transformers } = roots();
+        const path = modelDir(transformers, "Xenova", "bge-small-en");
+        const source = new HfSource(hub, transformers);
+
+        expect(source.cachedPath("Xenova/bge-small-en")).toBe(path);
+        expect(source.isCached("Xenova/bge-small-en")).toBe(true);
+    });
+
+    test("a directory holding no model files is not a cache hit", () => {
+        const { hub, transformers } = roots();
+        mkdirSync(join(transformers, "Xenova", "empty"), { recursive: true });
+        const source = new HfSource(hub, transformers);
+
+        expect(source.cachedPath("Xenova/empty")).toBeNull();
+        expect(source.isCached("Xenova/empty")).toBe(false);
+    });
+
+    test("an uncached model has no path at all", () => {
+        const { hub, transformers } = roots();
+
+        expect(new HfSource(hub, transformers).cachedPath("Xenova/never-downloaded")).toBeNull();
+    });
+});

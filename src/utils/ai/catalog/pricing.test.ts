@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { clearPricingCache, convertOpenRouterPricing, effectivePricing, pricingCacheSize, pricingFor } from "./pricing";
+import {
+    clearPricingCache,
+    convertOpenRouterPricing,
+    effectivePricing,
+    pricingCacheSize,
+    pricingFor,
+    pricingForCall,
+} from "./pricing";
 import { byId } from "./static";
 import type { ModelPricing } from "./types";
 
@@ -295,5 +302,32 @@ describe("catalog entries carrying rules", () => {
         }
 
         expect(effectivePricing(opus, { at: new Date("2026-07-29"), contextTokens: 900_000 })).toEqual(opus);
+    });
+});
+
+describe("pricingForCall", () => {
+    /**
+     * `pricingFor` answers with rules unapplied by design, and three production
+     * cost paths priced that answer directly, so a dated rule was declared in the
+     * catalog and never charged. This is the resolved entry point they use.
+     */
+    test("resolves dated rules that pricingFor leaves unapplied", async () => {
+        clearPricingCache();
+        const raw = await pricingFor("anthropic", "claude-sonnet-5");
+        const intro = await pricingForCall("anthropic", "claude-sonnet-5", {
+            at: new Date("2026-07-29T12:00:00Z"),
+        });
+        const later = await pricingForCall("anthropic", "claude-sonnet-5", {
+            at: new Date("2026-09-01T00:00:00Z"),
+        });
+
+        expect(raw?.rules?.length).toBeGreaterThan(0);
+        expect(intro?.rules).toBeUndefined();
+        expect(intro?.inputPer1M).toBeLessThan(raw?.inputPer1M as number);
+        expect(later?.inputPer1M).toBe(raw?.inputPer1M as number);
+    });
+
+    test("an unpriced model stays undefined rather than becoming an empty rate", async () => {
+        expect(await pricingForCall("nobody", "no-such-model")).toBeUndefined();
     });
 });
