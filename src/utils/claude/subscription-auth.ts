@@ -121,7 +121,34 @@ const JOURNAL_KEEP_DAYS = 30;
  * that situation. So instead of touching entries, drop the old ones: anything
  * older than the retention window can no longer be the live pair.
  */
-function pruneJournal(path: string): void {
+/**
+ * Newest-first until the budget runs out, then stop.
+ *
+ * Age alone does not bound the file: a burst of rotations inside the retention
+ * window keeps every line, and the journal grows without limit. Recovery only
+ * ever reuses the most recent pair for an account, so dropping from the old end
+ * is the cut that costs nothing. At least one line always survives, even if that
+ * single line is bigger than the whole budget.
+ */
+function keepNewestWithinBudget(lines: string[], maxBytes: number): string[] {
+    const kept: string[] = [];
+    let bytes = 0;
+
+    for (let i = lines.length - 1; i >= 0; i--) {
+        bytes += Buffer.byteLength(lines[i], "utf8") + 1;
+
+        if (bytes > maxBytes && kept.length > 0) {
+            break;
+        }
+
+        kept.push(lines[i]);
+    }
+
+    return kept.reverse();
+}
+
+/** Exported for its test: the byte bound has no other observable seam. */
+export function pruneJournal(path: string): void {
     try {
         if (!existsSync(path) || statSync(path).size < JOURNAL_MAX_BYTES) {
             return;
@@ -144,9 +171,14 @@ function pruneJournal(path: string): void {
                 }
             });
 
-        writeFileSync(path, kept.length > 0 ? `${kept.join("\n")}\n` : "", { mode: 0o600 });
+        const bounded = keepNewestWithinBudget(kept, JOURNAL_MAX_BYTES);
+
+        writeFileSync(path, bounded.length > 0 ? `${bounded.join("\n")}\n` : "", { mode: 0o600 });
         chmodSync(path, 0o600);
-        logger.info({ path, kept: kept.length }, "[token-refresh] pruned token journal");
+        logger.info(
+            { path, kept: bounded.length, droppedByBudget: kept.length - bounded.length },
+            "[token-refresh] pruned token journal"
+        );
     } catch (err) {
         logger.warn({ err, path }, "[token-refresh] journal prune failed");
     }
