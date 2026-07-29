@@ -185,7 +185,10 @@ function buildMemberViews(
 function realPathOrSelf(path: string): string {
     try {
         return realpathSync(path);
-    } catch {
+    } catch (error) {
+        // A team whose cwd has since been deleted still has to compare against the
+        // filter, so fall back to lexical resolution rather than dropping it.
+        logger.debug({ error, path }, "[teams] realpath failed; comparing the lexically resolved path");
         return resolve(path);
     }
 }
@@ -271,8 +274,9 @@ export function discoverTeams(opts: DiscoverTeamsOptions = {}): TeamView[] {
             let mtimeMs = 0;
             try {
                 mtimeMs = statSync(configPath).mtimeMs;
-            } catch {
-                mtimeMs = 0;
+            } catch (error) {
+                // Only drives the age column and the sort tiebreak — 0 sorts last.
+                logger.debug({ error, configPath }, "[teams] could not stat team config; treating it as age 0");
             }
 
             const cwdFromMembers =
