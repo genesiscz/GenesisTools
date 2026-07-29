@@ -3,9 +3,17 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 
 const TOOL_NAME = "ai-proxy";
 
+/**
+ * Owner-only: this config carries the proxy bearer key and, since
+ * `accounts[].apiKey`, billed vendor credentials in plain text. Declared on the
+ * storage instance so every writer of config.json honours it, not just the one
+ * `AiProxyConfigStore.save` happens to call.
+ */
+export const AI_PROXY_CONFIG_FILE_MODE = 0o600;
+
 export class AiProxyStorage extends Storage {
     constructor() {
-        super(TOOL_NAME);
+        super(TOOL_NAME, { configFileMode: AI_PROXY_CONFIG_FILE_MODE });
     }
 
     runtimePath(): string {
