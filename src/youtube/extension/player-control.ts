@@ -18,19 +18,40 @@ export function findPlayerVideo(): HTMLVideoElement | null {
     );
 }
 
+/**
+ * Where a seek to `seconds` lands on a video of `duration`, or null when the
+ * request can't be honoured. Split out of `seekPlayerTo` so the clamping rules
+ * are pinned without a DOM, the same way `player-chapters` exports
+ * `tickPositionPct`.
+ */
+export function seekTargetFor(seconds: number, duration: number): number | null {
+    if (!Number.isFinite(seconds)) {
+        return null;
+    }
+
+    const target = Math.max(0, seconds);
+
+    // Live streams report Infinity and a not-yet-loaded video reports NaN — in both
+    // cases there is no end to clamp against, so only a finite duration caps the seek.
+    return Number.isFinite(duration) ? Math.min(target, duration) : target;
+}
+
 /** Returns false when the player isn't on the page yet, so callers can log it. */
 export function seekPlayerTo(seconds: number): boolean {
     const video = findPlayerVideo();
 
-    if (!video || !Number.isFinite(seconds)) {
+    if (!video) {
         return false;
     }
 
-    const target = Math.max(0, seconds);
-    // Live streams report Infinity and a not-yet-loaded video reports NaN — in both
-    // cases there is no end to clamp against, so only a finite duration caps the seek.
-    const { duration } = video;
-    video.currentTime = Number.isFinite(duration) ? Math.min(target, duration) : target;
+    const target = seekTargetFor(seconds, video.duration);
+
+    if (target === null) {
+        return false;
+    }
+
+    video.currentTime = target;
+
     return true;
 }
 
