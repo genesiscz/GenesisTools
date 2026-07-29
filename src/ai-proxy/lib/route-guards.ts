@@ -1,6 +1,6 @@
 import type { ResolvedClient } from "@app/ai-proxy/lib/clients";
 import { clientProviderDenial, resolveClient } from "@app/ai-proxy/lib/clients";
-import { acquireProvider, routeProviderKey } from "@app/ai-proxy/lib/providers/registry";
+import { acquireProvider, providerUnavailableResponse } from "@app/ai-proxy/lib/providers/registry";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { resolveModel } from "@app/ai-proxy/lib/resolve-model";
 import type { AiProxyConfig, ResolvedRoute } from "@app/ai-proxy/lib/types";
@@ -72,7 +72,7 @@ export async function guardProxyRoute(input: {
     const provider = await acquireProvider(input.providers, route);
 
     if (!provider) {
-        return jsonError(500, `Provider not loaded: ${routeProviderKey(route)}`);
+        return providerUnavailableResponse(route);
     }
 
     return { client, route, provider, proxyModel: input.proxyModel };

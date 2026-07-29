@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { convertMessagesToInput } from "@app/ai-proxy/lib/chat-to-responses-body";
 import { captureUpstreamFailure } from "@app/ai-proxy/lib/debug-capture";
@@ -705,7 +706,9 @@ async function accumulateResponsesJson(
     const output: unknown[] = [];
 
     if (text.length > 0) {
+        // Responses API clients (Vercel AI SDK) require an id on every output item; WHAM omits it.
         output.push({
+            id: `msg_${randomUUID().replace(/-/g, "")}`,
             type: "message",
             role: "assistant",
             status: "completed",
@@ -713,7 +716,14 @@ async function accumulateResponsesJson(
         });
     }
 
-    output.push(...functionCalls);
+    for (const call of functionCalls) {
+        if (isObject(call) && typeof call.id !== "string") {
+            output.push({ ...call, id: `fc_${randomUUID().replace(/-/g, "")}` });
+            continue;
+        }
+
+        output.push(call);
+    }
 
     return { failed: false, body: SafeJSON.stringify({ ...completed, object: "response", output }) };
 }

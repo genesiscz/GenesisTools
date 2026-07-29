@@ -1,5 +1,6 @@
 import { migrateAccountConfig } from "@app/ai-proxy/lib/account-config";
 import { normalizeBasePath } from "@app/ai-proxy/lib/path-prefix";
+import { maskApiKey } from "@app/ai-proxy/lib/providers/api-key-state";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { AiProxyConfig, AiProxyPublicConfig } from "@app/ai-proxy/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -154,9 +155,14 @@ export function resetAiProxyConfigStore(): void {
 }
 
 export function redactConfig(config: AiProxyConfig): AiProxyConfig {
+    // `maskApiKey` rather than a prefix slice: a short key is entirely inside its
+    // own first few characters, which is the one case redaction has to survive.
     return {
         ...config,
-        proxyApiKey: config.proxyApiKey ? `${config.proxyApiKey.slice(0, 8)}…` : "",
+        proxyApiKey: config.proxyApiKey ? maskApiKey(config.proxyApiKey) : "",
+        accounts: config.accounts.map((account) =>
+            account.apiKey ? { ...account, apiKey: maskApiKey(account.apiKey) } : account
+        ),
     };
 }
 

@@ -102,6 +102,24 @@ function queueAppend(file: string, day: string, payload: string): void {
     });
 }
 
+/** Transcripts are opt-out; a realtime session must honour the same switch. */
+export function transcriptsEnabled(): boolean {
+    return env.aiProxy.getTranscripts();
+}
+
+/**
+ * Append already-serialized JSONL entries to a session file. Realtime sessions
+ * stream for minutes, so they write as they go instead of building one exchange
+ * up front the way `writeTranscript` does.
+ */
+export function appendTranscriptLines(file: string, day: string, lines: string[]): void {
+    if (lines.length === 0) {
+        return;
+    }
+
+    queueAppend(file, day, `${lines.join("\n")}\n`);
+}
+
 function sanitize(part: string | undefined, fallback: string): string {
     const cleaned = (part ?? "").replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
     return cleaned || fallback;

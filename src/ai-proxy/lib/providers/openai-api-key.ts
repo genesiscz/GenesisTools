@@ -1,4 +1,5 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
+import { type ApiKeySource, assertApiKeySourceAllowed } from "@app/ai-proxy/lib/providers/api-key-guard";
 import { relayHeaders, rewriteSessionModel, toWsBase } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider, RealtimeConnectTarget } from "@app/ai-proxy/lib/providers/types";
 import { rewriteBodyModel } from "@app/ai-proxy/lib/rewrite-upstream-body";
@@ -41,11 +42,25 @@ export class OpenAiApiKeyProvider implements ProxyProvider {
 
     static async create(account: AiProxyAccountConfig): Promise<OpenAiApiKeyProvider> {
         const envName = account.apiKeyEnv ?? "OPENAI_API_KEY";
-        const apiKey = env.getTrimmed(envName as never);
+        const configured = account.apiKey?.trim();
+        const apiKey = configured || env.getTrimmed(envName as never);
 
         if (!apiKey) {
-            throw new Error(`No OpenAI API key found (checked ${envName}).`);
+            throw new Error(`No OpenAI API key found (checked config apiKey, ${envName}).`);
         }
+
+        const source: ApiKeySource = configured ? "config" : "configEnv";
+        assertApiKeySourceAllowed({ account, source, envName });
+
+        logger.info(
+            {
+                account: account.name,
+                provider: account.provider,
+                keySource: source,
+                apiKeyEnv: envName,
+            },
+            "ai-proxy: openai account using a billed API key"
+        );
 
         return new OpenAiApiKeyProvider(account, apiKey);
     }

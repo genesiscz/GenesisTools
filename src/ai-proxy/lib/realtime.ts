@@ -2,8 +2,10 @@ import type { ProxyProvider, RealtimeConnectTarget } from "@app/ai-proxy/lib/pro
 import { guardProxyRoute, jsonError } from "@app/ai-proxy/lib/route-guards";
 import type { AiProxyConfig, ResolvedRoute } from "@app/ai-proxy/lib/types";
 import { scheduleBillingSync } from "@app/ai-proxy/lib/usage/billing-sync";
+import { RealtimeTranscript } from "@app/ai-proxy/lib/usage/realtime-transcript";
 import { recordUsageRequest } from "@app/ai-proxy/lib/usage/store";
-import type { TokenUsage } from "@app/ai-proxy/lib/usage/types";
+import { readRequestTags } from "@app/ai-proxy/lib/usage/transcripts";
+import type { RequestTags, TokenUsage } from "@app/ai-proxy/lib/usage/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { Server, ServerWebSocket, WebSocketHandler } from "bun";
@@ -30,6 +32,8 @@ export interface RealtimeBridgeData {
     upstreamFrames: number;
     upstreamBytes: number;
     usage: TokenUsage | null;
+    transcript: RealtimeTranscript;
+    tags?: RequestTags;
 }
 
 /** Browsers cannot set WS headers — accept the proxy key via `?key=` too. */
@@ -130,6 +134,7 @@ export async function handleRealtimeUpgrade(input: {
         return jsonError(400, `Provider "${route.account.provider}" does not support realtime`);
     }
 
+    const tags = readRequestTags(input.req.headers);
     const data: RealtimeBridgeData = {
         target: provider.realtimeConnect(route.upstreamId),
         client: client.name,
@@ -145,6 +150,16 @@ export async function handleRealtimeUpgrade(input: {
         upstreamFrames: 0,
         upstreamBytes: 0,
         usage: null,
+        tags,
+        transcript: new RealtimeTranscript({
+            ts: new Date().toISOString(),
+            account: route.accountName,
+            provider: route.account.provider,
+            proxyModel: guarded.proxyModel,
+            upstreamModel: route.upstreamId,
+            client: client.name,
+            tags,
+        }),
     };
 
     if (input.server.upgrade(input.req, { data })) {
@@ -205,6 +220,7 @@ export const realtimeWebsocket: WebSocketHandler<RealtimeBridgeData> = {
             const payload = event.data as string | ArrayBuffer;
             data.upstreamFrames += 1;
             data.upstreamBytes += frameByteLength(payload);
+            data.transcript.recordFrame("upstream", payload);
 
             if (typeof payload === "string") {
                 sniffRealtimeUsage(data, payload);
@@ -241,6 +257,7 @@ export const realtimeWebsocket: WebSocketHandler<RealtimeBridgeData> = {
         const data = ws.data;
         data.clientFrames += 1;
         data.clientBytes += frameByteLength(message);
+        data.transcript.recordFrame("client", message);
         const upstream = data.upstream;
 
         if (!upstream || upstream.readyState !== WebSocket.OPEN) {
@@ -292,6 +309,16 @@ export const realtimeWebsocket: WebSocketHandler<RealtimeBridgeData> = {
             "ai-proxy: realtime session closed"
         );
 
+        const transcript = data.transcript.finish({
+            elapsedMs,
+            closeCode: code,
+            usage: data.usage ?? undefined,
+            clientFrames: data.clientFrames,
+            clientBytes: data.clientBytes,
+            upstreamFrames: data.upstreamFrames,
+            upstreamBytes: data.upstreamBytes,
+        });
+
         recordUsageRequest({
             ts: new Date().toISOString(),
             account: data.route.accountName,
@@ -304,6 +331,8 @@ export const realtimeWebsocket: WebSocketHandler<RealtimeBridgeData> = {
             elapsedMs,
             stream: true,
             usage: data.usage ?? undefined,
+            tags: data.tags,
+            transcript,
         });
         scheduleBillingSync(data.route.account, data.providers);
     },
@@ -353,20 +382,92 @@ export async function handleRealtimeClientSecrets(input: {
         return jsonError(400, `Provider "${route.account.provider}" does not support realtime client secrets`);
     }
 
+    if (!input.config.realtime?.allowClientSecrets) {
+        logger.warn(
+            {
+                path: "/v1/realtime/client_secrets",
+                model: proxyModel,
+                upstreamModel: route.upstreamId,
+                account: route.accountName,
+                client: client.name,
+            },
+            "ai-proxy: refused to mint a realtime client secret (realtime.allowClientSecrets is off)"
+        );
+
+        return jsonError(
+            403,
+            "Minting realtime client secrets is disabled: the minted secret talks to the vendor directly, " +
+                "so that session's usage and content never reach this proxy's logs. Use the logged WS tunnel " +
+                "(GET /v1/realtime?model=…), or set realtime.allowClientSecrets = true in the ai-proxy config " +
+                "to accept the blind spot.",
+            { type: "forbidden", code: "client_secrets_disabled" }
+        );
+    }
+
     const started = performance.now();
     const response = await provider.realtimeClientSecrets(input.req, route.upstreamId, bodyText);
+    const elapsedMs = Math.round(performance.now() - started);
+    const minted = await response.text();
 
-    logger.info(
+    logger.warn(
         {
             path: "/v1/realtime/client_secrets",
             model: proxyModel,
             upstreamModel: route.upstreamId,
+            account: route.accountName,
+            provider: route.account.provider,
             status: response.status,
-            elapsedMs: Math.round(performance.now() - started),
+            elapsedMs,
             client: client.name,
+            expiresAt: readSecretExpiry(minted),
         },
-        "ai-proxy: request"
+        response.ok
+            ? "ai-proxy: minted a realtime client secret — that session bypasses this proxy and is NOT logged"
+            : "ai-proxy: realtime client secret mint was refused upstream"
     );
 
-    return response;
+    // The grant is on record even though the session it authorizes is not, so
+    // vendor-side usage can at least be attributed to a client and a moment.
+    recordUsageRequest({
+        ts: new Date().toISOString(),
+        account: route.accountName,
+        client: client.name,
+        provider: route.account.provider,
+        proxyModel,
+        upstreamModel: route.upstreamId,
+        path: "/v1/realtime/client_secrets",
+        status: response.status,
+        elapsedMs,
+        stream: false,
+        error: response.status >= 400,
+    });
+
+    // `response.text()` already decoded the body, so upstream's framing headers
+    // now describe a payload that no longer exists — clients would misdecode it.
+    const headers = new Headers(response.headers);
+    headers.delete("content-encoding");
+    headers.delete("content-length");
+    headers.delete("transfer-encoding");
+
+    return new Response(minted, { status: response.status, headers });
+}
+
+/** Pull the expiry out of a mint response so the grant's lifetime is on record. */
+function readSecretExpiry(body: string): string | undefined {
+    try {
+        const parsed = SafeJSON.parse(body, { strict: true }) as {
+            expires_at?: number | string;
+            client_secret?: { expires_at?: number | string };
+        };
+        const raw = parsed.client_secret?.expires_at ?? parsed.expires_at;
+
+        if (typeof raw === "number") {
+            return new Date(raw * 1000).toISOString();
+        }
+
+        return typeof raw === "string" ? raw : undefined;
+    } catch (err) {
+        logger.debug({ err }, "ai-proxy: realtime mint response was not JSON — no expiry recorded");
+        return undefined;
+    }
 }
