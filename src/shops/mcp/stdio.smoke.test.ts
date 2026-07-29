@@ -8,6 +8,12 @@ interface JsonRpcResponse {
     error?: { code: number; message: string };
 }
 
+interface JsonRpcFrame {
+    jsonrpc?: string;
+    id?: number | string;
+    method?: string;
+}
+
 async function runInitializeAndListTools(): Promise<{ initialize: JsonRpcResponse; listTools: JsonRpcResponse }> {
     const proc = Bun.spawn(["bun", "src/shops/index.ts", "mcp"], {
         cwd: process.cwd(),
@@ -46,16 +52,40 @@ async function runInitializeAndListTools(): Promise<{ initialize: JsonRpcRespons
     proc.kill();
     await proc.exited;
 
+    const context = `\nstdout: ${stdoutText.slice(0, 500)}\nstderr: ${stderrText.slice(0, 500)}`;
     const lines = stdoutText.split("\n").filter((l) => l.trim().length > 0);
-    if (lines.length < 2) {
-        throw new Error(
-            `Expected at least 2 JSON-RPC frames on stdout, got ${lines.length}.\n` +
-                `stdout: ${stdoutText.slice(0, 500)}\nstderr: ${stderrText.slice(0, 500)}`
-        );
+
+    // Every stdout line must be a JSON-RPC frame. This is the "no stdout
+    // pollution" half of the contract: one stray console.log anywhere in the
+    // server or its imports corrupts the stream for every client.
+    const byId = new Map<number | string, JsonRpcResponse>();
+    for (const [index, line] of lines.entries()) {
+        let frame: JsonRpcFrame;
+
+        try {
+            frame = SafeJSON.parse(line) as JsonRpcFrame;
+        } catch {
+            throw new Error(`stdout line ${index + 1} is not JSON, so something polluted the stream: ${line}`);
+        }
+
+        if (frame.jsonrpc !== "2.0") {
+            throw new Error(`stdout line ${index + 1} is not a JSON-RPC 2.0 frame: ${line}`);
+        }
+
+        // Notifications carry no id and need no correlation.
+        if (frame.id === undefined) {
+            continue;
+        }
+
+        byId.set(frame.id, frame as JsonRpcResponse);
     }
 
-    const initialize = SafeJSON.parse(lines[0]) as JsonRpcResponse;
-    const listTools = SafeJSON.parse(lines[1]) as JsonRpcResponse;
+    const initialize = byId.get(1);
+    const listTools = byId.get(2);
+    if (!initialize || !listTools) {
+        throw new Error(`Missing responses for ids 1 and 2, got ids [${[...byId.keys()].join(", ")}].${context}`);
+    }
+
     return { initialize, listTools };
 }
 
