@@ -11,12 +11,13 @@ import {
 } from "@app/ai-proxy/commands/accounts";
 import { runAccountsLogin } from "@app/ai-proxy/commands/accounts-login";
 import { runCallsCommand } from "@app/ai-proxy/commands/calls";
-import { clientsAdd, clientsList, clientsUsage } from "@app/ai-proxy/commands/clients";
+import { clientsAdd, clientsList, clientsSecure, clientsUsage } from "@app/ai-proxy/commands/clients";
 import { runConfigDetect, runConfigInit, runConfigSet, runConfigShow } from "@app/ai-proxy/commands/config";
 import { runConfigMenu, runSetupCloudflaredTunnel } from "@app/ai-proxy/commands/config-wizard";
 import { runDownCommand } from "@app/ai-proxy/commands/down";
 import { runUpdateModelsCommand } from "@app/ai-proxy/commands/internal/update-models";
 import { runIntrospectCommand } from "@app/ai-proxy/commands/introspect";
+import { runLinkCommand } from "@app/ai-proxy/commands/link";
 import { runModelsCommand } from "@app/ai-proxy/commands/models";
 import { runServeCommand } from "@app/ai-proxy/commands/serve";
 import { runStatusCommand } from "@app/ai-proxy/commands/status";
@@ -145,6 +146,14 @@ program
         }
     );
 
+program
+    .command("link")
+    .description("Register this proxy as an AI-config account so @proxy/<slug>/<model> refs resolve")
+    .option("--status", "Report the link without changing anything")
+    .action(async (options: { status?: boolean }) => {
+        await runLinkCommand(options);
+    });
+
 const clientsCmd = program.command("clients").description("Manage per-user client keys + usage ledger");
 
 clientsCmd
@@ -167,6 +176,13 @@ clientsCmd
             costCap: opts.costCap,
             providers: opts.provider as AiProxyProviderType[] | undefined,
         });
+    });
+
+clientsCmd
+    .command("secure")
+    .description("Move plaintext client keys into the vault (config keeps only a reference)")
+    .action(async () => {
+        await clientsSecure();
     });
 
 clientsCmd
