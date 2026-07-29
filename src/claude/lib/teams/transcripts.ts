@@ -13,13 +13,36 @@ const TAIL_BYTES = 32 * 1024;
 /** Files bigger than this without an agentName hit in the head are skipped. */
 const SKIP_LARGE_WITHOUT_AGENT_BYTES = 2 * 1024 * 1024;
 
+/** Matches a whole JSON string literal, so `\"` and `\\` do not end the capture. */
+const AGENT_NAME_RE = /"agentName"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+
 /**
- * Agent names come out of transcript JSON, so they are arbitrary text. Interpolated
- * raw into a pattern, one containing `.`/`+`/`(` silently stops matching its own
- * transcript, and an unbalanced one (`a[b`) throws and aborts the whole index pass.
+ * Agent names in the slice are JSON string literals, so the bytes between the quotes
+ * are the ENCODED spelling (`a\"b`, `a\\b`). Everything downstream compares against
+ * the DECODED value `SafeJSON.parse` returns, so a name indexed under the raw capture
+ * could never match its own member. Decode each literal before it becomes a key.
+ *
+ * Decoding also removes the need to build a RegExp out of a name: one containing
+ * `.`/`+`/`(` silently stopped matching its own transcript, and an unbalanced one
+ * (`a[b`) threw and aborted the whole index pass.
  */
-function escapeRegExp(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function agentNamesIn(text: string): Set<string> {
+    const names = new Set<string>();
+
+    for (const match of text.matchAll(AGENT_NAME_RE)) {
+        try {
+            const decoded = SafeJSON.parse(`"${match[1]}"`, { strict: true }) as string;
+
+            if (decoded && decoded !== "team-lead") {
+                names.add(decoded);
+            }
+        } catch (error) {
+            // A literal cut in half by the head/tail boundary lands here.
+            logger.trace({ error, raw: match[1] }, "[teams] skipping undecodable agentName literal");
+        }
+    }
+
+    return names;
 }
 
 function stripTeammateEnvelope(text: string): string {
@@ -174,7 +197,9 @@ function summarizeSlice(
         return undefined;
     }
 
-    if (agentName && !seenAgent && !head.includes(`"agentName":"${agentName}"`)) {
+    // Fallback for a slice where no line parsed: compare decoded names, since a
+    // literal spelling of `agentName` misses anything JSON had to escape.
+    if (agentName && !seenAgent && !agentNamesIn(head).has(agentName)) {
         return undefined;
     }
 
@@ -288,26 +313,21 @@ export function indexProjectTranscripts(
             }
 
             // Agents present in the slice
-            const agentNames = new Set<string>();
-            const agentRe = /"agentName"\s*:\s*"([^"]+)"/g;
-            for (const match of hay.matchAll(agentRe)) {
-                const name = match[1];
-                if (name && name !== "team-lead") {
-                    agentNames.add(name);
-                }
-            }
+            const agentNames = agentNamesIn(hay);
 
             if (agentNames.size === 0) {
                 continue;
             }
 
+            // Large files only earn a full summarize pass when the agent shows up
+            // early. Resolved once per file, against decoded names, rather than
+            // rebuilt per agent.
+            const headAgentNames = size > SKIP_LARGE_WITHOUT_AGENT_BYTES ? agentNamesIn(head.slice(0, 8192)) : null;
+
             for (const teamName of hitTeams) {
                 const byAgent = byTeam.get(teamName)!;
                 for (const agentName of agentNames) {
-                    if (
-                        size > SKIP_LARGE_WITHOUT_AGENT_BYTES &&
-                        !new RegExp(`"agentName"\\s*:\\s*"${escapeRegExp(agentName)}"`).test(head.slice(0, 8192))
-                    ) {
+                    if (headAgentNames && !headAgentNames.has(agentName)) {
                         continue;
                     }
 

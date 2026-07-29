@@ -17,6 +17,18 @@ function listAllProcesses(): PsRow[] {
             stdout: "pipe",
             stderr: "pipe",
         });
+
+        // Same as readProcessEnvKeys: a nonzero exit is not an exception. Without
+        // this, a failed ps reads as "no processes running" and every teammate
+        // silently shows as dead.
+        if (proc.exitCode !== 0) {
+            logger.warn(
+                { exitCode: proc.exitCode, stderr: proc.stderr.toString().trim() },
+                "[teams] ps -ax failed; treating every teammate as not running"
+            );
+            return [];
+        }
+
         const text = proc.stdout.toString();
         const rows: PsRow[] = [];
         for (const line of text.split("\n")) {
@@ -69,6 +81,18 @@ export function readProcessEnvKeys(pid: number, keys: string[]): Record<string, 
             stdout: "pipe",
             stderr: "pipe",
         });
+
+        // spawnSync reports an ordinary command failure through exitCode, not by
+        // throwing — the process being gone, or ps refusing another user's env,
+        // never reaches the catch below.
+        if (proc.exitCode !== 0) {
+            logger.debug(
+                { pid, exitCode: proc.exitCode, stderr: proc.stderr.toString().trim() },
+                "[teams] ps eww failed; account attribution skipped"
+            );
+            return out;
+        }
+
         const text = proc.stdout.toString();
         for (const key of keys) {
             const re = new RegExp(`(?:^|\\s)${key}=([^\\s]*)`);
@@ -79,8 +103,8 @@ export function readProcessEnvKeys(pid: number, keys: string[]): Record<string, 
         }
     } catch (error) {
         // Callers treat a missing key as "account unknown" and fall back, so a
-        // failed `ps eww` (process gone, permissions) is degraded, not fatal.
-        logger.debug({ error, pid }, "[teams] could not read process env; account attribution skipped");
+        // ps that cannot even be spawned is degraded, not fatal.
+        logger.debug({ error, pid }, "[teams] could not spawn ps eww; account attribution skipped");
     }
 
     return out;
