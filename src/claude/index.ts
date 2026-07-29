@@ -27,6 +27,7 @@ import { registerSpendingCommand } from "./commands/spending";
 import { registerStartCommand } from "./commands/start";
 import { registerSummarizeCommand } from "./commands/summarize";
 import { registerTailCommand } from "./commands/tail";
+import { registerTeamsCommand } from "./commands/teams";
 import { registerUsageCommand } from "./commands/usage";
 import { registerWarmupCommand } from "./commands/warmup";
 
@@ -58,6 +59,7 @@ registerLoginSecondaryCommand(program);
 registerLogoutCommand(program);
 registerSpendingCommand(program);
 registerStartCommand(program);
+registerTeamsCommand(program);
 
 addGlobalVerboseOption(program);
 
