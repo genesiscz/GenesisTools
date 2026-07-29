@@ -108,13 +108,23 @@ describe("createWatcher", () => {
             const filePath = join(tempDir, "existing.txt");
             await Bun.write(filePath, "original");
 
-            const { waitForEvents, startWatcher } = collectEvents();
+            const { events: seen, waitForEvents, startWatcher } = collectEvents();
             await startWatcher();
             await Bun.sleep(100);
 
             await Bun.write(filePath, "modified content");
 
+            // Under heavy machine load (the 16x parallel suite) FSEvents can
+            // coalesce this write into the subscription's initial scan and
+            // deliver nothing. One re-touch after a quiet window keeps the test
+            // honest — it still requires a real update event to pass.
+            const nudge = setTimeout(() => {
+                if (seen.length === 0) {
+                    void Bun.write(filePath, "modified content, nudged");
+                }
+            }, 3_000);
             const events = await waitForEvents(1);
+            clearTimeout(nudge);
             const updateEvent = events.find((e) => e.path === filePath && e.type === "update");
             expect(updateEvent).toBeTruthy();
         },

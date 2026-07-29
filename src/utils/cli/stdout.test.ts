@@ -16,14 +16,12 @@ describe.skipIf(skip.onWindows)("writeStdout", () => {
         expect(out.length).toBe(300001);
     });
 
-    it("plain console.log truncates the same payload", async () => {
-        const proc = Bun.spawn(["sh", "-c", `bun -e 'console.log("X".repeat(300000))' | cat`], {
-            stdout: "pipe",
-        });
-        const out = await new Response(proc.stdout).text();
-        await proc.exited;
-        expect(out.length).toBeLessThan(300001);
-    });
+    // A second test used to pin the MOTIVATION: plain `console.log` of the same
+    // payload truncated through a pipe. Bun fixed that truncation (observed
+    // delivering all 300001 bytes on 1.3.14), so asserting the bug's presence
+    // failed on every current runtime. writeStdout keeps its guarantee either
+    // way, which the test above pins; the historical bug does not need to
+    // stay reproducible for that to hold.
 });
 
 describe("printLn", () => {

@@ -455,10 +455,15 @@ sequential reader finishes at Step 7 and never runs it. This is that place.
    there is one.
 
    ```bash
-   # background; ~6 min, then report what came back
-   SECONDS=0; until [ $SECONDS -ge 360 ]; do sleep 30; done
-   tools github review <pr> --llm -u
+   # backgrounded (note the trailing &): the main agent reports Step 7 and keeps
+   # working while this waits, then reads the file when the wait fires
+   ( SECONDS=0; until [ $SECONDS -ge 360 ]; do sleep 30; done; \
+     tools github review <pr> --llm -u > /tmp/pr-<pr>-second-pass.txt 2>&1 ) &
    ```
+
+   In Claude Code, prefer the harness's own background mechanism over a shell
+   `&` — run the wait via Bash with `run_in_background: true` so the completion
+   notification re-invokes the agent instead of the agent polling.
 
 2. **Re-read every thread you replied to** and apply the Step 6 table: resolved
    by the bot → nothing; acknowledgement → resolve; disagreement or follow-up →
@@ -490,7 +495,12 @@ User: /github-pr 137 -u
 8. Fix each thread, run linting
 9. Commit: "fix(scope): address code review issues..."
 10. Reply agent: tools github review respond t1 "Fixed in ..." -s pr137-...
-11. Report: "Fixed 12 threads, skipped 2 (FALSE_POSITIVE), modified 5 files, commit abc1234"
+11. Report: "Fixed 12 threads, skipped 2 (FALSE_POSITIVE), modified 5 files, commit abc1234
+    — Step 8 still outstanding"
+12. Arm the ≥5-minute background wait (Step 8.1), keep working or yield the turn
+13. On the wait firing: re-read the replied threads, apply the Step 6 table
+    (bot resolved → nothing; ack → resolve; disagreement → back to Step 2.5;
+    silence → resolve), batch-resolve, confirm with a final --llm -u read
 ```
 
 ---

@@ -104,23 +104,14 @@ export async function clientsAdd(input: {
     const config = await loadConfigFresh();
     const key = randomBytes(24).toString("base64url");
 
-    // The vault is where a new key belongs, but a machine without a master key
-    // must still be able to add a client — falling back to a literal keeps the
-    // command working and `clients list` labels it so it can be secured later.
-    let stored: AiProxyClientConfig["key"] = key;
-    try {
-        const store = await secrets();
-        stored = await store.set(clientKeyPath(input.name), key);
-    } catch (err) {
-        logger.warn({ err, client: input.name }, "ai-proxy: vault unavailable — storing the client key in config");
-        out.log.warn(
-            "Vault unavailable — key stored in config as plaintext. Secure it later: tools ai-proxy clients secure"
-        );
-    }
-
+    // Validate BEFORE any irreversible write. The vault write used to come
+    // first, so adding a client under an EXISTING name overwrote that client's
+    // live key at `ai-proxy/clients/<name>/key` and THEN failed the duplicate
+    // check — the working client was locked out by a command that reported
+    // failure and printed nothing.
     const client: AiProxyClientConfig = {
         name: input.name,
-        key: stored,
+        key,
         ...(input.providers?.length ? { allowedProviders: input.providers } : {}),
         ...(input.tokenCap !== undefined ? { monthlyTokenCap: input.tokenCap } : {}),
         ...(input.costCap !== undefined ? { monthlyCostCapUsd: input.costCap } : {}),
@@ -131,6 +122,22 @@ export async function clientsAdd(input: {
     if (problems.length > 0) {
         logger.error({ problems }, "ai-proxy: refusing to add client");
         out.log.error(problems.join("\n"));
+        process.exitCode = 1;
+        return;
+    }
+
+    // Fail CLOSED when the vault is unreachable: a billed bearer credential must
+    // never land in config.json as a literal, and a transient keychain error
+    // silently downgrading storage is worse than asking the caller to retry.
+    try {
+        const store = await secrets();
+        client.key = await store.set(clientKeyPath(input.name), key);
+    } catch (err) {
+        logger.error({ err, client: input.name }, "ai-proxy: vault unavailable — refusing to add the client");
+        out.log.error(
+            "Vault unavailable — the client key was NOT stored. Make the master key reachable " +
+                "(GENESIS_TOOLS_MASTER_KEY, the OS keychain, or the opt-in key file) and re-run."
+        );
         process.exitCode = 1;
         return;
     }

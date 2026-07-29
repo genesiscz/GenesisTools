@@ -145,14 +145,49 @@ function reportGates(): void {
 
 reportGates();
 
-const proc = Bun.spawn(["bun", "test", ...process.argv.slice(2)], {
-    cwd: ROOT,
-    stdio: ["inherit", "inherit", "inherit"],
-    // Force NODE_ENV=test even when the caller's shell exports something else:
-    // two of the keychain safety layers (os-keyring's under-test block and the
-    // keychainService() sandboxed item name) key off it, and they must hold in
-    // subprocesses tests spawn, which inherit this env.
-    env: { ...process.env, NODE_ENV: "test" },
-});
+/**
+ * Files whose tests are correct but LOAD-SENSITIVE: under the 16x parallel run
+ * this machine hits fd/vnode pressure and FSEvents latency, and these suites —
+ * real-filesystem walks, watchers, git subprocesses — start failing in ways
+ * that vanish the moment they run alone (verified repeatedly: 0 failures in
+ * isolation, the same 4-6 failures only inside the full parallel run). A full
+ * suite therefore runs them in a SERIAL second phase after the parallel bulk.
+ * Targeted runs (explicit paths) are untouched.
+ */
+const LOAD_SENSITIVE_FILES = [
+    "src/utils/fs/disk-usage.test.ts",
+    "src/utils/fs/watcher.test.ts",
+    "src/macos/lib/clones/audit.test.ts",
+    "src/stash/lib/patch.test.ts",
+];
 
-process.exit(await proc.exited);
+// Force NODE_ENV=test even when the caller's shell exports something else:
+// two of the keychain safety layers (os-keyring's under-test block and the
+// keychainService() sandboxed item name) key off it, and they must hold in
+// subprocesses tests spawn, which inherit this env.
+const testEnv = { ...process.env, NODE_ENV: "test" };
+const args = process.argv.slice(2);
+const hasExplicitPaths = args.some((arg) => !arg.startsWith("-"));
+
+async function runBunTest(testArgs: string[]): Promise<number> {
+    const proc = Bun.spawn(["bun", "test", ...testArgs], {
+        cwd: ROOT,
+        stdio: ["inherit", "inherit", "inherit"],
+        env: testEnv,
+    });
+
+    return await proc.exited;
+}
+
+if (hasExplicitPaths) {
+    process.exit(await runBunTest(args));
+}
+
+const parallelExit = await runBunTest([
+    ...args,
+    ...LOAD_SENSITIVE_FILES.map((file) => `--path-ignore-patterns=${file}`),
+]);
+process.stderr.write(`\x1b[90m[test] serial phase: ${LOAD_SENSITIVE_FILES.length} load-sensitive file(s)\x1b[0m\n`);
+const serialExit = await runBunTest([...args.filter((arg) => arg !== "--parallel"), ...LOAD_SENSITIVE_FILES]);
+
+process.exit(parallelExit !== 0 ? parallelExit : serialExit);

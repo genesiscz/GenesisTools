@@ -35,7 +35,7 @@ relative to the fragment's own location, so the extends is all you need.
 
 ```ts
 import { SafeJSON } from "@genesiscz/utils/json";
-import { callLLM } from "@genesiscz/utils/ai/call-llm";
+import { callLLM } from "@genesiscz/utils/ai/core/call";
 import { something } from "@genesiscz/tools/ask/lib/whatever";
 ```
 
@@ -80,11 +80,9 @@ bun add @genesiscz/utils
   if you import the UI/TUI parts.
 - `@ai-sdk/assemblyai` / `@ai-sdk/gladia` are optional peers, lazy-imported by
   the transcription manager; install them only if you use those providers.
-- Model resolution (`ai/resolvers`) enriches models with pricing via the ask
-  tool's DynamicPricing when running inside `@genesiscz/tools`; in a
-  standalone `@genesiscz/utils` install it degrades gracefully to
-  pricing-less models (the one documented cross-boundary escape hatch — see
-  `PURITY_EXEMPTIONS` in `scripts/ci/check-package-boundaries.ts`).
+- Model pricing resolves through `@genesiscz/utils/ai/catalog/pricing`
+  (static catalog first, then LiteLLM/OpenRouter); a standalone install with
+  no network degrades gracefully to pricing-less models.
 
 ### Publishing (manual, deliberate)
 

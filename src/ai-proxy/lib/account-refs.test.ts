@@ -90,9 +90,7 @@ describe("account-refs", () => {
         expect(resolveProxyAccountEntry(grokAccount, store)?.id).toBe("acc_grok_work");
         // A ref pointing at a deleted account must not silently resolve to some
         // other account just because the stale NAME still matches one.
-        expect(resolveProxyAccountEntry({ ...grokAccount, account: "@account/acc_gone" }, store)?.id).toBe(
-            "acc_grok_work"
-        );
+        expect(resolveProxyAccountEntry({ ...grokAccount, account: "@account/acc_gone" }, store)).toBeUndefined();
         expect(resolveProxyAccountEntry({ ...grokAccount, grok: {} }, fakeStore([]))).toBeUndefined();
     });
 
