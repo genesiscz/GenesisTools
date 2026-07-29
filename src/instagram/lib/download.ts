@@ -109,8 +109,13 @@ export async function downloadReels(
     );
     const results: DownloadResult[] = [];
 
-    // Sequential on purpose: these requests carry a live session cookie, and
-    // parallel bursts against Instagram are what trips account-level blocks.
+    // Sequential on purpose — but NOT because of the session. These requests go to
+    // the pre-signed CDN URL with no cookie attached at all (see the bare `fetch`
+    // below), so nothing here is scored against the account. What they do share
+    // with the API calls is the egress IP, and this codebase already classifies
+    // `sentry_block` / `rate_limit_error` as IP-level. A burst of CDN requests is
+    // the cheapest way to earn one, and a story reel is a handful of items, so
+    // there is no throughput worth trading for that risk.
     for (const [index, job] of jobs.entries()) {
         const target = join(outputDir, fileNameFor(job.item, job.prefix));
 
