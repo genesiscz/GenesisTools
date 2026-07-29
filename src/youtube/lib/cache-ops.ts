@@ -34,37 +34,61 @@ export function clearVideoBinaries(opts: { yt: Youtube; audio: boolean; video: b
     let deletedCount = 0;
     let freedBytes = 0;
 
+    // The DB reference is cleared either way — a row pointing at a file someone
+    // already removed is exactly the stale state this is here to clean up — but
+    // only a real unlink counts toward the totals reported to the user.
     for (const video of videos) {
         if (opts.audio && video.audioPath) {
-            freedBytes += deletePath(video.audioPath, video.audioSizeBytes);
+            const cleared = deletePath(video.audioPath, video.audioSizeBytes);
             opts.yt.db.setVideoBinaryPath(video.id, "audio", null);
-            deletedCount++;
+            freedBytes += cleared.bytes;
+
+            if (cleared.removed) {
+                deletedCount++;
+            }
         }
 
         if (opts.video && video.videoPath) {
-            freedBytes += deletePath(video.videoPath, video.videoSizeBytes);
+            const cleared = deletePath(video.videoPath, video.videoSizeBytes);
             opts.yt.db.setVideoBinaryPath(video.id, "video", null);
-            deletedCount++;
+            freedBytes += cleared.bytes;
+
+            if (cleared.removed) {
+                deletedCount++;
+            }
         }
 
         if (opts.thumbs && video.thumbPath) {
-            freedBytes += deletePath(video.thumbPath, null);
+            const cleared = deletePath(video.thumbPath, null);
             opts.yt.db.setVideoBinaryPath(video.id, "thumb", null);
-            deletedCount++;
+            freedBytes += cleared.bytes;
+
+            if (cleared.removed) {
+                deletedCount++;
+            }
         }
     }
 
     return { deletedCount, freedBytes };
 }
 
-export function deletePath(path: string, knownBytes: number | null): number {
-    const bytes = knownBytes ?? (existsSync(path) ? statSync(path).size : 0);
-
-    if (existsSync(path)) {
-        unlinkSync(path);
+/**
+ * Unlinks `path` when it is still on disk.
+ *
+ * Reports `removed: false, bytes: 0` for an already-gone file rather than the
+ * stored size: `cache clear` and `/api/v1/cache/clear` print both totals straight
+ * to the user, and charging the DB's remembered size for a file nothing deleted
+ * claimed space back that was never reclaimed.
+ */
+export function deletePath(path: string, knownBytes: number | null): { removed: boolean; bytes: number } {
+    if (!existsSync(path)) {
+        return { removed: false, bytes: 0 };
     }
 
-    return bytes;
+    const bytes = knownBytes ?? statSync(path).size;
+    unlinkSync(path);
+
+    return { removed: true, bytes };
 }
 
 export function sumBytes(values: Array<number | null>): number {
