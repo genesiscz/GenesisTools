@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { extractErrors } from "./errors";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { AxiosError, AxiosHeaders, type AxiosResponse } from "axios";
+import pino from "pino";
+import { axiosLogFields, extractErrors } from "./errors";
 
 describe("extractErrors", () => {
     it("finds FAIL lines with ±5 context for short logs", () => {
@@ -85,5 +88,47 @@ describe("extractErrors (agnostic patterns)", () => {
         const errs = extractErrors(text);
         expect(errs.length).toBeGreaterThan(0);
         expect(errs[0].matched).toContain(line.slice(0, 10));
+    });
+});
+
+describe("axiosLogFields", () => {
+    const TOKEN = "SUPER_SECRET_JENKINS_TOKEN";
+
+    function jenkinsAxiosError(): AxiosError {
+        const headers = new AxiosHeaders();
+        const config = {
+            url: "/job/deploy/42/api/json",
+            method: "get",
+            baseURL: "https://jenkins.example.com",
+            auth: { username: "ci-user", password: TOKEN },
+            headers,
+        };
+        return new AxiosError("Request failed with status code 500", "ERR_BAD_RESPONSE", config, {}, {
+            status: 500,
+            statusText: "Internal Server Error",
+            data: {},
+            headers,
+            config,
+        } as AxiosResponse);
+    }
+
+    it("keeps the fields needed to reconstruct a failed call", () => {
+        const fields = axiosLogFields(jenkinsAxiosError());
+
+        expect(fields.message).toBe("Request failed with status code 500");
+        expect(fields.code).toBe("ERR_BAD_RESPONSE");
+        expect(fields.status).toBe(500);
+        expect(fields.method).toBe("get");
+        expect(fields.url).toBe("/job/deploy/42/api/json");
+        expect(fields.stack).toBeDefined();
+    });
+
+    it("drops the basic-auth credentials that pino would otherwise serialize", () => {
+        const error = jenkinsAxiosError();
+
+        // Control: the raw error really does leak, so this test is load-bearing.
+        expect(SafeJSON.stringify(pino.stdSerializers.err(error))).toContain(TOKEN);
+
+        expect(SafeJSON.stringify(axiosLogFields(error))).not.toContain(TOKEN);
     });
 });
