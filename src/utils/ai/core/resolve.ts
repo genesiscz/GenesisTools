@@ -78,12 +78,13 @@ interface ModelRequest {
     providerId?: string;
     modelId?: string;
     via: string;
-    /** True when the caller named a ref, which freezes out the configured specs. */
-    explicit: boolean;
 }
 
 /** Resolve without binding: no credential read, no network, no provider construction. */
-export async function resolveModelTarget(ref: ModelRef | undefined, opts: ResolveOptions = {}): Promise<ResolvedTarget> {
+export async function resolveModelTarget(
+    ref: ModelRef | undefined,
+    opts: ResolveOptions = {}
+): Promise<ResolvedTarget> {
     const { log } = logger.scoped("ai-core");
     const store = opts.store ?? (await AiConfigStore.load());
     const cfg = store.data();
@@ -151,7 +152,7 @@ function buildRequest(ref: ModelRef | undefined, cfg: AiConfigData, task: TaskNa
         const parsed = parseModelRef(ref, cfg);
         const suffix = parsed.alias ? ` (alias "${parsed.alias}")` : "";
 
-        return { ...seedFrom(parsed), via: `ref ${formatModelRef(parsed)}${suffix}`, explicit: true };
+        return { ...seedFrom(parsed), via: `ref ${formatModelRef(parsed)}${suffix}` };
     }
 
     const appRung = app ? cfg.defaults.app?.[app]?.[task] : undefined;
@@ -166,7 +167,7 @@ function buildRequest(ref: ModelRef | undefined, cfg: AiConfigData, task: TaskNa
         return fromTaskDefault(taskRung, cfg, `defaults.task.${task}`);
     }
 
-    return { via: "defaults.account", explicit: false };
+    return { via: "defaults.account" };
 }
 
 function hasSpec(rung: TaskDefault | undefined): rung is TaskDefault {
@@ -179,13 +180,13 @@ function fromTaskDefault(rung: TaskDefault, cfg: AiConfigData, via: string): Mod
     // `provider` only fills a half the model ref left open, so a rung written as
     // `{ provider: "anthropic", model: "@account/acc_x:opus" }` still bills acc_x.
     if (rung.provider && !seed.providerId && !seed.accountId) {
-        return { ...seed, providerId: rung.provider, via, explicit: false };
+        return { ...seed, providerId: rung.provider, via };
     }
 
-    return { ...seed, via, explicit: false };
+    return { ...seed, via };
 }
 
-function seedFrom(parsed: ParsedModelRef): Omit<ModelRequest, "via" | "explicit"> {
+function seedFrom(parsed: ParsedModelRef): Omit<ModelRequest, "via"> {
     switch (parsed.kind) {
         case "bare":
             return { modelId: parsed.modelId };
@@ -200,12 +201,7 @@ function seedFrom(parsed: ParsedModelRef): Omit<ModelRequest, "via" | "explicit"
     }
 }
 
-function pickAccount(
-    store: AiConfigStore,
-    cfg: AiConfigData,
-    request: ModelRequest,
-    task: TaskName
-): AccountEntry {
+function pickAccount(store: AiConfigStore, cfg: AiConfigData, request: ModelRequest, task: TaskName): AccountEntry {
     if (request.accountId) {
         const account = store.account(request.accountId);
 
