@@ -89,6 +89,9 @@ function anthropic(entry: {
         ...entry,
         provider: "anthropic",
         capabilities: CHAT,
+        // Every Claude model in this list takes client-side tools; the Messages
+        // API has priced a tool-use system prompt for each one since Opus 4.
+        flags: { tools: true, ...entry.flags },
         source: "static",
     };
 }
@@ -293,6 +296,9 @@ const XAI_ENTRIES: CatalogEntry[] = XAI_IDS.map((id) => ({
     capabilities: CHAT,
     thinking: XAI_THINKING[id] ?? "optional",
     ...(XAI_VISION_MODELS.has(id) ? { inputModalities: ["text", "image"] } : {}),
+    // Both xAI paths the proxy serves advertise tool support unconditionally
+    // (`supportsTools: true` in ai-proxy's xai and grok meta builders).
+    flags: { tools: true },
     source: "static" as const,
 }));
 
@@ -310,7 +316,14 @@ const OPENAI_SUB_ENTRIES: CatalogEntry[] = [
     { id: "gpt-5.4", displayName: "GPT-5.4", contextWindow: 272_000 },
     { id: "gpt-5.4-mini", displayName: "GPT-5.4-Mini", contextWindow: 272_000 },
     { id: "gpt-5-codex", displayName: "GPT-5-Codex", contextWindow: 272_000 },
-].map((entry) => ({ ...entry, provider: "openai-sub", capabilities: CHAT, source: "static" as const }));
+].map((entry) => ({
+    ...entry,
+    provider: "openai-sub",
+    capabilities: CHAT,
+    // ai-proxy advertises every WHAM record with `supportsTools: true`.
+    flags: { tools: true },
+    source: "static" as const,
+}));
 
 export const STATIC_CATALOG: CatalogEntry[] = [...ANTHROPIC_ENTRIES, ...XAI_ENTRIES, ...OPENAI_SUB_ENTRIES];
 

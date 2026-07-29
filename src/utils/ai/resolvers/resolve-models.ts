@@ -36,9 +36,10 @@ const IMPLIED_BY_CHAT: ReadonlySet<string> = new Set(["summarize", "translate", 
  * The two vocabularies differ: the catalog describes a model by TASK
  * (`chat`, `embed`, `transcribe`) plus structured fields, while `ModelInfo`
  * carries free-form FEATURE strings that `tools ask models --caps` filters on.
- * Vision and reasoning translate cleanly because the catalog states them
- * (`inputModalities`, `thinking`); tool-calling has no catalog field, so it is
- * simply not claimed rather than assumed.
+ * Vision, reasoning and tool-calling all translate from stated catalog fields
+ * (`inputModalities`, `thinking`, `flags.tools`); nothing here is inferred from
+ * the model id. `function-calling` is the spelling the pricing table colours and
+ * `--caps functions` normalises to.
  */
 export function toModelInfo(entry: CatalogEntry): ModelInfo {
     const isChat = entry.capabilities.has("chat");
@@ -52,6 +53,10 @@ export function toModelInfo(entry: CatalogEntry): ModelInfo {
 
     if (entry.thinking === "reasoning") {
         capabilities.push("reasoning");
+    }
+
+    if (entry.flags?.tools) {
+        capabilities.push("function-calling");
     }
 
     return {
