@@ -1,5 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
-import { embed as sdkEmbed, embedMany as sdkEmbedMany } from "ai";
+import { embed as sdkEmbed, embedMany as sdkEmbedMany, generateImage as sdkGenerateImage } from "ai";
 import { type CallLLMOptions, type CallLLMResult, callLLM } from "../core/call";
 import type { ModelRef } from "../core/model-ref";
 import type { ResolvedBinding } from "../core/types";
@@ -30,6 +30,19 @@ import { Transcriber } from "./Transcriber";
  * per bind (local/adapters/index.ts:102-139), so every method here runs its work
  * inside `withBinding`, which frees it in a `finally` even on throw.
  */
+
+export interface ImageOptions {
+    /** How many images to generate. Provider-capped; HuggingFace serves one per call. */
+    n?: number;
+    /** `<width>x<height>`, the ai-sdk spelling. */
+    size?: `${number}x${number}`;
+}
+
+export interface ImageResult {
+    images: Uint8Array[];
+    model: string;
+    provider: string;
+}
 
 export interface TaskCommonOptions {
     /** `opus`, `deepgram/nova-3`, `@account/acc_x:whisper-1` — or nothing, to use the config default. */
@@ -164,17 +177,42 @@ export const ai = {
     },
 
     /**
-     * Stubbed on purpose rather than left undefined: no plugin declares the
-     * `image` capability today (`tools ai image` talks to HuggingFace's
-     * InferenceClient directly, src/ai/index.ts:206), so a call here has nothing
-     * to bind. Naming it keeps the verb list complete and gives the next person
-     * the exact place to add it.
+     * Image generation.
+     *
+     * Only the HuggingFace plugin declares the `image` capability today, so in
+     * practice this resolves to an `hf-cloud`-style account. The verb exists
+     * regardless of how many providers back it: a caller should ask the facade
+     * rather than go looking for whichever SDK client happens to be wired up,
+     * which is what `tools ai image` still does (src/ai/index.ts:206).
      */
-    async image(prompt: string): Promise<never> {
-        logger.debug({ chars: prompt.length }, "ai.image called before any provider declares the image capability");
-        throw new NotImplementedError(
-            "ai.image()",
-            "no provider plugin declares the `image` capability yet; use `tools ai image` (HuggingFace) until one does"
+    async image(prompt: string, options?: TaskCommonOptions & ImageOptions): Promise<ImageResult> {
+        return withBinding(
+            { task: "image", model: options?.model, app: options?.app, needs: "image" },
+            async (resolved) => {
+                const model = resolved.binding.image?.(resolved.model.id);
+
+                if (!model) {
+                    throw new Error(`${resolved.plugin.id} exposes no image model`);
+                }
+
+                const result = await sdkGenerateImage({
+                    model,
+                    prompt,
+                    ...(options?.n ? { n: options.n } : {}),
+                    ...(options?.size ? { size: options.size } : {}),
+                });
+
+                logger.debug(
+                    { provider: resolved.plugin.id, model: resolved.model.id, images: result.images.length },
+                    "generated images"
+                );
+
+                return {
+                    images: result.images.map((image) => image.uint8Array),
+                    model: resolved.model.id,
+                    provider: resolved.plugin.id,
+                };
+            }
         );
     },
 

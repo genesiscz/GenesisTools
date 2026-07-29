@@ -5,6 +5,7 @@ import { apiKeyPlugins } from "./plugins/api-key";
 import { asrVendorPlugins } from "./plugins/asr-vendors";
 import { githubCopilotPlugin } from "./plugins/github-copilot";
 import { grokSubPlugin } from "./plugins/grok-sub";
+import { huggingFacePlugin } from "./plugins/huggingface";
 import { openAiSubPlugin } from "./plugins/openai-sub";
 import { registerPlugin } from "./registry";
 
@@ -28,6 +29,7 @@ export function registerBuiltInPlugins(): void {
     registerPlugin(grokSubPlugin);
     registerPlugin(githubCopilotPlugin);
     registerPlugin(aiProxyPlugin);
+    registerPlugin(huggingFacePlugin);
 
     for (const plugin of [...apiKeyPlugins, ...asrVendorPlugins, ...localPlugins]) {
         registerPlugin(plugin);
