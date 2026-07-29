@@ -17,6 +17,10 @@ class EnvKeyProvider implements MasterKeyProvider {
     }
 
     async get(): Promise<Buffer | undefined> {
+        return this.getSync();
+    }
+
+    getSync(): Buffer | undefined {
         return decodeMasterKey(env.security.getMasterKey(), "env");
     }
 

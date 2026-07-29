@@ -6,6 +6,13 @@ export interface MasterKeyProvider {
     available(): Promise<boolean>;
     get(): Promise<Buffer | undefined>;
     set(key: Buffer): Promise<void>;
+    /**
+     * Synchronous read, when the rung supports one. Every current rung does
+     * (keyring reads, file reads and env reads are all sync underneath), and
+     * this is what lets sync credential accessors keep working after their
+     * values move into the vault.
+     */
+    getSync?(): Buffer | undefined;
 }
 
 /** Service/account pair for the OS keychain entry holding the vault master key. */

@@ -28,6 +28,10 @@ class OsKeyring implements MasterKeyProvider {
     }
 
     async get(): Promise<Buffer | undefined> {
+        return this.getSync();
+    }
+
+    getSync(): Buffer | undefined {
         try {
             return decodeMasterKey(this.entry().getPassword(), "keychain");
         } catch (err) {

@@ -69,6 +69,27 @@ export async function masterKey(): Promise<Buffer> {
     return generated;
 }
 
+/**
+ * Synchronous variant, for callers whose signature cannot become async (the
+ * pre-vault credential accessors). Returns undefined instead of generating a
+ * key: minting one is an interactive decision and belongs in `masterKey()`.
+ */
+export function masterKeySync(): Buffer | undefined {
+    if (cached) {
+        return cached.key;
+    }
+
+    for (const provider of providers) {
+        const key = provider.getSync?.();
+        if (key) {
+            cached = { key, source: provider.id };
+            return key;
+        }
+    }
+
+    return undefined;
+}
+
 export async function masterKeySource(): Promise<MasterKeySource | undefined> {
     if (cached) {
         return cached.source;
