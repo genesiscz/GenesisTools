@@ -27,10 +27,9 @@ describe("test gate harness", () => {
 
         expect(block).not.toBeNull();
 
-        const runnerGates = [...(block?.[1] ?? "").matchAll(/^\s*(\w+):\s*"([A-Z0-9_]+)"/gm)].map(([, gate, variable]) => [
-            gate,
-            variable,
-        ]);
+        const runnerGates = [...(block?.[1] ?? "").matchAll(/^\s*(\w+):\s*"([A-Z0-9_]+)"/gm)].map(
+            ([, gate, variable]) => [gate, variable]
+        );
 
         expect(Object.fromEntries(runnerGates)).toEqual(GATE_ENV_VARS);
     });

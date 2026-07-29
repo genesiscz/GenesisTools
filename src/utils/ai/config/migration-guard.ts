@@ -14,12 +14,36 @@ import { logger } from "@genesiscz/utils/logger";
  * against the real home only when this build is the installed one, or the user
  * opts in explicitly.
  */
+export function isWorktreeCheckout(cwd: string = process.cwd()): boolean {
+    return cwd.includes("/.worktrees/") || cwd.includes("/.claude/worktrees/");
+}
+
+/**
+ * The write-side twin of `migrationAllowedHere`. Any code about to persist the
+ * new config shape asks this, so a bug in one migration's own gate cannot reach
+ * the user's real file.
+ */
+export function assertSafeToWriteRealConfig(): void {
+    if (env.tools.hasExplicitHome() || process.env.GENESIS_TOOLS_ALLOW_REAL_MIGRATION === "1") {
+        return;
+    }
+
+    if (!isWorktreeCheckout()) {
+        return;
+    }
+
+    throw new Error(
+        "Refusing to write the v4 AI config from a worktree build into the real ~/.genesis-tools: " +
+            "the installed tools still read v3 and would break. Set GENESIS_TOOLS_HOME to a sandbox, " +
+            "or GENESIS_TOOLS_ALLOW_REAL_MIGRATION=1 if this is the deliberate post-merge run."
+    );
+}
+
 export function migrationAllowedHere(): boolean {
-    // NOTE: env.tools.getHome() falls back to homedir(), so it is NEVER falsy —
-    // using it here made this guard a no-op and let worktree runs migrate the real
-    // config anyway. getHomeEnvKey() returns undefined when the variable is unset,
-    // which is the actual question being asked.
-    if (env.tools.getHomeEnvKey()) {
+    // env.tools.getHome() falls back to homedir(), so it is NEVER falsy — using it
+    // here made this guard a no-op and let worktree runs migrate the real config
+    // anyway. hasExplicitHome() asks the actual question.
+    if (env.tools.hasExplicitHome()) {
         // A sandboxed root (tests, rehearsals) is always safe to migrate.
         return true;
     }

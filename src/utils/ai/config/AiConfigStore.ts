@@ -2,6 +2,7 @@ import { statSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { _resetMigrationStateForTest, ensureAiConfigMigrated } from "./migrate";
+import { assertSafeToWriteRealConfig } from "./migration-guard";
 import { type AccountRef, accountRef, type Referrer, referrersOf } from "./refs";
 import { type AccountEntry, type AiConfigData, aiConfigSchema, emptyConfig } from "./schema";
 
@@ -170,6 +171,9 @@ export class AiConfigStore {
             const result = await fn(config);
 
             const validated = aiConfigSchema.parse(config);
+            // Last line of defence: every v4 write in the codebase funnels through
+            // here, so even a mis-gated migration cannot reach the real config.
+            assertSafeToWriteRealConfig();
             await this.storage.setConfig(validated);
             this.config = validated;
             this.mtimeMs = AiConfigStore.mtimeOf(this.storage);
