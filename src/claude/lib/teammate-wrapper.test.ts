@@ -101,21 +101,38 @@ describe("resolveClaudeBinaryForTeammates", () => {
         expect(resolveClaudeBinaryForTeammates()).toBe(usable);
     });
 
-    /**
-     * The bare-name fallback is deliberate (aborting the LEAD launch over a
-     * teammate's binary is the worse failure, and a tmux pane can carry a PATH
-     * this process lacks), but it is NOT exercised here and the reason is worth
-     * recording: `Bun.which("claude")` finds this repo's own
-     * `node_modules/@anthropic-ai/claude-code/cli.js` no matter what PATH says,
-     * so the branch is unreachable from inside the repo. What is assertable is
-     * the invariant that matters to the wrapper, which execs the result: when
-     * anything resolves at all, it is an absolute path, never a bare name.
-     */
     test("returns an absolute path whenever anything resolves at all", () => {
         const resolved = resolveClaudeBinaryForTeammates();
 
         expect(resolved.startsWith("/")).toBe(true);
         expect(resolved).not.toBe("claude");
+    });
+
+    /**
+     * The last-resort branch, reachable only through the injected lookup:
+     * `Bun.which("claude")` finds this repo's own
+     * `node_modules/@anthropic-ai/claude-code` no matter what PATH says, so the
+     * real candidate list can never come back empty from inside the repo.
+     */
+    test("falls back to the bare name when every candidate misses", () => {
+        expect(resolveClaudeBinaryForTeammates(() => [])).toBe("claude");
+    });
+
+    test("falls back when candidates exist but none is executable", () => {
+        const dir = join(home, "nope");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "claude"), "not executable");
+        chmodSync(join(dir, "claude"), 0o644);
+
+        expect(resolveClaudeBinaryForTeammates(() => [join(dir, "claude"), join(dir, "missing")])).toBe("claude");
+    });
+
+    test("the injected list is honoured in order", () => {
+        const first = installClaudeAt("first", "bin");
+        const second = installClaudeAt("second", "bin");
+
+        expect(resolveClaudeBinaryForTeammates(() => [first, second])).toBe(first);
+        expect(resolveClaudeBinaryForTeammates(() => [second, first])).toBe(second);
     });
 });
 

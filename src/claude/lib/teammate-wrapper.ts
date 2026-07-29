@@ -60,16 +60,26 @@ export function teammateWrappersDir(): string {
 }
 
 /**
- * Resolve a real executable for teammate panes. Must be a file path, not a shell
- * function (`ccc`/`claude` wrappers from rc) — CC execs TEAMMATE_COMMAND directly.
+ * Where to look for `claude`, in order. Must yield a file path, not a shell
+ * function (`ccc`/`claude` wrappers from rc): CC execs TEAMMATE_COMMAND directly.
+ *
+ * Split out and injectable because the last-resort branch below is otherwise
+ * untestable from inside this repo: `Bun.which("claude")` finds our own
+ * `node_modules/@anthropic-ai/claude-code` no matter what PATH says, so no test
+ * could ever force every candidate to miss.
  */
-export function resolveClaudeBinaryForTeammates(): string {
+export function claudeBinaryCandidates(): string[] {
     const home = env.paths.getHome() ?? homedir();
-    const candidates = [
+
+    return [
         join(home, ".bun", "bin", "claude"),
         join(home, ".local", "bin", "claude"),
         Bun.which("claude") ?? undefined,
     ].filter((p): p is string => Boolean(p));
+}
+
+export function resolveClaudeBinaryForTeammates(candidatesFor: () => string[] = claudeBinaryCandidates): string {
+    const candidates = candidatesFor();
 
     for (const candidate of candidates) {
         try {
