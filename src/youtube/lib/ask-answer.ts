@@ -47,8 +47,8 @@ export interface AnswerOverVideosResult {
     citations: EnrichedCitation[];
     /** Videos actually searched (had a transcript and an embedding index). */
     searchedVideoIds: VideoId[];
-    /** Videos in scope with no transcript stored yet. */
-    missingTranscript: VideoId[];
+    /** Videos in scope holding none of the REQUESTED sources yet (transcript, comments, or both). */
+    missingSources: VideoId[];
     /** Videos with a transcript that were left unindexed by `maxIndex`. */
     skippedUnindexed: VideoId[];
     indexedNow: number;
@@ -66,21 +66,27 @@ const DEFAULT_SOURCES: QaSource[] = ["transcript"];
  */
 export async function answerOverVideos(opts: AnswerOverVideosOpts): Promise<AnswerOverVideosResult> {
     const { yt } = opts;
-    const withTranscript: VideoId[] = [];
-    const missingTranscript: VideoId[] = [];
+    const sources = opts.sources ?? DEFAULT_SOURCES;
+    // Eligibility follows the REQUESTED sources, not the transcript alone. A
+    // comments-only ask is legitimate — `routes/videos.ts` demands a transcript only
+    // when `sources.includes("transcript")` — so partitioning on `getTranscript`
+    // unconditionally made every comments-only question fail with "none have a
+    // transcript" before it ever reached retrieval.
+    const usable: VideoId[] = [];
+    const missingSources: VideoId[] = [];
 
     for (const videoId of opts.videoIds) {
-        if (yt.db.getTranscript(videoId)) {
-            withTranscript.push(videoId);
+        if (sources.some((source) => hasSourceData(yt, videoId, source))) {
+            usable.push(videoId);
             continue;
         }
 
-        missingTranscript.push(videoId);
+        missingSources.push(videoId);
     }
 
-    if (withTranscript.length === 0) {
+    if (usable.length === 0) {
         throw new Error(
-            `ask: none of the ${opts.videoIds.length} video(s) in scope have a transcript yet — run "tools youtube queue add <target> --stages metadata,captions" first`
+            `ask: none of the ${opts.videoIds.length} video(s) in scope have ${sources.join(" or ")} data yet — run "tools youtube queue add <target> --stages metadata,captions" first`
         );
     }
 
@@ -88,8 +94,7 @@ export async function answerOverVideos(opts: AnswerOverVideosOpts): Promise<Answ
     // is true for ANY source in ANY embedding model, so a video holding only comment
     // chunks (or chunks from another embedder) counted as indexed and was then searched
     // with no usable context. Mirrors the per-source check inside `QaService.index()`.
-    const sources = opts.sources ?? DEFAULT_SOURCES;
-    const needsIndex = withTranscript.filter((videoId) =>
+    const needsIndex = usable.filter((videoId) =>
         sources.some((source) => !yt.db.hasQaChunks(videoId, DEFAULT_MODEL_ID, source))
     );
     // Default to a BUDGET, not "everything". A channel scope can reach thousands
@@ -121,7 +126,7 @@ export async function answerOverVideos(opts: AnswerOverVideosOpts): Promise<Answ
     // MAX_LAZY_INDEX_PER_ASK, a channel ask leaves nearly everything it found in
     // `skippedUnindexed`, so both sides of this filter carry thousands of ids.
     const skipped = new Set(skippedUnindexed);
-    const searchedVideoIds = withTranscript.filter((videoId) => !skipped.has(videoId));
+    const searchedVideoIds = usable.filter((videoId) => !skipped.has(videoId));
     const videos = yt.db.getVideosByIds(searchedVideoIds);
     const metaById = new Map(videos.map((video) => [video.id, video]));
     const crossVideo =
@@ -155,7 +160,7 @@ export async function answerOverVideos(opts: AnswerOverVideosOpts): Promise<Answ
         {
             videos: searchedVideoIds.length,
             citations: result.citations.length,
-            missingTranscript: missingTranscript.length,
+            missingSources: missingSources.length,
             skippedUnindexed: skippedUnindexed.length,
         },
         "youtube ask answered"
@@ -176,10 +181,19 @@ export async function answerOverVideos(opts: AnswerOverVideosOpts): Promise<Answ
             };
         }),
         searchedVideoIds,
-        missingTranscript,
+        missingSources,
         skippedUnindexed,
         indexedNow,
     };
+}
+
+/** Whether a video actually holds data for one requested source. */
+function hasSourceData(yt: Youtube, videoId: VideoId, source: QaSource): boolean {
+    if (source === "transcript") {
+        return yt.db.getTranscript(videoId) !== null;
+    }
+
+    return yt.db.getComments(videoId).length > 0;
 }
 
 /** `[#1] Title (2026-04-24) 12:03-14:31 → https://…&t=723s` — one line per citation. */
