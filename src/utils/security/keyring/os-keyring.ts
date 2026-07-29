@@ -1,7 +1,8 @@
+import { isInteractive } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { Entry } from "@napi-rs/keyring";
-import { decodeMasterKey, KEYCHAIN_ACCOUNT, keychainService, type MasterKeyProvider } from "./types";
+import { decodeMasterKey, isTestProcess, KEYCHAIN_ACCOUNT, keychainService, type MasterKeyProvider } from "./types";
 
 /**
  * The OS keychain is MACHINE-GLOBAL state: it ignores GENESIS_TOOLS_HOME, so a
@@ -13,7 +14,7 @@ import { decodeMasterKey, KEYCHAIN_ACCOUNT, keychainService, type MasterKeyProvi
  * GENESIS_TOOLS_MASTER_KEY instead of writing the real keychain.
  */
 function blockedUnderTest(): boolean {
-    return env.get("NODE_ENV") === "test" && !env.isFlag("RUN_KEYCHAIN");
+    return isTestProcess() && !env.isFlag("RUN_KEYCHAIN");
 }
 
 /**
@@ -65,6 +66,17 @@ class OsKeyring implements MasterKeyProvider {
     async set(key: Buffer): Promise<void> {
         if (blockedUnderTest()) {
             throw new Error("Refusing to write the real OS keychain under bun test. Set RUN_KEYCHAIN=1 to allow.");
+        }
+
+        // Storing a master key is an interactive decision. A headless process
+        // (an agent's CLI smoke, a daemon, a cron job) silently minting one
+        // changes machine-global state every later process observes; that is
+        // how a stray key landed in the login keychain on 2026-07-29. Headless
+        // provisioning that really means it opts in explicitly.
+        if (!isInteractive() && !env.isFlag("GENESIS_TOOLS_ALLOW_KEYRING_WRITE")) {
+            throw new Error(
+                "Refusing to write the OS keychain from a non-interactive process. Set GENESIS_TOOLS_ALLOW_KEYRING_WRITE=1 for deliberate headless provisioning, or use the GENESIS_TOOLS_MASTER_KEY env rung."
+            );
         }
 
         this.entry().setPassword(key.toString("base64"));

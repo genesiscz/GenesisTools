@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
-import { Entry } from "@napi-rs/keyring";
 import { env } from "@genesiscz/utils/env";
+import { Entry } from "@napi-rs/keyring";
 import { osKeyring } from "./os-keyring";
-import { KEYCHAIN_SERVICE, keychainService } from "./types";
+import { isTestProcess, KEYCHAIN_SERVICE, keychainService } from "./types";
 
 const optedIn = env.isFlag("RUN_KEYCHAIN");
 
@@ -13,9 +13,16 @@ const optedIn = env.isFlag("RUN_KEYCHAIN");
  * other two green — that redundancy is the point, not an accident.
  */
 describe("keychain test lockdown", () => {
-    test("layer 1: the service name is sandboxed under NODE_ENV=test", () => {
-        expect(env.get("NODE_ENV")).toBe("test");
+    test("layer 1: the service name is sandboxed in test processes", () => {
+        expect(isTestProcess()).toBe(true);
         expect(keychainService()).toBe(`${KEYCHAIN_SERVICE}-test`);
+    });
+
+    test("the detector survives a spoofed NODE_ENV via the Bun.main signal", () => {
+        env.testing.withOverrides({ NODE_ENV: "production" }, () => {
+            expect(isTestProcess()).toBe(true);
+            expect(keychainService()).toBe(`${KEYCHAIN_SERVICE}-test`);
+        });
     });
 
     test.skipIf(optedIn)("layer 2: the keyring rung is unavailable and refuses writes", async () => {

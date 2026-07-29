@@ -22,17 +22,35 @@ export const KEYCHAIN_SERVICE = "genesis-tools";
 export const KEYCHAIN_ACCOUNT = "master-key";
 
 /**
- * Effective keychain service name. Under a test process (NODE_ENV=test, which
- * `bun test` sets and `scripts/test.ts` forces) this diverges to a sandboxed
- * item name, so even a test that reaches the keyring API — the availability
- * gate deleted, RUN_KEYCHAIN=1 set, whatever — reads and writes a throwaway
- * `genesis-tools-test` item and can never touch the real master key. This is
- * deliberately a SECOND, independent mechanism next to the os-keyring rung's
- * under-test block and the @napi-rs/keyring preload mock: any one of the three
- * alone is sufficient.
+ * True inside any test process, by two independent signals so a single hole
+ * (an unset variable, a bypassed wrapper) never exposes the real keychain:
+ *
+ * - NODE_ENV=test — `bun test` sets it when unset and `scripts/test.ts`
+ *   forces it (inherited by subprocesses tests spawn);
+ * - `Bun.main` naming a test file — the runner's entrypoint IS the test file,
+ *   and bun itself refuses to collect files without the .test/.spec infix, so
+ *   the pattern holds even when a caller exported NODE_ENV=production. A false
+ *   positive (`bun run foo.test.ts`) fails SAFE: it blocks the keychain.
+ */
+export function isTestProcess(): boolean {
+    if (env.get("NODE_ENV") === "test") {
+        return true;
+    }
+
+    return /\.(test|spec)\.[cm]?[jt]sx?$/.test(globalThis.Bun?.main ?? "");
+}
+
+/**
+ * Effective keychain service name. In a test process this diverges to a
+ * sandboxed item name, so even a test that reaches the keyring API — the
+ * availability gate deleted, RUN_KEYCHAIN=1 set, whatever — reads and writes
+ * a throwaway `genesis-tools-test` item and can never touch the real master
+ * key. Deliberately an independent mechanism next to the os-keyring rung's
+ * under-test block, the @napi-rs/keyring preload mock and the non-interactive
+ * write barrier: any one alone is sufficient.
  */
 export function keychainService(): string {
-    return env.get("NODE_ENV") === "test" ? `${KEYCHAIN_SERVICE}-test` : KEYCHAIN_SERVICE;
+    return isTestProcess() ? `${KEYCHAIN_SERVICE}-test` : KEYCHAIN_SERVICE;
 }
 
 export const MASTER_KEY_BYTES = 32;
