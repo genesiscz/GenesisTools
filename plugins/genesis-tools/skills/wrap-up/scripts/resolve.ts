@@ -73,6 +73,7 @@ async function readPluginConfig(): Promise<WrapUpConfig> {
     }
 
     try {
+        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         const parsed = JSON.parse(await f.text());
         return typeof parsed?.["wrap-up"] === "object" && parsed["wrap-up"] !== null ? parsed["wrap-up"] : {};
     } catch (err) {
@@ -92,18 +93,26 @@ async function registryPath(): Promise<string> {
     return expandHome(cfg.registryPath ?? join(homedir(), ".claude", "handoff-registry.json"));
 }
 
-async function sh(cmd: string[]): Promise<string> {
-    const p = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
-    const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
-    const code = await p.exited;
-    if (code !== 0) {
-        // Callers deliberately fall back (cwd / empty branch) so this stays
-        // non-fatal, but a swallowed failure is indistinguishable from a
-        // legitimately empty result — say which one happened.
-        console.error(`wrap-up: \`${cmd.join(" ")}\` exited ${code}${err.trim() ? `: ${err.trim()}` : ""}`);
-    }
+export async function sh(cmd: string[]): Promise<string> {
+    try {
+        const p = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
+        const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
+        const code = await p.exited;
+        if (code !== 0) {
+            // Callers deliberately fall back (cwd / empty branch) so this stays
+            // non-fatal, but a swallowed failure is indistinguishable from a
+            // legitimately empty result — say which one happened.
+            console.error(`wrap-up: \`${cmd.join(" ")}\` exited ${code}${err.trim() ? `: ${err.trim()}` : ""}`);
+        }
 
-    return out.trim();
+        return out.trim();
+    } catch (err) {
+        // Bun.spawn throws outright when the binary is missing from $PATH, which
+        // would crash the whole command instead of taking the documented
+        // no-git fallback. Degrade to "" like a non-zero exit does.
+        console.error(`wrap-up: \`${cmd.join(" ")}\` could not run: ${String(err)}`);
+        return "";
+    }
 }
 
 async function loadRegistry(): Promise<Registry> {
@@ -114,6 +123,7 @@ async function loadRegistry(): Promise<Registry> {
     }
 
     try {
+        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         const parsed = JSON.parse(await f.text());
         return Array.isArray(parsed?.entries) ? parsed : { entries: [] };
     } catch (err) {
@@ -135,6 +145,7 @@ async function writeAtomic(path: string, body: string): Promise<void> {
 }
 
 async function saveRegistry(reg: Registry): Promise<void> {
+    // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
     await writeAtomic(await registryPath(), `${JSON.stringify(reg, null, 2)}\n`);
 }
 
@@ -213,6 +224,7 @@ async function cmdResolve() {
         if (docDir) {
             const entry: Entry = { projectDir: ctx.toplevel, obsidianDir: docDir };
             console.log(
+                // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
                 JSON.stringify(
                     {
                         found: true,
@@ -230,12 +242,14 @@ async function cmdResolve() {
             return;
         }
 
+        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         console.log(JSON.stringify({ found: false, project: ctx.toplevel, branch: ctx.branch, cwd: ctx.cwd }, null, 2));
         return;
     }
 
     const { e } = ranked[0];
     console.log(
+        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         JSON.stringify(
             {
                 found: true,
@@ -280,6 +294,7 @@ async function cmdRegister(args: Record<string, string>) {
     reg.entries.push(entry);
     await saveRegistry(reg);
     console.log(
+        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         JSON.stringify(
             { registered: entry, registry: await registryPath(), docPath: derivedDocPath(entry, ctx.branch) },
             null,
@@ -454,6 +469,7 @@ async function cmdLog(file: string) {
     }
 
     await writeAtomic(file, built.body);
+    // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
     console.log(JSON.stringify({ logged: file, stamp }, null, 2));
 }
 
