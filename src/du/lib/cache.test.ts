@@ -19,8 +19,15 @@ const isDarwin = process.platform === "darwin";
 const CLONE_MB = 4;
 const CLONE_BYTES = CLONE_MB * 1024 * 1024;
 
-/** Byte offset of `nrecs` in CacheHeader: magic(8) version(4) reserved(4) fsid(8). */
+// CacheHeader layout: magic(8) version(4) reserved(4) fsid(8) nrecs(8) nexts(8).
+const HEADER_BYTES = 40;
 const NRECS_OFFSET = 24;
+const NEXTS_OFFSET = 32;
+/** CacheEnt: fileid, mtime_ns, dlen, alloc, ext_off (8 each) + ext_count, last_seen (4 each). */
+const CACHE_ENT_BYTES = 48;
+/** Mirrors CACHE_MAX_RECS in clonesize.c. */
+const CACHE_MAX_RECS = 2_000_000;
+const FORGED_RECS = CACHE_MAX_RECS - 1;
 
 const tmpDirs: string[] = [];
 
@@ -124,12 +131,12 @@ describe.skipIf(!isDarwin)("extent cache", () => {
         expect(after.naive_bytes).toBe(truth.naive_bytes);
     }, 60_000);
 
-    it("rejects a forged record count instead of reading past the end of the file", () => {
-        // A header claiming more records than the file can hold is the cheap way to
-        // try to reach the CACHE_MAX_RECS eviction branch without writing 2M files.
-        // It does not work, and that is the point: cache_open computes the bytes the
-        // header implies and drops the whole cache when they exceed the file size, so
-        // a bloated count can never be trusted into an out-of-bounds read.
+    it("rejects a record count the file is too small to hold", () => {
+        // cache_open multiplies the header's counts back out and drops the cache when
+        // they exceed the file, so an inconsistent or truncated file can never be
+        // trusted into an out-of-bounds read. Note this is a CONSISTENCY check, not a
+        // ceiling on the count itself — see the eviction test below for a header that
+        // claims just as much and is padded to back it up.
         const fixture = makeCloneFixture();
         const cacheDir = makeTmp("du-cache-dir-");
 
@@ -147,6 +154,36 @@ describe.skipIf(!isDarwin)("extent cache", () => {
         expect(after.files_cached).toBe(0);
         expect(after.files_opened).toBe(3);
         expect(after.unique_bytes).toBe(truth.unique_bytes);
+    }, 60_000);
+
+    it("evicts down to CACHE_MAX_RECS when the merged set overflows", () => {
+        // Reaching eviction by writing 2M real files would take minutes. A cache that
+        // *claims* 1,999,999 records and is padded to actually hold them passes
+        // cache_open's size check, so the merge (1,999,999 carried over + this run's
+        // records) crosses CACHE_MAX_RECS and the recency truncation has to fire.
+        const fixture = makeCloneFixture();
+        const cacheDir = makeTmp("du-cache-dir-");
+
+        scan(fixture, cacheDir, true);
+        const cacheFile = join(cacheDir, readdirSync(cacheDir).find((f) => f.startsWith("extents-"))!);
+
+        // Keep the real magic/version/fsid so the file is accepted, then claim 1,999,999
+        // zeroed records (fileid 0, last_seen 0) and no extents.
+        const header = readFileSync(cacheFile).subarray(0, HEADER_BYTES);
+        header.writeBigUInt64LE(BigInt(FORGED_RECS), NRECS_OFFSET);
+        header.writeBigUInt64LE(0n, NEXTS_OFFSET);
+        writeFileSync(cacheFile, Buffer.concat([header, Buffer.alloc(FORGED_RECS * CACHE_ENT_BYTES)]));
+
+        const after = scan(fixture, cacheDir);
+
+        // The forged records match no real file, so everything is read from disk and
+        // the totals stay correct through the whole exercise.
+        expect(after.files_cached).toBe(0);
+        expect(after.files_opened).toBe(3);
+        expect(after.unique_bytes).toBe(CLONE_BYTES);
+
+        // 1,999,999 carried over + 3 fresh = 2,000,002, truncated back to the cap.
+        expect(readFileSync(cacheFile).readBigUInt64LE(NRECS_OFFSET)).toBe(BigInt(CACHE_MAX_RECS));
     }, 60_000);
 
     it("keeps records for files outside the scanned subtree when it rewrites", () => {
