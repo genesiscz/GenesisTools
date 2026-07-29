@@ -42,10 +42,15 @@ export class RateLimiter {
         this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     }
 
-    /** Milliseconds the caller must wait before the next request fits the budget. */
-    waitTimeMs(): number {
+    /** Drop the timestamps that have aged out of the window. The only mutator here. */
+    private evictExpired(): void {
         const cutoff = this.now() - WINDOW_MS;
         this.timestamps = this.timestamps.filter((stamp) => stamp > cutoff);
+    }
+
+    /** Milliseconds the caller must wait before the next request fits the budget. */
+    waitTimeMs(): number {
+        this.evictExpired();
 
         if (this.timestamps.length < MAX_PER_WINDOW) {
             return 0;
@@ -81,7 +86,7 @@ export class RateLimiter {
 
     get used(): number {
         const cutoff = this.now() - WINDOW_MS;
-        return this.timestamps.filter((stamp) => stamp > cutoff).length;
+        return this.timestamps.reduce((count, stamp) => (stamp > cutoff ? count + 1 : count), 0);
     }
 }
 
