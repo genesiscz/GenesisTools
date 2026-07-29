@@ -1,4 +1,13 @@
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+    appendFileSync,
+    existsSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    statSync,
+    unlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -69,9 +78,27 @@ export interface JsonFilesBackendOptions {
     dir: string;
 }
 
+/**
+ * The append-only store API plus the three file operations ask needs.
+ *
+ * `ChatSession` is an in-memory buffer that is written out whole, so `save()`
+ * REPLACES a session's lines rather than appending one — an operation the
+ * generic `SessionBackend` deliberately does not have. The raw entry accessors
+ * exist because ask's `SessionEntry` union is its own type: the manager reads
+ * the untyped JSON and narrows it there, exactly as it did when it owned the
+ * file handling itself.
+ */
+export interface JsonFilesBackend extends SessionBackend {
+    /** Raw on-disk entries, unmapped. */
+    rawEntries(id: string): Promise<unknown[]>;
+    /** Replaces the file's contents with `entries`. */
+    writeRawEntries(id: string, entries: unknown[]): Promise<void>;
+    remove(id: string): Promise<void>;
+}
+
 const VALID_ID = /^[A-Za-z0-9_-]+$/;
 
-export function createJsonFilesBackend(options: JsonFilesBackendOptions): SessionBackend {
+export function createJsonFilesBackend(options: JsonFilesBackendOptions): JsonFilesBackend {
     const { log } = logger.scoped("ai-session");
     const dir = resolve(options.dir);
 
@@ -213,6 +240,23 @@ export function createJsonFilesBackend(options: JsonFilesBackendOptions): Sessio
             // The last entry's timestamp IS the session's updatedAt in this
             // format; appending already moved it. Nothing to write.
             log.debug({ session: id }, "json-files touch is a no-op (updatedAt derives from the last entry)");
+        },
+
+        async rawEntries(id: string): Promise<unknown[]> {
+            return readEntries(id);
+        },
+
+        async writeRawEntries(id: string, entries: unknown[]): Promise<void> {
+            const content = entries.length === 0 ? "" : `${entries.map((e) => SafeJSON.stringify(e)).join("\n")}\n`;
+            writeFileSync(filePath(id), content);
+        },
+
+        async remove(id: string): Promise<void> {
+            const path = filePath(id);
+
+            if (existsSync(path)) {
+                unlinkSync(path);
+            }
         },
     };
 }

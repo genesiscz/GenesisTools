@@ -1,4 +1,8 @@
-export { createJsonFilesBackend, type JsonFilesBackendOptions } from "./backends/json-files";
+export {
+    createJsonFilesBackend,
+    type JsonFilesBackend,
+    type JsonFilesBackendOptions,
+} from "./backends/json-files";
 export {
     createSqliteSessionBackend,
     type MessageColumnMap,

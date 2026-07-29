@@ -1,19 +1,24 @@
-import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
-import { resolve } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
+import type { JsonFilesBackend } from "@genesiscz/utils/ai/session";
+import { createJsonFilesBackend } from "@genesiscz/utils/ai/session";
 import type { ChatSessionManagerRef } from "./ChatSession";
 import { ChatSession } from "./ChatSession";
 import type { SessionEntry } from "./types";
 
+/**
+ * ask's sessions, stored by the shared session backend.
+ *
+ * The JSONL format is unchanged — `createJsonFilesBackend` reads and writes the
+ * same `<id>.jsonl` files this class used to open itself, so sessions written
+ * before this refactor load unchanged. What moved out is the file handling:
+ * directory creation, line parsing, the malformed-line skip and the delete.
+ * What stayed is everything ask-specific — the `SessionEntry` union, the
+ * in-memory `ChatSession` buffer, and the "save writes the whole session" model.
+ */
 export class ChatSessionManager implements ChatSessionManagerRef {
-    private readonly dir: string;
+    private readonly backend: JsonFilesBackend;
 
     constructor(options: { dir: string }) {
-        this.dir = resolve(options.dir);
-
-        if (!existsSync(this.dir)) {
-            mkdirSync(this.dir, { recursive: true });
-        }
+        this.backend = createJsonFilesBackend({ dir: options.dir });
     }
 
     /** Create a new empty session */
@@ -27,30 +32,14 @@ export class ChatSessionManager implements ChatSessionManagerRef {
 
     /** Load session from JSONL file */
     async load(sessionId: string): Promise<ChatSession> {
-        const filePath = this.getFilePath(sessionId);
-        const file = Bun.file(filePath);
+        this.validateSessionId(sessionId);
 
-        if (!(await file.exists())) {
+        if (!(await this.backend.byId(sessionId))) {
             throw new Error(`Session not found: ${sessionId}`);
         }
 
-        const text = await file.text();
-        const entries: SessionEntry[] = [];
-
-        for (const line of text.split("\n")) {
-            const trimmed = line.trim();
-
-            if (!trimmed) {
-                continue;
-            }
-
-            try {
-                entries.push(SafeJSON.parse(trimmed, { strict: true }) as SessionEntry);
-            } catch {
-                // Skip malformed lines
-            }
-        }
-
+        // The backend hands back what the file held; the union is ask's to narrow.
+        const entries = (await this.backend.rawEntries(sessionId)) as SessionEntry[];
         const session = new ChatSession(sessionId, entries);
         session.setManager(this);
         return session;
@@ -58,66 +47,49 @@ export class ChatSessionManager implements ChatSessionManagerRef {
 
     /** Save session entries to JSONL file */
     async save(session: ChatSession): Promise<void> {
-        const filePath = this.getFilePath(session.id);
-        const entries = session.getAllEntries();
-        const content = `${entries.map((e) => SafeJSON.stringify(e)).join("\n")}\n`;
-        await Bun.write(filePath, content);
+        this.validateSessionId(session.id);
+        await this.backend.writeRawEntries(session.id, session.getAllEntries());
     }
 
     /** List available sessions */
     async list(): Promise<Array<{ id: string; startedAt: string; messageCount: number; lastActivity: string }>> {
-        const files = readdirSync(this.dir).filter((f) => f.endsWith(".jsonl"));
         const sessions: Array<{ id: string; startedAt: string; messageCount: number; lastActivity: string }> = [];
 
-        for (const file of files) {
-            const id = file.replace(".jsonl", "");
+        // The directory is the namespace in this format, so `owner` is inert here.
+        for (const record of await this.backend.list("ask")) {
+            const entries = await this.backend.messages(record.id);
 
-            try {
-                const session = await this.load(id);
-                const entries = session.getAllEntries();
-
-                if (entries.length === 0) {
-                    continue;
-                }
-
-                sessions.push({
-                    id,
-                    startedAt: entries[0].timestamp,
-                    messageCount: entries.length,
-                    lastActivity: entries[entries.length - 1].timestamp,
-                });
-            } catch {
-                // Skip unreadable files
+            if (entries.length === 0) {
+                continue;
             }
+
+            sessions.push({
+                id: record.id,
+                startedAt: new Date(entries[0].at).toISOString(),
+                messageCount: entries.length,
+                lastActivity: new Date(entries[entries.length - 1].at).toISOString(),
+            });
         }
 
-        // Sort by last activity descending
         sessions.sort((a, b) => b.lastActivity.localeCompare(a.lastActivity));
         return sessions;
     }
 
     /** Delete a session file */
     async delete(sessionId: string): Promise<void> {
-        const filePath = this.getFilePath(sessionId);
-
-        if (existsSync(filePath)) {
-            unlinkSync(filePath);
-        }
+        this.validateSessionId(sessionId);
+        await this.backend.remove(sessionId);
     }
 
     /** Check if a session exists */
     async exists(sessionId: string): Promise<boolean> {
-        return existsSync(this.getFilePath(sessionId));
+        this.validateSessionId(sessionId);
+        return (await this.backend.byId(sessionId)) !== undefined;
     }
 
     private validateSessionId(sessionId: string): void {
         if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) {
             throw new Error(`Invalid session ID "${sessionId}" — only alphanumeric, hyphens, and underscores allowed`);
         }
-    }
-
-    private getFilePath(sessionId: string): string {
-        this.validateSessionId(sessionId);
-        return resolve(this.dir, `${sessionId}.jsonl`);
     }
 }
