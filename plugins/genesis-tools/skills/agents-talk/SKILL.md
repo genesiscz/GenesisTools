@@ -135,21 +135,11 @@ tools agents request --from reviewer --to lead --body 'Approve the auth change?'
 ## Long-lived Codex teammates
 
 `tools codex spawn` creates a persistent app-server session and auto-registers `codex_<name>` on this same bus. Do
-not manually log that identity in from the orchestrator. The driver observes inbound controls; the model receives with
-the seeded `tools agents login --agent-name codex_<name> --once --session <id>` command.
+not manually log that identity in from the orchestrator — the model receives with its seeded
+`tools agents login --agent-name codex_<name> --once --session <id>` command.
 
-Sessions are read-only unless you deliberately choose a write policy:
-
-```bash
-# Supervised worker: untrusted commands and write approvals go to lead.
-tools codex spawn --name implementer --write ask --prompt 'Implement the bounded change'
-
-# Trusted bounded worker: workspace writes without approval prompts.
-tools codex spawn --name implementer --write allow --prompt 'Implement the bounded change'
-```
-
-Omit `--write` (or use `--write deny`) for reviewers. Use `--write ask` as the default when edits are needed; use
-`--write allow` only when the task and writable roots are tightly bounded.
+Write policies, steering, approvals, and the driver-subagent pattern live in **`gt:handoff-to-codex`**. Load that
+skill rather than hand-rolling a spawn from here.
 
 ## What you receive on the `login` stream
 
