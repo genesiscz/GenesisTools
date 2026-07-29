@@ -135,12 +135,19 @@ async function runCreate(storage: Storage, service: TimelyService, options: Crea
 
     p.intro(chalk.cyan(`Timely create — ${dates.length} day(s)`));
 
+    // Through the service so an aged-out token is refreshed first; the stored one
+    // may be months stale and would 401 every memory fetch.
+    const accessToken = await service.getValidAccessToken();
+
     const spin = p.spinner();
     spin.start("Loading memories + 8-week corpus...");
     const [memoriesResult, corpus] = await Promise.all([
-        fetchMemoriesForDates({ accountId, accessToken: tokens.access_token, dates, storage }),
+        fetchMemoriesForDates({ accountId, accessToken, dates, storage }),
         loadEventCorpus(storage, service, accountId),
-    ]);
+    ]).catch((err: unknown) => {
+        spin.stop("Could not load memories.");
+        throw err;
+    });
     spin.stop(`Loaded ${memoriesResult.entries.length} memories, ${corpus.length} past entries.`);
 
     const created: number[] = [];
@@ -234,8 +241,9 @@ async function runPlan(storage: Storage, service: TimelyService, options: Create
         process.exit(1);
     }
 
+    const accessToken = await service.getValidAccessToken();
     const [memoriesResult, corpus] = await Promise.all([
-        fetchMemoriesForDates({ accountId, accessToken: tokens.access_token, dates, storage }),
+        fetchMemoriesForDates({ accountId, accessToken, dates, storage }),
         loadEventCorpus(storage, service, accountId),
     ]);
 
@@ -356,7 +364,7 @@ async function runApply(storage: Storage, service: TimelyService, options: Creat
         service,
         storage,
         accountId,
-        accessToken: tokens.access_token,
+        accessToken: await service.getValidAccessToken(),
         dryRun: options.dryRun ?? false,
         onPayload: (day, idx, payload) => {
             out.println(chalk.dim(`\n--- ${day} event #${idx} ---`));

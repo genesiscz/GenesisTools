@@ -139,9 +139,13 @@ async function eventsAction(storage: Storage, service: TimelyService, options: E
 
         const dates = [...new Set(events.map((e) => e.day))];
 
+        // Through the service so an aged-out token is refreshed first; the stored one
+        // may be months stale and would 401 every memory fetch.
+        const accessToken = await service.getValidAccessToken();
+
         const result = await fetchMemoriesForDates({
             accountId,
-            accessToken: tokens.access_token,
+            accessToken,
             dates,
             storage,
             force: options.force,

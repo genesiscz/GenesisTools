@@ -4,6 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import type { Storage } from "@genesiscz/utils/storage";
 import chalk from "chalk";
+import { TimelyHttpError } from "./errors";
 
 export interface RequestOptions {
     params?: Record<string, string | number | boolean>;
@@ -69,19 +70,29 @@ export class TimelyApiClient {
             throw new Error("Not authenticated. Run 'tools timely login' first.");
         }
 
-        // Check if token is expired (with 5 minute buffer)
-        if (tokens.created_at && tokens.expires_in) {
-            const expiresAt = (tokens.created_at + tokens.expires_in) * 1000;
+        // Check if token is expired (with 5 minute buffer). Timely's token response does
+        // NOT always carry expires_in — when it is missing we cannot know the lifetime, so
+        // refresh rather than sending a token that may be months stale (it 401s otherwise).
+        if (tokens.created_at) {
             const bufferMs = 5 * 60 * 1000; // 5 minutes
+            const expiresAt = tokens.expires_in ? (tokens.created_at + tokens.expires_in) * 1000 : 0;
 
             if (Date.now() > expiresAt - bufferMs) {
-                logger.debug("Access token expired, refreshing...");
+                logger.debug("Access token expired or lifetime unknown, refreshing...");
                 const newTokens = await this.refreshToken(tokens.refresh_token);
                 return newTokens.access_token;
             }
         }
 
         return tokens.access_token;
+    }
+
+    /**
+     * Public accessor for a guaranteed-fresh token, for callers that must hit a Timely
+     * host this client does not wrap (e.g. app.timelyapp.com's suggested_entries).
+     */
+    async getValidAccessToken(): Promise<string> {
+        return this.getAccessToken();
     }
 
     /**
@@ -105,7 +116,10 @@ export class TimelyApiClient {
 
         if (!response.ok) {
             const error = await response.text();
-            throw new Error(`Token refresh failed: ${error}`);
+            throw new TimelyHttpError(`Token refresh failed: ${error}`, {
+                status: response.status,
+                scope: "token",
+            });
         }
 
         const tokens = (await response.json()) as OAuth2Tokens;
@@ -142,7 +156,10 @@ export class TimelyApiClient {
 
         if (!response.ok) {
             const error = await response.text();
-            throw new Error(`Token exchange failed: ${error}`);
+            throw new TimelyHttpError(`Token exchange failed: ${error}`, {
+                status: response.status,
+                scope: "token",
+            });
         }
 
         const tokens = (await response.json()) as OAuth2Tokens;
@@ -152,6 +169,11 @@ export class TimelyApiClient {
             ...tokens,
             created_at: Math.floor(Date.now() / 1000),
         });
+
+        // tokens.created_at is rewritten by every refresh, and because Timely sends no
+        // expires_in every request refreshes — so it cannot answer "when did I log in?".
+        // Record the exchange separately; only this code path writes it.
+        await this.storage.setConfigValue("authenticatedAt", Math.floor(Date.now() / 1000));
 
         return tokens;
     }
@@ -201,7 +223,10 @@ export class TimelyApiClient {
 
         if (!response.ok) {
             const error = await response.text();
-            throw new Error(`API request failed (${response.status}): ${error}`);
+            throw new TimelyHttpError(`API request failed (${response.status}): ${error}`, {
+                status: response.status,
+                scope: "api",
+            });
         }
 
         // Handle empty responses

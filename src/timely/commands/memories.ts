@@ -35,7 +35,7 @@ interface MemoriesOptions {
     force?: boolean;
 }
 
-async function memoriesAction(storage: Storage, _service: TimelyService, options: MemoriesOptions): Promise<void> {
+async function memoriesAction(storage: Storage, service: TimelyService, options: MemoriesOptions): Promise<void> {
     const accountId = options.account
         ? parseInt(options.account, 10)
         : await storage.getConfigValue<number>("selectedAccountId");
@@ -49,6 +49,10 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
         logger.error("Not authenticated. Run 'tools timely login' first.");
         process.exit(1);
     }
+
+    // Go through the service so an expired token is refreshed first; reading tokens
+    // straight from storage sends whatever was last persisted, which 401s once it ages out.
+    const accessToken = await service.getValidAccessToken();
 
     // Resolve --from/--to (primary) with --since/--upto (hidden aliases)
     const from = options.from || options.since;
@@ -78,7 +82,7 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
 
     const result = await fetchMemoriesForDates({
         accountId,
-        accessToken: tokens.access_token,
+        accessToken,
         dates,
         storage,
         force: options.force,

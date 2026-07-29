@@ -3,7 +3,7 @@
 // src/timely/index.ts
 
 import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
-import { logger, out } from "@genesiscz/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
 import { Storage } from "@genesiscz/utils/storage";
@@ -22,6 +22,7 @@ import { registerLogoutCommand } from "./commands/logout";
 import { registerMemoriesCommand } from "./commands/memories";
 import { registerProjectsCommand } from "./commands/projects";
 import { registerStatusCommand } from "./commands/status";
+import { reportTimelyFailure } from "./utils/failure";
 
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
@@ -116,7 +117,7 @@ async function main(): Promise<void> {
     await runTool(program, { tool: "timely" });
 }
 
-main().catch((err) => {
-    logger.error(`Unexpected error: ${err}`);
+main().catch(async (err) => {
+    await reportTimelyFailure(err, service);
     process.exit(1);
 });
