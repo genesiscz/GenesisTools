@@ -1,6 +1,13 @@
 @import 'tailwindcss';
 /* Same enter/exit utilities the panel needs — see side-panel.css. */
 @import 'tw-animate-css';
+/* shadcn's `cyber` Input/Badge variants style their surface with `glass-card`
+   and `neon-border`, which live here and nowhere in the Tailwind output. Without
+   this the popup's inputs and the status badge render fully transparent
+   (verified: computed background-color rgba(0, 0, 0, 0)). The side panel shims
+   both classes locally because a shadow root can't reach this file; a normal
+   extension page can, so import the real thing. */
+@import '../../../utils/ui/theme/cyberpunk.css';
 @source '..';
 @source '../../../utils/ui/components';
 /* Shared youtube panel components live outside the extension dir; unscanned,

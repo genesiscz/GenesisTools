@@ -8,6 +8,7 @@ import {
     shouldRecoverInline,
 } from "@ext/placement";
 import { type ChapterTicksHandle, mountChapterTicks } from "@ext/player-chapters";
+import { findPlayerVideo, seekPlayerTo } from "@ext/player-control";
 import type { PlayerChaptersMessage, PlayerTimeMessage } from "@ext/shared/messages";
 import type { PanelTarget } from "@ext/side-panel/target";
 import { logger } from "@genesiscz/utils/logger/client";
@@ -460,16 +461,11 @@ function currentVideoId(): string | null {
     return target?.kind === "video" ? target.videoId : null;
 }
 
-function findVideoEl(): HTMLVideoElement | null {
-    return (
-        document.querySelector<HTMLVideoElement>("#movie_player video") ??
-        document.querySelector<HTMLVideoElement>("video")
-    );
-}
-
 function seekPlayer(seconds: number): void {
-    // Same bridge the panel's timestamp pills use.
-    window.postMessage({ event: "command", func: "seekTo", args: [seconds, true] }, "https://www.youtube.com");
+    // Same path the panel's timestamp pills use.
+    if (!seekPlayerTo(seconds)) {
+        logger.debug({ seconds }, "chapter seek ignored — no <video> on the page yet");
+    }
 }
 
 function unmountTicks(): void {
@@ -488,7 +484,7 @@ function ensureChapterTicks(): void {
     }
 
     const bar = document.querySelector<HTMLElement>(".ytp-progress-bar");
-    const duration = findVideoEl()?.duration;
+    const duration = findPlayerVideo()?.duration;
 
     if (!bar || duration === undefined || !Number.isFinite(duration) || duration <= 0) {
         // Bar or duration not ready yet — the 1 Hz tick retries.
@@ -566,7 +562,7 @@ const playerTimeInterval = window.setInterval(() => {
 
     ensurePlayerObserver();
     ensureChapterTicks();
-    const video = findVideoEl();
+    const video = findPlayerVideo();
 
     if (!video) {
         return;
