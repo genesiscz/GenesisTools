@@ -276,10 +276,9 @@ describe("AIConfig key resolution through the vault", () => {
     test("literal keys survive the round trip into the vault and back", async () => {
         const config = await AIConfig.load();
 
-        const onDisk = SafeJSON.parse(
-            readFileSync(join(home, ".genesis-tools", "ai", "config.json"), "utf8"),
-            { strict: true }
-        ) as { accounts: Array<{ credentials?: Record<string, unknown> }> };
+        const onDisk = SafeJSON.parse(readFileSync(join(home, ".genesis-tools", "ai", "config.json"), "utf8"), {
+            strict: true,
+        }) as { accounts: Array<{ credentials?: Record<string, unknown> }> };
         const apiKeyField = onDisk.accounts.find((a) => "apiKey" in (a.credentials ?? {}))?.credentials?.apiKey;
         expect(apiKeyField).toEqual({ type: "secure", path: expect.stringMatching(/^ai\/.+\/apiKey$/) });
 
