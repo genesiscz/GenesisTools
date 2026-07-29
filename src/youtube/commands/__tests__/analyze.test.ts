@@ -68,6 +68,15 @@ mock.module("@app/youtube/commands/_shared/ensure-pipeline", () => ({
                 return { short: "Short summary" };
             },
         },
+        // `--ask` now goes through `answerOverVideos` (the one answering path),
+        // which checks for a stored transcript and for existing embeddings before
+        // it indexes, then enriches citations with title/clock/deep-link. That
+        // needs a `db`, which the old direct-`qa.ask` route did not.
+        db: {
+            getTranscript: () => ({ segments: [{ startSec: 0, endSec: 90, text: "hello" }] }),
+            hasQaChunks: () => false,
+            getVideosByIds: (ids: string[]) => ids.map((id) => ({ id, title: "Fake video", uploadDate: null })),
+        },
         qa: {
             index: async (opts: unknown) => {
                 calls.index.push(opts);
@@ -164,10 +173,14 @@ describe("youtube analyze command", () => {
             "-y",
         ]);
 
-        expect(calls.index).toEqual([{ videoId: "abc123def45" }]);
+        expect(calls.index).toMatchObject([{ videoId: "abc123def45" }]);
         expect(calls.ask[0]).toMatchObject({ videoIds: ["abc123def45"], question: "what changed?", topK: 4 });
         expect(stdout).toContain("The answer");
-        expect(stdout).toContain("abc123def45#0");
+        // Enriched citations are the point of routing through the shared path:
+        // human output prints the title and a deep link, where the old direct
+        // call could only print `<videoId>#<chunkIdx>`.
+        expect(stdout).toContain("Fake video");
+        expect(stdout).toContain("watch?v=abc123def45");
     });
 
     it("rejects ask combined with summary flags", async () => {
