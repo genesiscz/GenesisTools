@@ -1,43 +1,60 @@
-import { parseJobStatus, redactJobForApi, toJobStages } from "@app/youtube/lib/queue";
-import { resolveUser } from "@app/youtube/lib/server/auth";
+import { JOB_STAGES, JOB_TARGET_KINDS } from "@app/youtube/lib/jobs.types";
+import { parseJobStages, parseJobStatus, redactJobForApi } from "@app/youtube/lib/queue";
+import { resolveJobActor } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
 import type { JobStage, JobTargetKind } from "@app/youtube/lib/types";
 import type { Youtube } from "@app/youtube/lib/youtube";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 interface EnqueueBody {
     target: string;
     targetKind?: JobTargetKind;
     stages: JobStage[];
-    params?: Record<string, unknown> | null;
+    params: Record<string, unknown> | null;
     priority?: number;
-    force?: boolean;
+    force: boolean;
 }
+
+type ParseResult = { ok: true; value: EnqueueBody } | { ok: false; error: string };
 
 export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): Promise<Response> {
     try {
-        if (matchRoute(req, "POST", "/api/v1/pipeline", url.pathname)) {
-            const body = (await req.json()) as EnqueueBody;
+        // Resolved once, for every branch below: the same identity decides who a new
+        // job is attributed to and whose jobs the reads and the cancel may touch.
+        const actor = resolveJobActor(req, url, yt.db);
 
-            // The cast above is a claim, not a check. Without this guard a missing or
-            // mistyped `stages` reached `toJobStages` as a non-array and surfaced to
-            // the client as a 500 (`body.stages.map is not a function`) — a bad
-            // request reported as a server fault.
-            if (typeof body.target !== "string" || !Array.isArray(body.stages)) {
-                return jsonError("target (string) and stages (array of stage names) are required", 400);
+        if (matchRoute(req, "POST", "/api/v1/pipeline", url.pathname)) {
+            let raw: unknown;
+
+            try {
+                raw = await req.json();
+            } catch (err) {
+                logger.debug({ err, path: url.pathname }, "youtube API: pipeline enqueue body was not valid JSON");
+
+                return jsonError("request body must be valid JSON", 400);
             }
 
-            const user = resolveUser(req, url, yt.db);
+            // Everything below is a check rather than the `as EnqueueBody` claim this
+            // used to make. Each field that `QueueService.enqueue` would throw on is
+            // rejected here instead, because the outer catch turns a throw into a 500
+            // and every one of these is a bad request, not a server fault.
+            const body = parseEnqueueBody(raw);
+
+            if (!body.ok) {
+                return jsonError(body.error, 400);
+            }
+
             const result = yt.queue.enqueue({
-                target: body.target,
-                targetKind: body.targetKind,
-                stages: toJobStages(body.stages),
-                userId: user?.id ?? null,
-                params: body.params ?? null,
-                priority: body.priority,
-                force: body.force === true,
+                target: body.value.target,
+                targetKind: body.value.targetKind,
+                stages: body.value.stages,
+                userId: actor.kind === "user" ? actor.userId : null,
+                params: body.value.params,
+                priority: body.value.priority,
+                force: body.value.force,
             });
 
             return Response.json(
@@ -54,7 +71,7 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
         if (matchRoute(req, "GET", "/api/v1/jobs", url.pathname)) {
             const status = parseJobStatus(url.searchParams.get("status"));
             const limit = parseInt(url.searchParams.get("limit") ?? "100", 10);
-            const jobs = yt.queue.list({ status: status ?? undefined, limit, redact: true });
+            const jobs = yt.queue.list({ status: status ?? undefined, limit, redact: true, actor });
 
             return Response.json({ jobs }, { headers: CORS_HEADERS });
         }
@@ -67,7 +84,7 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
 
         if (jobOnly) {
             const id = parseInt(jobOnly.id, 10);
-            const result = yt.queue.get(id, { redact: true });
+            const result = yt.queue.get(id, { redact: true, actor });
 
             if (!result) {
                 return jsonError("job not found", 404);
@@ -80,7 +97,7 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
 
         if (activity) {
             const id = parseInt(activity.id, 10);
-            const rows = yt.queue.activity(id);
+            const rows = yt.queue.activity(id, actor);
 
             if (!rows) {
                 return jsonError("job not found", 404);
@@ -93,7 +110,7 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
 
         if (cancel) {
             const id = parseInt(cancel.id, 10);
-            const job = yt.queue.cancel(id);
+            const job = yt.queue.cancel(id, actor);
 
             if (!job) {
                 return jsonError("job not found", 404);
@@ -106,6 +123,56 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
     } catch (err) {
         return toErrorResponse(err);
     }
+}
+
+function parseEnqueueBody(raw: unknown): ParseResult {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+        return { ok: false, error: "request body must be a JSON object" };
+    }
+
+    const body = raw as Record<string, unknown>;
+
+    if (typeof body.target !== "string" || body.target.trim() === "") {
+        return { ok: false, error: "target is required and must be a non-empty string" };
+    }
+
+    const stages = parseJobStages(body.stages);
+
+    if (!stages) {
+        return { ok: false, error: `stages must be a non-empty array of: ${JOB_STAGES.join(", ")}` };
+    }
+
+    if (body.targetKind !== undefined && !isTargetKind(body.targetKind)) {
+        return { ok: false, error: `targetKind must be one of: ${JOB_TARGET_KINDS.join(", ")}` };
+    }
+
+    if (body.priority !== undefined && !Number.isFinite(body.priority)) {
+        return { ok: false, error: "priority must be a number" };
+    }
+
+    if (body.params !== undefined && body.params !== null && !isPlainObject(body.params)) {
+        return { ok: false, error: "params must be a JSON object or null" };
+    }
+
+    return {
+        ok: true,
+        value: {
+            target: body.target,
+            targetKind: body.targetKind,
+            stages,
+            params: isPlainObject(body.params) ? body.params : null,
+            priority: typeof body.priority === "number" ? body.priority : undefined,
+            force: body.force === true,
+        },
+    };
+}
+
+function isTargetKind(value: unknown): value is JobTargetKind {
+    return typeof value === "string" && JOB_TARGET_KINDS.some((kind) => kind === value);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function jsonError(error: string, status: number): Response {

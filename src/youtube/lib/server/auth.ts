@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
+import type { JobActor } from "@app/youtube/lib/queue";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import type { YtUser } from "@app/youtube/lib/users.types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -146,6 +147,22 @@ export function resolveUser(req: Request, url: URL, db: YoutubeDatabase): YtUser
     const token = presented?.startsWith(USER_TOKEN_PREFIX) ? presented : null;
 
     return token ? db.getUserByToken(token) : null;
+}
+
+/**
+ * The job-ownership scope this request runs under.
+ *
+ * A resolved `ytu_` user is confined to their own jobs, because `requireServiceKey`
+ * lets any valid user token through the top-level gate — without this, one logged-in
+ * user could list, read and cancel everyone else's jobs. Everything that gets past
+ * that gate WITHOUT a user token is the operator: a configured service key, or open
+ * mode on localhost where no key is set at all. That is what keeps `tools youtube`
+ * and the dashboard working against the full queue.
+ */
+export function resolveJobActor(req: Request, url: URL, db: YoutubeDatabase): JobActor {
+    const user = resolveUser(req, url, db);
+
+    return user ? { kind: "user", userId: user.id } : { kind: "operator" };
 }
 
 /**

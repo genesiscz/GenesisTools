@@ -64,7 +64,7 @@ describe("QueueService", () => {
             fixture.queue.enqueue({ target: "first-video", stages: ["metadata"] });
             fixture.queue.enqueue({ target: "second-video", stages: ["metadata"] });
 
-            expect(fixture.queue.list()).toHaveLength(2);
+            expect(fixture.queue.list({ actor: { kind: "operator" } })).toHaveLength(2);
             expect(fixture.queue.stats()).toMatchObject({ queued: 2, running: 0 });
         } finally {
             await disposeFixture(fixture);
@@ -88,14 +88,16 @@ describe("QueueService", () => {
                 },
             });
 
-            expect(fixture.queue.list()[0]?.params).toEqual({
+            expect(fixture.queue.list({ actor: { kind: "operator" } })[0]?.params).toEqual({
                 holdId: 12,
                 creditCost: 4,
                 question: "private question",
                 presetInstructions: "private instructions",
                 language: "en",
             });
-            expect(fixture.queue.list({ redact: true })[0]?.params).toEqual({ language: "en" });
+            expect(fixture.queue.list({ redact: true, actor: { kind: "operator" } })[0]?.params).toEqual({
+                language: "en",
+            });
         } finally {
             await disposeFixture(fixture);
         }
