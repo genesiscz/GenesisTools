@@ -255,9 +255,16 @@ function resolveUrl(path: string, label: string): URL {
         throw new InstagramError("network", `${label} targeted ${url.origin}, which is not the Instagram web origin`);
     }
 
-    // Userinfo survives the origin check — `https://evil:pw@www.instagram.com/`
-    // has origin `https://www.instagram.com` — and `fetch` turns it into an
-    // Authorization header. Nothing here should ever carry one.
+    // Userinfo survives the origin check: `https://evil:pw@www.instagram.com/`
+    // has origin `https://www.instagram.com`. What happens to it after that is
+    // runtime dependent, and neither outcome is worth depending on. Measured on
+    // Bun 1.3.14, the runtime this ships on: no throw, and no Authorization
+    // header on the wire either, the userinfo is simply dropped and the request
+    // goes out. Node/undici 6.24.1 instead throws a bare TypeError, "Request
+    // cannot be constructed from a URL that includes credentials"
+    // (undici/lib/web/fetch/request.js:121). A URL arriving here with
+    // credentials in it means a caller built it out of something it should not
+    // have, so it is refused here and reported as one stable InstagramError.
     if (url.username !== "" || url.password !== "") {
         log.warn({ label, origin: url.origin }, "refusing a request url carrying userinfo");
         throw new InstagramError("network", `${label} carried credentials in the URL, which this client never sends`);

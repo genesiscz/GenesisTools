@@ -385,8 +385,9 @@ describe("request origin", () => {
 
     test("refuses a url carrying userinfo, which the origin check alone allows", async () => {
         // `https://evil:pw@www.instagram.com/` has origin `https://www.instagram.com`,
-        // so only an explicit userinfo check catches it. fetch would turn it into
-        // an Authorization header.
+        // so only an explicit userinfo check catches it. On Bun the request would
+        // otherwise just go out with the userinfo quietly dropped; on Node/undici
+        // it would throw a bare TypeError. This guard is what makes it neither.
         let requested = 0;
         globalThis.fetch = mock(async () => {
             requested += 1;
