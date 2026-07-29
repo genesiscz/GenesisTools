@@ -159,6 +159,19 @@ const LOAD_SENSITIVE_FILES = [
     "src/utils/fs/watcher.test.ts",
     "src/macos/lib/clones/audit.test.ts",
     "src/stash/lib/patch.test.ts",
+    // Direct native-syscall suites: getattrlistbulk intermittently answers
+    // EINVAL under the parallel run's fd/vnode pressure, and these test the
+    // syscall itself, so no readdir fallback can absorb it.
+    "src/utils/macos/getattrlistbulk.test.ts",
+    "src/utils/macos/getattrlistbulk-privatesize.test.ts",
+    // @opentui's zig.ts dynamic-imports its per-platform native package at
+    // module top level, and under parallel workers that import races into
+    // "Cannot access 'default' before initialization" — bun records it as an
+    // "Unhandled error between tests": +1 fail, ZERO failing testcases (junit
+    // says failures=0), no (fail) line anywhere. This was the long-standing
+    // phantom failure in every full run, on master too.
+    "src/doctor/ui/tui/views/__tests__/drawer-content-packing.test.ts",
+    "src/utils/prompts/p/backend.test.ts",
 ];
 
 // Force NODE_ENV=test even when the caller's shell exports something else:
