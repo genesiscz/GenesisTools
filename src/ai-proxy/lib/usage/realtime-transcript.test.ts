@@ -40,7 +40,8 @@ function closingSummary() {
 
 interface Entry {
     eventType?: string;
-    realtime?: { retainedEvents?: number; cappedEvents?: number };
+    realtime?: { retainedEvents?: number; cappedEvents?: number; skippedEvents?: Record<string, number> };
+    message?: { content?: { text?: string }[] };
 }
 
 function entries(): Entry[] {
@@ -62,6 +63,36 @@ describe("RealtimeTranscript", () => {
         const recorded = entries();
         expect(recorded.filter((entry) => entry.eventType === "response.audio.delta")).toHaveLength(0);
         expect(recorded.filter((entry) => entry.eventType === "session.update")).toHaveLength(1);
+    });
+
+    it("reports every skipped high-volume type and its count in the closing summary", () => {
+        // Dropping the frames is only half the contract: the summary is the only
+        // record that a voice session carried audio at all, so the counts have to
+        // survive both in the structured field and in the human-readable text.
+        const transcript = newTranscript();
+
+        for (let index = 0; index < 10_000; index += 1) {
+            transcript.recordFrame("upstream", SafeJSON.stringify({ type: "response.audio.delta", delta: "AAAA" }));
+        }
+
+        for (let index = 0; index < 42; index += 1) {
+            transcript.recordFrame("client", SafeJSON.stringify({ type: "input_audio_buffer.append", audio: "BBBB" }));
+        }
+
+        transcript.finish(closingSummary());
+
+        const recorded = entries();
+        // 10_042 frames in, one summary line out.
+        expect(recorded).toHaveLength(1);
+
+        const summary = recorded[0];
+        expect(summary?.realtime?.skippedEvents).toEqual({
+            "response.audio.delta": 10_000,
+            "input_audio_buffer.append": 42,
+        });
+        expect(summary?.realtime?.retainedEvents).toBe(0);
+        expect(summary?.message?.content?.[0]?.text).toContain("response.audio.delta x10000");
+        expect(summary?.message?.content?.[0]?.text).toContain("input_audio_buffer.append x42");
     });
 
     it("stops retaining events at the ceiling and counts the rest in the summary", () => {
