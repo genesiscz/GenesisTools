@@ -355,7 +355,7 @@ describe("fold-after-append truthfulness (§8.9c)", () => {
 });
 
 describe("handoff_list (§8.12)", () => {
-    test("mine includes targeted-but-never-claimed; open filters; paging info", () => {
+    test("mine includes targeted-but-never-claimed", () => {
         const env = freshEnv();
         postHandoff({ title: "other", tasks: [{ text: "x" }] }, env.depsFor(A));
         const targeted = postHandoff(
@@ -365,7 +365,56 @@ describe("handoff_list (§8.12)", () => {
 
         const mineC = listHandoffs({ mine: true }, env.depsFor(C));
         expect(mineC.handoffs.map((h) => h.id)).toEqual([targeted.handoff.id]);
+    });
 
+    test("mine and auto-claim match a target abbreviated to the leading id segment", () => {
+        const env = freshEnv();
+        const FULL = byFor("cd4e9457-105b-45f5-829d-9c4f554df36a", "worker");
+        const OTHER = byFor("cd4e9458-0000-0000-0000-000000000000", "other-worker");
+        const targeted = postHandoff(
+            { title: "for-prefix", tasks: [{ text: "x" }], target: { sessionId: "cd4e9457" } },
+            env.depsFor(A)
+        );
+
+        expect(listHandoffs({ mine: true }, env.depsFor(FULL)).handoffs.map((h) => h.id)).toEqual([
+            targeted.handoff.id,
+        ]);
+        // A session whose id merely starts with similar characters is not the target.
+        expect(listHandoffs({ mine: true }, env.depsFor(OTHER)).handoffs).toHaveLength(0);
+
+        const got = getHandoff({ id: targeted.handoff.id }, env.depsFor(FULL));
+        expect(got.handoff.status).toBe("claimed");
+        expect(got.handoff.claimedBy?.[0]?.sessionId).toBe("cd4e9457-105b-45f5-829d-9c4f554df36a");
+    });
+
+    test("a prefix shorter than one id segment never establishes identity", () => {
+        const env = freshEnv();
+        const FULL = byFor("cd4e9457-105b-45f5-829d-9c4f554df36a", "worker");
+        postHandoff({ title: "too-short", tasks: [{ text: "x" }], target: { sessionId: "cd4e" } }, env.depsFor(A));
+
+        expect(listHandoffs({ mine: true }, env.depsFor(FULL)).handoffs).toHaveLength(0);
+    });
+
+    test("an abbreviated ACTOR never inherits poster authority from the full session", () => {
+        const env = freshEnv();
+        const POSTER = byFor("cd4e9457-105b-45f5-829d-9c4f554df36a", "poster");
+        // Paste blocks publish the leading segment, so treating it as identity
+        // would hand poster verbs to anyone who read one.
+        const ABBREV = byFor("cd4e9457", "impostor");
+        const { handoff } = postHandoff({ title: "T", tasks: [{ text: "x" }] }, env.depsFor(POSTER));
+
+        const res = executeHandoffActions(
+            { id: handoff.id, actions: [{ action: "cancel_handoff" }] },
+            env.depsFor(ABBREV)
+        );
+
+        expect(res.results[0].ok).toBe(false);
+        expect(res.results[0].error).toContain("Poster credential required");
+        expect(res.handoff.status).not.toBe("cancelled");
+    });
+
+    test("open filters and paging info", () => {
+        const env = freshEnv();
         const done = postHandoff({ title: "done-one", tasks: [{ text: "x" }] }, env.depsFor(A));
         executeHandoffActions(
             {

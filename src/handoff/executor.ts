@@ -4,7 +4,7 @@ import { getAgentRuntimeContext } from "@genesiscz/utils/agent-runtime";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { attachmentFilePath, ingestAttachmentBytes, ingestAttachmentFromPath } from "./attachments";
-import { CANCELLED_INFO, claimMatches, DONE_INFO, isHumanOwner, sessionIdMatches } from "./fold";
+import { CANCELLED_INFO, claimMatches, DONE_INFO, isHumanOwner, sessionIdMatches, targetMatchesSession } from "./fold";
 import { generateEditId, generateEventUid, generateHandoffId, normalizeEditId, normalizeHandoffId } from "./ids";
 import { appendHandoffEvents } from "./log-store";
 import { isEventsOnlyInclude, type ProjectedHandoff, parseIncludeSections, projectHandoff } from "./project";
@@ -338,7 +338,7 @@ export function getHandoff(input: GetHandoffInput, deps: HandoffDeps = {}): GetH
         const autoClaim =
             input.unclaim !== true &&
             existing.target?.sessionId !== undefined &&
-            sessionIdMatches(existing.target.sessionId, by.sessionId) &&
+            targetMatchesSession(existing.target.sessionId, by.sessionId) &&
             !isClaimedBy(existing, by) &&
             (existing.status === "open" || existing.status === "claimed");
 
@@ -465,7 +465,7 @@ export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = 
                 (h) =>
                     isPosterSession(h, by) ||
                     isClaimedBy(h, by) ||
-                    sessionIdMatches(h.target?.sessionId ?? null, by.sessionId) ||
+                    targetMatchesSession(h.target?.sessionId ?? null, by.sessionId) ||
                     (h.target?.sessionName != null &&
                         by.sessionTitle != null &&
                         h.target.sessionName === by.sessionTitle)

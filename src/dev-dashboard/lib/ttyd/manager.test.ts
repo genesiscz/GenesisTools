@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { killAllTtyd, killTtyd, listTtyd, spawnTtyd, ttydLabel } from "@app/dev-dashboard/lib/ttyd/manager";
+import {
+    killAllTtyd,
+    killTtyd,
+    listTtyd,
+    retargetTtydTmuxBindings,
+    spawnTtyd,
+    ttydLabel,
+} from "@app/dev-dashboard/lib/ttyd/manager";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
+import { renameTmuxSession, sessionExists } from "@genesiscz/utils/tmux/sessions";
 
 // The spawn/kill/list cases launch real ttyd + tmux processes. Skip them when
 // the binaries are absent (CI, Linux, non-Homebrew) so the suite stays green
@@ -73,6 +81,33 @@ describe.skipIf(!hasTtydDeps)("ttyd manager", () => {
         await expect(spawnTtyd({ attachTmuxSession: tmuxName })).rejects.toThrow("already open in ttyd");
 
         await killTtyd(attached.id, { killTmux: true });
+    });
+
+    test("retarget relaunches ttyd so argv tracks the renamed tmux session", async () => {
+        const session = await spawnTtyd({ command: "/bin/sh", cwd: process.cwd() });
+        const fromName = session.tmuxSessionName;
+        expect(fromName).toBeTruthy();
+
+        const toName = `retarget-test-${session.id.slice(0, 8)}`;
+        renameTmuxSession(fromName!, toName);
+
+        await retargetTtydTmuxBindings(fromName!, toName);
+
+        const listed = (await listTtyd()).find((s) => s.id === session.id);
+        expect(listed?.tmuxSessionName).toBe(toName);
+        expect(listed?.port).toBe(session.port);
+        expect(listed?.id).toBe(session.id);
+        expect(sessionExists(toName)).toBe(true);
+        expect(sessionExists(fromName!)).toBe(false);
+
+        // Live process must attach to the NEW name (this is the bug: config-only retarget).
+        const ps = Bun.spawnSync(["/bin/ps", "-p", String(listed!.pid), "-o", "command="], {
+            stdio: ["ignore", "pipe", "ignore"],
+        });
+        expect(ps.exitCode).toBe(0);
+        const cmd = ps.stdout.toString();
+        expect(cmd).toContain(`-t ${toName}`);
+        expect(cmd).not.toContain(`-t ${fromName}`);
     });
 });
 
