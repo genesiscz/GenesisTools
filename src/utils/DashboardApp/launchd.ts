@@ -10,7 +10,7 @@
  * unloads the plist before SIGTERM so the user's intent to stop isn't
  * defeated by launchd respawning the process immediately.
  */
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
@@ -174,7 +174,18 @@ ${envEntries}
 `;
 
     mkdirSync(LAUNCH_AGENTS_DIR, { recursive: true });
-    writeFileSync(path, plist);
+    // EnvironmentVariables can carry provider API keys, so the plist must never be
+    // group/world-readable — not even for the instant between write and chmod.
+    // Tighten an existing file BEFORE overwriting it (writeFileSync's `mode` is
+    // ignored when the file already exists), and create a new one owner-only.
+    if (existsSync(path)) {
+        chmodSync(path, 0o600);
+    }
+
+    writeFileSync(path, plist, { mode: 0o600 });
+    // The creation mode above is still masked by the process umask, which can strip
+    // owner bits too (umask 0200 would leave the file read-only). Restore 0600 exactly.
+    chmodSync(path, 0o600);
 }
 
 export async function refreshLaunchd(opts: LaunchdInstallOptions): Promise<void> {

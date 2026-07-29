@@ -1,4 +1,4 @@
-import { existsSync, statSync, unlinkSync } from "node:fs";
+import { buildCacheStatsBase, clearVideoBinaries, listCacheVideos, ttlDays } from "@app/youtube/lib/cache-ops";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { requireOperator } from "@app/youtube/lib/server/require-operator";
@@ -49,7 +49,15 @@ export async function handleCacheRoute(req: Request, url: URL, yt: Youtube): Pro
             }
 
             const body = (await req.json()) as ClearCacheBody;
-            return Response.json(clearCachedBinaries(yt, body), { headers: CORS_HEADERS });
+            return Response.json(
+                clearVideoBinaries({
+                    yt,
+                    audio: Boolean(body.all || body.audio),
+                    video: Boolean(body.all || body.video),
+                    thumbs: Boolean(body.all || body.thumbs),
+                }),
+                { headers: CORS_HEADERS }
+            );
         }
 
         return jsonError("not found", 404);
@@ -60,71 +68,19 @@ export async function handleCacheRoute(req: Request, url: URL, yt: Youtube): Pro
 
 function buildCacheStats(yt: Youtube) {
     const channels = yt.channels.list();
-    const videos = yt.videos.list({ includeShorts: true, includeLive: true, limit: 1_000_000 });
+    const videos = listCacheVideos(yt);
     const jobs = yt.pipeline.listJobs({ limit: 100 });
-    const transcriptCount = videos.reduce((count, video) => count + yt.db.listTranscripts(video.id).length, 0);
+    const stats = buildCacheStatsBase({ yt, channels: channels.length, videos });
 
     return {
-        channels: channels.length,
-        videos: videos.length,
-        transcripts: transcriptCount,
+        channels: stats.channels,
+        videos: stats.videos,
+        transcripts: stats.transcripts,
         jobs,
-        audioBytes: sumBytes(videos.map((video) => video.audioSizeBytes)),
-        videoBytes: sumBytes(videos.map((video) => video.videoSizeBytes)),
+        audioBytes: stats.audioBytes,
+        videoBytes: stats.videoBytes,
         thumbBytes: 0,
     };
-}
-
-function clearCachedBinaries(yt: Youtube, body: ClearCacheBody): { deletedCount: number; freedBytes: number } {
-    const videos = yt.videos.list({ includeShorts: true, includeLive: true, limit: 1_000_000 });
-    let deletedCount = 0;
-    let freedBytes = 0;
-
-    for (const video of videos) {
-        if ((body.all || body.audio) && video.audioPath) {
-            freedBytes += deletePath(video.audioPath, video.audioSizeBytes);
-            yt.db.setVideoBinaryPath(video.id, "audio", null);
-            deletedCount++;
-        }
-
-        if ((body.all || body.video) && video.videoPath) {
-            freedBytes += deletePath(video.videoPath, video.videoSizeBytes);
-            yt.db.setVideoBinaryPath(video.id, "video", null);
-            deletedCount++;
-        }
-
-        if ((body.all || body.thumbs) && video.thumbPath) {
-            freedBytes += deletePath(video.thumbPath, null);
-            yt.db.setVideoBinaryPath(video.id, "thumb", null);
-            deletedCount++;
-        }
-    }
-
-    return { deletedCount, freedBytes };
-}
-
-function deletePath(path: string, knownBytes: number | null): number {
-    const bytes = knownBytes ?? (existsSync(path) ? statSync(path).size : 0);
-
-    if (existsSync(path)) {
-        unlinkSync(path);
-    }
-
-    return bytes;
-}
-
-function sumBytes(values: Array<number | null>): number {
-    return values.reduce<number>((total, value) => total + (value ?? 0), 0);
-}
-
-function ttlDays(raw: string): number | undefined {
-    const match = raw.match(/^(\d+)\s+days?$/);
-
-    if (!match?.[1]) {
-        return undefined;
-    }
-
-    return parseInt(match[1], 10);
 }
 
 async function safeJson<T>(req: Request): Promise<T | undefined> {

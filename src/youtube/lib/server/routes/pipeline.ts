@@ -1,42 +1,11 @@
+import { parseJobStatus, redactJobForApi, toJobStages } from "@app/youtube/lib/queue";
 import { resolveUser } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import { matchRoute } from "@app/youtube/lib/server/match-route";
-import type { JobStage, JobStatus, JobTargetKind, PipelineJob } from "@app/youtube/lib/types";
+import type { JobStage, JobTargetKind } from "@app/youtube/lib/types";
 import type { Youtube } from "@app/youtube/lib/youtube";
 import { SafeJSON } from "@genesiscz/utils/json";
-
-/** Billing capability ids the server owns — never accepted from or echoed to clients. */
-const SERVER_OWNED_PARAM_KEYS = ["holdId", "creditCost"];
-
-/** Sensitive per-request params redacted from list/get job DTOs (worker keeps the full shape). */
-const SENSITIVE_PARAM_KEYS = new Set(["holdId", "creditCost", "question", "presetInstructions"]);
-
-function sanitizePipelineParams(params: Record<string, unknown> | null): Record<string, unknown> | null {
-    if (!params) {
-        return null;
-    }
-
-    const clean = { ...params };
-    for (const key of SERVER_OWNED_PARAM_KEYS) {
-        delete clean[key];
-    }
-
-    return clean;
-}
-
-function redactJobForApi(job: PipelineJob): PipelineJob {
-    if (!job.params) {
-        return job;
-    }
-
-    const params = { ...job.params };
-    for (const key of SENSITIVE_PARAM_KEYS) {
-        delete params[key];
-    }
-
-    return { ...job, params };
-}
 
 interface EnqueueBody {
     target: string;
@@ -51,14 +20,13 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
     try {
         if (matchRoute(req, "POST", "/api/v1/pipeline", url.pathname)) {
             const body = (await req.json()) as EnqueueBody;
-            const targetKind = body.targetKind ?? inferTargetKind(body.target);
             const user = resolveUser(req, url, yt.db);
-            const result = yt.pipeline.enqueue({
-                targetKind,
+            const result = yt.queue.enqueue({
                 target: body.target,
-                stages: body.stages,
+                targetKind: body.targetKind,
+                stages: toJobStages(body.stages),
                 userId: user?.id ?? null,
-                params: sanitizePipelineParams(body.params ?? null),
+                params: body.params ?? null,
                 priority: body.priority,
                 force: body.force === true,
             });
@@ -77,49 +45,46 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
         if (matchRoute(req, "GET", "/api/v1/jobs", url.pathname)) {
             const status = parseJobStatus(url.searchParams.get("status"));
             const limit = parseInt(url.searchParams.get("limit") ?? "100", 10);
-            const jobs = yt.pipeline.listJobs({ status: status ?? undefined, limit }).map(redactJobForApi);
+            const jobs = yt.queue.list({ status: status ?? undefined, limit, redact: true });
 
             return Response.json({ jobs }, { headers: CORS_HEADERS });
         }
 
         if (matchRoute(req, "GET", "/api/v1/jobs/queue", url.pathname)) {
-            return Response.json({ queue: yt.db.getQueueStats() }, { headers: CORS_HEADERS });
+            return Response.json({ queue: yt.queue.stats() }, { headers: CORS_HEADERS });
         }
 
         const jobOnly = matchRoute(req, "GET", "/api/v1/jobs/:id", url.pathname);
 
         if (jobOnly) {
             const id = parseInt(jobOnly.id, 10);
-            const job = yt.pipeline.getJob(id);
+            const result = yt.queue.get(id, { redact: true });
 
-            if (!job) {
+            if (!result) {
                 return jsonError("job not found", 404);
             }
 
-            return Response.json(
-                { job: redactJobForApi(job), queuePosition: yt.db.getJobQueuePosition(id) },
-                { headers: CORS_HEADERS }
-            );
+            return Response.json(result, { headers: CORS_HEADERS });
         }
 
         const activity = matchRoute(req, "GET", "/api/v1/jobs/:id/activity", url.pathname);
 
         if (activity) {
             const id = parseInt(activity.id, 10);
+            const rows = yt.queue.activity(id);
 
-            if (!yt.pipeline.getJob(id)) {
+            if (!rows) {
                 return jsonError("job not found", 404);
             }
 
-            return Response.json({ activity: yt.db.listJobActivity(id) }, { headers: CORS_HEADERS });
+            return Response.json({ activity: rows }, { headers: CORS_HEADERS });
         }
 
         const cancel = matchRoute(req, "POST", "/api/v1/jobs/:id/cancel", url.pathname);
 
         if (cancel) {
             const id = parseInt(cancel.id, 10);
-            yt.pipeline.cancelJob(id);
-            const job = yt.pipeline.getJob(id);
+            const job = yt.queue.cancel(id);
 
             return Response.json({ job }, { headers: CORS_HEADERS });
         }
@@ -128,33 +93,6 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
     } catch (err) {
         return toErrorResponse(err);
     }
-}
-
-function inferTargetKind(target: string): JobTargetKind {
-    if (target.startsWith("@")) {
-        return "channel";
-    }
-
-    if (target.includes("://")) {
-        return "url";
-    }
-
-    return "video";
-}
-
-function parseJobStatus(value: string | null): JobStatus | null {
-    if (
-        value === "pending" ||
-        value === "running" ||
-        value === "completed" ||
-        value === "failed" ||
-        value === "cancelled" ||
-        value === "interrupted"
-    ) {
-        return value;
-    }
-
-    return null;
 }
 
 function jsonError(error: string, status: number): Response {

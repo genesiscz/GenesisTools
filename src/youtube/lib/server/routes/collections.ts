@@ -26,13 +26,16 @@ export async function handleCollectionsRoute(req: Request, url: URL, yt: Youtube
             }
 
             const threadId = parseId(threadDetail.threadId);
-            const thread = threadId !== null ? yt.db.getAskThread(user.id, threadId) : null;
+            const thread = threadId !== null ? yt.db.getAskSession(user.id, threadId) : null;
 
             if (!thread) {
                 return jsonError("thread not found", 404);
             }
 
-            return Response.json({ thread, messages: yt.db.listAskMessages(thread.id) }, { headers: CORS_HEADERS });
+            return Response.json(
+                { thread, messages: yt.db.listAskSessionMessages(thread.id) },
+                { headers: CORS_HEADERS }
+            );
         }
 
         if (matchRoute(req, "GET", "/api/v1/collections", url.pathname)) {
@@ -98,7 +101,10 @@ export async function handleCollectionsRoute(req: Request, url: URL, yt: Youtube
                 return jsonError("collection not found", 404);
             }
 
-            return Response.json({ threads: yt.db.listAskThreads(user.id, collection.id) }, { headers: CORS_HEADERS });
+            return Response.json(
+                { threads: yt.db.listAskSessions(user.id, { collectionId: collection.id }) },
+                { headers: CORS_HEADERS }
+            );
         }
 
         const ask = matchRoute(req, "POST", "/api/v1/collections/:id/ask", url.pathname);

@@ -19,8 +19,9 @@ import {
     summaryAudioCacheHit,
 } from "@app/youtube/lib/summary-audio";
 import { compactTranscript } from "@app/youtube/lib/transcript-compact";
+import { renderTranscriptSrt, renderTranscriptVtt } from "@app/youtube/lib/transcript-export";
 import { translateTranscript } from "@app/youtube/lib/transcripts";
-import type { ChannelHandle, QaSource, Transcript, Video, VideoId } from "@app/youtube/lib/types";
+import type { ChannelHandle, QaSource, Video, VideoId } from "@app/youtube/lib/types";
 import { CREDIT_COSTS, InsufficientCreditsError, REUSE_COST } from "@app/youtube/lib/types";
 import { resolveUserSettings, type TaskDefaultSettings } from "@app/youtube/lib/user-settings";
 import type { SummaryFormat, SummaryLength, SummaryTone } from "@app/youtube/lib/video.types";
@@ -890,13 +891,13 @@ function handleTranscriptRoute(req: Request, url: URL, yt: Youtube, id: VideoId)
     }
 
     if (format === "srt") {
-        return new Response(toSrt(transcript), {
+        return new Response(renderTranscriptSrt(transcript.segments), {
             headers: { ...CORS_HEADERS, "Content-Type": "application/x-subrip; charset=utf-8" },
         });
     }
 
     if (format === "vtt") {
-        return new Response(toVtt(transcript), {
+        return new Response(renderTranscriptVtt(transcript.segments), {
             headers: { ...CORS_HEADERS, "Content-Type": "text/vtt; charset=utf-8" },
         });
     }
@@ -929,35 +930,6 @@ function parseSpeakers(value: unknown): Array<{ idx: number; label: string }> | 
     }
 
     return speakers;
-}
-
-function toSrt(transcript: Transcript): string {
-    return transcript.segments
-        .map(
-            (segment, index) =>
-                `${index + 1}\n${formatTimestamp(segment.start, ",")} --> ${formatTimestamp(segment.end, ",")}\n${segment.text}`
-        )
-        .join("\n\n");
-}
-
-function toVtt(transcript: Transcript): string {
-    const cues = transcript.segments
-        .map(
-            (segment) =>
-                `${formatTimestamp(segment.start, ".")} --> ${formatTimestamp(segment.end, ".")}\n${segment.text}`
-        )
-        .join("\n\n");
-    return `WEBVTT\n\n${cues}`;
-}
-
-function formatTimestamp(seconds: number, separator: "," | "."): string {
-    const totalMs = Math.round(seconds * 1000);
-    const hours = Math.floor(totalMs / 3_600_000);
-    const minutes = Math.floor((totalMs % 3_600_000) / 60_000);
-    const secs = Math.floor((totalMs % 60_000) / 1000);
-    const ms = totalMs % 1000;
-
-    return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}${separator}${ms.toString().padStart(3, "0")}`;
 }
 
 function jsonError(error: string, status: number): Response {
