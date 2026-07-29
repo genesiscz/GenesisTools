@@ -307,7 +307,9 @@ export async function callLLM(options: CallLLMOptions): Promise<CallLLMResult> {
 }
 
 /** `callLLM`'s streaming mode with the chunks handed to a callback instead of a stream. */
-export async function streamLLM(options: CallLLMOptions & { onChunk: (chunk: string) => void }): Promise<CallLLMResult> {
+export async function streamLLM(
+    options: CallLLMOptions & { onChunk: (chunk: string) => void }
+): Promise<CallLLMResult> {
     const target = await resolveCallTarget(options);
 
     const result = await coreChat({
