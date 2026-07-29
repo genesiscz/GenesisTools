@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { readStoredCookie } from "@app/timely/utils/cookie";
 import { Storage } from "@genesiscz/utils/storage";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
-import { probeAndSaveCookie } from "./cookie-probe";
+import { type CookieRejection, probeAndSaveCookie } from "./cookie-probe";
 
 setupStorageSandbox();
 
@@ -29,8 +29,57 @@ describe("probeAndSaveCookie", () => {
 
         const outcome = await probeAndSaveCookie({ storage, accountId: 558481, cookie: "_memory_session=stale" });
 
-        expect(outcome).toEqual({ status: "rejected", httpStatus: 401 });
+        expect(outcome).toEqual({ status: "rejected", httpStatus: 401, reason: "http-status" });
         expect(await readStoredCookie(storage)).toBeUndefined();
+    });
+
+    // A web host answers a signed-out request with a bounce to sign-in, or with the
+    // sign-in page under a 200. Both read as success to `response.ok`, so each one is
+    // its own way of persisting a cookie that authenticates nothing.
+    const bypasses: [string, () => Response, { httpStatus: number; reason: CookieRejection }][] = [
+        [
+            "a redirect to the sign-in page",
+            () => new Response(null, { status: 302, headers: { location: "/login" } }),
+            { httpStatus: 302, reason: "redirected" },
+        ],
+        [
+            "a 200 carrying the sign-in page instead of JSON",
+            () => new Response("<!DOCTYPE html><title>Sign in to Timely</title>", { status: 200 }),
+            { httpStatus: 200, reason: "not-suggested-entries" },
+        ],
+        [
+            "a 200 carrying a JSON error object instead of the entries array",
+            () => new Response('{"error":"Unauthorized"}', { status: 200 }),
+            { httpStatus: 200, reason: "not-suggested-entries" },
+        ],
+        [
+            "a non-200 success status",
+            () => new Response("[]", { status: 201 }),
+            { httpStatus: 201, reason: "http-status" },
+        ],
+    ];
+
+    test.each(bypasses)("%s is refused and never reaches disk", async (name, makeResponse, expected) => {
+        const storage = await freshStorage(`timely-probe-${name.replace(/\W+/g, "-")}`);
+        stubFetch(async () => makeResponse());
+
+        const outcome = await probeAndSaveCookie({ storage, accountId: 558481, cookie: "_memory_session=stale" });
+
+        expect(outcome).toEqual({ status: "rejected", ...expected });
+        expect(await readStoredCookie(storage)).toBeUndefined();
+    });
+
+    test("redirects are never followed, so a bounce cannot be laundered into a 200", async () => {
+        const storage = await freshStorage("timely-probe-redirect-mode");
+        const redirectModes: (RequestRedirect | undefined)[] = [];
+        stubFetch(async (_input, init) => {
+            redirectModes.push(init?.redirect);
+            return new Response("[]", { status: 200 });
+        });
+
+        await probeAndSaveCookie({ storage, accountId: 558481, cookie: "_memory_session=live" });
+
+        expect(redirectModes).toEqual(["manual"]);
     });
 
     test("an unreachable Timely never reaches disk either", async () => {
