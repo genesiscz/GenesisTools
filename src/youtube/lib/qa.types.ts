@@ -1,8 +1,8 @@
 import type { Transcript } from "@app/youtube/lib/transcript.types";
 import type { VideoId } from "@app/youtube/lib/video.types";
-import type { ProviderChoice } from "@ask/types";
 import type { CallLLMOptions, CallLLMResult } from "@genesiscz/utils/ai/call-llm";
 import type { EmbeddingResult } from "@genesiscz/utils/ai/types";
+import type { ProviderChoice } from "@genesiscz/utils/ask/types";
 
 export type QaSource = "transcript" | "comments";
 

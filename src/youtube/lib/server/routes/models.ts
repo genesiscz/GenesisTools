@@ -5,7 +5,7 @@ import { resolveUser } from "@app/youtube/lib/server/auth";
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
 import { toErrorResponse } from "@app/youtube/lib/server/error";
 import type { Youtube } from "@app/youtube/lib/youtube";
-import { providerManager } from "@ask/providers/ProviderManager";
+import { listChoosableTargets } from "@genesiscz/utils/ai/core/choose";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -66,20 +66,15 @@ export async function handleModelsRoute(req: Request, url: URL, yt: Youtube): Pr
             }
         }
 
-        const providers = await providerManager.detectProviders();
-        const presets: ModelPreset[] = [];
-        for (const provider of providers) {
-            // Subscription billing is a provider trait (anthropic-sub, openai-sub, grok-sub), not per-model.
-            const subscription = provider.subscription === true;
-            for (const model of provider.models) {
-                presets.push({
-                    label: `${provider.name} · ${model.id}`,
-                    provider: provider.name,
-                    model: model.id,
-                    subscription,
-                });
-            }
-        }
+        // Listing never binds a provider: `listChoosableTargets` only DESCRIBES
+        // each account's credential, so rendering the picker cannot rotate a
+        // subscription token or spend a request.
+        const presets: ModelPreset[] = (await listChoosableTargets()).map((target) => ({
+            label: `${target.provider} · ${target.modelId}`,
+            provider: target.provider,
+            model: target.modelId,
+            subscription: target.subscription,
+        }));
 
         const all = await yt.config.getAll();
         const defaults = {

@@ -1,23 +1,15 @@
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
-import { modelSelector } from "@ask/providers/ModelSelector";
-import type { ProviderChoice } from "@ask/types";
-import { isInteractive } from "@genesiscz/utils/cli/executor";
+import type { ProviderChoice } from "@genesiscz/utils/ask/types";
 
 export interface AskProviderOpts {
     provider?: string;
     model?: string;
 }
 
+/**
+ * A CLI command's provider choice: explicit flags win, otherwise a TTY picks and
+ * a pipe falls through to the configured defaults.
+ */
 export async function loadAskProviderChoice(opts: AskProviderOpts = {}): Promise<ProviderChoice> {
-    if (opts.provider || opts.model) {
-        return resolveProviderChoice(opts);
-    }
-
-    const selected = isInteractive() ? await modelSelector.selectModel() : await modelSelector.selectModelByName();
-
-    if (!selected) {
-        throw new Error("Unable to select an AI provider/model. Pass --provider/--model or run interactively.");
-    }
-
-    return selected;
+    return resolveProviderChoice({ ...opts, interactive: true });
 }

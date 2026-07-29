@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { toLanguageModelUsage } from "@ask/utils/helpers";
+import { toLanguageModelUsage } from "@genesiscz/utils/ask/usage-tokens";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
 

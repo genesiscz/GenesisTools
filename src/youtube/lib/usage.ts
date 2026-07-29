@@ -3,7 +3,7 @@
  * through here so they show up in `tools usage` (the central UsageDatabase shared
  * with the `ask` tool).
  *
- * Per-call cost is computed by `dynamicPricingManager` (provider+model+token-based).
+ * Per-call cost is computed from the catalog price ladder (provider+model+token-based).
  * If the provider doesn't return a `LanguageModelUsage`, we still record the action
  * with zeroed tokens so call counts are visible in the dashboard.
  *
@@ -16,8 +16,9 @@ import { getJobActivityContext } from "@app/youtube/lib/job-activity";
 import type { JobActivityKind } from "@app/youtube/lib/jobs.types";
 import { getRequestContext } from "@app/youtube/lib/request-context";
 import { costTracker } from "@ask/output/CostTracker";
-import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
-import type { ProviderChoice } from "@ask/types";
+import { pricingFor } from "@genesiscz/utils/ai/catalog/pricing";
+import { calculateCallCostUsd } from "@genesiscz/utils/ai/llm-cost";
+import type { ProviderChoice } from "@genesiscz/utils/ask/types";
 import { logger } from "@genesiscz/utils/logger";
 import type { LanguageModelUsage } from "ai";
 
@@ -143,8 +144,8 @@ function actionToKind(action: YoutubeUsageAction): JobActivityKind {
 
 async function safeCalculateCost(provider: string, model: string, usage: LanguageModelUsage): Promise<number | null> {
     try {
-        const cost = await dynamicPricingManager.calculateCost(provider, model, usage);
-        return Number.isFinite(cost) ? cost : null;
+        const cost = calculateCallCostUsd(await pricingFor(provider, model), usage);
+        return cost !== null && Number.isFinite(cost) ? cost : null;
     } catch {
         return null;
     }

@@ -17,11 +17,11 @@ import type {
 import { identifyProviderChoice, recordYoutubeUsage } from "@app/youtube/lib/usage";
 import type { VideoId } from "@app/youtube/lib/video.types";
 import { downloadAudio } from "@app/youtube/lib/yt-dlp";
-import type { ProviderChoice } from "@ask/types";
 import type { CallLLMOptions, CallLLMResult } from "@genesiscz/utils/ai/call-llm";
 import { callLLM as defaultCallLLM } from "@genesiscz/utils/ai/call-llm";
 import { Transcriber } from "@genesiscz/utils/ai/tasks/Transcriber";
 import { speakerIndexFromLabel } from "@genesiscz/utils/ai/transcription/speaker-label";
+import type { ProviderChoice } from "@genesiscz/utils/ask/types";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { estimateTokens } from "@genesiscz/utils/tokens";
