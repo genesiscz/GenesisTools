@@ -1,6 +1,6 @@
 // biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ or /Users/ string literals — production plugins do not apply to test code
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -191,17 +191,16 @@ describe("atomicWriteFileSync mode", () => {
         expect(readdirSync(dir)).toEqual(["target"]);
     });
 
-    // Same caveat as the grok refresh suite: a 0500 directory does not stop root.
-    it.skipIf(process.getuid?.() === 0)("leaves no temp file behind when the data cannot be written at all", () => {
-        const readOnly = join(dir, "read-only");
-        mkdirSync(readOnly, { mode: 0o500 });
+    it("leaves no temp file behind when the data cannot be written at all", () => {
+        // ENOTDIR via a regular file as a parent component, rather than a 0500
+        // directory: permission bits are bypassed by root and not enforced the
+        // same way on Windows, so a mode-based denial is not a dependable
+        // failure. A file is never a directory, on any host, for any user.
+        const notADirectory = join(dir, "not-a-directory");
+        writeFileSync(notADirectory, "x");
 
-        try {
-            expect(() => atomicWriteFileSync(join(readOnly, "x.json"), "{}", { mode: 0o600 })).toThrow();
-            expect(readdirSync(readOnly)).toEqual([]);
-        } finally {
-            chmodSync(readOnly, 0o700);
-        }
+        expect(() => atomicWriteFileSync(join(notADirectory, "x.json"), "{}", { mode: 0o600 })).toThrow();
+        expect(readdirSync(dir)).toEqual(["not-a-directory"]);
     });
 
     it("leaves the mode to the umask when none is requested", () => {
