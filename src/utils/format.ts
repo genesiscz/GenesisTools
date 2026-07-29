@@ -101,8 +101,8 @@ export function formatDuration(value: number, unit: DurationUnit = "ms", style: 
 
 // ============= Duration Parsing =============
 
-// Single value + unit, e.g. "30m", "2hours", "90s"
-const SIMPLE_DURATION_PATTERN = /^(\d+)\s*(s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hrs|hours?)$/i;
+// Single value + unit, e.g. "30m", "2hours", "90s", "7d"
+const SIMPLE_DURATION_PATTERN = /^(\d+)\s*(s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hrs|hours?|d|days?)$/i;
 
 // Multi-part durations, e.g. "1h30m", "2h15min10s". Each group is optional,
 // allowing any combination of hours/minutes/seconds:
@@ -111,14 +111,14 @@ const SIMPLE_DURATION_PATTERN = /^(\d+)\s*(s|sec|secs|seconds?|m|min|mins|minute
 //   (?:(\d+)\s*s...)? — optional seconds (capture group 3)
 // Unit suffixes accept common spellings: h/hr/hrs/hour/hours, m/min/mins/minute/minutes, s/sec/secs/second/seconds
 const COMPOUND_DURATION_PATTERN =
-    /^(?:(\d+)\s*h(?:ours?|rs?|r)?)?\s*(?:(\d+)\s*m(?:in(?:utes?|s)?)?)?\s*(?:(\d+)\s*s(?:ec(?:onds?|s)?)?)?$/i;
+    /^(?:(\d+)\s*d(?:ays?)?)?\s*(?:(\d+)\s*h(?:ours?|rs?|r)?)?\s*(?:(\d+)\s*m(?:in(?:utes?|s)?)?)?\s*(?:(\d+)\s*s(?:ec(?:onds?|s)?)?)?$/i;
 
 /**
  * Parse a human-readable duration string into milliseconds.
  *
  * Supports:
- *   - Simple: "30s", "30m", "30min", "30minutes", "2h", "2hours"
- *   - Compound: "1h30m", "2h15min", "20m 1s", "1h30m15s"
+ *   - Simple: "30s", "30m", "30min", "30minutes", "2h", "2hours", "7d", "7days"
+ *   - Compound: "1h30m", "2h15min", "20m 1s", "1h30m15s", "2d6h"
  *   - Plain number: treated as minutes (e.g. "30" → 30 minutes)
  *
  * Returns 0 if the input cannot be parsed.
@@ -147,15 +147,20 @@ export function parseDuration(input: string): number {
         if (unit.startsWith("h")) {
             return value * 60 * 60 * 1000;
         }
+
+        if (unit.startsWith("d")) {
+            return value * 24 * 60 * 60 * 1000;
+        }
     }
 
     const compound = trimmed.match(COMPOUND_DURATION_PATTERN);
 
-    if (compound && (compound[1] || compound[2] || compound[3])) {
-        const hours = compound[1] ? Number.parseInt(compound[1], 10) : 0;
-        const minutes = compound[2] ? Number.parseInt(compound[2], 10) : 0;
-        const seconds = compound[3] ? Number.parseInt(compound[3], 10) : 0;
-        return (hours * 3600 + minutes * 60 + seconds) * 1000;
+    if (compound && (compound[1] || compound[2] || compound[3] || compound[4])) {
+        const days = compound[1] ? Number.parseInt(compound[1], 10) : 0;
+        const hours = compound[2] ? Number.parseInt(compound[2], 10) : 0;
+        const minutes = compound[3] ? Number.parseInt(compound[3], 10) : 0;
+        const seconds = compound[4] ? Number.parseInt(compound[4], 10) : 0;
+        return (days * 86400 + hours * 3600 + minutes * 60 + seconds) * 1000;
     }
 
     return 0;

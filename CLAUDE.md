@@ -149,6 +149,10 @@ See `.claude/docs/tool-template.md` for complete templates (@inquirer + @clack/p
 
 **Before writing or restyling ANY web UI** (`src/<tool>/ui`, `src/dashboard`, `src/dev-dashboard/ui`), read `.claude/docs/design-system.md`. It is the single shared-UI contract: theme tokens + `@ui/components/*` primitives + `wow-components.css` looks. Hard rules: no raw `zinc-*`/`white/NN` palette in app code (use theme tokens), never override a `<Card>`'s surface, pick a rich Button/Card variant on purpose, wrap routes in the shared shell/auth-layout. This doc exists because clarity & shops drifted "flat" by ignoring it while the dashboard didn't — don't repeat that. For per-dashboard design lineage (all 8 dashboards categorized into design families; why youtube/dev-dashboard diverge) see `.claude/docs/design-system-dashboards.md`; for the canonical ports/launch registry + conflict detection see `src/utils/ui/dashboards.ts`.
 
+## Working on `tools du` (`src/du/`)
+
+**Before touching ANYTHING under `src/du/`, read `.claude/docs/benchmarks-du.md`, and append a new dated section to it for every feature you add.** The native core (`src/du/native/clonesize.c`) is syscall-bound and runs in the hot loop of multi-million-file scans, so an unmeasured feature is a silent regression. Measure with `src/du/native/bench.sh <label>` (fixed target matrix + hyperfine), record system CPU time as the primary metric (wall time on this machine swings with load average — always note `uptime`), and diff the `--json` byte totals to prove the change was performance-only.
+
 ## Code Style Rules
 
 - **Fix bugs at the root, not at every call site.** When the same issue appears in multiple places because of a shared function, fix the shared function — don't patch each caller individually. One fix at the source beats N fixes at the edges.
