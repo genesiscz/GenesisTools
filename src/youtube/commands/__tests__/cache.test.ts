@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ChannelHandle, PipelineJob, Video, VideoId } from "@app/youtube/lib/types";
 import { Command } from "commander";
+
+/** Deliberately absent: the default fixture is a row whose file is already gone. */
+const MISSING_AUDIO_PATH = join(tmpdir(), "youtube-cache-never-written.opus");
 
 const videos: Video[] = [
     {
@@ -24,7 +30,7 @@ const videos: Video[] = [
         summaryShortLang: "en",
         summaryTimestampedLang: "en",
         summaryLongLang: "en",
-        audioPath: "/tmp/audio.opus",
+        audioPath: MISSING_AUDIO_PATH,
         audioSizeBytes: 1024,
         audioCachedAt: "2026-04-01",
         videoPath: "/tmp/video.mp4",
@@ -159,12 +165,33 @@ describe("youtube cache command", () => {
     });
 
     it("clears selected cache kinds with --yes", async () => {
+        const audioPath = join(tmpdir(), `youtube-cache-clear-${Date.now()}.opus`);
+        await Bun.write(audioPath, "x".repeat(1024));
+        videos[0].audioPath = audioPath;
+
+        try {
+            const program = await makeProgram();
+
+            await program.parseAsync(["node", "test", "cache", "clear", "--audio", "--yes"]);
+
+            expect(calls.setPath).toEqual([["abc123def45", "audio", null]]);
+            expect(stdout).toContain("Deleted 1 file");
+            expect(existsSync(audioPath)).toBe(false);
+        } finally {
+            videos[0].audioPath = MISSING_AUDIO_PATH;
+        }
+    });
+
+    // The counters go straight to the user, so a row pointing at a file someone
+    // already deleted must not be reported as space reclaimed — only the stale
+    // reference is cleared.
+    it("reports nothing freed when the cached file is already gone", async () => {
         const program = await makeProgram();
 
         await program.parseAsync(["node", "test", "cache", "clear", "--audio", "--yes"]);
 
         expect(calls.setPath).toEqual([["abc123def45", "audio", null]]);
-        expect(stdout).toContain("Deleted 1 file");
+        expect(stdout).toContain("Deleted 0 file(s), freed 0 B");
     });
 
     it("rejects clear without selected kind", async () => {
