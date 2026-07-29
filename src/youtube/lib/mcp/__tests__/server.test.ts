@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { MAX_TOOL_LIMIT, MCP_TOOLS, toolLimit } from "@app/youtube/lib/mcp/server";
+import { callMcpTool, MAX_TOOL_LIMIT, MCP_TOOLS, toolLimit } from "@app/youtube/lib/mcp/server";
+import { ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 
 /**
  * `toolLimit` is the security boundary, not the JSON schema: an MCP client can
@@ -86,5 +87,69 @@ describe("MCP cost and output bounds", () => {
 
         expect(ask?.inputSchema.properties).toMatchObject({ topK: { type: "integer", minimum: 1, maximum: 50 } });
         expect(window?.inputSchema.properties).toMatchObject({ windowSec: { minimum: 1, maximum: 600 } });
+    });
+});
+
+/**
+ * Handler-level, through `callMcpTool` rather than stdio: the SDK's framing is not
+ * this module's code, but the argument validation and error shape are.
+ */
+describe("callMcpTool argument handling", () => {
+    const listVideosCalls: Array<Record<string, unknown>> = [];
+    const yt = {
+        db: {
+            listVideos: (opts: Record<string, unknown>) => {
+                listVideosCalls.push(opts);
+                return [];
+            },
+            getVideo: () => null,
+            getTranscript: () => null,
+        },
+        qa: { keywordSearch: () => [] },
+    } as unknown as Parameters<typeof callMcpTool>[0];
+
+    it("raises MethodNotFound for an unknown tool instead of returning a result", async () => {
+        await expect(callMcpTool(yt, "no_such_tool", {})).rejects.toMatchObject({
+            code: ErrorCode.MethodNotFound,
+        });
+    });
+
+    // Every one of these would previously have run with the literal string
+    // "undefined" (or NaN) rather than refusing.
+    it("refuses each required argument when it is missing", async () => {
+        for (const [name, field] of [
+            ["get_video", "videoId"],
+            ["search_transcripts", "query"],
+            ["transcript_window", "videoId"],
+            ["ask", "question"],
+            ["queue_add", "target"],
+        ] as const) {
+            const result = await callMcpTool(yt, name, {});
+
+            expect(result.isError).toBe(true);
+            expect(result.content[0].text).toContain(field);
+        }
+    });
+
+    it("rejects a non-finite atSec before touching the database", async () => {
+        const result = await callMcpTool(yt, "transcript_window", { videoId: "abc123def45", atSec: "soon" });
+
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("atSec");
+    });
+
+    it("canonicalises a bare channel handle before querying", async () => {
+        listVideosCalls.length = 0;
+        await callMcpTool(yt, "list_videos", { channel: "bridgemindai" });
+
+        expect(listVideosCalls[0]).toMatchObject({ channel: "@bridgemindai" });
+    });
+
+    it("clamps a hostile limit at the handler, not the schema", async () => {
+        listVideosCalls.length = 0;
+        await callMcpTool(yt, "list_videos", { limit: -1 });
+        await callMcpTool(yt, "list_videos", { limit: 10_000 });
+
+        expect(listVideosCalls.map((opts) => opts.limit)).toEqual([50, MAX_TOOL_LIMIT]);
     });
 });

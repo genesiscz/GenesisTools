@@ -230,188 +230,208 @@ export const MCP_TOOLS = [
     },
 ];
 
+/**
+ * The tool dispatcher, separated from the transport.
+ *
+ * What can be wrong in this module is argument validation and scoping, not the
+ * SDK's stdio framing — so the dispatcher is a plain function a test can call
+ * directly rather than something reachable only through a spawned process.
+ */
+export async function callMcpTool(yt: Youtube, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+    try {
+        switch (name) {
+            case "list_videos": {
+                const videos = yt.db.listVideos({
+                    // Canonicalised, not cast: rows are stored under `@handle`, so a
+                    // client passing a bare `bridgemindai` matched nothing and got an
+                    // empty list rather than an error.
+                    ...(typeof args.channel === "string" ? { channel: normaliseHandle(args.channel) } : {}),
+                    limit: toolLimit(args.limit, 50),
+                });
+
+                return text(
+                    SafeJSON.stringify(
+                        videos.map((video) => publicVideo(video as unknown as Record<string, unknown>)),
+                        null,
+                        2
+                    )
+                );
+            }
+
+            case "get_video": {
+                const requested = requiredString(args.videoId);
+
+                if (!requested) {
+                    return { ...text("get_video: `videoId` is required."), isError: true };
+                }
+
+                const videoId = requested as VideoId;
+                const video = yt.db.getVideo(videoId);
+
+                if (!video) {
+                    return { ...text(`No stored video ${videoId}.`), isError: true };
+                }
+
+                const transcript = yt.db.getTranscript(videoId);
+
+                return text(
+                    SafeJSON.stringify(
+                        {
+                            video: publicVideo(video as unknown as Record<string, unknown>),
+                            url: videoUrl(videoId),
+                            hasTranscript: Boolean(transcript),
+                            segments: transcript?.segments.length ?? 0,
+                        },
+                        null,
+                        2
+                    )
+                );
+            }
+
+            case "search_transcripts": {
+                const query = requiredString(args.query);
+
+                if (!query) {
+                    return { ...text("search_transcripts: `query` is required."), isError: true };
+                }
+
+                const hits = yt.qa.keywordSearch(query, asVideoIds(args.videoIds), toolLimit(args.limit, 20));
+
+                return text(SafeJSON.stringify(hits, null, 2));
+            }
+
+            case "transcript_window": {
+                const requested = requiredString(args.videoId);
+
+                if (!requested) {
+                    return { ...text("transcript_window: `videoId` is required."), isError: true };
+                }
+
+                const at = Number(args.atSec);
+
+                if (!Number.isFinite(at)) {
+                    return { ...text("transcript_window: `atSec` must be a finite number."), isError: true };
+                }
+
+                const videoId = requested as VideoId;
+                const transcript = yt.db.getTranscript(videoId);
+
+                if (!transcript) {
+                    return { ...text(`No transcript stored for ${videoId}.`), isError: true };
+                }
+
+                // Bounded for the same reason the row limits are: an unbounded
+                // half-width returns the entire transcript through the stdio pipe.
+                const half = boundedWindowSec(args.windowSec);
+                const inWindow = transcript.segments.filter(
+                    (segment) => segment.end >= at - half && segment.start <= at + half
+                );
+
+                return text(
+                    inWindow.map((segment) => `[${formatClock(segment.start)}] ${segment.text}`).join("\n") ||
+                        "(nothing in that window)"
+                );
+            }
+
+            case "ask": {
+                const question = requiredString(args.question);
+
+                if (!question) {
+                    return { ...text("ask: `question` is required."), isError: true };
+                }
+
+                return await withConsoleContext(yt.db, async () => {
+                    const scope = await resolveAskScope(yt, {
+                        ...(typeof args.channel === "string" ? { channel: args.channel } : {}),
+                        ...(Array.isArray(args.videoIds) ? { videoIds: asVideoIds(args.videoIds) } : {}),
+                    });
+
+                    const result = await answerOverVideos({
+                        yt,
+                        videoIds: scope.videoIds,
+                        question,
+                        topK: boundedTopK(args.topK),
+                        providerChoice: await resolveProviderChoice({}),
+                    });
+
+                    return text(`${result.answer}\n\nCitations:\n${formatCitationLines(result.citations).join("\n")}`);
+                });
+            }
+
+            case "queue_add": {
+                const target = requiredString(args.target);
+
+                if (!target) {
+                    return { ...text("queue_add: `target` is required."), isError: true };
+                }
+
+                return await withConsoleContext(yt.db, async (user) => {
+                    // No `transcribe` in the default: that stage runs ASR with
+                    // `forceTranscribe`, and a client that asked only to "queue this
+                    // video" did not ask to be billed for audio transcription. The
+                    // free path (captions) is the default; paid work has to be named.
+                    const stages = toJobStages(
+                        Array.isArray(args.stages) && args.stages.length > 0
+                            ? args.stages.map(String)
+                            : ["metadata", "captions", "summarize"]
+                    );
+
+                    const enqueued = yt.queue.enqueue({
+                        target,
+                        stages,
+                        userId: user.id,
+                    });
+
+                    return text(SafeJSON.stringify(enqueued, null, 2));
+                });
+            }
+
+            case "queue_status": {
+                return await withConsoleContext(yt.db, async (user) => {
+                    // Deliberately NOT the operator the CLI uses. This door treats its
+                    // caller as untrusted-ish (see the header), so it reads the queue as
+                    // the same console account `queue_add` enqueues under: it sees its
+                    // own work, and never another user's jobs, ids or queue depth.
+                    const actor: JobActor = { kind: "user", userId: user.id };
+
+                    if (typeof args.jobId === "number") {
+                        const found = yt.queue.get(args.jobId, { redact: true, actor });
+
+                        return found
+                            ? text(SafeJSON.stringify(found, null, 2))
+                            : { ...text(`Job ${args.jobId} not found.`), isError: true };
+                    }
+
+                    return text(SafeJSON.stringify(yt.queue.stats(actor), null, 2));
+                });
+            }
+
+            default:
+                // A protocol-level fault, not a tool result: an unknown name is
+                // JSON-RPC -32601, which a client distinguishes from a tool that
+                // ran and reported a problem.
+                throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
+        }
+    } catch (err) {
+        if (err instanceof McpError) {
+            throw err;
+        }
+
+        // A thrown tool must not kill the server: an MCP client sees the
+        // message and can correct its call.
+        logger.warn({ err, tool: name }, "youtube mcp: tool failed");
+        return { ...text(err instanceof Error ? err.message : String(err)), isError: true };
+    }
+}
+
 export async function startMcpServer(yt: Youtube): Promise<void> {
     const server = new Server({ name: SERVER_NAME, version: SERVER_VERSION }, { capabilities: { tools: {} } });
 
     server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: MCP_TOOLS }));
+    server.setRequestHandler(CallToolRequestSchema, async (request) =>
+        callMcpTool(yt, request.params.name, (request.params.arguments ?? {}) as Record<string, unknown>)
+    );
 
-    server.setRequestHandler(CallToolRequestSchema, async (request) => {
-        const args = (request.params.arguments ?? {}) as Record<string, unknown>;
-
-        try {
-            switch (request.params.name) {
-                case "list_videos": {
-                    const videos = yt.db.listVideos({
-                        // Canonicalised, not cast: rows are stored under `@handle`, so a
-                        // client passing a bare `bridgemindai` matched nothing and got an
-                        // empty list rather than an error.
-                        ...(typeof args.channel === "string" ? { channel: normaliseHandle(args.channel) } : {}),
-                        limit: toolLimit(args.limit, 50),
-                    });
-
-                    return text(
-                        SafeJSON.stringify(
-                            videos.map((video) => publicVideo(video as unknown as Record<string, unknown>)),
-                            null,
-                            2
-                        )
-                    );
-                }
-
-                case "get_video": {
-                    const videoId = String(args.videoId) as VideoId;
-                    const video = yt.db.getVideo(videoId);
-
-                    if (!video) {
-                        return { ...text(`No stored video ${videoId}.`), isError: true };
-                    }
-
-                    const transcript = yt.db.getTranscript(videoId);
-
-                    return text(
-                        SafeJSON.stringify(
-                            {
-                                video: publicVideo(video as unknown as Record<string, unknown>),
-                                url: videoUrl(videoId),
-                                hasTranscript: Boolean(transcript),
-                                segments: transcript?.segments.length ?? 0,
-                            },
-                            null,
-                            2
-                        )
-                    );
-                }
-
-                case "search_transcripts": {
-                    const hits = yt.qa.keywordSearch(
-                        String(args.query),
-                        asVideoIds(args.videoIds),
-                        toolLimit(args.limit, 20)
-                    );
-
-                    return text(SafeJSON.stringify(hits, null, 2));
-                }
-
-                case "transcript_window": {
-                    const videoId = String(args.videoId) as VideoId;
-                    const transcript = yt.db.getTranscript(videoId);
-
-                    if (!transcript) {
-                        return { ...text(`No transcript stored for ${videoId}.`), isError: true };
-                    }
-
-                    const at = Number(args.atSec);
-
-                    if (!Number.isFinite(at)) {
-                        return { ...text("transcript_window: `atSec` must be a finite number."), isError: true };
-                    }
-
-                    // Bounded for the same reason the row limits are: an unbounded
-                    // half-width returns the entire transcript through the stdio pipe.
-                    const half = boundedWindowSec(args.windowSec);
-                    const inWindow = transcript.segments.filter(
-                        (segment) => segment.end >= at - half && segment.start <= at + half
-                    );
-
-                    return text(
-                        inWindow.map((segment) => `[${formatClock(segment.start)}] ${segment.text}`).join("\n") ||
-                            "(nothing in that window)"
-                    );
-                }
-
-                case "ask": {
-                    const question = requiredString(args.question);
-
-                    if (!question) {
-                        return { ...text("ask: `question` is required."), isError: true };
-                    }
-
-                    return await withConsoleContext(yt.db, async () => {
-                        const scope = await resolveAskScope(yt, {
-                            ...(typeof args.channel === "string" ? { channel: args.channel } : {}),
-                            ...(Array.isArray(args.videoIds) ? { videoIds: asVideoIds(args.videoIds) } : {}),
-                        });
-
-                        const result = await answerOverVideos({
-                            yt,
-                            videoIds: scope.videoIds,
-                            question,
-                            topK: boundedTopK(args.topK),
-                            providerChoice: await resolveProviderChoice({}),
-                        });
-
-                        return text(
-                            `${result.answer}\n\nCitations:\n${formatCitationLines(result.citations).join("\n")}`
-                        );
-                    });
-                }
-
-                case "queue_add": {
-                    const target = requiredString(args.target);
-
-                    if (!target) {
-                        return { ...text("queue_add: `target` is required."), isError: true };
-                    }
-
-                    return await withConsoleContext(yt.db, async (user) => {
-                        // No `transcribe` in the default: that stage runs ASR with
-                        // `forceTranscribe`, and a client that asked only to "queue this
-                        // video" did not ask to be billed for audio transcription. The
-                        // free path (captions) is the default; paid work has to be named.
-                        const stages = toJobStages(
-                            Array.isArray(args.stages) && args.stages.length > 0
-                                ? args.stages.map(String)
-                                : ["metadata", "captions", "summarize"]
-                        );
-
-                        const enqueued = yt.queue.enqueue({
-                            target,
-                            stages,
-                            userId: user.id,
-                        });
-
-                        return text(SafeJSON.stringify(enqueued, null, 2));
-                    });
-                }
-
-                case "queue_status": {
-                    return await withConsoleContext(yt.db, async (user) => {
-                        // Deliberately NOT the operator the CLI uses. This door treats its
-                        // caller as untrusted-ish (see the header), so it reads the queue as
-                        // the same console account `queue_add` enqueues under: it sees its
-                        // own work, and never another user's jobs, ids or queue depth.
-                        const actor: JobActor = { kind: "user", userId: user.id };
-
-                        if (typeof args.jobId === "number") {
-                            const found = yt.queue.get(args.jobId, { redact: true, actor });
-
-                            return found
-                                ? text(SafeJSON.stringify(found, null, 2))
-                                : { ...text(`Job ${args.jobId} not found.`), isError: true };
-                        }
-
-                        return text(SafeJSON.stringify(yt.queue.stats(actor), null, 2));
-                    });
-                }
-
-                default:
-                    // A protocol-level fault, not a tool result: an unknown name is
-                    // JSON-RPC -32601, which a client distinguishes from a tool that
-                    // ran and reported a problem.
-                    throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`);
-            }
-        } catch (err) {
-            if (err instanceof McpError) {
-                throw err;
-            }
-
-            // A thrown tool must not kill the server: an MCP client sees the
-            // message and can correct its call.
-            logger.warn({ err, tool: request.params.name }, "youtube mcp: tool failed");
-            return { ...text(err instanceof Error ? err.message : String(err)), isError: true };
-        }
-    });
-
-    logger.info({ tools: 7 }, "youtube mcp server starting on stdio");
+    logger.info({ tools: MCP_TOOLS.length }, "youtube mcp server starting on stdio");
     await server.connect(new StdioServerTransport());
 }
