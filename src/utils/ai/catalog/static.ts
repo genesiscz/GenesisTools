@@ -1,3 +1,5 @@
+import { GROK_STATIC_CATALOG } from "../grok/models";
+import { OPENAI_SUB_STATIC_CATALOG } from "../openai/sub-models";
 import type { Capability } from "../providers/plugin-types";
 import type { CatalogEntry, ModelFamily, ModelPricing } from "./types";
 
@@ -275,37 +277,13 @@ const XAI_THINKING: Record<string, CatalogEntry["thinking"]> = {
     "grok-4.20-0309-non-reasoning": "none",
 };
 
-const XAI_IDS = [
-    "grok-4.5",
-    "grok-build",
-    "grok-composer-2.5-fast",
-    "grok-build-0.1",
-    "grok-code-fast",
-    "grok-code-fast-1",
-    "grok-code-fast-1-0825",
-    "grok-3",
-    "grok-3-mini",
-    "grok-3-fast",
-    "grok-3-fast-latest",
-    "grok-3-mini-fast",
-    "grok-3-mini-fast-latest",
-    "grok-4",
-    "grok-4-fast",
-    "grok-4-fast-reasoning",
-    "grok-4-fast-non-reasoning",
-    "grok-4-0709",
-    "grok-4-1-fast",
-    "grok-4-1-fast-reasoning",
-    "grok-4-1-fast-non-reasoning",
-    "grok-latest",
-    "grok-4.3",
-    "grok-4.20",
-    "grok-4.20-multi-agent",
-    "grok-4.20-0309",
-    "grok-4.20-0309-reasoning",
-    "grok-4.20-0309-non-reasoning",
-    "grok-4.20-multi-agent-0309",
-];
+/**
+ * Derived, never copied. `GROK_STATIC_CATALOG` is the authoritative xAI list
+ * (its records carry probe status, speed and visibility that this generic view
+ * has no field for), so a hand-maintained duplicate here goes stale the first
+ * time a model is added there and nothing catches it.
+ */
+const XAI_IDS = GROK_STATIC_CATALOG.map((model) => model.id);
 
 const XAI_ENTRIES: CatalogEntry[] = XAI_IDS.map((id) => ({
     id,
@@ -322,21 +300,15 @@ const XAI_ENTRIES: CatalogEntry[] = XAI_IDS.map((id) => ({
 }));
 
 /**
- * Codex/ChatGPT (WHAM backend) models, newest first. Verified live against
- * GET wham/models (2026-07-12, plan "plus"); refresh via fetchWhamModels().
- * `gpt-5-codex` is not served on Plus but higher plans do serve it —
- * unsupported ids surface WHAM's own 400 to the caller.
+ * Derived from `OPENAI_SUB_STATIC_CATALOG`, which is the authoritative WHAM list
+ * (its records also carry visibility and modality fields this generic view has
+ * no home for). Copying the seven ids here meant a refresh via
+ * `fetchWhamModels()` updated one list and silently left this one behind.
  */
-const OPENAI_SUB_ENTRIES: CatalogEntry[] = [
-    { id: "gpt-5.6-sol", displayName: "GPT-5.6-Sol", contextWindow: 372_000 },
-    { id: "gpt-5.6-terra", displayName: "GPT-5.6-Terra", contextWindow: 372_000 },
-    { id: "gpt-5.6-luna", displayName: "GPT-5.6-Luna", contextWindow: 372_000 },
-    { id: "gpt-5.5", displayName: "GPT-5.5", contextWindow: 272_000 },
-    { id: "gpt-5.4", displayName: "GPT-5.4", contextWindow: 272_000 },
-    { id: "gpt-5.4-mini", displayName: "GPT-5.4-Mini", contextWindow: 272_000 },
-    { id: "gpt-5-codex", displayName: "GPT-5-Codex", contextWindow: 272_000 },
-].map((entry) => ({
-    ...entry,
+const OPENAI_SUB_ENTRIES: CatalogEntry[] = OPENAI_SUB_STATIC_CATALOG.map((entry) => ({
+    id: entry.slug,
+    displayName: entry.displayName,
+    contextWindow: entry.contextWindow,
     provider: "openai-sub",
     capabilities: CHAT,
     // ai-proxy advertises every WHAM record with `supportsTools: true`.

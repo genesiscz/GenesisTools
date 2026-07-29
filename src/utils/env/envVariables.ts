@@ -248,6 +248,11 @@ export const env = {
         getTestAudioFile: () => getTrimmed("TEST_AUDIO_FILE"),
         isOllamaTest: () => isNonEmpty("TEST_OLLAMA"),
         isTvNetTests: () => isNonEmpty("TV_NET_TESTS"),
+        /**
+         * Opt a test process OUT of the throwaway `~/.genesis-tools` sandbox that
+         * `preload-test-sandbox` installs. Nothing in the suite should need it.
+         */
+        allowsRealHome: () => isFlag("GENESIS_TOOLS_TEST_ALLOW_REAL_HOME"),
     },
 
     // Client-safe domains are defined once in @app/utils/env.client and re-exposed here.

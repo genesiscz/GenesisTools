@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
@@ -10,14 +10,22 @@ describe("AIConfig", () => {
     // Without this sandbox these tests load and WRITE the user's real
     // ~/.genesis-tools/ai/config.json — `setAppDefaults("test-app", …)` below had
     // been persisting a `test-app` block into live config on every run.
+    let home: string;
+
     beforeEach(() => {
-        env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "gt-aiconfig-")));
+        home = mkdtempSync(join(tmpdir(), "gt-aiconfig-"));
+        env.testing.set("GENESIS_TOOLS_HOME", home);
         AIConfig.invalidate();
     });
 
+    // Removed only AFTER the singleton is dropped: it holds a Storage bound to
+    // this root. One sandbox per test, and each holds a config file full of
+    // credential-shaped fixtures, so leaving them behind litters the temp
+    // directory on every run.
     afterEach(() => {
         env.testing.unset("GENESIS_TOOLS_HOME");
         AIConfig.invalidate();
+        rmSync(home, { recursive: true, force: true });
     });
 
     it("load() returns a singleton", async () => {

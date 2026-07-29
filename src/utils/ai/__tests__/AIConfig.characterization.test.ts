@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -67,10 +67,13 @@ beforeEach(() => {
     AIConfig.invalidate();
 });
 
+// The sandbox goes only AFTER the singleton is dropped: it holds a Storage bound
+// to this root. One per test, each holding credential-shaped fixtures.
 afterEach(() => {
     env.testing.unset("GENESIS_TOOLS_HOME");
     env.testing.unset("CHARACTERIZATION_XAI_KEY");
     AIConfig.invalidate();
+    rmSync(home, { recursive: true, force: true });
 });
 
 describe("AIConfig account lookup (characterization)", () => {
