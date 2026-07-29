@@ -1,7 +1,8 @@
 import { rateLimitAwareDelay, retry } from "@genesiscz/utils/async";
+import { logger } from "@genesiscz/utils/logger";
 import { AIConfig } from "../AIConfig";
-import { getProviderForTask } from "../providers";
-import type { AIProviderType, AITranslationProvider, TranslateOptions, TranslationResult } from "../types";
+import type { AIProviderType, TranslateOptions, TranslationResult } from "../types";
+import { ai } from "./facade";
 
 const RETRY_DELAY = rateLimitAwareDelay();
 
@@ -20,54 +21,49 @@ function shouldRetryTransient(error: unknown): boolean {
     return true;
 }
 
+/**
+ * The `--provider`/`--model` shaped entry to translation, over `ai.translate`.
+ *
+ * Source-language detection stays here rather than moving into the facade: it is
+ * a macOS-only NLP call that only this path ever wanted, and `ai.translate`
+ * already reads a missing `from` as "auto". See `Summarizer` for why `create`
+ * persists the provider instead of carrying a model ref.
+ */
 export class Translator {
-    private provider: AITranslationProvider;
-
-    private constructor(provider: AITranslationProvider) {
-        this.provider = provider;
-    }
+    private constructor() {}
 
     static async create(options?: { provider?: string; model?: string }): Promise<Translator> {
-        const config = await AIConfig.load();
-
         if (options?.provider) {
+            const config = await AIConfig.load();
             await config.setTask("translate", {
                 provider: options.provider as AIProviderType,
                 model: options.model,
             });
         }
 
-        const provider = await getProviderForTask("translate", config);
-
-        if (!("translate" in provider)) {
-            throw new Error(`Provider "${provider.type}" does not support translation`);
-        }
-
-        return new Translator(provider as AITranslationProvider);
+        return new Translator();
     }
 
     async translate(text: string, options: TranslateOptions): Promise<TranslationResult> {
-        if (!options.from) {
-            // Auto-detect source language via DarwinKit if available
+        let effective = options;
+
+        if (!effective.from && process.platform === "darwin") {
             try {
-                if (process.platform === "darwin") {
-                    const { detectLanguage } = await import("@genesiscz/utils/macos/nlp");
-                    const detected = await detectLanguage(text);
-                    options = { ...options, from: detected.language };
-                }
-            } catch {
-                // Ignore — provider will handle auto-detect or use "en" as fallback
+                const { detectLanguage } = await import("@genesiscz/utils/macos/nlp");
+                const detected = await detectLanguage(text);
+                effective = { ...effective, from: detected.language };
+            } catch (err) {
+                logger.debug({ err }, "source-language detection unavailable; translating with from=auto");
             }
         }
 
-        return retry(() => this.provider.translate(text, options), {
+        return retry(() => ai.translate(text, effective), {
             maxAttempts: 3,
             getDelay: RETRY_DELAY,
             shouldRetry: shouldRetryTransient,
         });
     }
 
-    dispose(): void {
-        this.provider.dispose?.();
-    }
+    /** @deprecated No-op: `ai.translate` binds and disposes per call. */
+    dispose(): void {}
 }
