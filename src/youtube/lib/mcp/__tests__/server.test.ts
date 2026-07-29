@@ -69,3 +69,22 @@ describe("MCP tool registration", () => {
         );
     });
 });
+
+describe("MCP cost and output bounds", () => {
+    // queue_add's default must stay on the free path: an MCP client asking to
+    // "queue this video" has not asked to be billed for AI transcription.
+    it("keeps paid transcription out of the advertised queue_add default", () => {
+        const queueAdd = MCP_TOOLS.find((tool) => tool.name === "queue_add");
+
+        expect(queueAdd?.description).toContain("transcribe");
+        expect(queueAdd?.description).toMatch(/free stages/i);
+    });
+
+    it("bounds ask topK and the transcript window in the schema", () => {
+        const ask = MCP_TOOLS.find((tool) => tool.name === "ask");
+        const window = MCP_TOOLS.find((tool) => tool.name === "transcript_window");
+
+        expect(ask?.inputSchema.properties).toMatchObject({ topK: { type: "integer", minimum: 1, maximum: 50 } });
+        expect(window?.inputSchema.properties).toMatchObject({ windowSec: { minimum: 1, maximum: 600 } });
+    });
+});

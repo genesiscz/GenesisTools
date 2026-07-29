@@ -77,6 +77,34 @@ function asVideoIds(value: unknown): VideoId[] {
     return Array.isArray(value) ? (value.filter((id): id is string => typeof id === "string") as VideoId[]) : [];
 }
 
+/** Widest transcript slice a single `transcript_window` call may return, in seconds. */
+const MAX_WINDOW_SEC = 600;
+/** Most chunks any ask through this door may pull into a paid prompt. */
+const MAX_TOP_K = 50;
+
+/** Half-width for `transcript_window`, bounded so it cannot return a whole transcript. */
+function boundedWindowSec(value: unknown): number {
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+        return 45;
+    }
+
+    return Math.min(value, MAX_WINDOW_SEC);
+}
+
+/**
+ * Retrieval depth for `ask`, bounded before it reaches the model.
+ *
+ * Every selected chunk is serialized into a paid prompt, so an unbounded `topK`
+ * from an untrusted-ish client is token spend and latency, not just a big query.
+ */
+function boundedTopK(value: unknown): number | undefined {
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+        return undefined;
+    }
+
+    return Math.min(value, MAX_TOP_K);
+}
+
 /**
  * A required string argument, or null.
  *
@@ -145,7 +173,12 @@ export const MCP_TOOLS = [
             properties: {
                 videoId: { type: "string" },
                 atSec: { type: "number" },
-                windowSec: { type: "number", description: "Half-width in seconds (default 45)" },
+                windowSec: {
+                    type: "number",
+                    minimum: 1,
+                    maximum: MAX_WINDOW_SEC,
+                    description: `Half-width in seconds (default 45, capped at ${MAX_WINDOW_SEC})`,
+                },
             },
             required: ["videoId", "atSec"],
         },
@@ -160,19 +193,29 @@ export const MCP_TOOLS = [
                 question: { type: "string" },
                 channel: { type: "string", description: "Ask over every stored video of this channel" },
                 videoIds: { type: "array", items: { type: "string" } },
-                topK: { type: "number" },
+                topK: {
+                    type: "integer",
+                    minimum: 1,
+                    maximum: MAX_TOP_K,
+                    description: `Chunks to retrieve (capped at ${MAX_TOP_K}; each one is sent to a paid model)`,
+                },
             },
             required: ["question"],
         },
     },
     {
         name: "queue_add",
-        description: "Enqueue a pipeline job for a video id, URL or @handle.",
+        description:
+            "Enqueue a pipeline job for a video id, URL or @handle. Defaults to free stages (metadata, captions, summarize); pass `transcribe` explicitly to pay for AI transcription when a video has no captions.",
         inputSchema: {
             type: "object" as const,
             properties: {
                 target: { type: "string" },
-                stages: { type: "array", items: { type: "string" } },
+                stages: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "Defaults to metadata, captions, summarize. `transcribe` costs credits.",
+                },
             },
             required: ["target"],
         },
@@ -258,7 +301,14 @@ export async function startMcpServer(yt: Youtube): Promise<void> {
                     }
 
                     const at = Number(args.atSec);
-                    const half = typeof args.windowSec === "number" ? args.windowSec : 45;
+
+                    if (!Number.isFinite(at)) {
+                        return { ...text("transcript_window: `atSec` must be a finite number."), isError: true };
+                    }
+
+                    // Bounded for the same reason the row limits are: an unbounded
+                    // half-width returns the entire transcript through the stdio pipe.
+                    const half = boundedWindowSec(args.windowSec);
                     const inWindow = transcript.segments.filter(
                         (segment) => segment.end >= at - half && segment.start <= at + half
                     );
@@ -286,7 +336,7 @@ export async function startMcpServer(yt: Youtube): Promise<void> {
                             yt,
                             videoIds: scope.videoIds,
                             question,
-                            topK: typeof args.topK === "number" ? args.topK : undefined,
+                            topK: boundedTopK(args.topK),
                             providerChoice: await resolveProviderChoice({}),
                         });
 
@@ -304,10 +354,14 @@ export async function startMcpServer(yt: Youtube): Promise<void> {
                     }
 
                     return await withConsoleContext(yt.db, async (user) => {
+                        // No `transcribe` in the default: that stage runs ASR with
+                        // `forceTranscribe`, and a client that asked only to "queue this
+                        // video" did not ask to be billed for audio transcription. The
+                        // free path (captions) is the default; paid work has to be named.
                         const stages = toJobStages(
                             Array.isArray(args.stages) && args.stages.length > 0
                                 ? args.stages.map(String)
-                                : ["metadata", "captions", "transcribe", "summarize"]
+                                : ["metadata", "captions", "summarize"]
                         );
 
                         const enqueued = yt.queue.enqueue({
