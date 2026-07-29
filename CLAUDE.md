@@ -106,7 +106,7 @@ Most tools follow these common patterns:
 **CLI Argument Parsing**:
 
 -   Use `commander` for parsing command-line arguments with subcommands and options
--   **Commands as controllers**: Treat `src/<tool>/commands/` files as thin wrappers — parse args, call into `src/<tool>/lib/` for business logic. Keep commands lean, keep logic in lib/.
+-   **One core, three thin doors.** Business logic lives in `src/<tool>/lib/`. All THREE surfaces are thin adapters that parse input, call lib, and render output: `src/<tool>/commands/*` (CLI), `src/<tool>/lib/server/routes/*` (HTTP) and MCP tool modules. **A behaviour must never exist in a route that the CLI cannot reach**, and vice versa. The rule used to name commands only, which is how the same question came to be answered differently depending on which door you knocked on: the youtube `qa` pipeline stage and `analyze --ask` each indexed and called `qa.ask` inline, skipping the citation enrichment the HTTP route performed.
 
 **Interactive User Experience**:
 

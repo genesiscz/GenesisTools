@@ -42,6 +42,19 @@ function text(value: string): ToolResult {
     return { content: [{ type: "text", text: value }] };
 }
 
+/**
+ * Metadata only, with the local cache paths dropped.
+ *
+ * `Video` carries `audioPath` / `videoPath` / `thumbPath`, which are absolute
+ * paths under the user's home. This server treats its clients as untrusted-ish,
+ * and an MCP client needs none of them — serialising the raw record disclosed
+ * the host username and the on-disk layout for no benefit.
+ */
+function publicVideo(video: Record<string, unknown>): Record<string, unknown> {
+    const { audioPath, videoPath, thumbPath, ...rest } = video;
+    return rest;
+}
+
 function asVideoIds(value: unknown): VideoId[] {
     return Array.isArray(value) ? (value.filter((id): id is string => typeof id === "string") as VideoId[]) : [];
 }
@@ -146,7 +159,13 @@ export async function startMcpServer(yt: Youtube): Promise<void> {
                         limit: typeof args.limit === "number" ? args.limit : 50,
                     });
 
-                    return text(SafeJSON.stringify(videos, null, 2));
+                    return text(
+                        SafeJSON.stringify(
+                            videos.map((video) => publicVideo(video as unknown as Record<string, unknown>)),
+                            null,
+                            2
+                        )
+                    );
                 }
 
                 case "get_video": {
@@ -162,7 +181,7 @@ export async function startMcpServer(yt: Youtube): Promise<void> {
                     return text(
                         SafeJSON.stringify(
                             {
-                                video,
+                                video: publicVideo(video as unknown as Record<string, unknown>),
                                 url: videoUrl(videoId),
                                 hasTranscript: Boolean(transcript),
                                 segments: transcript?.segments.length ?? 0,

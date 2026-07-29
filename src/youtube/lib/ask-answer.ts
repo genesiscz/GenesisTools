@@ -1,4 +1,4 @@
-import { DEFAULT_MODEL_ID } from "@app/youtube/lib/qa";
+import { DEFAULT_MODEL_ID, MAX_LAZY_INDEX_PER_ASK } from "@app/youtube/lib/qa";
 import type { AskCitation, AskHistoryTurn, QaSource } from "@app/youtube/lib/qa.types";
 import { formatClock, videoUrl } from "@app/youtube/lib/transcript-export";
 import type { VideoId } from "@app/youtube/lib/video.types";
@@ -92,7 +92,15 @@ export async function answerOverVideos(opts: AnswerOverVideosOpts): Promise<Answ
     const needsIndex = withTranscript.filter((videoId) =>
         sources.some((source) => !yt.db.hasQaChunks(videoId, DEFAULT_MODEL_ID, source))
     );
-    const budget = opts.maxIndex ?? needsIndex.length;
+    // Default to a BUDGET, not "everything". A channel scope can reach thousands
+    // of stored transcripts, and defaulting to all of them made a single
+    // `youtube ask --channel` sequentially embed the entire channel before it
+    // answered: a very long blocking command and, on a paid embedder, a very
+    // expensive one. `MAX_LAZY_INDEX_PER_ASK` is the cap `selectCandidateVideos`
+    // has always applied to lazy indexing; this is the same rule, applied where
+    // every caller (CLI, MCP, HTTP) inherits it. Pass `maxIndex: null` to opt
+    // into indexing everything.
+    const budget = opts.maxIndex === null ? needsIndex.length : (opts.maxIndex ?? MAX_LAZY_INDEX_PER_ASK);
     const toIndex = needsIndex.slice(0, budget);
     const skippedUnindexed = needsIndex.slice(budget);
     let indexedNow = 0;
@@ -109,10 +117,7 @@ export async function answerOverVideos(opts: AnswerOverVideosOpts): Promise<Answ
         indexedNow += result.indexed;
     }
 
-    // Set, not `Array.includes`: a channel-scoped ask carries thousands of ids on
-    // both sides of this filter.
-    const skipped = new Set(skippedUnindexed);
-    const searchedVideoIds = withTranscript.filter((videoId) => !skipped.has(videoId));
+    const searchedVideoIds = withTranscript.filter((videoId) => !skippedUnindexed.includes(videoId));
     const videos = yt.db.getVideosByIds(searchedVideoIds);
     const metaById = new Map(videos.map((video) => [video.id, video]));
     const crossVideo =
