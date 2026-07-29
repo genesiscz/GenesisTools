@@ -1,3 +1,4 @@
+import { isSecretPath } from "@genesiscz/utils/security/SecureRef";
 import { z } from "zod";
 
 /**
@@ -21,9 +22,17 @@ export const TASK_NAMES = [
 ] as const;
 export type TaskName = (typeof TASK_NAMES)[number];
 
+/**
+ * Validated against the SAME pattern `resolveSecret` enforces, not a looser
+ * "non-empty string". A path that only satisfied `min(1)` would let a config
+ * validate cleanly and then resolve to `undefined` at read time, which reads as
+ * a missing credential rather than a malformed one.
+ */
 export const secureRefSchema = z.object({
     type: z.literal("secure"),
-    path: z.string().min(1),
+    path: z.string().refine(isSecretPath, {
+        message: 'Expected <domain>/<name>[/<name>...] using [A-Za-z0-9._-], e.g. "ai/acc_xai_key/apiKey"',
+    }),
 });
 
 /** A credential field: a literal value (discouraged) or a vault pointer. */

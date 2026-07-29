@@ -44,6 +44,33 @@ export function backupPath(storage: Storage): string {
 }
 
 /**
+ * Where THIS run's plaintext copy goes.
+ *
+ * An existing backup is never overwritten and never reused. It holds the
+ * plaintext of credentials that are already SecureRefs in the config on disk, so
+ * copying the config again now would produce a file missing them, while reusing
+ * the old one would miss whatever this run is about to move. Either way the
+ * "only fallback if the master key is lost" promise below would be false. A run
+ * that finds newly-added plaintext gets its own numbered file instead.
+ */
+function backupFor(storage: Storage): string {
+    const base = backupPath(storage);
+
+    if (!existsSync(base)) {
+        return base;
+    }
+
+    const numbered = (n: number) => base.replace(/\.json$/, `.${n}.json`);
+    let n = 2;
+
+    while (existsSync(numbered(n))) {
+        n += 1;
+    }
+
+    return numbered(n);
+}
+
+/**
  * Move every plaintext credential into the vault, leaving a SecureRef behind.
  *
  * A 0600 copy of the pre-migration config is kept, and the user is told about it
@@ -94,11 +121,9 @@ export const migrateSecretsToVault: ConfigMigration = {
                 return;
             }
 
-            const backup = backupPath(storage);
-            if (!existsSync(backup)) {
-                copyFileSync(storage.getConfigPath(), backup);
-                chmodSync(backup, 0o600);
-            }
+            const backup = backupFor(storage);
+            copyFileSync(storage.getConfigPath(), backup);
+            chmodSync(backup, 0o600);
 
             for (const account of config.accounts) {
                 for (const field of SECRET_FIELDS) {
@@ -137,7 +162,7 @@ export const migrateSecretsToVault: ConfigMigration = {
                 [
                     `Moved ${moved} credential(s) into the encrypted vault.`,
                     `A plaintext copy of the previous config is at ${backup} (mode 0600).`,
-                    "Delete it once everything works: it is the only fallback if the vault master key is lost.",
+                    "Delete it once everything works: it, plus any earlier numbered copies beside it, are the only fallback if the vault master key is lost.",
                 ].join("\n")
             );
         });

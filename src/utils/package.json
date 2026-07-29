@@ -297,6 +297,11 @@
             "types": "./search/index.ts",
             "default": "./search/index.ts"
         },
+        "./security": {
+            "bun": "./security/index.ts",
+            "types": "./security/index.ts",
+            "default": "./security/index.ts"
+        },
         "./sql-time": {
             "bun": "./sql-time.ts",
             "types": "./sql-time.ts",
