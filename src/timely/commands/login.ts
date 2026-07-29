@@ -1,5 +1,5 @@
 import type { TimelyApiClient } from "@app/timely/api/client";
-import { probeAndSaveCookie } from "@app/timely/api/cookie-probe";
+import { type CookieRejection, probeAndSaveCookie } from "@app/timely/api/cookie-probe";
 import type { OAuthApplication } from "@app/timely/types";
 import { describeCookie, extractCookie } from "@app/timely/utils/cookie";
 import { Browser } from "@genesiscz/utils/browser";
@@ -163,7 +163,7 @@ async function cookieLogin(storage: Storage, options: { fromClipboard: boolean }
     }
 
     if (outcome.status === "rejected") {
-        logger.error(`Timely rejected that cookie (HTTP ${outcome.httpStatus}). Nothing was saved.`);
+        logger.error(rejectionMessage(outcome.httpStatus, outcome.reason));
         logger.info("Copy the request again from a page you are logged into, including every name=value pair.");
         process.exit(1);
     }
@@ -178,6 +178,24 @@ async function cookieLogin(storage: Storage, options: { fromClipboard: boolean }
     }
 
     logger.info("Memories work again: tools timely memories --day <YYYY-MM-DD>");
+}
+
+/**
+ * A signed-out request to app.timelyapp.com is answered with a bounce to sign-in,
+ * not a 401, so say which of the three refusals happened. "Rejected" alone sends
+ * the user re-copying a cookie when the real problem was that they were signed out
+ * in that tab.
+ */
+function rejectionMessage(httpStatus: number, reason: CookieRejection): string {
+    if (reason === "redirected") {
+        return `Timely bounced that request to a sign-in page (HTTP ${httpStatus}), so the cookie is not a live session. Nothing was saved.`;
+    }
+
+    if (reason === "not-suggested-entries") {
+        return "Timely answered 200, but with a sign-in page rather than suggested entries, so the cookie is not a live session. Nothing was saved.";
+    }
+
+    return `Timely rejected that cookie (HTTP ${httpStatus}). Nothing was saved.`;
 }
 
 /** Read the clipboard without letting a headless/denied clipboard abort the command. */
