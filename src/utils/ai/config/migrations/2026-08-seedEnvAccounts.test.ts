@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { AiConfigStore } from "../AiConfigStore";
+import { type AccountEntry, type AiConfigData, aiConfigSchema, CONFIG_VERSION } from "../schema";
 import { envKeyNames } from "../selectors";
-import { type AccountEntry, aiConfigSchema, type AiConfigData, CONFIG_VERSION } from "../schema";
 import {
     GRANDFATHER_TAG,
     GRANDFATHERED_ENV_PROVIDERS,

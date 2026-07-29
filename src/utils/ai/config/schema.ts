@@ -97,13 +97,20 @@ export const taskDefaultSchema = z.object({
     provider: z.string().optional(),
 });
 
-export const appDefaultSchema = z
-    .object({
-        temperature: z.number().optional(),
-        maxTokens: z.number().optional(),
-        streaming: z.boolean().optional(),
-    })
-    .catchall(z.union([taskDefaultSchema, z.number(), z.boolean(), z.undefined()]));
+/**
+ * Per-app overrides: one optional block per task, plus generation knobs.
+ * Task keys are spelled out rather than a catchall so `app.chat.model` is typed
+ * for consumers instead of collapsing into a union with the numeric knobs.
+ */
+export const appDefaultSchema = z.object({
+    ...(Object.fromEntries(TASK_NAMES.map((task) => [task, taskDefaultSchema.optional()])) as Record<
+        TaskName,
+        z.ZodOptional<typeof taskDefaultSchema>
+    >),
+    temperature: z.number().optional(),
+    maxTokens: z.number().optional(),
+    streaming: z.boolean().optional(),
+});
 
 export const aiConfigSchema = z.object({
     version: z.literal(CONFIG_VERSION),
