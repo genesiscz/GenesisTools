@@ -2,7 +2,7 @@ import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import type { YoutubeConfigShape } from "@app/youtube/lib/config.types";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 /**
@@ -13,9 +13,15 @@ import type { Command } from "commander";
  * the server is up, prefer the HTTP route.
  */
 
-/** Narrows a user-supplied string to a real config key, so indexing stays typed. */
+/**
+ * Narrows a user-supplied string to a real config key, so indexing stays typed.
+ *
+ * `hasOwn`, not `in`: `in` also matches prototype members, so `config get toString`
+ * passed the guard, read a function out of the object and crashed in rendering
+ * instead of reporting an unknown key.
+ */
 function isConfigKey(config: YoutubeConfigShape, key: string): key is keyof YoutubeConfigShape & string {
-    return key in config;
+    return Object.hasOwn(config, key);
 }
 
 export function registerConfigCommand(program: Command): void {
@@ -73,10 +79,15 @@ export function registerConfigCommand(program: Command): void {
             let parsed: unknown = value;
 
             try {
-                parsed = SafeJSON.parse(value);
-            } catch {
-                // Not JSON, keep the raw string. Deliberately silent: a bare
-                // word failing to parse is the expected case, not an error.
+                // Strict: this is untrusted CLI input, not a hand-written config
+                // file, so comment-json's leniency would let comments and trailing
+                // commas through into the persisted value.
+                parsed = SafeJSON.parse(value, { strict: true });
+            } catch (err) {
+                // A bare word failing to parse is the expected path, not a fault —
+                // but it is still logged, so a genuinely malformed JSON value that
+                // silently lands as a string can be traced afterwards.
+                logger.debug({ err, key, value }, "youtube config set: value is not JSON, keeping it as a string");
             }
 
             // The cast below erases the type error, so without this check
