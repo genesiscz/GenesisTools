@@ -38,6 +38,19 @@ export interface CredentialSpec {
 export interface BindContext {
     account: AccountEntry;
     fetch?: typeof fetch;
+    /**
+     * This call is a DIAGNOSIS, not real use: read credentials, never rotate them.
+     *
+     * A subscription refresh token is single-use and its replacement only
+     * survives if the config write lands, which is exactly what a worktree build
+     * has guarded. A probe that refreshed would therefore spend the user's grant
+     * with nowhere to persist the new one, silently bricking the account.
+     *
+     * Set by every diagnostic caller (`doctor`, `account test`) on the context
+     * they already build, so a plugin honours it once and every future probe
+     * inherits the guarantee. `health()` is always a probe and need not be told.
+     */
+    probe?: boolean;
 }
 
 /**

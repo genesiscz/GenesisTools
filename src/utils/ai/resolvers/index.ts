@@ -5,9 +5,19 @@ import type { AIProvider } from "@genesiscz/utils/config/ai.types";
  * Knows how to resolve an account of a specific provider type
  * into a DetectedProvider (SDK instance + models + metadata).
  */
+export interface ResolveAccountOptions {
+    /**
+     * Read credentials without rotating them. Set by diagnostic callers
+     * (`tools ai config doctor --live`), never by real use: a subscription
+     * refresh token is single-use, so a probe that refreshes spends a grant it
+     * cannot always persist.
+     */
+    noRefresh?: boolean;
+}
+
 export interface AccountResolver {
     readonly providerType: AIProvider;
-    resolve(accountName: string): Promise<DetectedProvider>;
+    resolve(accountName: string, options?: ResolveAccountOptions): Promise<DetectedProvider>;
 }
 
 const registry = new Map<AIProvider, AccountResolver>();

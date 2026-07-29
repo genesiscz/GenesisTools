@@ -24,7 +24,9 @@ export const anthropicSubPlugin: ProviderPlugin = {
     },
 
     async bind(ctx: BindContext): Promise<ProviderBinding> {
-        const detected = await resolver.resolve(ctx.account.name);
+        // Binding for a diagnosis must not rotate the grant; binding for real use
+        // still refreshes, because that is what makes the next request work.
+        const detected = await resolver.resolve(ctx.account.name, { noRefresh: ctx.probe });
 
         return {
             accountId: ctx.account.id,
@@ -35,9 +37,15 @@ export const anthropicSubPlugin: ProviderPlugin = {
         };
     },
 
+    /**
+     * Read-side only. A health probe that refreshed would spend the account's
+     * single-use refresh token, and when the config write is guarded (a worktree
+     * build) the rotated pair cannot be persisted, silently bricking the account.
+     * An expired token is therefore REPORTED, never repaired.
+     */
     async health(ctx: BindContext) {
         try {
-            await resolver.resolve(ctx.account.name);
+            await resolver.resolve(ctx.account.name, { noRefresh: true });
             return { ok: true, detail: "subscription token resolved" };
         } catch (err) {
             return { ok: false, detail: err instanceof Error ? err.message : String(err) };

@@ -27,6 +27,16 @@ export interface ResolveOptions {
     staleAccessToken?: string;
     /** Lock timeout in ms. Default: 60_000 */
     lockTimeout?: number;
+    /**
+     * Diagnosis mode: read the stored token, never rotate it.
+     *
+     * A refresh token is single-use, and the rotated pair only survives if the
+     * config write lands. A worktree build has that write guarded, so a probe
+     * that "just checks" an expired account would consume the grant and be
+     * unable to persist its replacement, bricking the account silently. Refresh
+     * belongs to real use; `doctor` sets this and reports instead.
+     */
+    noRefresh?: boolean;
 }
 
 export interface ResolvedToken {
@@ -258,6 +268,18 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
             },
             refreshed: false,
         };
+    }
+
+    // Diagnosis stops here, BEFORE the lock and before anything is logged as an
+    // initiated refresh: past this line the single-use grant is spent.
+    if (options?.noRefresh) {
+        const reason = acc.tokens.expiresAt
+            ? `expired ${new Date(acc.tokens.expiresAt).toISOString()}`
+            : "has no recorded expiry";
+        throw new Error(
+            `Access token for "${name}" ${reason} and refresh is disabled for diagnosis ` +
+                `(a refresh token is single-use, so a probe must not spend it). Run: tools claude login ${name}`
+        );
     }
 
     const caller = forceRefresh ? "force-refresh" : "token-expired";
