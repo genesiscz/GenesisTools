@@ -40,10 +40,26 @@ function dirSize(dirPath: string): number {
     return totalSize;
 }
 
-export class HfSource {
-    private transformersCacheDir: string | null = null;
+/**
+ * A transformers.js model directory, as opposed to an intermediate `<org>` one:
+ * it holds a config JSON plus at least one weight file.
+ */
+function isModelDir(path: string): boolean {
+    const files = readdirSync(path);
 
-    constructor(private readonly hubDir: string = HUB_CACHE_DIR) {}
+    return files.some((f) => f.endsWith(".json")) && files.length > 1;
+}
+
+export class HfSource {
+    /**
+     * `transformersCacheDir` is normally discovered by `resolveTransformersCache`
+     * (an import of the library, so async). Accepting it up front lets a caller
+     * that already knows the directory (including a test) skip that import.
+     */
+    constructor(
+        private readonly hubDir: string = HUB_CACHE_DIR,
+        private transformersCacheDir: string | null = null
+    ) {}
 
     /**
      * Resolve the transformers.js cache dir. Cheap to call repeatedly; the
@@ -82,8 +98,7 @@ export class HfSource {
             const localPath = join(this.transformersCacheDir, modelId);
 
             if (existsSync(localPath)) {
-                const files = readdirSync(localPath);
-                return files.some((f) => f.endsWith(".json")) && files.length > 1;
+                return isModelDir(localPath);
             }
         }
 
@@ -108,6 +123,14 @@ export class HfSource {
     }
 
     list(): CachedArtifact[] {
+        return [...this.listHub(), ...this.listTransformers()];
+    }
+
+    private artifact(id: string, path: string, root: string): CachedArtifact {
+        return { id, source: "hf", root, path, sizeBytes: dirSize(path), mtimeMs: statSync(path).mtimeMs };
+    }
+
+    private listHub(): CachedArtifact[] {
         if (!existsSync(this.hubDir)) {
             return [];
         }
@@ -119,15 +142,53 @@ export class HfSource {
                 continue;
             }
 
-            const path = join(this.hubDir, entry.name);
-            artifacts.push({
-                id: entry.name.replace("models--", "").replace(/--/g, "/"),
-                source: "hf",
-                root: this.hubDir,
-                path,
-                sizeBytes: dirSize(path),
-                mtimeMs: statSync(path).mtimeMs,
-            });
+            artifacts.push(
+                this.artifact(
+                    entry.name.replace("models--", "").replace(/--/g, "/"),
+                    join(this.hubDir, entry.name),
+                    this.hubDir
+                )
+            );
+        }
+
+        return artifacts;
+    }
+
+    /**
+     * The transformers.js cache needs its own walk: it stores `<org>/<name>`
+     * (or a bare `<name>`) rather than the hub's flat `models--org--name`. It is
+     * also the cache actually used whenever `HF_HOME` is unset, so skipping it
+     * made `stats()` under-report by whole model directories and left `prune()`
+     * unable to reclaim them, even though `roots()` and `isCached()` both count
+     * it. Only reachable once `resolveTransformersCache()` has run, which is the
+     * same precondition those two already carry.
+     */
+    private listTransformers(): CachedArtifact[] {
+        const root = this.transformersCacheDir;
+
+        if (!root || root === this.hubDir || !existsSync(root)) {
+            return [];
+        }
+
+        const artifacts: CachedArtifact[] = [];
+
+        for (const org of readdirSync(root, { withFileTypes: true })) {
+            if (!org.isDirectory() || org.name.startsWith("models--")) {
+                continue;
+            }
+
+            const orgPath = join(root, org.name);
+
+            if (isModelDir(orgPath)) {
+                artifacts.push(this.artifact(org.name, orgPath, root));
+                continue;
+            }
+
+            for (const model of readdirSync(orgPath, { withFileTypes: true })) {
+                if (model.isDirectory()) {
+                    artifacts.push(this.artifact(`${org.name}/${model.name}`, join(orgPath, model.name), root));
+                }
+            }
         }
 
         return artifacts;

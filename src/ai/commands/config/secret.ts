@@ -104,7 +104,12 @@ export async function cmdSecretSet(path: string, value: string | undefined, flag
     }
 
     const store = await secrets();
-    await store.set(path, secret.trim());
+
+    // Stored verbatim. `set` takes an arbitrary vault path, so the value may be a
+    // passphrase or a key blob whose leading/trailing bytes are part of it;
+    // emptiness was already judged above, which is the only thing trimming was
+    // ever needed for.
+    await store.set(path, secret);
     out.log.success(`Stored ${pc.bold(path)} in the vault.`);
 }
 

@@ -8,13 +8,21 @@ import { ArtifactStore } from "./store";
 
 let root: string;
 let hubDir: string;
+let transformersDir: string;
 let legacyRoot: string;
 
+/**
+ * The transformers.js root is pinned to a temp directory on purpose. `list()`
+ * awaits `resolveTransformersCache()`, which otherwise asks the installed
+ * library for its real `env.cacheDir`, a directory inside `node_modules` that
+ * holds whatever models this machine has downloaded. Leaving it unpinned makes
+ * these counts depend on the developer's cache and points `prune()` at it.
+ */
 function makeStore(fetcher?: (url: string) => Promise<ArrayBuffer>) {
     return new ArtifactStore({
         root,
         legacyRoots: [legacyRoot],
-        hf: new HfSource(hubDir),
+        hf: new HfSource(hubDir, transformersDir),
         fetcher,
     });
 }
@@ -31,9 +39,11 @@ beforeEach(() => {
     const base = mkdtempSync(join(tmpdir(), "artifact-store-"));
     root = join(base, "local-models");
     hubDir = join(base, "hub");
+    transformersDir = join(base, "transformers");
     legacyRoot = join(base, "legacy-sherpa");
     mkdirSync(root, { recursive: true });
     mkdirSync(hubDir, { recursive: true });
+    mkdirSync(transformersDir, { recursive: true });
     mkdirSync(legacyRoot, { recursive: true });
 });
 

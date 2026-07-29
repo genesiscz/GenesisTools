@@ -142,8 +142,16 @@ export async function resolveClient(req: Request, config: AiProxyConfig): Promis
         resolved = { name: OWNER_CLIENT_NAME, isOwner: true };
     }
 
-    for (const client of Array.isArray(config.clients) ? config.clients : []) {
-        const key = await clientKey(client);
+    const clients = Array.isArray(config.clients) ? config.clients : [];
+
+    // `statSync` blocks, and every candidate in this loop observes the same
+    // vault generation, so the stamp is taken ONCE for the whole loop instead of
+    // once per client. Taking it only when some client actually points into the
+    // vault keeps a plaintext-only config at zero stats per request.
+    const stamp = clients.some((client) => isSecureRef(client.key)) ? vaultStamp() : undefined;
+
+    for (const client of clients) {
+        const key = await clientKey(client, stamp);
 
         if (key === undefined) {
             continue;
@@ -160,51 +168,78 @@ export async function resolveClient(req: Request, config: AiProxyConfig): Promis
 }
 
 /**
- * Resolved vault keys, keyed by the vault file's mtime.
+ * Which vault a set of cached keys came from: its resolved path AND its mtime.
+ *
+ * The path is half the identity because `vaultAdmin.path()` is resolved
+ * dynamically from the config root, so ONE process can legitimately read two
+ * different vaults over its lifetime. Keyed on mtime alone, a SecureRef with the
+ * same logical path would be served plaintext decrypted from the vault that was
+ * current a moment ago, authenticating a key that does not exist in the vault
+ * now selected.
+ */
+interface VaultStamp {
+    path: string;
+    mtimeMs: number;
+}
+
+/**
+ * Resolved vault keys, valid only for the vault generation in `stamp`.
  *
  * `resolveSecret` reads and parses the whole vault, derives an HKDF subkey and
  * runs an AES-GCM decrypt, with no caching of its own. `resolveClient` calls it
  * once PER CLIENT PER REQUEST while comparing candidates, so a five-client proxy
  * paid five file reads, five parses and five decrypts on every
- * `/v1/chat/completions`. Stamping on mtime keeps a rotated or edited vault
- * picked up immediately, and nothing about the comparison changes: the loop
- * still visits every candidate in constant position and still hashes with
- * `digestsEqual`.
+ * `/v1/chat/completions`. Stamping keeps a rotated or edited vault picked up
+ * immediately (mtime carries sub-millisecond precision, so back-to-back writes
+ * do not alias), and nothing about the comparison changes: the loop still visits
+ * every candidate in constant position and still hashes with `digestsEqual`.
  */
-let keyCache: { mtimeMs: number; keys: Map<string, string | undefined> } | null = null;
+let keyCache: { stamp: VaultStamp; keys: Map<string, string | undefined> } | null = null;
 
-function vaultStamp(): number {
+function vaultStamp(): VaultStamp {
+    const path = vaultAdmin.path();
+
     try {
-        return statSync(vaultAdmin.path()).mtimeMs;
+        return { path, mtimeMs: statSync(path).mtimeMs };
     } catch (err) {
         // No vault yet is normal on a plaintext-only config; a zero stamp simply
         // means "nothing cached from a vault that does not exist".
         logger.debug({ err }, "ai-proxy: vault not present for the client-key cache");
-        return 0;
+        return { path, mtimeMs: 0 };
     }
 }
 
-async function clientKey(client: AiProxyClientConfig): Promise<string | undefined> {
+function cachedKeys(stamp: VaultStamp): Map<string, string | undefined> {
+    if (!keyCache || keyCache.stamp.path !== stamp.path || keyCache.stamp.mtimeMs !== stamp.mtimeMs) {
+        keyCache = { stamp, keys: new Map() };
+    }
+
+    return keyCache.keys;
+}
+
+/** Drop cached plaintext. Tests that swap config roots in-process need this. */
+export function _resetClientKeyCacheForTest(): void {
+    keyCache = null;
+}
+
+async function clientKey(client: AiProxyClientConfig, stamp: VaultStamp | undefined): Promise<string | undefined> {
     if (typeof client.key === "string") {
         return client.key;
     }
 
-    if (!isSecureRef(client.key)) {
+    // Not a vault pointer, or there is no vault generation to read it against.
+    if (!isSecureRef(client.key) || stamp === undefined) {
         return undefined;
     }
 
-    const stamp = vaultStamp();
+    const keys = cachedKeys(stamp);
 
-    if (!keyCache || keyCache.mtimeMs !== stamp) {
-        keyCache = { mtimeMs: stamp, keys: new Map() };
-    }
-
-    if (keyCache.keys.has(client.key.path)) {
-        return keyCache.keys.get(client.key.path);
+    if (keys.has(client.key.path)) {
+        return keys.get(client.key.path);
     }
 
     const value = await resolveSecret(client.key);
-    keyCache.keys.set(client.key.path, value);
+    keys.set(client.key.path, value);
 
     if (value === undefined) {
         logger.warn(
