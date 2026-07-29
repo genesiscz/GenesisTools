@@ -867,8 +867,8 @@ function buildPaths(): Record<string, OpenApiPathItem> {
                     {
                         name: "limit",
                         in: "query",
-                        description: "Max rows (default 100).",
-                        schema: { type: "integer", default: 100 },
+                        description: "Max rows (default 100, between 1 and 1000). Outside that range answers 400.",
+                        schema: { type: "integer", default: 100, minimum: 1, maximum: 1000 },
                     },
                 ],
                 responses: {
