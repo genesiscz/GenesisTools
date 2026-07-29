@@ -174,8 +174,10 @@ export class QueueService {
         return this.db.getJob(id);
     }
 
-    stats(): QueueStats {
-        return this.db.getQueueStats();
+    stats(actor: JobActor): QueueStats {
+        // Counts leak too: queue-wide depth, per-stage workload and oldest-job age
+        // describe every other tenant's activity even though no row is returned.
+        return this.db.getQueueStats(actor.kind === "user" ? { userId: actor.userId } : {});
     }
 
     async *watch(opts: WatchQueueOpts): AsyncGenerator<QueueWatchEvent> {

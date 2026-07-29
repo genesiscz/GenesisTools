@@ -60,16 +60,24 @@ export function extractBearerToken(req: Request): string | null {
     return match?.[1] ?? null;
 }
 
+/**
+ * Every channel a caller may present a token on: the Bearer header first, then
+ * `?access_token=`, then `?key=` (query params exist because browsers cannot set
+ * headers on a WebSocket handshake or an `<audio src>`).
+ *
+ * ONE list, shared by the gate and by identity resolution, because the two
+ * disagreeing is not a mismatch but a privilege escalation. `requireServiceKey`
+ * read `?key=` and `resolveUser` did not, so `/api/v1/jobs?key=ytu_alice` passed
+ * the gate AS Alice and then resolved to no user at all — falling through to
+ * operator scope, which is strictly more access than Alice's own token grants.
+ */
+function extractPresentedToken(req: Request, url: URL): string | null {
+    return extractBearerToken(req) ?? url.searchParams.get("access_token") ?? url.searchParams.get("key");
+}
+
 /** Bearer header first, then `?access_token=` / `?key=` (for WebSocket handshakes). */
 export function extractServiceToken(req: Request): string | null {
-    const bearer = extractBearerToken(req);
-
-    if (bearer) {
-        return bearer;
-    }
-
-    const url = new URL(req.url);
-    return url.searchParams.get("access_token") ?? url.searchParams.get("key");
+    return extractPresentedToken(req, new URL(req.url));
 }
 
 function tokenMatchesAny(presented: string, keys: string[]): boolean {
@@ -143,7 +151,7 @@ export function requireServiceKey(req: Request, keys: string[], db?: YoutubeData
  * but a missing/invalid token yields `null` instead of a 401.
  */
 export function resolveUser(req: Request, url: URL, db: YoutubeDatabase): YtUser | null {
-    const presented = extractBearerToken(req) ?? url.searchParams.get("access_token");
+    const presented = extractPresentedToken(req, url);
     const token = presented?.startsWith(USER_TOKEN_PREFIX) ? presented : null;
 
     return token ? db.getUserByToken(token) : null;
@@ -173,7 +181,7 @@ export function resolveJobActor(req: Request, url: URL, db: YoutubeDatabase): Jo
  * prefix are ignored here — they may be service keys handled elsewhere.
  */
 export function requireUser(req: Request, url: URL, db: YoutubeDatabase): YtUser | Response {
-    const presented = extractBearerToken(req) ?? url.searchParams.get("access_token");
+    const presented = extractPresentedToken(req, url);
     const token = presented?.startsWith(USER_TOKEN_PREFIX) ? presented : null;
     const user = token ? db.getUserByToken(token) : null;
 

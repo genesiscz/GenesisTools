@@ -195,3 +195,70 @@ describe("POST /api/v1/jobs/:id/cancel", () => {
         expect(await status("POST /api/v1/jobs/424242/cancel", null)).toBe(404);
     });
 });
+
+describe("token source consistency", () => {
+    // requireServiceKey authenticates ?key=, resolveUser used to ignore it, so a
+    // user token in ?key= passed the gate as that user and then fell through to
+    // operator scope — strictly more access than the token itself grants.
+    it("treats ?key= as the same identity as a Bearer token", async () => {
+        const alice = db.createUser({ email: "alice@example.com", passwordHash: "h", apiToken: "ytu_alice" });
+        db.enqueueJob({ targetKind: "video", target: "vid00000001", stages: ["captions"], userId: alice.id });
+        const foreign = db.enqueueJob({ targetKind: "video", target: "vid00000002", stages: ["captions"] });
+
+        const viaKey = await call("GET /api/v1/jobs?key=ytu_alice", null);
+        const viaBearer = await call("GET /api/v1/jobs", "ytu_alice");
+
+        expect(((await viaKey.json()) as { jobs: unknown[] }).jobs).toHaveLength(1);
+        expect(((await viaBearer.json()) as { jobs: unknown[] }).jobs).toHaveLength(1);
+        expect(await status(`GET /api/v1/jobs/${foreign.job.id}?key=ytu_alice`, null)).toBe(404);
+    });
+
+    it("still resolves ?access_token= and leaves a service key as the operator", async () => {
+        db.createUser({ email: "alice@example.com", passwordHash: "h", apiToken: "ytu_alice" });
+        const unowned = db.enqueueJob({ targetKind: "video", target: "vid00000003", stages: ["captions"] });
+
+        expect(await status(`GET /api/v1/jobs/${unowned.job.id}?access_token=ytu_alice`, null)).toBe(404);
+        // A non-ytu_ token is a service key, which stays operator-scoped.
+        expect(await status(`GET /api/v1/jobs/${unowned.job.id}?key=svc-secret`, null)).toBe(200);
+    });
+});
+
+describe("GET /api/v1/jobs/queue scoping", () => {
+    it("counts only the caller's jobs, and everything for the operator", async () => {
+        const alice = db.createUser({ email: "alice@example.com", passwordHash: "h", apiToken: "ytu_alice" });
+        db.createUser({ email: "bob@example.com", passwordHash: "h", apiToken: "ytu_bob" });
+        db.enqueueJob({ targetKind: "video", target: "vid00000001", stages: ["captions"], userId: alice.id });
+        db.enqueueJob({ targetKind: "video", target: "vid00000002", stages: ["summarize"] });
+
+        const forAlice = (await (await call("GET /api/v1/jobs/queue", "ytu_alice")).json()) as {
+            queue: { queued: number; perStage: Record<string, unknown>; oldestQueuedAgeSec: number | null };
+        };
+        const forBob = (await (await call("GET /api/v1/jobs/queue", "ytu_bob")).json()) as {
+            queue: { queued: number; oldestQueuedAgeSec: number | null };
+        };
+        const forOperator = (await (await call("GET /api/v1/jobs/queue", null)).json()) as {
+            queue: { queued: number };
+        };
+
+        expect(forAlice.queue.queued).toBe(1);
+        expect(Object.keys(forAlice.queue.perStage)).toEqual(["captions"]);
+        // Bob sees nothing at all — not even the oldest-job age, which is itself a
+        // signal about other tenants' activity.
+        expect(forBob.queue.queued).toBe(0);
+        expect(forBob.queue.oldestQueuedAgeSec).toBeNull();
+        expect(forOperator.queue.queued).toBe(2);
+    });
+});
+
+describe("force validation", () => {
+    it("rejects a non-boolean force and accepts a boolean one", async () => {
+        const base = { target: "vid00000001", stages: ["captions"] };
+
+        expect(await status("POST /api/v1/pipeline", null, { ...base, force: "true" })).toBe(400);
+        expect(await status("POST /api/v1/pipeline", null, { ...base, force: 1 })).toBe(400);
+        expect(await status("POST /api/v1/pipeline", null, { ...base, force: false })).toBe(200);
+        expect(
+            await status("POST /api/v1/pipeline", null, { target: "vid00000002", stages: ["captions"], force: true })
+        ).toBe(200);
+    });
+});

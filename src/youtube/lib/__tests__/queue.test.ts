@@ -65,7 +65,7 @@ describe("QueueService", () => {
             fixture.queue.enqueue({ target: "second-video", stages: ["metadata"] });
 
             expect(fixture.queue.list({ actor: { kind: "operator" } })).toHaveLength(2);
-            expect(fixture.queue.stats()).toMatchObject({ queued: 2, running: 0 });
+            expect(fixture.queue.stats({ kind: "operator" })).toMatchObject({ queued: 2, running: 0 });
         } finally {
             await disposeFixture(fixture);
         }

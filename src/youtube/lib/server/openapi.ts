@@ -831,6 +831,9 @@ function buildPaths(): Record<string, OpenApiPathItem> {
                             target: { type: "string", description: "Video id, channel handle, or URL." },
                             targetKind: { type: "string", enum: ["video", "channel", "url", "report"] },
                             stages: arrayOf(ref("JobStage")),
+                            params: { type: ["object", "null"], description: "Extra stage parameters." },
+                            priority: { type: "number", description: "Overrides the stage-derived default." },
+                            force: { type: "boolean", description: "Skip fingerprint reuse and always insert." },
                         },
                         required: ["target", "stages"],
                     },
@@ -842,6 +845,10 @@ function buildPaths(): Record<string, OpenApiPathItem> {
                         properties: { job: ref("PipelineJob") },
                         required: ["job"],
                     }),
+                    "400": jsonResponse(
+                        "Malformed JSON, or a field that fails validation: target must be a non-empty string, stages a non-empty array of JobStage, targetKind one of the enum, priority a number, params an object or null, force a boolean.",
+                        ref("Error")
+                    ),
                 },
             },
         },

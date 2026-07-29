@@ -77,7 +77,7 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
         }
 
         if (matchRoute(req, "GET", "/api/v1/jobs/queue", url.pathname)) {
-            return Response.json({ queue: yt.queue.stats() }, { headers: CORS_HEADERS });
+            return Response.json({ queue: yt.queue.stats(actor) }, { headers: CORS_HEADERS });
         }
 
         const jobOnly = matchRoute(req, "GET", "/api/v1/jobs/:id", url.pathname);
@@ -152,6 +152,13 @@ function parseEnqueueBody(raw: unknown): ParseResult {
 
     if (body.params !== undefined && body.params !== null && !isPlainObject(body.params)) {
         return { ok: false, error: "params must be a JSON object or null" };
+    }
+
+    // `force` gets the same treatment as the other optionals rather than a
+    // `=== true` coercion: `"force": "true"` is a client that believes it asked
+    // for a forced run, and silently giving it the opposite is worse than a 400.
+    if (body.force !== undefined && typeof body.force !== "boolean") {
+        return { ok: false, error: "force must be a boolean" };
     }
 
     return {
