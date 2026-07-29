@@ -877,6 +877,7 @@ function buildPaths(): Record<string, OpenApiPathItem> {
                         properties: { jobs: arrayOf(ref("PipelineJob")) },
                         required: ["jobs"],
                     }),
+                    "400": errorResponse,
                 },
             },
         },
