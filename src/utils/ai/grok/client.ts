@@ -4,6 +4,7 @@ import { decodeJwtClaims, getActiveAuthEntry, isTokenExpired, readAuthFileAsync 
 import { GrokAuthExpiredError, isAuthHttpStatus } from "./auth-errors";
 import { buildCliProxyHeaders } from "./headers";
 import { GROK_CLI_CHAT_PROXY_BASE_URL, grokAuthPath } from "./paths";
+import { refreshGrokAuth } from "./refresh";
 import type { GrokBillingConfig, GrokProbeResult, GrokSettings } from "./types";
 
 export interface GrokSubscriptionClientOptions {
@@ -77,8 +78,25 @@ export class GrokSubscriptionClient {
         }
 
         if (isTokenExpired(decodeJwtClaims(this.token))) {
+            await this.refreshToken("expired in memory and on disk");
+        }
+    }
+
+    /**
+     * Last resort before giving up on an expired token: perform the OIDC
+     * refresh-token grant ourselves instead of telling the user to run the
+     * `grok` CLI, which a background daemon cannot do.
+     */
+    private async refreshToken(reason: string): Promise<void> {
+        const refreshed = await refreshGrokAuth({ path: this.authPath });
+
+        if (!refreshed || isTokenExpired(decodeJwtClaims(refreshed))) {
+            logger.warn({ authPath: this.authPath, reason }, "grok: OIDC refresh did not yield a usable token");
             throw new GrokAuthExpiredError(this.authPath);
         }
+
+        this.token = refreshed;
+        logger.info({ authPath: this.authPath, reason }, "grok: recovered the session with an OIDC refresh");
     }
 
     async fetch(path: string, init?: RequestInit & { modelOverride?: string }): Promise<Response> {
@@ -93,6 +111,18 @@ export class GrokSubscriptionClient {
             if (reloaded && reloaded !== previousToken) {
                 logger.debug("grok: reloaded auth.json after 401, retrying once");
                 response = await this.doFetch(path, init);
+            } else {
+                // Same token the upstream just rejected — force the grant rather
+                // than retrying the identical credential. A rejected token is
+                // usually still inside its `exp`, so an unforced refresh would
+                // hand back that same credential and skip the retry entirely.
+                const refreshed = await refreshGrokAuth({ path: this.authPath, force: true });
+
+                if (refreshed && refreshed !== previousToken) {
+                    this.token = refreshed;
+                    logger.info({ authPath: this.authPath }, "grok: refreshed auth after 401, retrying once");
+                    response = await this.doFetch(path, init);
+                }
             }
         }
 

@@ -31,10 +31,19 @@ interface ModelMetadata {
 
 export class ProviderManager {
     private detectedProviders: Map<string, DetectedProvider> = new Map();
-    private initialized = false;
+    /**
+     * Set only by a scan that was allowed to look at EVERY provider. A targeted
+     * scan skips the subscription probes for the other providers (see the
+     * `!targetProvider ||` guards below), so marking its result complete would
+     * hide anthropic-sub / openai-sub / grok-sub for the rest of the process.
+     * That is exactly what happened in the long-lived youtube server: one
+     * `resolveProviderChoice({fallbackSpec: "xai/…"})` — a cost estimate was
+     * enough — left `/api/v1/models` serving an xai-only catalog until restart.
+     */
+    private scannedAll = false;
 
     async detectProviders(targetProvider?: string): Promise<DetectedProvider[]> {
-        if (this.initialized) {
+        if (this.scannedAll || (targetProvider && this.detectedProviders.has(targetProvider))) {
             return Array.from(this.detectedProviders.values());
         }
 
@@ -106,14 +115,22 @@ export class ProviderManager {
             await this.detectGrokSubscription(detected);
         }
 
-        this.initialized = true;
+        // Only a full scan may be cached as complete.
+        if (!targetProvider) {
+            this.scannedAll = true;
+        }
 
-        if (detected.length === 0) {
+        // The map, not the local `detected` array: this scan skipped every probe
+        // an earlier targeted scan already cached, so returning only what THIS
+        // call found would hand the first full-catalog caller a short list.
+        const all = Array.from(this.detectedProviders.values());
+
+        if (all.length === 0) {
             logger.warn("No AI providers detected. Please set API keys in environment variables.");
             logger.info(`Supported providers: ${configs.map((c) => c.envKey).join(", ")}`);
         }
 
-        return detected;
+        return all;
     }
 
     private async detectAnthropicSubscription(askConfig: AskConfig, detected: DetectedProvider[]): Promise<void> {

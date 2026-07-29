@@ -9,4 +9,5 @@ export * from "./management-api";
 export * from "./models";
 export * from "./paths";
 export * from "./probe";
+export * from "./refresh";
 export * from "./types";

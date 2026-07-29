@@ -1,8 +1,10 @@
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
+import { logger } from "@genesiscz/utils/logger";
 import { decodeJwtClaims, getActiveAuthEntry, isTokenExpired, readAuthFileAsync } from "./auth";
 import { GrokAuthExpiredError } from "./auth-errors";
 import { grokAuthPath } from "./paths";
+import { refreshGrokAuth } from "./refresh";
 
 export interface ResolvedGrokSubToken {
     token: string;
@@ -47,7 +49,19 @@ export async function resolveGrokSubToken(accountName?: string): Promise<Resolve
     // An explicit `authFile` reference wins over stored tokens (which can go
     // stale on their own — the referenced file is CLI-refreshed).
     if (account.tokens.accessToken && !account.tokens.authFile) {
-        assertNotExpired(account.tokens.accessToken, authPath);
+        // A stored token carries no refresh metadata of its own, and `authPath`
+        // here is only the CLI's default file — whoever the CLI happens to be
+        // logged in as. Refreshing from it would hand back a DIFFERENT account's
+        // token and quietly cross a billing boundary, so expiry is fatal instead.
+        if (isTokenExpired(decodeJwtClaims(account.tokens.accessToken))) {
+            logger.warn(
+                { account: account.name },
+                "grok: stored accessToken expired and the account references no authFile to refresh from"
+            );
+
+            throw new GrokAuthExpiredError(authPath);
+        }
+
         return { token: account.tokens.accessToken, authPath, account: pick(account) };
     }
 
@@ -58,14 +72,32 @@ export async function resolveGrokSubToken(accountName?: string): Promise<Resolve
         throw new GrokAuthExpiredError(authPath);
     }
 
-    assertNotExpired(active.key, authPath);
-    return { token: active.key, authPath, account: pick(account) };
+    const token = await ensureFreshToken(active.key, authPath);
+    return { token, authPath, account: pick(account) };
 }
 
-function assertNotExpired(token: string, authPath: string): void {
-    if (isTokenExpired(decodeJwtClaims(token))) {
+/**
+ * An expired token is recoverable on its own: the auth file carries the OIDC
+ * `refresh_token` / issuer / client id, so perform the grant rather than telling
+ * the caller to run the `grok` CLI by hand — impossible for a background daemon,
+ * and the reason provider detection used to fail outright. Only a refresh that
+ * cannot be attempted (no refresh fields) or that the issuer rejects is fatal.
+ */
+async function ensureFreshToken(token: string, authPath: string): Promise<string> {
+    if (!isTokenExpired(decodeJwtClaims(token))) {
+        return token;
+    }
+
+    const refreshed = await refreshGrokAuth({ path: authPath });
+
+    if (!refreshed || isTokenExpired(decodeJwtClaims(refreshed))) {
+        logger.warn({ authPath }, "grok: OIDC refresh did not yield a usable token for the grok-sub account");
         throw new GrokAuthExpiredError(authPath);
     }
+
+    logger.info({ authPath }, "grok: refreshed the expired grok-sub token via OIDC");
+
+    return refreshed;
 }
 
 function pick(account: AIAccountEntry): { name: string; label?: string } {
