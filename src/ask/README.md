@@ -274,8 +274,8 @@ Comprehensive error handling with user-friendly messages:
 
 ### Adding New Providers
 
-1. Add provider configuration to `providers/providers.ts`
-2. Add supported models to `KNOWN_MODELS`
+1. Add provider configuration to `src/utils/ask/providers/compat.ts`
+2. Add supported models to `src/utils/ai/catalog/static.ts` (the one model catalog)
 3. Import and register in `ProviderManager.createProvider()`
 4. Test with both interactive and non-interactive modes
 

@@ -19,6 +19,18 @@ import type { CatalogEntry, ModelFamily, ModelPricing } from "./types";
 
 const CHAT: ReadonlySet<Capability> = new Set(["chat", "summarize", "translate"]);
 
+/**
+ * "grok-4-fast" → "Grok 4 Fast". The display name for providers that ship ids
+ * and no marketing names, and the fallback for any id the catalog does not
+ * carry — one derivation, so a picker and a pricing table never disagree.
+ */
+export function formatModelDisplayName(id: string): string {
+    return id
+        .split("-")
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(" ");
+}
+
 /** Opus 4.5 and later — Anthropic dropped Opus to $5/$25 at 4.5 and kept it there. */
 const OPUS_4_PRICING: ModelPricing = {
     inputPer1M: 5,
@@ -256,7 +268,7 @@ const XAI_IDS = [
 const XAI_ENTRIES: CatalogEntry[] = XAI_IDS.map((id) => ({
     id,
     provider: "xai",
-    displayName: id,
+    displayName: formatModelDisplayName(id),
     contextWindow: XAI_WINDOWS[id] ?? XAI_DEFAULT_WINDOW,
     capabilities: CHAT,
     thinking: XAI_THINKING[id] ?? "optional",

@@ -1,6 +1,7 @@
-import { getProviderConfigs, KNOWN_MODELS } from "@genesiscz/utils/ask/providers/providers";
+import { getProviderConfigs } from "@genesiscz/utils/ask/providers/compat";
 import type { ModelInfo, PricingInfo, ProviderConfig } from "@genesiscz/utils/ask/types";
 import { logger } from "@genesiscz/utils/logger";
+import { byProvider, type CatalogEntry, inputModalitiesFor } from "../catalog";
 
 interface ResolvedModels {
     models: ModelInfo[];
@@ -26,6 +27,44 @@ function inferCategory(modelId: string): string | undefined {
     return undefined;
 }
 
+/** Tasks any chat model performs; naming them in a picker adds length, not information. */
+const IMPLIED_BY_CHAT: ReadonlySet<string> = new Set(["summarize", "translate", "classify", "sentiment"]);
+
+/**
+ * Flatten a catalog entry into the shape ask's pickers and pricing table read.
+ *
+ * The two vocabularies differ: the catalog describes a model by TASK
+ * (`chat`, `embed`, `transcribe`) plus structured fields, while `ModelInfo`
+ * carries free-form FEATURE strings that `tools ask models --caps` filters on.
+ * Vision and reasoning translate cleanly because the catalog states them
+ * (`inputModalities`, `thinking`); tool-calling has no catalog field, so it is
+ * simply not claimed rather than assumed.
+ */
+export function toModelInfo(entry: CatalogEntry): ModelInfo {
+    const isChat = entry.capabilities.has("chat");
+    const capabilities: string[] = [...entry.capabilities].filter(
+        (capability) => !isChat || !IMPLIED_BY_CHAT.has(capability)
+    );
+
+    if (inputModalitiesFor(entry)?.includes("image")) {
+        capabilities.push("vision");
+    }
+
+    if (entry.thinking === "reasoning") {
+        capabilities.push("reasoning");
+    }
+
+    return {
+        id: entry.id,
+        name: entry.displayName,
+        contextWindow: entry.contextWindow,
+        capabilities,
+        provider: entry.provider,
+        category: entry.family ?? inferCategory(entry.id),
+        pricing: entry.pricing,
+    };
+}
+
 /**
  * Fetch models and pricing for a known provider.
  * Shared by all API-key and subscription resolvers to avoid duplication.
@@ -37,20 +76,19 @@ export async function resolveModelsWithPricing(providerName: string): Promise<Re
         throw new Error(`${providerName} provider config missing from PROVIDER_CONFIGS`);
     }
 
-    const knownModels = KNOWN_MODELS[providerName as keyof typeof KNOWN_MODELS];
+    const entries = byProvider(providerName);
 
-    if (!knownModels) {
+    if (entries.length === 0) {
+        logger.debug({ provider: providerName }, "no static catalog entries — resolver returns an empty model list");
         return { models: [], config };
     }
 
     const getPricing = await loadPricingLookup();
     const models: ModelInfo[] = await Promise.all(
-        knownModels.map(async (m) => ({
-            ...m,
-            provider: providerName,
-            category: ("category" in m ? m.category : undefined) ?? inferCategory(m.id),
-            pricing: (await getPricing(providerName, m.id)) || undefined,
-        }))
+        entries.map(async (entry) => {
+            const info = toModelInfo(entry);
+            return { ...info, pricing: (await getPricing(providerName, entry.id)) || info.pricing };
+        })
     );
 
     return { models, config };

@@ -3,6 +3,7 @@ export {
     byCapability,
     byId,
     byProvider,
+    formatModelDisplayName,
     inputModalitiesFor,
     isDatedModelId,
     STATIC_CATALOG,
