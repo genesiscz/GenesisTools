@@ -8,7 +8,7 @@ import { Command } from "commander";
 import pc from "picocolors";
 import { fetchHighlightMedia, fetchHighlightTray, fetchProfile, fetchPublicReelInfo, fetchStories } from "./lib/api";
 import { displayHighlights, displayProfile, displayReels, explainError } from "./lib/display";
-import { downloadReels } from "./lib/download";
+import { downloadReels, summarizeDownloads } from "./lib/download";
 import { readSessionConfig, resolveSession, writeSessionConfig } from "./lib/session";
 import type { StoryReel } from "./lib/types";
 
@@ -222,12 +222,10 @@ async function emitReels(
 
     spinner.stop(`Downloaded ${results.length} file${results.length === 1 ? "" : "s"} to ${dir}`);
 
-    // downloadReels only throws when EVERY item failed, so a partial failure would
-    // otherwise read as a complete download that happened to be short.
-    const expected = reels.reduce((sum, reel) => sum + reel.items.length, 0);
-    if (results.length < expected) {
-        out.log.warn(`${expected - results.length} of ${expected} items failed to download.`);
-        log.warn({ expected, downloaded: results.length, dir }, "partial story download");
+    const summary = summarizeDownloads(reels, results);
+    if (summary.failed > 0) {
+        out.log.warn(`${summary.failed} of ${summary.requested} items failed to download.`);
+        log.warn({ ...summary, dir }, "partial story download");
     }
 }
 
