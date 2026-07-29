@@ -2,6 +2,11 @@ import type { MCPProvider, MCPServerInfo, UnifiedMCPServerConfig } from "@app/mc
 import { logger, out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
 
+/**
+ * Options for {@link listServers}. `json` switches the output MODE, not just the
+ * formatting: the human listing is skipped entirely and the payload is written to
+ * stdout through `out.result`, so the command stays pipeable.
+ */
 export interface ListOptions {
     /** Emit machine-readable JSON on stdout instead of the human listing. */
     json?: boolean;
@@ -25,16 +30,44 @@ export interface ServerConnection {
     headers?: Record<string, string>;
 }
 
+/**
+ * One server in the `--json` payload.
+ *
+ * The same server name can be registered in several providers at once, so
+ * enablement is reported twice over: `providers` keeps the per-provider truth,
+ * while `enabled` and `status` summarise it for callers that do not care which
+ * provider supplied the entry.
+ */
 export interface ServerJsonEntry {
+    /** Name the server is registered under, unique across the payload. */
     name: string;
     /** True when at least one provider has this server enabled. */
     enabled: boolean;
+    /**
+     * Rollup of `providers`: `enabled` when every provider listing this server
+     * has it turned on, `disabled` when none do, `partial` when they disagree
+     * (typically a server enabled for one editor but not another).
+     */
     status: "enabled" | "partial" | "disabled";
+    /** Per-provider enablement, one entry per provider that lists this server. */
     providers: ServerProviderEntry[];
+    /** Transport details taken from the winning config (see {@link pickConfig}). */
     connection: ServerConnection;
 }
 
+/**
+ * Payload of `tools mcp-manager list --json`.
+ *
+ * This is a consumed contract rather than a debug dump: the mcp-scripting skill
+ * builds mcporter ServerDefinitions straight from `servers[].connection`. Treat
+ * the field names as public, and prefer adding fields over renaming them.
+ *
+ * A provider absent from BOTH `providersScanned` and `providersFailed` simply had
+ * no config file on disk, which is why an empty `servers` array is a valid result
+ * and not an error.
+ */
 export interface ListJsonOutput {
+    /** Every server found, sorted by name. Empty when no provider listed any. */
     servers: ServerJsonEntry[];
     /** Providers whose config file existed and was read. */
     providersScanned: string[];
