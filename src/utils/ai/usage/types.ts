@@ -89,9 +89,9 @@ export interface UsageEventInput extends Omit<UsageEvent, "at" | "costUsd"> {
     at?: string | Date;
     /**
      * Stored verbatim when present, never recomputed. When absent, the static
-     * catalog fills it in and `meta.costSource` records which of the two
-     * happened — see `recordUsage` for why the provenance has to be written
-     * rather than inferred later.
+     * catalog fills it in and `costSource` records which of the two happened —
+     * see `recordUsage` for why the provenance has to be written rather than
+     * inferred later.
      */
     costUsd?: number;
     /**
