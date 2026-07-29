@@ -30,6 +30,18 @@ const FINAL_JOB_STATUSES = new Set<JobStatus>(["completed", "failed", "cancelled
 
 export const CHANNEL_URL_PATTERN = /(?:https?:\/\/)?(?:www\.)?youtube\.com\/(@[A-Za-z0-9_.-]+)/;
 
+/**
+ * Whose jobs an operation may touch.
+ *
+ * A discriminated union rather than an optional `userId`, because an omitted owner
+ * still has to mean something and "unscoped" is the dangerous default: the reads
+ * below run behind a gate that accepts ANY valid `ytu_` user token
+ * (`requireServiceKey`, server/auth.ts), so a caller that forgot the field would
+ * hand one user the whole queue. Naming the operator case makes each door state
+ * its reach in writing.
+ */
+export type JobActor = { kind: "operator" } | { kind: "user"; userId: number };
+
 export interface QueueEnqueueInput {
     target: string;
     targetKind?: JobTargetKind;
@@ -115,36 +127,45 @@ export class QueueService {
         });
     }
 
-    list(opts: ListJobsOpts & { redact?: boolean } = {}): PipelineJob[] {
-        const { redact = false, ...listOpts } = opts;
-        const jobs = this.db.listJobs(listOpts);
+    list(opts: ListJobsOpts & { redact?: boolean; actor: JobActor }): PipelineJob[] {
+        const { redact = false, actor, ...listOpts } = opts;
+        // `userId` last, so a caller-supplied filter can narrow an operator's view
+        // but can never widen a user's beyond their own rows.
+        const jobs = this.db.listJobs(actor.kind === "user" ? { ...listOpts, userId: actor.userId } : listOpts);
 
         return redact ? jobs.map(redactJobForApi) : jobs;
     }
 
-    get(id: number, opts?: { redact?: boolean }): { job: PipelineJob; queuePosition: number | null } | null {
+    get(
+        id: number,
+        opts: { redact?: boolean; actor: JobActor }
+    ): { job: PipelineJob; queuePosition: number | null } | null {
         const job = this.db.getJob(id);
 
-        if (!job) {
+        if (!job || !actorOwnsJob(job, opts.actor)) {
             return null;
         }
 
         return {
-            job: opts?.redact ? redactJobForApi(job) : job,
+            job: opts.redact ? redactJobForApi(job) : job,
             queuePosition: this.db.getJobQueuePosition(id),
         };
     }
 
-    activity(id: number): JobActivity[] | null {
-        if (!this.db.getJob(id)) {
+    activity(id: number, actor: JobActor): JobActivity[] | null {
+        const job = this.db.getJob(id);
+
+        if (!job || !actorOwnsJob(job, actor)) {
             return null;
         }
 
         return this.db.listJobActivity(id);
     }
 
-    cancel(id: number): PipelineJob | null {
-        if (!this.db.getJob(id)) {
+    cancel(id: number, actor: JobActor): PipelineJob | null {
+        const job = this.db.getJob(id);
+
+        if (!job || !actorOwnsJob(job, actor)) {
             return null;
         }
 
@@ -493,6 +514,43 @@ export function toJobStages(values: string[]): JobStage[] {
 
         return value;
     });
+}
+
+/**
+ * A job the actor may not touch is reported as absent, never as forbidden.
+ *
+ * 403 on someone else's id and 404 on an unused one would turn the endpoints into
+ * an existence oracle over the whole jobs table. An unowned job (`userId === null`,
+ * enqueued by the CLI service user or an anonymous path) belongs to the operator
+ * alone, which the strict equality below already gives us.
+ */
+function actorOwnsJob(job: PipelineJob, actor: JobActor): boolean {
+    return actor.kind === "operator" || job.userId === actor.userId;
+}
+
+/**
+ * Non-throwing counterpart to `toJobStages`, for request parsing.
+ *
+ * `toJobStages` throws, which is right for a programming error inside the pipeline
+ * but wrong at an HTTP door: the throw travelled to the outer catch and came back
+ * as a 500 for what is a plain bad request.
+ */
+export function parseJobStages(value: unknown): JobStage[] | null {
+    if (!Array.isArray(value) || value.length === 0) {
+        return null;
+    }
+
+    const stages: JobStage[] = [];
+
+    for (const entry of value) {
+        if (typeof entry !== "string" || !isStringMember(JOB_STAGES, entry)) {
+            return null;
+        }
+
+        stages.push(entry);
+    }
+
+    return stages;
 }
 
 export function parseJobStatus(value: string | null): JobStatus | null {
