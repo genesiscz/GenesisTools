@@ -1,9 +1,10 @@
 // biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ or /Users/ string literals — production plugins do not apply to test code
-import { afterEach, describe, expect, it } from "bun:test";
-import { homedir } from "node:os";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { Storage } from "./storage";
+import { atomicWriteFileSync, Storage } from "./storage";
 
 describe("Storage.parseTTL", () => {
     const storage = new Storage("test-tool");
@@ -96,5 +97,57 @@ describe("Storage GENESIS_TOOLS_HOME override", () => {
         expect(new Storage("ask").getConfigPath()).toBe(join(home, ".genesis-tools", "ask", "config.json"));
         env.testing.set("GENESIS_TOOLS_HOME", "");
         expect(new Storage("ask").getConfigPath()).toBe(join(home, ".genesis-tools", "ask", "config.json"));
+    });
+});
+
+describe("atomicWriteFileSync mode", () => {
+    let dir: string;
+
+    beforeEach(() => {
+        dir = mkdtempSync(join(tmpdir(), "atomic-mode-"));
+    });
+
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("leaves the published file at the requested mode, never at the umask default", () => {
+        const target = join(dir, "secret.json");
+        atomicWriteFileSync(target, "{}", { mode: 0o600 });
+
+        // The mode rides the rename, so the file is never briefly visible at
+        // 0644 under its real name — a post-rename chmod could not promise that.
+        expect(statSync(target).mode & 0o777).toBe(0o600);
+        expect(readdirSync(dir)).toEqual(["secret.json"]);
+    });
+
+    it("survives a umask that would otherwise strip the requested bits", () => {
+        // writeFileSync's own `mode` is masked by umask: with umask 0600 it
+        // produces a 000 file, so the mode has to be re-applied before rename.
+        const target = join(dir, "hostile-umask.json");
+        const previous = process.umask(0o600);
+
+        try {
+            atomicWriteFileSync(target, "{}", { mode: 0o600 });
+        } finally {
+            process.umask(previous);
+        }
+
+        expect(statSync(target).mode & 0o777).toBe(0o600);
+    });
+
+    it("leaves the mode to the umask when none is requested", () => {
+        // Existing callers (todo, task, mcp-tsc) must keep their old behaviour;
+        // umask is pinned here so the expectation does not depend on the host.
+        const target = join(dir, "plain.json");
+        const previous = process.umask(0o022);
+
+        try {
+            atomicWriteFileSync(target, "{}");
+        } finally {
+            process.umask(previous);
+        }
+
+        expect(statSync(target).mode & 0o777).toBe(0o644);
     });
 });
