@@ -203,7 +203,11 @@ export class QaService {
         const provider = await this.config.get("provider");
         // Provider resolution is asymmetric: index() uses resolveAiSpecForTask(),
         // while ask() reads config.provider.embed directly.
-        const embedder = await this.deps.createEmbedder({ provider: provider.embed });
+        //
+        // `model` must be forwarded: retrieval filters chunks by `opts.model`, so
+        // omitting it here embedded the query with the default model and then scored
+        // it against vectors another model wrote — comparing two different spaces.
+        const embedder = await this.deps.createEmbedder({ provider: provider.embed, model: opts.model });
 
         try {
             const sources = opts.sources ?? ["transcript"];
