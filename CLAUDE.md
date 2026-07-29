@@ -151,7 +151,7 @@ See `.claude/docs/tool-template.md` for complete templates (@inquirer + @clack/p
 
 ## Working on `tools du` (`src/du/`)
 
-**Before touching ANYTHING under `src/du/`, read `.claude/docs/benchmarks-du.md`, and append a new dated section to it for every feature you add.** The native core (`src/du/native/clonesize.c`) is syscall-bound and runs in the hot loop of multi-million-file scans, so an unmeasured feature is a silent regression. Measure with `src/du/native/bench.sh <label>` (fixed target matrix + hyperfine), record system CPU time as the primary metric (wall time on this machine swings with load average — always note `uptime`), and diff the `--json` byte totals to prove the change was performance-only.
+**Before touching ANYTHING under `src/du/`, read `.claude/docs/benchmarks-du.md`, and append a new dated section to it for every feature you add.** The native core (`src/du/native/clonesize.c`) is syscall-bound and runs in the hot loop of multi-million-file scans, so an unmeasured feature is a silent regression. Measure with `src/du/native/bench.sh <label>` (fixed target matrix + hyperfine), record system CPU time as the primary metric (wall time on this machine swings with load average — always note `uptime`), and diff the `--json` byte totals. **Identical totals are required only when the change is meant to preserve scan semantics** (refactors, performance work, validation hardening). Features that deliberately change what is counted — `--changed-within` filtering, cloud-boundary pruning, allocation-vs-mapped reporting — must instead state which totals move, by how much, and why. Unexplained movement is a bug either way.
 
 ## Code Style Rules
 
