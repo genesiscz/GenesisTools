@@ -67,8 +67,14 @@ export interface InstagramResponse<T> {
  * decorative: it starts as "0", and the server then hands back
  * `x-ig-set-www-claim`, which every subsequent request is expected to echo. Not
  * replaying it marks the client as not-a-browser across the whole session.
+ *
+ * Kept PER AUTH MODE, because the claim is minted by Instagram against the
+ * caller it answered. Echoing a claim issued to the logged-in session on a later
+ * anonymous request hands Instagram the link between the two, which is exactly
+ * the leak `fetchProfile` refuses a `sessionId` parameter to prevent — one
+ * shared variable here would have reintroduced it below the API surface.
  */
-let wwwClaim = "0";
+const wwwClaims: Record<AuthMode, string> = { anonymous: "0", session: "0" };
 
 let limiter = new RateLimiter();
 
@@ -76,7 +82,7 @@ function buildHeaders(options: RequestOptions): Record<string, string> {
     const headers: Record<string, string> = {
         "x-ig-app-id": WEB_APP_ID,
         "x-asbd-id": ASBD_ID,
-        "x-ig-www-claim": wwwClaim,
+        "x-ig-www-claim": wwwClaims[options.sessionId ? "session" : "anonymous"],
         "user-agent": WEB_USER_AGENT,
         accept: "*/*",
         "accept-language": "en-US,en;q=0.9",
@@ -185,8 +191,8 @@ export async function getJson<T>(path: string, options: RequestOptions): Promise
 
     const setClaim = response.headers.get("x-ig-set-www-claim");
     if (setClaim) {
-        log.debug({ label: options.label }, "captured a fresh x-ig-www-claim to replay on later requests");
-        wwwClaim = setClaim;
+        log.debug({ label: options.label, authMode }, "captured a fresh x-ig-www-claim to replay on later requests");
+        wwwClaims[authMode] = setClaim;
     }
 
     if (response.status >= 300 && response.status < 400) {
@@ -244,9 +250,10 @@ export async function getJson<T>(path: string, options: RequestOptions): Promise
  */
 export const __testing = {
     resetWwwClaim: () => {
-        wwwClaim = "0";
+        wwwClaims.anonymous = "0";
+        wwwClaims.session = "0";
     },
-    currentWwwClaim: () => wwwClaim,
+    currentWwwClaim: (mode: AuthMode = "anonymous") => wwwClaims[mode],
     useInstantLimiter: () => {
         limiter = new RateLimiter({ random: () => 0, sleep: async () => undefined });
     },
