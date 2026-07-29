@@ -6,6 +6,8 @@ import {
     type CallToolResult,
     type ListResourcesResult,
     type ListToolsResult,
+    ProtocolError,
+    ProtocolErrorCode,
     type ReadResourceResult,
     Server,
 } from "@modelcontextprotocol/server";
@@ -40,10 +42,7 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
         const name = request.params.name;
         const lookup = getHandler(registry, name, allowWrite);
         if (lookup.kind === "notFound") {
-            return {
-                content: [{ type: "text" as const, text: `Unknown tool: ${name}` }],
-                isError: true,
-            };
+            throw new ProtocolError(ProtocolErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
 
         if (lookup.kind === "writeBlocked") {

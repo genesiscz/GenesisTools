@@ -1,6 +1,12 @@
 import { env } from "@genesiscz/utils/env/envVariables";
 import { logger } from "@genesiscz/utils/logger";
-import { type CallToolResult, type ListToolsResult, Server } from "@modelcontextprotocol/server";
+import {
+    type CallToolResult,
+    type ListToolsResult,
+    ProtocolError,
+    ProtocolErrorCode,
+    Server,
+} from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { ANNOTATE_IMAGE_INPUT_SCHEMA, type AnnotateImageArgs, handleAnnotateImage } from "./tools/annotate-image";
 import {
@@ -463,10 +469,7 @@ export async function startMcpServer(): Promise<void> {
     server.setRequestHandler("tools/call", async (request): Promise<CallToolResult> => {
         const entry = registry[request.params.name];
         if (!entry) {
-            return {
-                content: [{ type: "text" as const, text: `Unknown tool: ${request.params.name}` }],
-                isError: true,
-            };
+            throw new ProtocolError(ProtocolErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`);
         }
 
         try {

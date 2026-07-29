@@ -6,7 +6,13 @@ import { filterByTsconfig, resolveFiles } from "@app/mcp-tsc/utils/FileResolver.
 import { normalizeFilePaths } from "@app/mcp-tsc/utils/normalize-file-paths.js";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { type CallToolResult, type ListToolsResult, Server } from "@modelcontextprotocol/server";
+import {
+    type CallToolResult,
+    type ListToolsResult,
+    ProtocolError,
+    ProtocolErrorCode,
+    Server,
+} from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import ts from "typescript";
 
@@ -142,10 +148,7 @@ export class McpAdapter {
                 return await this.handleGetDiagnostics(args as unknown as GetTsDiagnosticsArgs);
             }
 
-            return {
-                isError: true,
-                content: [{ type: "text" as const, text: `Unknown tool: ${toolName}` }],
-            };
+            throw new ProtocolError(ProtocolErrorCode.MethodNotFound, `Unknown tool: ${toolName}`);
         });
     }
 
