@@ -19,10 +19,13 @@ export function findPlayerVideo(): HTMLVideoElement | null {
 }
 
 /**
- * Where a seek to `seconds` lands on a video of `duration`, or null when the
- * request can't be honoured. Split out of `seekPlayerTo` so the clamping rules
- * are pinned without a DOM, the same way `player-chapters` exports
- * `tickPositionPct`.
+ * Where a seek to `seconds` lands on a video of `duration`. Split out of
+ * `seekPlayerTo` so the clamping rules are pinned without a DOM, the same way
+ * `player-chapters` exports `tickPositionPct`.
+ *
+ * @returns The target clamped into `[0, duration]`, uncapped when `duration` is
+ * non-finite (live stream, or a video that hasn't loaded its metadata), or null
+ * when `seconds` itself is non-finite — assigning that to `currentTime` throws.
  */
 export function seekTargetFor(seconds: number, duration: number): number | null {
     if (!Number.isFinite(seconds)) {
