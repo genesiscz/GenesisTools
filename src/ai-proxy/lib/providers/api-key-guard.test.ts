@@ -86,6 +86,30 @@ describe("resolveAccountApiKey", () => {
         ).toEqual({ key: "default-key", source: "defaultEnv" });
     });
 
+    it("falls through when the named var is exported but empty", () => {
+        // `export XAI_API_KEY=` in a shell rc is the realistic footgun here: the
+        // variable exists, so a `has()`-style check would accept it and hand the
+        // provider an empty bearer token.
+        env.testing.set("MY_NAMED_KEY", "   ");
+
+        try {
+            expect(
+                resolveAccountApiKey({
+                    account: { ...account, apiKeyEnv: "MY_NAMED_KEY" },
+                    defaultEnvKey: () => "default-key",
+                })
+            ).toEqual({ key: "default-key", source: "defaultEnv" });
+        } finally {
+            env.testing.unset("MY_NAMED_KEY");
+        }
+    });
+
+    it("ignores a whitespace-only stored key the same way", () => {
+        expect(
+            resolveAccountApiKey({ account: { ...account, apiKey: "  " }, defaultEnvKey: () => "default-key" })
+        ).toEqual({ key: "default-key", source: "defaultEnv" });
+    });
+
     it("returns undefined when nothing carries a key", () => {
         expect(resolveAccountApiKey({ account, defaultEnvKey: () => undefined })).toBeUndefined();
     });
