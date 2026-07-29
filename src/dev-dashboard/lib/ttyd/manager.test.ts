@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import {
+    argvTargetsTmux,
     killAllTtyd,
     killTtyd,
     listTtyd,
@@ -171,5 +172,40 @@ describe("ttydLabel", () => {
 
     test("blank name falls back", () => {
         expect(ttydLabel({ ...labelBase, name: "  " })).toBe("zsh :50245");
+    });
+});
+
+// The heal sweep decides "is this live ttyd still attached to the session config
+// says it is?" purely from this predicate, so its edge cases are pinned here — no
+// ttyd/tmux binaries needed, unlike the lifecycle cases above.
+describe("argvTargetsTmux", () => {
+    const argv = (session: string) =>
+        `/opt/homebrew/bin/ttyd -i 127.0.0.1 -b /ttyd/6f1c2f0e-1111-2222-3333-444455556666 -W -p 50245 /opt/homebrew/bin/tmux attach-session -t ${session}\n`;
+
+    test("matches the session the process actually attached to", () => {
+        expect(argvTargetsTmux(argv("bridge"), "bridge")).toBe(true);
+    });
+
+    test("a different session does not match", () => {
+        expect(argvTargetsTmux(argv("bridge"), "dev-dashboard-abc12345")).toBe(false);
+    });
+
+    test("a session whose name merely PREFIXES the live one is not a match", () => {
+        // The false positive that matters: reading `-t bridge-2` as "targets bridge"
+        // makes the heal sweep leave a ttyd attached to the wrong session forever.
+        expect(argvTargetsTmux(argv("bridge-2"), "bridge")).toBe(false);
+        expect(argvTargetsTmux(argv("dev-dashboard-abc12345"), "dev-dashboard-abc1")).toBe(false);
+    });
+
+    test("the longer live name still matches itself", () => {
+        expect(argvTargetsTmux(argv("bridge-2"), "bridge-2")).toBe(true);
+    });
+
+    test("a name appearing outside the attach target does not count", () => {
+        expect(argvTargetsTmux("/opt/homebrew/bin/ttyd -b /ttyd/bridge -W -p 50245\n", "bridge")).toBe(false);
+    });
+
+    test("an empty session name never matches", () => {
+        expect(argvTargetsTmux(argv("bridge"), "")).toBe(false);
     });
 });
