@@ -10,6 +10,16 @@ import { logger, out } from "@genesiscz/utils/logger";
 /** Owner-only: the config carries the proxy bearer key and billed vendor keys. */
 const CONFIG_FILE_MODE = 0o600;
 
+/**
+ * Whether any group or other bit survived on the config's mode. Split out so the
+ * mask itself is pinned by tests: narrowing it to `0o007` would stop catching a
+ * group-readable file, and comparing against `0o600` instead would report a
+ * stricter 0o400 as a problem. Both are silent failures of a security check.
+ */
+export function isReadableByOthers(mode: number): boolean {
+    return (mode & 0o077) !== 0;
+}
+
 export function getDefaultConfig(): AiProxyConfig {
     return {
         listen: { host: "127.0.0.1", port: 8317 },
@@ -141,7 +151,7 @@ export class AiProxyConfigStore {
             // believed otherwise.
             const mode = (await stat(path)).mode & 0o777;
 
-            if ((mode & 0o077) !== 0) {
+            if (isReadableByOthers(mode)) {
                 this.warnConfigReadable(path, mode.toString(8));
             }
         } catch (err) {
