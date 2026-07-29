@@ -90,7 +90,7 @@ export async function answerOverVideos(opts: AnswerOverVideosOpts): Promise<Answ
     const needsIndex = withTranscript.filter((videoId) =>
         sources.some((source) => !yt.db.hasQaChunks(videoId, DEFAULT_MODEL_ID, source))
     );
-    const budget = opts.maxIndex === null ? needsIndex.length : (opts.maxIndex ?? needsIndex.length);
+    const budget = opts.maxIndex ?? needsIndex.length;
     const toIndex = needsIndex.slice(0, budget);
     const skippedUnindexed = needsIndex.slice(budget);
     let indexedNow = 0;
@@ -107,7 +107,10 @@ export async function answerOverVideos(opts: AnswerOverVideosOpts): Promise<Answ
         indexedNow += result.indexed;
     }
 
-    const searchedVideoIds = withTranscript.filter((videoId) => !skippedUnindexed.includes(videoId));
+    // Set, not `Array.includes`: a channel-scoped ask carries thousands of ids on
+    // both sides of this filter.
+    const skipped = new Set(skippedUnindexed);
+    const searchedVideoIds = withTranscript.filter((videoId) => !skipped.has(videoId));
     const videos = yt.db.getVideosByIds(searchedVideoIds);
     const metaById = new Map(videos.map((video) => [video.id, video]));
     const crossVideo =
