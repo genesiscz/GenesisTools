@@ -20,6 +20,7 @@ import { withCancel } from "@genesiscz/utils/prompts/clack/helpers.ts";
 import { formatTable } from "@genesiscz/utils/table.ts";
 import { Command } from "commander";
 import pc from "picocolors";
+import { registerConfigCommands } from "./commands/config";
 
 // ============================================
 // Translate
@@ -675,12 +676,7 @@ modelsCmd
         await cmdModelsClean(opts);
     });
 
-program
-    .command("config")
-    .description("Configure AI providers, models, and tokens")
-    .action(async () => {
-        await cmdConfig();
-    });
+registerConfigCommands(program, cmdConfig);
 
 async function main(): Promise<void> {
     try {

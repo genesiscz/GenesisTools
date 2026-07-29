@@ -131,14 +131,16 @@ describe("resolveCredential", () => {
         );
     });
 
-    test("the error names the exact commands that fix it", async () => {
+    test("the error names the exact commands that fix it, runnable as written", async () => {
         try {
             await resolveCredential(account(), SPEC);
             throw new Error("expected a CredentialUnavailableError");
         } catch (err) {
             const message = (err as Error).message;
             expect(message).toContain("tools ai config secret set ai/acc_xai/apiKey");
-            expect(message).toContain("--use-env XAI_API_KEY or X_AI_API_KEY");
+            // Comma-joined, because `--use-env A or B` is prose a user cannot paste.
+            expect(message).toContain("--use-env XAI_API_KEY,X_AI_API_KEY");
+            expect(message).not.toContain("XAI_API_KEY or ");
         }
     });
 
