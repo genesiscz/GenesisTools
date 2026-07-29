@@ -188,6 +188,38 @@ describe("enforcement classification (post-research)", () => {
     });
 });
 
+describe("marker scanning is gated on a failure envelope", () => {
+    test("does not read the word `spam` in a profile bio as feedback_required", async () => {
+        // `web_profile_info` answers 200 with the user's own text in it. Scanning
+        // that for enforcement substrings invents a block on a working account —
+        // and "no spam pls" is an extremely ordinary thing for a bio to say.
+        mockResponse('{"data":{"user":{"username":"real","biography":"dm me, no spam pls"}},"status":"ok"}', 200);
+
+        const response = await getJson<{ data: { user: { username: string } } }>("/x", { label: "test" });
+
+        expect(response.data.data.user.username).toBe("real");
+    });
+
+    test("does not read a bio asking you to wait a few minutes as a throttle", async () => {
+        mockResponse('{"data":{"user":{"biography":"live soon — please wait a few minutes"}},"status":"ok"}', 200);
+
+        const response = await getJson<{ status: string }>("/x", { label: "test" });
+
+        expect(response.data.status).toBe("ok");
+    });
+
+    test("still classifies enforcement that arrives as HTTP 200 plus a fail envelope", async () => {
+        // The gate must not be `!response.ok` alone: Instagram does answer 200 with
+        // `status: fail`, and dropping that would trade a false positive for a
+        // false negative.
+        mockResponse('{"message":"feedback_required","spam":true,"status":"fail"}', 200);
+
+        const error = (await getJson("/x", { label: "test" }).catch((err) => err)) as InstagramError;
+
+        expect(error.kind).toBe("feedback-required");
+    });
+});
+
 describe("please-wait throttle", () => {
     test("does not mistake the 401 + require_login throttle for an auth failure", async () => {
         // Encountered live on 2026-07-27 while developing this tool: Instagram

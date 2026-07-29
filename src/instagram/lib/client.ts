@@ -29,10 +29,22 @@ const WEB_USER_AGENT =
 
 /** Terminal responses Instagram gives when it has decided something about the account. */
 const CHECKPOINT_MARKERS = ["checkpoint_required", "challenge_required"] as const;
-const FEEDBACK_MARKERS = ["feedback_required", "spam"] as const;
+/** `"spam"` keeps its quotes: it is a JSON key here, and a bare word in bios. */
+const FEEDBACK_MARKERS = ['"spam"', "feedback_required"] as const;
 const IP_BLOCK_MARKERS = ["sentry_block", "rate_limit_error"] as const;
 /** Arrives as 401 + `require_login: true`, so it must be matched before login_required. */
 const PLEASE_WAIT_MARKERS = ["please wait a few minutes", "wait a few minutes"] as const;
+
+/**
+ * Instagram's failure envelope, and the gate every marker scan sits behind.
+ *
+ * The markers are ordinary English otherwise: a profile whose biography reads
+ * "no spam pls" or "please wait a few minutes, posting soon" comes back from
+ * `web_profile_info` as a perfectly good HTTP 200, and scanning that body for
+ * substrings turns a working account into a fabricated enforcement error. A
+ * marker only means what it says inside a response Instagram itself failed.
+ */
+const FAIL_ENVELOPE = /"status"\s*:\s*"fail"/;
 
 export interface RequestOptions {
     sessionId?: string;
@@ -98,8 +110,11 @@ interface Classification {
 
 function classify(status: number, body: string, authMode: AuthMode): Classification | undefined {
     const lower = body.toLowerCase();
+    // Instagram answers enforcement with 200 + a fail envelope as readily as with
+    // a 4xx, so neither signal alone is enough to decide the body is worth scanning.
+    const failed = status >= 400 || FAIL_ENVELOPE.test(lower);
 
-    if (CHECKPOINT_MARKERS.some((marker) => lower.includes(marker))) {
+    if (failed && CHECKPOINT_MARKERS.some((marker) => lower.includes(marker))) {
         const challengeUrl = extractChallengeUrl(body);
 
         // instaloader and instagrapi agree: "/suspended/" in the challenge URL is
@@ -111,19 +126,19 @@ function classify(status: number, body: string, authMode: AuthMode): Classificat
         return { kind: "checkpoint", challengeUrl };
     }
 
-    if (FEEDBACK_MARKERS.some((marker) => lower.includes(marker))) {
+    if (failed && FEEDBACK_MARKERS.some((marker) => lower.includes(marker))) {
         return { kind: "feedback-required" };
     }
 
-    if (IP_BLOCK_MARKERS.some((marker) => lower.includes(marker))) {
+    if (failed && IP_BLOCK_MARKERS.some((marker) => lower.includes(marker))) {
         return { kind: "rate-limited" };
     }
 
-    if (PLEASE_WAIT_MARKERS.some((marker) => lower.includes(marker))) {
+    if (failed && PLEASE_WAIT_MARKERS.some((marker) => lower.includes(marker))) {
         return { kind: "please-wait" };
     }
 
-    if (lower.includes("login_required") || lower.includes("logged_out")) {
+    if (failed && (lower.includes("login_required") || lower.includes("logged_out"))) {
         return { kind: "session-required" };
     }
 
