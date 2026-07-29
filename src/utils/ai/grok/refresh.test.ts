@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -254,6 +254,26 @@ describe("refreshGrokAuth", () => {
         expect(raw.settings).toEqual({ theme: "dark" });
         expect(raw["https://auth.x.ai::logged-out"]).toEqual({ auth_mode: "oidc", key: "" });
         expect((raw[ENTRY_KEY] as GrokAuthEntry).key).toBe(FRESH);
+    });
+
+    it("leaves no temp file behind when the atomic write cannot complete", async () => {
+        // The temp file carries the access AND refresh tokens, so a write that
+        // fails partway must not leave one on disk. The directory is revoked
+        // mid-grant, after the initial read has already succeeded.
+        writeAuth(defaultEntries());
+        stubFetch({
+            calls: [],
+            onToken: () => {
+                chmodSync(dir, 0o500);
+            },
+        });
+
+        expect(await refreshGrokAuth({ path: authPath })).toBeNull();
+
+        chmodSync(dir, 0o700);
+        expect(readdirSync(dir).filter((entry) => entry.endsWith(".tmp"))).toEqual([]);
+        // The original token is untouched, so the account is no worse off.
+        expect(readAuth()[ENTRY_KEY]?.key).toBe(EXPIRED);
     });
 
     it("keeps a concurrent refresh of the SAME entry rather than clobbering it", async () => {
