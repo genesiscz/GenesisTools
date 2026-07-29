@@ -91,13 +91,27 @@ export class ChatEngine {
         return engine.sendMessage(options.message, options.tools);
     }
 
-    /** What `coreChat` needs to know about this engine's configured model. */
+    /**
+     * What `coreChat` needs to know about this engine's configured model.
+     *
+     * `accountId` / `provider` / `modelId` / `app` are not optional decoration:
+     * `logUsage` falls back to `accountId: "unknown"` and `modelId: target.label`
+     * when they are absent, and the label is `<provider>/<model>`, which
+     * `catalogPricing`'s `byId` can never match. Every `tools ask` row was
+     * therefore written unpriced and unattributed — into an append-only log, so
+     * the cross-surface total the usage layer exists to produce was blind to the
+     * busiest emitter in the repo.
+     */
     private callTarget() {
         return {
             model: this.config.model,
             providerType: this.config.providerType,
             systemPromptPrefix: this.config.providerChoice?.provider.systemPromptPrefix,
             label: `${this.config.provider}/${this.config.modelName}`,
+            accountId: this.config.providerChoice?.provider.account?.name ?? this.config.provider,
+            provider: this.config.providerType ?? this.config.provider,
+            modelId: this.config.modelName,
+            app: "ask",
         };
     }
 

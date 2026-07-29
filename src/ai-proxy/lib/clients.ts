@@ -1,8 +1,10 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { statSync } from "node:fs";
 import { extractBearerToken } from "@app/ai-proxy/lib/auth-middleware";
 import type { AiProxyClientConfig, AiProxyConfig, AiProxyProviderType } from "@app/ai-proxy/lib/types";
 import { logger } from "@genesiscz/utils/logger";
 import { isSecureRef, resolveSecret } from "@genesiscz/utils/security";
+import { vaultAdmin } from "@genesiscz/utils/security/SecretStore";
 
 export const OWNER_CLIENT_NAME = "owner";
 
@@ -157,6 +159,31 @@ export async function resolveClient(req: Request, config: AiProxyConfig): Promis
     return resolved;
 }
 
+/**
+ * Resolved vault keys, keyed by the vault file's mtime.
+ *
+ * `resolveSecret` reads and parses the whole vault, derives an HKDF subkey and
+ * runs an AES-GCM decrypt, with no caching of its own. `resolveClient` calls it
+ * once PER CLIENT PER REQUEST while comparing candidates, so a five-client proxy
+ * paid five file reads, five parses and five decrypts on every
+ * `/v1/chat/completions`. Stamping on mtime keeps a rotated or edited vault
+ * picked up immediately, and nothing about the comparison changes: the loop
+ * still visits every candidate in constant position and still hashes with
+ * `digestsEqual`.
+ */
+let keyCache: { mtimeMs: number; keys: Map<string, string | undefined> } | null = null;
+
+function vaultStamp(): number {
+    try {
+        return statSync(vaultAdmin.path()).mtimeMs;
+    } catch (err) {
+        // No vault yet is normal on a plaintext-only config; a zero stamp simply
+        // means "nothing cached from a vault that does not exist".
+        logger.debug({ err }, "ai-proxy: vault not present for the client-key cache");
+        return 0;
+    }
+}
+
 async function clientKey(client: AiProxyClientConfig): Promise<string | undefined> {
     if (typeof client.key === "string") {
         return client.key;
@@ -166,7 +193,18 @@ async function clientKey(client: AiProxyClientConfig): Promise<string | undefine
         return undefined;
     }
 
+    const stamp = vaultStamp();
+
+    if (!keyCache || keyCache.mtimeMs !== stamp) {
+        keyCache = { mtimeMs: stamp, keys: new Map() };
+    }
+
+    if (keyCache.keys.has(client.key.path)) {
+        return keyCache.keys.get(client.key.path);
+    }
+
     const value = await resolveSecret(client.key);
+    keyCache.keys.set(client.key.path, value);
 
     if (value === undefined) {
         logger.warn(
