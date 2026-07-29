@@ -59,6 +59,10 @@ export function apiKeyStatus(account: AiProxyAccountConfig): ApiKeyStatus {
     };
 }
 
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 const SHELL_RC_FILES = [".zshrc", ".zprofile", ".zshenv", ".bashrc", ".bash_profile", ".profile"];
 
 async function shellConfigCandidates(): Promise<string[]> {
@@ -83,7 +87,10 @@ async function shellConfigCandidates(): Promise<string[]> {
  * variable may come from a keychain helper, a launch agent, or a parent shell).
  */
 export async function findEnvSourceFile(envName: string): Promise<string | undefined> {
-    const pattern = new RegExp(`^\\s*(export\\s+)?${envName}\\s*=`, "m");
+    // `envName` is a config value (`apiKeyEnv`), so it reaches here unvalidated:
+    // unescaped, a `(` would throw SyntaxError out of an interactive prompt and
+    // a `.` would match a variable the account does not actually read.
+    const pattern = new RegExp(`^\\s*(export\\s+)?${escapeRegExp(envName)}\\s*=`, "m");
 
     for (const file of await shellConfigCandidates()) {
         try {

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { apiKeyStatus, defaultApiKeyEnvName, maskApiKey } from "@app/ai-proxy/lib/providers/api-key-state";
+import {
+    apiKeyStatus,
+    defaultApiKeyEnvName,
+    findEnvSourceFile,
+    maskApiKey,
+} from "@app/ai-proxy/lib/providers/api-key-state";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { env } from "@genesiscz/utils/env";
 
@@ -50,5 +55,13 @@ describe("apiKeyStatus", () => {
 
     it("never reveals a short key", () => {
         expect(maskApiKey("short")).toBe("****");
+    });
+});
+
+describe("findEnvSourceFile", () => {
+    it("treats a regex-shaped env name as literal instead of throwing", async () => {
+        // `apiKeyEnv` is an unvalidated config value, and this runs inside the
+        // interactive `accounts set-key` prompt where a throw is user-visible.
+        expect(await findEnvSourceFile("KEY(")).toBeUndefined();
     });
 });
