@@ -115,6 +115,16 @@ export interface CallTarget {
     modelId?: string;
     /** Which surface is spending, for `defaults.app.*` and for the usage row. */
     app?: string;
+    /**
+     * Release a binding THIS function resolved, set only when it did.
+     *
+     * Local runtimes hold native handles, so a binding nobody frees is a real
+     * leak. The ownership rule is what makes this safe: a caller who passed an
+     * already-resolved `ResolvedBinding` still owns it and may reuse it for
+     * further calls, so we must not dispose that one. Only the binding we
+     * created from a bare `ModelRef` is ours to release.
+     */
+    dispose?: () => void;
 }
 
 export interface CoreChatOptions {
@@ -333,8 +343,8 @@ export async function resolveCallTarget(options: {
         throw new Error("No model named: pass `model` (a ModelRef) or `providerChoice`.");
     }
 
-    const resolved =
-        typeof model === "string" ? await resolveModel(model, { task: options.task, app: options.app }) : model;
+    const selfResolved = typeof model === "string";
+    const resolved = selfResolved ? await resolveModel(model, { task: options.task, app: options.app }) : model;
 
     return {
         model: resolved.binding.language(resolved.model.id),
@@ -345,12 +355,23 @@ export async function resolveCallTarget(options: {
         provider: resolved.account.provider,
         modelId: resolved.model.id,
         app: options.app,
+        ...(selfResolved ? { dispose: () => resolved.binding.dispose?.() } : {}),
     };
 }
 
 export async function callLLM(options: CallLLMOptions): Promise<CallLLMResult> {
     const target = await resolveCallTarget(options);
 
+    try {
+        return await runCall(target, options);
+    } finally {
+        // Only fires for a binding resolveCallTarget created itself; a caller
+        // that passed its own ResolvedBinding keeps ownership.
+        target.dispose?.();
+    }
+}
+
+async function runCall(target: CallTarget, options: CallLLMOptions): Promise<CallLLMResult> {
     if (!options.streaming) {
         const result = await coreChat({
             target,
@@ -403,22 +424,38 @@ export async function streamLLM(
 ): Promise<CallLLMResult> {
     const target = await resolveCallTarget(options);
 
-    const result = await coreChat({
-        target,
-        system: options.systemPrompt,
-        prompt: options.userPrompt,
-        maxTokens: options.maxTokens,
-        temperature: options.temperature,
-        headers: options.headers,
-        stream: true,
-        onChunk: options.onChunk,
-    });
+    try {
+        const result = await coreChat({
+            target,
+            system: options.systemPrompt,
+            prompt: options.userPrompt,
+            maxTokens: options.maxTokens,
+            temperature: options.temperature,
+            headers: options.headers,
+            stream: true,
+            onChunk: options.onChunk,
+        });
 
-    return { content: result.content, usage: result.usage };
+        return { content: result.content, usage: result.usage };
+    } finally {
+        target.dispose?.();
+    }
 }
 
 export async function callLLMStructured<T>(options: CallLLMStructuredOptions<T>): Promise<CallLLMStructuredResult<T>> {
     const target = await resolveCallTarget(options);
+
+    try {
+        return await runStructured(target, options);
+    } finally {
+        target.dispose?.();
+    }
+}
+
+async function runStructured<T>(
+    target: CallTarget,
+    options: CallLLMStructuredOptions<T>
+): Promise<CallLLMStructuredResult<T>> {
     const { schema, maxTokens, temperature, onPartial } = options;
 
     const callArgs = {
