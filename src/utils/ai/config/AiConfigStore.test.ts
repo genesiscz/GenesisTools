@@ -167,6 +167,29 @@ describe("AiConfigStore mutation", () => {
         expect((await AiConfigStore.load()).account("acc_new")?.name).toBe("added");
     });
 
+    // An `async` callback is assignable to a `void`-returning parameter, so
+    // `fn(data)` without an await type-checked and then applied its mutations
+    // after the schema parse and the write. The account vanished with no error
+    // and no log. Anything the callback does after its first await is the part
+    // that gets dropped, so this fixture awaits before touching `data`.
+    test("mutate awaits an async callback instead of dropping what it does after the first await", async () => {
+        const store = await AiConfigStore.load();
+
+        await store.mutate(async (data) => {
+            // A timer, not `await Promise.resolve()`. An unawaited callback still
+            // wins the microtask race against the parse, so only work that
+            // outlives a macrotask tick — a real vault write, which is what the
+            // doc comment above tells callers to nest here — actually gets lost.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            data.accounts.push(account("acc_async", "added-after-await"));
+        });
+
+        expect(store.account("acc_async")?.name).toBe("added-after-await");
+
+        AiConfigStore.invalidate();
+        expect((await AiConfigStore.load()).account("acc_async")?.name).toBe("added-after-await");
+    });
+
     test("mutate re-reads first, so a concurrent writer's account is not lost", async () => {
         const store = await AiConfigStore.load();
 

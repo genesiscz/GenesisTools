@@ -194,9 +194,16 @@ export class AiConfigStore {
      * INSIDE this callback: config lock first, vault lock second, always in that
      * order, or two processes rotating a token can deadlock.
      */
-    async mutate(fn: (data: AiConfigData) => void): Promise<void> {
+    /**
+     * The callback may be async, and it must be awaited. TypeScript accepts an
+     * `async` function wherever a `void`-returning one is expected, so a
+     * `fn(data)` without an await compiled fine and then applied its mutations
+     * AFTER the schema parse and the write — the change vanished with no error
+     * and no log.
+     */
+    async mutate(fn: (data: AiConfigData) => void | Promise<void>): Promise<void> {
         await this.withLock(async (data) => {
-            fn(data);
+            await fn(data);
         });
     }
 
