@@ -2,6 +2,7 @@ import { localPlugins } from "../local/adapters";
 import { aiProxyPlugin } from "./plugins/ai-proxy";
 import { anthropicSubPlugin } from "./plugins/anthropic-sub";
 import { apiKeyPlugins } from "./plugins/api-key";
+import { asrVendorPlugins } from "./plugins/asr-vendors";
 import { githubCopilotPlugin } from "./plugins/github-copilot";
 import { grokSubPlugin } from "./plugins/grok-sub";
 import { openAiSubPlugin } from "./plugins/openai-sub";
@@ -28,7 +29,7 @@ export function registerBuiltInPlugins(): void {
     registerPlugin(githubCopilotPlugin);
     registerPlugin(aiProxyPlugin);
 
-    for (const plugin of [...apiKeyPlugins, ...localPlugins]) {
+    for (const plugin of [...apiKeyPlugins, ...asrVendorPlugins, ...localPlugins]) {
         registerPlugin(plugin);
     }
 

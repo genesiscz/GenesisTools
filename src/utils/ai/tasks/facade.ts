@@ -8,10 +8,13 @@ import type {
     EmbedOptions,
     SummarizationResult,
     SummarizeOptions,
+    TranscribeOptions,
+    TranscriptionResult,
     TranslateOptions,
     TranslationResult,
 } from "../types";
 import { resolveForTask } from "./resolve-task";
+import { Transcriber } from "./Transcriber";
 
 /**
  * One entry point per task verb.
@@ -102,6 +105,32 @@ export const ai = {
                 }));
             }
         );
+    },
+
+    /**
+     * Cloud or on-device, one call.
+     *
+     * `Transcriber` stays the engine: chunking audio too large for a single
+     * upload, retrying transient failures, cleaning repetition loops and running
+     * local diarization over the WHOLE buffer are none of them vendor-specific,
+     * and re-deriving them here would be two implementations of the same subtle
+     * rules. What changed underneath is only who gets asked — its provider now
+     * comes from `resolveForTask` and a plugin binding.
+     */
+    async transcribe(
+        audio: Buffer | string,
+        options?: TaskCommonOptions & TranscribeOptions
+    ): Promise<TranscriptionResult> {
+        const transcriber = await Transcriber.create({
+            ...(options?.model ? { model: options.model } : {}),
+            ...(options?.app ? { app: options.app } : {}),
+        });
+
+        try {
+            return await transcriber.transcribe(audio, options);
+        } finally {
+            transcriber.dispose();
+        }
     },
 
     async summarize(text: string, options?: TaskCommonOptions & SummarizeOptions): Promise<SummarizationResult> {

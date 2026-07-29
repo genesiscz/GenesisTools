@@ -8,7 +8,7 @@ import { rateLimitAwareDelay, retry } from "@genesiscz/utils/async";
 import { CLOUD_PROVIDER_TYPES } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
 import { AIConfig } from "../AIConfig";
-import { getProviderForTask } from "../providers";
+import { fromTranscriptionModel } from "../providers/transcription-adapter";
 import { assignSpeakers } from "../transcription/align-speakers";
 import { cleanRepetitions } from "../transcription/repetition-cleanup";
 import type {
@@ -18,6 +18,7 @@ import type {
     TranscriptionResult,
     TranscriptionSegment,
 } from "../types";
+import { resolveForTask } from "./resolve-task";
 
 const MAX_CLOUD_BYTES = 24 * 1024 * 1024;
 const RETRY_DELAY = rateLimitAwareDelay();
@@ -42,6 +43,18 @@ function shouldRetryTransient(error: unknown): boolean {
     return true;
 }
 
+/**
+ * `--provider deepgram --model nova-3` is `deepgram/nova-3`; a bare `--model` is
+ * a bare ref; neither is `undefined`, which means "use the config default".
+ */
+function modelRefFrom(options?: { provider?: string; model?: string }): string | undefined {
+    if (options?.provider && options.model) {
+        return `${options.provider}/${options.model}`;
+    }
+
+    return options?.provider ?? options?.model;
+}
+
 export class Transcriber {
     private provider: AITranscriptionProvider;
 
@@ -49,23 +62,35 @@ export class Transcriber {
         this.provider = provider;
     }
 
-    static async create(options?: { provider?: string; model?: string; persist?: boolean }): Promise<Transcriber> {
-        const config = await AIConfig.load();
-
+    /**
+     * `provider` and `model` are the CLI's two halves of a model ref
+     * (`tools transcribe --provider local-hf`, `--local` being shorthand for it),
+     * so they are spelled as one here and handed to the single resolution ladder
+     * — which then applies the same availability fallback the old
+     * `getProviderForTask` did, via `resolveForTask`.
+     */
+    static async create(options?: {
+        provider?: string;
+        model?: string;
+        persist?: boolean;
+        app?: string;
+    }): Promise<Transcriber> {
         if (options?.persist && options.provider) {
+            const config = await AIConfig.load();
             await config.setTask("transcribe", {
                 provider: options.provider as AIProviderType,
                 model: options.model,
             });
         }
 
-        const provider = await getProviderForTask("transcribe", config);
+        const resolved = await resolveForTask({
+            task: "transcribe",
+            model: modelRefFrom(options),
+            app: options?.app,
+            needs: "transcription",
+        });
 
-        if (!("transcribe" in provider)) {
-            throw new Error(`Provider "${provider.type}" does not support transcription`);
-        }
-
-        return new Transcriber(provider as AITranscriptionProvider);
+        return new Transcriber(fromTranscriptionModel(resolved));
     }
 
     async transcribe(audioOrPath: Buffer | string, options?: TranscribeOptions): Promise<TranscriptionResult> {

@@ -5,7 +5,8 @@ import { AILocalProvider } from "../../providers/AILocalProvider";
 import { AIOllamaProvider } from "../../providers/AIOllamaProvider";
 import { toEmbeddingModel } from "../../providers/embedding-adapter";
 import type { BindContext, Capability, ProviderBinding, ProviderPlugin } from "../../providers/plugin-types";
-import type { AIEmbeddingProvider } from "../../types";
+import { toTranscriptionModel } from "../../providers/transcription-adapter";
+import type { AIEmbeddingProvider, AITranscriptionProvider } from "../../types";
 import { ArtifactStore } from "../artifacts";
 import { byTask, type LocalModelDescriptor } from "../descriptors";
 
@@ -25,6 +26,8 @@ interface LocalPluginSpec {
     capabilities: Capability[];
     /** Runtimes load a model at construction, so this is per model id. */
     createEmbedder?: (modelId: string) => AIEmbeddingProvider;
+    /** Same contract for speech-to-text: one runtime per model id, cached on the binding. */
+    createTranscriber?: (modelId: string) => AITranscriptionProvider;
 }
 
 const SPECS: LocalPluginSpec[] = [
@@ -32,6 +35,10 @@ const SPECS: LocalPluginSpec[] = [
         id: "local-hf",
         capabilities: ["embed", "transcribe", "translate", "summarize"],
         createEmbedder: () => new AILocalProvider(),
+        // Whisper via transformers.js. The model id reaches the runtime through
+        // the per-call options rather than the constructor, so one instance
+        // serves whichever whisper the descriptor catalogue named.
+        createTranscriber: () => new AILocalProvider(),
     },
     {
         id: "ollama",
@@ -99,7 +106,28 @@ function buildPlugin(spec: LocalPluginSpec): ProviderPlugin {
         credential: { fields: [], envKeys: [] },
 
         async bind(ctx: BindContext): Promise<ProviderBinding> {
-            const runtimes = new Map<string, AIEmbeddingProvider>();
+            // Keyed by task as well as model id: a runtime instance holds ONE
+            // loaded model, so an embedder and a transcriber for the same id are
+            // still two native handles, and `dispose()` has to free both.
+            const runtimes = new Map<string, { dispose?(): void }>();
+            const { createEmbedder, createTranscriber } = spec;
+
+            function runtimeFor<T extends { dispose?(): void }>(
+                task: string,
+                modelId: string,
+                create: (id: string) => T
+            ): T {
+                const key = `${task}:${modelId}`;
+                const existing = runtimes.get(key) as T | undefined;
+
+                if (existing) {
+                    return existing;
+                }
+
+                const created = create(modelId);
+                runtimes.set(key, created);
+                return created;
+            }
 
             return {
                 accountId: ctx.account.id,
@@ -110,23 +138,24 @@ function buildPlugin(spec: LocalPluginSpec): ProviderPlugin {
                         `${spec.id} has no chat model (${modelId}); it provides ${spec.capabilities.join(", ")}.`
                     );
                 },
-                ...(spec.createEmbedder
+                ...(createEmbedder
                     ? {
-                          embedding: (modelId: string) => {
-                              let runtime = runtimes.get(modelId);
-
-                              if (!runtime) {
-                                  runtime = spec.createEmbedder?.(modelId);
-
-                                  if (!runtime) {
-                                      throw new Error(`${spec.id} cannot embed`);
-                                  }
-
-                                  runtimes.set(modelId, runtime);
-                              }
-
-                              return toEmbeddingModel({ provider: runtime, providerId: spec.id, modelId });
-                          },
+                          embedding: (modelId: string) =>
+                              toEmbeddingModel({
+                                  provider: runtimeFor("embed", modelId, createEmbedder),
+                                  providerId: spec.id,
+                                  modelId,
+                              }),
+                      }
+                    : {}),
+                ...(createTranscriber
+                    ? {
+                          transcription: (modelId: string) =>
+                              toTranscriptionModel({
+                                  provider: runtimeFor("transcribe", modelId, createTranscriber),
+                                  providerId: spec.id,
+                                  modelId,
+                              }),
                       }
                     : {}),
                 dispose: () => {
