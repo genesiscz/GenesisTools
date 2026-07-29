@@ -9,7 +9,13 @@ handleReadmeFlag(import.meta.url);
 import { runTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { type CallToolResult, type ListToolsResult, Server } from "@modelcontextprotocol/server";
+import {
+    type CallToolResult,
+    type ListToolsResult,
+    ProtocolError,
+    ProtocolErrorCode,
+    Server,
+} from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { checkLLMModel, downloadLLMModel } from "@nanocollective/get-md";
 import { type EngineName, getEngine, listEngines } from "./engines/index.js";
@@ -232,9 +238,14 @@ server.setRequestHandler("tools/call", async (request): Promise<CallToolResult> 
             return (await handleFetchWebMarkdown(args)) as CallToolResult;
         }
 
-        return { content: [{ type: "text" as const, text: `Unknown tool: ${name}` }], isError: true };
+        throw new ProtocolError(ProtocolErrorCode.MethodNotFound, `Unknown tool: ${name}`);
     } catch (e: unknown) {
+        if (e instanceof ProtocolError) {
+            throw e;
+        }
+
         const message = e instanceof Error ? e.message : String(e);
+        logger.warn({ error: e, tool: name }, "mcp-web-reader tool call failed");
         return {
             isError: true,
             content: [{ type: "text" as const, text: `Error: ${message}` }],

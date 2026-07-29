@@ -8,7 +8,13 @@ import type { EntryFilter, HarFile, HarSession } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
 import { formatBytes, formatDuration } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
-import { type CallToolResult, type ListToolsResult, Server } from "@modelcontextprotocol/server";
+import {
+    type CallToolResult,
+    type ListToolsResult,
+    ProtocolError,
+    ProtocolErrorCode,
+    Server,
+} from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 
 export async function startMcpServer(): Promise<void> {
@@ -404,10 +410,15 @@ export async function startMcpServer(): Promise<void> {
                 }
 
                 default:
-                    return { content: [{ type: "text" as const, text: `Unknown tool: ${name}` }], isError: true };
+                    throw new ProtocolError(ProtocolErrorCode.MethodNotFound, `Unknown tool: ${name}`);
             }
         } catch (error) {
+            if (error instanceof ProtocolError) {
+                throw error;
+            }
+
             const message = error instanceof Error ? error.message : String(error);
+            logger.warn({ error, tool: name }, "[har-analyzer] MCP tool call failed");
             return { content: [{ type: "text" as const, text: `Error: ${message}` }], isError: true };
         }
     });
