@@ -84,7 +84,19 @@ export function registerAskCommand(program: Command): void {
                     ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
                 };
 
-                const streamTarget = opts.stream ? process.stdout : undefined;
+                // Streaming writes model chunks straight to stdout, so combining it
+                // with --json produced answer text FOLLOWED by JSON: not parseable
+                // by anything. Machine-readable output wins, and the incompatibility
+                // is stated rather than silently resolved.
+                const flags = cmd.optsWithGlobals();
+                const machineReadable = flags.json === true || flags.clipboard === true;
+
+                if (opts.stream && machineReadable) {
+                    out.printlnErr("--stream is ignored with --json/--clipboard: the result must stay parseable.");
+                }
+
+                const streaming = opts.stream === true && !machineReadable;
+                const streamTarget = streaming ? process.stdout : undefined;
 
                 const result = opts.session
                     ? await askInSession({
@@ -92,7 +104,7 @@ export function registerAskCommand(program: Command): void {
                           question,
                           providerChoice,
                           topK: opts.topK,
-                          streaming: opts.stream,
+                          streaming,
                           streamTarget,
                           session: (
                               await ensureAskSession({
@@ -109,7 +121,7 @@ export function registerAskCommand(program: Command): void {
                           question,
                           providerChoice,
                           topK: opts.topK,
-                          streaming: opts.stream,
+                          streaming,
                           streamTarget,
                           videoIds: (await resolveAskScope(yt, scopeInput)).videoIds,
                       });
@@ -128,7 +140,7 @@ export function registerAskCommand(program: Command): void {
                 await renderOrEmit({
                     // Streaming already wrote the answer to stdout, so repeating it
                     // here would print it twice.
-                    text: [opts.stream ? "" : result.answer, pc.dim("Citations:"), citations, ...notes]
+                    text: [streaming ? "" : result.answer, pc.dim("Citations:"), citations, ...notes]
                         .filter(Boolean)
                         .join("\n"),
                     json: result,

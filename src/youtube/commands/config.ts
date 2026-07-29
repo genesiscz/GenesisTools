@@ -79,7 +79,39 @@ export function registerConfigCommand(program: Command): void {
                 // word failing to parse is the expected case, not an error.
             }
 
-            await yt.config.set(key, parsed as never);
+            // The cast below erases the type error, so without this check
+            // `config set concurrency null` or `config set powerUsers 1` would be
+            // persisted and only explode later, in whatever consumer indexed the
+            // array or read a member. Compare against the CURRENT value's runtime
+            // shape, which is the only schema available here.
+            //
+            // ⚠️ This catches shape, not VALUE: `config set defaultQuality garbage`
+            // is still a string and still passes. Real per-key validation belongs
+            // in `yt.config` so the HTTP PATCH route cannot diverge from the CLI.
+            // SafeJSON is comment-json, which BOXES scalars so it can hang comment
+            // metadata off them: `SafeJSON.parse('"a"')` is a String object, and
+            // `typeof` reports "object". Comparing that against a real string
+            // would have rejected every valid scalar, so unwrap first.
+            const unwrapped =
+                parsed instanceof String || parsed instanceof Number || parsed instanceof Boolean
+                    ? parsed.valueOf()
+                    : parsed;
+            const current = all[key];
+            const sameShape =
+                typeof unwrapped === typeof current &&
+                Array.isArray(unwrapped) === Array.isArray(current) &&
+                (unwrapped === null) === (current === null);
+
+            if (!sameShape) {
+                out.error(
+                    `"${key}" is ${Array.isArray(current) ? "an array" : `a ${current === null ? "null" : typeof current}`}, ` +
+                        `but ${value} is ${Array.isArray(unwrapped) ? "an array" : `a ${unwrapped === null ? "null" : typeof unwrapped}`}.`
+                );
+                process.exitCode = 1;
+                return;
+            }
+
+            await yt.config.set(key, unwrapped as never);
             const updated = await yt.config.getAll();
 
             await renderOrEmit({
