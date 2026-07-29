@@ -18,6 +18,12 @@ import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { finishKeychainSession, injectSecondaryLogin, inspectKeychainBeforeInject } from "../lib/keychain-session";
+import {
+    installTeammateWrapper,
+    removeTeammateWrapper,
+    resolveClaudeBinaryForTeammates,
+    sweepStaleTeammateWrappers,
+} from "../lib/teammate-wrapper";
 import { pickSessionForResume } from "./resume";
 
 /**
@@ -36,6 +42,7 @@ interface StartOptions {
     resume?: string | boolean;
     continue?: boolean;
     keychain?: boolean;
+    cmux?: boolean;
 }
 
 /**
@@ -72,6 +79,102 @@ async function ensureOnboardingSkippedForOAuthToken(): Promise<void> {
 
 function shellQuote(arg: string): string {
     return `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+/** Same bound findClaudeCommand uses — an rc file that blocks must not hang the launch. */
+const CMUX_PROBE_TIMEOUT_MS = 3000;
+
+/**
+ * `cmux claude-teams` launches claude with agent teams enabled and a tmux shim on PATH
+ * (so Claude's tmux calls become cmux splits), forwarding every remaining arg to claude.
+ * Resolved through the same interactive shell as findClaudeCommand so a PATH set up in
+ * the user's rc (e.g. ~/.local/bin) is visible.
+ */
+async function findCmuxTeamsCommand(shell: string): Promise<string> {
+    const proc = Bun.spawn({
+        cmd: [shell, "-ic", "command -v cmux"],
+        stdio: ["ignore", "pipe", "ignore"],
+    });
+
+    let path: string | undefined;
+
+    try {
+        const stdout = await Promise.race([
+            new Response(proc.stdout).text(),
+            new Promise<string>((_, reject) => setTimeout(() => reject(new Error("timeout")), CMUX_PROBE_TIMEOUT_MS)),
+        ]);
+        await proc.exited;
+
+        // A failed `command -v` still prints whatever the rc init wrote to stdout,
+        // and that text would be exec'd as the command. Only a clean exit with a
+        // single bare token (absolute path, or a function/builtin name) counts.
+        const candidate = stdout.trim().split("\n").pop()?.trim();
+        if (proc.exitCode === 0 && candidate && !/\s/.test(candidate)) {
+            path = candidate;
+        }
+    } catch (error) {
+        logger.debug({ error, shell }, "[start] cmux probe timed out or failed");
+    } finally {
+        proc.kill();
+    }
+
+    if (!path) {
+        out.error(pc.red("--cmux needs the `cmux` CLI on PATH, but it was not found."));
+        out.printlnErr(pc.dim("Install cmux (or drop --cmux to launch claude directly)."));
+        await out.flush();
+        process.exit(1);
+    }
+
+    logger.debug({ path, shell }, "[start] resolved cmux for claude-teams launch");
+    return `${shellQuote(path)} claude-teams`;
+}
+
+/**
+ * `cmux claude-teams` execs the bare `claude` binary, bypassing the user's shell wrapper
+ * (`ccc`, findClaudeCommand's first candidate) whose whole job is adding
+ * `--dangerously-skip-permissions`. Re-add it so --cmux sessions behave like the default
+ * launch instead of silently regressing to permission prompts. An explicit
+ * `--permission-mode` (or the flag itself) always wins.
+ */
+export function cmuxPermissionArgs(forwarded: string[]): string[] {
+    const alreadySet = forwarded.some(
+        (arg) => arg === "--dangerously-skip-permissions" || arg.startsWith("--permission-mode")
+    );
+
+    if (alreadySet) {
+        logger.debug({ forwarded }, "[start] --cmux: caller set permission flags, not injecting");
+        return [];
+    }
+
+    return ["--dangerously-skip-permissions"];
+}
+
+/**
+ * Argv appended after the resolved claude command. Forwarded args go LAST because
+ * they may contain a `--` separator or a positional prompt, past which claude stops
+ * reading options — anything we inject after that would be swallowed as prompt text.
+ */
+export function buildLaunchArgs(input: {
+    modelId?: string;
+    resumeArgs: string[];
+    passthrough: string[];
+    cmux: boolean;
+}): string[] {
+    const args: string[] = [];
+
+    if (input.modelId) {
+        args.push("--model", input.modelId);
+    }
+
+    const forwarded = [...input.resumeArgs, ...input.passthrough];
+
+    if (input.cmux) {
+        args.push(...cmuxPermissionArgs(forwarded));
+    }
+
+    args.push(...forwarded);
+
+    return args;
 }
 
 /** Headless launch (`-p`/`--print`): claude prints a result and exits, no TUI. */
@@ -544,20 +647,16 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         await ensureOnboardingSkippedForOAuthToken();
     }
 
-    const cmd = await findClaudeCommand();
     const shell = env.paths.getShell("/bin/sh");
+    const cmd = opts.cmux ? await findCmuxTeamsCommand(shell) : await findClaudeCommand();
 
-    const extraArgs: string[] = [];
-    if (modelId) {
-        extraArgs.push("--model", modelId);
-    }
-
-    extraArgs.push(...resumeArgs, ...passthrough);
+    const extraArgs = buildLaunchArgs({ modelId, resumeArgs, passthrough, cmux: opts.cmux === true });
 
     const suffix = extraArgs.length > 0 ? ` ${extraArgs.map(shellQuote).join(" ")}` : "";
     const detail = [
         account.label ? `(${account.label})` : "",
         modelId ? `model ${pc.magenta(modelId)}` : "",
+        opts.cmux ? pc.cyan("via cmux claude-teams") : "",
         resumeArgs.length > 0 ? pc.dim(resumeArgs.join(" ")) : "",
     ]
         .filter(Boolean)
@@ -569,7 +668,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         out.printlnErr(pc.dim(`Starting Claude as ${pc.cyan(accountName)} (${mode})${detail ? ` ${detail}` : ""}...`));
     }
 
-    logger.debug({ cmd, accountName, modelId, resumeArgs, passthrough, mode, headless }, "Spawning claude");
+    logger.debug({ cmd, accountName, modelId, resumeArgs, passthrough, extraArgs, mode, headless }, "Spawning claude");
 
     let launchEnv: Record<string, string | undefined>;
 
@@ -606,36 +705,70 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         };
     }
 
-    const proc = Bun.spawn({
-        cmd: [shell, "-ic", `exec ${cmd}${suffix}`],
-        stdio: ["inherit", "inherit", headless ? "pipe" : "inherit"],
-        env: launchEnv,
-    });
-
-    const stderrPump = headless && proc.stderr ? forwardStderrDroppingZleNoise(proc.stderr) : null;
-
-    const exitCode = await proc.exited;
-    if (stderrPump) {
-        await stderrPump;
+    // Agent-team tmux teammates do NOT inherit CLAUDE_CODE_OAUTH_TOKEN (CC spawn
+    // allowlist). Point CLAUDE_CODE_TEAMMATE_COMMAND at a per-PID wrapper that
+    // re-exports this launch env. See Claude/Bugs/TeammateTmuxNotRespectingOauthTokens.
+    let teammateWrapperPath: string | undefined;
+    if (!opts.keychain && account.tokens.longLivedToken) {
+        try {
+            sweepStaleTeammateWrappers();
+            const installed = installTeammateWrapper({
+                claudeBin: resolveClaudeBinaryForTeammates(),
+                env: {
+                    accountName: account.name,
+                    oauthToken: account.tokens.longLivedToken,
+                    subscriptionType: account.label?.split(" ")[0] ?? "max",
+                    fableModel: "claude-fable-5",
+                    customModelOption: "claude-fable-5[1m]",
+                    customModelOptionName: "Fable 5",
+                    customModelOptionDescription: "Fable 5 · Most capable for hardest and longest-running tasks",
+                },
+            });
+            teammateWrapperPath = installed.path;
+            launchEnv.CLAUDE_CODE_TEAMMATE_COMMAND = installed.path;
+        } catch (error) {
+            logger.warn({ error }, "[start] teammate OAuth wrapper install failed — tmux mates may not auth");
+        }
     }
 
-    if (opts.keychain) {
-        try {
-            const result = await finishKeychainSession(aiConfig, injectedUuid, foreignBackupPath);
+    let exitCode: number;
 
-            if (result.status === "synced") {
-                out.printlnErr(pc.dim(`Synced rotated keychain tokens back to "${result.account}".`));
-            } else if (result.status === "no-match") {
-                out.printlnErr(
-                    pc.yellow(
-                        `Keychain now holds a different login (uuid ${result.uuid}) — left untouched, nothing synced.`
-                    )
-                );
-            }
-        } catch (err) {
-            logger.error({ err }, "[keychain] post-session sync failed");
-            out.printlnErr(pc.red(`Keychain sync-back failed: ${err instanceof Error ? err.message : err}`));
+    try {
+        const proc = Bun.spawn({
+            cmd: [shell, "-ic", `exec ${cmd}${suffix}`],
+            stdio: ["inherit", "inherit", headless ? "pipe" : "inherit"],
+            env: launchEnv,
+        });
+
+        const stderrPump = headless && proc.stderr ? forwardStderrDroppingZleNoise(proc.stderr) : null;
+
+        exitCode = await proc.exited;
+        if (stderrPump) {
+            await stderrPump;
         }
+
+        if (opts.keychain) {
+            try {
+                const result = await finishKeychainSession(aiConfig, injectedUuid, foreignBackupPath);
+
+                if (result.status === "synced") {
+                    out.printlnErr(pc.dim(`Synced rotated keychain tokens back to "${result.account}".`));
+                } else if (result.status === "no-match") {
+                    out.printlnErr(
+                        pc.yellow(
+                            `Keychain now holds a different login (uuid ${result.uuid}) — left untouched, nothing synced.`
+                        )
+                    );
+                }
+            } catch (err) {
+                logger.error({ err }, "[keychain] post-session sync failed");
+                out.printlnErr(pc.red(`Keychain sync-back failed: ${err instanceof Error ? err.message : err}`));
+            }
+        }
+    } finally {
+        // The wrapper holds the OAuth token in plaintext — it must be unlinked
+        // before we leave, and process.exit() inside the try would skip this.
+        removeTeammateWrapper(teammateWrapperPath);
     }
 
     process.exit(exitCode);
@@ -659,6 +792,13 @@ export function registerStartCommand(program: Command): void {
             "--keychain",
             "Run logged-in via the account's secondary login injected into the macOS keychain " +
                 "(instead of CLAUDE_CODE_OAUTH_TOKEN); rotated tokens sync back to the account on exit"
+        )
+        .option(
+            "--cmux",
+            "Launch through `cmux claude-teams` instead of claude directly (agent teams + tmux shim so " +
+                "Claude's tmux calls become cmux splits); all other args forward unchanged. Adds " +
+                "--dangerously-skip-permissions to match the shell wrapper cmux bypasses, unless you pass " +
+                "your own permission flag"
         )
         .action(async (name: string | undefined, opts: StartOptions, command: Command) => {
             const operands = command.args;
