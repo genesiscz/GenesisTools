@@ -304,13 +304,26 @@ Use markdown link format in the reply: `[short-sha](full-url)`.
 
 **Author tagging — CHECK EVERY THREAD'S AUTHOR:** For each reply command, look at the **Author** field from the L1 output for that specific thread and apply the correct prefix. Do NOT copy-paste replies without verifying the author per thread.
 
-| Thread Author | Reply prefix | Example |
-|---------------|-------------|---------|
-| `@coderabbitai` | `@coderabbitai ` | `@coderabbitai Fixed in ...` |
-| `@gemini-code-assist` | `/gemini ` | `/gemini Fixed in ...` |
-| `@copilot-pull-request-reviewer` | _(none)_ | `Fixed in ...` |
-| Other bots / GitHub Actions | _(none)_ | `Fixed in ...` |
-| Human reviewer | `@<username> ` only if they asked a question | `@alice Fixed in ...` |
+| Thread Author | `user.login` in the API | Reply prefix | Example |
+|---------------|------------------------|--------------|---------|
+| `@coderabbitai` | `coderabbitai[bot]` | `@coderabbitai ` | `@coderabbitai Fixed in ...` |
+| `@gemini-code-assist` | `gemini-code-assist[bot]` | `/gemini ` | `/gemini Fixed in ...` |
+| `@copilot-pull-request-reviewer` | `copilot-pull-request-reviewer[bot]` | _(none)_ | `Fixed in ...` |
+| `@eve-bot-lovinka` | `eve-bot-lovinka[bot]` | _(none)_ | `Fixed in ...` |
+| Other bots / GitHub Actions | usually `<name>[bot]` | _(none)_ | `Fixed in ...` |
+| Human reviewer | plain username | `@<username> ` only if they asked a question | `@alice Fixed in ...` |
+
+⚠️ **The `[bot]` suffix is part of the login.** The display name in the L1
+output (`@eve-bot-lovinka`) is NOT what the API matches on. A `jq` filter
+missing the suffix returns empty and is indistinguishable from "this reviewer
+has never reviewed", because both print nothing:
+
+```bash
+# WRONG — silently empty, reads as "eve never reviewed"
+gh api repos/<o>/<r>/pulls/<N>/reviews --jq '.[] | select(.user.login=="eve-bot-lovinka")'
+# Confirm the spelling against the unfiltered set before believing a negative:
+gh api repos/<o>/<r>/pulls/<N>/reviews --paginate --jq '.[].user.login' | sort | uniq -c
+```
 
 **For fixed threads** — explain what was fixed and link the commit:
 ```bash
@@ -351,6 +364,42 @@ Task tool call:
 The main agent should **not wait** for the reply agent — continue to Step 7 immediately.
 
 **Important:** Do NOT use `--resolve` unless the user explicitly asks to resolve threads. Only reply.
+
+**🛑 Exception — close the threads yourself on a second pass.** A replied-to
+thread is not a finished thread. Bots differ: CodeRabbit mostly resolves its own
+once it accepts a reply; `@eve-bot-lovinka` NEVER does, so an eve-reviewed PR
+accumulates answered-but-unresolved threads forever (verified 2026-07-29 on
+PR #298: 114 threads, 114 unresolved, every one already answered).
+
+**Protocol, per thread:**
+
+1. Reply. Note the time.
+2. **Wait at least 5 minutes.** Never resolve earlier: you would close the
+   thread before the reviewer could push back, turning a review into a
+   monologue. Batch this with the next-round wait rather than sleeping twice.
+3. Re-read the thread (`tools github review expand <refs> -s <id>`) and branch:
+
+   | What the bot did | Action |
+   |---|---|
+   | Resolved it itself | Nothing. CodeRabbit usually does this. |
+   | Replied with an **acknowledgement** ("thanks", "makes sense", "agreed", "resolved in …", 👍) | **Resolve it.** The acknowledgement IS the close signal. |
+   | Replied **disagreeing** or asked a follow-up | Do NOT resolve. Live finding: answer it, fix if warranted, restart the 5-minute clock. |
+   | Said nothing after 5+ min | **Resolve it.** Silence on an answered finding is consent. `@eve-bot-lovinka` is always this case. |
+
+   ```bash
+   tools github review resolve t1,t2,t3 -s <session-id>
+   ```
+
+4. Never resolve a thread you have not answered, and never resolve a HUMAN
+   reviewer's thread without being asked — silence from a person is not consent.
+   The reply is what makes the resolve honest.
+
+⚠️ Read the bot's reply, don't just check that one exists. "Fixed in abc1234" is
+an acknowledgement; "the guard still misses the `finally` path" is a new finding
+wearing the same shape, and resolving it buries it.
+
+This also restores `0 unresolved` as a usable "round is clean" signal, which on
+an eve PR is otherwise unreachable.
 
 **When the user asks to resolve threads**, add `--resolve` to the respond commands:
 ```bash
