@@ -214,7 +214,7 @@ describe("ask sessions", () => {
         seedVideo("vidChanSes2", "Second uploaded later");
 
         expect(await resolveSessionVideoIds(yt, session)).toHaveLength(2);
-        expect(db.getAskSession(session.id, 1)?.videoIds).toHaveLength(2);
+        expect(db.getAskSession(1, session.id)?.videoIds).toHaveLength(2);
     });
 
     it("replays prior turns as history without repeating the current question", async () => {
