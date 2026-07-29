@@ -782,3 +782,97 @@ conclusion should be drawn from it in either direction.
 **Methodology note worth keeping:** when a measurement disagrees with the structure
 of the change, run the same binary against itself before believing the measurement.
 This log has twice recorded a "regression" that a control would have dismissed.
+
+---
+
+## 2026-07-29 08:11 — Review round 5 (PR #302): the same overflow, at two more sites
+
+Round 4 fixed the header counts in `cache_open`. Review then found the identical
+class one function away, and grepping for it found a third site nobody had
+reported. **`cache_lookup` runs once per shared file, so this one IS in the hot
+loop** and is measured below.
+
+### The three sites
+
+`off` and `count` are read straight out of the cache file, so `off + count` wraps
+a 64-bit unsigned and lands back under the limit:
+
+| site | check | status |
+|---|---|---|
+| `cache_open` header counts | `nrecs * sizeof(CacheEnt)` overflowed | fixed round 4, now routed through the helper |
+| `cache_lookup` per entry | `e->ext_off + e->ext_count > g_cache_nexts` | **reported** (CodeRabbit, Critical) |
+| `cache_write` carryover | `&g_cache_exts[g_cache_ents[oi].ext_off]`, **no check at all** | **found by grep, unreported** |
+
+All three now go through one helper, per the repo's fix-at-the-root rule:
+
+```c
+static inline int range_within(uint64_t off, uint64_t count, uint64_t limit) {
+    return off <= limit && count <= limit - off;
+}
+```
+
+Call sites divide rather than multiply when the limit is in bytes, so nothing is
+ever scaled before it is bounded.
+
+### What the per-entry bug actually did (it does not crash)
+
+Worth recording precisely, because the obvious guess is wrong. Forging one
+record's `ext_off` to `UINT64_MAX` on the 3-clone fixture:
+
+| | files_cached | files_opened | unique_bytes |
+|---|---|---|---|
+| pre-fix | 3 | 0 | **7,667,827,374,364,295,172** |
+| post-fix | 2 | 1 | 4,194,304 |
+
+**7.7 exabytes reported from 12 MB of files, silently, exit 0.** It does not
+segfault because the pointer arithmetic wraps too: `ext_off * sizeof(CacheExt)`
+lands just *before* `g_cache_exts`, which is still inside the mapping, so the
+scan reads whatever bytes are there and believes them. On a large cache the same
+wrap can reach past the end of the mapping. Silent wrong output is the realistic
+failure, not a crash.
+
+The fix degrades gracefully: only the poisoned record is dropped (`cached` 3 → 2)
+and its file is re-read from disk (`opened` 0 → 1). Rejecting one entry never
+throws the whole cache away.
+
+### Correctness
+
+Round-4 binary vs round-5 on `node_modules`, all ten totals identical:
+`files_scanned` 94696 · `files_opened` 94691 · `files_cached` 0 · `extents` 95834 ·
+`naive_bytes` 2461622272 · `unique_bytes` 2061258070 ·
+`unique_allocated_bytes` 2289090560 · `shared_bytes` 400364202 ·
+`outside_shared_bytes` 2257260544 · `private_sum_bytes` 282624.
+
+### Benchmark: warm-cache path, where `cache_lookup` is hottest
+
+T2 (`node_modules`) against a pre-warmed cache so every timed run is a pure
+`cache_lookup` workload. `--warmup 2 --runs 7`, load average **54**. The control
+(the R4 binary run a second time under a different label) is included in the same
+invocation, which is the only way to read these numbers honestly:
+
+| | Wall mean ± σ | Wall min | System CPU |
+|---|---|---|---|
+| R4 (add-then-compare) | 352.6 ms ± 23.9 ms | 332.7 ms | 4093.6 ms |
+| R5 (`range_within`) | 341.9 ms ± 20.1 ms | 319.0 ms | 3558.0 ms |
+| **CONTROL (R4 again)** | 298.3 ms ± 10.2 ms | 283.9 ms | 3054.9 ms |
+
+**R4 disagrees with itself by 18% on the mean and 34% on system CPU, and R5 lands
+between R4's two measurements.** The change swaps one add-and-compare for a
+compare-subtract-compare once per cache hit; it is far below what this machine can
+resolve. No regression, and no claim of an improvement either.
+
+### `bench.sh` fixes from the same round
+
+- **The caller's label no longer reaches a benched command.** `LABEL` (`$1`) was
+  interpolated into `CACHE_DIR`, which is pasted into the single-quoted hyperfine
+  command strings — a label containing `'` broke out and ran arbitrary commands.
+  Verified: the old construction executed an injected `touch`, the new `mktemp -d`
+  path does not. The label still appears in the human header, where it is echoed.
+- **`uptime` is printed at start, after the matrix, and at the end.** The doc has
+  required the load average since the first entry and the script never captured
+  it. Immediately useful: the verification run started at load **14.48** and hit
+  **87.64** by the end of the matrix, which is precisely the swing that makes
+  single-sided wall-time numbers worthless.
+- **The correctness cross-check prints the real totals**, not `head -c 600` of the
+  JSON — a fixed byte prefix is arbitrary once `groups[]` grows, so a "correctness
+  diff" could silently compare nothing.
