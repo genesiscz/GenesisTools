@@ -20,6 +20,44 @@ export function isReadableByOthers(mode: number): boolean {
     return (mode & 0o077) !== 0;
 }
 
+/**
+ * The filesystem calls the permission check makes, injectable so both failure
+ * shapes can be driven from a test without mocking `node:fs` process-wide.
+ */
+export interface ConfigPermissionOps {
+    chmod: (path: string, mode: number) => Promise<void>;
+    statMode: (path: string) => Promise<number>;
+}
+
+const realPermissionOps: ConfigPermissionOps = {
+    chmod: (path, mode) => chmod(path, mode),
+    statMode: async (path) => (await stat(path)).mode & 0o777,
+};
+
+/**
+ * Enforce owner-only on the config and report what actually stuck: the octal
+ * mode when the file is still reachable by somebody else, `"unknown"` when the
+ * filesystem refused to answer, and undefined when it is owner-only.
+ *
+ * It reports the RESULTING mode rather than the requested one on purpose — the
+ * whole point is to catch a chmod that claimed success without doing anything.
+ */
+export async function checkConfigPermissions(
+    path: string,
+    ops: ConfigPermissionOps = realPermissionOps
+): Promise<string | undefined> {
+    try {
+        await ops.chmod(path, CONFIG_FILE_MODE);
+        const mode = await ops.statMode(path);
+
+        return isReadableByOthers(mode) ? mode.toString(8) : undefined;
+    } catch (err) {
+        logger.warn({ err, path }, "ai-proxy: could not restrict config file permissions to owner-only");
+
+        return "unknown";
+    }
+}
+
 export function getDefaultConfig(): AiProxyConfig {
     return {
         listen: { host: "127.0.0.1", port: 8317 },
@@ -128,35 +166,27 @@ export class AiProxyConfigStore {
     async save(config: AiProxyConfig): Promise<void> {
         const normalized = mergeConfig(config);
         await this.storage.ensureDirs();
-        await this.storage.setConfig(normalized);
+        // The mode travels with the temp file through the rename, so the key is
+        // never published at the umask default even for an instant.
+        await this.storage.setConfig(normalized, { mode: CONFIG_FILE_MODE });
         await this.restrictConfigPermissions();
         this.cached = normalized;
     }
 
     /**
-     * Re-applied on every save, not once: the atomic write renames a fresh temp
-     * file over the config, so the new inode carries the process umask (0644 in
-     * practice) and any earlier tightening is gone. The file holds the proxy
-     * bearer key and, since `accounts[].apiKey`, billed vendor credentials in
-     * plain text — other local accounts have no business reading either.
+     * Defence in depth behind `save`'s birth-mode: that closes the disclosure
+     * window, this catches the case where the mode never took effect at all —
+     * on a filesystem without POSIX permissions (exFAT, some network mounts)
+     * every chmod succeeds and changes nothing. The file holds the proxy bearer
+     * key and, since `accounts[].apiKey`, billed vendor credentials in plain
+     * text, so a silent no-op there must not read as success.
      */
     private async restrictConfigPermissions(): Promise<void> {
         const path = this.storage.getConfigPath();
+        const insecureMode = await checkConfigPermissions(path);
 
-        try {
-            await chmod(path, CONFIG_FILE_MODE);
-            // Verified, not assumed: on a filesystem without POSIX permissions
-            // (exFAT, some network mounts) chmod returns success and changes
-            // nothing, which would leave the key readable while this code
-            // believed otherwise.
-            const mode = (await stat(path)).mode & 0o777;
-
-            if (isReadableByOthers(mode)) {
-                this.warnConfigReadable(path, mode.toString(8));
-            }
-        } catch (err) {
-            logger.warn({ err, path }, "ai-proxy: could not restrict config file permissions to owner-only");
-            this.warnConfigReadable(path, "unknown");
+        if (insecureMode) {
+            this.warnConfigReadable(path, insecureMode);
         }
     }
 

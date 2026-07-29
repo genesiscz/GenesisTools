@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+    type ConfigPermissionOps,
+    checkConfigPermissions,
     getAiProxyConfigStore,
     isReadableByOthers,
     parseConfigJson,
@@ -99,14 +101,86 @@ describe("config-store migration", () => {
 
         await store.save(config);
 
-        // Written through a rename of a fresh umask'd temp file, so this has to
-        // be re-applied per save rather than once at creation.
+        // The mode is carried by the temp file through the rename, so it holds
+        // on the very first save rather than being applied after publication.
         expect(statSync(getAiProxyStorage().getConfigPath()).mode & 0o777).toBe(0o600);
 
         await store.save(config);
         expect(statSync(getAiProxyStorage().getConfigPath()).mode & 0o777).toBe(0o600);
 
         rmSync(tempDir, { recursive: true, force: true });
+    });
+});
+
+describe("checkConfigPermissions", () => {
+    // Never opened — every filesystem call is injected. It only has to look like
+    // a config path in the warning the function logs.
+    const fakeConfigPath = join(tmpdir(), "ai-proxy-permissions", "config.json");
+
+    function recordingOps(behaviour: { chmod?: () => Promise<void>; statMode?: () => Promise<number> }): {
+        ops: ConfigPermissionOps;
+        calls: { chmod: number[]; stat: number };
+    } {
+        const calls = { chmod: [] as number[], stat: 0 };
+
+        return {
+            calls,
+            ops: {
+                chmod: async (_path, mode) => {
+                    calls.chmod.push(mode);
+                    await behaviour.chmod?.();
+                },
+                statMode: async () => {
+                    calls.stat += 1;
+                    return (await behaviour.statMode?.()) ?? 0o600;
+                },
+            },
+        };
+    }
+
+    it("reports nothing when the file ends up owner-only", async () => {
+        const { ops, calls } = recordingOps({ statMode: async () => 0o600 });
+
+        expect(await checkConfigPermissions(fakeConfigPath, ops)).toBeUndefined();
+        expect(calls.chmod).toEqual([0o600]);
+    });
+
+    it("reports the RESULTING mode when chmod succeeded but changed nothing", async () => {
+        // The exFAT / network-mount case: chmod resolves, the mode is untouched.
+        // Reporting the requested 0600 here would tell the user the file is safe.
+        const { ops, calls } = recordingOps({ statMode: async () => 0o644 });
+
+        expect(await checkConfigPermissions(fakeConfigPath, ops)).toBe("644");
+        // A regression that stops re-reading the mode would make this 0.
+        expect(calls.stat).toBe(1);
+    });
+
+    it("reports a group-readable result too, not just world-readable", async () => {
+        const { ops } = recordingOps({ statMode: async () => 0o640 });
+
+        expect(await checkConfigPermissions(fakeConfigPath, ops)).toBe("640");
+    });
+
+    it("reports unknown when chmod is rejected", async () => {
+        const { ops, calls } = recordingOps({
+            chmod: async () => {
+                throw new Error("EPERM");
+            },
+        });
+
+        expect(await checkConfigPermissions(fakeConfigPath, ops)).toBe("unknown");
+        // The mode is unknowable, so it must not silently pass as owner-only.
+        expect(calls.stat).toBe(0);
+    });
+
+    it("reports unknown when the mode cannot be read back", async () => {
+        const { ops } = recordingOps({
+            statMode: async () => {
+                throw new Error("ENOENT");
+            },
+        });
+
+        expect(await checkConfigPermissions(fakeConfigPath, ops)).toBe("unknown");
     });
 });
 
