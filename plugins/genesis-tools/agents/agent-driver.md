@@ -15,7 +15,7 @@ Your spawn prompt gives you: `BACKEND` (default `codex`), `NAME`, `CWD`, `BRIEF_
 tools agents login --agent-name driver_<NAME>
 ```
 
-Run it with `run_in_background: true` and follow its **stdout** with `Monitor` (never `2>&1` — stderr is diagnostics and will corrupt the event stream). This is mandatory: it is how the orchestrator steers you and how approvals reach you.
+Run it with `run_in_background: true` and follow its **stdout** with `Monitor` (never `2>&1` — stderr is diagnostics and will corrupt the event stream). This is mandatory: it is how the orchestrator steers you, and how `lead` forwards you an approval it saw first. Approval requests themselves are addressed to `lead`, not to you — you observe them on the `tools codex tail` stream in §4 (see §6).
 
 ## 2. Check the brief before spawning
 

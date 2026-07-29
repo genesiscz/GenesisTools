@@ -164,7 +164,7 @@ Wait on event types only (`error:` appears in normal red-test output):
 
 ```bash
 SECONDS=0; until rg -q '"type":"turn.completed"|"type":"turn.failed"' /tmp/codex-<task>.log 2>/dev/null || [ $SECONDS -ge 600 ]; do sleep 5; done
-rg -q '"type":"turn.completed"|"type":"turn.failed"' /tmp/codex-<task>.log || { echo "TIMEOUT after ${SECONDS}s — turn never terminated"; tail -20 /tmp/codex-<task>.log; }
+rg -q '"type":"turn.completed"|"type":"turn.failed"' /tmp/codex-<task>.log || { echo "TIMEOUT after ${SECONDS}s — turn never terminated"; tail -20 /tmp/codex-<task>.log; exit 1; }
 ```
 
 The re-check after the loop is not optional: the loop also exits on the deadline, and a timed-out run still leaves a stale `-o` file on disk. Reading that file without confirming a terminal event reports a half-finished turn as a result. On timeout, stop and report — do not resume blindly.
