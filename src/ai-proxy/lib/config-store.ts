@@ -1,11 +1,11 @@
-import { chmod } from "node:fs/promises";
+import { chmod, stat } from "node:fs/promises";
 import { migrateAccountConfig } from "@app/ai-proxy/lib/account-config";
 import { normalizeBasePath } from "@app/ai-proxy/lib/path-prefix";
 import { maskApiKey } from "@app/ai-proxy/lib/providers/api-key-state";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { AiProxyConfig, AiProxyPublicConfig } from "@app/ai-proxy/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 
 /** Owner-only: the config carries the proxy bearer key and billed vendor keys. */
 const CONFIG_FILE_MODE = 0o600;
@@ -135,9 +135,33 @@ export class AiProxyConfigStore {
 
         try {
             await chmod(path, CONFIG_FILE_MODE);
+            // Verified, not assumed: on a filesystem without POSIX permissions
+            // (exFAT, some network mounts) chmod returns success and changes
+            // nothing, which would leave the key readable while this code
+            // believed otherwise.
+            const mode = (await stat(path)).mode & 0o777;
+
+            if ((mode & 0o077) !== 0) {
+                this.warnConfigReadable(path, mode.toString(8));
+            }
         } catch (err) {
             logger.warn({ err, path }, "ai-proxy: could not restrict config file permissions to owner-only");
+            this.warnConfigReadable(path, "unknown");
         }
+    }
+
+    /**
+     * Deliberately does not throw. The config, key included, is already on disk
+     * by the time this runs, so failing the save would report "nothing was
+     * saved" about a file that now holds the credential. What the caller can
+     * actually act on is the path and the command that fixes it.
+     */
+    private warnConfigReadable(path: string, mode: string): void {
+        logger.warn(
+            { path, mode, fix: `chmod 600 ${path}` },
+            "ai-proxy: config file with billed api keys is readable by other local accounts"
+        );
+        out.log.warn(`${path} holds billed API keys and is readable by other local accounts. Fix: chmod 600 ${path}`);
     }
 
     async update(patch: Partial<AiProxyConfig>): Promise<AiProxyConfig> {
