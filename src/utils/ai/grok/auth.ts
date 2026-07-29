@@ -5,6 +5,21 @@ import { logger } from "@genesiscz/utils/logger";
 import { grokAuthPath } from "./paths";
 import type { GrokAuthEntry, GrokJwtClaims } from "./types";
 
+/**
+ * The one rule for "is this top-level value a usable auth entry?". Exported
+ * because a writer has to apply the SAME rule in reverse: everything this
+ * rejects is still someone else's data in a file we do not own.
+ */
+export function isAuthEntry(value: unknown): value is GrokAuthEntry {
+    if (typeof value !== "object" || value === null) {
+        return false;
+    }
+
+    const entry = value as GrokAuthEntry;
+
+    return typeof entry.key === "string" && entry.key.length > 0;
+}
+
 function parseAuthEntries(raw: unknown): Map<string, GrokAuthEntry> {
     const entries = new Map<string, GrokAuthEntry>();
 
@@ -13,13 +28,8 @@ function parseAuthEntries(raw: unknown): Map<string, GrokAuthEntry> {
     }
 
     for (const [key, value] of Object.entries(raw)) {
-        if (typeof value !== "object" || value === null) {
-            continue;
-        }
-
-        const entry = value as GrokAuthEntry;
-        if (typeof entry.key === "string" && entry.key.length > 0) {
-            entries.set(key, entry);
+        if (isAuthEntry(value)) {
+            entries.set(key, value);
         }
     }
 
