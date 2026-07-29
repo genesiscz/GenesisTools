@@ -38,12 +38,26 @@ function toNumber(value: string | number | undefined): number | undefined {
 }
 
 /** OpenRouter quotes per token; everything else in this layer is per 1M. */
-export function convertOpenRouterPricing(pricing: OpenRouterPricingShape): ModelPricing {
+export function convertOpenRouterPricing(pricing: OpenRouterPricingShape): ModelPricing | undefined {
+    const input = toNumber(pricing.prompt);
+    const output = toNumber(pricing.completion);
+
+    // Absent means UNKNOWN, never free — the invariant this layer states at
+    // catalog/types.ts. Coercing a missing field to 0 produced a truthy pricing
+    // object, which then got cached for an hour and booked the call at $0,
+    // indistinguishable from a genuinely free model and invisible to the
+    // `unpricedEvents` accounting. An explicit 0 is preserved: OpenRouter's
+    // `:free` routes really do quote "0", which is why this is a presence check
+    // rather than a truthiness check.
+    if (input === undefined || output === undefined) {
+        return undefined;
+    }
+
     const cached = toNumber(pricing.cache_read) ?? toNumber(pricing.input_cache_read);
 
     return {
-        inputPer1M: (toNumber(pricing.prompt) ?? 0) * 1_000_000,
-        outputPer1M: (toNumber(pricing.completion) ?? 0) * 1_000_000,
+        inputPer1M: input * 1_000_000,
+        outputPer1M: output * 1_000_000,
         ...(cached === undefined ? {} : { cachedReadPer1M: cached * 1_000_000 }),
     };
 }

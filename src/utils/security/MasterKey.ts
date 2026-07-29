@@ -40,6 +40,12 @@ export async function masterKey(): Promise<Buffer> {
         return cached.key;
     }
 
+    // A rung that THROWS is not caught here, deliberately. Returning undefined
+    // means "I looked and there is no key", which lets the loop fall through to
+    // minting a replacement; a rung that could not look (a locked or corrupt
+    // keychain) throws instead, and that must abort the whole ladder rather than
+    // be downgraded into "absent". Minting past a rung that merely failed to
+    // read is how the key that decrypts the vault would get overwritten.
     for (const provider of providers) {
         if (!(await provider.available())) {
             continue;

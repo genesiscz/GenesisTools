@@ -114,7 +114,21 @@ describe("pricing ladder", () => {
             outputPer1M: 10,
             cachedReadPer1M: 1.25,
         });
-        expect(convertOpenRouterPricing({})).toEqual({ inputPer1M: 0, outputPer1M: 0 });
+        // Absent means UNKNOWN, never free (the invariant in catalog/types.ts).
+        // This used to assert `{inputPer1M: 0, outputPer1M: 0}`, which is a
+        // truthy object: it got cached for an hour and booked calls at $0,
+        // indistinguishable from a genuinely free model.
+        expect(convertOpenRouterPricing({})).toBeUndefined();
+        expect(convertOpenRouterPricing({ prompt: "0.0000025" })).toBeUndefined();
+    });
+
+    // A real free route quotes "0", which must survive as a priced zero rather
+    // than being confused with an absent field.
+    test("an explicit zero quote stays a priced zero", () => {
+        expect(convertOpenRouterPricing({ prompt: "0", completion: "0" })).toEqual({
+            inputPer1M: 0,
+            outputPer1M: 0,
+        });
     });
 });
 

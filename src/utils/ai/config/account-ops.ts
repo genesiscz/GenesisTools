@@ -240,6 +240,56 @@ export async function removeAccount(idOrName: string, options: { force?: boolean
     });
 }
 
+/** Credential fields a caller may clear without deleting the account. */
+export type ClearableCredential = "apiKey" | "accessToken" | "refreshToken" | "longLivedToken";
+
+const EXPIRY_OF: Partial<Record<ClearableCredential, string[]>> = {
+    accessToken: ["expiresAt"],
+    refreshToken: ["refreshExpiresAt"],
+    longLivedToken: ["longLivedTokenExpiresAt"],
+};
+
+/**
+ * Revoke specific credentials, keeping the account.
+ *
+ * This exists because a legacy caller CANNOT express a deletion. The v3 view is
+ * a projection built from whatever currently resolves (`toV3Account`), so a
+ * field the caller deleted and a field whose vault read merely failed look
+ * identical by the time they reach `applyV3Tokens`, which skips both. That is
+ * how `tools claude logout` came to report "Removed access + refresh token"
+ * while the vault refs, and therefore the working credentials, survived.
+ *
+ * Deleting is destructive, so it is stated explicitly here rather than inferred
+ * from an absence.
+ */
+export async function clearCredentials(
+    idOrName: string,
+    fields: readonly ClearableCredential[]
+): Promise<{ account: AccountEntry; secretsDeleted: string[] }> {
+    const store = await AiConfigStore.load();
+
+    return store.withLock(async (config) => {
+        const account = requireAccount(config, idOrName);
+        const vault = await secrets();
+        const secretsDeleted: string[] = [];
+
+        for (const field of fields) {
+            if (await vault.delete(vaultPathFor(account.id, field))) {
+                secretsDeleted.push(vaultPathFor(account.id, field));
+            }
+
+            delete account.credentials[field];
+
+            for (const expiry of EXPIRY_OF[field] ?? []) {
+                delete (account.credentials as Record<string, unknown>)[expiry];
+            }
+        }
+
+        logger.info({ id: account.id, fields, secretsDeleted }, "cleared AI account credentials");
+        return { account, secretsDeleted };
+    });
+}
+
 export interface AccountTestResult {
     account: AccountEntry;
     credential: { ok: boolean; detail: string };

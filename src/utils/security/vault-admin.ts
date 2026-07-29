@@ -152,8 +152,28 @@ export async function importVault(blob: string, passphrase: string): Promise<{ i
         throw new Error(`Vault export has a ${tag.length}-byte auth tag (expected ${TAG_BYTES}); refusing.`);
     }
 
-    const key = passphraseKey(passphrase, Buffer.from(parsed.salt, "base64"), parsed.N, parsed.r, parsed.p);
-    const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(parsed.iv, "base64"));
+    // The blob names its own KDF cost, and it arrives from a file the caller
+    // chose. `maxmem` bounds MEMORY (node enforces 128*r*N + 128*r*p <= maxmem)
+    // but nothing bounds TIME: N=2^14, r=8, p=2^15 fits in ~50 MiB and still
+    // costs ~4.3e9 operations, blocking the event loop for minutes inside a
+    // synchronous scrypt. Only the parameters we actually write are accepted.
+    if (parsed.N !== SCRYPT_N || parsed.r !== SCRYPT_r || parsed.p !== SCRYPT_p) {
+        throw new Error(
+            `Vault export uses unsupported scrypt parameters (N=${parsed.N}, r=${parsed.r}, p=${parsed.p}); expected N=${SCRYPT_N}, r=${SCRYPT_r}, p=${SCRYPT_p}.`
+        );
+    }
+
+    const salt = Buffer.from(parsed.salt, "base64");
+    const iv = Buffer.from(parsed.iv, "base64");
+
+    if (salt.length !== SALT_BYTES || iv.length !== IV_BYTES) {
+        throw new Error(
+            `Vault export has a ${salt.length}-byte salt and a ${iv.length}-byte IV, expected ${SALT_BYTES} and ${IV_BYTES}.`
+        );
+    }
+
+    const key = passphraseKey(passphrase, salt, parsed.N, parsed.r, parsed.p);
+    const decipher = createDecipheriv("aes-256-gcm", key, iv);
     decipher.setAuthTag(tag);
 
     let payload: { exportedAt: number; secrets: Record<string, string> };

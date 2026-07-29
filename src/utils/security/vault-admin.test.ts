@@ -131,7 +131,7 @@ describe("rotateMasterKey", () => {
             },
         ]);
 
-        expect(rotateMasterKey()).rejects.toThrow("simulated crash");
+        await expect(rotateMasterKey()).rejects.toThrow("simulated crash");
 
         // Old key still works: nothing was rewritten.
         expect(await store.get("ai/acc_x/apiKey")).toBe("value-of-x");
@@ -175,13 +175,13 @@ describe("exportVault / importVault", () => {
         await store.set("ai/acc_x/apiKey", "v");
         const blob = await exportVault("passphrase123");
 
-        expect(importVault(blob, "wrong-passphrase")).rejects.toThrow("Wrong passphrase");
+        await expect(importVault(blob, "wrong-passphrase")).rejects.toThrow("Wrong passphrase");
     });
 
     test("refuses a too-short passphrase and an unrecognised blob", async () => {
         await secrets();
 
-        expect(exportVault("short")).rejects.toThrow("at least 8 characters");
-        expect(importVault('{"version":99,"kdf":"scrypt"}', "passphrase123")).rejects.toThrow("Unrecognised");
+        await expect(exportVault("short")).rejects.toThrow("at least 8 characters");
+        await expect(importVault('{"version":99,"kdf":"scrypt"}', "passphrase123")).rejects.toThrow("Unrecognised");
     });
 });

@@ -1,7 +1,8 @@
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { type ClearableCredential, clearCredentials } from "@genesiscz/utils/ai/config/account-ops";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
-import type { AIAccountEntry, AIAccountTokens } from "@genesiscz/utils/config/ai.types";
+import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -256,25 +257,40 @@ export function registerLogoutCommand(program: Command): void {
                 }
             }
 
-            const tokens: AIAccountTokens = { ...account.tokens };
+            // Straight to the v4 store, NOT through the legacy token projection.
+            // Deleting fields from a `toV3Account` snapshot and writing it back
+            // does not revoke anything: `applyV3Tokens` skips absent fields (it
+            // cannot tell a deliberate deletion from a vault read that failed),
+            // so the credentials survived while this command printed success.
+            const cleared: ClearableCredential[] = [];
 
             if (scope === "oauth" || scope === "both") {
-                delete tokens.accessToken;
-                delete tokens.refreshToken;
-                delete tokens.expiresAt;
+                cleared.push("accessToken", "refreshToken");
             }
 
             if (scope === "long" || scope === "both") {
-                delete tokens.longLivedToken;
+                cleared.push("longLivedToken");
             }
 
-            await aiConfig.updateAccount(accountName, { tokens });
+            await clearCredentials(accountName, cleared);
 
             const removed =
                 scope === "both" ? "all tokens" : scope === "oauth" ? "access + refresh token" : "long-lived token";
             p.log.success(`Removed ${removed} from "${accountName}".`);
 
-            const remaining = tokenInventory({ ...account, tokens });
+            // Report what is left from the CLEARED set rather than from a
+            // pre-clear snapshot, so the summary cannot claim a token is gone
+            // that is still there.
+            const remainingTokens = { ...account.tokens };
+            for (const field of cleared) {
+                delete remainingTokens[field];
+            }
+
+            if (cleared.includes("accessToken")) {
+                delete remainingTokens.expiresAt;
+            }
+
+            const remaining = tokenInventory({ ...account, tokens: remainingTokens });
             p.log.info(pc.dim(`Remaining: ${remaining}. Account entry kept in config.`));
             p.log.info(
                 pc.dim(

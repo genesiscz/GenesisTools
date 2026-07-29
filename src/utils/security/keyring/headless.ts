@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { decodeMasterKey, MASTER_KEY_BYTES, type MasterKeyProvider } from "./types";
@@ -51,6 +52,28 @@ async function securityConfig(): Promise<SecurityLocalConfig> {
 }
 
 /**
+ * The same opt-in check, readable from synchronous code.
+ *
+ * `Storage.getConfig` is async, but `getConfigPath()` is not, so the file can be
+ * read directly. This exists because the sync ladder cannot await, and without
+ * it the key-file rung was invisible to every synchronous credential read.
+ */
+function securityConfigSync(): SecurityLocalConfig {
+    const path = securityStorage().getConfigPath();
+
+    if (!existsSync(path)) {
+        return {};
+    }
+
+    try {
+        return SafeJSON.parse(readFileSync(path, "utf8")) as SecurityLocalConfig;
+    } catch (err) {
+        logger.debug({ err, path }, "security config unreadable; treating the key file as disabled");
+        return {};
+    }
+}
+
+/**
  * When the vault was last escrowed to a passphrase-protected export.
  *
  * A vault with no export is one keychain loss away from unrecoverable, so
@@ -85,7 +108,22 @@ class FileKeyProvider implements MasterKeyProvider {
     }
 
     async get(): Promise<Buffer | undefined> {
-        if (!(await this.available())) {
+        return this.getSync();
+    }
+
+    /**
+     * Without this the rung existed only for async callers, so on a headless box
+     * whose ONLY key source is the file, `masterKeySync()` returned undefined:
+     * every legacy sync credential read came back empty (`resolveSecretSync` in
+     * SecretStore), and the secretsToVault migration wrongly deferred as though
+     * no key were reachable.
+     *
+     * `masterKeySync` deliberately skips `available()`, so the opt-in gate has to
+     * live in here rather than beside it. `get()` delegates so the two paths can
+     * never disagree about whether the file is enabled.
+     */
+    getSync(): Buffer | undefined {
+        if (securityConfigSync().allowKeyFile !== true) {
             return undefined;
         }
 

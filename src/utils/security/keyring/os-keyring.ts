@@ -50,17 +50,45 @@ class OsKeyring implements MasterKeyProvider {
         return this.getSync();
     }
 
+    /**
+     * "No key here" and "I could not look" must not be the same answer.
+     *
+     * This used to catch everything and return undefined, which merged three
+     * outcomes into one. That is a data-loss path, not a tidiness issue:
+     * `available()` below only constructs an `Entry` (no backend call), so a
+     * locked or broken keychain still reports available, the ladder falls
+     * through to "no key found", and an interactive `masterKey()` then MINTS a
+     * new key and `writeMasterKey` OVERWRITES the entry that was merely
+     * unreadable. Every vault entry becomes undecryptable.
+     *
+     * `@napi-rs/keyring` types this as `getPassword(): string | null`, and the
+     * not-found case is the `null` — which `decodeMasterKey` already maps to
+     * undefined without throwing. So the only things the old catch swallowed
+     * were a corrupt (wrong-length) value and a real backend failure, and both
+     * of those must be loud.
+     */
     getSync(): Buffer | undefined {
         if (blockedUnderTest()) {
             return undefined;
         }
 
+        let stored: string | null;
+
         try {
-            return decodeMasterKey(this.entry().getPassword(), "keychain");
+            stored = this.entry().getPassword();
         } catch (err) {
-            logger.debug({ err }, "no master key in OS keyring");
+            throw new Error(
+                "The OS keychain could not be read. Refusing to treat that as an absent master key, because continuing would mint a replacement over the entry that decrypts your vault.",
+                { cause: err }
+            );
+        }
+
+        if (stored === null) {
+            logger.debug("no master key in OS keyring");
             return undefined;
         }
+
+        return decodeMasterKey(stored, "keychain");
     }
 
     async set(key: Buffer): Promise<void> {

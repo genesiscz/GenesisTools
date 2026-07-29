@@ -18,11 +18,17 @@ import {
 const SUBSCRIPTION_PROVIDERS = new Set(["anthropic-sub", "openai-sub", "grok-sub", "github-copilot"]);
 
 export function slugifyAccountId(name: string, taken: Set<string>): string {
-    const base =
-        `acc_${name
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "_")
-            .replace(/^_+|_+$/g, "")}` || "acc_account";
+    // The fallback has to guard the BODY, not the whole template. `acc_${""}` is
+    // "acc_", which is truthy, so a trailing `|| "acc_account"` never fired — and
+    // "acc_" fails the id regex in schema.ts. The migration writes without
+    // validating, so any account named only in punctuation or non-ASCII ("---",
+    // "日本") produced a v4 file that AiConfigStore then refused to load: a
+    // bricked config with no way back, since the file already says version 4.
+    const body = name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+    const base = `acc_${body || "account"}`;
     let candidate = base;
     let suffix = 2;
 
@@ -163,7 +169,15 @@ export function convertConfig(v3: V3ConfigData): AiConfigData {
 
     const accounts: AccountEntry[] = (v3.accounts ?? []).map((account) => {
         const id = slugifyAccountId(account.name, taken);
-        idByName.set(account.name, id);
+
+        // First wins, because v3 `getAccount(name)` was a `find()` (AIConfig.ts).
+        // An unconditional set made a migrated default point at the LAST account
+        // sharing a name, silently moving which account pays.
+        if (idByName.has(account.name)) {
+            logger.warn({ name: account.name }, "v4 migration: duplicate account name; the first one keeps the name");
+        } else {
+            idByName.set(account.name, id);
+        }
 
         const converted = convertAccount(account, id, envVarByProvider.get(account.provider));
         if (disabledProviders.has(account.provider)) {
@@ -284,10 +298,18 @@ export const migrateConfigV4: ConfigMigration = {
         const storage = aiStorage();
 
         await storage.withConfigLock(async () => {
-            const raw = await storage.getConfig<V3ConfigData & { version?: number }>();
+            const raw = await storage.getConfig<V3ConfigData & { version?: number; _schemaVersion?: number }>();
+
+            // Re-check under the lock with the SAME rule shouldRun() used. An
+            // equality test on CONFIG_VERSION let a v5 file through, which would
+            // then be run through the v3 converter and written back as v4,
+            // dropping every field this converter does not know about.
+            const version = raw?.version ?? raw?._schemaVersion;
+
             if (
                 !raw ||
-                raw.version === CONFIG_VERSION ||
+                typeof version !== "number" ||
+                version >= CONFIG_VERSION ||
                 (raw.accounts !== undefined && !Array.isArray(raw.accounts))
             ) {
                 return;
