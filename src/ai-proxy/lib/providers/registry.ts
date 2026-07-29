@@ -1,5 +1,9 @@
 import { homedir } from "node:os";
-import { accountConfigFingerprint, describeAccountCredential } from "@app/ai-proxy/lib/account-config";
+import {
+    accountBindingFingerprint,
+    accountConfigFingerprint,
+    describeAccountCredential,
+} from "@app/ai-proxy/lib/account-config";
 import { AnthropicSubscriptionProvider } from "@app/ai-proxy/lib/providers/anthropic-subscription";
 import { GithubCopilotSubscriptionProvider } from "@app/ai-proxy/lib/providers/github-copilot-subscription";
 import { GrokSubscriptionProvider } from "@app/ai-proxy/lib/providers/grok-subscription";
@@ -84,6 +88,21 @@ export async function createProvider(account: AiProxyAccountConfig): Promise<Pro
 }
 
 /**
+ * The last binding fingerprint each provider was built from.
+ *
+ * A provider only carries its OWN config hash (`accountFingerprint`), so a
+ * credential edited in `tools ai config` or a token rotated into the vault
+ * changed nothing it could observe. Tracking the extended hash here rebuilds the
+ * provider on those edits without every provider class having to learn about the
+ * AI config.
+ */
+const bindingFingerprints = new Map<string, string>();
+
+export function _resetBindingFingerprintsForTest(): void {
+    bindingFingerprints.clear();
+}
+
+/**
  * Fetch the cached provider for a resolved route, recreating it when the
  * account config changed (fingerprint mismatch) or it was never built. Returns
  * null when the provider cannot be created.
@@ -94,7 +113,17 @@ export async function acquireProvider(
 ): Promise<ProxyProvider | null> {
     const key = routeProviderKey(route);
     const fingerprint = accountConfigFingerprint(route.account);
+    const binding = await accountBindingFingerprint(route.account);
     let provider = providers.get(key);
+
+    if (provider && bindingFingerprints.get(key) !== binding) {
+        logger.info(
+            { account: route.accountName, provider: route.account.provider },
+            "ai-proxy: referenced credential changed — rebuilding the account's provider"
+        );
+        providers.delete(key);
+        provider = undefined;
+    }
 
     if (provider && provider.accountFingerprint !== fingerprint) {
         const refreshed = await tryCreateProvider(route.account);
@@ -113,6 +142,12 @@ export async function acquireProvider(
             providers.set(key, created);
             provider = created;
         }
+    }
+
+    if (provider) {
+        bindingFingerprints.set(key, binding);
+    } else {
+        bindingFingerprints.delete(key);
     }
 
     return provider ?? null;

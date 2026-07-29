@@ -1,3 +1,4 @@
+import type { AccountRef } from "@genesiscz/utils/ai/config/refs";
 import type { CopilotAccountType, CopilotUsageSummary } from "@genesiscz/utils/ai/github-copilot/types";
 import type { GrokBillingConfig, GrokModelRecord, GrokSettings } from "@genesiscz/utils/ai/grok";
 
@@ -116,6 +117,12 @@ export interface AiProxyAccountConfig {
     provider: AiProxyProviderType;
     providerSlug: string;
     enabled: boolean;
+    /**
+     * The AI-config account this entry bills, as `@account/<immutable id>`.
+     * Supersedes the name-based `*.accountName` links: renaming an account no
+     * longer breaks the proxy, and `referrersOf` can see the link (account-refs.ts).
+     */
+    account?: AccountRef;
     grok?: AiProxyGrokAccountConfig;
     githubCopilot?: AiProxyGithubCopilotAccountConfig;
     anthropicSub?: AiProxyAnthropicSubAccountConfig;

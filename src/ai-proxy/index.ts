@@ -22,6 +22,8 @@ import { runServeCommand } from "@app/ai-proxy/commands/serve";
 import { runStatusCommand } from "@app/ai-proxy/commands/status";
 import { runUpCommand } from "@app/ai-proxy/commands/up";
 import { runUsageCommand } from "@app/ai-proxy/commands/usage";
+import { registerAiProxyRefScanner } from "@app/ai-proxy/lib/account-refs";
+import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import { isValidThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import type { AiProxyProviderType, CursorTranslationMode, ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
 import { runTool } from "@genesiscz/utils/cli";
@@ -35,6 +37,11 @@ import { Command } from "commander";
 if (process.argv.includes("serve")) {
     configureLogger({ includeTimestamp: true, timestampFormat: "SYS:yyyy-mm-dd HH:MM:ss" });
 }
+
+// So `referrersOf` sees the accounts this proxy bills. The scanner is per
+// PROCESS, so `tools ai config link` needs the same one line in its own
+// entrypoint to see proxy links (src/ai/ is another phase's file).
+registerAiProxyRefScanner(loadConfigFresh);
 
 const program = new Command()
     .name("ai-proxy")
