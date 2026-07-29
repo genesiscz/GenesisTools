@@ -190,7 +190,9 @@ describe("migrateConfigV4", () => {
 
         const onDisk = SafeJSON.parse(readFileSync(configPath(), "utf8"), { strict: true });
         expect(onDisk.version).toBe(CONFIG_VERSION);
-        expect(onDisk._schemaVersion).toBeUndefined();
+        // Kept ON PURPOSE: the sentinel that stops a pre-v4 binary's migration
+        // from rewriting this file (see schema.ts on _schemaVersion).
+        expect(onDisk._schemaVersion).toBe(3);
 
         const store = await AiConfigStore.load();
         expect(store.account("martin-max")?.id).toBe("acc_martin_max");
@@ -300,5 +302,102 @@ describe("migrateConfigV4", () => {
         // The v3-shaped newcomer converted, without colliding with the reserved id.
         expect(parsed.accounts[1].id).not.toBe("acc_martin_max");
         expect(parsed.accounts[1].credentials.apiKey).toBe("hf_added_on_old_code");
+    });
+
+    /**
+     * The armor that stops the old binary rewriting at all: its migration fires
+     * on `!existing._schemaVersion || existing._schemaVersion < 3`
+     * (2026-04-07-migrateAI.ts on master), so a v4 file carrying the sentinel
+     * makes a pre-v4 LOAD read-only instead of a rewrite.
+     */
+    test("the written v4 file carries the _schemaVersion: 3 sentinel that disarms the old migration", async () => {
+        writeFileSync(configPath(), SafeJSON.stringify(V3, null, 2));
+        await migrateConfigV4.run();
+
+        const raw = SafeJSON.parse(readFileSync(configPath(), "utf8"), { strict: true }) as Record<string, unknown>;
+
+        expect(raw.version).toBe(4);
+        expect(raw._schemaVersion).toBe(3);
+        // The old predicate, verbatim: it must NOT fire on this file.
+        const oldWouldMigrate = !raw._schemaVersion || (raw._schemaVersion as number) < 3;
+        expect(oldWouldMigrate).toBe(false);
+        // And the NEW migration must not loop on its own output.
+        expect(await migrateConfigV4.shouldRun()).toBe(false);
+    });
+
+    /**
+     * A stale daemon that refreshed a token AFTER re-stamping writes the fresh
+     * pair into a v3 `tokens` block beside the untouched v4 `credentials`. The
+     * vault then holds the CONSUMED half of a single-use refresh pair, so the
+     * repair must prefer the fresher literals and keep untouched fields as refs.
+     */
+    test("repair merges a stale daemon's refreshed tokens over the vault refs", async () => {
+        const hybrid = {
+            _schemaVersion: 3,
+            accounts: [
+                {
+                    id: "acc_max",
+                    name: "max",
+                    provider: "anthropic-sub",
+                    enabled: true,
+                    billing: { mode: "subscription" },
+                    credentials: {
+                        accessToken: { type: "secure", path: "ai/acc_max/accessToken" },
+                        refreshToken: { type: "secure", path: "ai/acc_max/refreshToken" },
+                        longLivedToken: { type: "secure", path: "ai/acc_max/longLivedToken" },
+                        expiresAt: 1790000000000,
+                    },
+                    useEnvApiKey: false,
+                    tokens: {
+                        accessToken: "sk-ant-oat01-FRESHER",
+                        refreshToken: "sk-ant-ort01-FRESHER",
+                        expiresAt: 1799000000000,
+                    },
+                },
+            ],
+            defaultAccounts: {},
+            tasks: {},
+            apps: {},
+            providers: {},
+        };
+        writeFileSync(configPath(), SafeJSON.stringify(hybrid, null, 2));
+        await migrateConfigV4.run();
+
+        const parsed = aiConfigSchema.parse(SafeJSON.parse(readFileSync(configPath(), "utf8"), { strict: true }));
+        const creds = parsed.accounts[0].credentials;
+
+        expect(creds.accessToken).toBe("sk-ant-oat01-FRESHER");
+        expect(creds.refreshToken).toBe("sk-ant-ort01-FRESHER");
+        expect(creds.expiresAt).toBe(1799000000000);
+        // A field the daemon did not touch keeps its vault ref.
+        expect(creds.longLivedToken).toEqual({ type: "secure", path: "ai/acc_max/longLivedToken" });
+    });
+
+    /**
+     * The old binary's rewrite drops the v4 `defaults` block (its applyDefaults
+     * rebuilds the doc from a fixed v3 key list). The snapshot is the copy old
+     * code never touches, so the repair restores from it.
+     */
+    test("repair restores defaults from the snapshot the old binary cannot touch", async () => {
+        writeFileSync(configPath(), SafeJSON.stringify(V3, null, 2));
+        await migrateConfigV4.run();
+
+        const migrated = aiConfigSchema.parse(SafeJSON.parse(readFileSync(configPath(), "utf8"), { strict: true }));
+        expect(Object.keys(migrated.defaults.account ?? {}).length).toBeGreaterThan(0);
+
+        // Simulate the old binary's rewrite: v3 top level, v4 accounts, defaults gone.
+        const restamped = {
+            _schemaVersion: 3,
+            accounts: migrated.accounts,
+            defaultAccounts: {},
+            tasks: {},
+            apps: {},
+            providers: {},
+        };
+        writeFileSync(configPath(), SafeJSON.stringify(restamped, null, 2));
+        await migrateConfigV4.run();
+
+        const repaired = aiConfigSchema.parse(SafeJSON.parse(readFileSync(configPath(), "utf8"), { strict: true }));
+        expect(repaired.defaults).toEqual(migrated.defaults);
     });
 });
