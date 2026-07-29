@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getAiProxyConfigStore, parseConfigJson, resetAiProxyConfigStore } from "@app/ai-proxy/lib/config-store";
+import {
+    getAiProxyConfigStore,
+    isReadableByOthers,
+    parseConfigJson,
+    resetAiProxyConfigStore,
+} from "@app/ai-proxy/lib/config-store";
 import { getAiProxyStorage, resetAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -102,5 +107,24 @@ describe("config-store migration", () => {
         expect(statSync(getAiProxyStorage().getConfigPath()).mode & 0o777).toBe(0o600);
 
         rmSync(tempDir, { recursive: true, force: true });
+    });
+});
+
+describe("isReadableByOthers", () => {
+    it("accepts owner-only modes", () => {
+        expect(isReadableByOthers(0o600)).toBe(false);
+        // Stricter than required is still fine — flagging 0o400 would send the
+        // user a `chmod 600` for a file that is already safe.
+        expect(isReadableByOthers(0o400)).toBe(false);
+        expect(isReadableByOthers(0o000)).toBe(false);
+    });
+
+    it("rejects anything a group or other user can reach", () => {
+        expect(isReadableByOthers(0o640)).toBe(true);
+        expect(isReadableByOthers(0o604)).toBe(true);
+        expect(isReadableByOthers(0o644)).toBe(true);
+        // Execute-only counts: it still grants a bit to somebody else.
+        expect(isReadableByOthers(0o601)).toBe(true);
+        expect(isReadableByOthers(0o610)).toBe(true);
     });
 });
