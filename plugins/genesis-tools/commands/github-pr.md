@@ -363,13 +363,24 @@ Task tool call:
 
 The main agent should **not wait** for the reply agent — continue to Step 7 immediately.
 
-**Important:** Do NOT use `--resolve` unless the user explicitly asks to resolve threads. Only reply.
+**Important — one rule, two cases. Read both before resolving anything.**
 
-**🛑 Exception — close the threads yourself on a second pass.** A replied-to
-thread is not a finished thread. Bots differ: CodeRabbit mostly resolves its own
-once it accepts a reply; `@eve-bot-lovinka` NEVER does, so an eve-reviewed PR
-accumulates answered-but-unresolved threads forever (verified 2026-07-29 on
-PR #298: 114 threads, 114 unresolved, every one already answered).
+- **HUMAN reviewer threads: never resolve unless the user explicitly asks.**
+  Silence from a person is not consent; they may simply not have looked yet.
+  Never pass `--resolve` to `respond` for these.
+- **BOT reviewer threads: close them yourself on a second pass**, under the
+  protocol below. This is a **standing instruction from the repo owner
+  (2026-07-29)**, not a liberty the agent takes: `@eve-bot-lovinka` never
+  resolves its own threads no matter how it answers, so an eve-reviewed PR
+  accumulates answered-but-unresolved threads forever (PR #298 reached 114
+  threads, 114 unresolved, every one already answered). CodeRabbit mostly closes
+  its own, so usually there is nothing to do there.
+
+⚠️ **A resolve is only honest because an ANSWER precedes it**, and closing a
+thread never makes a PR mergeable. `0 unresolved` is a bookkeeping state, not a
+review verdict: step 5 still requires a full reviewer round to come back clean on
+the CURRENT head. If you resolve threads and the next round reopens the subject,
+that round wins.
 
 **Protocol, per thread:**
 
@@ -379,10 +390,10 @@ PR #298: 114 threads, 114 unresolved, every one already answered).
    monologue. Batch this with the next-round wait rather than sleeping twice.
 3. Re-read the thread (`tools github review expand <refs> -s <id>`) and branch:
 
-   | What the bot did | Action |
+   | What the reviewer did | Action |
    |---|---|
    | Resolved it itself | Nothing. CodeRabbit usually does this. |
-   | Replied with an **acknowledgement** ("thanks", "makes sense", "agreed", "resolved in …", 👍) | **Resolve it.** The acknowledgement IS the close signal. |
+   | Replied with an **acknowledgement** ("thanks", "makes sense", "agreed", "good catch", 👍) | **Resolve it.** The acknowledgement IS the close signal. |
    | Replied **disagreeing** or asked a follow-up | Do NOT resolve. Live finding: answer it, fix if warranted, restart the 5-minute clock. |
    | Said nothing after 5+ min | **Resolve it.** Silence on an answered finding is consent. `@eve-bot-lovinka` is always this case. |
 
@@ -394,9 +405,17 @@ PR #298: 114 threads, 114 unresolved, every one already answered).
    reviewer's thread without being asked — silence from a person is not consent.
    The reply is what makes the resolve honest.
 
-⚠️ Read the bot's reply, don't just check that one exists. "Fixed in abc1234" is
-an acknowledgement; "the guard still misses the `finally` path" is a new finding
-wearing the same shape, and resolving it buries it.
+🛑 **Check the AUTHOR of the last reply, not that a reply exists.** The reply
+count in L1 (`1r`, `2r`) counts YOUR OWN replies too, and after step 4 every
+thread you touched has at least one. A thread whose newest reply is yours means
+the reviewer **has not responded** — silence case, not acknowledgement case.
+`expand` shows each reply with its author; that is what to read.
+
+⚠️ `"Fixed in abc1234 — scoped the cleanup to the current project"` is almost
+always **your own** reply, so it proves nothing. What matters is the reviewer's
+answer TO it: `"thanks, that addresses it"` (ack → resolve) versus `"the guard
+still misses the finally path"` (a live finding wearing the same shape →
+resolving it buries it).
 
 This also restores `0 unresolved` as a usable "round is clean" signal, which on
 an eve PR is otherwise unreachable.
