@@ -13,30 +13,39 @@
  * never persists usage or audit data — usage accounting is the proxy server's
  * job (usage/requests.jsonl); this client only surfaces what the server returns.
  *
- * WHY THIS STILL HAS ITS OWN TRANSPORT (Phase 4 kept it deliberately; Phase 7 owns
- * the fold). The gateway plugin path — `resolveModel("@proxy/<slug>/<model>")` +
- * `coreChat` — works and is covered by `core/gateway-tags.test.ts`, including the
- * `x-gt-*` job tags. Two things block moving THIS class onto it:
+ * WHY THIS STILL HAS ITS OWN TRANSPORT. The gateway plugin path —
+ * `resolveModel("@proxy/<slug>/<model>")` + `coreChat` — works and is covered by
+ * `core/gateway-tags.test.ts`, including the `x-gt-*` job tags.
  *
- *   1. Credentials come from different places. The plugin resolves the proxy key
- *      from an `ai-proxy` ACCOUNT in ~/.genesis-tools/ai/config.json; this client
- *      reads ~/.genesis-tools/ai-proxy/config.json. No such account exists yet, so
- *      routing through the plugin today fails resolution outright for every
- *      consumer (7 probe scripts, the learn-from-fable runners, ai-proxy's own
- *      commands). Seeding that account is config work, not transport work.
- *   2. `schemaMode: "auto"`/`"prompt"` is deliberately TOLERANT: a reply that does
- *      not match the schema comes back as `parsed: undefined` + `parseError`, with
- *      the text intact. The ai-sdk's `generateObject` throws instead, and
- *      `AiProxyRunner` (learn-from-fable's judge/mine/consolidate stages) depends
- *      on the tolerant contract, not on an exception.
+ * ✅ The CREDENTIAL blocker is GONE (Phase 8b). `tools ai-proxy link` registers an
+ * `ai-proxy` account whose key is a vault reference and whose endpoint comes from
+ * this proxy's own listen config (src/ai-proxy/lib/gateway-account.ts), so
+ * `@proxy/` refs resolve. `gateway-account.test.ts` pins both halves: the ref
+ * fails before the link and resolves to `acc_ai_proxy` after it.
  *
- * The SSE parser below is therefore NOT dead duplication yet: it is the only path
- * that expresses raw OpenAI tool-call deltas, abort-returns-partial steering, and
- * tolerant schema parsing.
+ * ❗ What still blocks the swap is a CONTRACT gap in `core/call.ts`, not config.
+ * `src/learn-from-fable/lib/runners/AiProxyRunner.ts:124-156` is the live proof —
+ * one call site uses all four of these, and `CoreChatOptions`/`CoreChatResult`
+ * express none of them:
+ *
+ *   1. TOLERANT structured output. `jsonSchema` here is a raw JSON Schema and a
+ *      non-conforming reply returns `parsed: undefined` + `parseError` with the
+ *      text intact. Core takes a zod schema and throws instead.
+ *   2. `aborted: true`. Core DOES keep the partial text on abort (call.ts:218),
+ *      but `CoreChatResult` has no flag, so a caller cannot tell an interjected
+ *      turn from a finished one — which is the whole steering contract.
+ *   3. Raw OpenAI tool-call deltas. `onToolCallDelta` streams argument FRAGMENTS
+ *      and `ToolCall.argumentsJson` keeps the model's exact bytes; core's
+ *      `onToolCall(name, input)` only fires on a complete, parsed call.
+ *   4. Per-call `reasoningEffort`. Core builds provider options from the provider
+ *      TYPE, with no per-request override.
+ *
+ * So the SSE parser below is not dead duplication: it is the only path expressing
+ * those four. Fold it the moment `coreChat` grows them.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { repairJson } from "@genesiscz/utils/json/repair";
 import { logger } from "@genesiscz/utils/logger";
@@ -147,8 +156,16 @@ export interface ChatResult {
     raw: unknown;
 }
 
-const CONFIG_PATH = join(homedir(), ".genesis-tools", "ai-proxy", "config.json");
 const DEFAULT_PORT = 8317;
+
+/**
+ * Resolved per call, not once at module load: `GENESIS_TOOLS_HOME` is how tests
+ * and sandboxed smokes point at a temp root, and a constant captured at import
+ * time read the user's REAL proxy key out of every one of them.
+ */
+function configPath(): string {
+    return join(env.tools.getHome(), ".genesis-tools", "ai-proxy", "config.json");
+}
 
 interface LocalProxyConfig {
     proxyApiKey?: string;
@@ -156,13 +173,14 @@ interface LocalProxyConfig {
 }
 
 export function loadLocalProxyConfig(): { baseUrl: string; apiKey?: string } {
+    const path = configPath();
     let parsed: LocalProxyConfig = {};
 
-    if (existsSync(CONFIG_PATH)) {
+    if (existsSync(path)) {
         try {
-            parsed = SafeJSON.parse(readFileSync(CONFIG_PATH, "utf-8")) as LocalProxyConfig;
+            parsed = SafeJSON.parse(readFileSync(path, "utf-8")) as LocalProxyConfig;
         } catch (err) {
-            logger.warn({ path: CONFIG_PATH, error: err }, "ai-proxy config unreadable; using defaults");
+            logger.warn({ path, error: err }, "ai-proxy config unreadable; using defaults");
         }
     }
 
