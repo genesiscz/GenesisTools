@@ -320,6 +320,31 @@ describe("renderVolume", () => {
         expect(text).toContain("sudo tools du volume /System/Volumes/Data");
     });
 
+    it("still reports denials when the scan over-counts instead of under-counting", () => {
+        // A volume can exceed used_bytes (clones counted on both sides, purgeable
+        // churn) and still be missing hundreds of unreadable paths. Gating the
+        // denial block on a positive gap hid them in exactly that case.
+        const text = stripAnsi(
+            renderVolume(
+                volume(),
+                scanned({
+                    unique_allocated_bytes: 950_000_000_000,
+                    denied_dirs: 7,
+                    denied_files: 2,
+                    denied_paths: ["/private/var/db/locked"],
+                })
+            )
+        );
+
+        expect(text).toContain("over-counted");
+        expect(text).toContain("9 unreadable path(s)");
+        expect(text).toContain("every total above is INCOMPLETE");
+        expect(text).toContain("/private/var/db/locked");
+        expect(text).toContain("sudo tools du volume /System/Volumes/Data");
+        // The gap framing only applies when there actually is a gap.
+        expect(text).not.toContain("prime suspect");
+    });
+
     it("says the gap is metadata when nothing was denied", () => {
         const text = stripAnsi(renderVolume(volume(), scanned()));
 

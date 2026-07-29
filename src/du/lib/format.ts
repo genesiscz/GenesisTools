@@ -353,10 +353,19 @@ export function renderVolume(vol: VolumeInfo, scan: ClonesizeResult, elapsedMs?:
         }
     }
 
+    // Denials are reported whenever they happened, never gated on the sign of the
+    // gap. A volume can over-count (clones counted on both sides, purgeable churn)
+    // and still have hundreds of unreadable paths; gating on `unaccounted > 0` hid
+    // them in exactly that case, which is the silence this report exists to break.
+    // Only the "prime suspect for the gap" framing depends on there being a gap.
     const denied = (scan.denied_dirs ?? 0) + (scan.denied_files ?? 0);
-    if (unaccounted > 0 && denied > 0) {
+    if (denied > 0) {
         L.push("");
-        L.push(pc.yellow(`  ⚠ ${denied} unreadable path(s) — the prime suspect for the gap.`));
+        L.push(
+            unaccounted > 0
+                ? pc.yellow(`  ⚠ ${denied} unreadable path(s) — the prime suspect for the gap.`)
+                : pc.yellow(`  ⚠ ${denied} unreadable path(s) — every total above is INCOMPLETE.`)
+        );
         for (const p of (scan.denied_paths ?? []).slice(0, 10)) {
             L.push(pc.dim(`     ${p}`));
         }
