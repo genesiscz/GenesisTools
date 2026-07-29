@@ -149,6 +149,29 @@ describe("convertConfig", () => {
         expect(converted.defaults.account).toBeUndefined();
         expect(converted.defaults.app?.ask).toBeUndefined();
     });
+
+    // "cloud" was AICloudProvider("auto"), never a real provider. Carrying it
+    // into v4 named a plugin that does not exist and broke `tools ai summarize`
+    // with `No enabled account for provider "cloud"` on every migrated home.
+    test('the legacy "cloud" task provider is dropped, keeping any model beside it', () => {
+        const converted = convertConfig({
+            ...V3,
+            tasks: { summarize: { provider: "cloud" }, translate: { provider: "cloud", model: "gpt-4o-mini" } },
+        });
+
+        expect(converted.defaults.task?.summarize).toEqual({});
+        expect(converted.defaults.task?.translate).toEqual({ model: "gpt-4o-mini" });
+    });
+
+    test("every other v3 provider is a plugin id and survives the migration verbatim", () => {
+        const converted = convertConfig({
+            ...V3,
+            tasks: { transcribe: { provider: "deepgram" }, embed: { provider: "local-hf" } },
+        });
+
+        expect(converted.defaults.task?.transcribe).toEqual({ provider: "deepgram" });
+        expect(converted.defaults.task?.embed).toEqual({ provider: "local-hf" });
+    });
 });
 
 describe("migrateConfigV4", () => {
