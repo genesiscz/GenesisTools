@@ -14,7 +14,7 @@
  * the same moment, so refreshes are single-flighted per auth path — one network
  * call, one rotation, no burnt refresh tokens.
  */
-import { chmod, rename, writeFile } from "node:fs/promises";
+import { chmod, rename, unlink, writeFile } from "node:fs/promises";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { decodeJwt } from "@genesiscz/utils/jwt";
 import { logger } from "@genesiscz/utils/logger";
@@ -97,9 +97,23 @@ async function writeAuthFileAtomically(authPath: string, document: Record<string
     const temp = `${authPath}.${process.pid}.${Date.now()}.tmp`;
     const payload = `${SafeJSON.stringify(document, { strict: true }, 2)}\n`;
 
-    await writeFile(temp, payload, { mode: AUTH_FILE_MODE });
-    await chmod(temp, AUTH_FILE_MODE);
-    await rename(temp, authPath);
+    // The temp file holds the access AND refresh tokens, so a failure after it
+    // exists must not leave it lying around at whatever mode it got. `writeFile`
+    // mode is masked by umask (umask 0600 yields a 000 file), which is why the
+    // chmod follows rather than being redundant with it.
+    try {
+        await writeFile(temp, payload, { mode: AUTH_FILE_MODE });
+        await chmod(temp, AUTH_FILE_MODE);
+        await rename(temp, authPath);
+    } catch (err) {
+        try {
+            await unlink(temp);
+        } catch (cleanupErr) {
+            logger.warn({ err: cleanupErr, temp }, "grok refresh: could not remove the temp auth file after a failure");
+        }
+
+        throw err;
+    }
 }
 
 /** Token-shaped runs, which some issuers echo back inside their error payloads. */
