@@ -58,3 +58,23 @@ describe("ask sessions", () => {
         expect(sessions[0].id).toBe(older.id);
     });
 });
+
+describe("ask session title uniqueness", () => {
+    it("refuses a second session with the same title for one owner", () => {
+        db.createAskSession({ userId: 1, collectionId: 5, scopeKind: "collection", title: "digest" });
+
+        // The schema constraint, not ensureAskSession's check/recheck: that only
+        // holds inside one connection, and the CLI and server are two.
+        expect(() =>
+            db.createAskSession({ userId: 1, collectionId: 5, scopeKind: "collection", title: "digest" })
+        ).toThrow();
+    });
+
+    it("allows the same title for a different owner", () => {
+        db.createAskSession({ userId: 1, collectionId: 5, scopeKind: "collection", title: "digest" });
+
+        expect(() =>
+            db.createAskSession({ userId: 2, collectionId: 5, scopeKind: "collection", title: "digest" })
+        ).not.toThrow();
+    });
+});

@@ -262,3 +262,50 @@ describe("force validation", () => {
         ).toBe(200);
     });
 });
+
+describe("GET /api/v1/jobs limit", () => {
+    it("rejects non-numeric, negative, zero and over-max limits", async () => {
+        // LIMIT -1 means "no limit" in SQLite, so this one was a full-table read.
+        expect(await status("GET /api/v1/jobs?limit=-1", null)).toBe(400);
+        expect(await status("GET /api/v1/jobs?limit=0", null)).toBe(400);
+        expect(await status("GET /api/v1/jobs?limit=abc", null)).toBe(400);
+        // parseInt stopped at the first non-digit and silently accepted this as 5.
+        expect(await status("GET /api/v1/jobs?limit=5x", null)).toBe(400);
+        expect(await status("GET /api/v1/jobs?limit=1001", null)).toBe(400);
+    });
+
+    it("accepts the bounds and defaults when absent", async () => {
+        expect(await status("GET /api/v1/jobs?limit=1", null)).toBe(200);
+        expect(await status("GET /api/v1/jobs?limit=1000", null)).toBe(200);
+        expect(await status("GET /api/v1/jobs", null)).toBe(200);
+    });
+});
+
+describe("queue position scoping", () => {
+    it("counts a user's position among their own pending jobs only", async () => {
+        const alice = db.createUser({ email: "alice@example.com", passwordHash: "h", apiToken: "ytu_alice" });
+
+        // Three foreign jobs enqueue ahead of Alice's.
+        db.enqueueJob({ targetKind: "video", target: "vid00000001", stages: ["captions"] });
+        db.enqueueJob({ targetKind: "video", target: "vid00000002", stages: ["captions"] });
+        db.enqueueJob({ targetKind: "video", target: "vid00000003", stages: ["captions"] });
+        const mine = db.enqueueJob({
+            targetKind: "video",
+            target: "vid00000004",
+            stages: ["captions"],
+            userId: alice.id,
+        });
+
+        const asAlice = (await (await call(`GET /api/v1/jobs/${mine.job.id}`, "ytu_alice")).json()) as {
+            queuePosition: number;
+        };
+        const asOperator = (await (await call(`GET /api/v1/jobs/${mine.job.id}`, null)).json()) as {
+            queuePosition: number;
+        };
+
+        // 1 of her own, not 4 of everyone's — the global number discloses how much
+        // other tenants have queued.
+        expect(asAlice.queuePosition).toBe(1);
+        expect(asOperator.queuePosition).toBe(4);
+    });
+});

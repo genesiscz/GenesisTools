@@ -47,7 +47,10 @@ export class Pipeline {
         }
 
         const { job, reused } = this.db.enqueueJob(input);
-        const queuePosition = this.db.getJobQueuePosition(job.id);
+        // Counted within the job's own owner, since this number is handed straight
+        // back to whoever enqueued it. An unowned job (CLI/operator) has no owner to
+        // narrow by and keeps the global position.
+        const queuePosition = this.db.getJobQueuePosition(job.id, { userId: job.userId ?? undefined });
         logger.info(
             {
                 jobId: job.id,

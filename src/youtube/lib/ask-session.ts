@@ -44,14 +44,36 @@ export async function ensureAskSession(opts: EnsureAskSessionOpts): Promise<Ensu
         return { session: raced, created: false };
     }
 
-    const session = opts.yt.db.createAskSession({
-        userId: opts.userId,
-        title: opts.name,
-        scopeKind: scope.kind,
-        scopeValue: scope.value,
-        videoIds: scope.videoIds,
-        providerSpec: opts.providerSpec ?? null,
-    });
+    // The re-read above closes the in-process race; the unique index
+    // (`idx_ask_sessions_user_title`) closes the cross-process one, and this is where
+    // that constraint surfaces — a separate CLI process or server can insert between
+    // the read and here, and losing that race must return their row, not throw.
+    let session: AskSessionRecord;
+
+    try {
+        session = opts.yt.db.createAskSession({
+            userId: opts.userId,
+            title: opts.name,
+            scopeKind: scope.kind,
+            scopeValue: scope.value,
+            videoIds: scope.videoIds,
+            providerSpec: opts.providerSpec ?? null,
+        });
+    } catch (error) {
+        const winner = opts.yt.db.getAskSessionByTitle(opts.userId, opts.name);
+
+        if (!winner) {
+            throw error;
+        }
+
+        logger.debug(
+            { session: opts.name, userId: opts.userId, err: error },
+            "youtube ask session: lost the create race, using the existing row"
+        );
+
+        return { session: winner, created: false };
+    }
+
     logger.info(
         { session: session.title, userId: opts.userId, kind: session.scopeKind, videos: scope.videoIds.length },
         "youtube ask session created"

@@ -312,7 +312,7 @@ interface ParsedExport {
     segments: TranscriptSegment[];
 }
 
-function parseExportJson(raw: string): ParsedExport | null {
+export function parseExportJson(raw: string): ParsedExport | null {
     const parsed = SafeJSON.parse(raw, { unbox: true }) as Partial<TranscriptExportJson> | undefined;
 
     if (!parsed || typeof parsed.videoId !== "string" || typeof parsed.text !== "string") {
@@ -328,8 +328,63 @@ function parseExportJson(raw: string): ParsedExport | null {
         lang: typeof parsed.lang === "string" ? parsed.lang : "en",
         source: typeof parsed.source === "string" ? parsed.source : "captions",
         text: parsed.text,
-        segments: Array.isArray(parsed.segments) ? parsed.segments : [],
+        segments: parseSegments(parsed.segments),
     };
+}
+
+/**
+ * Keeps only the entries that really are segments.
+ *
+ * `Array.isArray` proved the container and nothing about the contents, so
+ * `segments: [null]` or a string `start` went through `saveTranscript` untouched and
+ * surfaced much later as broken chunking, indexing or rendering — with no trace back
+ * to the import that wrote it. Dropping bad entries rather than rejecting the file
+ * keeps a mostly-good export usable, and the count is logged so a silently thinned
+ * import is still visible.
+ */
+function parseSegments(value: unknown): TranscriptSegment[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    const segments = value.filter(isTranscriptSegment);
+
+    if (segments.length !== value.length) {
+        logger.warn(
+            { received: value.length, kept: segments.length },
+            "youtube transcript import dropped malformed segments"
+        );
+    }
+
+    return segments;
+}
+
+function isTranscriptSegment(value: unknown): value is TranscriptSegment {
+    if (typeof value !== "object" || value === null) {
+        return false;
+    }
+
+    const segment = value as Record<string, unknown>;
+
+    if (typeof segment.text !== "string") {
+        return false;
+    }
+
+    if (!isFiniteNumber(segment.start) || !isFiniteNumber(segment.end)) {
+        return false;
+    }
+
+    // Negative or reversed ranges are the ones that bite downstream: chunking slices
+    // on [start, end] and a reversed pair yields an empty or negative-length window.
+    if (segment.start < 0 || segment.end < segment.start) {
+        return false;
+    }
+
+    return segment.speaker === undefined || isFiniteNumber(segment.speaker);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+    return typeof value === "number" && Number.isFinite(value);
 }
 
 export function parseExportMarkdown(raw: string, fallbackVideoId: string): ParsedExport | null {
