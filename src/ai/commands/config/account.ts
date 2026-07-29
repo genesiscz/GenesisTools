@@ -1,5 +1,4 @@
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
-import { SafeJSON } from "@genesiscz/utils/json";
 import {
     AccountInUseError,
     type AddAccountInput,
@@ -13,6 +12,7 @@ import type { AccountEntry, UseEnvApiKey } from "@genesiscz/utils/ai/config/sche
 import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
 import { allProviderPlugins, providerPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { redactSecrets } from "@genesiscz/utils/security";

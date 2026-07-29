@@ -14,7 +14,7 @@ import {
 import type { BindContext, HealthReport, ProviderPlugin } from "../providers/plugin-types";
 import { _resetPluginsForTest, registerPlugin } from "../providers/registry";
 import { AiConfigStore } from "./AiConfigStore";
-import { EXPIRY_WARNING_MS, type DoctorCheck, type DoctorLevel, runDoctor } from "./doctor";
+import { type DoctorCheck, type DoctorLevel, EXPIRY_WARNING_MS, runDoctor } from "./doctor";
 import { _clearExternalRefScanners } from "./refs";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "./schema";
 

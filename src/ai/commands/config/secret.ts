@@ -52,8 +52,7 @@ async function readPassphrase(options: {
 
     const passphrase = await p.password({
         message: `Passphrase (${options.purpose}):`,
-        validate: (value) =>
-            value.length < MIN_PASSPHRASE ? `At least ${MIN_PASSPHRASE} characters` : undefined,
+        validate: (value) => (value.length < MIN_PASSPHRASE ? `At least ${MIN_PASSPHRASE} characters` : undefined),
     });
 
     if (options.confirm) {

@@ -13,8 +13,8 @@ import {
 } from "@genesiscz/utils/security";
 import type { BindContext, ProviderPlugin } from "../providers/plugin-types";
 import { _resetPluginsForTest, registerPlugin } from "../providers/registry";
-import { AccountInUseError, addAccount, editAccount, removeAccount, testAccount } from "./account-ops";
 import { AiConfigStore } from "./AiConfigStore";
+import { AccountInUseError, addAccount, editAccount, removeAccount, testAccount } from "./account-ops";
 import { _clearExternalRefScanners, registerExternalRefScanner } from "./refs";
 import { type AiConfigData, CONFIG_VERSION } from "./schema";
 
