@@ -1,6 +1,7 @@
 import { statSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { _resetMigrationStateForTest, ensureAiConfigMigrated } from "./migrate";
 import { type AccountRef, accountRef, type Referrer, referrersOf } from "./refs";
 import { type AccountEntry, type AiConfigData, aiConfigSchema, emptyConfig } from "./schema";
 
@@ -58,6 +59,8 @@ export class AiConfigStore {
             return AiConfigStore.instance;
         }
 
+        await ensureAiConfigMigrated();
+
         const storage = new Storage("ai");
         const { config, mtimeMs } = await AiConfigStore.readFrom(storage);
         AiConfigStore.instance = new AiConfigStore(storage, config, mtimeMs);
@@ -66,6 +69,7 @@ export class AiConfigStore {
 
     static invalidate(): void {
         AiConfigStore.instance = null;
+        _resetMigrationStateForTest();
     }
 
     private static async readFrom(storage: Storage): Promise<{ config: AiConfigData; mtimeMs: number }> {

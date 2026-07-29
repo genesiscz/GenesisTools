@@ -198,8 +198,29 @@ describe("AiConfigStore mutation", () => {
 });
 
 describe("AiConfigStore validation", () => {
-    test("a v3 config on disk is a loud error, never a silent empty config", async () => {
-        writeFileSync(configPath(home), SafeJSON.stringify({ _schemaVersion: 3, accounts: [] }, null, 2));
+    // Behavior changed deliberately: load() now runs the migration chain, so a v3
+    // file is upgraded rather than rejected. The "loud error" property still holds
+    // for a config that is neither v3 nor v4 (corrupt, or from a newer build) —
+    // that case is asserted below, and it is the one where guessing would be unsafe.
+    test("a v3 config on disk is migrated on load, not rejected", async () => {
+        writeFileSync(
+            configPath(home),
+            SafeJSON.stringify(
+                { _schemaVersion: 3, accounts: [{ name: "legacy", provider: "openai", tokens: { apiKey: "sk-old" } }] },
+                null,
+                2
+            )
+        );
+        AiConfigStore.invalidate();
+
+        const store = await AiConfigStore.load();
+
+        expect(store.data().version).toBe(CONFIG_VERSION);
+        expect(store.account("legacy")?.id).toBe("acc_legacy");
+    });
+
+    test("an unrecognisable config is a loud error, never a silent empty config", async () => {
+        writeFileSync(configPath(home), SafeJSON.stringify({ version: 99, accounts: "not-an-array" }, null, 2));
         AiConfigStore.invalidate();
 
         expect(AiConfigStore.load()).rejects.toThrow("not a valid v4 config");
