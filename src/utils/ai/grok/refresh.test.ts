@@ -227,6 +227,35 @@ describe("refreshGrokAuth", () => {
         expect(entries[ENTRY_KEY]?.key).toBe(FRESH);
     });
 
+    it("preserves top-level fields that are not auth entries", async () => {
+        // `parseAuthEntries` keeps only objects carrying a non-empty `key`, so a
+        // rewrite built from that map alone would silently delete whatever else
+        // the `grok` CLI stores beside the entries in a file we do not own.
+        writeFileSync(
+            authPath,
+            SafeJSON.stringify(
+                {
+                    ...defaultEntries(),
+                    version: 2,
+                    settings: { theme: "dark" },
+                    "https://auth.x.ai::logged-out": { auth_mode: "oidc", key: "" },
+                },
+                { strict: true },
+                2
+            ),
+            { mode: 0o600 }
+        );
+        stubFetch({ calls: [] });
+
+        await refreshGrokAuth({ path: authPath });
+
+        const raw = SafeJSON.parse(readFileSync(authPath, "utf-8"), { strict: true }) as Record<string, unknown>;
+        expect(raw.version).toBe(2);
+        expect(raw.settings).toEqual({ theme: "dark" });
+        expect(raw["https://auth.x.ai::logged-out"]).toEqual({ auth_mode: "oidc", key: "" });
+        expect((raw[ENTRY_KEY] as GrokAuthEntry).key).toBe(FRESH);
+    });
+
     it("keeps a concurrent refresh of the SAME entry rather than clobbering it", async () => {
         writeAuth(defaultEntries());
         stubFetch({

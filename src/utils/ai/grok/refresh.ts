@@ -18,7 +18,7 @@ import { chmod, rename, writeFile } from "node:fs/promises";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { decodeJwt } from "@genesiscz/utils/jwt";
 import { logger } from "@genesiscz/utils/logger";
-import { decodeJwtClaims, isTokenExpired, readAuthFileAsync } from "./auth";
+import { decodeJwtClaims, isAuthEntry, isTokenExpired, readAuthFileAsync } from "./auth";
 import { grokAuthPath } from "./paths";
 import type { GrokAuthEntry } from "./types";
 
@@ -70,9 +70,32 @@ async function resolveTokenEndpoint(issuer: string): Promise<string> {
     return `${base}/oauth2/token`;
 }
 
-async function writeAuthFileAtomically(authPath: string, entries: Map<string, GrokAuthEntry>): Promise<void> {
+/**
+ * The parsed entry map is a filtered VIEW of auth.json: `parseAuthEntries` drops
+ * every top-level value that is not a live entry (a logged-out slot with an
+ * empty `key`, a `settings` object, a scalar version marker). Rebuilding the
+ * file from that map would delete all of it, so the rewrite patches the raw
+ * document and the map is used only to reason about entries.
+ */
+async function readAuthDocument(authPath: string): Promise<Record<string, unknown>> {
+    try {
+        const parsed = SafeJSON.parse(await Bun.file(authPath).text(), { strict: true });
+
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+            return parsed as Record<string, unknown>;
+        }
+
+        logger.warn({ authPath }, "grok refresh: auth file is not a JSON object, rewriting it with entries only");
+    } catch (err) {
+        logger.warn({ err, authPath }, "grok refresh: auth file unreadable before rewrite, keeping entries only");
+    }
+
+    return {};
+}
+
+async function writeAuthFileAtomically(authPath: string, document: Record<string, unknown>): Promise<void> {
     const temp = `${authPath}.${process.pid}.${Date.now()}.tmp`;
-    const payload = `${SafeJSON.stringify(Object.fromEntries(entries), { strict: true }, 2)}\n`;
+    const payload = `${SafeJSON.stringify(document, { strict: true }, 2)}\n`;
 
     await writeFile(temp, payload, { mode: AUTH_FILE_MODE });
     await chmod(temp, AUTH_FILE_MODE);
@@ -167,8 +190,9 @@ async function performRefresh(authPath: string, force: boolean): Promise<string 
 
     // Re-read right before writing: whatever the CLI wrote in the meantime keeps
     // its other entries, and only this entry's tokens are replaced.
-    const current = await readAuthFileAsync(authPath);
-    const target = current.get(id) ?? entry;
+    const document = await readAuthDocument(authPath);
+    const onDisk = document[id];
+    const target = isAuthEntry(onDisk) ? onDisk : entry;
 
     // …unless the CLI refreshed THIS entry while the grant was in flight. Its
     // rotated refresh token is the one the issuer now expects, so overwriting it
@@ -186,21 +210,22 @@ async function performRefresh(authPath: string, force: boolean): Promise<string 
               ? Math.floor(Date.now() / 1000) + payload.expires_in
               : undefined;
 
-    current.set(id, {
+    const next: GrokAuthEntry = {
         ...target,
         key: payload.access_token,
         refresh_token: payload.refresh_token ?? target.refresh_token,
         expires_at: expSec ? new Date(expSec * 1000).toISOString() : target.expires_at,
-    });
+    };
 
-    await writeAuthFileAtomically(authPath, current);
+    document[id] = next;
+    await writeAuthFileAtomically(authPath, document);
 
     logger.info(
         {
             authPath,
             endpoint,
             rotatedRefreshToken: Boolean(payload.refresh_token),
-            expiresAt: current.get(id)?.expires_at,
+            expiresAt: next.expires_at,
         },
         "grok refresh: access token refreshed via OIDC and auth.json rewritten"
     );
