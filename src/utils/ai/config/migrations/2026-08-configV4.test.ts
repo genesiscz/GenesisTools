@@ -242,4 +242,63 @@ describe("migrateConfigV4", () => {
         expect(max?.credentials.accessToken).toBe("sk-ant-oat01-live");
         expect(store.account("groq-key")?.credentials.apiKey).toBe("gsk_literal");
     });
+
+    /**
+     * The HYBRID a pre-v4 binary leaves behind (observed live 2026-07-29): its
+     * own migration re-stamps `_schemaVersion: 3` and rebuilds the v3 top-level
+     * keys, but passes the account objects through untouched — already v4, with
+     * `credentials` holding SecureRefs and no `tokens`. Running such an account
+     * through the v3 converter destructured `account.tokens` and crashed, so the
+     * migration failed on every load and one stale daemon bricked the machine.
+     */
+    test("repairs a config re-stamped by an older binary without touching account ids or vault refs", async () => {
+        const hybrid = {
+            _schemaVersion: 3,
+            accounts: [
+                {
+                    id: "acc_martin_max",
+                    name: "martin-max",
+                    provider: "anthropic-sub",
+                    enabled: true,
+                    billing: { mode: "subscription" },
+                    credentials: {
+                        accessToken: { type: "secure", path: "ai/acc_martin_max/accessToken" },
+                        refreshToken: { type: "secure", path: "ai/acc_martin_max/refreshToken" },
+                        expiresAt: 1790000000000,
+                    },
+                    useEnvApiKey: false,
+                    apps: ["claude", "ask"],
+                },
+                // An account the OLD binary added AFTER the re-stamp (a login on
+                // stale code): v3-shaped, and its slug must not steal the id above.
+                {
+                    name: "martin max",
+                    provider: "huggingface",
+                    tokens: { apiKey: "hf_added_on_old_code" },
+                },
+            ],
+            defaultAccounts: {},
+            tasks: { summarize: { provider: "cloud" } },
+            apps: {},
+            providers: {},
+        };
+        writeFileSync(configPath(), SafeJSON.stringify(hybrid, null, 2));
+
+        expect(await migrateConfigV4.shouldRun()).toBe(true);
+        await migrateConfigV4.run();
+
+        const raw = SafeJSON.parse(readFileSync(configPath(), "utf8"), { strict: true });
+        const parsed = aiConfigSchema.parse(raw);
+
+        expect(parsed.version).toBe(CONFIG_VERSION);
+        // Verbatim pass-through: id stable (the vault paths embed it), ref untouched.
+        expect(parsed.accounts[0].id).toBe("acc_martin_max");
+        expect(parsed.accounts[0].credentials.accessToken).toEqual({
+            type: "secure",
+            path: "ai/acc_martin_max/accessToken",
+        });
+        // The v3-shaped newcomer converted, without colliding with the reserved id.
+        expect(parsed.accounts[1].id).not.toBe("acc_martin_max");
+        expect(parsed.accounts[1].credentials.apiKey).toBe("hf_added_on_old_code");
+    });
 });

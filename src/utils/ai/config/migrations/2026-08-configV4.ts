@@ -7,6 +7,7 @@ import { migrationAllowedHere } from "../migration-guard";
 import { accountRef } from "../refs";
 import {
     type AccountEntry,
+    accountEntrySchema,
     type AiConfigData,
     type AppDefault,
     CONFIG_VERSION,
@@ -171,7 +172,41 @@ export function convertConfig(v3: V3ConfigData): AiConfigData {
         }
     }
 
+    // HYBRID entries: a pre-v4 binary (a stale daemon, a checkout that has not
+    // pulled) loaded an already-migrated config and its own migration stamped
+    // `_schemaVersion: 3` back onto the file while preserving the account
+    // objects it did not understand. Such an account is already v4 —
+    // `credentials` (holding live SecureRefs) and no `tokens` — so running it
+    // through the v3 converter crashed on `account.tokens` and bricked the
+    // config for every tool on the machine. Pass it through unchanged, and
+    // reserve its `id` BEFORE any v3 entry slugifies (the vault paths embed the
+    // id, so a collision would re-point another account at its secrets).
+    const hybrids = new Map<AIAccountEntry, AccountEntry>();
+    for (const account of v3.accounts ?? []) {
+        const hybrid = accountEntrySchema.safeParse(account);
+
+        if (hybrid.success) {
+            hybrids.set(account, hybrid.data);
+            taken.add(hybrid.data.id);
+        }
+    }
+
     const accounts: AccountEntry[] = (v3.accounts ?? []).map((account) => {
+        const kept = hybrids.get(account);
+
+        if (kept) {
+            if (!idByName.has(kept.name)) {
+                idByName.set(kept.name, kept.id);
+            }
+
+            logger.info(
+                { account: kept.name, id: kept.id },
+                "v4 migration: account is already v4 (re-stamped by an older binary); kept verbatim"
+            );
+
+            return kept;
+        }
+
         const id = slugifyAccountId(account.name, taken);
 
         // First wins, because v3 `getAccount(name)` was a `find()` (AIConfig.ts).
