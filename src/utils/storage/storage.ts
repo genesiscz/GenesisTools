@@ -66,10 +66,24 @@ export function atomicWriteFileSync(filePath: string, data: string, options?: { 
 
     try {
         renameSync(tmp, filePath);
-    } catch {
+    } catch (err) {
         removeTempFile(tmp);
-        throw new Error(`Atomic rename failed: ${tmp} → ${filePath}`);
+        // The errno is the whole diagnosis here: EXDEV (tmp and target on
+        // different mounts), ENOSPC, EACCES and ENOTEMPTY all need different
+        // answers and would otherwise collapse into one opaque message.
+        throw new Error(`Atomic rename failed: ${tmp} → ${filePath}`, { cause: err });
     }
+}
+
+export interface StorageOptions {
+    /**
+     * Octal mode (e.g. `0o600`) applied to `config.json` by EVERY writer on this
+     * instance. Set it once here when a tool's config holds credentials, rather
+     * than per call: `setConfigValue` and `atomicConfigUpdate` write the same
+     * file as `setConfig`, so a per-call option is one forgotten argument away
+     * from republishing the secret at the umask default.
+     */
+    configFileMode?: number;
 }
 
 export class Storage {
@@ -77,13 +91,16 @@ export class Storage {
     private baseDir: string;
     private cacheDir: string;
     private configPath: string;
+    private configFileMode?: number;
 
     /**
      * Create a Storage instance for a tool
      * @param toolName - Name of the tool (e.g., "timely", "ask")
+     * @param options - See {@link StorageOptions}
      */
-    constructor(toolName: string) {
+    constructor(toolName: string, options?: StorageOptions) {
         this.toolName = toolName;
+        this.configFileMode = options?.configFileMode;
         // GENESIS_TOOLS_HOME overrides the storage root. Purely additive: unset
         // in production → identical to `homedir()`. Tests set it to a fresh
         // tmp dir so the suite can never write a user's real ~/.genesis-tools
@@ -225,15 +242,18 @@ export class Storage {
     /**
      * Set the entire config object
      * @param config - The config object to save
-     * @param options.mode - Octal file mode (e.g. `0o600`) for the config file.
-     * Pass it whenever the config holds credentials: the mode is applied to the
+     * @param options.mode - Octal file mode (e.g. `0o600`) for the config file,
+     * overriding the instance's `configFileMode`. The mode is applied to the
      * temp file BEFORE it is renamed into place, so the file is never briefly
-     * readable at the umask default. Omit it and the mode is left to the umask,
-     * which is what every non-secret config wants.
+     * readable at the umask default. With neither set, the mode is left to the
+     * umask, which is what every non-secret config wants. Prefer setting
+     * `configFileMode` once on the instance — see {@link StorageOptions}.
      */
     async setConfig<T extends object>(config: T, options?: { mode?: number }): Promise<void> {
         await this.ensureDirs();
-        this.atomicWrite(this.configPath, SafeJSON.stringify(config, null, 2), options);
+        this.atomicWrite(this.configPath, SafeJSON.stringify(config, null, 2), {
+            mode: options?.mode ?? this.configFileMode,
+        });
         logger.debug(`Config saved`);
     }
 
@@ -601,7 +621,9 @@ export class Storage {
                 }
 
                 updater(config);
-                this.atomicWrite(this.configPath, SafeJSON.stringify(config, null, 2));
+                this.atomicWrite(this.configPath, SafeJSON.stringify(config, null, 2), {
+                    mode: this.configFileMode,
+                });
                 logger.debug("Atomic config update complete");
 
                 return config;

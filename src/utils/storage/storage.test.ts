@@ -100,6 +100,49 @@ describe("Storage GENESIS_TOOLS_HOME override", () => {
     });
 });
 
+describe("Storage configFileMode", () => {
+    let home: string;
+
+    beforeEach(() => {
+        home = mkdtempSync(join(tmpdir(), "storage-mode-"));
+        env.testing.set("GENESIS_TOOLS_HOME", home);
+    });
+
+    afterEach(() => {
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    it("applies the instance mode to every config writer, not just setConfig", async () => {
+        // setConfigValue and atomicConfigUpdate rewrite the SAME config.json, so
+        // a mode that only setConfig honoured would be undone by either of them.
+        const storage = new Storage("secret-tool", { configFileMode: 0o600 });
+
+        await storage.setConfig({ a: 1 });
+        expect(statSync(storage.getConfigPath()).mode & 0o777).toBe(0o600);
+
+        await storage.setConfigValue("b", 2);
+        expect(statSync(storage.getConfigPath()).mode & 0o777).toBe(0o600);
+
+        await storage.atomicConfigUpdate<{ c?: number }>((config) => {
+            config.c = 3;
+        });
+        expect(statSync(storage.getConfigPath()).mode & 0o777).toBe(0o600);
+    });
+
+    it("leaves the mode to the umask for tools that store no secrets", async () => {
+        const storage = new Storage("plain-tool");
+        const previous = process.umask(0o022);
+
+        try {
+            await storage.setConfig({ a: 1 });
+        } finally {
+            process.umask(previous);
+        }
+
+        expect(statSync(storage.getConfigPath()).mode & 0o777).toBe(0o644);
+    });
+});
+
 describe("atomicWriteFileSync mode", () => {
     let dir: string;
 
@@ -148,7 +191,8 @@ describe("atomicWriteFileSync mode", () => {
         expect(readdirSync(dir)).toEqual(["target"]);
     });
 
-    it("leaves no temp file behind when the data cannot be written at all", () => {
+    // Same caveat as the grok refresh suite: a 0500 directory does not stop root.
+    it.skipIf(process.getuid?.() === 0)("leaves no temp file behind when the data cannot be written at all", () => {
         const readOnly = join(dir, "read-only");
         mkdirSync(readOnly, { mode: 0o500 });
 

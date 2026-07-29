@@ -2,13 +2,13 @@ import { chmod, stat } from "node:fs/promises";
 import { migrateAccountConfig } from "@app/ai-proxy/lib/account-config";
 import { normalizeBasePath } from "@app/ai-proxy/lib/path-prefix";
 import { maskApiKey } from "@app/ai-proxy/lib/providers/api-key-state";
-import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
+import { AI_PROXY_CONFIG_FILE_MODE, getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { AiProxyConfig, AiProxyPublicConfig } from "@app/ai-proxy/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 
 /** Owner-only: the config carries the proxy bearer key and billed vendor keys. */
-const CONFIG_FILE_MODE = 0o600;
+const CONFIG_FILE_MODE = AI_PROXY_CONFIG_FILE_MODE;
 
 /**
  * Whether any group or other bit survived on the config's mode. Split out so the
@@ -166,9 +166,10 @@ export class AiProxyConfigStore {
     async save(config: AiProxyConfig): Promise<void> {
         const normalized = mergeConfig(config);
         await this.storage.ensureDirs();
-        // The mode travels with the temp file through the rename, so the key is
-        // never published at the umask default even for an instant.
-        await this.storage.setConfig(normalized, { mode: CONFIG_FILE_MODE });
+        // Mode comes from the storage instance (AI_PROXY_CONFIG_FILE_MODE) and
+        // travels with the temp file through the rename, so the key is never
+        // published at the umask default even for an instant.
+        await this.storage.setConfig(normalized);
         await this.restrictConfigPermissions();
         this.cached = normalized;
     }
