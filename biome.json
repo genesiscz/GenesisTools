@@ -120,16 +120,6 @@
             }
         },
         {
-            "includes": ["plugins/genesis-tools/skills/wrap-up/scripts/**"],
-            "linter": {
-                "rules": {
-                    "style": {
-                        "noRestrictedGlobals": "off"
-                    }
-                }
-            }
-        },
-        {
             "includes": ["**/*.test.ts", "**/*.test.tsx", "**/__tests__/**", "**/*.data.ts"],
             "plugins": []
         }

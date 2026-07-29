@@ -8,6 +8,7 @@ import {
     innerBlock,
     matches,
     parseFlags,
+    sh,
     slug,
     splitSentinels,
 } from "./resolve.ts";
@@ -264,6 +265,22 @@ describe("parseFlags", () => {
 
     it("ignores positional noise", () => {
         expect(parseFlags(["stray", "--branch", "feat/x"])).toEqual({ branch: "feat/x" });
+    });
+});
+
+describe("sh", () => {
+    it("returns trimmed stdout on success", async () => {
+        expect(await sh(["echo", "  hello  "])).toBe("hello");
+    });
+
+    it("returns empty string when the command exits non-zero", async () => {
+        expect(await sh(["false"])).toBe("");
+    });
+
+    it("returns empty string instead of throwing when the binary is missing", async () => {
+        // Bun.spawn throws on ENOENT; gitContext()'s documented no-git fallback
+        // depends on this degrading to "" rather than crashing the command.
+        expect(await sh(["wrap-up-no-such-binary-xyz"])).toBe("");
     });
 });
 
