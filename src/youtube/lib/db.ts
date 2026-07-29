@@ -780,6 +780,14 @@ export class YoutubeDatabase extends BaseDatabase {
         // only holds inside ONE connection — a CLI run and the server are separate
         // SQLite connections and could both insert. The constraint has to live in the
         // schema for that to be true across processes.
+        //
+        // NAMED sessions only. `title` is a display string for everyone else: a
+        // collection conversation is titled with the question that opened it
+        // (`collection-ask.ts`, `input.question.slice(0, 80)`), so a global unique
+        // index made asking the same question twice fail outright, and the dedupe
+        // below merged unrelated conversations that merely shared 80 characters.
+        // `resolveAskScope` only ever yields channel/videos/dir, so `scope_kind`
+        // separates the two namespaces exactly.
         this.runMigration("ask-sessions-unique-title-per-user", () => {
             const dedupe = this.db.transaction(() => {
                 // Any duplicate that predates the index has to go first, or CREATE
@@ -787,29 +795,40 @@ export class YoutubeDatabase extends BaseDatabase {
                 // lowest id wins and inherits the others' messages, so no
                 // conversation is lost — merging beats deleting here because the
                 // rows are user-written history.
+                //
+                // The DROP is not redundant: a database opened by an earlier build of
+                // this branch already carries the non-partial index, and
+                // `CREATE ... IF NOT EXISTS` would leave that stricter one in place.
                 this.db.exec(`
+                    DROP INDEX IF EXISTS idx_ask_sessions_user_title;
+
                     UPDATE ask_session_messages
                        SET session_id = (
                            SELECT MIN(keep.id) FROM ask_sessions keep
                             WHERE keep.user_id = (SELECT user_id FROM ask_sessions WHERE id = session_id)
                               AND keep.title = (SELECT title FROM ask_sessions WHERE id = session_id)
+                              AND keep.scope_kind <> 'collection'
                        )
                      WHERE session_id IN (
                            SELECT dup.id FROM ask_sessions dup
-                            WHERE dup.id > (
+                            WHERE dup.scope_kind <> 'collection'
+                              AND dup.id > (
                                 SELECT MIN(keep.id) FROM ask_sessions keep
                                  WHERE keep.user_id = dup.user_id AND keep.title = dup.title
+                                   AND keep.scope_kind <> 'collection'
                             )
                        );
 
                     DELETE FROM ask_sessions
-                     WHERE id > (
+                     WHERE scope_kind <> 'collection'
+                       AND id > (
                            SELECT MIN(keep.id) FROM ask_sessions keep
                             WHERE keep.user_id = ask_sessions.user_id AND keep.title = ask_sessions.title
+                              AND keep.scope_kind <> 'collection'
                        );
 
                     CREATE UNIQUE INDEX IF NOT EXISTS idx_ask_sessions_user_title
-                        ON ask_sessions(user_id, title);
+                        ON ask_sessions(user_id, title) WHERE scope_kind <> 'collection';
                 `);
             });
             dedupe();
@@ -3327,9 +3346,13 @@ export class YoutubeDatabase extends BaseDatabase {
 
     /** Named lookup within one owner's namespace — CLI sessions are addressed by name. */
     getAskSessionByTitle(userId: number, title: string): AskSessionRecord | null {
+        // Scoped to the same namespace the unique index covers. A collection
+        // conversation's title is the question that opened it, not a name anyone
+        // addresses it by, so matching one here would hand `ensureAskSession` a
+        // collection session whose members then resolve by collection rules.
         const row = this.db
             .query<AskSessionRow, [number, string]>(
-                "SELECT * FROM ask_sessions WHERE user_id = ? AND title = ? ORDER BY id DESC LIMIT 1"
+                "SELECT * FROM ask_sessions WHERE user_id = ? AND title = ? AND scope_kind <> 'collection' ORDER BY id DESC LIMIT 1"
             )
             .get(userId, title);
 

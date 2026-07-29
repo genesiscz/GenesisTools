@@ -60,21 +60,31 @@ describe("ask sessions", () => {
 });
 
 describe("ask session title uniqueness", () => {
-    it("refuses a second session with the same title for one owner", () => {
-        db.createAskSession({ userId: 1, collectionId: 5, scopeKind: "collection", title: "digest" });
+    it("refuses a second NAMED session with the same title for one owner", () => {
+        db.createAskSession({ userId: 1, scopeKind: "channel", scopeValue: "@chan", title: "digest" });
 
         // The schema constraint, not ensureAskSession's check/recheck: that only
         // holds inside one connection, and the CLI and server are two.
         expect(() =>
-            db.createAskSession({ userId: 1, collectionId: 5, scopeKind: "collection", title: "digest" })
+            db.createAskSession({ userId: 1, scopeKind: "channel", scopeValue: "@chan", title: "digest" })
         ).toThrow();
     });
 
     it("allows the same title for a different owner", () => {
-        db.createAskSession({ userId: 1, collectionId: 5, scopeKind: "collection", title: "digest" });
+        db.createAskSession({ userId: 1, scopeKind: "channel", scopeValue: "@chan", title: "digest" });
 
         expect(() =>
-            db.createAskSession({ userId: 2, collectionId: 5, scopeKind: "collection", title: "digest" })
+            db.createAskSession({ userId: 2, scopeKind: "channel", scopeValue: "@chan", title: "digest" })
+        ).not.toThrow();
+    });
+
+    // The index covers named sessions only. `collection-ask` titles a conversation
+    // with the question that opened it, so repeating a question is ordinary use.
+    it("allows two collection conversations to share a title", () => {
+        db.createAskSession({ userId: 1, collectionId: 5, scopeKind: "collection", title: "how do they compare?" });
+
+        expect(() =>
+            db.createAskSession({ userId: 1, collectionId: 5, scopeKind: "collection", title: "how do they compare?" })
         ).not.toThrow();
     });
 });
