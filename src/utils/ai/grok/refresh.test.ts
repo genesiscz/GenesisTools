@@ -256,24 +256,69 @@ describe("refreshGrokAuth", () => {
         expect((raw[ENTRY_KEY] as GrokAuthEntry).key).toBe(FRESH);
     });
 
-    it("leaves no temp file behind when the atomic write cannot complete", async () => {
-        // The temp file carries the access AND refresh tokens, so a write that
-        // fails partway must not leave one on disk. The directory is revoked
-        // mid-grant, after the initial read has already succeeded.
-        writeAuth(defaultEntries());
+    // Revoking directory write access does not stop root, so under a root CI
+    // image the write would succeed and this would fail for the wrong reason.
+    it.skipIf(process.getuid?.() === 0)(
+        "leaves no temp file behind when the atomic write cannot complete",
+        async () => {
+            // The temp file carries the access AND refresh tokens, so a write that
+            // fails partway must not leave one on disk. The directory is revoked
+            // mid-grant, after the initial read has already succeeded.
+            writeAuth(defaultEntries());
+            stubFetch({
+                calls: [],
+                onToken: () => {
+                    chmodSync(dir, 0o500);
+                },
+            });
+
+            expect(await refreshGrokAuth({ path: authPath })).toBeNull();
+
+            chmodSync(dir, 0o700);
+            expect(readdirSync(dir).filter((entry) => entry.endsWith(".tmp"))).toEqual([]);
+            // The original token is untouched, so the account is no worse off.
+            expect(readAuth()[ENTRY_KEY]?.key).toBe(EXPIRED);
+        }
+    );
+
+    it("preserves sibling data in a file the lenient reader accepts but strict JSON rejects", async () => {
+        // The reader (`readAuthFileAsync`) parses leniently, so a trailing comma
+        // is a file this code happily refreshes. If the rewrite re-parsed it
+        // strictly it would fall back and delete everything else — the very data
+        // loss this rewrite path exists to prevent.
+        writeFileSync(
+            authPath,
+            `{
+                "version": 2,
+                ${SafeJSON.stringify(ENTRY_KEY, { strict: true })}: ${SafeJSON.stringify(defaultEntries()[ENTRY_KEY], { strict: true })},
+            }`,
+            { mode: 0o600 }
+        );
+        stubFetch({ calls: [] });
+
+        expect(await refreshGrokAuth({ path: authPath })).toBe(FRESH);
+
+        const raw = SafeJSON.parse(readFileSync(authPath, "utf-8"), { strict: true }) as Record<string, unknown>;
+        expect(raw.version).toBe(2);
+        expect((raw[ENTRY_KEY] as GrokAuthEntry).key).toBe(FRESH);
+    });
+
+    it("keeps every other entry when the file turns unparseable mid-grant", async () => {
+        const otherKey = `${ISSUER}::99999999-8888-7777-6666-555555555555`;
+        writeAuth({ ...defaultEntries(), [otherKey]: { key: FRESH, refresh_token: "other-refresh" } });
         stubFetch({
             calls: [],
             onToken: () => {
-                chmodSync(dir, 0o500);
+                writeFileSync(authPath, "{ this is not json at all", { mode: 0o600 });
             },
         });
 
-        expect(await refreshGrokAuth({ path: authPath })).toBeNull();
+        await refreshGrokAuth({ path: authPath });
 
-        chmodSync(dir, 0o700);
-        expect(readdirSync(dir).filter((entry) => entry.endsWith(".tmp"))).toEqual([]);
-        // The original token is untouched, so the account is no worse off.
-        expect(readAuth()[ENTRY_KEY]?.key).toBe(EXPIRED);
+        // Falling back to an empty document would have dropped the other account.
+        const entries = readAuth();
+        expect(entries[otherKey]?.key).toBe(FRESH);
+        expect(entries[ENTRY_KEY]?.key).toBe(FRESH);
     });
 
     it("keeps a concurrent refresh of the SAME entry rather than clobbering it", async () => {

@@ -4,7 +4,7 @@ import { decodeJwtClaims, getActiveAuthEntry, isTokenExpired, readAuthFileAsync 
 import { GrokAuthExpiredError, isAuthHttpStatus } from "./auth-errors";
 import { buildCliProxyHeaders } from "./headers";
 import { GROK_CLI_CHAT_PROXY_BASE_URL, grokAuthPath } from "./paths";
-import { refreshGrokAuth } from "./refresh";
+import { refreshGrokAuth, refreshGrokAuthOrThrow } from "./refresh";
 import type { GrokBillingConfig, GrokProbeResult, GrokSettings } from "./types";
 
 export interface GrokSubscriptionClientOptions {
@@ -88,15 +88,12 @@ export class GrokSubscriptionClient {
      * `grok` CLI, which a background daemon cannot do.
      */
     private async refreshToken(reason: string): Promise<void> {
-        const refreshed = await refreshGrokAuth({ path: this.authPath });
-
-        if (!refreshed || isTokenExpired(decodeJwtClaims(refreshed))) {
-            logger.warn({ authPath: this.authPath, reason }, "grok: OIDC refresh did not yield a usable token");
-            throw new GrokAuthExpiredError(this.authPath);
-        }
-
-        this.token = refreshed;
-        logger.info({ authPath: this.authPath, reason }, "grok: recovered the session with an OIDC refresh");
+        this.token = await refreshGrokAuthOrThrow({
+            authPath: this.authPath,
+            context: { reason },
+            onSuccess: "grok: recovered the session with an OIDC refresh",
+            onFailure: "grok: OIDC refresh did not yield a usable token",
+        });
     }
 
     async fetch(path: string, init?: RequestInit & { modelOverride?: string }): Promise<Response> {

@@ -4,7 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { decodeJwtClaims, getActiveAuthEntry, isTokenExpired, readAuthFileAsync } from "./auth";
 import { GrokAuthExpiredError } from "./auth-errors";
 import { grokAuthPath } from "./paths";
-import { refreshGrokAuth } from "./refresh";
+import { refreshGrokAuthOrThrow } from "./refresh";
 
 export interface ResolvedGrokSubToken {
     token: string;
@@ -88,16 +88,12 @@ async function ensureFreshToken(token: string, authPath: string): Promise<string
         return token;
     }
 
-    const refreshed = await refreshGrokAuth({ path: authPath });
-
-    if (!refreshed || isTokenExpired(decodeJwtClaims(refreshed))) {
-        logger.warn({ authPath }, "grok: OIDC refresh did not yield a usable token for the grok-sub account");
-        throw new GrokAuthExpiredError(authPath);
-    }
-
-    logger.info({ authPath }, "grok: refreshed the expired grok-sub token via OIDC");
-
-    return refreshed;
+    return refreshGrokAuthOrThrow({
+        authPath,
+        context: {},
+        onSuccess: "grok: refreshed the expired grok-sub token via OIDC",
+        onFailure: "grok: OIDC refresh did not yield a usable token for the grok-sub account",
+    });
 }
 
 function pick(account: AIAccountEntry): { name: string; label?: string } {
