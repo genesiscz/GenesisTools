@@ -35,7 +35,9 @@ interface AskOpts {
 export function registerAskCommand(program: Command): void {
     program
         // Question FIRST: commander refuses any argument after a variadic one.
-        .command("ask <question> [targets...]")
+        // Optional rather than required because `--history` only reads a session back
+        // and never uses it — demanding a positional there forced a dummy argument.
+        .command("ask [question] [targets...]")
         .description("Ask a question across videos, a channel, or a transcript directory")
         .option("--channel <handle>", "Ask over every stored video of a channel")
         .option("--dir <path>", "Import a transcript directory, then ask over it")
@@ -47,7 +49,7 @@ export function registerAskCommand(program: Command): void {
         .option("--provider <name>", "Provider override")
         .option("--model <id>", "Model override")
         .option("--json", "Machine-readable output")
-        .action(async (question: string, targets: string[], opts: AskOpts, cmd: Command) => {
+        .action(async (question: string | undefined, targets: string[], opts: AskOpts, cmd: Command) => {
             const yt = await getYoutube();
 
             await withConsoleContext(yt.db, async (user) => {
@@ -73,6 +75,14 @@ export function registerAskCommand(program: Command): void {
                         .join("\n\n");
 
                     await renderOrEmit({ text, json: messages, flags: cmd.optsWithGlobals() });
+                    return;
+                }
+
+                // Only the `--history` branch above may run without one; everything
+                // past here asks the model something.
+                if (!question) {
+                    out.error("A question is required. Pass one, or use --history --session <name> to read a session.");
+                    process.exitCode = 1;
                     return;
                 }
 
@@ -129,8 +139,10 @@ export function registerAskCommand(program: Command): void {
                 const citations = formatCitationLines(result.citations).join("\n");
                 const notes: string[] = [];
 
-                if (result.missingTranscript.length > 0) {
-                    notes.push(pc.yellow(`${result.missingTranscript.length} video(s) have no transcript yet`));
+                if (result.missingSources.length > 0) {
+                    notes.push(
+                        pc.yellow(`${result.missingSources.length} video(s) have none of the asked sources yet`)
+                    );
                 }
 
                 if (result.skippedUnindexed.length > 0) {

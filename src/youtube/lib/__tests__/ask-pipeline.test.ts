@@ -110,6 +110,50 @@ describe("answerOverVideos index gating", () => {
         expect(indexed.map((opts) => opts.videoId)).toEqual([videoId]);
     });
 
+    // The ask surfaces allow comments-only questions (routes/videos.ts demands a
+    // transcript only when transcript is among the sources), so eligibility has to
+    // follow the REQUESTED sources — partitioning on the transcript alone rejected
+    // every one of them before retrieval.
+    it("answers over a video that has comments but no transcript when only comments are asked for", async () => {
+        db.upsertVideo({ id: "vidOnlyCmts", channelHandle: "@chan", title: "Comments only" });
+        db.upsertComments("vidOnlyCmts" as VideoId, [
+            {
+                commentId: "c1",
+                author: "someone",
+                authorId: null,
+                text: "the answer is 42",
+                likeCount: null,
+                publishedAt: null,
+                parentCommentId: null,
+            },
+        ]);
+
+        const result = await answerOverVideos({
+            yt,
+            videoIds: ["vidOnlyCmts" as VideoId],
+            question: "what?",
+            providerChoice,
+            sources: ["comments"],
+        });
+
+        expect(result.searchedVideoIds).toEqual(["vidOnlyCmts"]);
+        expect(result.missingSources).toEqual([]);
+    });
+
+    it("still refuses when none of the videos hold any requested source", async () => {
+        db.upsertVideo({ id: "vidNothing01", channelHandle: "@chan", title: "Nothing" });
+
+        await expect(
+            answerOverVideos({
+                yt,
+                videoIds: ["vidNothing01" as VideoId],
+                question: "what?",
+                providerChoice,
+                sources: ["comments"],
+            })
+        ).rejects.toThrow(/comments data yet/);
+    });
+
     it("reports videos with no transcript instead of indexing them", async () => {
         const withTranscript = seedVideo("vidHasText1", "Has text");
         db.upsertVideo({ id: "vidNoText001", channelHandle: "@chan", title: "No text" });
@@ -121,7 +165,7 @@ describe("answerOverVideos index gating", () => {
             providerChoice,
         });
 
-        expect(result.missingTranscript).toEqual(["vidNoText001"]);
+        expect(result.missingSources).toEqual(["vidNoText001"]);
         expect(result.searchedVideoIds).toEqual([withTranscript]);
     });
 });
