@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { TimelyConfig } from "@app/timely/types";
-import { describeTokenLifetime } from "./token-status";
+import { ASSUMED_TOKEN_LIFETIME_SECONDS, describeTokenLifetime, tokenNeedsRefresh } from "./token-status";
 
 const NOW_MS = Date.UTC(2026, 6, 28, 12, 0, 0);
 const NOW_SECONDS = Math.floor(NOW_MS / 1000);
@@ -16,6 +16,41 @@ function config(overrides: Partial<TimelyConfig>): TimelyConfig {
         ...overrides,
     };
 }
+
+describe("tokenNeedsRefresh", () => {
+    test("a token with no expires_in is usable for the assumed lifetime, not refreshed every call", () => {
+        // The whole point: unknown lifetime used to mean "always expired", which put a
+        // token-endpoint POST in front of every single request.
+        const justIssued = { created_at: NOW_SECONDS };
+
+        expect(tokenNeedsRefresh(justIssued, NOW_MS)).toBe(false);
+        expect(tokenNeedsRefresh(justIssued, NOW_MS + 60 * 60 * 1000)).toBe(false);
+    });
+
+    test("a token past the assumed lifetime is refreshed", () => {
+        const aged = { created_at: NOW_SECONDS - ASSUMED_TOKEN_LIFETIME_SECONDS };
+
+        expect(tokenNeedsRefresh(aged, NOW_MS)).toBe(true);
+    });
+
+    test("the buffer refreshes shortly before the deadline, never mid-request", () => {
+        const nearlyDue = { created_at: NOW_SECONDS - ASSUMED_TOKEN_LIFETIME_SECONDS + 60 };
+
+        expect(tokenNeedsRefresh(nearlyDue, NOW_MS)).toBe(true);
+    });
+
+    test("an explicit expires_in still wins over the assumption", () => {
+        const shortLived = { created_at: NOW_SECONDS, expires_in: 600 };
+
+        expect(tokenNeedsRefresh(shortLived, NOW_MS)).toBe(false);
+        expect(tokenNeedsRefresh(shortLived, NOW_MS + 11 * 60 * 1000)).toBe(true);
+    });
+
+    test("a token with no created_at is left alone rather than refreshed blindly", () => {
+        expect(tokenNeedsRefresh({}, NOW_MS)).toBe(false);
+        expect(tokenNeedsRefresh(undefined, NOW_MS)).toBe(false);
+    });
+});
 
 describe("describeTokenLifetime", () => {
     test("reports nothing when there is no token", () => {
