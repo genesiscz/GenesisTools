@@ -1,6 +1,7 @@
 import type { TimelyApiClient } from "@app/timely/api/client";
+import { probeAndSaveCookie } from "@app/timely/api/cookie-probe";
 import type { OAuthApplication } from "@app/timely/types";
-import { describeCookie, extractCookie, saveCookie } from "@app/timely/utils/cookie";
+import { describeCookie, extractCookie } from "@app/timely/utils/cookie";
 import { Browser } from "@genesiscz/utils/browser";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { readFromClipboard } from "@genesiscz/utils/clipboard";
@@ -154,22 +155,20 @@ async function cookieLogin(storage: Storage, options: { fromClipboard: boolean }
 
     logger.info(chalk.yellow("Checking the cookie against suggested_entries..."));
 
-    let response: Response;
+    const outcome = await probeAndSaveCookie({ storage, accountId, cookie });
 
-    try {
-        response = await probeCookie(accountId, cookie);
-    } catch (err) {
-        logger.error({ error: err }, "Could not reach Timely to check the cookie. Nothing was saved.");
+    if (outcome.status === "unreachable") {
+        logger.error({ error: outcome.error }, "Could not reach Timely to check the cookie. Nothing was saved.");
         process.exit(1);
     }
 
-    if (!response.ok) {
-        logger.error(`Timely rejected that cookie (HTTP ${response.status}). Nothing was saved.`);
+    if (outcome.status === "rejected") {
+        logger.error(`Timely rejected that cookie (HTTP ${outcome.httpStatus}). Nothing was saved.`);
         logger.info("Copy the request again from a page you are logged into, including every name=value pair.");
         process.exit(1);
     }
 
-    const saved = await saveCookie(storage, cookie);
+    const { saved } = outcome;
     logger.info(
         chalk.green(`Cookie accepted (HTTP 200) and saved to ${saved.path}${saved.ownerOnly ? " (mode 600)" : ""}.`)
     );
@@ -179,19 +178,6 @@ async function cookieLogin(storage: Storage, options: { fromClipboard: boolean }
     }
 
     logger.info("Memories work again: tools timely memories --day <YYYY-MM-DD>");
-}
-
-/** Never let a stalled network leave `login cookies` waiting with no output. */
-const PROBE_TIMEOUT_MS = 15_000;
-
-/** The single validation request. 200 means the cookie is a live browser session. */
-function probeCookie(accountId: number, cookie: string): Promise<Response> {
-    const today = new Date().toISOString().slice(0, 10);
-    const url = `https://app.timelyapp.com/${accountId}/suggested_entries.json?date=${today}&spam=true`;
-    return fetch(url, {
-        headers: { accept: "application/json", Cookie: cookie },
-        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-    });
 }
 
 /** Read the clipboard without letting a headless/denied clipboard abort the command. */
