@@ -3,8 +3,9 @@ preload = ["./src/utils/bun/preload-solid-scoped.ts", "./src/utils/search/stores
 [install]
 # Supply-chain delay: refuse package versions younger than 7 days (604800s)
 minimumReleaseAge = 604800
-# Exact-match only. AI SDK: we track latest majors closely. MCP: authorized
-# 2026-07-28 for SDK v2 migration (packages published 2026-07-27).
+# Exact-match only, and a standing bypass for every future version of the listed
+# package. Nothing goes in here that does not need permanent latest-tracking.
+# AI SDK: we track latest majors closely.
 minimumReleaseAgeExcludes = [
     "ai",
     "@ai-sdk/anthropic",
@@ -17,10 +18,6 @@ minimumReleaseAgeExcludes = [
     "@ai-sdk/provider-utils",
     "@ai-sdk/gateway",
     "@openrouter/ai-sdk-provider",
-    "@modelcontextprotocol/client",
-    "@modelcontextprotocol/server",
-    "@modelcontextprotocol/core",
-    "@modelcontextprotocol/codemod",
 ]
 
 [test]
