@@ -659,3 +659,34 @@ Worth recording for anyone extending `PartnersResult`: `clonesize_partners_json`
 emits `denied_dirs` and `denied_files` but **never `denied_paths`**, so the partner
 report's denial warning stands on counts alone and prints
 `(N further denial(s) not listed)`.
+
+---
+
+## 2026-07-29 07:14 — Review round 3 (PR #302): eviction is reachable after all
+
+Still no C change. This section exists to correct the one above, which overstated
+its own result.
+
+Round 2 claimed a forged record count "cannot reach the eviction branch". That is
+wrong as written, and the review caught it. `cache_open`'s
+`need > (size_t)st.st_size` is a **consistency** check, not a ceiling on the count:
+it only rejects a cache too small for what its header claims. A file that claims
+1,999,999 records **and is padded to actually hold them** passes it.
+
+So eviction is testable in fixture time after all:
+
+- header keeps the real magic / version / fsid, sets `nrecs = 1,999,999`, `nexts = 0`
+- body is 1,999,999 zeroed `CacheEnt` records (48 bytes each) → 95,999,992 bytes
+- the zeroed records have `fileid = 0`, so they match no real file: the scan opens
+  all 3 fixture files and the byte totals stay correct
+- `cache_write` then merges 1,999,999 carried-over records with this run's 3,
+  reaching 2,000,002, which trips `n > CACHE_MAX_RECS` and the recency truncation
+
+Result, measured: the rewritten cache holds **exactly 2,000,000** records, and the
+whole scan takes **0.26s**. The eviction branch is now covered by
+`cache.test.ts` ("evicts down to CACHE_MAX_RECS when the merged set overflows"),
+and the full du + format suite still runs in well under a second.
+
+The distinction worth keeping: the size check protects against an **inconsistent or
+truncated** cache (out-of-bounds reads), and nothing more. It is not a bound on
+`nrecs`, and it should not be described as one.
