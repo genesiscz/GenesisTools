@@ -1,4 +1,9 @@
-import { getCurrentUsage, getUsageHistory, getUsageHistoryMulti } from "@app/dev-dashboard/lib/claude-usage/aggregator";
+import {
+    getCurrentUsage,
+    getUsageHistory,
+    getUsageHistoryMulti,
+    getUsageTotals,
+} from "@app/dev-dashboard/lib/claude-usage/aggregator";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
 
@@ -10,6 +15,20 @@ export function claudeRoutes(): RouteDef[] {
             handler: async () => {
                 try {
                     return { kind: "json", status: 200, body: await getCurrentUsage() };
+                } catch (err) {
+                    return errorResult(err);
+                }
+            },
+        },
+        {
+            method: "GET",
+            pattern: "/api/claude/usage/totals",
+            handler: async (ctx) => {
+                const minutes = Number.parseInt(ctx.query.get("minutes") ?? "1440", 10);
+                const safeMinutes = Number.isFinite(minutes) && minutes > 0 ? minutes : 1440;
+
+                try {
+                    return { kind: "json", status: 200, body: await getUsageTotals({ minutes: safeMinutes }) };
                 } catch (err) {
                     return errorResult(err);
                 }

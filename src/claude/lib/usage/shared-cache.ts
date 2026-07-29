@@ -2,6 +2,8 @@ import { join } from "node:path";
 import { processExtraUsageNotifications } from "@app/claude/lib/usage/extra-usage-notify";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { getClaudeUsageStorage } from "@app/claude/lib/usage/storage";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import { recordUsage } from "@genesiscz/utils/ai/usage";
 import { logger } from "@genesiscz/utils/logger";
 import type { AccountUsage } from "./api";
 import { fetchAllAccountsUsage } from "./api";
@@ -52,14 +54,20 @@ function filterAccounts(accounts: AccountUsage[], filter?: string | string[]): A
  * 2026-07-12 only the daemon recorded, so successes fetched by other
  * consumers refreshed the Overview but left multi-minute holes in History
  * whenever the daemon's own polls were failing (e.g. 429/invalid_grant).
+ *
+ * It ALSO mirrors each newly-changed bucket into the shared usage layer
+ * (`src/utils/ai/usage`) as a `bucket-snapshot` event, so a cross-surface query
+ * can see Claude subscription pressure next to per-token spend. The DB remains
+ * the source of truth for buckets; the events are additive and carry no tokens.
  */
-export function recordAll(accounts: AccountUsage[]): void {
+export async function recordAll(accounts: AccountUsage[]): Promise<void> {
     // No dbPath -> UsageHistoryDb resolves the process-wide ClaudeDatabase
     // singleton (see ClaudeDatabase.getInstance) — in the daemon that is the
     // same connection poll-daemon.ts holds open in its own `db` and closes
     // once in its top-level `finally`. Closing it here would sever that
     // shared connection mid-flight.
     const db = new UsageHistoryDb();
+    const accountIds = await accountIdsByName();
 
     for (const account of accounts) {
         // Stale entries are replays of an older successful fetch — recording
@@ -75,11 +83,35 @@ export function recordAll(accounts: AccountUsage[]): void {
                 continue;
             }
 
-            db.recordIfChangedV2(account.accountName, limit.bucket, limit.percent, {
+            const changed = db.recordIfChangedV2(account.accountName, limit.bucket, limit.percent, {
                 resetsAt: limit.resets_at,
                 severity: limit.severity,
                 scopeModel: limit.scope_model,
             });
+
+            // Only on a real change. The poller runs every ~30s against five
+            // buckets per account; mirroring unchanged values would append tens
+            // of thousands of identical rows a day to an append-only log.
+            if (changed) {
+                void recordUsage({
+                    app: "claude",
+                    accountId: accountIds.get(account.accountName) ?? account.accountName,
+                    provider: "anthropic-sub",
+                    modelId: limit.scope_model ?? limit.bucket,
+                    // A limit bucket is a percentage, not a token count. Zeroes
+                    // here are honest: these events say "pressure changed", and
+                    // per-token spend is what the call-site emitters record.
+                    inputTokens: 0,
+                    outputTokens: 0,
+                    meta: {
+                        kind: "bucket-snapshot",
+                        bucket: limit.bucket,
+                        utilization: limit.percent,
+                        resetsAt: limit.resets_at,
+                        severity: limit.severity,
+                    },
+                });
+            }
         }
 
         const spend = normalizeSpend(account.usage);
@@ -87,6 +119,21 @@ export function recordAll(accounts: AccountUsage[]): void {
         if (spend) {
             db.recordSpendIfChanged(account.accountName, spend);
         }
+    }
+}
+
+/**
+ * Account NAME → `acc_…` id, so the mirrored events group with the ones the core
+ * call path emits (which knows ids). A name that resolves to nothing keeps the
+ * name as its key rather than dropping the row.
+ */
+async function accountIdsByName(): Promise<Map<string, string>> {
+    try {
+        const store = await AiConfigStore.load();
+        return new Map(store.accounts().map((entry) => [entry.name, entry.id]));
+    } catch (err) {
+        logger.debug({ err }, "usage mirror: could not read account ids; falling back to account names");
+        return new Map();
     }
 }
 

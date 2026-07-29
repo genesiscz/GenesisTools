@@ -1,9 +1,11 @@
 import type { AccountUsage } from "@app/claude/lib/usage/api";
+import type { UsageTotalsResult } from "@app/dev-dashboard/lib/claude-usage/types";
 import { useQuery } from "@tanstack/react-query";
 import { SegmentedControl } from "@ui/components/segmented-control";
 import { useMemo, useState } from "react";
 import { AccountCard } from "@/components/claude-usage/AccountCard";
 import { AccountUsageChart } from "@/components/claude-usage/AccountUsageChart";
+import { SpendTotals } from "@/components/claude-usage/SpendTotals";
 import { fetchJson } from "@/lib/api";
 
 const RANGES = [
@@ -19,6 +21,13 @@ export function ClaudeRoute() {
         refetchInterval: 30000,
     });
     const [rangeMinutes, setRangeMinutes] = useState<string>("10080");
+    // The totals follow the same range control as the charts: "what did the last
+    // 7 days cost" reads next to "how full is the 7-day bucket".
+    const totalsQuery = useQuery({
+        queryKey: ["claude", "usage", "totals", rangeMinutes],
+        queryFn: () => fetchJson<UsageTotalsResult>(`/api/claude/usage/totals?minutes=${rangeMinutes}`),
+        refetchInterval: 60000,
+    });
 
     // One window end shared by every chart so their time axes align exactly.
     // Recomputed on each poll tick and on range change, not per chart render
@@ -51,6 +60,8 @@ export function ClaudeRoute() {
                     <AccountCard key={account.accountName} account={account} />
                 ))}
             </div>
+
+            {totalsQuery.data ? <SpendTotals totals={totalsQuery.data} /> : null}
 
             <div className="flex items-center justify-between">
                 <h3 className="dd-accent-text text-sm font-semibold">Utilization history</h3>
