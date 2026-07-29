@@ -193,14 +193,14 @@ describe.skipIf(!isDarwin)("extent cache", () => {
     // Each case must now be rejected, leaving the scan to read the filesystem.
     const OVERFLOW_HEADERS: [name: string, nrecs: bigint, nexts: bigint][] = [
         // 48 * 2^60 == 3 * 2^64, i.e. the record term wraps to EXACTLY zero.
-        ["record count wrapping to zero", 1n << 60n, 0n],
-        ["record count at UINT64_MAX", (1n << 64n) - 1n, 0n],
-        ["extent count at UINT64_MAX", 3n, (1n << 64n) - 1n],
+        ["a record count wrapping to zero", 1n << 60n, 0n],
+        ["a record count at UINT64_MAX", (1n << 64n) - 1n, 0n],
+        ["an extent count at UINT64_MAX", 3n, (1n << 64n) - 1n],
         ["both counts oversized", 1n << 60n, (1n << 64n) - 1n],
     ];
 
     for (const [name, nrecs, nexts] of OVERFLOW_HEADERS) {
-        it(`rejects a ${name} instead of reading past the mapping`, () => {
+        it(`rejects ${name} instead of reading past the mapping`, () => {
             const fixture = makeCloneFixture();
             const cacheDir = makeTmp("du-cache-dir-");
 
