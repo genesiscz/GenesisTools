@@ -1,7 +1,12 @@
 import { loadAskProviderChoice } from "@app/youtube/commands/_shared/ask-provider";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
-import { formatSummary, resolveTargetsToVideoIds } from "@app/youtube/commands/_shared/utils";
+import {
+    formatSummary,
+    normaliseTarget,
+    resolveTargetsToVideoIds,
+    splitTargets,
+} from "@app/youtube/commands/_shared/utils";
 import { answerOverVideos, formatCitationLines } from "@app/youtube/lib/ask-answer";
 import type { TimestampedSummaryEntry, VideoId } from "@app/youtube/lib/types";
 import * as p from "@clack/prompts";
@@ -56,6 +61,10 @@ export function registerAnalyzeCommand(program: Command): void {
 
             const yt = await getYoutube();
             const ids = await resolveTargetsToVideoIds(yt, targets);
+            // A `@handle` target expands to as many as 5,000 stored videos, so those
+            // ids were NOT named one by one and the lazy-index budget still has to
+            // protect them. Only an explicit id list earns the uncapped path.
+            const expandsAChannel = splitTargets(targets).some((target) => normaliseTarget(target).startsWith("@"));
 
             const action = opts.ask ? "ask" : opts.timestamped ? "timestamped" : "summary";
             const proceed = await confirmLlmCall({
@@ -88,10 +97,10 @@ export function registerAnalyzeCommand(program: Command): void {
                     streaming: opts.stream,
                     providerChoice: await loadAskProviderChoice({ provider: opts.provider, model: opts.model }),
                     streamTarget: opts.stream ? process.stdout : undefined,
-                    // Every id here was named explicitly by the user, so the lazy-index
-                    // budget must not apply: silently dropping the 6th target and
-                    // answering as if it had been covered is worse than the wait.
-                    maxIndex: null,
+                    // Explicit ids: dropping the 6th target and answering as if it had
+                    // been covered is worse than the wait. An expanded channel keeps
+                    // the budget — see `expandsAChannel` above.
+                    ...(expandsAChannel ? {} : { maxIndex: null }),
                 });
 
                 await renderOrEmit({
