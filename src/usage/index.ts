@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import { UsageDatabase } from "@app/ask/output/UsageDatabase";
-import { dynamicPricingManager } from "@app/ask/providers/DynamicPricing";
 import { runTool } from "@genesiscz/utils/cli";
 import { formatDateTime } from "@genesiscz/utils/date";
+import { formatCost, formatTokens } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
@@ -37,18 +37,6 @@ Examples:
   tools usage --format summary    # Show summary only
   tools usage --format json       # Output as JSON
 `);
-}
-
-function formatCost(cost: number): string {
-    // Show more precision for very small costs
-    if (cost > 0 && cost < 0.0001) {
-        return `$${cost.toExponential(2)}`;
-    }
-    return dynamicPricingManager.formatCost(cost);
-}
-
-function formatTokens(tokens: number): string {
-    return dynamicPricingManager.formatTokens(tokens);
 }
 
 function formatDate(dateStr: string): string {

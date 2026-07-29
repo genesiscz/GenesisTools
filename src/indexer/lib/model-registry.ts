@@ -1,29 +1,24 @@
-import {
-    getEmbedModelsForType,
-    getMaxEmbedChars,
-    getModelsForTask,
-    getTaskPrefix,
-} from "@genesiscz/utils/ai/ModelRegistry";
+import { byTask, embedModelsForType, maxEmbedChars, taskPrefix } from "@genesiscz/utils/ai/local/descriptors";
 import type { ModelEntry } from "@genesiscz/utils/ai/types";
 import { formatTable } from "@genesiscz/utils/table";
 
 /** @deprecated Use ModelEntry from @genesiscz/utils/ai/types */
 export type ModelInfo = ModelEntry;
 
-export { getMaxEmbedChars, getTaskPrefix };
+export { maxEmbedChars as getMaxEmbedChars, taskPrefix as getTaskPrefix };
 
 /**
  * On-device embedding models. Named for the task it serves because the plain
  * `MODEL_REGISTRY` collided with the LLM catalog's legacy export of that name —
  * two unrelated lists, one identifier, and an import that read as either.
  */
-export const EMBED_MODEL_REGISTRY: ModelEntry[] = [...getModelsForTask("embed")];
+export const EMBED_MODEL_REGISTRY: ModelEntry[] = [...byTask("embed")];
 
 /**
  * Returns models sorted with best matches for the given type first.
  */
 export function getModelsForType(type: "code" | "files" | "mail" | "chat"): ModelEntry[] {
-    return [...getEmbedModelsForType(type)];
+    return [...embedModelsForType(type)];
 }
 
 /**

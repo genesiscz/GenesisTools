@@ -10,7 +10,7 @@ import {
     selectEmbeddingModel,
     selectEmbeddingProvider,
 } from "@genesiscz/utils/ai/embedding-selection";
-import { findModel, getEmbeddingProviderTypes } from "@genesiscz/utils/ai/ModelRegistry";
+import { embeddingProviderTypes, findDescriptor } from "@genesiscz/utils/ai/local/descriptors";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { formatBytes, formatDuration } from "@genesiscz/utils/format";
 import type { Command } from "commander";
@@ -301,7 +301,7 @@ async function runCleanup(): Promise<void> {
     }
 }
 
-const VALID_EMBEDDING_PROVIDERS: ReadonlySet<string> = getEmbeddingProviderTypes();
+const VALID_EMBEDDING_PROVIDERS: ReadonlySet<string> = embeddingProviderTypes();
 
 async function createAndSync(
     manager: IndexerManager,
@@ -366,7 +366,7 @@ async function createAndSync(
     }
 
     if (model && !provider) {
-        const found = findModel(model);
+        const found = findDescriptor(model);
         provider = found?.provider;
     }
 

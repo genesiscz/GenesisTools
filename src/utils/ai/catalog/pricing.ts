@@ -1,4 +1,6 @@
+import { calculateCallCostUsd } from "@genesiscz/utils/ai/llm-cost";
 import { logger } from "@genesiscz/utils/logger";
+import type { LanguageModelUsage } from "ai";
 import { liteLLMPricingFetcher } from "./litellm";
 import { byId } from "./static";
 import type { ModelPricing, PricingRule } from "./types";
@@ -165,6 +167,22 @@ export async function pricingForCall(
     const pricing = await pricingFor(provider, modelId);
 
     return pricing ? effectivePricing(pricing, context) : undefined;
+}
+
+/**
+ * The one-call spelling of "price this usage": resolve today's effective rates,
+ * then run the cost math. Unpriceable models cost 0 and warn, because every
+ * caller of the old `dynamicPricingManager.calculateCost` treated null that way.
+ */
+export async function costForCall(provider: string, modelId: string, usage: LanguageModelUsage): Promise<number> {
+    const pricing = await pricingForCall(provider, modelId, { at: new Date() });
+
+    if (!pricing) {
+        logger.warn(`Could not determine pricing for ${provider}/${modelId}`);
+        return 0;
+    }
+
+    return calculateCallCostUsd(pricing, usage) ?? 0;
 }
 
 export interface PricingContext {

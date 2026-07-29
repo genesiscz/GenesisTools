@@ -1,12 +1,12 @@
 /**
  * Claude models launchable via `claude --model`, plus alias/substring
  * resolution for the `tools claude start --model` flag. Derived from the
- * curated registry (`@genesiscz/utils/ai/models/registry`) — a model appears
+ * curated registry (`@genesiscz/utils/ai/catalog`) — a model appears
  * here only when it carries a `cli` entry there. Grouped by family, newest
  * first within each family; picker order follows this order.
  */
 
-import { byProvider, type ModelFamily } from "@genesiscz/utils/ai/models/registry";
+import { byProvider, type ModelFamily } from "@genesiscz/utils/ai/catalog";
 
 export type ClaudeModelFamily = ModelFamily;
 

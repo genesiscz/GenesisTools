@@ -111,7 +111,7 @@ export async function resolveModelTarget(
     const plugin = providerPlugin(account.provider);
     const capability = TASK_CAPABILITY[task];
 
-    // Local runtimes deliberately throw from `language()` (providers/plugins/local.ts:75).
+    // Local runtimes deliberately throw from `language()` (local/adapters (language() throws by design)).
     // Checking the declared capability first turns "ollama has no chat model" into a
     // resolution error naming the fix, instead of a stack trace out of the SDK.
     if (!plugin.capabilities.has(capability)) {

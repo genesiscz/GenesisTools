@@ -1,23 +1,22 @@
-import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { DynamicPricingManager } from "@ask/providers/DynamicPricing";
-import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { providerManager } from "@ask/providers/ProviderManager";
 import { toLanguageModelUsage } from "@ask/utils/helpers";
+import { liteLLMPricingFetcher } from "@genesiscz/utils/ai/catalog/litellm";
+import { clearPricingCache, costForCall, pricingCacheSize, pricingForCall } from "@genesiscz/utils/ai/catalog/pricing";
+import { calculateCallCostUsd } from "@genesiscz/utils/ai/llm-cost";
 import type { PricingInfo } from "@genesiscz/utils/ask/types/provider";
 import { env } from "@genesiscz/utils/env";
+import { formatCost, formatTokens } from "@genesiscz/utils/format";
 
-describe("DynamicPricingManager", () => {
-    let pricingManager: DynamicPricingManager;
-
+describe("catalog pricing ladder", () => {
     beforeEach(() => {
-        pricingManager = new DynamicPricingManager();
-        pricingManager.clearCache();
+        clearPricingCache();
         // Clear LiteLLM cache
         liteLLMPricingFetcher.clearCache();
     });
 
     afterEach(() => {
-        pricingManager.clearCache();
+        clearPricingCache();
         liteLLMPricingFetcher.clearCache();
     });
 
@@ -28,7 +27,7 @@ describe("DynamicPricingManager", () => {
         // its SHAPE is pinned here — the live-rate checks sit in the
         // network-gated "Current Pricing Verification" block below.
         it("should return live-sourced pricing for gpt-4o", async () => {
-            const pricing = await pricingManager.getPricing("openai", "gpt-4o");
+            const pricing = await pricingForCall("openai", "gpt-4o");
 
             expect(pricing).not.toBeNull();
             expect(pricing?.inputPer1M).toBeGreaterThan(0);
@@ -40,8 +39,8 @@ describe("DynamicPricingManager", () => {
         });
 
         it("should price gpt-4o-mini below gpt-4o", async () => {
-            const mini = await pricingManager.getPricing("openai", "gpt-4o-mini");
-            const full = await pricingManager.getPricing("openai", "gpt-4o");
+            const mini = await pricingForCall("openai", "gpt-4o-mini");
+            const full = await pricingForCall("openai", "gpt-4o");
 
             expect(mini).not.toBeNull();
             expect(mini?.inputPer1M).toBeGreaterThan(0);
@@ -51,7 +50,7 @@ describe("DynamicPricingManager", () => {
 
         it("should fetch real pricing from LiteLLM for OpenRouter models", async () => {
             // Real API call to LiteLLM - will be cached after first call
-            const pricing = await pricingManager.getPricing("openrouter", "openai/gpt-4o");
+            const pricing = await pricingForCall("openrouter", "openai/gpt-4o");
 
             expect(pricing).not.toBeNull();
             expect(pricing?.inputPer1M).toBeGreaterThan(0);
@@ -62,7 +61,7 @@ describe("DynamicPricingManager", () => {
 
         it("should fetch real pricing from LiteLLM for Claude models with tiered pricing", async () => {
             // Real API call to LiteLLM - tests actual tiered pricing support
-            const pricing = await pricingManager.getPricing("anthropic", "claude-3-5-sonnet-20241022");
+            const pricing = await pricingForCall("anthropic", "claude-3-5-sonnet-20241022");
 
             expect(pricing).not.toBeNull();
             expect(pricing?.inputPer1M).toBeGreaterThan(0);
@@ -76,11 +75,11 @@ describe("DynamicPricingManager", () => {
         });
 
         it("should cache pricing results", async () => {
-            const pricing1 = await pricingManager.getPricing("openai", "gpt-4o");
-            const pricing2 = await pricingManager.getPricing("openai", "gpt-4o");
+            const pricing1 = await pricingForCall("openai", "gpt-4o");
+            const pricing2 = await pricingForCall("openai", "gpt-4o");
 
             expect(pricing1).toEqual(pricing2);
-            expect(pricingManager.getCacheSize()).toBe(1);
+            expect(pricingCacheSize()).toBe(1);
         });
     });
 
@@ -91,8 +90,6 @@ describe("DynamicPricingManager", () => {
                 inputPer1M: 5.0,
                 outputPer1M: 15.0,
             };
-            // biome-ignore lint/suspicious/noExplicitAny: spyOn requires cast for method name type mismatch
-            spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
 
             const usage = toLanguageModelUsage({
                 inputTokens: 1000,
@@ -100,7 +97,7 @@ describe("DynamicPricingManager", () => {
                 totalTokens: 1500,
             });
 
-            const cost = await pricingManager.calculateCost("openai", "gpt-4o", usage);
+            const cost = calculateCallCostUsd(mockPricing, usage) ?? 0;
 
             // Expected: (1000 / 1_000_000) * 5.0 + (500 / 1_000_000) * 15.0
             // = 0.005 + 0.0075 = 0.0125
@@ -114,8 +111,6 @@ describe("DynamicPricingManager", () => {
                 outputPer1M: 15.0,
                 cachedReadPer1M: 2.5,
             };
-            // biome-ignore lint/suspicious/noExplicitAny: spyOn requires cast for method name type mismatch
-            spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
 
             const usage = toLanguageModelUsage({
                 inputTokens: 1000,
@@ -124,7 +119,7 @@ describe("DynamicPricingManager", () => {
                 cachedInputTokens: 200,
             });
 
-            const cost = await pricingManager.calculateCost("openai", "gpt-4o", usage);
+            const cost = calculateCallCostUsd(mockPricing, usage) ?? 0;
 
             // Expected: (1000 / 1_000_000) * 5.0 + (500 / 1_000_000) * 15.0 + (200 / 1_000_000) * 2.5
             // = 0.005 + 0.0075 + 0.0005 = 0.013
@@ -139,9 +134,6 @@ describe("DynamicPricingManager", () => {
                 outputPer1MAbove200k: 30.0,
             };
 
-            // biome-ignore lint/suspicious/noExplicitAny: spyOn requires cast for method name type mismatch
-            spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
-
             // 300k input tokens, 250k output tokens
             const usage = toLanguageModelUsage({
                 inputTokens: 300_000,
@@ -149,7 +141,7 @@ describe("DynamicPricingManager", () => {
                 totalTokens: 550_000,
             });
 
-            const cost = await pricingManager.calculateCost("anthropic", "claude-3-5-sonnet-20241022", usage);
+            const cost = calculateCallCostUsd(mockPricing, usage) ?? 0;
 
             // Expected:
             // Input: (200k / 1M) * 3.0 + (100k / 1M) * 6.0 = 0.6 + 0.6 = 1.2
@@ -166,9 +158,6 @@ describe("DynamicPricingManager", () => {
                 outputPer1MAbove200k: 30.0,
             };
 
-            // biome-ignore lint/suspicious/noExplicitAny: spyOn requires cast for method name type mismatch
-            spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
-
             // Exactly 200k tokens - should use base pricing only
             const usage = toLanguageModelUsage({
                 inputTokens: 200_000,
@@ -176,7 +165,7 @@ describe("DynamicPricingManager", () => {
                 totalTokens: 200_000,
             });
 
-            const cost = await pricingManager.calculateCost("anthropic", "claude-3-5-sonnet-20241022", usage);
+            const cost = calculateCallCostUsd(mockPricing, usage) ?? 0;
 
             // Expected: (200k / 1M) * 3.0 = 0.6
             expect(cost).toBeCloseTo(0.6, 2);
@@ -190,9 +179,6 @@ describe("DynamicPricingManager", () => {
                 outputPer1MAbove200k: 30.0,
             };
 
-            // biome-ignore lint/suspicious/noExplicitAny: spyOn requires cast for method name type mismatch
-            spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
-
             // 200,001 tokens - should use tiered pricing for 1 token
             const usage = toLanguageModelUsage({
                 inputTokens: 200_001,
@@ -200,7 +186,7 @@ describe("DynamicPricingManager", () => {
                 totalTokens: 200_001,
             });
 
-            const cost = await pricingManager.calculateCost("anthropic", "claude-3-5-sonnet-20241022", usage);
+            const cost = calculateCallCostUsd(mockPricing, usage) ?? 0;
 
             // Expected: (200k / 1M) * 3.0 + (1 / 1M) * 6.0 = 0.6 + 0.000006 = 0.600006
             expect(cost).toBeCloseTo(0.600006, 6);
@@ -213,22 +199,20 @@ describe("DynamicPricingManager", () => {
                 totalTokens: 0,
             });
 
-            const cost = await pricingManager.calculateCost("openai", "gpt-4o", usage);
+            const cost = await costForCall("openai", "gpt-4o", usage);
 
             expect(cost).toBe(0);
         });
 
         it("should handle missing pricing gracefully", async () => {
-            // biome-ignore lint/suspicious/noExplicitAny: spyOn requires cast for method name type mismatch
-            spyOn(pricingManager, "getPricing" as any).mockResolvedValue(null);
-
             const usage = toLanguageModelUsage({
                 inputTokens: 1000,
                 outputTokens: 500,
                 totalTokens: 1500,
             });
 
-            const cost = await pricingManager.calculateCost("unknown", "unknown-model", usage);
+            // No mock: an unknown model resolves no pricing anywhere in the ladder.
+            const cost = await costForCall("unknown", "unknown-model", usage);
 
             expect(cost).toBe(0);
         });
@@ -246,8 +230,8 @@ describe("DynamicPricingManager", () => {
                 totalTokens: 1500,
             });
 
-            const cost1 = await pricingManager.calculateCost("openai", "gpt-4o", usage1);
-            const cost2 = await pricingManager.calculateCost("openai", "gpt-4o", usage2);
+            const cost1 = await costForCall("openai", "gpt-4o", usage1);
+            const cost2 = await costForCall("openai", "gpt-4o", usage2);
 
             expect(cost1).toBeCloseTo(cost2, 6);
         });
@@ -280,11 +264,11 @@ describe("DynamicPricingManager", () => {
             // This test verifies the fallback mechanism works
             // We can't easily test network failures without mocking, but we can test
             // that the system handles missing models gracefully
-            const pricing = await pricingManager.getPricing("openrouter", "nonexistent-model-xyz-123");
+            const pricing = await pricingForCall("openrouter", "nonexistent-model-xyz-123");
 
             // Should either return null or fallback pricing
             // The important thing is it doesn't throw
-            expect(pricing === null || (pricing !== null && pricing.inputPer1M >= 0)).toBe(true);
+            expect(pricing == null || pricing.inputPer1M >= 0).toBe(true);
         });
 
         it("should convert LiteLLM pricing correctly", async () => {
@@ -322,7 +306,7 @@ describe("DynamicPricingManager", () => {
         it("should fetch real pricing from OpenRouter API", async () => {
             // Real API call to OpenRouter - tests actual integration
             // This will be used as fallback if LiteLLM doesn't have the model
-            const pricing = await pricingManager.getPricing("openrouter", "openai/gpt-4o");
+            const pricing = await pricingForCall("openrouter", "openai/gpt-4o");
 
             expect(pricing).not.toBeNull();
             expect(pricing?.inputPer1M).toBeGreaterThan(0);
@@ -333,7 +317,7 @@ describe("DynamicPricingManager", () => {
 
         it("should handle OpenRouter API response format (string or number)", async () => {
             // Real API call - OpenRouter may return pricing as strings or numbers
-            const pricing = await pricingManager.getPricing("openrouter", "openai/gpt-4o");
+            const pricing = await pricingForCall("openrouter", "openai/gpt-4o");
 
             expect(pricing).not.toBeNull();
             // Should handle both formats correctly
@@ -343,11 +327,11 @@ describe("DynamicPricingManager", () => {
 
         it("should cache OpenRouter API responses", async () => {
             // First call - should fetch from API
-            const pricing1 = await pricingManager.getPricing("openrouter", "openai/gpt-4o");
+            const pricing1 = await pricingForCall("openrouter", "openai/gpt-4o");
             expect(pricing1).not.toBeNull();
 
             // Second call - should use cache (no additional API call)
-            const pricing2 = await pricingManager.getPricing("openrouter", "openai/gpt-4o");
+            const pricing2 = await pricingForCall("openrouter", "openai/gpt-4o");
             expect(pricing2).toEqual(pricing1);
         });
     });
@@ -362,9 +346,7 @@ describe("DynamicPricingManager", () => {
                 { provider: "openrouter", model: "openai/gpt-4o" },
             ];
 
-            const results = await Promise.all(
-                models.map(({ provider, model }) => pricingManager.getPricing(provider, model))
-            );
+            const results = await Promise.all(models.map(({ provider, model }) => pricingForCall(provider, model)));
 
             expect(results.length).toBe(models.length);
             results.forEach((pricing) => {
@@ -383,7 +365,7 @@ describe("DynamicPricingManager", () => {
                 "google/gemini-pro",
             ];
 
-            const results = await Promise.all(models.map((model) => pricingManager.getPricing("openrouter", model)));
+            const results = await Promise.all(models.map((model) => pricingForCall("openrouter", model)));
 
             results.forEach((pricing, _index) => {
                 expect(pricing).not.toBeNull();
@@ -397,11 +379,11 @@ describe("DynamicPricingManager", () => {
             const model = "gpt-4o";
 
             // First request - should cache
-            const pricing1 = await pricingManager.getPricing(provider, model);
+            const pricing1 = await pricingForCall(provider, model);
             expect(pricing1).not.toBeNull();
 
             // Rapid subsequent requests - should use cache
-            const requests = Array.from({ length: 10 }, () => pricingManager.getPricing(provider, model));
+            const requests = Array.from({ length: 10 }, () => pricingForCall(provider, model));
             const results = await Promise.all(requests);
 
             results.forEach((pricing) => {
@@ -413,9 +395,9 @@ describe("DynamicPricingManager", () => {
             const variations = ["gpt-4o", "openai/gpt-4o", "openrouter/openai/gpt-4o"];
 
             for (const modelId of variations) {
-                const pricing = await pricingManager.getPricing("openrouter", modelId);
+                const pricing = await pricingForCall("openrouter", modelId);
                 // Should either find pricing or gracefully return null
-                expect(pricing === null || (pricing !== null && pricing.inputPer1M > 0)).toBe(true);
+                expect(pricing == null || pricing.inputPer1M > 0).toBe(true);
             }
         });
 
@@ -434,7 +416,7 @@ describe("DynamicPricingManager", () => {
                     totalTokens: testCase.input + testCase.output,
                 });
 
-                const cost = await pricingManager.calculateCost("openai", "gpt-4o", usage);
+                const cost = await costForCall("openai", "gpt-4o", usage);
 
                 expect(cost).toBeGreaterThanOrEqual(testCase.expectedMin);
                 expect(cost).toBeLessThanOrEqual(testCase.expectedMax);
@@ -449,7 +431,8 @@ describe("DynamicPricingManager", () => {
                 totalTokens: 550_000,
             });
 
-            const cost = await pricingManager.calculateCost("anthropic", "claude-3-5-sonnet-20241022", usage);
+            // Real API call: the ladder itself supplies Claude pricing here.
+            const cost = await costForCall("anthropic", "claude-3-5-sonnet-20241022", usage);
 
             // Should use tiered pricing if available
             expect(cost).toBeGreaterThan(0);
@@ -463,9 +446,6 @@ describe("DynamicPricingManager", () => {
                 inputPer1MAbove200k: 6.0,
                 outputPer1MAbove200k: 30.0,
             };
-
-            // biome-ignore lint/suspicious/noExplicitAny: spyOn requires cast for method name type mismatch
-            spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
 
             const edgeCases = [
                 { input: 199_999, output: 0 }, // Just below threshold
@@ -482,7 +462,7 @@ describe("DynamicPricingManager", () => {
                     totalTokens: edgeCase.input + edgeCase.output,
                 });
 
-                const cost = await pricingManager.calculateCost("anthropic", "claude-3-5-sonnet-20241022", usage);
+                const cost = calculateCallCostUsd(mockPricing, usage) ?? 0;
 
                 expect(cost).toBeGreaterThanOrEqual(0);
                 expect(Number.isNaN(cost)).toBe(false);
@@ -506,7 +486,7 @@ describe("DynamicPricingManager", () => {
             // ⚠️ BREAKS IF: OpenAI changes GPT-4o pricing or LiteLLM updates it.
             // Was $5/$15 from the killed 2024 static map — stale by two price
             // cuts, which is exactly why the map died.
-            const pricing = await pricingManager.getPricing("openai", "gpt-4o");
+            const pricing = await pricingForCall("openai", "gpt-4o");
 
             expect(pricing).not.toBeNull();
             expect(pricing?.inputPer1M).toBe(2.5); // $2.50 per million input tokens
@@ -515,7 +495,7 @@ describe("DynamicPricingManager", () => {
 
         it("should match current OpenAI GPT-4o-mini pricing from LiteLLM ($0.15/$0.6 per million)", async () => {
             // ⚠️ BREAKS IF: OpenAI changes GPT-4o-mini pricing or LiteLLM updates it
-            const pricing = await pricingManager.getPricing("openai", "gpt-4o-mini");
+            const pricing = await pricingForCall("openai", "gpt-4o-mini");
 
             expect(pricing).not.toBeNull();
             expect(pricing?.inputPer1M).toBe(0.15); // $0.15 per million input tokens
@@ -531,7 +511,7 @@ describe("DynamicPricingManager", () => {
         it("should match current OpenRouter GPT-4o pricing from LiteLLM", async () => {
             // ⚠️ BREAKS IF: LiteLLM updates OpenRouter pricing OR OpenRouter changes prices
             // Fetches real pricing from LiteLLM GitHub repository
-            const pricing = await pricingManager.getPricing("openrouter", "openai/gpt-4o");
+            const pricing = await pricingForCall("openrouter", "openai/gpt-4o");
 
             expect(pricing).not.toBeNull();
             // As of 2025-11-24: OpenRouter GPT-4o is $2.50/$10.00 per million
@@ -543,7 +523,7 @@ describe("DynamicPricingManager", () => {
         it("should match current Claude 3.5 Sonnet pricing from LiteLLM", async () => {
             // ⚠️ BREAKS IF: LiteLLM updates Claude pricing OR Anthropic changes prices
             // Fetches real pricing from LiteLLM GitHub repository
-            const pricing = await pricingManager.getPricing("anthropic", "claude-3-5-sonnet-20241022");
+            const pricing = await pricingForCall("anthropic", "claude-3-5-sonnet-20241022");
 
             expect(pricing).not.toBeNull();
             // As of 2025-11-24: Claude 3.5 Sonnet 20241022 has 200k context window, $3/$15 per million (flat rate)
@@ -566,8 +546,8 @@ describe("DynamicPricingManager", () => {
                 totalTokens: 1_500_000,
             });
 
-            const pricing = await pricingManager.getPricing("openai", "gpt-4o");
-            const cost = await pricingManager.calculateCost("openai", "gpt-4o", usage);
+            const pricing = await pricingForCall("openai", "gpt-4o");
+            const cost = await costForCall("openai", "gpt-4o", usage);
 
             expect(pricing).not.toBeNull();
             const expected = (pricing?.inputPer1M ?? 0) * 1 + (pricing?.outputPer1M ?? 0) * 0.5;
@@ -585,7 +565,7 @@ describe("DynamicPricingManager", () => {
                 totalTokens: 550_000,
             });
 
-            const cost = await pricingManager.calculateCost("anthropic", "claude-3-5-sonnet-20241022", usage);
+            const cost = await costForCall("anthropic", "claude-3-5-sonnet-20241022", usage);
 
             // Expected with flat pricing (no tiered pricing for 200k context models):
             // Input: (300k / 1M) * 3.0 = 0.9
@@ -597,8 +577,8 @@ describe("DynamicPricingManager", () => {
         it("should verify OpenRouter pricing is cheaper than direct OpenAI", async () => {
             // ⚠️ BREAKS IF: OpenRouter raises prices above OpenAI direct pricing
             // This test ensures OpenRouter remains a cost-effective alternative
-            const openRouterPricing = await pricingManager.getPricing("openrouter", "openai/gpt-4o");
-            const directOpenAIPricing = await pricingManager.getPricing("openai", "gpt-4o");
+            const openRouterPricing = await pricingForCall("openrouter", "openai/gpt-4o");
+            const directOpenAIPricing = await pricingForCall("openai", "gpt-4o");
 
             expect(openRouterPricing).not.toBeNull();
             expect(directOpenAIPricing).not.toBeNull();
@@ -615,7 +595,7 @@ describe("DynamicPricingManager", () => {
             // We'll check if any Claude model with tiered pricing follows the 2x structure
 
             // Try to find a Claude model with tiered pricing (if available)
-            const pricing = await pricingManager.getPricing("anthropic", "claude-3-5-sonnet-20241022");
+            const pricing = await pricingForCall("anthropic", "claude-3-5-sonnet-20241022");
             expect(pricing).not.toBeNull();
 
             // For 200k context models, tiered pricing should not exist
@@ -637,7 +617,7 @@ describe("DynamicPricingManager", () => {
             const models = [{ model: "openai/gpt-4o", expectedInput: 2.5, expectedOutput: 10.0 }];
 
             for (const { model, expectedInput, expectedOutput } of models) {
-                const pricing = await pricingManager.getPricing("openrouter", model);
+                const pricing = await pricingForCall("openrouter", model);
 
                 expect(pricing).not.toBeNull();
                 expect(pricing?.inputPer1M).toBe(expectedInput); // Exact match - will break if prices change
@@ -683,8 +663,8 @@ describe("DynamicPricingManager", () => {
          */
 
         it("should verify OpenRouter GPT-4o is not more expensive than direct OpenAI", async () => {
-            const openRouterPricing = await pricingManager.getPricing("openrouter", "openai/gpt-4o");
-            const directOpenAIPricing = await pricingManager.getPricing("openai", "gpt-4o");
+            const openRouterPricing = await pricingForCall("openrouter", "openai/gpt-4o");
+            const directOpenAIPricing = await pricingForCall("openai", "gpt-4o");
 
             expect(openRouterPricing).not.toBeNull();
             expect(directOpenAIPricing).not.toBeNull();
@@ -695,7 +675,7 @@ describe("DynamicPricingManager", () => {
         });
 
         it("should verify Claude models have reasonable pricing (input < $20, output < $100)", async () => {
-            const claudePricing = await pricingManager.getPricing("anthropic", "claude-3-5-sonnet-20241022");
+            const claudePricing = await pricingForCall("anthropic", "claude-3-5-sonnet-20241022");
 
             expect(claudePricing).not.toBeNull();
             expect(claudePricing?.inputPer1M).toBeLessThan(20); // Should be under $20 per million input
@@ -705,8 +685,8 @@ describe("DynamicPricingManager", () => {
         });
 
         it("should verify GPT-4o-mini pricing is cheaper than GPT-4o", async () => {
-            const gpt4oPricing = await pricingManager.getPricing("openai", "gpt-4o");
-            const gpt4oMiniPricing = await pricingManager.getPricing("openai", "gpt-4o-mini");
+            const gpt4oPricing = await pricingForCall("openai", "gpt-4o");
+            const gpt4oMiniPricing = await pricingForCall("openai", "gpt-4o-mini");
 
             expect(gpt4oPricing).not.toBeNull();
             expect(gpt4oMiniPricing).not.toBeNull();
@@ -718,11 +698,8 @@ describe("DynamicPricingManager", () => {
 
         it("should verify OpenRouter Claude pricing is reasonable compared to direct", async () => {
             // OpenRouter might route to Anthropic, so pricing should be similar
-            const openRouterClaude = await pricingManager.getPricing(
-                "openrouter",
-                "anthropic/claude-3-5-sonnet-20241022"
-            );
-            const directClaude = await pricingManager.getPricing("anthropic", "claude-3-5-sonnet-20241022");
+            const openRouterClaude = await pricingForCall("openrouter", "anthropic/claude-3-5-sonnet-20241022");
+            const directClaude = await pricingForCall("anthropic", "claude-3-5-sonnet-20241022");
 
             if (openRouterClaude && directClaude) {
                 // Should be within reasonable range (not 10x different)
@@ -742,7 +719,7 @@ describe("DynamicPricingManager", () => {
             ];
 
             for (const { provider, model } of models) {
-                const pricing = await pricingManager.getPricing(provider, model);
+                const pricing = await pricingForCall(provider, model);
                 expect(pricing).not.toBeNull();
                 expect(pricing?.inputPer1M).toBeGreaterThan(0);
                 expect(pricing?.outputPer1M).toBeGreaterThan(0);
@@ -752,7 +729,7 @@ describe("DynamicPricingManager", () => {
         });
 
         it("should verify cached pricing is not more expensive than regular pricing", async () => {
-            const gpt4oPricing = await pricingManager.getPricing("openai", "gpt-4o");
+            const gpt4oPricing = await pricingForCall("openai", "gpt-4o");
 
             expect(gpt4oPricing).not.toBeNull();
             if (gpt4oPricing?.cachedReadPer1M) {
@@ -766,7 +743,7 @@ describe("DynamicPricingManager", () => {
         });
 
         it("should verify GPT-4o-mini cached pricing matches expected values", async () => {
-            const miniPricing = await pricingManager.getPricing("openai", "gpt-4o-mini");
+            const miniPricing = await pricingForCall("openai", "gpt-4o-mini");
 
             expect(miniPricing).not.toBeNull();
             // Cached read should be half of input price (0.075 vs 0.15)
@@ -780,7 +757,7 @@ describe("DynamicPricingManager", () => {
         });
 
         it("should verify tiered pricing is more expensive than base pricing when present", async () => {
-            const claudePricing = await pricingManager.getPricing("anthropic", "claude-3-5-sonnet-20241022");
+            const claudePricing = await pricingForCall("anthropic", "claude-3-5-sonnet-20241022");
 
             expect(claudePricing).not.toBeNull();
             // Note: This model doesn't have tiered pricing (200k context), but if it did:
@@ -794,7 +771,7 @@ describe("DynamicPricingManager", () => {
             const models = ["openai/gpt-4o", "openai/gpt-4o-mini"];
 
             for (const model of models) {
-                const pricing = await pricingManager.getPricing("openrouter", model);
+                const pricing = await pricingForCall("openrouter", model);
                 expect(pricing).not.toBeNull();
                 // Should have both input and output pricing
                 expect(pricing?.inputPer1M).toBeGreaterThan(0);
@@ -814,7 +791,7 @@ describe("DynamicPricingManager", () => {
             ];
 
             for (const { provider, model } of models) {
-                const pricing = await pricingManager.getPricing(provider, model);
+                const pricing = await pricingForCall(provider, model);
                 if (pricing) {
                     expect(pricing.inputPer1M).toBeLessThan(100); // Sanity check: no model should cost >$100 per million input
                 }
@@ -834,7 +811,7 @@ describe("DynamicPricingManager", () => {
             const expensiveModels: Array<{ provider: string; model: string; outputPer1M: number }> = [];
 
             for (const { provider, model } of models) {
-                const pricing = await pricingManager.getPricing(provider, model);
+                const pricing = await pricingForCall(provider, model);
                 if (pricing) {
                     if (pricing.outputPer1M < 0.6) {
                         cheapModels.push({ provider, model, outputPer1M: pricing.outputPer1M });
@@ -875,7 +852,7 @@ describe("DynamicPricingManager", () => {
 
             // All models should be within range
             for (const { provider, model } of models) {
-                const pricing = await pricingManager.getPricing(provider, model);
+                const pricing = await pricingForCall(provider, model);
                 if (pricing) {
                     expect(pricing.outputPer1M).toBeGreaterThanOrEqual(0.6);
                     expect(pricing.outputPer1M).toBeLessThanOrEqual(75);
@@ -886,22 +863,24 @@ describe("DynamicPricingManager", () => {
 
     describe("formatCost", () => {
         it("should format normal costs correctly", () => {
-            expect(pricingManager.formatCost(0.0125)).toBe("$0.0125");
-            expect(pricingManager.formatCost(1.5)).toBe("$1.5000");
+            expect(formatCost(0.0125)).toBe("$0.0125");
+            expect(formatCost(1.5)).toBe("$1.5000");
         });
 
         it("should format very small costs with exponential notation", () => {
             const cost = 0.00001;
-            const formatted = pricingManager.formatCost(cost);
+            const formatted = formatCost(cost);
             expect(formatted).toContain("e-");
         });
     });
 
     describe("formatTokens", () => {
         it("should format tokens correctly", () => {
-            expect(pricingManager.formatTokens(1000)).toBe("1.0k");
-            expect(pricingManager.formatTokens(1500)).toBe("1.5k");
-            expect(pricingManager.formatTokens(1000000)).toBe("1000.0k");
+            // The shared formatter (utils/format.ts), which uses K/M — the old
+            // shim's always-lowercase "1000.0k" spelling died with the shim.
+            expect(formatTokens(1000)).toBe("1.0K");
+            expect(formatTokens(1500)).toBe("1.5K");
+            expect(formatTokens(1000000)).toBe("1.0M");
         });
     });
 
@@ -916,7 +895,7 @@ describe("DynamicPricingManager", () => {
             }
 
             // Clear caches to ensure fresh data
-            pricingManager.clearCache();
+            clearPricingCache();
             liteLLMPricingFetcher.clearCache();
 
             const providers = await providerManager.detectProviders();
@@ -960,7 +939,7 @@ describe("DynamicPricingManager", () => {
                 return;
             }
 
-            pricingManager.clearCache();
+            clearPricingCache();
             liteLLMPricingFetcher.clearCache();
 
             const providers = await providerManager.detectProviders();
@@ -1002,7 +981,7 @@ describe("DynamicPricingManager", () => {
                 return;
             }
 
-            pricingManager.clearCache();
+            clearPricingCache();
             liteLLMPricingFetcher.clearCache();
 
             const providers = await providerManager.detectProviders();
@@ -1061,7 +1040,7 @@ describe("DynamicPricingManager", () => {
                 return;
             }
 
-            pricingManager.clearCache();
+            clearPricingCache();
             liteLLMPricingFetcher.clearCache();
 
             const providers = await providerManager.detectProviders();
@@ -1115,7 +1094,7 @@ describe("DynamicPricingManager", () => {
                 return;
             }
 
-            pricingManager.clearCache();
+            clearPricingCache();
             liteLLMPricingFetcher.clearCache();
 
             const providers = await providerManager.detectProviders();

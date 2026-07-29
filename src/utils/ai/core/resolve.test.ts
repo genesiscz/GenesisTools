@@ -292,7 +292,7 @@ describe("resolveModel — errors", () => {
         writeConfig({});
 
         // `ollama` declares embed/summarize/translate; its binding's language()
-        // throws by design (providers/plugins/local.ts:75).
+        // throws by design (local/adapters (language() throws by design)).
         expect(resolveModelTarget("@account/acc_ollama:nomic-embed")).rejects.toThrow("cannot chat");
     });
 

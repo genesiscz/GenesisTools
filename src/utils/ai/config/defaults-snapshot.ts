@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, type Storage } from "@genesiscz/utils/storage/storage";
-import { aiConfigSchema, type AiConfigData } from "./schema";
+import { type AiConfigData, aiConfigSchema } from "./schema";
 
 /**
  * A copy of `defaults` in a file no pre-v4 binary knows about.

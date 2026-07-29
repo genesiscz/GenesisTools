@@ -1,18 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import {
-    findModel,
-    getEmbeddingProviderTypes,
-    getEmbedModelsForType,
-    getMaxEmbedChars,
-    getModelsByProvider,
-    getModelsForTask,
-    getTaskPrefix,
-} from "./ModelRegistry";
+    findDescriptor as findModel,
+    embeddingProviderTypes as getEmbeddingProviderTypes,
+    embedModelsForType as getEmbedModelsForType,
+    maxEmbedChars as getMaxEmbedChars,
+    byTaskAndProvider as getModelsByProvider,
+    byTask as getModelsForTask,
+    taskPrefix as getTaskPrefix,
+} from "./descriptors";
 
 /**
  * Pins the registry's observable behavior BEFORE the Phase 6 descriptor
  * extraction, so the move can be proven data-preserving. Values were captured
- * from the pre-move `ModelRegistry.ts` (671-line data blob) — treat any change
+ * from the pre-move `ModelRegistry.ts` (671-line data blob, since deleted;
+ * the aliases above keep the pinned names) — treat any change
  * here as a behavior change that needs a stated reason, not a rebaseline.
  */
 

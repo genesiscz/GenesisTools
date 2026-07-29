@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { billedModelIds, estimateCostUsd, legacyBilledIds } from "@app/ai-proxy/lib/billing/pricing";
+import { STATIC_CATALOG } from "@genesiscz/utils/ai/catalog";
 import { GROK_STATIC_CATALOG } from "@genesiscz/utils/ai/grok/models";
-import { MODEL_REGISTRY } from "@genesiscz/utils/ai/models/registry";
 import { OPENAI_SUB_STATIC_CATALOG } from "@genesiscz/utils/ai/openai/sub-models";
 
 describe("estimateCostUsd", () => {
@@ -67,7 +67,7 @@ describe("billing table coverage", () => {
     // model somebody can actually call — never that the rates match.
     const grokIds = GROK_STATIC_CATALOG.map((model) => model.id);
     const openAiIds = OPENAI_SUB_STATIC_CATALOG.map((model) => model.slug);
-    const catalogIds = [...MODEL_REGISTRY.map((model) => model.id), ...grokIds, ...openAiIds, ...legacyBilledIds()];
+    const catalogIds = [...STATIC_CATALOG.map((model) => model.id), ...grokIds, ...openAiIds, ...legacyBilledIds()];
 
     /** Sibling proxy tests mock.module the openai catalog process-wide; an empty catalog is a stub, not a gap. */
     function isStubbedProvider(prefix: string): boolean {

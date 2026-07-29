@@ -1,6 +1,6 @@
 import { rateLimitAwareDelay, retry } from "@genesiscz/utils/async";
 import { AIConfig } from "../AIConfig";
-import { findModel } from "../ModelRegistry";
+import { findDescriptor } from "../local/descriptors";
 import { getProviderForTask } from "../providers";
 import type { AIEmbeddingProvider, AIProviderType, EmbeddingResult, EmbedOptions } from "../types";
 
@@ -88,7 +88,7 @@ export class Embedder {
 
     get dimensions(): number {
         if (this.modelId) {
-            const entry = findModel(this.modelId);
+            const entry = findDescriptor(this.modelId);
 
             if (entry?.dimensions) {
                 return entry.dimensions;

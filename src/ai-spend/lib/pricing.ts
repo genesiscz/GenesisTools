@@ -1,4 +1,4 @@
-import { byProvider, stripModelVariantSuffix } from "@genesiscz/utils/ai/models/registry";
+import { byProvider, stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
 import type { ModelPrice, PricingTable, TokenTotals } from "./types";
 
 /**
@@ -6,7 +6,7 @@ import type { ModelPrice, PricingTable, TokenTotals } from "./types";
  * `-latest` suffix is stripped and the exact lookup retried. Never an
  * open-ended prefix match — an unlisted id reports unpriced rather than
  * costing at a guessed family rate. Rates come from the curated registry
- * (`@genesiscz/utils/ai/models/registry`); update them there.
+ * (`@genesiscz/utils/ai/catalog`); update them there.
  */
 
 /** $/Mtok. cacheWrite ≈ 1.25× input, cacheRead ≈ 0.1× input (Anthropic public ratios). */

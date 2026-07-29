@@ -2,9 +2,10 @@ import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { ChatMessage, ChatSession, ConversationMetadata } from "@ask/types";
 import { usageCacheReadTokens } from "@ask/utils/helpers";
+import { costForCall } from "@genesiscz/utils/ai/catalog/pricing";
+import { formatCost } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { write } from "bun";
@@ -191,7 +192,7 @@ export class ConversationManager {
         if (totalCost === 0) {
             for (const msg of session.messages) {
                 if (msg.usage) {
-                    const cost = await dynamicPricingManager.calculateCost(session.provider, session.model, msg.usage);
+                    const cost = await costForCall(session.provider, session.model, msg.usage);
                     totalCost += cost;
                 }
             }
@@ -235,7 +236,7 @@ export class ConversationManager {
         }
         markdown += `**Messages:** ${session.messages.length}\n`;
         if (session.totalCost) {
-            markdown += `**Cost:** ${dynamicPricingManager.formatCost(session.totalCost)}\n`;
+            markdown += `**Cost:** ${formatCost(session.totalCost)}\n`;
         }
         markdown += "\n---\n\n";
 
@@ -259,7 +260,7 @@ export class ConversationManager {
         }
         text += `Messages: ${session.messages.length}\n`;
         if (session.totalCost) {
-            text += `Cost: ${dynamicPricingManager.formatCost(session.totalCost)}\n`;
+            text += `Cost: ${formatCost(session.totalCost)}\n`;
         }
         text += `\n${"=".repeat(50)}\n\n`;
 

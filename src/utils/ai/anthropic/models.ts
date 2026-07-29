@@ -1,4 +1,4 @@
-import { aliasMapFor, byId, byProvider, inputModalitiesFor } from "@genesiscz/utils/ai/models/registry";
+import { aliasMapFor, byId, byProvider, inputModalitiesFor } from "@genesiscz/utils/ai/catalog";
 import { logger } from "@genesiscz/utils/logger";
 import { fetchDirect } from "@genesiscz/utils/net/fetch-direct";
 
@@ -12,7 +12,7 @@ export interface AnthropicSubModelRecord {
 
 /**
  * Claude models served to subscription (OAuth) tokens, newest first — derived
- * from the curated registry (`@genesiscz/utils/ai/models/registry`). Add new
+ * from the curated registry (`@genesiscz/utils/ai/catalog`). Add new
  * models there, not here.
  */
 export const ANTHROPIC_SUB_STATIC_CATALOG: AnthropicSubModelRecord[] = byProvider("anthropic").map((model) => ({

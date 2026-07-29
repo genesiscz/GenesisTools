@@ -11,7 +11,7 @@ import type {
     CallLLMResult,
     CallLLMStructuredOptions,
     CallLLMStructuredResult,
-} from "@genesiscz/utils/ai/call-llm";
+} from "@genesiscz/utils/ai/core/call";
 import type { ProviderChoice } from "@genesiscz/utils/ask/types";
 
 export interface SummaryProgressInfo {

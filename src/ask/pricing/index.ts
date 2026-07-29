@@ -1,7 +1,7 @@
-import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { ModelInfo, PricingInfo } from "@ask/types";
 import type { ModelsOptions } from "@ask/types/cli";
+import { pricingForCall } from "@genesiscz/utils/ai/catalog/pricing";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import Table from "cli-table3";
@@ -9,7 +9,7 @@ import pc from "picocolors";
 
 interface ModelWithPricing {
     model: ModelInfo;
-    pricing: PricingInfo | null;
+    pricing: PricingInfo | null | undefined;
 }
 
 interface ModelWithProvider extends ModelWithPricing {
@@ -146,7 +146,7 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
         // Fetch pricing for all models
         let modelsWithPricing = await Promise.all(
             provider.models.map(async (model) => {
-                const pricing = await dynamicPricingManager.getPricing(provider.name, model.id);
+                const pricing = await pricingForCall(provider.name, model.id);
                 return { model, pricing };
             })
         );
@@ -154,7 +154,7 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
         // Filter out models with invalid pricing (null, negative, or extreme values)
         // Also exclude "Auto Router" which has invalid pricing from OpenRouter
         modelsWithPricing = modelsWithPricing.filter(({ model, pricing }) => {
-            if (pricing === null) {
+            if (pricing == null) {
                 return true; // Keep models without pricing (they'll show as N/A)
             }
 
@@ -240,7 +240,7 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
                         return null;
                     }
                 }
-                const pricing = await dynamicPricingManager.getPricing(provider.name, model.id);
+                const pricing = await pricingForCall(provider.name, model.id);
                 return { model, provider: provider.name, pricing };
             })
         );
@@ -258,7 +258,7 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
     // Filter out models with invalid pricing (null, negative, or extreme values)
     // Also exclude "Auto Router" which has invalid pricing from OpenRouter
     const validModels = modelsWithPricing.filter((m) => {
-        if (m.pricing === null) {
+        if (m.pricing == null) {
             return false;
         }
 
@@ -379,7 +379,7 @@ async function showPricingJSON(providerFilter?: string, filterCapabilities?: str
                 }
             }
 
-            const pricing = await dynamicPricingManager.getPricing(provider.name, model.id);
+            const pricing = await pricingForCall(provider.name, model.id);
             models.push({
                 id: model.id,
                 name: model.name,

@@ -1,6 +1,7 @@
-import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { CostBreakdown } from "@ask/types";
 import { usageCacheReadTokens, usageCacheWriteTokens, usageInputNoCacheTokens } from "@ask/utils/helpers";
+import { costForCall } from "@genesiscz/utils/ai/catalog/pricing";
+import { formatCost, formatTokens } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { LanguageModelUsage } from "ai";
@@ -56,7 +57,7 @@ export class CostTracker {
         logger.debug({ cacheWriteTokens: usageCacheWriteTokens(usage) }, `[CostTracker] usage cacheWriteTokens`);
 
         const key = `${provider}/${model}`;
-        const cost = await dynamicPricingManager.calculateCost(provider, model, usage);
+        const cost = await costForCall(provider, model, usage);
 
         // Update session costs
         const existing = this.sessionCosts.get(key) || {
@@ -105,11 +106,7 @@ export class CostTracker {
         // Check for alerts
         await this.checkCostAlerts(existing, currentDailyCost);
 
-        logger.debug(
-            `Tracked usage: ${provider}/${model} - ${dynamicPricingManager.formatTokens(
-                totalTokens
-            )} tokens, ${dynamicPricingManager.formatCost(cost)}`
-        );
+        logger.debug(`Tracked usage: ${provider}/${model} - ${formatTokens(totalTokens)} tokens, ${formatCost(cost)}`);
     }
 
     private async checkCostAlerts(sessionCost: SessionCost, dailyCost: number): Promise<void> {
@@ -119,9 +116,7 @@ export class CostTracker {
                 type: "daily",
                 amount: dailyCost,
                 threshold: this.dailyLimit,
-                message: `Daily cost limit exceeded: ${dynamicPricingManager.formatCost(
-                    dailyCost
-                )} > ${dynamicPricingManager.formatCost(this.dailyLimit)}`,
+                message: `Daily cost limit exceeded: ${formatCost(dailyCost)} > ${formatCost(this.dailyLimit)}`,
             };
             this.costAlerts.push(alert);
             logger.warn(alert.message);
@@ -133,9 +128,9 @@ export class CostTracker {
                 type: "limit",
                 amount: sessionCost.cost,
                 threshold: this.sessionLimit,
-                message: `Session cost limit exceeded: ${dynamicPricingManager.formatCost(
+                message: `Session cost limit exceeded: ${formatCost(
                     sessionCost.cost
-                )} > ${dynamicPricingManager.formatCost(this.sessionLimit)}`,
+                )} > ${formatCost(this.sessionLimit)}`,
             };
             this.costAlerts.push(alert);
             logger.warn(alert.message);
@@ -149,7 +144,7 @@ export class CostTracker {
                     type: "warning",
                     amount: sessionCost.cost,
                     threshold,
-                    message: `Cost warning: ${dynamicPricingManager.formatCost(sessionCost.cost)} spent on ${
+                    message: `Cost warning: ${formatCost(sessionCost.cost)} spent on ${
                         sessionCost.provider
                     }/${sessionCost.model}`,
                 };
@@ -245,12 +240,12 @@ export class CostTracker {
 
     setDailyLimit(limit: number): void {
         this.dailyLimit = limit;
-        logger.info(`Daily cost limit set to ${dynamicPricingManager.formatCost(limit)}`);
+        logger.info(`Daily cost limit set to ${formatCost(limit)}`);
     }
 
     setSessionLimit(limit: number): void {
         this.sessionLimit = limit;
-        logger.info(`Session cost limit set to ${dynamicPricingManager.formatCost(limit)}`);
+        logger.info(`Session cost limit set to ${formatCost(limit)}`);
     }
 
     getLimits(): { daily?: number; session?: number } {
@@ -327,17 +322,17 @@ export class CostTracker {
         report += `${"=".repeat(60)}\n\n`;
 
         // Summary
-        report += `Session Total: ${dynamicPricingManager.formatCost(totalCost)}\n`;
-        report += `Total Tokens: ${dynamicPricingManager.formatTokens(totalTokens)}\n`;
-        report += `Daily Cost: ${dynamicPricingManager.formatCost(dailyCost)}\n\n`;
+        report += `Session Total: ${formatCost(totalCost)}\n`;
+        report += `Total Tokens: ${formatTokens(totalTokens)}\n`;
+        report += `Daily Cost: ${formatCost(dailyCost)}\n\n`;
 
         // Provider breakdown
         if (Object.keys(providerStats).length > 0) {
             report += "By Provider:\n";
             for (const [provider, stats] of Object.entries(providerStats)) {
-                report += `  ${provider}: ${dynamicPricingManager.formatCost(
+                report += `  ${provider}: ${formatCost(
                     stats.cost
-                )} (${dynamicPricingManager.formatTokens(stats.tokens)} tokens, ${stats.messages} messages)\n`;
+                )} (${formatTokens(stats.tokens)} tokens, ${stats.messages} messages)\n`;
             }
             report += "\n";
         }
@@ -347,11 +342,9 @@ export class CostTracker {
             report += "By Model:\n";
             for (const item of breakdown) {
                 const avgCostPerToken = item.totalTokens > 0 ? (item.cost / item.totalTokens) * 1000 : 0;
-                report += `  ${item.provider}/${item.model}: ${dynamicPricingManager.formatCost(
+                report += `  ${item.provider}/${item.model}: ${formatCost(
                     item.cost
-                )} (${dynamicPricingManager.formatTokens(item.totalTokens)} tokens, ${dynamicPricingManager.formatCost(
-                    avgCostPerToken
-                )}/1K tokens)\n`;
+                )} (${formatTokens(item.totalTokens)} tokens, ${formatCost(avgCostPerToken)}/1K tokens)\n`;
             }
             report += "\n";
         }
@@ -371,10 +364,10 @@ export class CostTracker {
         if (limits.daily || limits.session) {
             report += "Limits:\n";
             if (limits.daily) {
-                report += `  Daily: ${dynamicPricingManager.formatCost(limits.daily)}\n`;
+                report += `  Daily: ${formatCost(limits.daily)}\n`;
             }
             if (limits.session) {
-                report += `  Session: ${dynamicPricingManager.formatCost(limits.session)}\n`;
+                report += `  Session: ${formatCost(limits.session)}\n`;
             }
         }
 
