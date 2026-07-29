@@ -5,7 +5,13 @@ import { wrapArray } from "@genesiscz/utils/array";
 import { logger } from "@genesiscz/utils/logger";
 import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { escapeShellArg, stripAnsi } from "@genesiscz/utils/string";
-import { type CallToolResult, type ListToolsResult, Server } from "@modelcontextprotocol/server";
+import {
+    type CallToolResult,
+    type ListToolsResult,
+    ProtocolError,
+    ProtocolErrorCode,
+    Server,
+} from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 
 // stdio MCP server: stdout carries JSON-RPC frames, so all diagnostics MUST go
@@ -231,10 +237,7 @@ server.setRequestHandler("tools/call", async (request, _ctx): Promise<CallToolRe
     const toolName = request.params.name;
 
     if (!["search", "advanced-search", "count-matches", "list-files", "list-file-types"].includes(toolName)) {
-        return {
-            content: [{ type: "text" as const, text: `Unknown tool: ${toolName}` }],
-            isError: true,
-        };
+        throw new ProtocolError(ProtocolErrorCode.MethodNotFound, `Unknown tool: ${toolName}`);
     }
 
     try {
