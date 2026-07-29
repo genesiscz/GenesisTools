@@ -703,7 +703,13 @@ export class YoutubeDatabase extends BaseDatabase {
             // cannot relax that in place, while a channel/ids/dir session has no
             // collection. Existing rows are collection-backed, so they carry over as
             // scope_kind='collection' with their collection_id intact.
-            this.db.exec(`
+            //
+            // Atomic, because `runMigration` records nothing: if a statement after the
+            // first DROP failed, `ask_threads` would already be gone, this branch would
+            // no-op on the next open, and `add-ask-sessions` below would recreate the
+            // tables empty — losing the legacy rows with no way to retry.
+            const rebuild = this.db.transaction(() => {
+                this.db.exec(`
                 CREATE TABLE ask_sessions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,
@@ -735,6 +741,8 @@ export class YoutubeDatabase extends BaseDatabase {
                     SELECT id, thread_id, role, content, tool_name, tool_args_json, created_at FROM ask_messages;
                 DROP TABLE ask_messages;
             `);
+            });
+            rebuild();
         });
 
         this.runMigration("add-ask-sessions", () => {
