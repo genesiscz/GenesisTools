@@ -33,7 +33,7 @@ const PLUGIN_CONFIG = join(homedir(), ".genesis-tools", "plugins", "config.json"
 const HERE_START = "<!-- YOU-ARE-HERE:START -->";
 const HERE_END = "<!-- YOU-ARE-HERE:END -->";
 
-interface Entry {
+export interface Entry {
     projectDir: string;
     branch?: string;
     worktreeDir?: string;
@@ -50,7 +50,22 @@ interface WrapUpConfig {
     docDir?: string;
 }
 
+// One resolve invocation reads this on both the registry-path lookup and the
+// docDir fallback; caching keeps it to a single read and stops a corrupt config
+// from printing the same warning twice.
+let pluginConfigCache: WrapUpConfig | undefined;
+
 async function loadPluginConfig(): Promise<WrapUpConfig> {
+    if (pluginConfigCache) {
+        return pluginConfigCache;
+    }
+
+    const cfg = await readPluginConfig();
+    pluginConfigCache = cfg;
+    return cfg;
+}
+
+async function readPluginConfig(): Promise<WrapUpConfig> {
     const f = Bun.file(PLUGIN_CONFIG);
     if (!(await f.exists())) {
         return {};
@@ -67,7 +82,7 @@ async function loadPluginConfig(): Promise<WrapUpConfig> {
     }
 }
 
-function expandHome(p: string): string {
+export function expandHome(p: string): string {
     return p.startsWith("~/") ? join(homedir(), p.slice(2)) : p;
 }
 
@@ -77,9 +92,16 @@ async function registryPath(): Promise<string> {
 }
 
 async function sh(cmd: string[]): Promise<string> {
-    const p = Bun.spawn(cmd, { stdout: "pipe", stderr: "ignore" });
-    const out = await new Response(p.stdout).text();
-    await p.exited;
+    const p = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
+    const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
+    const code = await p.exited;
+    if (code !== 0) {
+        // Callers deliberately fall back (cwd / empty branch) so this stays
+        // non-fatal, but a swallowed failure is indistinguishable from a
+        // legitimately empty result — say which one happened.
+        console.error(`wrap-up: \`${cmd.join(" ")}\` exited ${code}${err.trim() ? `: ${err.trim()}` : ""}`);
+    }
+
     return out.trim();
 }
 
@@ -105,7 +127,7 @@ async function saveRegistry(reg: Registry): Promise<void> {
     await Bun.write(await registryPath(), `${JSON.stringify(reg, null, 2)}\n`);
 }
 
-function slug(s: string): string {
+export function slug(s: string): string {
     return (
         s
             .replace(/[^a-z0-9]+/gi, "-")
@@ -114,7 +136,7 @@ function slug(s: string): string {
     );
 }
 
-function derivedDocPath(entry: Entry, branch: string): string {
+export function derivedDocPath(entry: Entry, branch: string): string {
     if (entry.docPath) {
         return entry.docPath;
     }
@@ -132,7 +154,7 @@ async function gitContext() {
     return { toplevel: toplevel || cwd, branch: branch || "", cwd };
 }
 
-function matches(entry: Entry, ctx: { toplevel: string; branch: string; cwd: string }): number {
+export function matches(entry: Entry, ctx: { toplevel: string; branch: string; cwd: string }): number {
     // Higher score = more specific match. 0 = no match.
     const paths = [entry.worktreeDir, entry.projectDir].filter(Boolean) as string[];
     const pathHit = paths.some((p) => ctx.toplevel === p || ctx.cwd === p || ctx.cwd.startsWith(`${p}/`));
@@ -278,11 +300,11 @@ function nowStamp(): string {
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-function innerBlock(full: string): string {
+export function innerBlock(full: string): string {
     return full.replace(HERE_START, "").replace(HERE_END, "").trim();
 }
 
-function blockquote(s: string): string {
+export function blockquote(s: string): string {
     return s
         .split("\n")
         .map((l) => (l.length ? `> ${l}` : ">"))
@@ -315,59 +337,68 @@ function failLog(problem: string): never {
     process.exit(1);
 }
 
-async function cmdLog(file: string) {
-    if (!file) {
-        failLog("no wrap-up file path given (first positional arg)");
-    }
+export type SentinelSplit = { ok: true; hereBody: string; logBody: string } | { ok: false; problem: string };
 
-    const f = Bun.file(file);
-    if (!(await f.exists())) {
-        failLog(
-            `file does not exist: ${file}\n  → create it from the template with Write first, then use 'log' for every session after`
-        );
-    }
-
-    const stdin = (await Bun.stdin.text()).trim();
+export function splitSentinels(raw: string): SentinelSplit {
+    const stdin = raw.trim();
     if (!stdin) {
-        failLog("nothing on stdin — you must pipe the @@HERE@@ / @@LOG@@ heredoc in");
+        return { ok: false, problem: "nothing on stdin — you must pipe the @@HERE@@ / @@LOG@@ heredoc in" };
     }
 
     const hIdx = stdin.indexOf("@@HERE@@");
     const lIdx = stdin.indexOf("@@LOG@@");
     const missing = [hIdx === -1 && "@@HERE@@", lIdx === -1 && "@@LOG@@"].filter(Boolean);
     if (missing.length) {
-        failLog(`stdin is missing sentinel line(s): ${missing.join(" and ")}`);
+        return { ok: false, problem: `stdin is missing sentinel line(s): ${missing.join(" and ")}` };
     }
 
     if (lIdx < hIdx) {
-        failLog("@@LOG@@ appears before @@HERE@@ — order must be @@HERE@@ first, then @@LOG@@");
+        return { ok: false, problem: "@@LOG@@ appears before @@HERE@@ — order must be @@HERE@@ first, then @@LOG@@" };
     }
 
     const hereBody = stdin.slice(hIdx + "@@HERE@@".length, lIdx).trim();
     const logBody = stdin.slice(lIdx + "@@LOG@@".length).trim();
     if (!hereBody && !logBody) {
-        failLog("both the @@HERE@@ and @@LOG@@ sections are empty");
+        return { ok: false, problem: "both the @@HERE@@ and @@LOG@@ sections are empty" };
     }
 
     if (!hereBody) {
-        failLog("the @@HERE@@ section is empty — it needs the new 'You are here' state bullets");
+        return {
+            ok: false,
+            problem: "the @@HERE@@ section is empty — it needs the new 'You are here' state bullets",
+        };
     }
 
     if (!logBody) {
-        failLog("the @@LOG@@ section is empty — it needs the log-section body (## datetime header + forensics)");
+        return {
+            ok: false,
+            problem: "the @@LOG@@ section is empty — it needs the log-section body (## datetime header + forensics)",
+        };
     }
 
-    const text = await f.text();
+    return { ok: true, hereBody, logBody };
+}
+
+export type LogBuild = { ok: true; body: string } | { ok: false; problem: string };
+
+export function buildLogBody({
+    text,
+    hereBody,
+    logBody,
+    stamp,
+}: {
+    text: string;
+    hereBody: string;
+    logBody: string;
+    stamp: string;
+}): LogBuild {
     const s = text.indexOf(HERE_START);
     const e = text.indexOf(HERE_END);
     if (s === -1 || e === -1 || e < s) {
-        failLog(
-            `no valid ${HERE_START} … ${HERE_END} block in ${file} — is this a wrap-up file created from the template?`
-        );
+        return { ok: false, problem: `no valid ${HERE_START} … ${HERE_END} block` };
     }
 
     const oldFull = text.slice(s, e + HERE_END.length);
-    const stamp = nowStamp();
     const newFull = `${HERE_START}\n## You are here (${stamp})\n${hereBody}\n${HERE_END}`;
     const rewritten = text.slice(0, s) + newFull + text.slice(e + HERE_END.length);
 
@@ -385,12 +416,37 @@ async function cmdLog(file: string) {
         blockquote(innerBlock(newFull)),
     ].join("\n");
 
-    const body = `${rewritten.replace(/\s+$/, "")}\n\n${section}\n`;
-    await Bun.write(file, body);
+    return { ok: true, body: `${rewritten.replace(/\s+$/, "")}\n\n${section}\n` };
+}
+
+async function cmdLog(file: string) {
+    if (!file) {
+        failLog("no wrap-up file path given (first positional arg)");
+    }
+
+    const f = Bun.file(file);
+    if (!(await f.exists())) {
+        failLog(
+            `file does not exist: ${file}\n  → create it from the template with Write first, then use 'log' for every session after`
+        );
+    }
+
+    const split = splitSentinels(await Bun.stdin.text());
+    if (!split.ok) {
+        failLog(split.problem);
+    }
+
+    const stamp = nowStamp();
+    const built = buildLogBody({ text: await f.text(), hereBody: split.hereBody, logBody: split.logBody, stamp });
+    if (!built.ok) {
+        failLog(`${built.problem} in ${file} — is this a wrap-up file created from the template?`);
+    }
+
+    await Bun.write(file, built.body);
     console.log(JSON.stringify({ logged: file, stamp }, null, 2));
 }
 
-function parseFlags(argv: string[]): Record<string, string> {
+export function parseFlags(argv: string[]): Record<string, string> {
     const out: Record<string, string> = {};
     for (let i = 0; i < argv.length; i++) {
         if (argv[i].startsWith("--")) {
@@ -401,23 +457,27 @@ function parseFlags(argv: string[]): Record<string, string> {
     return out;
 }
 
-const [cmd, ...rest] = process.argv.slice(2);
-switch (cmd) {
-    case "resolve":
-        await cmdResolve();
-        break;
-    case "register":
-        await cmdRegister(parseFlags(rest));
-        break;
-    case "here":
-        await cmdHere(rest[0]);
-        break;
-    case "log":
-        await cmdLog(rest[0]);
-        break;
-    default:
-        console.error(
-            "usage: resolve.ts <resolve | register --obsidian <dir> [--branch b] [--worktree w] [--project p] [--doc path] | here <file> | log <file>  (log reads stdin: @@HERE@@ … @@LOG@@ …)>"
-        );
-        process.exit(1);
+// Guarded so the pure helpers above can be imported by tests without the CLI
+// dispatcher running (and calling process.exit) on import.
+if (import.meta.main) {
+    const [cmd, ...rest] = process.argv.slice(2);
+    switch (cmd) {
+        case "resolve":
+            await cmdResolve();
+            break;
+        case "register":
+            await cmdRegister(parseFlags(rest));
+            break;
+        case "here":
+            await cmdHere(rest[0]);
+            break;
+        case "log":
+            await cmdLog(rest[0]);
+            break;
+        default:
+            console.error(
+                "usage: resolve.ts <resolve | register --obsidian <dir> [--branch b] [--worktree w] [--project p] [--doc path] | here <file> | log <file>  (log reads stdin: @@HERE@@ … @@LOG@@ …)>"
+            );
+            process.exit(1);
+    }
 }
