@@ -1,9 +1,14 @@
+import { chmod } from "node:fs/promises";
 import { migrateAccountConfig } from "@app/ai-proxy/lib/account-config";
 import { normalizeBasePath } from "@app/ai-proxy/lib/path-prefix";
 import { maskApiKey } from "@app/ai-proxy/lib/providers/api-key-state";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { AiProxyConfig, AiProxyPublicConfig } from "@app/ai-proxy/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+
+/** Owner-only: the config carries the proxy bearer key and billed vendor keys. */
+const CONFIG_FILE_MODE = 0o600;
 
 export function getDefaultConfig(): AiProxyConfig {
     return {
@@ -114,7 +119,25 @@ export class AiProxyConfigStore {
         const normalized = mergeConfig(config);
         await this.storage.ensureDirs();
         await this.storage.setConfig(normalized);
+        await this.restrictConfigPermissions();
         this.cached = normalized;
+    }
+
+    /**
+     * Re-applied on every save, not once: the atomic write renames a fresh temp
+     * file over the config, so the new inode carries the process umask (0644 in
+     * practice) and any earlier tightening is gone. The file holds the proxy
+     * bearer key and, since `accounts[].apiKey`, billed vendor credentials in
+     * plain text — other local accounts have no business reading either.
+     */
+    private async restrictConfigPermissions(): Promise<void> {
+        const path = this.storage.getConfigPath();
+
+        try {
+            await chmod(path, CONFIG_FILE_MODE);
+        } catch (err) {
+            logger.warn({ err, path }, "ai-proxy: could not restrict config file permissions to owner-only");
+        }
     }
 
     async update(patch: Partial<AiProxyConfig>): Promise<AiProxyConfig> {
