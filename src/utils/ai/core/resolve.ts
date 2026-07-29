@@ -54,7 +54,12 @@ import type { ResolvedBinding, ResolvedModel, ResolvedTarget, ResolveOptions } f
  * default account for the provider half of an explicit model).
  */
 
-const TASK_CAPABILITY: Record<TaskName, Capability> = {
+/**
+ * Which capability a task needs. Exported because `tasks/resolve-task.ts` asks
+ * the same question, and a second copy could be edited out of step: `Record`
+ * forces both to hold every key, but nothing forces the VALUES to agree.
+ */
+export const TASK_CAPABILITY: Record<TaskName, Capability> = {
     chat: "chat",
     embed: "embed",
     transcribe: "transcribe",

@@ -10,8 +10,17 @@ import { migrateSecretsToVault } from "./migrations/2026-08-secretsToVault";
  * `migrateSeedEnvAccounts` is deliberately NOT here. Seeding creates an account
  * per environment-resolved provider, which is a rollout decision the user
  * reviews (the grandfather list) rather than something that should appear in
- * their config the first time any tool happens to read it. Phase 2 runs it
- * explicitly.
+ * their config the first time any tool happens to read it.
+ *
+ * ⚠️ NOTHING calls it today. An earlier version of this comment said "Phase 2
+ * runs it explicitly", which was never true and would mislead a reader into
+ * assuming seeded accounts already exist. The behaviour it was meant to protect
+ * is delivered a different way: `ephemeralEnvAccounts` (same file) synthesises
+ * the accounts IN MEMORY at resolution time, so a machine whose only credential
+ * for a provider is an environment variable still resolves. It is consumed by
+ * `core/resolve.ts`, `core/choose.ts` and `ask/providers/ProviderManager.ts`.
+ * What is still missing is the visible half: those variables never become
+ * reviewable entries in the user's config.
  *
  * Both entry points (`AiConfigStore.load` and the deprecated `AIConfig.load`)
  * run this, so reaching the config through either one cannot land on a shape the

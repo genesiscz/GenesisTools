@@ -2,6 +2,7 @@ import type { AIAccountEntry, AIConfigData as V3ConfigData } from "@genesiscz/ut
 import type { ConfigMigration } from "@genesiscz/utils/config/migration";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { slugify } from "@genesiscz/utils/string";
 import { migrationAllowedHere } from "../migration-guard";
 import { accountRef } from "../refs";
 import {
@@ -24,10 +25,13 @@ export function slugifyAccountId(name: string, taken: Set<string>): string {
     // validating, so any account named only in punctuation or non-ASCII ("---",
     // "日本") produced a v4 file that AiConfigStore then refused to load: a
     // bricked config with no way back, since the file already says version 4.
-    const body = name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "_")
-        .replace(/^_+|_+$/g, "");
+    // Through the shared `slugify`, which normalises NFD and strips combining
+    // marks first. The hand-rolled version skipped that step, so an accented
+    // letter contributed NOTHING instead of transliterating: "José" became
+    // "acc_jos" rather than "acc_jose".
+    // `.toLowerCase()` after slugify, NOT before: slugify preserves case, and the
+    // id regex in schema.ts only accepts lowercase.
+    const body = slugify(name).toLowerCase().replace(/-/g, "_");
     const base = `acc_${body || "account"}`;
     let candidate = base;
     let suffix = 2;
