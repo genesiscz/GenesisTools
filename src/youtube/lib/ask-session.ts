@@ -79,8 +79,15 @@ export async function resolveSessionVideoIds(yt: Youtube, session: AskSessionRec
     }
 
     const scope = await resolveAskScope(yt, { channel: session.scopeValue });
+    // Compare membership, not just the count: a channel that loses one video and
+    // gains another between asks keeps the same length, and a count-only check
+    // would leave every stored reader (session listings, the extension) on the
+    // old list forever.
+    const changed =
+        scope.videoIds.length !== session.videoIds.length ||
+        scope.videoIds.some((id, index) => id !== session.videoIds[index]);
 
-    if (scope.videoIds.length !== session.videoIds.length) {
+    if (changed) {
         yt.db.setAskSessionVideoIds(session.id, scope.videoIds);
     }
 
@@ -122,17 +129,23 @@ export async function askInSession(opts: AskInSessionOpts): Promise<AskInSession
     // Read BEFORE appending this turn: the current question already goes to the model
     // as the question, and repeating it as history would duplicate it in the prompt.
     const history = sessionHistory(opts.yt, opts.session.id);
-    opts.yt.db.appendAskSessionMessage({
-        sessionId: opts.session.id,
-        role: "user",
-        content: opts.question,
-    });
+    // Answer FIRST, then write both turns together. `answerOverVideos` throws on a
+    // scope with no transcripts, on an aborted signal and on any provider error —
+    // persisting the user turn up front left an orphan question behind, which the
+    // next ask replayed as history with no reply, once more per retry.
     const result = await answerOverVideos({ ...opts, videoIds, history });
-    opts.yt.db.appendAskSessionMessage({
-        sessionId: opts.session.id,
-        role: "assistant",
-        content: result.answer,
-        citationsJson: SafeJSON.stringify(result.citations, { strict: true }),
+    opts.yt.db.transaction(() => {
+        opts.yt.db.appendAskSessionMessage({
+            sessionId: opts.session.id,
+            role: "user",
+            content: opts.question,
+        });
+        opts.yt.db.appendAskSessionMessage({
+            sessionId: opts.session.id,
+            role: "assistant",
+            content: result.answer,
+            citationsJson: SafeJSON.stringify(result.citations, { strict: true }),
+        });
     });
     opts.yt.db.touchAskSession(opts.session.id);
     const turn = opts.yt.db.listAskSessionMessages(opts.session.id).length;
