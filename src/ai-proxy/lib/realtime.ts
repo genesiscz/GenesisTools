@@ -404,8 +404,55 @@ export async function handleRealtimeClientSecrets(input: {
         );
     }
 
+    const mintTags = readRequestTags(input.req.headers);
     const started = performance.now();
-    const response = await provider.realtimeClientSecrets(input.req, route.upstreamId, bodyText);
+
+    // This route is dispatched before server.ts's try/catch, so an expired
+    // subscription auth or a network failure here would surface as an unhandled
+    // rejection instead of the error envelope every other route returns.
+    let response: Response;
+    try {
+        response = await provider.realtimeClientSecrets(input.req, route.upstreamId, bodyText);
+    } catch (err) {
+        const elapsedMs = Math.round(performance.now() - started);
+        logger.warn(
+            {
+                err,
+                path: "/v1/realtime/client_secrets",
+                model: proxyModel,
+                upstreamModel: route.upstreamId,
+                account: route.accountName,
+                client: client.name,
+                elapsedMs,
+            },
+            "ai-proxy: realtime client secret mint failed before a response was received"
+        );
+
+        recordUsageRequest({
+            ts: new Date().toISOString(),
+            account: route.accountName,
+            client: client.name,
+            provider: route.account.provider,
+            proxyModel,
+            upstreamModel: route.upstreamId,
+            path: "/v1/realtime/client_secrets",
+            status: 502,
+            elapsedMs,
+            stream: false,
+            error: true,
+            tags: mintTags,
+        });
+
+        return jsonError(
+            502,
+            `Realtime client secret mint failed: ${err instanceof Error ? err.message : String(err)}`,
+            {
+                type: "upstream_error",
+                code: "client_secrets_failed",
+            }
+        );
+    }
+
     const elapsedMs = Math.round(performance.now() - started);
     const minted = await response.text();
 
@@ -440,6 +487,7 @@ export async function handleRealtimeClientSecrets(input: {
         elapsedMs,
         stream: false,
         error: response.status >= 400,
+        tags: mintTags,
     });
 
     // `response.text()` already decoded the body, so upstream's framing headers

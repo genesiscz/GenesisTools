@@ -36,12 +36,6 @@ function mapProxyRequestError(err: unknown): { status: number; message: string }
 
     const message = err instanceof Error ? err.message : String(err);
 
-    // The account exists but its credentials did not resolve — a configuration
-    // problem on the proxy host, retryable once fixed, so 503 rather than 400.
-    if (message.startsWith("Provider not loaded:")) {
-        return { status: 503, message };
-    }
-
     if (
         message.startsWith("Model id must be") ||
         message.startsWith("No enabled account for model") ||
