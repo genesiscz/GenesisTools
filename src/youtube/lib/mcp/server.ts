@@ -42,6 +42,25 @@ function text(value: string): ToolResult {
     return { content: [{ type: "text", text: value }] };
 }
 
+/** Largest page any tool here will return, whatever the client asks for. */
+export const MAX_TOOL_LIMIT = 200;
+
+/**
+ * A row limit this server is willing to run.
+ *
+ * Clamped in the handler rather than trusted from the schema: the values reach
+ * `LIMIT ?` directly, and SQLite reads a NEGATIVE limit as "no limit" — so an
+ * untrusted-ish client asking for `-1` would serialize the whole corpus through
+ * a stdio pipe. Non-integers and junk fall back to the tool's default.
+ */
+export function toolLimit(value: unknown, fallback: number): number {
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+        return fallback;
+    }
+
+    return Math.min(value, MAX_TOOL_LIMIT);
+}
+
 /**
  * Metadata only, with the local cache paths dropped.
  *
@@ -59,94 +78,105 @@ function asVideoIds(value: unknown): VideoId[] {
     return Array.isArray(value) ? (value.filter((id): id is string => typeof id === "string") as VideoId[]) : [];
 }
 
+/** The advertised tool set. Exported so its shape can be pinned without stdio. */
+export const MCP_TOOLS = [
+    {
+        name: "list_videos",
+        description: "List stored videos, optionally filtered to one channel handle.",
+        inputSchema: {
+            type: "object" as const,
+            properties: {
+                channel: { type: "string", description: "Channel handle, e.g. @bridgemindai" },
+                limit: {
+                    type: "integer",
+                    minimum: 1,
+                    maximum: MAX_TOOL_LIMIT,
+                    description: `Max rows (default 50, capped at ${MAX_TOOL_LIMIT})`,
+                },
+            },
+        },
+    },
+    {
+        name: "get_video",
+        description: "Metadata, transcript availability and the stored summary for one video, in one call.",
+        inputSchema: {
+            type: "object" as const,
+            properties: { videoId: { type: "string" } },
+            required: ["videoId"],
+        },
+    },
+    {
+        name: "search_transcripts",
+        description: "Keyword (full-text) search across stored transcripts. Fast, exact, no embedding cost.",
+        inputSchema: {
+            type: "object" as const,
+            properties: {
+                query: { type: "string" },
+                videoIds: { type: "array", items: { type: "string" } },
+                limit: {
+                    type: "integer",
+                    minimum: 1,
+                    maximum: MAX_TOOL_LIMIT,
+                    description: `Max hits (default 20, capped at ${MAX_TOOL_LIMIT})`,
+                },
+            },
+            required: ["query"],
+        },
+    },
+    {
+        name: "transcript_window",
+        description: "The transcript text around a timestamp, for quoting a passage a citation points at.",
+        inputSchema: {
+            type: "object" as const,
+            properties: {
+                videoId: { type: "string" },
+                atSec: { type: "number" },
+                windowSec: { type: "number", description: "Half-width in seconds (default 45)" },
+            },
+            required: ["videoId", "atSec"],
+        },
+    },
+    {
+        name: "ask",
+        description:
+            "Ask a question across a channel or an explicit video set. Returns the answer plus citations carrying timestamps and deep links.",
+        inputSchema: {
+            type: "object" as const,
+            properties: {
+                question: { type: "string" },
+                channel: { type: "string", description: "Ask over every stored video of this channel" },
+                videoIds: { type: "array", items: { type: "string" } },
+                topK: { type: "number" },
+            },
+            required: ["question"],
+        },
+    },
+    {
+        name: "queue_add",
+        description: "Enqueue a pipeline job for a video id, URL or @handle.",
+        inputSchema: {
+            type: "object" as const,
+            properties: {
+                target: { type: "string" },
+                stages: { type: "array", items: { type: "string" } },
+            },
+            required: ["target"],
+        },
+    },
+    {
+        name: "queue_status",
+        description: "Queue depth, or one job by id.",
+        inputSchema: {
+            type: "object" as const,
+            properties: { jobId: { type: "number" } },
+        },
+    },
+];
+
 export async function startMcpServer(yt: Youtube): Promise<void> {
     const server = new Server({ name: SERVER_NAME, version: SERVER_VERSION }, { capabilities: { tools: {} } });
 
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
-        tools: [
-            {
-                name: "list_videos",
-                description: "List stored videos, optionally filtered to one channel handle.",
-                inputSchema: {
-                    type: "object" as const,
-                    properties: {
-                        channel: { type: "string", description: "Channel handle, e.g. @bridgemindai" },
-                        limit: { type: "number", description: "Max rows (default 50)" },
-                    },
-                },
-            },
-            {
-                name: "get_video",
-                description: "Metadata, transcript availability and the stored summary for one video, in one call.",
-                inputSchema: {
-                    type: "object" as const,
-                    properties: { videoId: { type: "string" } },
-                    required: ["videoId"],
-                },
-            },
-            {
-                name: "search_transcripts",
-                description: "Keyword (full-text) search across stored transcripts. Fast, exact, no embedding cost.",
-                inputSchema: {
-                    type: "object" as const,
-                    properties: {
-                        query: { type: "string" },
-                        videoIds: { type: "array", items: { type: "string" } },
-                        limit: { type: "number" },
-                    },
-                    required: ["query"],
-                },
-            },
-            {
-                name: "transcript_window",
-                description: "The transcript text around a timestamp, for quoting a passage a citation points at.",
-                inputSchema: {
-                    type: "object" as const,
-                    properties: {
-                        videoId: { type: "string" },
-                        atSec: { type: "number" },
-                        windowSec: { type: "number", description: "Half-width in seconds (default 45)" },
-                    },
-                    required: ["videoId", "atSec"],
-                },
-            },
-            {
-                name: "ask",
-                description:
-                    "Ask a question across a channel or an explicit video set. Returns the answer plus citations carrying timestamps and deep links.",
-                inputSchema: {
-                    type: "object" as const,
-                    properties: {
-                        question: { type: "string" },
-                        channel: { type: "string", description: "Ask over every stored video of this channel" },
-                        videoIds: { type: "array", items: { type: "string" } },
-                        topK: { type: "number" },
-                    },
-                    required: ["question"],
-                },
-            },
-            {
-                name: "queue_add",
-                description: "Enqueue a pipeline job for a video id, URL or @handle.",
-                inputSchema: {
-                    type: "object" as const,
-                    properties: {
-                        target: { type: "string" },
-                        stages: { type: "array", items: { type: "string" } },
-                    },
-                    required: ["target"],
-                },
-            },
-            {
-                name: "queue_status",
-                description: "Queue depth, or one job by id.",
-                inputSchema: {
-                    type: "object" as const,
-                    properties: { jobId: { type: "number" } },
-                },
-            },
-        ],
-    }));
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: MCP_TOOLS }));
 
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const args = (request.params.arguments ?? {}) as Record<string, unknown>;
@@ -156,7 +186,7 @@ export async function startMcpServer(yt: Youtube): Promise<void> {
                 case "list_videos": {
                     const videos = yt.db.listVideos({
                         ...(typeof args.channel === "string" ? { channel: args.channel as ChannelHandle } : {}),
-                        limit: typeof args.limit === "number" ? args.limit : 50,
+                        limit: toolLimit(args.limit, 50),
                     });
 
                     return text(
@@ -196,7 +226,7 @@ export async function startMcpServer(yt: Youtube): Promise<void> {
                     const hits = yt.qa.keywordSearch(
                         String(args.query),
                         asVideoIds(args.videoIds),
-                        typeof args.limit === "number" ? args.limit : 20
+                        toolLimit(args.limit, 20)
                     );
 
                     return text(SafeJSON.stringify(hits, null, 2));
