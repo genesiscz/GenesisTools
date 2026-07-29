@@ -9,7 +9,7 @@
 
 import { afterAll, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scanWithCFfi } from "./engine";
@@ -18,6 +18,9 @@ import type { ClonesizeResult } from "./types";
 const isDarwin = process.platform === "darwin";
 const CLONE_MB = 4;
 const CLONE_BYTES = CLONE_MB * 1024 * 1024;
+
+/** Byte offset of `nrecs` in CacheHeader: magic(8) version(4) reserved(4) fsid(8). */
+const NRECS_OFFSET = 24;
 
 const tmpDirs: string[] = [];
 
@@ -119,6 +122,31 @@ describe.skipIf(!isDarwin)("extent cache", () => {
         expect(after.files_opened).toBe(3);
         expect(after.unique_bytes).toBe(truth.unique_bytes);
         expect(after.naive_bytes).toBe(truth.naive_bytes);
+    }, 60_000);
+
+    it("rejects a forged record count instead of reading past the end of the file", () => {
+        // A header claiming more records than the file can hold is the cheap way to
+        // try to reach the CACHE_MAX_RECS eviction branch without writing 2M files.
+        // It does not work, and that is the point: cache_open computes the bytes the
+        // header implies and drops the whole cache when they exceed the file size, so
+        // a bloated count can never be trusted into an out-of-bounds read.
+        const fixture = makeCloneFixture();
+        const cacheDir = makeTmp("du-cache-dir-");
+
+        scan(fixture, cacheDir, true);
+        const cacheFile = join(cacheDir, readdirSync(cacheDir).find((f) => f.startsWith("extents-"))!);
+
+        const buf = readFileSync(cacheFile);
+        expect(buf.readBigUInt64LE(NRECS_OFFSET)).toBe(3n);
+        buf.writeBigUInt64LE(1_999_999n, NRECS_OFFSET);
+        writeFileSync(cacheFile, buf);
+
+        const after = scan(fixture, cacheDir);
+        const truth = groundTruth(fixture);
+
+        expect(after.files_cached).toBe(0);
+        expect(after.files_opened).toBe(3);
+        expect(after.unique_bytes).toBe(truth.unique_bytes);
     }, 60_000);
 
     it("keeps records for files outside the scanned subtree when it rewrites", () => {
