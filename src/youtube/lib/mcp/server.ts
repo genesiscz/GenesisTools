@@ -2,7 +2,7 @@ import { answerOverVideos, formatCitationLines } from "@app/youtube/lib/ask-answ
 import { resolveAskScope } from "@app/youtube/lib/ask-scope";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
-import { toJobStages } from "@app/youtube/lib/queue";
+import { type JobActor, toJobStages } from "@app/youtube/lib/queue";
 import { withConsoleContext } from "@app/youtube/lib/service-user";
 import { formatClock, videoUrl } from "@app/youtube/lib/transcript-export";
 import type { VideoId } from "@app/youtube/lib/video.types";
@@ -262,15 +262,23 @@ export async function startMcpServer(yt: Youtube): Promise<void> {
                 }
 
                 case "queue_status": {
-                    if (typeof args.jobId === "number") {
-                        const found = yt.queue.get(args.jobId, { redact: true });
+                    return await withConsoleContext(yt.db, async (user) => {
+                        // Deliberately NOT the operator the CLI uses. This door treats its
+                        // caller as untrusted-ish (see the header), so it reads the queue as
+                        // the same console account `queue_add` enqueues under: it sees its
+                        // own work, and never another user's jobs, ids or queue depth.
+                        const actor: JobActor = { kind: "user", userId: user.id };
 
-                        return found
-                            ? text(SafeJSON.stringify(found, null, 2))
-                            : { ...text(`Job ${args.jobId} not found.`), isError: true };
-                    }
+                        if (typeof args.jobId === "number") {
+                            const found = yt.queue.get(args.jobId, { redact: true, actor });
 
-                    return text(SafeJSON.stringify(yt.queue.stats(), null, 2));
+                            return found
+                                ? text(SafeJSON.stringify(found, null, 2))
+                                : { ...text(`Job ${args.jobId} not found.`), isError: true };
+                        }
+
+                        return text(SafeJSON.stringify(yt.queue.stats(actor), null, 2));
+                    });
                 }
 
                 default:

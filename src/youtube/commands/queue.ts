@@ -3,7 +3,7 @@ import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import { statusIcon } from "@app/youtube/commands/_shared/status-icon";
 import { splitTargets } from "@app/youtube/commands/_shared/utils";
-import { parseJobStatus, type QueueWatchEvent, toJobStages } from "@app/youtube/lib/queue";
+import { type JobActor, parseJobStatus, type QueueWatchEvent, toJobStages } from "@app/youtube/lib/queue";
 import { withConsoleContext } from "@app/youtube/lib/service-user";
 import type { PipelineJob } from "@app/youtube/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -16,6 +16,21 @@ import pc from "picocolors";
  * rendering: the queue's own module owns normalisation, redaction and the watch
  * diffing, so a CLI and the HTTP routes cannot drift into two behaviours.
  */
+
+/**
+ * This door's reach over the queue.
+ *
+ * `tools youtube` runs on the operator's own machine, against their own database,
+ * with no auth gate in front of it — `resolveJobActor` (server/auth.ts) names this
+ * command as an operator for exactly that reason, and `download` / `pipeline`
+ * already wait on jobs as one. Scoping the CLI to the console service account
+ * instead would hide every job the web UI's users enqueued from the person
+ * administering the queue, which is the opposite of what `queue list` is for.
+ *
+ * Note this is a READ scope. New jobs are still attributed to the console user
+ * (`withConsoleContext` below), so operator reach never makes CLI work unowned.
+ */
+const CLI_ACTOR: JobActor = { kind: "operator" };
 
 interface AddOpts {
     stages: string[];
@@ -117,7 +132,7 @@ export function registerQueueCommand(program: Command): void {
             await renderOrEmit({ text: jobRows(jobs), json: results, flags: cmd.optsWithGlobals() });
 
             if (opts.watch && jobs.length > 0) {
-                for await (const event of yt.queue.watch({ jobIds: jobs.map((job) => job.id) })) {
+                for await (const event of yt.queue.watch({ actor: CLI_ACTOR, jobIds: jobs.map((job) => job.id) })) {
                     out.println(watchLine(event, false));
                 }
             }
@@ -145,6 +160,7 @@ export function registerQueueCommand(program: Command): void {
                 ...(opts.target ? { target: opts.target } : {}),
                 limit: Number.parseInt(opts.limit, 10),
                 redact: true,
+                actor: CLI_ACTOR,
             });
 
             await renderOrEmit({ text: jobRows(jobs), json: jobs, flags: cmd.optsWithGlobals() });
@@ -158,7 +174,7 @@ export function registerQueueCommand(program: Command): void {
         .action(async (id: string, opts: ShowOpts, cmd: Command) => {
             const yt = await getYoutube();
             const jobId = Number.parseInt(id, 10);
-            const found = yt.queue.get(jobId, { redact: true });
+            const found = yt.queue.get(jobId, { redact: true, actor: CLI_ACTOR });
 
             if (!found) {
                 out.error(`Job ${jobId} not found.`);
@@ -166,7 +182,7 @@ export function registerQueueCommand(program: Command): void {
                 return;
             }
 
-            const activity = opts.activity ? (yt.queue.activity(jobId) ?? []) : undefined;
+            const activity = opts.activity ? (yt.queue.activity(jobId, CLI_ACTOR) ?? []) : undefined;
             const lines = [
                 jobRows([found.job]),
                 found.queuePosition === null ? "" : pc.dim(`queue position: ${found.queuePosition}`),
@@ -193,6 +209,7 @@ export function registerQueueCommand(program: Command): void {
             const jobIds = ids.map((id) => Number.parseInt(id, 10)).filter((id) => Number.isFinite(id));
 
             for await (const event of yt.queue.watch({
+                actor: CLI_ACTOR,
                 ...(jobIds.length > 0 ? { jobIds } : {}),
                 followChildren: opts.noChildren !== true,
                 ...(opts.timeout ? { timeoutMs: Number.parseInt(opts.timeout, 10) * 1000 } : {}),
@@ -207,7 +224,7 @@ export function registerQueueCommand(program: Command): void {
         .description("Cancel a pending or running job")
         .action(async (id: string) => {
             const yt = await getYoutube();
-            const job = yt.queue.cancel(Number.parseInt(id, 10));
+            const job = yt.queue.cancel(Number.parseInt(id, 10), CLI_ACTOR);
 
             if (!job) {
                 out.error(`Job ${id} not found or already finished.`);
@@ -224,7 +241,7 @@ export function registerQueueCommand(program: Command): void {
         .option("--json", "Machine-readable output")
         .action(async (_opts: unknown, cmd: Command) => {
             const yt = await getYoutube();
-            const stats = yt.queue.stats();
+            const stats = yt.queue.stats(CLI_ACTOR);
 
             const text = [
                 `queued: ${stats.queued}   running: ${stats.running}`,
