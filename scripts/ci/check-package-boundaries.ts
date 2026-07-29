@@ -88,11 +88,7 @@ async function collectImports(scopes: string[]): Promise<ImportHit[]> {
  * Deliberate, documented cross-boundary escape hatches (dynamic imports with a
  * graceful standalone fallback). Keyed `file -> spec`. Keep this list SHORT.
  */
-const PURITY_EXEMPTIONS = new Map<string, string>([
-    // Pricing enrichment lives in the ask tool; resolve-models degrades to
-    // pricing-less models when @ask/* is absent (standalone utils install).
-    ["src/utils/ai/resolvers/resolve-models.ts", "@ask/providers/DynamicPricing"],
-]);
+const PURITY_EXEMPTIONS = new Map<string, string>([]);
 
 function appSegmentOf(spec: string): string | null {
     const m = spec.match(TOOL_IMPORT_RE);
