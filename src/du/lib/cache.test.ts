@@ -25,6 +25,10 @@ const NRECS_OFFSET = 24;
 const NEXTS_OFFSET = 32;
 /** CacheEnt: fileid, mtime_ns, dlen, alloc, ext_off (8 each) + ext_count, last_seen (4 each). */
 const CACHE_ENT_BYTES = 48;
+/** Offset of `ext_off` within a CacheEnt, and of the first record within the file. */
+const ENT_EXT_OFF_OFFSET = 32;
+const FIRST_RECORD_OFFSET = HEADER_BYTES;
+const UINT64_MAX = (1n << 64n) - 1n;
 /** Mirrors CACHE_MAX_RECS in clonesize.c. */
 const CACHE_MAX_RECS = 2_000_000;
 const FORGED_RECS = CACHE_MAX_RECS - 1;
@@ -221,6 +225,35 @@ describe.skipIf(!isDarwin)("extent cache", () => {
             expect(after.unique_bytes).toBe(CLONE_BYTES);
         }, 60_000);
     }
+
+    it("rejects an entry whose extent range wraps past the end of the blob", () => {
+        // Per-ENTRY counterpart to the header checks above. `ext_off + ext_count`
+        // wraps a 64-bit sum back under g_cache_nexts, so the old check accepted a
+        // forged offset and read extents from outside the declared region. It did
+        // not crash — the pointer arithmetic wrapped too and landed inside the
+        // mapping — it just reported garbage: this exact fixture came back with
+        // unique_bytes = 7,667,827,374,364,295,172 (7.7 EB from 12 MB of files).
+        const fixture = makeCloneFixture();
+        const cacheDir = makeTmp("du-cache-dir-");
+
+        scan(fixture, cacheDir, true);
+        const cacheFile = join(cacheDir, readdirSync(cacheDir).find((f) => f.startsWith("extents-"))!);
+
+        // Leave the identity fields intact so the lookup still matches this record
+        // and reaches the bounds check that is under test.
+        const buf = readFileSync(cacheFile);
+        buf.writeBigUInt64LE(UINT64_MAX, FIRST_RECORD_OFFSET + ENT_EXT_OFF_OFFSET);
+        writeFileSync(cacheFile, buf);
+
+        const after = scan(fixture, cacheDir);
+
+        // Only the poisoned record is dropped: its file is re-read from disk while
+        // the other two are still served from the cache. Rejecting one entry must
+        // not throw the whole cache away.
+        expect(after.files_cached).toBe(2);
+        expect(after.files_opened).toBe(1);
+        expect(after.unique_bytes).toBe(CLONE_BYTES);
+    }, 60_000);
 
     it("keeps records for files outside the scanned subtree when it rewrites", () => {
         // The cache is per VOLUME, so a scan of one subtree must merge its records
