@@ -104,6 +104,15 @@ function openLib() {
         //                          int depth, int freeable_tree,
         //                          unsigned long long changed_since,
         //                          const char* cache_dir, int cache_read, int include_cloud)
+        //
+        // Sentinels the C side expects, none of which are valid values:
+        //   threads       0  => auto (ncpu)
+        //   min_bytes     0  => keep every file
+        //   depth        -1  => no per-directory tree
+        //   changed_since 0  => mtime filter OFF (g_mtime_min in clonesize.c). NOT
+        //                       "epoch zero": a real cutoff is always > 0, and the
+        //                       CLI rejects a zero-length window before reaching here.
+        //   cache_dir  NULL  => extent cache disabled entirely
         clonesize_run_json: {
             args: [
                 FFIType.ptr,
