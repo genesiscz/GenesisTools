@@ -1,13 +1,5 @@
-import {
-    appendFileSync,
-    existsSync,
-    mkdirSync,
-    readdirSync,
-    readFileSync,
-    statSync,
-    unlinkSync,
-    writeFileSync,
-} from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -178,7 +170,7 @@ export function createJsonFilesBackend(options: JsonFilesBackendOptions): JsonFi
             }
 
             if (!existsSync(path)) {
-                writeFileSync(path, "");
+                atomicWriteFileSync(path, "");
             }
 
             return sessionRecord(session.title, session.owner, []);
@@ -248,7 +240,9 @@ export function createJsonFilesBackend(options: JsonFilesBackendOptions): JsonFi
 
         async writeRawEntries(id: string, entries: unknown[]): Promise<void> {
             const content = entries.length === 0 ? "" : `${entries.map((e) => SafeJSON.stringify(e)).join("\n")}\n`;
-            writeFileSync(filePath(id), content);
+            // This is ask's whole-file save() path: a plain write interrupted by
+            // a crash or a full disk truncates the user's chat history in place.
+            atomicWriteFileSync(filePath(id), content);
         },
 
         async remove(id: string): Promise<void> {

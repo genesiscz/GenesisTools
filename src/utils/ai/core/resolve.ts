@@ -9,6 +9,8 @@ import { providerPlugin } from "../providers/registry";
 import { formatModelRef, type ModelRef, type ParsedModelRef, parseModelRef } from "./model-ref";
 import type { ResolvedBinding, ResolvedModel, ResolvedTarget, ResolveOptions } from "./types";
 
+const { log } = logger.scoped("ai-core");
+
 /**
  * The one resolution ladder: a ModelRef (or nothing) in, a bound provider out.
  *
@@ -91,7 +93,6 @@ export async function resolveModelTarget(
     ref: ModelRef | undefined,
     opts: ResolveOptions = {}
 ): Promise<ResolvedTarget> {
-    const { log } = logger.scoped("ai-core");
     const store = opts.store ?? (await AiConfigStore.load());
     const cfg = store.data();
 
@@ -367,7 +368,6 @@ function lookupModel(modelId: string, providerId: string, opts: { warnUnlisted: 
         }
     }
 
-    const { log } = logger.scoped("ai-core");
     const message = "model is not in the static catalog; context window and pricing are unknown for this call";
 
     if (opts.warnUnlisted) {
