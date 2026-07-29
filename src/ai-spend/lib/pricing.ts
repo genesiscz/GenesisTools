@@ -19,13 +19,13 @@ function fromRegistry(): PricingTable {
         }
 
         const price: ModelPrice = {
-            input: model.pricing.inputPerMTok,
-            output: model.pricing.outputPerMTok,
-            cacheWrite: model.pricing.cacheWritePerMTok ?? model.pricing.inputPerMTok * 1.25,
-            cacheRead: model.pricing.cacheReadPerMTok ?? model.pricing.inputPerMTok * 0.1,
+            input: model.pricing.inputPer1M,
+            output: model.pricing.outputPer1M,
+            cacheWrite: model.pricing.cachedCreatePer1M ?? model.pricing.inputPer1M * 1.25,
+            cacheRead: model.pricing.cachedReadPer1M ?? model.pricing.inputPer1M * 0.1,
         };
 
-        for (const id of [model.id, model.cli?.id]) {
+        for (const id of [model.id, model.flags?.cli?.id]) {
             if (id) {
                 table[id] = price;
             }

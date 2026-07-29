@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { adaptOlderConfig, AiConfigStore } from "./AiConfigStore";
+import { AiConfigStore, adaptOlderConfig } from "./AiConfigStore";
 import { _clearExternalRefScanners, registerExternalRefScanner } from "./refs";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "./schema";
 

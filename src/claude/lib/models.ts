@@ -22,11 +22,11 @@ const FAMILY_ORDER: ClaudeModelFamily[] = ["fable", "opus", "sonnet", "haiku"];
 
 export const CLAUDE_MODELS: ClaudeModel[] = FAMILY_ORDER.flatMap((family) =>
     byProvider("anthropic")
-        .filter((model) => model.family === family && model.cli)
+        .filter((model) => model.family === family && model.flags?.cli)
         .map((model) => ({
-            id: model.cli?.id ?? model.id,
-            family: model.family,
-            label: model.cli?.label ?? model.displayName,
+            id: model.flags?.cli?.id ?? model.id,
+            family,
+            label: model.flags?.cli?.label ?? model.displayName,
             supports1m: model.flags?.supports1m,
         }))
 );
