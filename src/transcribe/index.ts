@@ -3,8 +3,8 @@
 import { existsSync } from "node:fs";
 import { basename, extname, resolve } from "node:path";
 import * as p from "@clack/prompts";
-import { AI } from "@genesiscz/utils/ai/index.ts";
 import { getAllProviders } from "@genesiscz/utils/ai/providers/index.ts";
+import { Transcriber } from "@genesiscz/utils/ai/tasks/Transcriber";
 import {
     formatOutput,
     formatTimestamp,
@@ -117,7 +117,7 @@ async function runTranscription(filePath: string, opts: TranscribeFlags): Promis
     s.start("Transcribing...");
 
     try {
-        const transcriber = await AI.Transcriber.create({
+        const transcriber = await Transcriber.create({
             provider,
             model: opts.model,
             persist: true,

@@ -1,7 +1,9 @@
 import { logger } from "@genesiscz/utils/logger";
 import { embed as sdkEmbed, embedMany as sdkEmbedMany, generateImage as sdkGenerateImage } from "ai";
+import type { TaskName } from "../config/schema";
 import { type CallLLMOptions, type CallLLMResult, callLLM } from "../core/call";
 import type { ModelRef } from "../core/model-ref";
+import { resolveModel } from "../core/resolve";
 import type { ResolvedBinding } from "../core/types";
 import type {
     EmbeddingResult,
@@ -75,6 +77,37 @@ async function withBinding<T>(
 }
 
 /**
+ * The text verbs, with the binding owned here rather than inside `callLLM`.
+ *
+ * `callLLM` resolves a ref into a binding and then only ever asks it for
+ * `language()`; nothing frees it afterwards, so every summarize and translate
+ * left a binding behind. Resolving one rung earlier and handing `callLLM` the
+ * already-resolved binding (which its `model` parameter accepts) changes no
+ * resolution behaviour — it is the same `resolveModel(ref, { task, app })` call
+ * — while putting the `dispose()` in a `finally` this file controls.
+ *
+ * It also makes "no model named" work: `callLLM` refuses a call with no ref at
+ * all, whereas `resolveModel(undefined, …)` walks the config ladder, which is
+ * what `AI.summarize(text)` did before the facade and what `tools ai summarize`
+ * still calls with nothing but the text.
+ */
+async function withLanguageBinding<T>(
+    opts: { task: TaskName; model?: ModelRef; app?: string },
+    use: (resolved: ResolvedBinding) => Promise<T>
+): Promise<T> {
+    const resolved = await resolveModel(opts.model, {
+        task: opts.task,
+        ...(opts.app ? { app: opts.app } : {}),
+    });
+
+    try {
+        return await use(resolved);
+    } finally {
+        resolved.binding.dispose?.();
+    }
+}
+
+/**
  * Prompts copied verbatim from the provider they replace, so a summary or a
  * translation produced through the facade reads the same as one produced before
  * it (providers/AICloudProvider.ts:175-194 and :150-173).
@@ -86,9 +119,20 @@ function summarizePrompt(text: string, options?: SummarizeOptions): string {
 }
 
 export const ai = {
-    /** A chat completion. Thin over `callLLM`, which owns the single generateText/streamText call. */
+    /**
+     * A chat completion. `callLLM` owns the single generateText/streamText call;
+     * this owns the binding's lifetime, unless the caller brought its own
+     * (a `providerChoice`, or a binding it resolved and will dispose itself).
+     */
     async chat(options: CallLLMOptions): Promise<CallLLMResult> {
-        return callLLM(options);
+        if (options.providerChoice || (options.model !== undefined && typeof options.model !== "string")) {
+            return callLLM(options);
+        }
+
+        return withLanguageBinding(
+            { task: options.task ?? "chat", model: options.model, app: options.app },
+            (resolved) => callLLM({ ...options, model: resolved })
+        );
     },
 
     /**
@@ -180,33 +224,36 @@ export const ai = {
     },
 
     async summarize(text: string, options?: TaskCommonOptions & SummarizeOptions): Promise<SummarizationResult> {
-        const result = await callLLM({
-            systemPrompt: "",
-            userPrompt: summarizePrompt(text, options),
-            task: "summarize",
-            ...(options?.model ? { model: options.model } : {}),
-            ...(options?.app ? { app: options.app } : {}),
-        });
+        return withLanguageBinding(
+            { task: "summarize", model: options?.model, app: options?.app },
+            async (resolved) => {
+                const result = await callLLM({
+                    systemPrompt: "",
+                    userPrompt: summarizePrompt(text, options),
+                    model: resolved,
+                });
 
-        return { summary: result.content, originalLength: text.length };
+                return { summary: result.content, originalLength: text.length };
+            }
+        );
     },
 
     async translate(text: string, options: TaskCommonOptions & TranslateOptions): Promise<TranslationResult> {
-        const result = await callLLM({
-            systemPrompt: "",
-            userPrompt:
-                `Translate the following text${options.from ? ` from ${options.from}` : ""} to ${options.to}. ` +
-                `Return ONLY the translation.\n\n${text}`,
-            task: "translate",
-            ...(options.model ? { model: options.model } : {}),
-            ...(options.app ? { app: options.app } : {}),
-        });
+        return withLanguageBinding({ task: "translate", model: options.model, app: options.app }, async (resolved) => {
+            const result = await callLLM({
+                systemPrompt: "",
+                userPrompt:
+                    `Translate the following text${options.from ? ` from ${options.from}` : ""} to ${options.to}. ` +
+                    `Return ONLY the translation.\n\n${text}`,
+                model: resolved,
+            });
 
-        return {
-            text: result.content,
-            from: options.from ?? "auto",
-            to: options.to,
-        };
+            return {
+                text: result.content,
+                from: options.from ?? "auto",
+                to: options.to,
+            };
+        });
     },
 
     /**
