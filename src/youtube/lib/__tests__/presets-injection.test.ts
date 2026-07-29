@@ -36,10 +36,6 @@ async function makeSummaryFixture() {
 
 function makeSummaryDeps(): SummaryServiceDeps {
     return {
-        createSummarizer: async () => ({
-            summarize: async () => ({ summary: "unused", originalLength: 0 }),
-            dispose: () => {},
-        }),
         callLLM: async (opts) => {
             callLlmCalls.push(opts);
             return { content: "short summary text" };

@@ -8,22 +8,14 @@ import { bucketSegments, pickSectionCount, SummaryService } from "@app/youtube/l
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { z } from "zod";
 
-const summarizerCreateCalls: unknown[] = [];
-const summarizeCalls: unknown[] = [];
-const disposeCalls: unknown[] = [];
 const callLlmCalls: unknown[] = [];
 const callLlmStructuredCalls: unknown[] = [];
-let summaries: string[] = [];
 let llmResponses: string[] = [];
 let structuredResponses: unknown[] = [];
 
 beforeEach(() => {
-    summarizerCreateCalls.length = 0;
-    summarizeCalls.length = 0;
-    disposeCalls.length = 0;
     callLlmCalls.length = 0;
     callLlmStructuredCalls.length = 0;
-    summaries = [];
     llmResponses = [];
     structuredResponses = [];
 });
@@ -74,7 +66,7 @@ describe("SummaryService", () => {
             await expect(service.summarize({ videoId: "abc123def45", mode: "short" })).resolves.toEqual({
                 short: "Cached summary",
             });
-            expect(summarizeCalls).toHaveLength(0);
+            expect(callLlmCalls).toHaveLength(0);
             expect(callLlmStructuredCalls).toHaveLength(0);
         } finally {
             db.close();
@@ -498,20 +490,6 @@ async function makeFixture() {
 
 function makeDeps() {
     return {
-        createSummarizer: async (opts: unknown) => {
-            summarizerCreateCalls.push(opts);
-
-            return {
-                summarize: async (text: string) => {
-                    summarizeCalls.push(text);
-
-                    return { summary: summaries.shift() ?? `summary:${text}`, originalLength: text.length };
-                },
-                dispose: () => {
-                    disposeCalls.push(true);
-                },
-            };
-        },
         callLLM: async (opts: unknown) => {
             callLlmCalls.push(opts);
 
