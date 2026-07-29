@@ -2,8 +2,17 @@ import { describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pc from "picocolors";
-import { diffScans, humanBytes, humanBytesDecimal, renderDenied, renderHuman, renderTree } from "./format";
-import type { ClonesizeResult, NodeResult } from "./types";
+import {
+    diffScans,
+    humanBytes,
+    humanBytesDecimal,
+    renderDenied,
+    renderHuman,
+    renderPartners,
+    renderTree,
+    renderVolume,
+} from "./format";
+import type { ClonesizeResult, NodeResult, PartnersResult, VolumeInfo } from "./types";
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping ANSI escapes for assertions
 const stripAnsi = (s: string): string => s.replace(/\[[0-9;]*m/g, "");
@@ -221,5 +230,173 @@ describe("renderHuman ordering and scope warnings", () => {
     it("stays silent about outside sharing when there is none", () => {
         const out = stripAnsi(renderHuman(flat({ outside_shared_bytes: 0 }), "c-ffi"));
         expect(out).not.toContain("OUTSIDE");
+    });
+});
+
+describe("renderVolume", () => {
+    const volume = (over: Partial<VolumeInfo> = {}): VolumeInfo => ({
+        mount: "/System/Volumes/Data",
+        size_bytes: 1_000_000_000_000,
+        used_bytes: 900_000_000_000,
+        free_bytes: 100_000_000_000,
+        available_bytes: 100_000_000_000,
+        ...over,
+    });
+
+    const scanned = (over: Partial<ClonesizeResult> = {}): ClonesizeResult => ({
+        ...baseResult([]),
+        nodes: undefined,
+        depth: undefined,
+        unique_allocated_bytes: 800_000_000_000,
+        ...over,
+    });
+
+    it("reports the gap between APFS used-bytes and what the walk could see", () => {
+        const text = stripAnsi(renderVolume(volume(), scanned()));
+
+        expect(text).toContain("Volume reconcile — /System/Volumes/Data");
+        expect(text).toContain("Volume used (APFS)");
+        // 900 GB used - 800 GB scanned = 100 GB the walk never accounted for.
+        expect(text).toContain("UNACCOUNTED");
+        expect(text).toContain("100.0 GB");
+        expect(text).toContain("(11.1% of used)");
+    });
+
+    it("prefers allocated bytes over mapped bytes as the scanned figure", () => {
+        // unique_bytes understates real consumption by each file's sub-block slack,
+        // so the reconcile must use unique_allocated_bytes when it is present.
+        const text = stripAnsi(
+            renderVolume(volume(), scanned({ unique_bytes: 500_000_000_000, unique_allocated_bytes: 800_000_000_000 }))
+        );
+
+        expect(text).toContain("800.0 GB");
+        expect(text).not.toContain("500.0 GB");
+    });
+
+    it("falls back to mapped bytes when the scan has no allocated figure", () => {
+        const text = stripAnsi(
+            renderVolume(volume(), scanned({ unique_bytes: 700_000_000_000, unique_allocated_bytes: undefined }))
+        );
+
+        expect(text).toContain("700.0 GB");
+        expect(text).toContain("200.0 GB");
+    });
+
+    it("labels a scan that exceeds volume used-bytes as over-counted, not negative", () => {
+        const text = stripAnsi(renderVolume(volume(), scanned({ unique_allocated_bytes: 950_000_000_000 })));
+
+        expect(text).toContain("over-counted");
+        expect(text).not.toContain("UNACCOUNTED");
+        expect(text).toContain("50.0 GB");
+    });
+
+    it("names skipped cloud roots, which are a silent hole in the total", () => {
+        const text = stripAnsi(
+            renderVolume(volume(), scanned({ skipped_cloud: ["/Users/x/Library/CloudStorage/Dropbox"] }))
+        );
+
+        expect(text).toContain("1 cloud-provider root(s) were NOT walked");
+        expect(text).toContain("/Users/x/Library/CloudStorage/Dropbox");
+        expect(text).toContain("--include-cloud");
+    });
+
+    it("truncates a long skipped-mount list instead of flooding the report", () => {
+        const mounts = Array.from({ length: 12 }, (_v, i) => `/mnt/vol${i}`);
+        const text = stripAnsi(renderVolume(volume(), scanned({ skipped_mounts: mounts })));
+
+        expect(text).toContain("12 mount point(s) of other filesystems were skipped");
+        expect(text).toContain("/mnt/vol7");
+        expect(text).not.toContain("/mnt/vol8");
+        expect(text).toContain("... and 4 more");
+    });
+
+    it("blames denials for the gap and offers the sudo rerun", () => {
+        const text = stripAnsi(
+            renderVolume(volume(), scanned({ denied_dirs: 3, denied_files: 1, denied_paths: ["/private/var/db/x"] }))
+        );
+
+        expect(text).toContain("4 unreadable path(s) — the prime suspect for the gap");
+        expect(text).toContain("/private/var/db/x");
+        expect(text).toContain("sudo tools du volume /System/Volumes/Data");
+    });
+
+    it("says the gap is metadata when nothing was denied", () => {
+        const text = stripAnsi(renderVolume(volume(), scanned()));
+
+        expect(text).toContain("volume metadata, snapshots, or purgeable space");
+        expect(text).not.toContain("unreadable path(s)");
+    });
+});
+
+describe("renderPartners", () => {
+    const partners = (over: Partial<PartnersResult> = {}): PartnersResult => ({
+        target: "/repo/.worktrees/feat-x",
+        root: "/repo",
+        target_shared_bytes: 300 * 1024 * 1024,
+        partner_bytes: 600 * 1024 * 1024,
+        partner_files_total: 12,
+        files_opened: 40,
+        denied_dirs: 0,
+        denied_files: 0,
+        partner_dirs: [],
+        partner_files: [],
+        ...over,
+    });
+
+    it("says so plainly when nothing under the search root holds the blocks", () => {
+        const text = stripAnsi(renderPartners(partners()));
+
+        expect(text).toContain("Clone partners of /repo/.worktrees/feat-x");
+        expect(text).toContain("No partners under /repo");
+        expect(text).not.toContain("Partner directories:");
+    });
+
+    it("lists partner dirs and files with their shared bytes", () => {
+        const text = stripAnsi(
+            renderPartners(
+                partners({
+                    partner_dirs: [{ path: "/repo/node_modules", shared_bytes: 200 * 1024 * 1024, files: 7 }],
+                    partner_files: [{ path: "/repo/node_modules/a.bin", shared_bytes: 50 * 1024 * 1024 }],
+                })
+            )
+        );
+
+        expect(text).toContain("Partner directories:");
+        expect(text).toContain("/repo/node_modules");
+        expect(text).toContain("200.0 MB");
+        expect(text).toContain("Partner files:");
+        expect(text).toContain("/repo/node_modules/a.bin");
+        expect(text).toContain("50.0 MB");
+        // The whole point of the command: these blocks are not freed by deleting.
+        expect(text).toContain("Deleting the target frees nothing that a partner still references");
+    });
+
+    it("truncates long paths from the left so the filename stays readable", () => {
+        const deep = `/repo/${"nested/".repeat(20)}leaf.bin`;
+        const text = stripAnsi(
+            renderPartners(
+                partners({
+                    // An empty partner_dirs list short-circuits before the file rows,
+                    // so a dir has to be present for this path to be exercised at all.
+                    partner_dirs: [{ path: "/repo/node_modules", shared_bytes: 1024, files: 1 }],
+                    partner_files: [{ path: deep, shared_bytes: 1024 * 1024 }],
+                })
+            )
+        );
+
+        expect(text).toContain("leaf.bin");
+        expect(text).toContain("…");
+        expect(text).not.toContain(deep);
+    });
+
+    it("surfaces denials, since unreadable dirs mean partners may be missing", () => {
+        // The partners JSON carries counts only — clonesize_partners_json emits
+        // denied_dirs/denied_files and never denied_paths — so the warning has to
+        // stand on the count alone.
+        const text = stripAnsi(renderPartners(partners({ denied_dirs: 2, denied_files: 1 })));
+
+        expect(text).toContain("2 directories and 1 file(s) could not be read");
+        expect(text).toContain("every total above is INCOMPLETE");
+        expect(text).toContain("(3 further denial(s) not listed)");
     });
 });
