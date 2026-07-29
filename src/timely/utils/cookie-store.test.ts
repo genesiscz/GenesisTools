@@ -3,7 +3,7 @@ import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Storage } from "@genesiscz/utils/storage";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
-import { readStoredCookie, saveCookie } from "./cookie";
+import { clearStoredCookie, readStoredCookie, saveCookie } from "./cookie";
 
 setupStorageSandbox();
 
@@ -48,6 +48,35 @@ describe("cookie storage", () => {
         expect(existsSync(path)).toBe(true);
         expect(statSync(path).mode & 0o777).toBe(0o600);
         expect(await storage.getConfigValue<string>("cookie")).toBeUndefined();
+    });
+
+    // The cookie is a second credential that works on its own, so logout has to reach it.
+    test("clearing removes the cookie file and its metadata, so logout really logs out", async () => {
+        const storage = await freshStorage("timely-cookie-clear-test");
+        const { path } = await saveCookie(storage, COOKIE);
+
+        const hadCookie = await clearStoredCookie(storage);
+
+        expect(hadCookie).toBe(true);
+        expect(existsSync(path)).toBe(false);
+        expect(await readStoredCookie(storage)).toBeUndefined();
+        expect(await storage.getConfigValue<number>("cookieUpdatedAt")).toBeUndefined();
+    });
+
+    test("clearing a cookie left in config.json by an older build also revokes it", async () => {
+        const storage = await freshStorage("timely-cookie-clear-legacy-test");
+        await storage.setConfigValue("cookie", COOKIE);
+
+        const hadCookie = await clearStoredCookie(storage);
+
+        expect(hadCookie).toBe(true);
+        expect(await readStoredCookie(storage)).toBeUndefined();
+    });
+
+    test("clearing when nothing is stored reports that there was nothing to revoke", async () => {
+        const storage = await freshStorage("timely-cookie-clear-empty-test");
+
+        expect(await clearStoredCookie(storage)).toBe(false);
     });
 
     test("no stored cookie reads as undefined rather than an empty header", async () => {

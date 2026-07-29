@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import type { Storage } from "@genesiscz/utils/storage";
@@ -76,13 +76,48 @@ async function migrateLegacyCookie(storage: Storage): Promise<string | undefined
         return undefined;
     }
 
-    writeCookieFile(cookiePath(storage), legacy);
+    const path = cookiePath(storage);
+    const ownerOnly = writeCookieFile(path, legacy);
     await storage.atomicConfigUpdate<Record<string, unknown>>((config) => {
         delete config[LEGACY_COOKIE_KEY];
     });
-    logger.info("Moved the stored Timely cookie out of config.json into its own owner-only file.");
+
+    if (ownerOnly) {
+        logger.info("Moved the stored Timely cookie out of config.json into its own owner-only file.");
+    } else {
+        // The legacy key is still removed: leaving the credential in config.json as well
+        // would mean two readable copies instead of one. Say plainly that the promise in
+        // the other branch does not hold here, rather than logging success either way.
+        logger.warn(
+            `Moved the stored Timely cookie out of config.json into ${path}, but could not restrict that file to owner-only (0600). Anyone able to read it can reuse your Timely session.`
+        );
+    }
 
     return legacy;
+}
+
+/**
+ * Forget the browser session. `logout` has to reach this too: the cookie is a
+ * second, independently usable credential, so clearing only the OAuth tokens
+ * would report a successful logout while leaving memories fully accessible.
+ */
+export async function clearStoredCookie(storage: Storage): Promise<boolean> {
+    const path = cookiePath(storage);
+    const existed = existsSync(path);
+
+    if (existed) {
+        unlinkSync(path);
+        logger.debug({ path }, "[cookie] removed the stored Timely browser session");
+    }
+
+    let hadLegacy = false;
+    await storage.atomicConfigUpdate<Record<string, unknown>>((config) => {
+        hadLegacy = config[LEGACY_COOKIE_KEY] !== undefined;
+        delete config[LEGACY_COOKIE_KEY];
+        delete config[COOKIE_UPDATED_KEY];
+    });
+
+    return existed || hadLegacy;
 }
 
 /** Strip a pasted "Cookie: " prefix and surrounding whitespace/quotes. */
