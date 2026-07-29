@@ -4,6 +4,7 @@ import {
     extractCookie,
     looksLikeCookiePairs,
     normalizeCookieHeader,
+    shellTokens,
     webSessionHeaders,
 } from "./cookie";
 
@@ -112,6 +113,27 @@ referer: https://app.timelyapp.com/558481/calendar/week`;
         expect(extractCookie("   \n  ")).toBeUndefined();
         expect(extractCookie("https://app.timelyapp.com/558481/calendar/week?date=2026-08-03")).toBeUndefined();
         expect(extractCookie("just some words the user copied by mistake")).toBeUndefined();
+    });
+});
+
+// Expectations below are the output of the same string run through bash itself.
+describe("shellTokens", () => {
+    test("a backslash pair inside $'…' collapses to one, instead of doubling", () => {
+        expect(shellTokens(String.raw`curl -b $'sess=a\\b; x=1'`)).toEqual(["curl", "-b", String.raw`sess=a\b; x=1`]);
+    });
+
+    test("a trailing backslash pair cannot escape the closing quote and swallow the next flag", () => {
+        expect(shellTokens(String.raw`curl -b $'sess=a\\' -H 'accept: application/json'`)).toEqual([
+            "curl",
+            "-b",
+            "sess=a\\",
+            "-H",
+            "accept: application/json",
+        ]);
+    });
+
+    test("a plain '…' keeps a backslash literal, the way a shell does", () => {
+        expect(shellTokens(String.raw`curl -b 'sess=a\b'`)).toEqual(["curl", "-b", String.raw`sess=a\b`]);
     });
 });
 

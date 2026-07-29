@@ -120,12 +120,18 @@ export function looksLikeCookiePairs(value: string): boolean {
  * "Copy as cURL" survives whichever quoting the browser chose. Handles single
  * quotes, double quotes, bash's `$'...'` (Chrome emits it when a header value
  * contains a quote), backslash escapes and backslash-newline continuations.
+ *
+ * Inside `$'...'` a backslash escapes the next character literally. The ANSI-C
+ * control escapes (`\n`, `\t`, `\xNN`) are deliberately left untranslated: a
+ * Cookie header cannot legally carry those bytes, so decoding them would only
+ * turn a malformed paste into a header value that looks valid.
  */
 export function shellTokens(input: string): string[] {
     const tokens: string[] = [];
     let current = "";
     let started = false;
     let quote: "'" | '"' | null = null;
+    let ansiC = false;
 
     for (let i = 0; i < input.length; i++) {
         const char = input[i];
@@ -133,10 +139,14 @@ export function shellTokens(input: string): string[] {
         if (quote) {
             if (char === quote) {
                 quote = null;
+                ansiC = false;
                 continue;
             }
 
-            if (char === "\\" && i + 1 < input.length && (quote === '"' || input[i + 1] === "'")) {
+            // Only "…" and $'…' process escapes; inside a plain '…' a backslash is
+            // literal. Consuming the whole pair is what stops a trailing `\\` from
+            // escaping the closing quote and swallowing the rest of the command.
+            if (char === "\\" && i + 1 < input.length && (quote === '"' || ansiC)) {
                 current += input[i + 1];
                 i++;
                 continue;
@@ -148,6 +158,7 @@ export function shellTokens(input: string): string[] {
 
         if (char === "$" && (input[i + 1] === "'" || input[i + 1] === '"')) {
             quote = input[i + 1] as "'" | '"';
+            ansiC = quote === "'";
             started = true;
             i++;
             continue;
