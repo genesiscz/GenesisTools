@@ -15,9 +15,52 @@ export interface FoldConfig {
     base?: string;
 }
 
-/** Null never establishes identity and never matches another null (spec §3). */
+/** Shortest id prefix accepted as identity — one UUID segment. */
+const MIN_SESSION_ID_PREFIX = 8;
+
+/**
+ * Actor identity — strict equality, never prefix matching. Poster/claimer
+ * authority (isPoster, isClaimer, editId recovery, unclaim/finish/reopen) hangs
+ * off this, and paste blocks publish the leading segment of a session id, so a
+ * prefix match here would let anyone who read a paste block act as the poster.
+ */
 export function sessionIdMatches(a: string | null | undefined, b: string | null | undefined): boolean {
-    return a != null && b != null && a === b;
+    if (a == null || b == null) {
+        return false;
+    }
+
+    return a === b;
+}
+
+/**
+ * Target discovery — directional, and deliberately NOT an identity check.
+ * A session id abbreviated to its leading UUID segment still names the session,
+ * and paste blocks quote them that way (`cd4e9457`), so a poster targeting
+ * `{ sessionId: "cd4e9457" }` used to match nothing at all: neither `mine: true`
+ * nor the auto-claim-on-target ever fired, and the targeted session only found
+ * its work by listing every open handoff.
+ *
+ * Only the STORED target may be abbreviated; the acting session id must be the
+ * full runtime id. The prefix must also end on a segment boundary, so
+ * `cd4e9457` matches `cd4e9457-105b-…` but a bare hex run that happens to share
+ * leading characters does not. Matching a target grants nothing an ordinary
+ * session could not already do (claim is open to any session).
+ */
+export function targetMatchesSession(target: string | null | undefined, sessionId: string | null | undefined): boolean {
+    if (target == null || sessionId == null) {
+        return false;
+    }
+
+    if (target === sessionId) {
+        return true;
+    }
+
+    return (
+        target.length >= MIN_SESSION_ID_PREFIX &&
+        sessionId.length > target.length &&
+        sessionId.startsWith(target) &&
+        sessionId[target.length] === "-"
+    );
 }
 
 /** Dashboard owner authority (§7.1): a distinct actor kind, never a session identity. */
