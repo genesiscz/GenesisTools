@@ -6,7 +6,7 @@ import type { ChannelHandle, PipelineJob, Video, VideoId } from "@app/youtube/li
 import { Command } from "commander";
 
 /** Deliberately absent: the default fixture is a row whose file is already gone. */
-const MISSING_AUDIO_PATH = join(tmpdir(), "youtube-cache-never-written.opus");
+const MISSING_AUDIO_PATH = join(tmpdir(), `youtube-cache-never-written-${process.pid}-${Date.now()}.opus`);
 
 const videos: Video[] = [
     {
@@ -186,6 +186,10 @@ describe("youtube cache command", () => {
     // already deleted must not be reported as space reclaimed — only the stale
     // reference is cleared.
     it("reports nothing freed when the cached file is already gone", async () => {
+        // Asserted, not assumed: if this path ever existed the test would quietly
+        // exercise the delete branch and prove the opposite of its name.
+        expect(existsSync(MISSING_AUDIO_PATH)).toBe(false);
+
         const program = await makeProgram();
 
         await program.parseAsync(["node", "test", "cache", "clear", "--audio", "--yes"]);
