@@ -231,6 +231,23 @@ describe("listServers --json", () => {
         expect(payload.servers.map((s) => s.name)).toEqual(["on"]);
     });
 
+    it("emits an empty payload instead of the human 'no servers' notice", async () => {
+        mockProvider.listServersResult = [];
+
+        const spy = spyOn(out, "result");
+        const callsBefore = spy.mock.calls.length;
+        await listServers([mockProvider], { json: true });
+
+        // One NEW result call proves the empty case did not fall through to the
+        // human early-return, which would leave stdout unparseable for consumers.
+        expect(spy.mock.calls.length).toBe(callsBefore + 1);
+
+        const payload = spy.mock.calls.at(-1)?.[0] as ListJsonOutput;
+        expect(payload.servers).toEqual([]);
+        expect(payload.providersScanned).toEqual(["claude"]);
+        expect(payload.providersFailed).toEqual([]);
+    });
+
     it("separates scanned providers from ones that threw", async () => {
         mockProvider.errors.set("listServers", new Error("Read failed"));
         mockProvider2.listServersResult = [{ name: "ok", config: { command: "a" }, enabled: true, provider: "gemini" }];
