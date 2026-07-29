@@ -436,12 +436,22 @@ class JenkinsServer {
                 }
 
                 if (axios.isAxiosError(error)) {
+                    logger.warn(
+                        {
+                            error,
+                            tool: request.params.name,
+                            status: error.response?.status,
+                            url: error.config?.url,
+                        },
+                        "Jenkins API call failed"
+                    );
                     throw new ProtocolError(
                         ProtocolErrorCode.InternalError,
                         `Jenkins API error: ${error.response?.data?.message || error.message}`
                     );
                 }
 
+                logger.error({ error, tool: request.params.name }, "Jenkins MCP tool call failed");
                 throw new ProtocolError(
                     ProtocolErrorCode.InternalError,
                     error instanceof Error ? error.message : "Unknown error"
