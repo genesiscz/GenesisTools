@@ -55,6 +55,21 @@ describe("parseExportJson segment validation", () => {
         expect(parsed?.segments).toEqual([{ text: "ok", start: 0, end: 1 }]);
     });
 
+    // `speaker` is a 0-based index, so a negative or fractional value has no speaker
+    // to name — it would key a label lookup that can never match.
+    it("drops negative, fractional and non-numeric speaker indices", () => {
+        const parsed = parseExportJson(
+            exportJson([
+                { text: "negative", start: 0, end: 1, speaker: -1 },
+                { text: "fractional", start: 0, end: 1, speaker: 1.5 },
+                { text: "string", start: 0, end: 1, speaker: "0" },
+                { text: "ok", start: 0, end: 1, speaker: 0 },
+            ])
+        );
+
+        expect(parsed?.segments).toEqual([{ text: "ok", start: 0, end: 1, speaker: 0 }]);
+    });
+
     it("treats a zero-length segment as valid and a non-array as empty", () => {
         expect(parseExportJson(exportJson([{ text: "tick", start: 5, end: 5 }]))?.segments).toHaveLength(1);
         expect(parseExportJson(exportJson("nope"))?.segments).toEqual([]);

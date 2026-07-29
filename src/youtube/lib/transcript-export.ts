@@ -380,11 +380,20 @@ function isTranscriptSegment(value: unknown): value is TranscriptSegment {
         return false;
     }
 
-    return segment.speaker === undefined || isFiniteNumber(segment.speaker);
+    return segment.speaker === undefined || isSpeakerIndex(segment.speaker);
 }
 
 function isFiniteNumber(value: unknown): value is number {
     return typeof value === "number" && Number.isFinite(value);
+}
+
+/**
+ * A 0-based diarized speaker index (`transcript.types.ts`), not an arbitrary
+ * finite number: `-1` and `1.5` have no speaker to correspond to, and the labels
+ * downstream key on the integer directly.
+ */
+function isSpeakerIndex(value: unknown): value is number {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
 export function parseExportMarkdown(raw: string, fallbackVideoId: string): ParsedExport | null {
