@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { shellSingleQuote } from "./shell-quote";
 
 /**
@@ -6,14 +9,26 @@ import { shellSingleQuote } from "./shell-quote";
  * inside `sh -c` strings, so the property that matters is not the exact spelling of
  * the output — it is that a real shell hands the original string back unchanged and
  * runs nothing extra. Every adversarial case is asserted that way.
+ *
+ * The payloads really do run `touch ./INJECTED` if quoting regresses, so each probe
+ * gets its own empty temp dir as cwd: a regression cannot litter the checkout, and a
+ * stray `INJECTED` in the repo cannot fail a correct implementation. `stray` reports
+ * anything the shell created, which is strictly more than the canary alone can catch.
  */
-function throughShell(value: string): { seen: string; marker: boolean } {
-    const probe = Bun.spawnSync(["/bin/sh", "-c", `printf %s ${shellSingleQuote(value)}; test ! -e ./INJECTED`], {
-        stdout: "pipe",
-        stderr: "pipe",
-    });
+function throughShell(value: string): { seen: string; marker: boolean; stray: string[] } {
+    const dir = mkdtempSync(join(tmpdir(), "shell-quote-probe-"));
 
-    return { seen: probe.stdout.toString(), marker: probe.exitCode === 0 };
+    try {
+        const probe = Bun.spawnSync(["/bin/sh", "-c", `printf %s ${shellSingleQuote(value)}; test ! -e ./INJECTED`], {
+            cwd: dir,
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+
+        return { seen: probe.stdout.toString(), marker: probe.exitCode === 0, stray: readdirSync(dir) };
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
 }
 
 describe("shellSingleQuote", () => {
@@ -57,10 +72,12 @@ describe("shellSingleQuote survives a real shell", () => {
 
     for (const [label, value] of cases) {
         test(`${label} round-trips byte-for-byte and executes nothing`, () => {
-            const { seen, marker } = throughShell(value);
+            const { seen, marker, stray } = throughShell(value);
 
             expect(seen).toBe(value);
             expect(marker).toBe(true);
+            // The probe dir started empty; anything here was created by the shell.
+            expect(stray).toEqual([]);
         });
     }
 });

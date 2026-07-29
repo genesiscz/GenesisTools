@@ -11,27 +11,51 @@ interface PsRow {
     command: string;
 }
 
-function listAllProcesses(): PsRow[] {
-    try {
-        const proc = Bun.spawnSync(["ps", "-ax", "-o", "pid=,ppid=,command="], {
-            stdout: "pipe",
-            stderr: "pipe",
-        });
+export interface PsResult {
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+}
 
-        // Same as readProcessEnvKeys: a nonzero exit is not an exception. Without
-        // this, a failed ps reads as "no processes running" and every teammate
-        // silently shows as dead.
-        if (proc.exitCode !== 0) {
+export type PsRunner = (cmd: string[]) => PsResult;
+
+const defaultPsRunner: PsRunner = (cmd) => {
+    const proc = Bun.spawnSync(cmd, { stdout: "pipe", stderr: "pipe" });
+
+    return {
+        exitCode: proc.exitCode ?? -1,
+        stdout: proc.stdout.toString(),
+        stderr: proc.stderr.toString(),
+    };
+};
+
+let psRunner: PsRunner = defaultPsRunner;
+
+/** Test seam for the `ps` calls, mirroring __setPersistRegistryForTest in ttyd/manager. */
+export function __setPsRunnerForTest(runner: PsRunner | null): void {
+    psRunner = runner ?? defaultPsRunner;
+}
+
+/**
+ * null means the SCAN ITSELF failed, which is not the same fact as "nothing is
+ * running" — callers must not render a teammate as stopped on the strength of a
+ * process table we never actually read.
+ */
+function listAllProcesses(): PsRow[] | null {
+    try {
+        const result = psRunner(["ps", "-ax", "-o", "pid=,ppid=,command="]);
+
+        // A nonzero exit is not an exception, so this cannot be left to the catch.
+        if (result.exitCode !== 0) {
             logger.warn(
-                { exitCode: proc.exitCode, stderr: proc.stderr.toString().trim() },
-                "[teams] ps -ax failed; treating every teammate as not running"
+                { exitCode: result.exitCode, stderr: result.stderr.trim() },
+                "[teams] ps -ax failed; live status is unknown for every teammate"
             );
-            return [];
+            return null;
         }
 
-        const text = proc.stdout.toString();
         const rows: PsRow[] = [];
-        for (const line of text.split("\n")) {
+        for (const line of result.stdout.split("\n")) {
             const m = line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/);
             if (!m) {
                 continue;
@@ -42,8 +66,8 @@ function listAllProcesses(): PsRow[] {
 
         return rows;
     } catch (error) {
-        logger.debug({ error }, "[teams] ps failed");
-        return [];
+        logger.warn({ error }, "[teams] ps -ax could not be spawned; live status is unknown");
+        return null;
     }
 }
 
@@ -77,23 +101,21 @@ function flagValue(cmd: string, flag: string): string | undefined {
 export function readProcessEnvKeys(pid: number, keys: string[]): Record<string, string> {
     const out: Record<string, string> = {};
     try {
-        const proc = Bun.spawnSync(["ps", "eww", "-p", String(pid)], {
-            stdout: "pipe",
-            stderr: "pipe",
-        });
+        const result = psRunner(["ps", "eww", "-p", String(pid)]);
 
         // spawnSync reports an ordinary command failure through exitCode, not by
         // throwing — the process being gone, or ps refusing another user's env,
-        // never reaches the catch below.
-        if (proc.exitCode !== 0) {
+        // never reaches the catch below. An empty result is safe here (unlike the
+        // process scan): callers read it as "account unknown" and fall back.
+        if (result.exitCode !== 0) {
             logger.debug(
-                { pid, exitCode: proc.exitCode, stderr: proc.stderr.toString().trim() },
+                { pid, exitCode: result.exitCode, stderr: result.stderr.trim() },
                 "[teams] ps eww failed; account attribution skipped"
             );
             return out;
         }
 
-        const text = proc.stdout.toString();
+        const text = result.stdout;
         for (const key of keys) {
             const re = new RegExp(`(?:^|\\s)${key}=([^\\s]*)`);
             const m = text.match(re);
@@ -180,13 +202,27 @@ function paneForPid(pid: number, panes: TmuxPaneRow[], allProcesses: PsRow[]): T
     return undefined;
 }
 
+export interface LiveProcessScan {
+    processes: LiveTeammateProcess[];
+    /**
+     * True when the process table could not be read. An empty `processes` then
+     * carries no information: "no match" must surface as UNKNOWN, never as dead.
+     */
+    failed: boolean;
+}
+
 /**
  * Live Claude processes that look like agent-team teammates or leads launched
  * via tools cc run / bare claude.
  */
-export function listLiveTeammateProcesses(): LiveTeammateProcess[] {
+export function listLiveTeammateProcesses(): LiveProcessScan {
     return prof.measure("listLiveTeammateProcesses", () => {
         const allProcesses = prof.measure("ps-ax", () => listAllProcesses());
+
+        if (allProcesses === null) {
+            return { processes: [], failed: true };
+        }
+
         const processes = listClaudeLikeProcesses(allProcesses);
         const panes = prof.measure("tmux-list-panes", () => listTmuxPanes());
         const results: LiveTeammateProcess[] = [];
@@ -256,7 +292,7 @@ export function listLiveTeammateProcesses(): LiveTeammateProcess[] {
             });
         }
 
-        return results;
+        return { processes: results, failed: false };
     });
 }
 
