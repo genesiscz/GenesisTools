@@ -36,6 +36,7 @@ export const aiProxyPlugin: ProviderPlugin = {
             name: "ai-proxy",
             baseURL: ctx.account.endpoint ?? DEFAULT_BASE_URL,
             apiKey,
+            ...(ctx.fetch ? { fetch: ctx.fetch } : {}),
         });
 
         return {

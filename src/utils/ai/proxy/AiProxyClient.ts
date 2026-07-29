@@ -12,6 +12,27 @@
  * (`proxyApiKey`, `port`) with explicit options taking precedence. The client
  * never persists usage or audit data — usage accounting is the proxy server's
  * job (usage/requests.jsonl); this client only surfaces what the server returns.
+ *
+ * WHY THIS STILL HAS ITS OWN TRANSPORT (Phase 4 kept it deliberately; Phase 7 owns
+ * the fold). The gateway plugin path — `resolveModel("@proxy/<slug>/<model>")` +
+ * `coreChat` — works and is covered by `core/gateway-tags.test.ts`, including the
+ * `x-gt-*` job tags. Two things block moving THIS class onto it:
+ *
+ *   1. Credentials come from different places. The plugin resolves the proxy key
+ *      from an `ai-proxy` ACCOUNT in ~/.genesis-tools/ai/config.json; this client
+ *      reads ~/.genesis-tools/ai-proxy/config.json. No such account exists yet, so
+ *      routing through the plugin today fails resolution outright for every
+ *      consumer (7 probe scripts, the learn-from-fable runners, ai-proxy's own
+ *      commands). Seeding that account is config work, not transport work.
+ *   2. `schemaMode: "auto"`/`"prompt"` is deliberately TOLERANT: a reply that does
+ *      not match the schema comes back as `parsed: undefined` + `parseError`, with
+ *      the text intact. The ai-sdk's `generateObject` throws instead, and
+ *      `AiProxyRunner` (learn-from-fable's judge/mine/consolidate stages) depends
+ *      on the tolerant contract, not on an exception.
+ *
+ * The SSE parser below is therefore NOT dead duplication yet: it is the only path
+ * that expresses raw OpenAI tool-call deltas, abort-returns-partial steering, and
+ * tolerant schema parsing.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
