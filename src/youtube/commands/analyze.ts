@@ -88,6 +88,10 @@ export function registerAnalyzeCommand(program: Command): void {
                     streaming: opts.stream,
                     providerChoice: await loadAskProviderChoice({ provider: opts.provider, model: opts.model }),
                     streamTarget: opts.stream ? process.stdout : undefined,
+                    // Every id here was named explicitly by the user, so the lazy-index
+                    // budget must not apply: silently dropping the 6th target and
+                    // answering as if it had been covered is worse than the wait.
+                    maxIndex: null,
                 });
 
                 await renderOrEmit({
