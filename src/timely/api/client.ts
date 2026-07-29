@@ -1,4 +1,5 @@
 import type { OAuth2Tokens, OAuthApplication } from "@app/timely/types";
+import { tokenNeedsRefresh } from "@app/timely/utils/token-status";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -15,6 +16,8 @@ export interface RequestOptions {
 export class TimelyApiClient {
     private baseUrl = "https://api.timelyapp.com/1.1";
     private storage: Storage;
+    /** Set while a refresh is in flight, so concurrent callers await it instead of racing. */
+    private inFlightRefresh?: Promise<OAuth2Tokens>;
 
     constructor(storage: Storage) {
         this.storage = storage;
@@ -70,21 +73,28 @@ export class TimelyApiClient {
             throw new Error("Not authenticated. Run 'tools timely login' first.");
         }
 
-        // Check if token is expired (with 5 minute buffer). Timely's token response does
-        // NOT always carry expires_in — when it is missing we cannot know the lifetime, so
-        // refresh rather than sending a token that may be months stale (it 401s otherwise).
-        if (tokens.created_at) {
-            const bufferMs = 5 * 60 * 1000; // 5 minutes
-            const expiresAt = tokens.expires_in ? (tokens.created_at + tokens.expires_in) * 1000 : 0;
-
-            if (Date.now() > expiresAt - bufferMs) {
-                logger.debug("Access token expired or lifetime unknown, refreshing...");
-                const newTokens = await this.refreshToken(tokens.refresh_token);
-                return newTokens.access_token;
-            }
+        if (tokenNeedsRefresh(tokens)) {
+            logger.debug("Access token is past its assumed lifetime, refreshing...");
+            const newTokens = await this.refreshWithoutStampede(tokens.refresh_token);
+            return newTokens.access_token;
         }
 
         return tokens.access_token;
+    }
+
+    /**
+     * Commands load memories and events together, so several calls can find the token
+     * stale at once. Without this they would each POST the token endpoint, and the
+     * losers of that race would then hold tokens the winner has already rotated away.
+     */
+    private refreshWithoutStampede(refreshToken: string): Promise<OAuth2Tokens> {
+        if (!this.inFlightRefresh) {
+            this.inFlightRefresh = this.refreshToken(refreshToken).finally(() => {
+                this.inFlightRefresh = undefined;
+            });
+        }
+
+        return this.inFlightRefresh;
     }
 
     /**
