@@ -56,6 +56,20 @@ describe("RateLimiter budget", () => {
         expect(limiter.used).toBe(0);
     });
 
+    test("holds the cap against concurrent acquirers, not just sequential ones", async () => {
+        // The check and the reservation are separated by two awaits. Unserialised,
+        // every one of these reads the same free capacity before any of them
+        // records a timestamp, so all 76 sail through a cap of 75 and none of them
+        // ever sees a budget wait.
+        const { limiter, slept } = makeLimiter();
+
+        await Promise.all(Array.from({ length: __testing.MAX_PER_WINDOW + 1 }, () => limiter.acquire("concurrent")));
+
+        // A sleep longer than the jitter ceiling can only be the budget wait, so
+        // its presence proves the 76th caller was actually throttled.
+        expect(slept.some((ms) => ms > __testing.JITTER_MAX_MS)).toBe(true);
+    });
+
     test("caps jitter at instaloader's 15s ceiling", () => {
         let draw = 0.999999999;
         const limiter = new RateLimiter({ now: () => 0, random: () => draw });

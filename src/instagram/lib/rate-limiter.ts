@@ -10,7 +10,14 @@ const { log } = logger.scoped("instagram:rate");
  * Proactive matters: instagrapi's approach is a flat jittered delay plus reactive
  * backoff once a 429 arrives, which means you only learn you were too fast after
  * Instagram has already counted it against you. A budget refuses the request
- * first, so the account never accrues the strike.
+ * first, so that request never becomes a strike.
+ *
+ * 🛑 The budget is PER PROCESS and is not persisted. `tools` runs each invocation
+ * in its own process, so ten commands in a row each start with a full 75, and
+ * back-to-back runs CAN exceed the window that a single run respects. Making this
+ * a real account-wide budget needs the timestamps in the tool's storage dir
+ * behind an inter-process lock; until then this is an invocation-local throttle
+ * and the docs must not promise more than that.
  */
 const WINDOW_MS = 11 * 60 * 1000;
 const MAX_PER_WINDOW = 75;
@@ -32,6 +39,8 @@ export interface RateLimiterOptions {
 
 export class RateLimiter {
     private timestamps: number[] = [];
+    /** Tail of the acquisition chain. See `acquire`. */
+    private queue: Promise<void> = Promise.resolve();
     private readonly now: () => number;
     private readonly random: () => number;
     private readonly sleep: (ms: number) => Promise<void>;
@@ -64,7 +73,23 @@ export class RateLimiter {
         return Math.min(expovariate(JITTER_LAMBDA, this.random) * 1000, JITTER_MAX_MS);
     }
 
+    /**
+     * Serialised, because the check and the reservation are separated by two
+     * awaits. Without this, concurrent callers all read the same free capacity
+     * before any of them records a timestamp, and a `Promise.all` over 76 calls
+     * sails past a cap of 75 — the one thing this class exists to prevent.
+     */
     async acquire(label: string): Promise<void> {
+        const turn = this.queue.then(() => this.acquireExclusive(label));
+        // The chain must survive a rejection, or one failed acquire wedges the limiter.
+        this.queue = turn.then(
+            () => undefined,
+            () => undefined
+        );
+        return turn;
+    }
+
+    private async acquireExclusive(label: string): Promise<void> {
         const wait = this.waitTimeMs();
 
         if (wait > 0) {
