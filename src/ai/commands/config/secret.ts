@@ -87,7 +87,12 @@ export async function cmdSecretSet(path: string, value: string | undefined, flag
     } else {
         if (!isInteractive()) {
             out.log.error("A secret value needs a hidden prompt, which needs a TTY.");
-            out.log.info(suggestCommand("tools ai config secret set", { add: ["--stdin"] }));
+            out.log.info(
+                suggestCommand("tools ai config secret set", {
+                    subcommand: ["config", "secret", "set"],
+                    add: ["--stdin"],
+                })
+            );
             process.exitCode = 1;
             return;
         }
@@ -132,7 +137,12 @@ export async function cmdSecretRotate(flags: { yes?: boolean }): Promise<void> {
     if (!flags.yes) {
         if (!isInteractive()) {
             out.log.error("Rotation rewrites every vault entry under a new key; confirm it explicitly.");
-            out.log.info(suggestCommand("tools ai config secret rotate", { add: ["--yes"] }));
+            out.log.info(
+                suggestCommand("tools ai config secret rotate", {
+                    subcommand: ["config", "secret", "rotate"],
+                    add: ["--yes"],
+                })
+            );
             process.exitCode = 1;
             return;
         }

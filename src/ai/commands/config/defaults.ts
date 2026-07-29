@@ -55,7 +55,11 @@ function labelValue(config: AiConfigData, value: string): string {
     return account ? `${value} ${pc.dim(`(${account.name})`)}` : `${value} ${pc.red("(dangling)")}`;
 }
 
-export async function cmdDefaultSet(task: string, modelRef: string, flags: { app?: string }): Promise<void> {
+export async function cmdDefaultSet(
+    task: string,
+    modelRef: string,
+    flags: { app?: string; provider?: string }
+): Promise<void> {
     if (!isTaskName(task)) {
         throw new Error(`Unknown task "${task}". Known tasks: ${TASK_NAMES.join(", ")}.`);
     }
@@ -72,18 +76,23 @@ export async function cmdDefaultSet(task: string, modelRef: string, flags: { app
     const pureAccountRef = accountRefSchema.safeParse(modelRef).success;
     let written = "";
 
+    const provider = flags.provider ? { provider: flags.provider } : {};
+
     await store.mutate((config) => {
         if (flags.app) {
             const existing = config.defaults.app?.[flags.app] ?? {};
             config.defaults.app = {
                 ...(config.defaults.app ?? {}),
-                [flags.app]: { ...existing, [task]: { ...(existing[task] ?? {}), model: modelRef } },
+                [flags.app]: { ...existing, [task]: { ...(existing[task] ?? {}), ...provider, model: modelRef } },
             };
-            written = `defaults.app.${flags.app}.${task}.model`;
+            written = `defaults.app.${flags.app}.${task}`;
             return;
         }
 
-        if (pureAccountRef) {
+        // A bare account ref belongs in defaults.account, which is the typed slot
+        // for "this account answers this task"; anything with a model in it is a
+        // model default and belongs in defaults.task.
+        if (pureAccountRef && !flags.provider) {
             config.defaults.account = { ...(config.defaults.account ?? {}), [task]: modelRef };
             written = `defaults.account.${task}`;
             return;
@@ -91,9 +100,9 @@ export async function cmdDefaultSet(task: string, modelRef: string, flags: { app
 
         config.defaults.task = {
             ...(config.defaults.task ?? {}),
-            [task]: { ...(config.defaults.task?.[task] ?? {}), model: modelRef },
+            [task]: { ...(config.defaults.task?.[task] ?? {}), ...provider, model: modelRef },
         };
-        written = `defaults.task.${task}.model`;
+        written = `defaults.task.${task}`;
     });
 
     out.log.success(`Set ${pc.bold(written)} = ${modelRef}`);
@@ -136,7 +145,8 @@ export function registerDefaultCommands(config: Command): void {
         .argument("<task>", `One of: ${TASK_NAMES.join(", ")}`)
         .argument("<modelRef>", 'Model id, "@account/<id>", or "@account/<id>:<model>"')
         .option("--app <app>", "Scope the default to one app instead of globally")
-        .action(async (task: string, modelRef: string, flags: { app?: string }) => {
+        .option("--provider <id>", "Also pin the provider for this task")
+        .action(async (task: string, modelRef: string, flags: { app?: string; provider?: string }) => {
             await cmdDefaultSet(task, modelRef, flags);
         });
 

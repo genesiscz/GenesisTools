@@ -219,6 +219,29 @@ function fromFlags(flags: AddFlags, apiKey: string | undefined): AddAccountInput
     return input;
 }
 
+async function reportAdded(input: AddAccountInput, json: boolean | undefined): Promise<void> {
+    const account = await addAccount(input);
+
+    if (json) {
+        out.result(redactSecrets(account));
+        return;
+    }
+
+    out.log.success(`Added ${pc.bold(account.name)} (${account.id}) for ${account.provider}.`);
+    out.log.info(`Verify it with: tools ai config account test ${account.name}`);
+}
+
+/**
+ * The prompt-driven add.
+ *
+ * Separate from `cmdAccountAdd` because the TUI has already passed the TTY gate
+ * before it gets here; re-asking `isInteractive()` inside would be a second
+ * guard that can only ever disagree with the first.
+ */
+export async function addAccountInteractive(flags: AddFlags = {}): Promise<void> {
+    await reportAdded(await collectInteractively(flags), flags.json);
+}
+
 export async function cmdAccountAdd(flags: AddFlags): Promise<void> {
     const apiKey = flags.apiKeyStdin ? await readStdinValue() : undefined;
 
@@ -232,6 +255,7 @@ export async function cmdAccountAdd(flags: AddFlags): Promise<void> {
         out.log.error("--provider and --name are required in non-interactive mode.");
         out.log.info(
             suggestCommand("tools ai config account add", {
+                subcommand: ["config", "account", "add"],
                 add: ["--provider", "<id>", "--name", "<name>", "--api-key-stdin"],
             })
         );
@@ -244,15 +268,7 @@ export async function cmdAccountAdd(flags: AddFlags): Promise<void> {
         input.secrets = { ...input.secrets, apiKey };
     }
 
-    const account = await addAccount(input);
-
-    if (flags.json) {
-        out.result(redactSecrets(account));
-        return;
-    }
-
-    out.log.success(`Added ${pc.bold(account.name)} (${account.id}) for ${account.provider}.`);
-    out.log.info(`Verify it with: tools ai config account test ${account.name}`);
+    await reportAdded(input, flags.json);
 }
 
 export async function cmdAccountList(flags: {
@@ -273,7 +289,7 @@ export async function cmdAccountList(flags: {
 
     if (accounts.length === 0) {
         out.log.info("No AI accounts configured yet.");
-        out.log.info(suggestCommand("tools ai config account add", { replaceCommand: ["config", "account", "add"] }));
+        out.log.info(suggestCommand("tools ai config account add", { subcommand: ["config", "account", "list"] }));
         return;
     }
 

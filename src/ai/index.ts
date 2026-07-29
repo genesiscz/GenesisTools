@@ -7,7 +7,6 @@ import { join, resolve } from "node:path";
 import * as p from "@clack/prompts";
 import { AI, AIConfig } from "@genesiscz/utils/ai/index.ts";
 import { ModelManager } from "@genesiscz/utils/ai/ModelManager.ts";
-import type { AIProviderType, AITask } from "@genesiscz/utils/ai/types.ts";
 import { runTool } from "@genesiscz/utils/cli";
 import { copyToClipboard, readFromClipboard } from "@genesiscz/utils/clipboard.ts";
 import { env } from "@genesiscz/utils/env";
@@ -21,6 +20,7 @@ import { formatTable } from "@genesiscz/utils/table.ts";
 import { Command } from "commander";
 import pc from "picocolors";
 import { registerConfigCommands } from "./commands/config";
+import { runConfigTui } from "./commands/config/tui";
 
 // ============================================
 // Translate
@@ -344,115 +344,6 @@ async function cmdModelsClean(opts: { older?: string }): Promise<void> {
 }
 
 // ============================================
-// Config
-// ============================================
-
-const TASK_LABELS: Record<AITask, string> = {
-    transcribe: "Transcription",
-    translate: "Translation",
-    summarize: "Summarization",
-    classify: "Classification",
-    embed: "Embedding",
-    sentiment: "Sentiment Analysis",
-    tts: "Text-to-Speech",
-};
-
-const PROVIDER_OPTIONS: Array<{ value: AIProviderType; label: string; hint: string }> = [
-    { value: "local-hf", label: "Local (Hugging Face)", hint: "runs locally via transformers.js" },
-    { value: "cloud", label: "Cloud", hint: "remote API (Groq, OpenAI, etc.)" },
-    { value: "darwinkit", label: "DarwinKit", hint: "macOS native ML" },
-];
-
-async function cmdConfig(): Promise<void> {
-    p.intro(pc.bgCyan(pc.black(" AI Configuration ")));
-
-    const config = await AIConfig.load();
-
-    // Show current config
-    const tasks: AITask[] = ["transcribe", "translate", "summarize", "classify", "embed", "sentiment", "tts"];
-    const currentRows = tasks.map((task) => {
-        const taskConfig = config.getTask(task);
-        return [TASK_LABELS[task], taskConfig.provider, taskConfig.model ?? pc.dim("default")];
-    });
-    const hfToken = config.getHfToken();
-    p.note(formatTable(currentRows, ["Task", "Provider", "Model"]), "Current Configuration");
-
-    if (hfToken) {
-        p.log.info(`HF Token: ${pc.dim(`${hfToken.slice(0, 8)}...${hfToken.slice(-4)}`)}`);
-    } else {
-        p.log.info(`HF Token: ${pc.dim("not set")}`);
-    }
-
-    const action = await withCancel(
-        p.select({
-            message: "What would you like to configure?",
-            options: [
-                { value: "task", label: "Task provider/model" },
-                { value: "hf-token", label: "Hugging Face token" },
-                { value: "done", label: "Exit" },
-            ],
-        })
-    );
-
-    if (action === "done") {
-        p.outro(pc.dim("No changes made."));
-        return;
-    }
-
-    if (action === "hf-token") {
-        const token = await withCancel(
-            p.text({
-                message: "Hugging Face API token:",
-                placeholder: "hf_...",
-                validate(value = "") {
-                    if (!value.startsWith("hf_")) {
-                        return 'Token should start with "hf_"';
-                    }
-                },
-            })
-        );
-
-        await config.setHfToken(token);
-        p.outro(pc.green("Token saved."));
-        return;
-    }
-
-    // Configure task
-    const taskChoice = await withCancel(
-        p.select({
-            message: "Select task to configure:",
-            options: tasks.map((t) => ({
-                value: t,
-                label: `${TASK_LABELS[t]} ${pc.dim(`(${config.getTaskProvider(t)})`)}`,
-            })),
-        })
-    );
-
-    const provider = await withCancel(
-        p.select({
-            message: "Provider:",
-            options: PROVIDER_OPTIONS,
-            initialValue: config.getTaskProvider(taskChoice),
-        })
-    );
-
-    const model = await withCancel(
-        p.text({
-            message: "Model (leave empty for default):",
-            placeholder: "default",
-            defaultValue: "",
-        })
-    );
-
-    await config.setTask(taskChoice, {
-        provider,
-        model: model || undefined,
-    });
-
-    p.outro(pc.green(`${TASK_LABELS[taskChoice]} updated: ${provider}${model ? ` (${model})` : ""}`));
-}
-
-// ============================================
 // Interactive mode
 // ============================================
 
@@ -474,7 +365,7 @@ async function interactiveMode(): Promise<void> {
     );
 
     if (action === "config") {
-        await cmdConfig();
+        await runConfigTui();
         return;
     }
 
@@ -676,7 +567,7 @@ modelsCmd
         await cmdModelsClean(opts);
     });
 
-registerConfigCommands(program, cmdConfig);
+registerConfigCommands(program);
 
 async function main(): Promise<void> {
     try {
