@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { estimateCostUsd } from "@app/ai-proxy/lib/billing/pricing";
 import type { ResolvedClient } from "@app/ai-proxy/lib/clients";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
+import { emitProxyUsage } from "@app/ai-proxy/lib/usage/usage-events";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
@@ -84,6 +85,9 @@ export function recordClientUsage(input: {
     ts: string;
     upstreamModel: string;
     usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+    /** The account billed upstream. Absent only where no route is known (tests). */
+    accountId?: string;
+    provider?: string;
 }): void {
     const dir = ledgerDir();
 
@@ -121,6 +125,22 @@ export function recordClientUsage(input: {
     }
 
     atomicWriteFileSync(ledgerPath(), SafeJSON.stringify(ledger, null, 2) ?? "{}");
+
+    // AFTER the invoice is on disk, and carrying the cost this ledger just
+    // booked, so the shared layer mirrors the invoice rather than re-deriving it.
+    if (input.accountId && input.provider) {
+        emitProxyUsage({
+            app: "ai-proxy",
+            at: input.ts,
+            accountId: input.accountId,
+            provider: input.provider,
+            modelId: input.upstreamModel,
+            inputTokens: input.usage?.prompt_tokens ?? 0,
+            outputTokens: input.usage?.completion_tokens ?? 0,
+            ...(cost === undefined ? {} : { costUsd: cost }),
+            meta: { kind: "proxy-request", client: input.client },
+        });
+    }
 }
 
 export function checkClientQuota(client: ResolvedClient): { ok: true } | { ok: false; reason: string } {
