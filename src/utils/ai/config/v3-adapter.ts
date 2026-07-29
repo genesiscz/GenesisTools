@@ -1,5 +1,6 @@
 import type { AIAccountEntry, AIProvider, AISecondaryLogin } from "@genesiscz/utils/config/ai.types";
-import { resolveSecretSync, secrets } from "@genesiscz/utils/security";
+import { logger } from "@genesiscz/utils/logger";
+import { type MaybeSecret, resolveSecretSync, secrets } from "@genesiscz/utils/security";
 import { accountRefIn } from "./refs";
 import type { AccountEntry, AiConfigData } from "./schema";
 
@@ -86,12 +87,33 @@ export function toV3Account(account: AccountEntry, config: AiConfigData): AIAcco
         entry.subscriptionCreatedAt = account.subscriptionCreatedAt;
     }
 
-    const apps = appsFor(config, account.id);
+    // v3 kept this on the account; v4 does too, with app-default references as a
+    // fallback for accounts that predate the field.
+    const apps = account.apps ?? appsFor(config, account.id);
     if (apps.length > 0) {
-        entry.apps = apps;
+        entry.apps = [...apps];
     }
 
     return entry;
+}
+
+/**
+ * Store a credential in the vault, falling back to a literal when no master key
+ * is reachable (headless process, keychain locked).
+ *
+ * Refusing to write would be worse than storing plaintext: the caller is usually
+ * a login flow persisting a token it just obtained, and throwing loses it
+ * outright. The value is recorded as v3 would have recorded it and the next
+ * interactive run vaults it, with a warning so the state is never silent.
+ */
+async function vaultOrLiteral(path: string, value: string): Promise<MaybeSecret> {
+    try {
+        const store = await secrets();
+        return await store.set(path, value);
+    } catch (err) {
+        logger.warn({ err, path }, "vault unavailable; storing credential as a literal for now");
+        return value;
+    }
 }
 
 /**
@@ -99,15 +121,13 @@ export function toV3Account(account: AccountEntry, config: AiConfigData): AIAcco
  * into the vault so a legacy caller cannot reintroduce plaintext into the config.
  */
 export async function applyV3Tokens(account: AccountEntry, tokens: AIAccountEntry["tokens"]): Promise<void> {
-    const store = await secrets();
-
     for (const field of SECRET_FIELDS) {
         const value = tokens[field];
         if (typeof value !== "string") {
             continue;
         }
 
-        account.credentials[field] = await store.set(`ai/${account.id}/${field}`, value);
+        account.credentials[field] = await vaultOrLiteral(`ai/${account.id}/${field}`, value);
     }
 
     if (tokens.authFile !== undefined) {
@@ -132,14 +152,15 @@ export async function applyV3Tokens(account: AccountEntry, tokens: AIAccountEntr
 }
 
 export async function applyV3Secondary(account: AccountEntry, secondary: AISecondaryLogin): Promise<void> {
-    const store = await secrets();
     const { accessToken, refreshToken, ...rest } = secondary;
 
     account.credentials.secondary = {
         ...rest,
-        ...(accessToken ? { accessToken: await store.set(`ai/${account.id}/secondary.accessToken`, accessToken) } : {}),
+        ...(accessToken
+            ? { accessToken: await vaultOrLiteral(`ai/${account.id}/secondary.accessToken`, accessToken) }
+            : {}),
         ...(refreshToken
-            ? { refreshToken: await store.set(`ai/${account.id}/secondary.refreshToken`, refreshToken) }
+            ? { refreshToken: await vaultOrLiteral(`ai/${account.id}/secondary.refreshToken`, refreshToken) }
             : {}),
     };
 }

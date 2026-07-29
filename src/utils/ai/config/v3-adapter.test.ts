@@ -17,7 +17,15 @@ import { applyV3Secondary, applyV3Tokens, appsFor, toV3Account } from "./v3-adap
 const KEY = randomBytes(32);
 
 function fakeKeyring() {
-    return [{ id: "keychain" as const, available: async () => true, get: async () => KEY, set: async () => {} }];
+    return [
+        {
+            id: "keychain" as const,
+            available: async () => true,
+            get: async () => KEY,
+            getSync: () => KEY,
+            set: async () => {},
+        },
+    ];
 }
 
 function account(overrides: Partial<AccountEntry> = {}): AccountEntry {

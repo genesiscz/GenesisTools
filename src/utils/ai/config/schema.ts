@@ -82,6 +82,8 @@ export const accountEntrySchema = z.object({
     enabled: z.boolean(),
     label: z.string().optional(),
     tags: z.array(z.string()).optional(),
+    /** Tools that use this account. Carried from v3, where it lived on the account. */
+    apps: z.array(z.string()).optional(),
     billing: accountBillingSchema,
     credentials: accountCredentialsSchema,
     useEnvApiKey: useEnvApiKeySchema.default(false),
@@ -122,6 +124,12 @@ export const aiConfigSchema = z.object({
             app: z.record(z.string(), appDefaultSchema).optional(),
         })
         .default({}),
+    /**
+     * Providers the user switched off outright. v3 could disable a provider that
+     * had no accounts at all, and per-account `enabled` cannot express that, so
+     * the list survives here rather than silently re-enabling something.
+     */
+    disabledProviders: z.array(z.string()).optional(),
     models: z
         .object({
             aliases: z.record(z.string(), z.string()).optional(),

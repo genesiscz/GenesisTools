@@ -17,6 +17,7 @@ function fakeKeyring() {
             id: "keychain" as const,
             available: async () => true,
             get: async () => KEY,
+            getSync: () => KEY,
             set: async () => {},
         },
     ];

@@ -7,8 +7,8 @@ export {
     invalidateMasterKeyCache,
     MasterKeyUnavailableError,
     masterKey,
-    masterKeySync,
     masterKeySource,
+    masterKeySync,
 } from "./MasterKey";
 export {
     _resetSecretsForTest,

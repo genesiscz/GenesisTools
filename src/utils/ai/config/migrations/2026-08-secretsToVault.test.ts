@@ -20,7 +20,15 @@ let home: string;
 const KEY = randomBytes(32);
 
 function fakeKeyring() {
-    return [{ id: "keychain" as const, available: async () => true, get: async () => KEY, set: async () => {} }];
+    return [
+        {
+            id: "keychain" as const,
+            available: async () => true,
+            get: async () => KEY,
+            getSync: () => KEY,
+            set: async () => {},
+        },
+    ];
 }
 
 function account(id: string, name: string, overrides: Partial<AccountEntry> = {}): AccountEntry {
