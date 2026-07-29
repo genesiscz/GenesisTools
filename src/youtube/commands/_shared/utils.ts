@@ -1,7 +1,7 @@
 import { renderColumns } from "@app/youtube/commands/_shared/columns";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
-import { extractVideoId, normaliseTarget } from "@app/youtube/lib/queue";
-import type { ChannelHandle, TimestampedSummaryEntry, VideoId } from "@app/youtube/lib/types";
+import { extractVideoId, normaliseHandle, normaliseTarget } from "@app/youtube/lib/queue";
+import type { TimestampedSummaryEntry, VideoId } from "@app/youtube/lib/types";
 import type { Youtube } from "@app/youtube/lib/youtube";
 import { formatDuration } from "@genesiscz/utils/format";
 import pc from "picocolors";
@@ -9,6 +9,7 @@ import pc from "picocolors";
 export {
     CHANNEL_URL_PATTERN,
     extractVideoId,
+    normaliseHandle,
     normaliseTarget,
     resolveTargetKind,
     toJobStages,
@@ -19,17 +20,6 @@ export interface GlobalFlags {
     clipboard?: boolean;
     silent?: boolean;
     verbose?: boolean;
-}
-
-export function normaliseHandle(input: string): ChannelHandle {
-    const trimmed = input.trim();
-    const match = trimmed.match(/(?:https?:\/\/)?(?:www\.)?youtube\.com\/(@[A-Za-z0-9_.-]+)/);
-
-    if (match) {
-        return match[1] as ChannelHandle;
-    }
-
-    return (trimmed.startsWith("@") ? trimmed : `@${trimmed}`) as ChannelHandle;
 }
 
 export function validateHandle(value: string | undefined): string | undefined {

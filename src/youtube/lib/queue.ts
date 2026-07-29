@@ -1,3 +1,4 @@
+import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { ListJobsOpts, QueueStats } from "@app/youtube/lib/db.types";
 import {
@@ -359,7 +360,18 @@ export class QueueService {
             timer = setInterval(() => {
                 const job = this.db.getJob(jobId);
 
-                if (job && isFinalJobStatus(job.status)) {
+                if (!job) {
+                    // "No row" is terminal, not "not yet". Callers pass an id they just
+                    // enqueued, so reaching here means the row was deleted underneath
+                    // us (cache clear, retention GC) or the id was never real — and
+                    // most callers pass no timeout, so treating it as pending parked
+                    // the CLI forever with nothing on screen.
+                    rejectOnce(new Error(`Job ${jobId} no longer exists`));
+
+                    return;
+                }
+
+                if (isFinalJobStatus(job.status)) {
                     resolveOnce(job);
                 }
             }, 100);
@@ -438,6 +450,22 @@ export function resolveTargetKind(target: string): JobTargetKind {
     }
 
     return "video";
+}
+
+/**
+ * Canonical `@handle` form. Accepts a channel URL, an already-prefixed handle, or
+ * a bare name — a bare `mkbhd` would otherwise never match the `@mkbhd` rows the
+ * database actually stores.
+ */
+export function normaliseHandle(input: string): ChannelHandle {
+    const trimmed = input.trim();
+    const match = CHANNEL_URL_PATTERN.exec(trimmed);
+
+    if (match) {
+        return match[1] as ChannelHandle;
+    }
+
+    return (trimmed.startsWith("@") ? trimmed : `@${trimmed}`) as ChannelHandle;
 }
 
 export function normaliseTarget(target: string): string {
@@ -520,7 +548,10 @@ function allWatchedJobsFinal(jobIds: number[], jobs: PipelineJob[]): boolean {
     const rootsFinal = jobIds.every((jobId) => {
         const job = jobsById.get(jobId);
 
-        return job ? isFinalJobStatus(job.status) : false;
+        // A watched id with no row is terminal, not pending: `jobsInScope` only
+        // returns rows that exist, so treating "absent" as unfinished meant a
+        // deleted or mistyped id polled until the caller's timeout or abort.
+        return job ? isFinalJobStatus(job.status) : true;
     });
 
     return rootsFinal && jobs.every((job) => isFinalJobStatus(job.status));
