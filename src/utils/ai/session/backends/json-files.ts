@@ -193,6 +193,18 @@ export function createJsonFilesBackend(options: JsonFilesBackendOptions): Sessio
             return toRecord(message.sessionId, entry, index);
         },
 
+        async appendPair(user: NewMessage, assistant: NewMessage): Promise<MessageRecord> {
+            const timestamp = new Date().toISOString();
+            const userEntry = toEntry(user, timestamp);
+            const assistantEntry = toEntry(assistant, timestamp);
+            const path = filePath(assistant.sessionId);
+            const index = readEntries(assistant.sessionId).length;
+            // One write, so a reader never catches the question without its answer.
+            appendFileSync(path, `${SafeJSON.stringify(userEntry)}\n${SafeJSON.stringify(assistantEntry)}\n`);
+
+            return toRecord(assistant.sessionId, assistantEntry, index + 1);
+        },
+
         async messages(id: string): Promise<MessageRecord[]> {
             return readEntries(id).map((entry, index) => toRecord(id, entry, index));
         },

@@ -242,6 +242,31 @@ export function createSqliteSessionBackend(options: SqliteBackendOptions): Sessi
         };
     }
 
+    /** Synchronous on purpose: `appendPair` runs it inside a sqlite transaction. */
+    function insertMessage(message: NewMessage): MessageRecord {
+        const extra = splitMeta(message.meta, messageMeta, mc.meta, `${messagesTable} message meta`);
+        const columns = [mc.sessionId, mc.role, mc.content, mc.at, ...extra.columns];
+        const values: Array<string | number | null> = [
+            idValue(message.sessionId),
+            message.role,
+            message.content,
+            now(),
+            ...extra.values,
+        ];
+        const row = db
+            .query<Row, Array<string | number | null>>(
+                `INSERT INTO ${messagesTable} (${columns.join(", ")})
+                     VALUES (${columns.map(() => "?").join(", ")}) RETURNING *`
+            )
+            .get(...values);
+
+        if (!row) {
+            throw new Error(`appendMessage: insert into ${messagesTable} returned no row`);
+        }
+
+        return toMessage(row);
+    }
+
     return {
         async create(session: NewSession): Promise<SessionRecord> {
             const stamp = now();
@@ -299,27 +324,15 @@ export function createSqliteSessionBackend(options: SqliteBackendOptions): Sessi
         },
 
         async append(message: NewMessage): Promise<MessageRecord> {
-            const extra = splitMeta(message.meta, messageMeta, mc.meta, `${messagesTable} message meta`);
-            const columns = [mc.sessionId, mc.role, mc.content, mc.at, ...extra.columns];
-            const values: Array<string | number | null> = [
-                idValue(message.sessionId),
-                message.role,
-                message.content,
-                now(),
-                ...extra.values,
-            ];
-            const row = db
-                .query<Row, Array<string | number | null>>(
-                    `INSERT INTO ${messagesTable} (${columns.join(", ")})
-                     VALUES (${columns.map(() => "?").join(", ")}) RETURNING *`
-                )
-                .get(...values);
+            return insertMessage(message);
+        },
 
-            if (!row) {
-                throw new Error(`appendMessage: insert into ${messagesTable} returned no row`);
-            }
+        async appendPair(user: NewMessage, assistant: NewMessage): Promise<MessageRecord> {
+            return db.transaction(() => {
+                insertMessage(user);
 
-            return toMessage(row);
+                return insertMessage(assistant);
+            })();
         },
 
         async messages(id: string): Promise<MessageRecord[]> {
@@ -345,6 +358,13 @@ function idValue(id: string): string | number {
 
 function encodeMeta(column: MetaColumn, value: unknown): string | number | null {
     const encoding = column.encoding ?? (column.column.endsWith("_json") ? "json" : "text");
+
+    // An explicit null means "this column is empty", never the string "null" or
+    // the number 0 — `provider_spec: null` and `collection_id: null` are both
+    // real states in youtube's rows.
+    if (value === null) {
+        return null;
+    }
 
     if (encoding === "json") {
         return SafeJSON.stringify(value, { strict: true });

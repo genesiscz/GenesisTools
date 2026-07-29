@@ -64,6 +64,14 @@ export interface SessionBackend {
     byId(id: SessionId): Promise<SessionRecord | undefined>;
     list(owner: string): Promise<SessionRecord[]>;
     append(message: NewMessage): Promise<MessageRecord>;
+    /**
+     * Both halves of one exchange, or neither. Returns the assistant record.
+     *
+     * `turn()` persists nothing until the responder succeeds, so the two rows are
+     * always written together and a reader must never observe the question
+     * without its answer.
+     */
+    appendPair(user: NewMessage, assistant: NewMessage): Promise<MessageRecord>;
     messages(id: SessionId): Promise<MessageRecord[]>;
     touch(id: SessionId): Promise<void>;
 }
@@ -101,8 +109,15 @@ export type TurnReply = string | { text: string; meta?: Record<string, unknown> 
 export interface SessionStore {
     getOrCreate(owner: string, title: string, meta?: Record<string, unknown>): Promise<SessionRecord>;
     /**
-     * Append `userText`, compute a reply over the resulting history, append it,
-     * and touch the session. Returns the assistant message.
+     * Compute a reply over the history that precedes `userText`, then persist the
+     * question and the answer together and touch the session. Returns the
+     * assistant message.
+     *
+     * `respond` therefore does NOT see `userText` in its history argument: it
+     * already has the text, and replaying it would duplicate the question in the
+     * prompt. Nothing is written if `respond` throws, so a failed provider call,
+     * an empty scope or an aborted signal cannot leave an orphan question that
+     * the next turn replays as history with no reply.
      */
     turn(
         id: SessionId,

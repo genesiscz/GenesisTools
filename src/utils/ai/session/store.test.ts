@@ -132,7 +132,7 @@ describe("session store", () => {
         expect(second.id).toBe(first.id);
     });
 
-    test("turn appends user before responding and assistant after", async () => {
+    test("turn responds over the history before this exchange, then appends both halves", async () => {
         const store = createSessionStore(createJsonFilesBackend({ dir }));
         const session = await store.getOrCreate("u", "chat");
         const seen: string[][] = [];
@@ -146,10 +146,33 @@ describe("session store", () => {
             return "a2";
         });
 
-        expect(seen[0]).toEqual(["user:q1"]);
-        expect(seen[1]).toEqual(["user:q1", "assistant:a1", "user:q2"]);
+        // The current question is NOT in its own history: `respond` already has it.
+        expect(seen[0]).toEqual([]);
+        expect(seen[1]).toEqual(["user:q1", "assistant:a1"]);
         const history = await store.history(session.id);
         expect(history.map((m) => m.content)).toEqual(["q1", "a1", "q2", "a2"]);
+    });
+
+    test("a responder that throws leaves no orphan question behind", async () => {
+        const store = createSessionStore(createJsonFilesBackend({ dir }));
+        const session = await store.getOrCreate("u", "chat");
+
+        await expect(
+            store.turn(session.id, "unanswerable", async () => {
+                throw new Error("no transcripts in scope");
+            })
+        ).rejects.toThrow("no transcripts in scope");
+
+        expect(await store.history(session.id)).toEqual([]);
+
+        // And the next turn sees a clean history rather than replaying the failure.
+        const seen: string[][] = [];
+        await store.turn(session.id, "q", async (history) => {
+            seen.push(history.map((m) => `${m.role}:${m.content}`));
+            return "a";
+        });
+
+        expect(seen[0]).toEqual([]);
     });
 
     test("a reply object contributes meta the caller could not know up front", async () => {

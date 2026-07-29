@@ -1,10 +1,12 @@
 import { type AnswerOverVideosOpts, type AnswerOverVideosResult, answerOverVideos } from "@app/youtube/lib/ask-answer";
 import { type AskScopeInput, resolveAskScope } from "@app/youtube/lib/ask-scope";
+import { askSessionStore, toAskSessionRecord } from "@app/youtube/lib/ask-session-store";
 import { resolveCollectionVideoIds } from "@app/youtube/lib/collection-rules";
 import type { AskSessionMessageRecord, AskSessionRecord } from "@app/youtube/lib/db.types";
 import type { AskHistoryTurn } from "@app/youtube/lib/qa.types";
 import type { VideoId } from "@app/youtube/lib/video.types";
 import type { Youtube } from "@app/youtube/lib/youtube";
+import type { MessageRecord } from "@genesiscz/utils/ai/session";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -26,60 +28,33 @@ export interface EnsureAskSessionResult {
 
 /** Returns this owner's session of that name, or creates it from `scope`. */
 export async function ensureAskSession(opts: EnsureAskSessionOpts): Promise<EnsureAskSessionResult> {
-    const existing = opts.yt.db.getAskSessionByTitle(opts.userId, opts.name);
+    const store = askSessionStore(opts.yt);
+    const owner = String(opts.userId);
+    const existing = await store.backend.byTitle(owner, opts.name);
 
     if (existing) {
-        return { session: existing, created: false };
+        return { session: toAskSessionRecord(existing), created: false };
     }
 
     const scope = await resolveAskScope(opts.yt, opts.scope);
-    // Re-read after the await: resolving a scope imports a directory or lists a
-    // channel, and two concurrent asks for the same name would otherwise both have
-    // passed the check above and created a duplicate. Nothing awaits between this
-    // read and the insert, and Bun's SQLite calls are synchronous, so the second
-    // caller here always sees the first one's row.
-    const raced = opts.yt.db.getAskSessionByTitle(opts.userId, opts.name);
-
-    if (raced) {
-        return { session: raced, created: false };
-    }
-
-    // The re-read above closes the in-process race; the unique index
-    // (`idx_ask_sessions_user_title`) closes the cross-process one, and this is where
-    // that constraint surfaces — a separate CLI process or server can insert between
-    // the read and here, and losing that race must return their row, not throw.
-    let session: AskSessionRecord;
-
-    try {
-        session = opts.yt.db.createAskSession({
-            userId: opts.userId,
-            title: opts.name,
-            scopeKind: scope.kind,
-            scopeValue: scope.value,
-            videoIds: scope.videoIds,
-            providerSpec: opts.providerSpec ?? null,
-        });
-    } catch (error) {
-        const winner = opts.yt.db.getAskSessionByTitle(opts.userId, opts.name);
-
-        if (!winner) {
-            throw error;
-        }
-
-        logger.debug(
-            { session: opts.name, userId: opts.userId, err: error },
-            "youtube ask session: lost the create race, using the existing row"
-        );
-
-        return { session: winner, created: false };
-    }
-
+    // `getOrCreate` re-reads by title before inserting, which closes the in-process
+    // race that resolving a scope opens (importing a directory or listing a channel
+    // is a long await, and two concurrent asks for the same name would otherwise
+    // both have passed the check above). The unique index
+    // (`idx_ask_sessions_user_title`) closes the cross-process one, and `getOrCreate`
+    // answers a lost race with the winner's row rather than the constraint error.
+    const session = await store.getOrCreate(owner, opts.name, {
+        scopeKind: scope.kind,
+        scopeValue: scope.value,
+        videoIds: scope.videoIds,
+        providerSpec: opts.providerSpec ?? null,
+    });
     logger.info(
-        { session: session.title, userId: opts.userId, kind: session.scopeKind, videos: scope.videoIds.length },
+        { session: session.title, userId: opts.userId, kind: scope.kind, videos: scope.videoIds.length },
         "youtube ask session created"
     );
 
-    return { session, created: true };
+    return { session: toAskSessionRecord(session), created: true };
 }
 
 /**
@@ -147,30 +122,27 @@ export interface AskInSessionResult extends AnswerOverVideosResult {
 }
 
 export async function askInSession(opts: AskInSessionOpts): Promise<AskInSessionResult> {
+    const store = askSessionStore(opts.yt);
+    const id = String(opts.session.id);
     const videoIds = await resolveSessionVideoIds(opts.yt, opts.session);
-    // Read BEFORE appending this turn: the current question already goes to the model
-    // as the question, and repeating it as history would duplicate it in the prompt.
-    const history = sessionHistory(opts.yt, opts.session.id);
-    // Answer FIRST, then write both turns together. `answerOverVideos` throws on a
-    // scope with no transcripts, on an aborted signal and on any provider error —
-    // persisting the user turn up front left an orphan question behind, which the
-    // next ask replayed as history with no reply, once more per retry.
-    const result = await answerOverVideos({ ...opts, videoIds, history });
-    opts.yt.db.transaction(() => {
-        opts.yt.db.appendAskSessionMessage({
-            sessionId: opts.session.id,
-            role: "user",
-            content: opts.question,
-        });
-        opts.yt.db.appendAskSessionMessage({
-            sessionId: opts.session.id,
-            role: "assistant",
-            content: result.answer,
-            citationsJson: SafeJSON.stringify(result.citations, { strict: true }),
-        });
+    let result: AnswerOverVideosResult | undefined;
+
+    // `store.turn` answers FIRST and writes the question and the answer together, so
+    // a scope with no transcripts, an aborted signal or any provider error leaves no
+    // orphan question for the next ask to replay as history with no reply. Its
+    // `history` argument is the exchange BEFORE this one, which is exactly what the
+    // prompt wants: repeating the current question would duplicate it.
+    await store.turn(id, opts.question, async (history) => {
+        result = await answerOverVideos({ ...opts, videoIds, history: sessionHistory(history) });
+
+        return { text: result.answer, meta: { citations: result.citations } };
     });
-    opts.yt.db.touchAskSession(opts.session.id);
-    const turn = opts.yt.db.listAskSessionMessages(opts.session.id).length;
+
+    if (!result) {
+        throw new Error("askInSession: the turn produced no answer");
+    }
+
+    const turn = (await store.history(id)).length;
 
     return { ...result, sessionId: opts.session.id, turn };
 }
@@ -179,10 +151,10 @@ export async function askInSession(opts: AskInSessionOpts): Promise<AskInSession
  * Prior turns for the prompt. `tool` rows are replay bookkeeping, not conversation,
  * so only the user/assistant exchange is replayed back to the model.
  */
-function sessionHistory(yt: Youtube, sessionId: number): AskHistoryTurn[] {
+function sessionHistory(messages: MessageRecord[]): AskHistoryTurn[] {
     const turns: AskHistoryTurn[] = [];
 
-    for (const message of yt.db.listAskSessionMessages(sessionId)) {
+    for (const message of messages) {
         if (message.role === "user" || message.role === "assistant") {
             turns.push({ role: message.role, content: message.content });
         }

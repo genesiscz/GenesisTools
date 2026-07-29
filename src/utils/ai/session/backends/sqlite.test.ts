@@ -187,7 +187,8 @@ describe("adopting youtube's ask tables", () => {
         await store.turn(session.id, "q2", async (history) => `saw ${history.length}`);
 
         const history = await store.history(session.id);
-        expect(history.map((m) => m.content)).toEqual(["q1", "a1", "q2", "saw 3"]);
+        // "saw 2": the responder is given the exchange before its own question.
+        expect(history.map((m) => m.content)).toEqual(["q1", "a1", "q2", "saw 2"]);
         expect(history[1].meta).toEqual({ citations: [{ videoId: "v" }] });
 
         const same = await store.getOrCreate("7", "probe");
