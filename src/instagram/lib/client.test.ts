@@ -364,6 +364,58 @@ describe("request origin", () => {
         expect(error.name).toBe("InstagramError");
     });
 
+    test("refuses the right host on a non-default port", async () => {
+        // `URL.hostname` drops the port, so a hostname-only check waves this
+        // through even though it is a different origin from WEB_BASE.
+        let requested = 0;
+        globalThis.fetch = mock(async () => {
+            requested += 1;
+            return new Response('{"ok":true}', { status: 200 });
+        }) as unknown as typeof fetch;
+
+        const error = (await getJson("https://www.instagram.com:4443/api/v1/x", {
+            label: "test",
+            sessionId: "abc",
+        }).catch((err) => err)) as InstagramError;
+
+        expect(requested).toBe(0);
+        expect(error.name).toBe("InstagramError");
+        expect(error.message).toContain("not the Instagram web origin");
+    });
+
+    test("refuses a url carrying userinfo, which the origin check alone allows", async () => {
+        // `https://evil:pw@www.instagram.com/` has origin `https://www.instagram.com`,
+        // so only an explicit userinfo check catches it. fetch would turn it into
+        // an Authorization header.
+        let requested = 0;
+        globalThis.fetch = mock(async () => {
+            requested += 1;
+            return new Response('{"ok":true}', { status: 200 });
+        }) as unknown as typeof fetch;
+
+        const error = (await getJson("https://evil:pw@www.instagram.com/api/v1/x", {
+            label: "test",
+            sessionId: "abc",
+        }).catch((err) => err)) as InstagramError;
+
+        expect(requested).toBe(0);
+        expect(error.message).toContain("credentials in the URL");
+    });
+
+    test("does not reject the explicit default port, which is the same origin", async () => {
+        // The guard must not overshoot: `:443` on https normalises away, so this
+        // is WEB_BASE spelled out rather than a different destination.
+        let capturedUrl = "";
+        globalThis.fetch = mock(async (url: string | URL) => {
+            capturedUrl = String(url);
+            return new Response('{"ok":true}', { status: 200 });
+        }) as unknown as typeof fetch;
+
+        await getJson("https://www.instagram.com:443/api/v1/x", { label: "test" });
+
+        expect(capturedUrl).toBe("https://www.instagram.com/api/v1/x");
+    });
+
     test("still resolves ordinary relative paths against the web origin", async () => {
         let capturedUrl = "";
         globalThis.fetch = mock(async (url: string | URL) => {
