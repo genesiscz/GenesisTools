@@ -208,6 +208,17 @@ describe("marker scanning is gated on a failure envelope", () => {
         expect(response.data.status).toBe("ok");
     });
 
+    test("only honours a TOP-LEVEL fail status, not one nested in the payload", async () => {
+        // The gate reads the parsed document's own verdict. A `status` belonging to
+        // some nested object must not open the marker scan while the real one says
+        // "ok", or a payload that happens to carry both is a fabricated block.
+        mockResponse('{"data":{"user":{"friendship":{"status":"fail"},"biography":"no spam"}},"status":"ok"}', 200);
+
+        const response = await getJson<{ status: string }>("/x", { label: "test" });
+
+        expect(response.data.status).toBe("ok");
+    });
+
     test("still classifies enforcement that arrives as HTTP 200 plus a fail envelope", async () => {
         // The gate must not be `!response.ok` alone: Instagram does answer 200 with
         // `status: fail`, and dropping that would trade a false positive for a
@@ -252,6 +263,26 @@ describe("www-claim isolation between auth modes", () => {
 
         expect(seen[1]["x-ig-www-claim"]).toBe("0");
         expect(__clientTesting.currentWwwClaim("session")).toBe("hmac.SESSION");
+        __clientTesting.resetWwwClaim();
+    });
+
+    test("never hands one session's claim to a different session", async () => {
+        // Auth mode alone is too coarse: two accounts are both "session", and
+        // account B echoing A's claim links the pair just as visibly.
+        __clientTesting.resetWwwClaim();
+        const seen: Array<Record<string, string>> = [];
+        globalThis.fetch = mock(async (_url: string, init?: RequestInit) => {
+            seen.push((init?.headers ?? {}) as Record<string, string>);
+            return new Response('{"ok":true}', { status: 200, headers: { "x-ig-set-www-claim": "hmac.ACCOUNT_A" } });
+        }) as unknown as typeof fetch;
+
+        await getJson("/x", { label: "account-a", sessionId: "session-a" });
+        await getJson("/x", { label: "account-a again", sessionId: "session-a" });
+        await getJson("/x", { label: "account-b", sessionId: "session-b" });
+
+        // Same credential keeps replaying it; a different one starts clean.
+        expect(seen[1]["x-ig-www-claim"]).toBe("hmac.ACCOUNT_A");
+        expect(seen[2]["x-ig-www-claim"]).toBe("0");
         __clientTesting.resetWwwClaim();
     });
 });
