@@ -105,13 +105,7 @@ async function fetchLiteLlmPricing(provider: string, modelId: string): Promise<M
  * the wrong vendor's rate for the route actually being paid.
  */
 function scopedStaticPricing(provider: string, modelId: string): ModelPricing | undefined {
-    const entry = byId(modelId);
-
-    if (!entry || entry.provider !== provider) {
-        return undefined;
-    }
-
-    return entry.pricing;
+    return byId(modelId, provider)?.pricing;
 }
 
 export async function pricingFor(provider: string, modelId: string): Promise<ModelPricing | undefined> {

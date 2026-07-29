@@ -325,7 +325,306 @@ const OPENAI_SUB_ENTRIES: CatalogEntry[] = [
     source: "static" as const,
 }));
 
-export const STATIC_CATALOG: CatalogEntry[] = [...ANTHROPIC_ENTRIES, ...XAI_ENTRIES, ...OPENAI_SUB_ENTRIES];
+/**
+ * The API-key providers whose model facts used to live in ask's `KNOWN_MODELS`.
+ *
+ * Ids, context windows and rates are verified against the LiteLLM feed
+ * (2026-07-29) — the source this spec names — and the list is refreshed to the
+ * generation each vendor actually serves today: the old copy still offered
+ * Gemini 1.5 and Llama 3.1 405B, both long retired. Each provider's own live
+ * endpoint remains the catalog of record; this is the offline floor.
+ *
+ * Non-chat surfaces (codex, -pro, realtime, audio, tts, transcribe, search,
+ * embeddings) stay out on purpose — ask filters them from the live lists too.
+ */
+interface ApiModelSeed {
+    id: string;
+    displayName: string;
+    contextWindow: number;
+    pricing: ModelPricing;
+    thinking: CatalogEntry["thinking"];
+    /** Absent means text-only; the catalog states modalities rather than guessing from the id. */
+    vision?: boolean;
+}
+
+function apiEntries(provider: string, seeds: ApiModelSeed[], flags?: CatalogEntry["flags"]): CatalogEntry[] {
+    return seeds.map(({ vision, ...seed }) => ({
+        ...seed,
+        provider,
+        capabilities: CHAT,
+        ...(vision ? { inputModalities: ["text", "image"] } : {}),
+        ...(flags ? { flags } : {}),
+        source: "static" as const,
+    }));
+}
+
+/** Tool support matches what `KNOWN_MODELS` claimed for these two providers. */
+const TOOL_CAPABLE = { tools: true };
+
+const OPENAI_ENTRIES: CatalogEntry[] = apiEntries(
+    "openai",
+    [
+        {
+            id: "gpt-5.6",
+            displayName: "GPT-5.6",
+            contextWindow: 1_050_000,
+            thinking: "reasoning",
+            pricing: { inputPer1M: 5, outputPer1M: 30, cachedReadPer1M: 0.5, cachedCreatePer1M: 6.25 },
+            vision: true,
+        },
+        {
+            id: "gpt-5.5",
+            displayName: "GPT-5.5",
+            contextWindow: 1_050_000,
+            thinking: "reasoning",
+            pricing: { inputPer1M: 5, outputPer1M: 30, cachedReadPer1M: 0.5 },
+            vision: true,
+        },
+        {
+            id: "gpt-5.4",
+            displayName: "GPT-5.4",
+            contextWindow: 1_050_000,
+            thinking: "reasoning",
+            pricing: { inputPer1M: 2.5, outputPer1M: 15, cachedReadPer1M: 0.25 },
+            vision: true,
+        },
+        {
+            id: "gpt-5.4-mini",
+            displayName: "GPT-5.4 Mini",
+            contextWindow: 1_050_000,
+            thinking: "reasoning",
+            pricing: { inputPer1M: 0.75, outputPer1M: 4.5, cachedReadPer1M: 0.075 },
+            vision: true,
+        },
+        {
+            id: "gpt-5.4-nano",
+            displayName: "GPT-5.4 Nano",
+            contextWindow: 1_050_000,
+            thinking: "reasoning",
+            pricing: { inputPer1M: 0.2, outputPer1M: 1.25, cachedReadPer1M: 0.02 },
+            vision: true,
+        },
+        {
+            id: "gpt-5.2",
+            displayName: "GPT-5.2",
+            contextWindow: 272_000,
+            thinking: "reasoning",
+            pricing: { inputPer1M: 1.75, outputPer1M: 14, cachedReadPer1M: 0.175 },
+            vision: true,
+        },
+        {
+            id: "gpt-5.1",
+            displayName: "GPT-5.1",
+            contextWindow: 272_000,
+            thinking: "reasoning",
+            pricing: { inputPer1M: 1.25, outputPer1M: 10, cachedReadPer1M: 0.125 },
+            vision: true,
+        },
+        {
+            id: "gpt-5",
+            displayName: "GPT-5",
+            contextWindow: 272_000,
+            thinking: "reasoning",
+            pricing: { inputPer1M: 1.25, outputPer1M: 10, cachedReadPer1M: 0.125 },
+            vision: true,
+        },
+        {
+            id: "gpt-5-mini",
+            displayName: "GPT-5 Mini",
+            contextWindow: 272_000,
+            thinking: "reasoning",
+            pricing: { inputPer1M: 0.25, outputPer1M: 2, cachedReadPer1M: 0.025 },
+            vision: true,
+        },
+        {
+            id: "gpt-5-nano",
+            displayName: "GPT-5 Nano",
+            contextWindow: 272_000,
+            thinking: "reasoning",
+            pricing: { inputPer1M: 0.05, outputPer1M: 0.4, cachedReadPer1M: 0.005 },
+            vision: true,
+        },
+        {
+            id: "gpt-4.1",
+            displayName: "GPT-4.1",
+            contextWindow: 1_047_576,
+            thinking: "none",
+            pricing: { inputPer1M: 2, outputPer1M: 8, cachedReadPer1M: 0.5 },
+            vision: true,
+        },
+        {
+            id: "gpt-4.1-mini",
+            displayName: "GPT-4.1 Mini",
+            contextWindow: 1_047_576,
+            thinking: "none",
+            pricing: { inputPer1M: 0.4, outputPer1M: 1.6, cachedReadPer1M: 0.1 },
+            vision: true,
+        },
+        {
+            id: "gpt-4o",
+            displayName: "GPT-4o",
+            contextWindow: 128_000,
+            thinking: "none",
+            pricing: { inputPer1M: 2.5, outputPer1M: 10, cachedReadPer1M: 1.25 },
+            vision: true,
+        },
+        {
+            id: "gpt-4o-mini",
+            displayName: "GPT-4o Mini",
+            contextWindow: 128_000,
+            thinking: "none",
+            pricing: { inputPer1M: 0.15, outputPer1M: 0.6, cachedReadPer1M: 0.075 },
+            vision: true,
+        },
+        // o-series: reasoning, text-only — the vision claim KNOWN_MODELS made for
+        // the gpt families was never made for these.
+        {
+            id: "o3",
+            displayName: "o3",
+            contextWindow: 200_000,
+            thinking: "reasoning",
+            pricing: { inputPer1M: 2, outputPer1M: 8, cachedReadPer1M: 0.5 },
+        },
+        {
+            id: "o4-mini",
+            displayName: "o4 Mini",
+            contextWindow: 200_000,
+            thinking: "reasoning",
+            pricing: { inputPer1M: 1.1, outputPer1M: 4.4, cachedReadPer1M: 0.275 },
+        },
+        {
+            id: "o3-mini",
+            displayName: "o3 Mini",
+            contextWindow: 200_000,
+            thinking: "reasoning",
+            pricing: { inputPer1M: 1.1, outputPer1M: 4.4, cachedReadPer1M: 0.55 },
+        },
+    ],
+    TOOL_CAPABLE
+);
+
+/** Ids are the bare Gemini API names; LiteLLM keys them behind a `gemini/` route prefix. */
+const GOOGLE_ENTRIES: CatalogEntry[] = apiEntries(
+    "google",
+    [
+        {
+            id: "gemini-3.5-flash",
+            displayName: "Gemini 3.5 Flash",
+            contextWindow: 1_048_576,
+            thinking: "optional",
+            pricing: { inputPer1M: 1.5, outputPer1M: 9, cachedReadPer1M: 0.15 },
+            vision: true,
+        },
+        {
+            id: "gemini-3.1-pro-preview",
+            displayName: "Gemini 3.1 Pro (preview)",
+            contextWindow: 1_048_576,
+            thinking: "reasoning",
+            pricing: { inputPer1M: 2, outputPer1M: 12, cachedReadPer1M: 0.2 },
+            vision: true,
+        },
+        {
+            id: "gemini-3.1-flash-lite",
+            displayName: "Gemini 3.1 Flash Lite",
+            contextWindow: 1_048_576,
+            thinking: "optional",
+            pricing: { inputPer1M: 0.25, outputPer1M: 1.5, cachedReadPer1M: 0.025 },
+            vision: true,
+        },
+        {
+            id: "gemini-3-pro-preview",
+            displayName: "Gemini 3 Pro (preview)",
+            contextWindow: 1_048_576,
+            thinking: "reasoning",
+            pricing: { inputPer1M: 2, outputPer1M: 12, cachedReadPer1M: 0.2 },
+            vision: true,
+        },
+        {
+            id: "gemini-2.5-pro",
+            displayName: "Gemini 2.5 Pro",
+            contextWindow: 1_048_576,
+            thinking: "reasoning",
+            pricing: { inputPer1M: 1.25, outputPer1M: 10, cachedReadPer1M: 0.125 },
+            vision: true,
+        },
+        {
+            id: "gemini-2.5-flash",
+            displayName: "Gemini 2.5 Flash",
+            contextWindow: 1_048_576,
+            thinking: "optional",
+            pricing: { inputPer1M: 0.3, outputPer1M: 2.5, cachedReadPer1M: 0.03 },
+            vision: true,
+        },
+        {
+            id: "gemini-2.5-flash-lite",
+            displayName: "Gemini 2.5 Flash Lite",
+            contextWindow: 1_048_576,
+            thinking: "optional",
+            pricing: { inputPer1M: 0.1, outputPer1M: 0.4, cachedReadPer1M: 0.01 },
+            vision: true,
+        },
+    ],
+    TOOL_CAPABLE
+);
+
+/**
+ * Groq ids carry the upstream vendor's namespace, which is what the Groq API
+ * expects verbatim. No tool flag: `KNOWN_MODELS` never claimed function calling
+ * for Groq, and absent means unverified, not unsupported.
+ */
+const GROQ_ENTRIES: CatalogEntry[] = apiEntries("groq", [
+    {
+        id: "llama-3.3-70b-versatile",
+        displayName: "Llama 3.3 70B Versatile",
+        contextWindow: 128_000,
+        thinking: "none",
+        pricing: { inputPer1M: 0.59, outputPer1M: 0.79 },
+    },
+    {
+        id: "llama-3.1-8b-instant",
+        displayName: "Llama 3.1 8B Instant",
+        contextWindow: 128_000,
+        thinking: "none",
+        pricing: { inputPer1M: 0.05, outputPer1M: 0.08 },
+    },
+    {
+        id: "moonshotai/kimi-k2-instruct-0905",
+        displayName: "Kimi K2 Instruct",
+        contextWindow: 262_144,
+        thinking: "none",
+        pricing: { inputPer1M: 1, outputPer1M: 3, cachedReadPer1M: 0.5 },
+    },
+    {
+        id: "openai/gpt-oss-120b",
+        displayName: "GPT-OSS 120B",
+        contextWindow: 131_072,
+        thinking: "optional",
+        pricing: { inputPer1M: 0.15, outputPer1M: 0.6, cachedReadPer1M: 0.075 },
+    },
+    {
+        id: "openai/gpt-oss-20b",
+        displayName: "GPT-OSS 20B",
+        contextWindow: 131_072,
+        thinking: "optional",
+        pricing: { inputPer1M: 0.075, outputPer1M: 0.3, cachedReadPer1M: 0.0375 },
+    },
+    {
+        id: "qwen/qwen3-32b",
+        displayName: "Qwen3 32B",
+        contextWindow: 131_000,
+        thinking: "optional",
+        pricing: { inputPer1M: 0.29, outputPer1M: 0.59 },
+    },
+]);
+
+export const STATIC_CATALOG: CatalogEntry[] = [
+    ...ANTHROPIC_ENTRIES,
+    ...XAI_ENTRIES,
+    ...OPENAI_SUB_ENTRIES,
+    ...OPENAI_ENTRIES,
+    ...GOOGLE_ENTRIES,
+    ...GROQ_ENTRIES,
+];
 
 /**
  * Strip a trailing date (`-YYYYMMDD`) or `-latest` variant suffix so dated ids
@@ -359,12 +658,18 @@ export function byProvider(provider: string): CatalogEntry[] {
     return STATIC_CATALOG.filter((model) => model.provider === provider);
 }
 
-/** Exact id first, then aliases — so "opus" and the dated id both resolve. */
-export function byId(id: string): CatalogEntry | undefined {
-    return (
-        STATIC_CATALOG.find((model) => model.id === id) ??
-        STATIC_CATALOG.find((model) => (model.aliases ?? []).includes(id))
-    );
+/**
+ * Exact id first, then aliases — so "opus" and the dated id both resolve.
+ *
+ * Pass `provider` whenever the caller knows which one it is billing. One id can
+ * name two different products: `gpt-5.4` is a 272K Codex-subscription model and
+ * a 1.05M OpenAI API model, and an unscoped lookup silently returns whichever
+ * sits earlier in the list.
+ */
+export function byId(id: string, provider?: string): CatalogEntry | undefined {
+    const pool = provider === undefined ? STATIC_CATALOG : byProvider(provider);
+
+    return pool.find((model) => model.id === id) ?? pool.find((model) => (model.aliases ?? []).includes(id));
 }
 
 export function byCapability(capability: Capability): CatalogEntry[] {

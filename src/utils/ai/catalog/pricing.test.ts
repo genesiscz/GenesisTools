@@ -75,6 +75,20 @@ describe("pricing ladder", () => {
         }
     });
 
+    /**
+     * Same id, two products, two rates: the Codex-subscription `gpt-5.4` carries
+     * no per-token price while the OpenAI API model does. Resolving the wrong
+     * one silently prices a paid API call at nothing.
+     */
+    test("a shared id is priced by the provider being billed", async () => {
+        expect(await pricingFor("openai", "gpt-5.4")).toEqual({
+            inputPer1M: 2.5,
+            outputPer1M: 15,
+            cachedReadPer1M: 0.25,
+        });
+        expect(await pricingFor("openai-sub", "gpt-5.4")).toBeUndefined();
+    });
+
     test("unknown pricing is undefined, never zero", async () => {
         // gpt-5.6-sol is in the static catalog WITHOUT pricing (subscription
         // model); the ladder must not invent a rate for it.
