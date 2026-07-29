@@ -1,10 +1,10 @@
 import { existsSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { DIARIZE_MODEL_DIR } from "@genesiscz/utils/audio/diarize-models";
 import { formatBytes } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import { aiDataDir } from "../../config/paths";
 import type { ArtifactRef } from "../descriptors/types";
+import { DIARIZE_MODEL_DIR } from "../runtimes/sherpa/paths";
 import { HfSource } from "./sources/hf";
 import { type ArtifactFetcher, UrlSource } from "./sources/url";
 import type { CachedArtifact, PruneReport, ResolvedArtifact } from "./types";

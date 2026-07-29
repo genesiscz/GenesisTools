@@ -10,6 +10,8 @@
  * under runtimes/.
  */
 
+export type { CachedArtifact, PruneReport, ResolvedArtifact } from "./artifacts";
+export { ArtifactStore, HfSource, UrlSource } from "./artifacts";
 export type { ArtifactRef, LocalModelDescriptor, LocalRuntimeId } from "./descriptors";
 export {
     byTask,
@@ -21,3 +23,5 @@ export {
     maxEmbedChars,
     taskPrefix,
 } from "./descriptors";
+export { detectDevice, type OnnxDevice, resolveDevice } from "./device";
+export { CoreMLRuntime, type LocalRuntime, TransformersJsRuntime } from "./runtimes";
