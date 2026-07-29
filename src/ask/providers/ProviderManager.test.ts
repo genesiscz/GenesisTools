@@ -56,9 +56,39 @@ function writeConfig(): void {
     AiConfigStore.invalidate();
 }
 
+/**
+ * Grandfathered env resolution reads these live and by design, and the developer
+ * running this suite has real ones exported — scrubbed so the detected set is the
+ * config's, not the machine's.
+ */
+const GRANDFATHERED_VARS = [
+    "OPENAI_API_KEY",
+    "GROQ_API_KEY",
+    "OPENROUTER_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GOOGLE_API_KEY",
+    "GOOGLE_GENERATIVE_AI_API_KEY",
+    "XAI_API_KEY",
+    "X_AI_API_KEY",
+    "JINA_AI_API_KEY",
+    "ASSEMBLYAI_API_KEY",
+    "DEEPGRAM_API_KEY",
+    "GLADIA_API_KEY",
+    "HUGGINGFACE_TOKEN",
+    "HF_TOKEN",
+];
+
+let envSnapshot: ReturnType<typeof env.testing.snapshot>;
+
 beforeEach(() => {
+    envSnapshot = env.testing.snapshot();
     home = mkdtempSync(join(tmpdir(), "gt-provider-manager-"));
     env.testing.set("GENESIS_TOOLS_HOME", home);
+
+    for (const name of GRANDFATHERED_VARS) {
+        env.testing.unset(name);
+    }
+
     AiConfigStore.invalidate();
     _resetPluginsForTest();
 
@@ -73,7 +103,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-    env.testing.unset("GENESIS_TOOLS_HOME");
+    env.testing.restore(envSnapshot);
     AiConfigStore.invalidate();
     _resetPluginsForTest();
     _resetBuiltInPluginsForTest(false);

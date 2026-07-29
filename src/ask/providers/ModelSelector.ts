@@ -2,8 +2,6 @@ import { providerManager } from "@ask/providers/ProviderManager";
 import type { DetectedProvider, ModelInfo, ProviderChoice } from "@ask/types";
 import { colorizeByPriceTier } from "@ask/utils/helpers";
 import * as p from "@clack/prompts";
-import type { TranscriptionCapableProvider } from "@genesiscz/utils/ai/types";
-import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import type { SearchItem } from "@genesiscz/utils/prompts/clack";
 import { searchSelect, searchSelectCancelSymbol } from "@genesiscz/utils/prompts/clack";
@@ -230,98 +228,6 @@ export class ModelSelector {
             return { provider: targetProvider, model: targetModel };
         } catch (error) {
             logger.error(`Failed to select model: ${error}`);
-            return null;
-        }
-    }
-
-    async selectTranscriptionModel(
-        fileSize?: number
-    ): Promise<{ provider: string; model: string; providerInstance: TranscriptionCapableProvider } | null> {
-        const transcriptionProviders = [
-            { name: "groq", envKey: "GROQ_API_KEY", model: "whisper-large-v3", maxFileSize: 25 * 1024 * 1024 },
-            {
-                name: "openrouter",
-                envKey: "OPENROUTER_API_KEY",
-                model: "openai/whisper-1",
-                maxFileSize: 25 * 1024 * 1024,
-            },
-            { name: "openai", envKey: "OPENAI_API_KEY", model: "whisper-1", maxFileSize: 25 * 1024 * 1024 },
-            { name: "assemblyai", envKey: "ASSEMBLYAI_API_KEY", model: "best", maxFileSize: 100 * 1024 * 1024 },
-            { name: "deepgram", envKey: "DEEPGRAM_API_KEY", model: "nova-3", maxFileSize: 100 * 1024 * 1024 },
-            { name: "gladia", envKey: "GLADIA_API_KEY", model: "default", maxFileSize: 100 * 1024 * 1024 },
-        ];
-
-        const availableProviders = transcriptionProviders.filter((prov) => {
-            if (fileSize && fileSize > prov.maxFileSize) {
-                return false;
-            }
-            return env.ai.getByEnvKey(prov.envKey);
-        });
-
-        if (availableProviders.length === 0) {
-            logger.error("No transcription providers available. Please set API keys for audio transcription.");
-            logger.info(
-                "Supported: GROQ_API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, ASSEMBLYAI_API_KEY, DEEPGRAM_API_KEY, GLADIA_API_KEY"
-            );
-            return null;
-        }
-
-        const selectedProvider = availableProviders[0];
-
-        try {
-            let providerInstance: TranscriptionCapableProvider;
-
-            switch (selectedProvider.name) {
-                case "groq": {
-                    const { groq } = await import("@ai-sdk/groq");
-                    providerInstance = groq;
-                    break;
-                }
-                case "openrouter": {
-                    const { createOpenAI } = await import("@ai-sdk/openai");
-                    providerInstance = createOpenAI({
-                        apiKey: env.ai.openrouter.getKey(),
-                        baseURL: "https://openrouter.ai/api/v1",
-                    });
-                    break;
-                }
-                case "openai": {
-                    const { openai } = await import("@ai-sdk/openai");
-                    providerInstance = openai;
-                    break;
-                }
-                case "assemblyai": {
-                    // @ts-expect-error - Optional dependency, may not be installed
-                    const { assemblyai } = await import("@ai-sdk/assemblyai");
-                    providerInstance = assemblyai;
-                    break;
-                }
-                case "deepgram": {
-                    // Optional dependency — string-typed specifier so tsc skips
-                    // module resolution whether or not @ai-sdk/deepgram is installed.
-                    const { deepgram } = await import("@ai-sdk/deepgram" as string);
-                    providerInstance = deepgram;
-                    break;
-                }
-                case "gladia": {
-                    // @ts-expect-error - Optional dependency, may not be installed
-                    const { gladia } = await import("@ai-sdk/gladia");
-                    providerInstance = gladia;
-                    break;
-                }
-                default:
-                    throw new Error(`Unsupported transcription provider: ${selectedProvider.name}`);
-            }
-
-            logger.info(`Using ${selectedProvider.name} for transcription (${selectedProvider.model})`);
-
-            return {
-                provider: selectedProvider.name,
-                model: selectedProvider.model,
-                providerInstance,
-            };
-        } catch (error) {
-            logger.error(`Failed to create transcription provider ${selectedProvider.name}: ${error}`);
             return null;
         }
     }
