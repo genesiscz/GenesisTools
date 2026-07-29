@@ -1,3 +1,5 @@
+import { env } from "@genesiscz/utils/env";
+
 export type MasterKeySource = "keychain" | "env" | "file";
 
 export interface MasterKeyProvider {
@@ -18,6 +20,20 @@ export interface MasterKeyProvider {
 /** Service/account pair for the OS keychain entry holding the vault master key. */
 export const KEYCHAIN_SERVICE = "genesis-tools";
 export const KEYCHAIN_ACCOUNT = "master-key";
+
+/**
+ * Effective keychain service name. Under a test process (NODE_ENV=test, which
+ * `bun test` sets and `scripts/test.ts` forces) this diverges to a sandboxed
+ * item name, so even a test that reaches the keyring API — the availability
+ * gate deleted, RUN_KEYCHAIN=1 set, whatever — reads and writes a throwaway
+ * `genesis-tools-test` item and can never touch the real master key. This is
+ * deliberately a SECOND, independent mechanism next to the os-keyring rung's
+ * under-test block and the @napi-rs/keyring preload mock: any one of the three
+ * alone is sufficient.
+ */
+export function keychainService(): string {
+    return env.get("NODE_ENV") === "test" ? `${KEYCHAIN_SERVICE}-test` : KEYCHAIN_SERVICE;
+}
 
 export const MASTER_KEY_BYTES = 32;
 

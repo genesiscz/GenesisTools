@@ -23,6 +23,7 @@ minimumReleaseAgeExcludes = [
 [test]
 preload = [
     "./src/utils/bun/preload-test-sandbox.ts",
+    "./src/utils/bun/preload-test-keyring.ts",
     "./src/utils/bun/preload-test-process-exit.ts",
     "./src/indexer/lib/test-cleanup-preload.ts",
 ]

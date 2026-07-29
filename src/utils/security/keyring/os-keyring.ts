@@ -1,7 +1,7 @@
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { Entry } from "@napi-rs/keyring";
-import { decodeMasterKey, KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, type MasterKeyProvider } from "./types";
+import { decodeMasterKey, KEYCHAIN_ACCOUNT, keychainService, type MasterKeyProvider } from "./types";
 
 /**
  * The OS keychain is MACHINE-GLOBAL state: it ignores GENESIS_TOOLS_HOME, so a
@@ -68,11 +68,11 @@ class OsKeyring implements MasterKeyProvider {
         }
 
         this.entry().setPassword(key.toString("base64"));
-        logger.info({ service: KEYCHAIN_SERVICE, account: KEYCHAIN_ACCOUNT }, "stored vault master key in OS keyring");
+        logger.info({ service: keychainService(), account: KEYCHAIN_ACCOUNT }, "stored vault master key in OS keyring");
     }
 
     private entry(): Entry {
-        return new Entry(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+        return new Entry(keychainService(), KEYCHAIN_ACCOUNT);
     }
 }
 

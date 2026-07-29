@@ -148,6 +148,11 @@ reportGates();
 const proc = Bun.spawn(["bun", "test", ...process.argv.slice(2)], {
     cwd: ROOT,
     stdio: ["inherit", "inherit", "inherit"],
+    // Force NODE_ENV=test even when the caller's shell exports something else:
+    // two of the keychain safety layers (os-keyring's under-test block and the
+    // keychainService() sandboxed item name) key off it, and they must hold in
+    // subprocesses tests spawn, which inherit this env.
+    env: { ...process.env, NODE_ENV: "test" },
 });
 
 process.exit(await proc.exited);
