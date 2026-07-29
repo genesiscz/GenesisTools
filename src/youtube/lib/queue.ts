@@ -326,11 +326,16 @@ export class QueueService {
 
         // A foreign id is treated exactly as a missing one, matching `get`/`cancel`:
         // waiting on someone else's job would otherwise return their row on completion.
-        if (immediate && !actorOwnsJob(immediate, opts.actor)) {
+        //
+        // A missing row is terminal here for the same reason the poll below says so.
+        // Checking ownership only against this first lookup and then waiting left a
+        // window: an id with no row yet would start the listeners, and a job created
+        // afterwards with that id resolved unchecked.
+        if (!immediate || !actorOwnsJob(immediate, opts.actor)) {
             throw new Error(`Job ${jobId} no longer exists`);
         }
 
-        if (immediate && isFinalJobStatus(immediate.status)) {
+        if (isFinalJobStatus(immediate.status)) {
             return immediate;
         }
 
@@ -352,6 +357,9 @@ export class QueueService {
                     dispose();
                 }
             };
+            // Ownership is re-asserted at every resolution, not just on the lookup
+            // above, so the boundary holds even if a future change reopens the window
+            // that let an unowned row reach a caller.
             const resolveOnce = (job: PipelineJob) => {
                 if (settled) {
                     return;
@@ -359,6 +367,13 @@ export class QueueService {
 
                 settled = true;
                 cleanup();
+
+                if (!actorOwnsJob(job, opts.actor)) {
+                    reject(new Error(`Job ${jobId} no longer exists`));
+
+                    return;
+                }
+
                 resolve(job);
             };
             const rejectOnce = (error: Error) => {
