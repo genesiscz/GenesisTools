@@ -20,10 +20,11 @@ const program = new Command()
 
 interface SessionOptions {
     sessionCookie?: string;
+    csrfToken?: string;
 }
 
 async function resolveOrExplain(options: SessionOptions) {
-    const session = await resolveSession(options.sessionCookie);
+    const session = await resolveSession(options.sessionCookie, options.csrfToken);
 
     if (session) {
         log.debug({ source: session.source, envKey: session.envKey }, "using instagram session");
@@ -67,6 +68,7 @@ program
     .command("highlights <username>")
     .description("List highlight ids (anonymous) and titles (needs a session)")
     .option("-s, --session-cookie <cookie>", "Instagram sessionid cookie")
+    .option("--csrf-token <token>", "csrftoken that belongs WITH --session-cookie (not read from the env)")
     .option("--json", "Emit JSON instead of a table")
     .action(async (username: string, options: SessionOptions & { json?: boolean }) => {
         try {
@@ -123,6 +125,7 @@ program
     .command("stories <username>")
     .description("Fetch active stories (requires a session cookie)")
     .option("-s, --session-cookie <cookie>", "Instagram sessionid cookie")
+    .option("--csrf-token <token>", "csrftoken that belongs WITH --session-cookie (not read from the env)")
     .option("-d, --download [dir]", "Download the media")
     .option("--json", "Emit JSON instead of a table")
     .action(async (username: string, options: SessionOptions & { download?: string | boolean; json?: boolean }) => {
@@ -142,6 +145,7 @@ program
     .command("highlight <username> <highlightId>")
     .description("Fetch one highlight's media (requires a session cookie)")
     .option("-s, --session-cookie <cookie>", "Instagram sessionid cookie")
+    .option("--csrf-token <token>", "csrftoken that belongs WITH --session-cookie (not read from the env)")
     .option("-d, --download [dir]", "Download the media")
     .option("--json", "Emit JSON instead of a table")
     .action(
