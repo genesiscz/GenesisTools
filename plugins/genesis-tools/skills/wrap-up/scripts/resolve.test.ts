@@ -1,5 +1,5 @@
-import { describe, expect, it } from "bun:test";
-import { chmod, mkdtemp, readdir, stat, writeFile } from "node:fs/promises";
+import { afterEach, describe, expect, it } from "bun:test";
+import { chmod, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -273,8 +273,20 @@ describe("parseFlags", () => {
 });
 
 describe("writeAtomic", () => {
-    it("replaces the destination's contents", async () => {
+    const fixtures: string[] = [];
+
+    async function tempDir(): Promise<string> {
         const dir = await mkdtemp(join(tmpdir(), "wrapup-atomic-"));
+        fixtures.push(dir);
+        return dir;
+    }
+
+    afterEach(async () => {
+        await Promise.all(fixtures.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    });
+
+    it("replaces the destination's contents", async () => {
+        const dir = await tempDir();
         const target = join(dir, "doc.md");
         await writeFile(target, "old contents");
 
@@ -283,7 +295,7 @@ describe("writeAtomic", () => {
     });
 
     it("creates the file when it does not exist yet", async () => {
-        const dir = await mkdtemp(join(tmpdir(), "wrapup-atomic-"));
+        const dir = await tempDir();
         const target = join(dir, "fresh.md");
 
         await writeAtomic(target, "hello");
@@ -291,7 +303,7 @@ describe("writeAtomic", () => {
     });
 
     it("preserves a restrictive destination mode instead of widening it", async () => {
-        const dir = await mkdtemp(join(tmpdir(), "wrapup-atomic-"));
+        const dir = await tempDir();
         const target = join(dir, "private.json");
         await writeFile(target, "{}");
         await chmod(target, 0o600);
@@ -303,7 +315,7 @@ describe("writeAtomic", () => {
     });
 
     it("leaves no temp file behind", async () => {
-        const dir = await mkdtemp(join(tmpdir(), "wrapup-atomic-"));
+        const dir = await tempDir();
         const target = join(dir, "doc.md");
 
         await writeAtomic(target, "body");
@@ -311,14 +323,20 @@ describe("writeAtomic", () => {
     });
 
     it("cleans up the temp file when the rename fails", async () => {
-        const dir = await mkdtemp(join(tmpdir(), "wrapup-atomic-"));
-        // A directory as the destination makes rename() fail after the temp
-        // file has already been written.
+        const dir = await tempDir();
+        // rename() onto a NON-EMPTY directory fails, which is what drives the
+        // cleanup path after the temp file has already been written. Create the
+        // directory explicitly rather than leaning on Bun.write's implicit
+        // parent creation, so the setup states its own intent.
         const target = join(dir, "adir");
-        await Bun.write(join(target, "keep.txt"), "x");
+        await mkdir(target);
+        await writeFile(join(target, "keep.txt"), "x");
 
         await expect(writeAtomic(target, "body")).rejects.toThrow();
         expect((await readdir(dir)).filter((f) => f.includes(".tmp-"))).toEqual([]);
+        // The destination is untouched, which pins that the rejection came from
+        // the rename onto the directory and not from something incidental.
+        expect(await readdir(target)).toEqual(["keep.txt"]);
     });
 });
 
@@ -329,6 +347,14 @@ describe("sh", () => {
 
     it("returns empty string when the command exits non-zero", async () => {
         expect(await sh(["false"])).toBe("");
+    });
+
+    it("discards stdout when the command exits non-zero", async () => {
+        // `false` prints nothing, so it cannot tell whether stdout is being
+        // dropped or was simply empty. A failing command that DOES print is
+        // the case that matters: git can write to stdout and still fail, and
+        // passing that through would be read as a real toplevel or branch.
+        expect(await sh(["sh", "-c", "echo not-a-real-branch; exit 3"])).toBe("");
     });
 
     it("returns empty string instead of throwing when the binary is missing", async () => {
