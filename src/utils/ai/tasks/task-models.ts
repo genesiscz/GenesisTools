@@ -63,6 +63,34 @@ export function taskModelDefault(providerId: string, capability: Capability): st
     return STATIC_TASK_MODELS[providerId]?.[capability] ?? localDefault(providerId, capability);
 }
 
+/**
+ * A CLI's `--provider` / `--model` pair as one ModelRef.
+ *
+ * The pair does not map onto the ref grammar directly: there is no
+ * "provider, no model" form (core/model-ref.ts:48-53), so a lone `deepgram`
+ * parses as a BARE MODEL ID called "deepgram" and the request goes out asking
+ * Deepgram for a model of that name. Filling the model half from this table is
+ * what `--provider deepgram` has always meant — the same default
+ * `TranscriptionManager.getDefaultModelForProvider` picked.
+ */
+export function taskModelRef(
+    options: { provider?: string; model?: string } | undefined,
+    capability: Capability
+): string | undefined {
+    const { provider, model } = options ?? {};
+
+    if (provider && model) {
+        return `${provider}/${model}`;
+    }
+
+    if (provider) {
+        const fallback = taskModelDefault(provider, capability);
+        return fallback ? `${provider}/${fallback}` : provider;
+    }
+
+    return model;
+}
+
 /** Providers this table can name a model for — the input to availability fallback. */
 export function providersWithTaskModel(capability: Capability): string[] {
     const ids = new Set<string>();

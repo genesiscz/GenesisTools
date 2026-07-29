@@ -19,6 +19,7 @@ import type {
     TranscriptionSegment,
 } from "../types";
 import { resolveForTask } from "./resolve-task";
+import { taskModelRef } from "./task-models";
 
 const MAX_CLOUD_BYTES = 24 * 1024 * 1024;
 const RETRY_DELAY = rateLimitAwareDelay();
@@ -41,18 +42,6 @@ function shouldRetryTransient(error: unknown): boolean {
     }
 
     return true;
-}
-
-/**
- * `--provider deepgram --model nova-3` is `deepgram/nova-3`; a bare `--model` is
- * a bare ref; neither is `undefined`, which means "use the config default".
- */
-function modelRefFrom(options?: { provider?: string; model?: string }): string | undefined {
-    if (options?.provider && options.model) {
-        return `${options.provider}/${options.model}`;
-    }
-
-    return options?.provider ?? options?.model;
 }
 
 export class Transcriber {
@@ -85,7 +74,7 @@ export class Transcriber {
 
         const resolved = await resolveForTask({
             task: "transcribe",
-            model: modelRefFrom(options),
+            model: taskModelRef(options, "transcribe"),
             app: options?.app,
             needs: "transcription",
         });
