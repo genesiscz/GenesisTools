@@ -108,15 +108,17 @@ referer: https://app.timelyapp.com/558481/calendar/week`;
         expect(extractCookie(block)).toEqual({ cookie: COOKIE, source: "header-line" });
     });
 
-    test("a curl flag wins over a bare Cookie: line elsewhere in the same paste", () => {
-        // Both parse as cookie pairs, so only the source order decides. The whole token
-        // scan runs before any line scan, which is what makes this independent of where
-        // the stray line sits.
-        const both = `curl 'https://app.timelyapp.com/558481/x' -b 'from_b=1' \\
-  -H 'accept: application/json'
-Cookie: from_header_line=2`;
+    // Both halves parse as cookie pairs, so only source precedence decides the winner.
+    // Both orderings are asserted on purpose: with only the flag-first case a naive
+    // first-match parser would pass while still returning the line when it comes first.
+    const CURL_LINE = `curl 'https://app.timelyapp.com/558481/x' -b 'from_b=1' -H 'accept: application/json'`;
+    const STRAY_LINE = "Cookie: from_header_line=2";
 
-        expect(extractCookie(both)).toEqual({ cookie: "from_b=1", source: "curl-cookie-flag" });
+    test.each([
+        ["curl flag first", `${CURL_LINE}\n${STRAY_LINE}`],
+        ["stray Cookie: line first", `${STRAY_LINE}\n${CURL_LINE}`],
+    ])("a curl flag beats a bare Cookie: line in the same paste (%s)", (_name, pasted) => {
+        expect(extractCookie(pasted)).toEqual({ cookie: "from_b=1", source: "curl-cookie-flag" });
     });
 
     test("returns undefined for empty or unusable input", () => {
@@ -148,9 +150,10 @@ describe("shellTokens", () => {
     });
 
     test("an unclosed quote yields the rest as one token rather than dropping it", () => {
-        // A half-copied paste. Returning the partial value is deliberate: the login
-        // command probes it against Timely and refuses to save anything but a 200,
-        // so a truncated cookie is rejected there rather than silently stored.
+        // A half-copied paste. Returning the partial value is deliberate: it is
+        // probeAndSaveCookie that refuses to persist anything Timely does not answer
+        // 200 to, so a truncated cookie is rejected there rather than silently stored.
+        // That guarantee is pinned by cookie-probe.test.ts, not assumed here.
         expect(shellTokens("curl -b 'sess=abc")).toEqual(["curl", "-b", "sess=abc"]);
     });
 });
