@@ -1,5 +1,19 @@
 # AI Models, Providers & Embedding Knowledge Base
 
+> [!warning] Partly superseded by the 2026-07 AI rearchitecture
+> The **Provider Architecture** section below describes the PRE-campaign shape:
+> `AIProviderType`, `AICloudProvider`, and per-provider ambient env vars. That
+> layer is gone. Providers are now one folder each under
+> `src/utils/ai/providers/plugins/`, keys resolve through `resolveCredential`
+> (account first, declared env second), and models/pricing come from
+> `src/utils/ai/catalog/`.
+>
+> - To ADD a provider or a local model: `.claude/docs/ai-adding-providers.md`.
+> - For the layer map and the guards: the "AI subsystem" section of the root `CLAUDE.md`.
+>
+> The DarwinKit / CoreML / embedding notes further down are still accurate and
+> are why this document is kept rather than deleted.
+
 ## Provider Architecture
 
 ### Provider Types (`AIProviderType`)
