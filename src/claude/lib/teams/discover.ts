@@ -137,8 +137,9 @@ export function statusOf(opts: {
         return "not-logged-in";
     }
 
-    // Only a SUCCESSFUL scan turns "has a transcript but no live process" into
-    // dead. After a failed scan that inference is unsupported.
+    // A transcript proves the teammate ran, so missing from a process table we
+    // actually read means it exited. A table we failed to read has no absence to
+    // interpret.
     if (opts.transcript && !opts.scanFailed) {
         return "dead";
     }
