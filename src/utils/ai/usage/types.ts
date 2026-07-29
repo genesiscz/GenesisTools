@@ -1,3 +1,6 @@
+import type { LegacyFlatUsage } from "@genesiscz/utils/ask/usage-tokens";
+import type { LanguageModelUsage } from "ai";
+
 /**
  * One usage record, written by whoever spent the tokens.
  *
@@ -91,6 +94,20 @@ export interface UsageEventInput extends Omit<UsageEvent, "at" | "costUsd"> {
      * rather than inferred later.
      */
     costUsd?: number;
+    /**
+     * The provider's own usage object, when the emitter has one.
+     *
+     * Not stored — it exists so the derived cost can go through
+     * `calculateCallCostUsd`, which prices cache reads and cache writes at their
+     * own rates. Without it the fallback is the flat two-count estimate, which
+     * silently ignores cache pricing entirely.
+     *
+     * `inputTokens` above should still be the NON-CACHE input
+     * (`usageInputNoCacheTokens`), because ai@7's Anthropic provider folds cache
+     * tokens into its top-level `inputTokens` and totalling that field
+     * double-counts them.
+     */
+    usage?: LanguageModelUsage | LegacyFlatUsage;
 }
 
 /**

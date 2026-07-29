@@ -127,6 +127,40 @@ describe("coreChat → recordUsage", () => {
         expect(result.usage?.inputTokens).toBe(120);
     });
 
+    test("does not bill cached input twice, and keeps the cache counts in meta", async () => {
+        // ai@7's Anthropic provider reports total inputTokens INCLUDING cache.
+        // 1M total = 200k fresh + 600k cache-read + 200k cache-write.
+        const model = new MockLanguageModelV4({
+            doGenerate: async (): Promise<GenerateResult> => ({
+                content: [{ type: "text", text: "hello" }],
+                finishReason: STOP,
+                usage: {
+                    inputTokens: {
+                        total: 1_000_000,
+                        noCache: 200_000,
+                        cacheRead: 600_000,
+                        cacheWrite: 200_000,
+                    },
+                    outputTokens: { total: 0, text: 0, reasoning: undefined },
+                },
+                warnings: [],
+            }),
+        }) as unknown as LanguageModel;
+
+        await coreChat({ target: target({ model }), prompt: "hi" });
+
+        const events = queryUsage(todayWindow()).events;
+
+        // Billable input is the 200k fresh tokens, NOT the 1M total.
+        expect(events[0].inputTokens).toBe(200_000);
+        expect(events[0].meta).toMatchObject({ cacheReadTokens: 600_000, cacheWriteTokens: 200_000 });
+
+        // claude-opus-4-1: $15/1M in, $1.50/1M cache read, $18.75/1M cache write.
+        // 0.2*15 + 0.6*1.5 + 0.2*18.75 = 3 + 0.9 + 3.75 = 7.65.
+        // Billing the raw 1M total at the input rate would have said $15+.
+        expect(events[0].costUsd).toBeCloseTo(7.65, 6);
+    });
+
     test("records nothing when the provider reported no usage", async () => {
         await coreChat({
             target: target({ model: mockModel({ input: undefined, output: undefined }) }),

@@ -1,5 +1,10 @@
 import type { ProviderChoice } from "@genesiscz/utils/ask/types";
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
+import {
+    usageCacheReadTokens,
+    usageCacheWriteTokens,
+    usageInputNoCacheTokens,
+} from "@genesiscz/utils/ask/usage-tokens";
 import { applySystemPromptPrefix } from "@genesiscz/utils/claude/subscription-billing";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -267,13 +272,25 @@ function logUsage(target: CallTarget, usage: LanguageModelUsage | undefined): vo
 
     log.debug({ model: target.label, usage }, "call usage");
 
+    const cacheRead = usageCacheReadTokens(usage);
+    const cacheWrite = usageCacheWriteTokens(usage);
+
     void recordUsage({
         app: target.app ?? "ai-core",
         accountId: target.accountId ?? "unknown",
         provider: target.provider ?? target.providerType ?? "unknown",
         modelId: target.modelId ?? target.label,
-        inputTokens: usage.inputTokens ?? 0,
+        // NOT `usage.inputTokens`: ai@7's Anthropic provider folds cache tokens
+        // into that field, so recording it as billable input charges every cached
+        // token twice — once at the full rate here and once at the cache rate.
+        inputTokens: usageInputNoCacheTokens(usage),
         outputTokens: usage.outputTokens ?? 0,
+        // The frozen event shape has no cache columns, so the counts ride in
+        // `meta` while `usage` (unstored) lets the cost use the real cache rates.
+        usage,
+        ...(cacheRead > 0 || cacheWrite > 0
+            ? { meta: { cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite } }
+            : {}),
     });
 }
 

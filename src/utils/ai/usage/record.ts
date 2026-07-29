@@ -4,7 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { effectivePricing } from "../catalog/pricing";
 import { byId } from "../catalog/static";
 import type { ModelPricing } from "../catalog/types";
-import { estimateLlmCallCostUsd } from "../llm-cost";
+import { calculateCallCostUsd, estimateLlmCallCostUsd } from "../llm-cost";
 import { dayFilePath, usageDir, utcDayOf } from "./paths";
 import type { UsageEvent, UsageEventInput } from "./types";
 
@@ -59,7 +59,7 @@ export async function recordUsage(input: UsageEventInput): Promise<UsageEvent> {
     // is append-only, so the distinction has to be recorded at write time or
     // never.
     const supplied = input.costUsd;
-    const costUsd = supplied ?? deriveCostUsd(event);
+    const costUsd = supplied ?? deriveCostUsd(event, input.usage);
 
     if (costUsd !== undefined) {
         event.costUsd = costUsd;
@@ -99,12 +99,15 @@ function toDate(at: UsageEventInput["at"]): Date {
  * single call. A caller that wants the fuller ladder resolves it itself and
  * passes `costUsd`.
  *
- * No rates and no second cost formula live here: `byId` owns the data,
- * `effectivePricing` resolves dated and context-banded rules, and
- * `estimateLlmCallCostUsd` is the arithmetic. `undefined` means no rate is
- * known, which is stored as an ABSENT cost rather than zero.
+ * No rates and no cost formula live here: `byId` owns the data,
+ * `effectivePricing` resolves dated and context-banded rules, and the
+ * arithmetic is `llm-cost.ts`'s — `calculateCallCostUsd` when the emitter hands
+ * over the provider's usage object (it prices cache reads and writes at their
+ * own rates), the flat `estimateLlmCallCostUsd` when it does not.
+ * `undefined` means no rate is known, which is stored as an ABSENT cost rather
+ * than zero.
  */
-function deriveCostUsd(event: UsageEvent): number | undefined {
+function deriveCostUsd(event: UsageEvent, usage: UsageEventInput["usage"]): number | undefined {
     const rates = catalogPricing(event.provider, event.modelId);
 
     if (!rates) {
@@ -115,6 +118,10 @@ function deriveCostUsd(event: UsageEvent): number | undefined {
         at: new Date(event.at),
         contextTokens: event.inputTokens,
     });
+
+    if (usage) {
+        return calculateCallCostUsd(resolved, usage) ?? undefined;
+    }
 
     return (
         estimateLlmCallCostUsd({
