@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    readdirSync,
+    renameSync,
+    statSync,
+    unlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -16,8 +25,14 @@ export type TTLString = string;
 /**
  * Write data to a file atomically via write-to-sibling-tmp + renameSync.
  * Safe under concurrent writers — each gets a unique tmp name and rename is atomic on POSIX.
+ *
+ * `mode` applies from the temp file's birth, so a file holding secrets is never
+ * briefly published at the umask default: the rename carries the restricted mode
+ * with it. Chmod'ing after the rename cannot close that window, and `writeFileSync`'s
+ * own `mode` is masked by umask (umask 0600 yields a 000 file), so it is re-applied
+ * to the temp file before it becomes visible under the real name.
  */
-export function atomicWriteFileSync(filePath: string, data: string): void {
+export function atomicWriteFileSync(filePath: string, data: string, options?: { mode?: number }): void {
     const dir = dirname(filePath);
 
     if (!existsSync(dir)) {
@@ -25,7 +40,11 @@ export function atomicWriteFileSync(filePath: string, data: string): void {
     }
 
     const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync(tmp, data);
+    writeFileSync(tmp, data, options?.mode === undefined ? undefined : { mode: options.mode });
+
+    if (options?.mode !== undefined) {
+        chmodSync(tmp, options.mode);
+    }
 
     try {
         renameSync(tmp, filePath);
@@ -194,9 +213,9 @@ export class Storage {
      * Set the entire config object
      * @param config - The config object to save
      */
-    async setConfig<T extends object>(config: T): Promise<void> {
+    async setConfig<T extends object>(config: T, options?: { mode?: number }): Promise<void> {
         await this.ensureDirs();
-        this.atomicWrite(this.configPath, SafeJSON.stringify(config, null, 2));
+        this.atomicWrite(this.configPath, SafeJSON.stringify(config, null, 2), options);
         logger.debug(`Config saved`);
     }
 
@@ -422,8 +441,8 @@ export class Storage {
     // Safe I/O
     // ============================================
 
-    private atomicWrite(filePath: string, data: string): void {
-        atomicWriteFileSync(filePath, data);
+    private atomicWrite(filePath: string, data: string, options?: { mode?: number }): void {
+        atomicWriteFileSync(filePath, data, options);
     }
 
     // ============================================
