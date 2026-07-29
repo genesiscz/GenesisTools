@@ -161,6 +161,12 @@ export const env = {
         getHome: () => getTrimmed("GENESIS_TOOLS_HOME") ?? homedir(),
         /** True only when GENESIS_TOOLS_HOME is actually set (a sandboxed root). */
         hasExplicitHome: () => isNonEmpty("GENESIS_TOOLS_HOME"),
+        /**
+         * Opt out of the worktree migration guard for the deliberate post-merge
+         * run. Read through the facade so `env.testing` overrides are seen; a
+         * direct `process.env` read in the guard was invisible to them.
+         */
+        allowsRealMigration: () => getTrimmed("GENESIS_TOOLS_ALLOW_REAL_MIGRATION") === "1",
         getHomeEnvKey: () => (isNonEmpty("GENESIS_TOOLS_HOME") ? "GENESIS_TOOLS_HOME" : undefined),
         getPath: () => getTrimmed("GENESIS_TOOLS_PATH"),
         getRoot: () => getTrimmed("GENESIS_TOOLS_ROOT"),

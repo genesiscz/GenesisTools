@@ -1,5 +1,7 @@
 import { runMigrations } from "@genesiscz/utils/config/migration";
 import { migrateAI } from "@genesiscz/utils/config/migrations/2026-04-07-migrateAI";
+import { logger } from "@genesiscz/utils/logger";
+import { migrationAllowedHere } from "./migration-guard";
 import { migrateConfigV4 } from "./migrations/2026-08-configV4";
 import { migrateSecretsToVault } from "./migrations/2026-08-secretsToVault";
 
@@ -29,13 +31,47 @@ import { migrateSecretsToVault } from "./migrations/2026-08-secretsToVault";
  */
 let migrated = false;
 
+const CHAIN = [migrateAI, migrateConfigV4, migrateSecretsToVault];
+
 export async function ensureAiConfigMigrated(): Promise<void> {
     if (migrated) {
         return;
     }
 
-    await runMigrations([migrateAI, migrateConfigV4, migrateSecretsToVault]);
-    migrated = true;
+    // The guard is applied to the WHOLE chain, not just to the members that
+    // carry it themselves. `migrateAI` has no gate of its own, so a worktree
+    // build reading a real v1/v2 config would rewrite it to v3 and only then hit
+    // the guarded v4 step, which is exactly the write this guard exists to
+    // refuse. Each migration keeps its own gate as well: two independent checks
+    // are what stop a bug in one from reaching the user's real file.
+    if (!migrationAllowedHere()) {
+        migrated = true;
+        return;
+    }
+
+    await runMigrations(CHAIN);
+
+    // `runMigrations` logs a failing migration, stops the chain and resolves
+    // normally, so nothing it returns distinguishes "all done" from "step two
+    // threw". Latching the process guard on that left a half-migrated config
+    // (plaintext credentials still in the file) with every later load in this
+    // process skipping the retry. Re-asking each migration costs a stat apiece.
+    migrated = !(await chainStillPending());
+}
+
+async function chainStillPending(): Promise<boolean> {
+    for (const migration of CHAIN) {
+        try {
+            if (await migration.shouldRun()) {
+                return true;
+            }
+        } catch (err) {
+            logger.debug({ err, migration: migration.id }, "shouldRun threw while confirming the chain finished");
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /** Test seam: the chain is process-scoped, and tests switch config roots. */

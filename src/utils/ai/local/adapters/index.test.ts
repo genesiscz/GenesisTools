@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { EmbeddingModel } from "ai";
 import type { AccountEntry } from "../../config/schema";
 import type { ProviderPlugin } from "../../providers/plugin-types";
@@ -27,6 +28,38 @@ function describeModel(model: EmbeddingModel | undefined): { modelId: string; pr
     }
 
     return { modelId: model.modelId, provider: model.provider };
+}
+
+/**
+ * Drive one real embed through the binding and report the URL it called.
+ *
+ * Asserting on the URL rather than reading a field is the point: `baseUrl` is
+ * private to the runtime, and what matters is where the request actually goes.
+ */
+async function embedTarget(model: EmbeddingModel | undefined): Promise<string> {
+    if (!model || typeof model === "string") {
+        throw new Error("expected an embedding model object");
+    }
+
+    const original = globalThis.fetch;
+    let called = "";
+
+    globalThis.fetch = (async (input: string | URL | Request) => {
+        called = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+        return new Response(SafeJSON.stringify({ embeddings: [[0.1, 0.2]] }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+        });
+    }) as typeof fetch;
+
+    try {
+        await model.doEmbed({ values: ["hello"] });
+    } finally {
+        globalThis.fetch = original;
+    }
+
+    return called;
 }
 
 function plugin(id: string): ProviderPlugin {
@@ -78,6 +111,59 @@ describe("local provider plugins", () => {
 
         expect(() => binding.language("anything")).toThrow(/coreml has no chat model/);
         expect(() => binding.language("anything")).toThrow(/embed/);
+    });
+
+    /**
+     * Capability-based selection routes a task to a plugin and then asks the
+     * binding for the model. Declaring a verb the binding cannot serve therefore
+     * turns "pick a provider" into a throw at the point of use, so every declared
+     * capability must have a matching accessor on the binding.
+     */
+    test("no plugin declares a capability its binding cannot serve", async () => {
+        const accessorFor: Record<string, (b: Awaited<ReturnType<ProviderPlugin["bind"]>>) => unknown> = {
+            embed: (b) => b.embedding,
+            transcribe: (b) => b.transcription,
+            tts: (b) => b.speech,
+        };
+
+        for (const candidate of localPlugins) {
+            const binding = await candidate.bind({ account: account(candidate.id) });
+
+            for (const capability of candidate.capabilities) {
+                const accessor = accessorFor[capability];
+
+                // `classify`/`sentiment` are served off the runtime directly, not
+                // through a binding accessor, so they have nothing to check here.
+                if (accessor) {
+                    expect(accessor(binding)).toBeDefined();
+                }
+
+                // Whatever the capability, it must not be one that needs the
+                // language accessor, because no local runtime has one yet.
+                expect(["summarize", "translate", "chat"]).not.toContain(capability);
+            }
+
+            binding.dispose?.();
+        }
+    });
+
+    test("an ollama account reaches its own endpoint, not the localhost default", async () => {
+        const remote = { ...account("ollama"), endpoint: "http://ollama.lan:11434" };
+        const binding = await plugin("ollama").bind({ account: remote });
+        const model = binding.embedding?.("nomic-embed-text");
+
+        expect(describeModel(model)).toEqual({ modelId: "nomic-embed-text", provider: "ollama" });
+        expect(await embedTarget(model)).toBe("http://ollama.lan:11434/api/embed");
+
+        binding.dispose?.();
+    });
+
+    test("an ollama account with no endpoint keeps the localhost default", async () => {
+        const binding = await plugin("ollama").bind({ account: account("ollama") });
+
+        expect(await embedTarget(binding.embedding?.("nomic-embed-text"))).toBe("http://localhost:11434/api/embed");
+
+        binding.dispose?.();
     });
 
     test("macos declares tts and nothing else, and has no embedder", async () => {
