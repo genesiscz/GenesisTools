@@ -41,13 +41,20 @@ export IG_CSRFTOKEN="<csrftoken cookie>"      # optional but recommended, see be
 
 Resolution order: `--session-cookie` flag → `IG_SESSIONID` / `INSTAGRAM_SESSIONID` → the variable named by `tools instagram session --use-env NAME`. Any of them accepts a bare value or a whole pasted `csrftoken=…; sessionid=…` string.
 
-Instagram expects the `x-csrftoken` header to match the `csrftoken` cookie. A mismatch is a fingerprint signal that triggers enforcement independently of request volume, so supply `IG_CSRFTOKEN` (or paste the full cookie string) when you can — the client warns on every request that goes out without it.
+Instagram pairs the `csrftoken` cookie with the `sessionid` it was issued alongside, and expects the `x-csrftoken` header to carry the same value. So a csrftoken has to travel *with its own* session:
+
+- `IG_SESSIONID` + `IG_CSRFTOKEN` are treated as a pair, since both come from the environment together.
+- `--session-cookie` does **not** borrow `IG_CSRFTOKEN`. The flag exists to override the environment's session, and attaching that session's token to a different cookie would manufacture exactly the mismatch this warns about. Paste the full cookie string, or pass `--csrf-token` to supply one that belongs with it.
+
+The client logs a warning on every request that goes out with no csrftoken at all.
 
 > **Use a throwaway account.** Reading stories this way violates Instagram's ToS, and it puts you in the story's viewer list exactly as the app would.
 
 ## Rate limiting
 
-Proactive, not reactive: a **75-request / 11-minute** budget with instaloader's per-request jitter (`min(expovariate(0.6), 15)` seconds), taken from `instaloader/instaloadercontext.py`. A budget refuses the request *before* it is sent, so the account never accrues the strike — unlike a flat delay plus backoff-on-429, which only tells you that you were too fast after Instagram has already counted it.
+Proactive, not reactive: a **75-request / 11-minute** budget with instaloader's per-request jitter (`min(expovariate(0.6), 15)` seconds), taken from `instaloader/instaloadercontext.py`. A budget refuses the request *before* it is sent, so that request never becomes a strike — unlike a flat delay plus backoff-on-429, which only tells you that you were too fast after Instagram has already counted it.
+
+> ⚠️ **The budget is per process and is not persisted.** `tools` runs each invocation in its own process, so ten commands in a row each start with a full 75, and back-to-back runs can exceed the window that any single run respects. Treat it as an invocation-local throttle, not an account-wide guarantee. Making it account-wide needs the timestamps in the tool's storage dir behind an inter-process lock.
 
 Media downloads run sequentially for the same reason. They go to the pre-signed CDN with no cookie attached, but they share the egress IP, and a burst is the cheapest way to earn an IP-level block.
 
