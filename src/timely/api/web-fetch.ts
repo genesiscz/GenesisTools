@@ -1,4 +1,6 @@
 import { webSessionHeaders } from "@app/timely/utils/cookie";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { TimelyHttpError, type TimelyRequestScope } from "./errors";
 
 /** Without a deadline a stalled app.timelyapp.com leaves the CLI waiting forever with no output. */
@@ -32,14 +34,30 @@ export async function fetchTimelyWebJson(options: TimelyWebJsonOptions): Promise
         signal: AbortSignal.timeout(options.timeoutMs ?? WEB_REQUEST_TIMEOUT_MS),
     });
 
+    const body = await response.text();
+
     if (!response.ok) {
-        const body = (await response.text()).slice(0, 200);
-        throw new TimelyHttpError(`${label} failed (${response.status}): ${body}`, {
+        throw new TimelyHttpError(`${label} failed (${response.status}): ${body.slice(0, 200)}`, {
             status: response.status,
             scope,
             usedCookie: Boolean(cookie),
         });
     }
 
-    return response.json();
+    try {
+        // Strict, so a remote body is held to real JSON rather than this repo's
+        // comment/trailing-comma tolerance.
+        return SafeJSON.parse(body, { strict: true });
+    } catch (err) {
+        // A 200 carrying HTML is how a web host serves a sign-in page, so the body is
+        // the only clue the caller gets. Keep the real status rather than inventing a
+        // 401: this stays a plain request failure, but one that names the surface and
+        // shows the body, instead of a bare SyntaxError from deep inside fetch.
+        logger.debug({ err, url, scope }, "Timely returned a body that is not JSON");
+        throw new TimelyHttpError(`${label} returned a non-JSON body (${response.status}): ${body.slice(0, 200)}`, {
+            status: response.status,
+            scope,
+            usedCookie: Boolean(cookie),
+        });
+    }
 }

@@ -60,6 +60,16 @@ describe("fetchTimelyWebJson", () => {
         }
     });
 
+    test("a 200 carrying HTML rather than JSON becomes a TimelyHttpError, not a bare SyntaxError", async () => {
+        stubFetch(async () => new Response("<!DOCTYPE html><title>Sign in to Timely</title>", { status: 200 }));
+
+        const promise = fetchTimelyWebJson(options({ cookie: "_memory_session=stale" }));
+
+        await expect(promise).rejects.toThrow(TimelyHttpError);
+        await expect(promise).rejects.toMatchObject({ status: 200, scope: "memories", usedCookie: true });
+        await expect(promise).rejects.toThrow("returned a non-JSON body (200)");
+    });
+
     test("the request carries an abort signal, so a stalled host cannot hang the CLI", async () => {
         let signal: AbortSignal | null | undefined;
         stubFetch(async (_input, init) => {
