@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { chmod, mkdtemp, readdir, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
     blockquote,
     buildLogBody,
@@ -11,6 +14,7 @@ import {
     sh,
     slug,
     splitSentinels,
+    writeAtomic,
 } from "./resolve.ts";
 
 const HERE_START = "<!-- YOU-ARE-HERE:START -->";
@@ -265,6 +269,56 @@ describe("parseFlags", () => {
 
     it("ignores positional noise", () => {
         expect(parseFlags(["stray", "--branch", "feat/x"])).toEqual({ branch: "feat/x" });
+    });
+});
+
+describe("writeAtomic", () => {
+    it("replaces the destination's contents", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "wrapup-atomic-"));
+        const target = join(dir, "doc.md");
+        await writeFile(target, "old contents");
+
+        await writeAtomic(target, "new contents");
+        expect(await Bun.file(target).text()).toBe("new contents");
+    });
+
+    it("creates the file when it does not exist yet", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "wrapup-atomic-"));
+        const target = join(dir, "fresh.md");
+
+        await writeAtomic(target, "hello");
+        expect(await Bun.file(target).text()).toBe("hello");
+    });
+
+    it("preserves a restrictive destination mode instead of widening it", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "wrapup-atomic-"));
+        const target = join(dir, "private.json");
+        await writeFile(target, "{}");
+        await chmod(target, 0o600);
+
+        await writeAtomic(target, '{"entries":[]}');
+        // rename() installs a new inode; without carrying the mode over this
+        // would come back as the umask default (commonly 0644).
+        expect((await stat(target)).mode & 0o777).toBe(0o600);
+    });
+
+    it("leaves no temp file behind", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "wrapup-atomic-"));
+        const target = join(dir, "doc.md");
+
+        await writeAtomic(target, "body");
+        expect((await readdir(dir)).filter((f) => f.includes(".tmp-"))).toEqual([]);
+    });
+
+    it("cleans up the temp file when the rename fails", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "wrapup-atomic-"));
+        // A directory as the destination makes rename() fail after the temp
+        // file has already been written.
+        const target = join(dir, "adir");
+        await Bun.write(join(target, "keep.txt"), "x");
+
+        await expect(writeAtomic(target, "body")).rejects.toThrow();
+        expect((await readdir(dir)).filter((f) => f.includes(".tmp-"))).toEqual([]);
     });
 });
 
