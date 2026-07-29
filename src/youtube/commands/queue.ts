@@ -58,6 +58,24 @@ interface WatchOpts {
     noChildren?: boolean;
 }
 
+/**
+ * A positive integer from a CLI argument, or null when it isn't one.
+ *
+ * `Number.parseInt` is too permissive for every one of these: it reads `"12abc"` as
+ * `12` and a bare word as `NaN`, and the NaN then reaches a SQLite `LIMIT ?` or
+ * silently disables a timeout (`Date.now() - startedAt >= NaN` is never true)
+ * rather than failing where the user can see it.
+ */
+function positiveInt(value: string): number | null {
+    if (!/^\d+$/.test(value.trim())) {
+        return null;
+    }
+
+    const parsed = Number.parseInt(value, 10);
+
+    return parsed > 0 ? parsed : null;
+}
+
 function jobRows(jobs: PipelineJob[]): string {
     return renderColumns({
         rows: jobs,
@@ -159,10 +177,18 @@ export function registerQueueCommand(program: Command): void {
                 return;
             }
 
+            const limit = positiveInt(opts.limit);
+
+            if (limit === null) {
+                out.error(`--limit must be a positive whole number, got "${opts.limit}".`);
+                process.exitCode = 1;
+                return;
+            }
+
             const jobs = yt.queue.list({
                 ...(status ? { status } : {}),
                 ...(opts.target ? { target: opts.target } : {}),
-                limit: Number.parseInt(opts.limit, 10),
+                limit,
                 redact: true,
                 actor: CLI_ACTOR,
             });
@@ -177,7 +203,14 @@ export function registerQueueCommand(program: Command): void {
         .option("--json", "Machine-readable output")
         .action(async (id: string, opts: ShowOpts, cmd: Command) => {
             const yt = await getYoutube();
-            const jobId = Number.parseInt(id, 10);
+            const jobId = positiveInt(id);
+
+            if (jobId === null) {
+                out.error(`Not a job id: "${id}".`);
+                process.exitCode = 1;
+                return;
+            }
+
             const found = yt.queue.get(jobId, { redact: true, actor: CLI_ACTOR });
 
             if (!found) {
@@ -213,7 +246,7 @@ export function registerQueueCommand(program: Command): void {
             // Strict, because dropping an unparseable id silently widens the command:
             // with no ids left, `watch` means "every active job", so `queue watch typo`
             // would quietly stream the whole queue instead of failing.
-            const invalid = ids.filter((id) => !/^\d+$/.test(id.trim()));
+            const invalid = ids.filter((id) => positiveInt(id) === null);
 
             if (invalid.length > 0) {
                 out.error(`Not a job id: ${invalid.join(", ")}. Pass numeric ids, or none to watch everything active.`);
@@ -222,12 +255,21 @@ export function registerQueueCommand(program: Command): void {
             }
 
             const jobIds = ids.map((id) => Number.parseInt(id, 10));
+            const timeoutSec = opts.timeout === undefined ? null : positiveInt(opts.timeout);
+
+            if (opts.timeout !== undefined && timeoutSec === null) {
+                // Silently dropping this disabled the safety timeout entirely, which
+                // is the opposite of what the flag was reached for.
+                out.error(`--timeout must be a positive whole number of seconds, got "${opts.timeout}".`);
+                process.exitCode = 1;
+                return;
+            }
 
             for await (const event of yt.queue.watch({
                 actor: CLI_ACTOR,
                 ...(jobIds.length > 0 ? { jobIds } : {}),
                 followChildren: opts.noChildren !== true,
-                ...(opts.timeout ? { timeoutMs: Number.parseInt(opts.timeout, 10) * 1000 } : {}),
+                ...(timeoutSec === null ? {} : { timeoutMs: timeoutSec * 1000 }),
             })) {
                 // stdout, because `--jsonl` output is meant to be piped.
                 process.stdout.write(`${watchLine(event, opts.jsonl === true)}\n`);
@@ -239,7 +281,15 @@ export function registerQueueCommand(program: Command): void {
         .description("Cancel a pending or running job")
         .action(async (id: string) => {
             const yt = await getYoutube();
-            const job = yt.queue.cancel(Number.parseInt(id, 10), CLI_ACTOR);
+            const jobId = positiveInt(id);
+
+            if (jobId === null) {
+                out.error(`Not a job id: "${id}".`);
+                process.exitCode = 1;
+                return;
+            }
+
+            const job = yt.queue.cancel(jobId, CLI_ACTOR);
 
             if (!job) {
                 out.error(`Job ${id} not found or already finished.`);
