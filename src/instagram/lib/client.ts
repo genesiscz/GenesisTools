@@ -225,12 +225,18 @@ function classify({ status, body, parsed, authMode }: ClassifyInput): Classifica
  * pointed at, so the destination is a credential boundary, not a convenience. An
  * absolute path from a caller (or a future redirect-following change) would
  * otherwise hand a live session to an arbitrary host, and an `http://` one would
- * put it on the wire in plaintext. Exact host match rather than a suffix test:
+ * put it on the wire in plaintext. Exact origin match rather than a suffix test:
  * the module's stated invariant is the WEB surface only, and `i.instagram.com`
  * is deliberately absent — adding the mobile surface should be a decision, not
  * something a wildcard grants silently.
+ *
+ * Compared as a full ORIGIN (scheme + host + port), not a hostname, because
+ * `URL.hostname` drops the port: `https://www.instagram.com:4443/` is a
+ * different origin that a hostname test waves through. Origin also subsumes the
+ * scheme check, since `http://www.instagram.com` is its own origin. A default
+ * `:443` normalises away, so the legitimate spelling is not rejected.
  */
-const ALLOWED_HOSTS: ReadonlySet<string> = new Set(["www.instagram.com"]);
+const ALLOWED_ORIGINS: ReadonlySet<string> = new Set([new URL(WEB_BASE).origin]);
 
 function resolveUrl(path: string, label: string): URL {
     let url: URL;
@@ -244,9 +250,17 @@ function resolveUrl(path: string, label: string): URL {
         throw new InstagramError("network", `${label} has an unusable request path`);
     }
 
-    if (url.protocol !== "https:" || !ALLOWED_HOSTS.has(url.hostname)) {
+    if (!ALLOWED_ORIGINS.has(url.origin)) {
         log.warn({ label, origin: url.origin }, "refusing to attach credentials to a non-Instagram origin");
         throw new InstagramError("network", `${label} targeted ${url.origin}, which is not the Instagram web origin`);
+    }
+
+    // Userinfo survives the origin check — `https://evil:pw@www.instagram.com/`
+    // has origin `https://www.instagram.com` — and `fetch` turns it into an
+    // Authorization header. Nothing here should ever carry one.
+    if (url.username !== "" || url.password !== "") {
+        log.warn({ label, origin: url.origin }, "refusing a request url carrying userinfo");
+        throw new InstagramError("network", `${label} carried credentials in the URL, which this client never sends`);
     }
 
     return url;
