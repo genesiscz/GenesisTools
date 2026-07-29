@@ -220,6 +220,27 @@ describe("marker scanning is gated on a failure envelope", () => {
     });
 });
 
+describe("www-claim isolation between auth modes", () => {
+    test("never replays the session's claim on a later anonymous request", async () => {
+        // The claim is minted against the caller Instagram answered. Echoing the
+        // logged-in one anonymously links the two, which is the whole leak the
+        // anonymous endpoints refuse a sessionId parameter to prevent.
+        __clientTesting.resetWwwClaim();
+        const seen: Array<Record<string, string>> = [];
+        globalThis.fetch = mock(async (_url: string, init?: RequestInit) => {
+            seen.push((init?.headers ?? {}) as Record<string, string>);
+            return new Response('{"ok":true}', { status: 200, headers: { "x-ig-set-www-claim": "hmac.SESSION" } });
+        }) as unknown as typeof fetch;
+
+        await getJson("/x", { label: "authed", sessionId: "abc" });
+        await getJson("/x", { label: "anon" });
+
+        expect(seen[1]["x-ig-www-claim"]).toBe("0");
+        expect(__clientTesting.currentWwwClaim("session")).toBe("hmac.SESSION");
+        __clientTesting.resetWwwClaim();
+    });
+});
+
 describe("please-wait throttle", () => {
     test("does not mistake the 401 + require_login throttle for an auth failure", async () => {
         // Encountered live on 2026-07-27 while developing this tool: Instagram
