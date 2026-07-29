@@ -12,6 +12,17 @@ import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 
+/** `no-transcript ×3, exists ×1` — the reasons, not just the count. */
+function summariseSkipped(skipped: Array<{ reason: string }>): string {
+    const counts = new Map<string, number>();
+
+    for (const entry of skipped) {
+        counts.set(entry.reason, (counts.get(entry.reason) ?? 0) + 1);
+    }
+
+    return [...counts.entries()].map(([reason, count]) => `${reason} ×${count}`).join(", ");
+}
+
 /**
  * Move transcripts between the database and a directory of files.
  *
@@ -76,7 +87,14 @@ export function registerTranscriptsCommand(program: Command): void {
                 ],
             });
 
-            await renderOrEmit({ text, json: result, flags: cmd.optsWithGlobals() });
+            // Without this a run where everything was skipped printed only
+            // "(nothing exported)", with the reasons sitting unread in `result`.
+            const summary =
+                result.skipped.length > 0
+                    ? `${text}\n${pc.dim(`${result.skipped.length} skipped: ${summariseSkipped(result.skipped)}`)}`
+                    : text;
+
+            await renderOrEmit({ text: summary, json: result, flags: cmd.optsWithGlobals() });
         });
 
     transcripts

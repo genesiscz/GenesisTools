@@ -313,7 +313,10 @@ interface ParsedExport {
 }
 
 export function parseExportJson(raw: string): ParsedExport | null {
-    const parsed = SafeJSON.parse(raw, { unbox: true }) as Partial<TranscriptExportJson> | undefined;
+    // Strict: an exported transcript is a machine-written file being read back, not
+    // a hand-edited config, so comments and trailing commas are corruption rather
+    // than convenience. (`unbox` is a no-op under strict mode, hence dropped.)
+    const parsed = SafeJSON.parse(raw, { strict: true }) as Partial<TranscriptExportJson> | undefined;
 
     if (!parsed || typeof parsed.videoId !== "string" || typeof parsed.text !== "string") {
         return null;

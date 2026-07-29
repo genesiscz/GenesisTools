@@ -70,6 +70,14 @@ describe("parseExportJson segment validation", () => {
         expect(parsed?.segments).toEqual([{ text: "ok", start: 0, end: 1, speaker: 0 }]);
     });
 
+    // These files are written by `transcripts export`, so comments and trailing
+    // commas mean the file was corrupted or hand-edited, not that it is convenient
+    // JSON5 — strict parsing rejects rather than silently importing.
+    it("rejects comment-json extensions in an exported file", () => {
+        expect(() => parseExportJson('{"videoId":"abc123def45","text":"a","segments":[],}')).toThrow();
+        expect(() => parseExportJson('{"videoId":"abc123def45","text":"a", // note\n"segments":[]}')).toThrow();
+    });
+
     it("treats a zero-length segment as valid and a non-array as empty", () => {
         expect(parseExportJson(exportJson([{ text: "tick", start: 5, end: 5 }]))?.segments).toHaveLength(1);
         expect(parseExportJson(exportJson("nope"))?.segments).toEqual([]);
