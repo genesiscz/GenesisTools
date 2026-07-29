@@ -1,11 +1,14 @@
 import { playBuffer, playStream } from "@genesiscz/utils/audio/playback";
 import { isInteractive } from "@genesiscz/utils/cli/executor";
 import type { AIProviderType } from "@genesiscz/utils/config/ai.types";
-import { CLOUD_PROVIDER_TYPES } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
 import { AIConfig } from "../AIConfig";
-import { getProvidersForTask, getTextToSpeechProvider } from "../providers";
+import type { ModelRef } from "../core/model-ref";
+import { registerBuiltInPlugins } from "../providers/plugins";
+import { pluginsByCapability } from "../providers/registry";
+import { speechEngineFor, speechEngineIds } from "../providers/speech-engines";
 import type { AITextToSpeechProvider, TTSOptions, TTSResult, TTSVoice } from "../types";
+import { resolveForTask } from "./resolve-task";
 
 export type ProviderSelector = AIProviderType | "local" | "cloud" | "any";
 
@@ -16,6 +19,10 @@ export interface VoicesByProvider {
 export interface SynthesizerCreateOptions {
     provider?: ProviderSelector;
     persist?: boolean;
+    /** A ModelRef. Names a provider outright and switches the availability scan off. */
+    model?: ModelRef;
+    /** Tool name, for `defaults.app.<app>.tts`. */
+    app?: string;
 }
 
 export interface SpeakOptions extends TTSOptions {
@@ -95,9 +102,16 @@ export class Synthesizer {
         return this.provider.type;
     }
 
+    /**
+     * The default selector stays `"local"`, not `"macos"`: `say/lib/speak.ts`
+     * passed `provider: "local"` before this phase, which means "the first
+     * available local TTS provider" rather than one named engine. Hard-coding
+     * macos here would look equivalent and quietly stop honouring anything else
+     * that registers as a local speaker.
+     */
     static async create(options?: SynthesizerCreateOptions): Promise<Synthesizer> {
         const selector = options?.provider ?? "local";
-        const provider = await resolveProvider(selector);
+        const provider = await resolveProvider({ selector, model: options?.model, app: options?.app });
 
         if (options?.persist) {
             const config = await AIConfig.load();
@@ -165,14 +179,14 @@ export class Synthesizer {
         const result: VoicesByProvider = {};
 
         if (opts?.provider) {
-            const provider = await resolveProvider(opts.provider);
+            const provider = await resolveProvider({ selector: opts.provider });
             result[provider.type] = provider.listVoices ? await provider.listVoices() : [];
             return result;
         }
 
-        const candidates = getProvidersForTask("tts").filter(
-            (p): p is AITextToSpeechProvider => typeof (p as AITextToSpeechProvider).synthesize === "function"
-        );
+        const candidates = speechPluginIds("any")
+            .map((id) => speechEngineFor(id))
+            .filter((engine): engine is AITextToSpeechProvider => engine !== undefined);
 
         for (const provider of candidates) {
             if (!(await provider.isAvailable())) {
@@ -196,7 +210,7 @@ export class Synthesizer {
 
     private async providerFor(options: SpeakOptions | undefined): Promise<AITextToSpeechProvider> {
         if (options?.provider && options.provider !== this.defaultSelector) {
-            return resolveProvider(options.provider);
+            return resolveProvider({ selector: options.provider });
         }
 
         return this.provider;
@@ -229,52 +243,115 @@ function shouldStream(text: string, options: SpeakOptions | undefined): boolean 
     return text.length > REST_STREAM_THRESHOLD_CHARS;
 }
 
-async function resolveProvider(selector: ProviderSelector): Promise<AITextToSpeechProvider> {
-    if (selector === "any") {
-        // Prefer local first, then cloud — iterate all TTS-capable providers in registration order.
-        const localCandidates = getProvidersForTask("tts", { kind: "local" });
-        const cloudCandidates = getProvidersForTask("tts", { kind: "cloud" });
+/**
+ * TTS-capable plugins, in the order the old `getProvidersForTask` returned them:
+ * local kinds first, then the rest. The kind now comes from `plugin.kind` rather
+ * than a `CLOUD_PROVIDER_TYPES` set, which is the same distinction spelled once
+ * instead of twice.
+ */
+function speechPluginIds(kind: "local" | "cloud" | "any"): string[] {
+    registerBuiltInPlugins();
 
-        for (const p of [...localCandidates, ...cloudCandidates]) {
-            if (await p.isAvailable()) {
-                if (typeof (p as AITextToSpeechProvider).synthesize !== "function") {
-                    continue;
-                }
+    const plugins = pluginsByCapability("tts").filter((plugin) => speechEngineFor(plugin.id));
+    const local = plugins.filter((plugin) => plugin.kind === "local").map((plugin) => plugin.id);
+    const remote = plugins.filter((plugin) => plugin.kind !== "local").map((plugin) => plugin.id);
 
-                return p as AITextToSpeechProvider;
-            }
+    if (kind === "local") {
+        return local;
+    }
+
+    if (kind === "cloud") {
+        return remote;
+    }
+
+    return [...local, ...remote];
+}
+
+async function firstAvailable(providerIds: string[]): Promise<AITextToSpeechProvider | undefined> {
+    for (const id of providerIds) {
+        const engine = speechEngineFor(id);
+
+        if (engine && (await engine.isAvailable())) {
+            return engine;
+        }
+    }
+
+    return undefined;
+}
+
+/**
+ * Which provider speaks, in one place.
+ *
+ * A ModelRef or an app name goes through the single resolution ladder (so
+ * `defaults.app.say.tts` and `@account/...` refs both work); a bare kind hint
+ * falls back to scanning the TTS-capable plugins, which is what makes `tools say`
+ * work on a laptop with no AI config at all. A named provider is a decision and
+ * fails loudly rather than degrading.
+ */
+async function resolveProvider(opts: {
+    selector: ProviderSelector;
+    model?: ModelRef;
+    app?: string;
+}): Promise<AITextToSpeechProvider> {
+    const { selector } = opts;
+    const { log } = logger.scoped("ai-tts");
+
+    if (selector !== "any" && selector !== "local" && selector !== "cloud") {
+        const engine = speechEngineFor(selector);
+
+        if (!engine) {
+            throw new Error(`Provider "${selector}" has no speech engine. Known: ${speechEngineIds().join(", ")}.`);
         }
 
-        throw new Error('No TTS provider is available for selector "any".');
-    }
-
-    if (selector === "local" || selector === "cloud") {
-        const candidates = getProvidersForTask("tts", { kind: selector });
-
-        for (const p of candidates) {
-            if (await p.isAvailable()) {
-                if (typeof (p as AITextToSpeechProvider).synthesize !== "function") {
-                    continue;
-                }
-
-                return p as AITextToSpeechProvider;
-            }
+        if (!(await engine.isAvailable())) {
+            throw new Error(`Provider "${selector}" is not available (missing API key or not installed).`);
         }
 
-        throw new Error(`No ${selector} TTS provider is available.`);
+        return engine;
     }
 
-    // Specific type string.
-    const provider = getTextToSpeechProvider(selector as AIProviderType);
+    if (opts.model || opts.app) {
+        try {
+            const resolved = await resolveForTask({
+                task: "tts",
+                model: opts.model,
+                app: opts.app,
+                needs: "speech",
+            });
+            // The binding is only consulted for WHO; the rich engine carries the
+            // native speak/stream/loudness behaviour the SDK shape cannot.
+            resolved.binding.dispose?.();
+            const engine = speechEngineFor(resolved.plugin.id);
 
-    if (!(await provider.isAvailable())) {
-        throw new Error(`Provider "${selector}" is not available (missing API key or not installed).`);
+            if (engine && (await engine.isAvailable())) {
+                return engine;
+            }
+
+            log.debug(
+                { provider: resolved.plugin.id },
+                "resolved TTS provider has no usable engine; falling back to the kind scan"
+            );
+        } catch (err) {
+            if (opts.model) {
+                throw err;
+            }
+
+            log.debug({ err, app: opts.app }, "no configured TTS default; falling back to the kind scan");
+        }
     }
 
-    return provider;
+    const engine = await firstAvailable(speechPluginIds(selector));
+
+    if (engine) {
+        return engine;
+    }
+
+    throw new Error(
+        selector === "any"
+            ? 'No TTS provider is available for selector "any".'
+            : `No ${selector} TTS provider is available.`
+    );
 }
 
 // `isInteractive` import retained for upcoming CLI helpers; silence unused-warn for now.
 void isInteractive;
-// `CLOUD_PROVIDER_TYPES` retained for future cloud detection helpers.
-void CLOUD_PROVIDER_TYPES;

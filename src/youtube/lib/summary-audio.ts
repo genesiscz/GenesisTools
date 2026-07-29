@@ -6,8 +6,8 @@ import { deleteIfExists, ensureBinaryDir } from "@app/youtube/lib/cache";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import { recordYoutubeUsage } from "@app/youtube/lib/usage";
 import type { SummaryMode, VideoId, VideoLongSummary } from "@app/youtube/lib/video.types";
-import { getTextToSpeechProvider } from "@genesiscz/utils/ai/providers";
-import type { AITextToSpeechProvider } from "@genesiscz/utils/ai/types";
+import { speechEngineFor } from "@genesiscz/utils/ai/providers/speech-engines";
+import { ai } from "@genesiscz/utils/ai/tasks/facade";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
@@ -89,22 +89,24 @@ type TtsProviderId = "xai" | "openai";
 const TTS_PROVIDER_IDS: readonly TtsProviderId[] = ["xai", "openai"];
 
 interface ResolvedTtsProvider {
-    provider: AITextToSpeechProvider;
     providerId: TtsProviderId;
 }
 
-/** xAI realtime TTS first, OpenAI TTS fallback — never the task-based auto-selector (its fallback list omits both TTS providers). */
+/**
+ * xAI realtime TTS first, OpenAI TTS fallback.
+ *
+ * Still an explicit two-entry order rather than the generic TTS default: a
+ * narrated video summary must not come out in the macOS `say` voice just because
+ * that is what happens to be available, and the cache key carries the provider
+ * id so the answer has to be one of exactly these two.
+ */
 async function resolveTtsProvider(): Promise<ResolvedTtsProvider | null> {
-    const xai = getTextToSpeechProvider("xai");
+    for (const providerId of TTS_PROVIDER_IDS) {
+        const engine = speechEngineFor(providerId);
 
-    if (await xai.isAvailable()) {
-        return { provider: xai, providerId: "xai" };
-    }
-
-    const openai = getTextToSpeechProvider("openai");
-
-    if (await openai.isAvailable()) {
-        return { provider: openai, providerId: "openai" };
+        if (engine && (await engine.isAvailable())) {
+            return { providerId };
+        }
     }
 
     return null;
@@ -114,9 +116,9 @@ export interface SummaryAudioTarget {
     script: string;
     voice: string;
     providerId: TtsProviderId;
-    /** The live provider to synthesize with, or `null` on a cache hit (a cached
-     *  file serves without any provider being currently available). */
-    provider: AITextToSpeechProvider | null;
+    /** True when a live provider answered, false on a cache hit (a cached file
+     *  serves without any provider being currently available). */
+    canSynthesize: boolean;
     path: string;
 }
 
@@ -149,7 +151,7 @@ export async function resolveSummaryAudioTarget(opts: {
         const path = summaryAudioFilePath(opts.videoId, summaryAudioCacheKey(script, voice, providerId));
 
         if (await Bun.file(path).exists()) {
-            return { script, voice, providerId, provider: null, path };
+            return { script, voice, providerId, canSynthesize: false, path };
         }
     }
 
@@ -161,7 +163,7 @@ export async function resolveSummaryAudioTarget(opts: {
 
     const path = summaryAudioFilePath(opts.videoId, summaryAudioCacheKey(script, voice, resolved.providerId));
 
-    return { script, voice, providerId: resolved.providerId, provider: resolved.provider, path };
+    return { script, voice, providerId: resolved.providerId, canSynthesize: true, path };
 }
 
 export async function summaryAudioCacheHit(target: SummaryAudioTarget): Promise<boolean> {
@@ -200,16 +202,19 @@ export async function getOrSynthesizeSummaryAudio(opts: {
         return { path: target.path, cached: true, contentType: "audio/mpeg" };
     }
 
-    if (!target.provider) {
+    if (!target.canSynthesize) {
         // The cached file vanished between resolve and here and no live provider
         // is available — nothing can synthesize it.
         throw new NoTtsProviderError();
     }
 
-    const provider = target.provider;
     let contentType = "audio/mpeg";
     const work = (async () => {
-        const result = await provider.synthesize(target.script, target.voice ? { voice: target.voice } : undefined);
+        const result = await ai.synthesize(target.script, {
+            app: "youtube",
+            provider: target.providerId,
+            ...(target.voice ? { voice: target.voice } : {}),
+        });
         contentType = result.contentType;
         ensureBinaryDir(target.path);
         // Temp-file + rename so a concurrent reader never sees a half-written mp3.

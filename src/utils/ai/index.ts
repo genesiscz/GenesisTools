@@ -85,15 +85,6 @@ export const AI = {
         return result;
     },
 
-    async transcribe(audio: Buffer | string, options?: TranscribeOptions): Promise<TranscriptionResult> {
-        const t = await Transcriber.create();
-        try {
-            return await t.transcribe(audio, options);
-        } finally {
-            t.dispose();
-        }
-    },
-
     async translate(text: string, options: TranslateOptions): Promise<TranslationResult> {
         return ai.translate(text, options);
     },
@@ -103,12 +94,14 @@ export const AI = {
     },
 
     async speak(text: string, options?: SpeakOptions): Promise<void> {
-        const s = await Synthesizer.create({ provider: options?.provider });
-        await s.speak(text, options);
+        return ai.speak(text, options);
     },
 
     async synthesize(text: string, options?: SpeakOptions): Promise<TTSResult> {
-        const s = await Synthesizer.create({ provider: options?.provider });
-        return s.synthesize(text, options);
+        return ai.synthesize(text, options);
+    },
+
+    async transcribe(audio: Buffer | string, options?: TranscribeOptions): Promise<TranscriptionResult> {
+        return ai.transcribe(audio, options);
     },
 };

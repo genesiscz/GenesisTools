@@ -16,7 +16,7 @@ describe.skipIf(skip.unlessMac)("Synthesizer", () => {
 
     test("speak() throws clearly when provider type is unsupported", async () => {
         await expect(Synthesizer.create({ provider: "deepgram" })).rejects.toThrow(
-            /does not implement AITextToSpeechProvider|not available/i
+            /has no speech engine|does not implement AITextToSpeechProvider|not available/i
         );
     });
 });

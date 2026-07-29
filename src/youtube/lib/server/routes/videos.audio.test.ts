@@ -9,14 +9,13 @@ let xaiAvailable = true;
 let synthesizeFails = false;
 const synthesizeCalls: unknown[] = [];
 
-// Resolved BEFORE mock.module registers the override below, so this import
-// still returns the real module (a self-import after registration would
-// recurse into the mock).
-const realProviders = await import("@genesiscz/utils/ai/providers");
-
-mock.module("@genesiscz/utils/ai/providers", () => ({
-    ...realProviders,
-    getTextToSpeechProvider: (type: "xai" | "openai") => ({
+// The engine table is what both `summary-audio` (availability) and
+// `ai.synthesize` (the actual call) go through, so mocking it covers the whole
+// TTS path without a live provider.
+mock.module("@genesiscz/utils/ai/providers/speech-engines", () => ({
+    speechEngineIds: () => ["macos", "xai", "openai"],
+    speechEngineFor: (type: "xai" | "openai") => ({
+        type,
         isAvailable: async () => (type === "xai" ? xaiAvailable : false),
         synthesize: async (text: string, options?: { voice?: string }) => {
             synthesizeCalls.push({ type, text, options });

@@ -18,6 +18,21 @@ mock.module("ai", () => ({
     // Imported by core/call.ts for the tool loop. Unused on the structured path,
     // but a module mock must cover every named import or the import itself fails.
     stepCountIs: () => () => false,
+    // Reached through the plugin barrel: core/resolve.ts registers every provider
+    // plugin, and the local adapters pull in the embedding/transcription/speech
+    // adapters, which import these. None of them run on this path.
+    embed: () => {
+        throw new Error("embed should not be called by callLLMStructured");
+    },
+    embedMany: () => {
+        throw new Error("embedMany should not be called by callLLMStructured");
+    },
+    transcribe: () => {
+        throw new Error("transcribe should not be called by callLLMStructured");
+    },
+    generateImage: () => {
+        throw new Error("generateImage should not be called by callLLMStructured");
+    },
 }));
 
 const fakeProviderChoice = {

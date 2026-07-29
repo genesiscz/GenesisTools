@@ -1,4 +1,4 @@
-import { AI } from "@genesiscz/utils/ai/index";
+import { ai } from "@genesiscz/utils/ai/tasks/facade";
 import { SayConfigManager } from "@genesiscz/utils/macos/SayConfigManager";
 import { normalizeVolume } from "@genesiscz/utils/macos/tts";
 
@@ -29,8 +29,13 @@ export async function speakWithProfile(options: SpeakWithProfileOptions): Promis
     const profile = await mgr.resolveApp(app);
     const volume = profile.volume != null ? normalizeVolume(profile.volume) : undefined;
 
-    await AI.speak(text, {
+    // `provider` stays "local", NOT "macos": it is a KIND, meaning "the first
+    // available local speaker", and naming macos outright would silently stop
+    // honouring anything else that registers as one. `app: "say"` is what lets
+    // `defaults.app.say.tts` override that without this file knowing about it.
+    await ai.speak(text, {
         provider: "local",
+        app: "say",
         voice: profile.voice ?? undefined,
         rate: profile.rate ?? undefined,
         volume,

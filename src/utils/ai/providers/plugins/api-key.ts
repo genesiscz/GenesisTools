@@ -2,8 +2,11 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createGroq } from "@ai-sdk/groq";
 import { createOpenAI } from "@ai-sdk/openai";
+import type { SpeechModel } from "ai";
 import { resolveCredential } from "../credentials";
 import type { BindContext, Capability, ProviderBinding, ProviderPlugin } from "../plugin-types";
+import { toSpeechModel } from "../speech-adapter";
+import { speechEngineFor } from "../speech-engines";
 
 /**
  * Metered API-key providers.
@@ -60,6 +63,31 @@ const SPECS: ApiKeyProviderSpec[] = [
     },
 ];
 
+/**
+ * xAI is built with `createOpenAI` pointed at `api.x.ai`, so the SDK hands it a
+ * `speechModel` that would POST to `/v1/audio/speech` — an endpoint xAI does not
+ * serve. Its real voice API is a different shape entirely (voice ids rather than
+ * model ids, WebSocket streaming past a length limit), which is what
+ * `AIXAITextToSpeechProvider` speaks. Routing `speech()` through the engine table
+ * keeps the binding honest instead of exposing a method that 404s.
+ */
+function speechFor(
+    providerId: string,
+    sdkSpeechModel?: (id: string) => never
+): { speech?: (modelId: string) => SpeechModel } {
+    if (providerId === "xai") {
+        const engine = speechEngineFor(providerId);
+
+        if (!engine) {
+            return {};
+        }
+
+        return { speech: (modelId: string) => toSpeechModel({ provider: engine, providerId, modelId }) };
+    }
+
+    return sdkSpeechModel ? { speech: (modelId: string) => sdkSpeechModel(modelId) } : {};
+}
+
 function buildPlugin(spec: ApiKeyProviderSpec): ProviderPlugin {
     return {
         id: spec.id,
@@ -100,7 +128,7 @@ function buildPlugin(spec: ApiKeyProviderSpec): ProviderPlugin {
                 ...(provider.transcriptionModel
                     ? { transcription: (modelId: string) => provider.transcriptionModel?.(modelId) }
                     : {}),
-                ...(provider.speechModel ? { speech: (modelId: string) => provider.speechModel?.(modelId) } : {}),
+                ...speechFor(spec.id, provider.speechModel),
                 ...(provider.imageModel ? { image: (modelId: string) => provider.imageModel?.(modelId) } : {}),
             } as ProviderBinding;
         },

@@ -12,8 +12,11 @@ import type {
     TranscriptionResult,
     TranslateOptions,
     TranslationResult,
+    TTSResult,
 } from "../types";
 import { resolveForTask } from "./resolve-task";
+import type { SpeakOptions } from "./Synthesizer";
+import { Synthesizer } from "./Synthesizer";
 import { Transcriber } from "./Transcriber";
 
 /**
@@ -144,6 +147,36 @@ export const ai = {
         } finally {
             transcriber.dispose();
         }
+    },
+
+    /**
+     * Speak, out loud. The one entry point that replaced four.
+     *
+     * `Synthesizer` is the engine — it owns the rate curve, the volume handling,
+     * the streaming threshold and the playback — while WHO speaks comes from
+     * `resolveForTask` through `app`/`model`. The `provider` selector remains for
+     * the callers that genuinely mean "any local one" rather than a named
+     * provider, which is what `tools say` has always meant by default.
+     */
+    async speak(text: string, options?: TaskCommonOptions & SpeakOptions): Promise<void> {
+        const synth = await Synthesizer.create({
+            ...(options?.provider ? { provider: options.provider } : {}),
+            ...(options?.model ? { model: options.model } : {}),
+            ...(options?.app ? { app: options.app } : {}),
+        });
+
+        await synth.speak(text, options);
+    },
+
+    /** The same resolution, but the audio comes back instead of being played. */
+    async synthesize(text: string, options?: TaskCommonOptions & SpeakOptions): Promise<TTSResult> {
+        const synth = await Synthesizer.create({
+            ...(options?.provider ? { provider: options.provider } : {}),
+            ...(options?.model ? { model: options.model } : {}),
+            ...(options?.app ? { app: options.app } : {}),
+        });
+
+        return synth.synthesize(text, options);
     },
 
     async summarize(text: string, options?: TaskCommonOptions & SummarizeOptions): Promise<SummarizationResult> {
