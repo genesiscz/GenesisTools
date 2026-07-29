@@ -1,6 +1,6 @@
 // biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ or /Users/ string literals — production plugins do not apply to test code
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -134,6 +134,30 @@ describe("atomicWriteFileSync mode", () => {
         }
 
         expect(statSync(target).mode & 0o777).toBe(0o600);
+    });
+
+    it("leaves no temp file behind when the write cannot be published", () => {
+        // Renaming onto a non-empty directory fails with EISDIR *after* the temp
+        // file has been written and chmod'd, which is the only reachable way to
+        // land in the cleanup path with a temp file actually on disk.
+        const target = join(dir, "target");
+        mkdirSync(target);
+        writeFileSync(join(target, "child"), "x");
+
+        expect(() => atomicWriteFileSync(target, "{}", { mode: 0o600 })).toThrow(/Atomic rename failed/);
+        expect(readdirSync(dir)).toEqual(["target"]);
+    });
+
+    it("leaves no temp file behind when the data cannot be written at all", () => {
+        const readOnly = join(dir, "read-only");
+        mkdirSync(readOnly, { mode: 0o500 });
+
+        try {
+            expect(() => atomicWriteFileSync(join(readOnly, "x.json"), "{}", { mode: 0o600 })).toThrow();
+            expect(readdirSync(readOnly)).toEqual([]);
+        } finally {
+            chmodSync(readOnly, 0o700);
+        }
     });
 
     it("leaves the mode to the umask when none is requested", () => {

@@ -22,6 +22,15 @@ import { withFileLock as acquireFileLock, LockTimeoutError } from "./file-lock";
  */
 export type TTLString = string;
 
+/** Best-effort removal of an abandoned temp file; never masks the failure that caused it. */
+function removeTempFile(tmp: string): void {
+    try {
+        unlinkSync(tmp);
+    } catch (cleanupErr) {
+        logger.debug({ err: cleanupErr, tmp }, "[storage] tmp-file cleanup after a failed atomic write");
+    }
+}
+
 /**
  * Write data to a file atomically via write-to-sibling-tmp + renameSync.
  * Safe under concurrent writers — each gets a unique tmp name and rename is atomic on POSIX.
@@ -40,21 +49,25 @@ export function atomicWriteFileSync(filePath: string, data: string, options?: { 
     }
 
     const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync(tmp, data, options?.mode === undefined ? undefined : { mode: options.mode });
 
-    if (options?.mode !== undefined) {
-        chmodSync(tmp, options.mode);
+    // Every step after the temp path may exist shares one cleanup path: a
+    // half-written or unchmod'd temp file must never be left behind, least of
+    // all when it holds the secret `mode` was requested for.
+    try {
+        writeFileSync(tmp, data, options?.mode === undefined ? undefined : { mode: options.mode });
+
+        if (options?.mode !== undefined) {
+            chmodSync(tmp, options.mode);
+        }
+    } catch (err) {
+        removeTempFile(tmp);
+        throw err;
     }
 
     try {
         renameSync(tmp, filePath);
     } catch {
-        try {
-            unlinkSync(tmp);
-        } catch (cleanupErr) {
-            logger.debug({ err: cleanupErr, tmp }, "[storage] tmp-file cleanup after failed rename");
-        }
-
+        removeTempFile(tmp);
         throw new Error(`Atomic rename failed: ${tmp} → ${filePath}`);
     }
 }
@@ -212,6 +225,11 @@ export class Storage {
     /**
      * Set the entire config object
      * @param config - The config object to save
+     * @param options.mode - Octal file mode (e.g. `0o600`) for the config file.
+     * Pass it whenever the config holds credentials: the mode is applied to the
+     * temp file BEFORE it is renamed into place, so the file is never briefly
+     * readable at the umask default. Omit it and the mode is left to the umask,
+     * which is what every non-secret config wants.
      */
     async setConfig<T extends object>(config: T, options?: { mode?: number }): Promise<void> {
         await this.ensureDirs();
