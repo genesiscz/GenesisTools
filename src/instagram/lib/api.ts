@@ -1,5 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
-import { getJson } from "./client";
+import { getAnonymousJson, getJson } from "./client";
 import {
     type HighlightRef,
     InstagramError,
@@ -89,10 +89,12 @@ interface RawHighlightsTray {
  * session into a "public" call whenever an anonymous request fails and any
  * credential is in scope, which turns anonymous reads into identified ones without
  * the caller noticing. Keeping the parameter off the signature makes that class of
- * leak unrepresentable rather than merely avoided.
+ * leak unrepresentable rather than merely avoided — and `getAnonymousJson` is what
+ * holds the request layer to the same promise, since a plain `getJson` call would
+ * accept a `sessionId` from a later refactor without complaint.
  */
 export async function fetchProfile(username: string): Promise<InstagramProfile> {
-    const { data } = await getJson<RawProfileResponse>(
+    const { data } = await getAnonymousJson<RawProfileResponse>(
         `/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
         { label: `profile:${username}` }
     );
@@ -257,7 +259,7 @@ export async function fetchPublicReelInfo(userId: string): Promise<PublicReelInf
         include_highlight_reels: "true",
     });
 
-    const { data } = await getJson<RawPublicReelResponse>(`/graphql/query/?${params.toString()}`, {
+    const { data } = await getAnonymousJson<RawPublicReelResponse>(`/graphql/query/?${params.toString()}`, {
         label: `public-reel:${userId}`,
     });
 

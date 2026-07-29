@@ -57,6 +57,21 @@ export interface RequestOptions {
     label: string;
 }
 
+/**
+ * The anonymous surface's contract, made structural instead of social.
+ *
+ * `fetchProfile` and `fetchPublicReelInfo` document that they take no session ON
+ * PURPOSE, but `RequestOptions` alone cannot hold them to it: `getJson(path, {
+ * label, sessionId: session?.sessionId })` typechecks perfectly, so one refactor
+ * reintroduces exactly the instagrapi-style silent injection those comments
+ * warn about. `sessionId?: never` turns that line into a compile error.
+ */
+export interface AnonymousRequestOptions {
+    label: string;
+    sessionId?: never;
+    csrfToken?: never;
+}
+
 export interface InstagramResponse<T> {
     data: T;
     authMode: AuthMode;
@@ -239,7 +254,23 @@ export async function getJson<T>(path: string, options: RequestOptions): Promise
         );
     }
 
-    return { data: SafeJSON.parse(text) as T, authMode };
+    try {
+        return { data: SafeJSON.parse(text) as T, authMode };
+    } catch (error) {
+        // `startsWith("{")` only proves it is not the HTML shell. A truncated or
+        // half-written body still gets here, and letting the raw SyntaxError out
+        // means the user sees a parser message instead of an Instagram one.
+        log.warn(
+            { error, status: response.status, label: options.label, authMode, bytes: text.length },
+            "instagram returned a body that opens like JSON but does not parse"
+        );
+        throw new InstagramError("network", `${options.label} returned malformed JSON`, response.status);
+    }
+}
+
+/** Anonymous-only entrypoint. See `AnonymousRequestOptions` for why it exists. */
+export function getAnonymousJson<T>(path: string, options: AnonymousRequestOptions): Promise<InstagramResponse<T>> {
+    return getJson<T>(path, options);
 }
 
 /**
