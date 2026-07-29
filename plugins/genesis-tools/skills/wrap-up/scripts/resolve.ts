@@ -26,7 +26,7 @@
  *   Resolution order: registry match > docDir > vaultDir > found:false.
  */
 
-import { rename } from "node:fs/promises";
+import { chmod, rename, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 
@@ -138,10 +138,25 @@ async function loadRegistry(): Promise<Registry> {
 // truncated file behind. Both targets are append-only records whose partial
 // loss is unrecoverable: the registry holds every project's wrap-up target,
 // and the wrap-up doc's log is the only permanent session history.
-async function writeAtomic(path: string, body: string): Promise<void> {
+export async function writeAtomic(path: string, body: string): Promise<void> {
     const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
-    await Bun.write(tmp, body);
-    await rename(tmp, path);
+    const existed = await Bun.file(path).exists();
+    try {
+        await Bun.write(tmp, body);
+        if (existed) {
+            // rename() swaps in a brand-new inode created under the current
+            // umask, so a private 0600 registry or wrap-up doc would silently
+            // widen to 0644. Carry the destination's mode over to the temp file.
+            const { mode } = await stat(path);
+            await chmod(tmp, mode & 0o777);
+        }
+
+        await rename(tmp, path);
+    } catch (err) {
+        // Never leave the half-written temp file next to the real one.
+        await rm(tmp, { force: true });
+        throw err;
+    }
 }
 
 async function saveRegistry(reg: Registry): Promise<void> {
