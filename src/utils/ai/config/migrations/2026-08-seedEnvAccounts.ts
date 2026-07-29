@@ -1,4 +1,5 @@
 import type { ConfigMigration } from "@genesiscz/utils/config/migration";
+import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { migrationAllowedHere } from "../migration-guard";
@@ -52,6 +53,26 @@ export function missingProviders(config: AiConfigData): Array<{ provider: string
     return GRANDFATHERED_ENV_PROVIDERS.filter(
         ({ provider }) => !config.accounts.some((account) => account.provider === provider)
     );
+}
+
+/**
+ * The same seeded accounts, in memory only, for the providers whose variable is
+ * set RIGHT NOW.
+ *
+ * The migration above is opt-in (it is not in the chain — seeding a user's config
+ * is a rollout decision), which leaves a gap: before it runs, a machine whose only
+ * xAI credential is `XAI_API_KEY` has no xai account, and account-first resolution
+ * would report "no enabled account for provider xai" for a key that worked
+ * yesterday. Resolution therefore falls back to these ephemeral entries.
+ *
+ * Nothing is written and no value is copied: the entry names the variable and
+ * `resolveCredential` reads it live, logging which one it spent. A REAL account
+ * for the provider always wins, because `missingProviders` skips it.
+ */
+export function ephemeralEnvAccounts(config: AiConfigData): AccountEntry[] {
+    return missingProviders(config)
+        .filter(({ envKeys }) => envKeys.some((name) => env.ai.getByEnvKey(name)))
+        .map(({ provider, envKeys }) => seedAccountFor(provider, envKeys));
 }
 
 function aiStorage(): Storage {

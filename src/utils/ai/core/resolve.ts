@@ -1,6 +1,7 @@
 import { logger } from "@genesiscz/utils/logger";
 import { byId, byProvider } from "../catalog";
 import { AiConfigStore } from "../config/AiConfigStore";
+import { ephemeralEnvAccounts } from "../config/migrations/2026-08-seedEnvAccounts";
 import type { AccountEntry, AiConfigData, TaskDefault, TaskName } from "../config/schema";
 import type { Capability } from "../providers/plugin-types";
 import { registerBuiltInPlugins } from "../providers/plugins";
@@ -281,14 +282,28 @@ function accountForProvider(
 
     const candidates = store.accounts({ provider: providerId, enabled: true });
 
-    if (candidates.length === 0) {
-        throw new ModelResolutionError(
-            `No enabled account for provider "${providerId}" (from ${request.via}). ` +
-                `Add one with: tools ai config account add --provider ${providerId}`
-        );
+    if (candidates.length > 0) {
+        return candidates[0];
     }
 
-    return candidates[0];
+    // Grandfathered: this provider's key has always come from the environment and
+    // still does, there just is no account row for it because the seeding
+    // migration is opt-in. Refusing here would switch off a working key.
+    const seeded = ephemeralEnvAccounts(cfg).find((account) => account.provider === providerId);
+
+    if (seeded) {
+        logger.debug(
+            { provider: providerId, via: request.via },
+            "no account for provider; using the grandfathered environment entry"
+        );
+
+        return seeded;
+    }
+
+    throw new ModelResolutionError(
+        `No enabled account for provider "${providerId}" (from ${request.via}). ` +
+            `Add one with: tools ai config account add --provider ${providerId}`
+    );
 }
 
 function defaultAccountRef(cfg: AiConfigData, task: TaskName): { id: string; via: string } | undefined {
