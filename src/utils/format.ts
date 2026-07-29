@@ -104,12 +104,13 @@ export function formatDuration(value: number, unit: DurationUnit = "ms", style: 
 // Single value + unit, e.g. "30m", "2hours", "90s", "7d"
 const SIMPLE_DURATION_PATTERN = /^(\d+)\s*(s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hrs|hours?|d|days?)$/i;
 
-// Multi-part durations, e.g. "1h30m", "2h15min10s". Each group is optional,
-// allowing any combination of hours/minutes/seconds:
-//   (?:(\d+)\s*h...)? — optional hours  (capture group 1)
-//   (?:(\d+)\s*m...)? — optional minutes (capture group 2)
-//   (?:(\d+)\s*s...)? — optional seconds (capture group 3)
-// Unit suffixes accept common spellings: h/hr/hrs/hour/hours, m/min/mins/minute/minutes, s/sec/secs/second/seconds
+// Multi-part durations, e.g. "1h30m", "2h15min10s", "2d6h". Each group is optional,
+// allowing any combination of days/hours/minutes/seconds:
+//   (?:(\d+)\s*d...)? — optional days    (capture group 1)
+//   (?:(\d+)\s*h...)? — optional hours   (capture group 2)
+//   (?:(\d+)\s*m...)? — optional minutes (capture group 3)
+//   (?:(\d+)\s*s...)? — optional seconds (capture group 4)
+// Unit suffixes accept common spellings: d/day/days, h/hr/hrs/hour/hours, m/min/mins/minute/minutes, s/sec/secs/second/seconds
 const COMPOUND_DURATION_PATTERN =
     /^(?:(\d+)\s*d(?:ays?)?)?\s*(?:(\d+)\s*h(?:ours?|rs?|r)?)?\s*(?:(\d+)\s*m(?:in(?:utes?|s)?)?)?\s*(?:(\d+)\s*s(?:ec(?:onds?|s)?)?)?$/i;
 
