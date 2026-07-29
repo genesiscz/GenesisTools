@@ -1,10 +1,8 @@
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
-import { AiConfigStore } from "../config/AiConfigStore";
 import type { AccountEntry } from "../config/schema";
 import { CredentialUnavailableError, type ResolvedCredential, resolveCredential } from "./credentials";
 import type { CredentialSpec } from "./plugin-types";
-import { registerBuiltInPlugins } from "./plugins";
 import { tryProviderPlugin } from "./registry";
 
 /**
@@ -29,6 +27,11 @@ import { tryProviderPlugin } from "./registry";
  * import `resolveCredential`, are not imported back by it.
  */
 export async function resolveProviderApiKey(providerId: string): Promise<ResolvedCredential> {
+    // Loaded at call time, not import time: the barrel drags in every plugin
+    // (the copilot module, the local runtimes, the subscription resolvers), and
+    // this module is imported by AICloudProvider, which many tools load without
+    // ever making a cloud call.
+    const { registerBuiltInPlugins } = await import("./plugins");
     registerBuiltInPlugins();
 
     const plugin = tryProviderPlugin(providerId);
@@ -80,6 +83,7 @@ export async function providerApiKey(providerId: string): Promise<string> {
 
 async function accountsFor(providerId: string): Promise<AccountEntry[]> {
     try {
+        const { AiConfigStore } = await import("../config/AiConfigStore");
         const store = await AiConfigStore.load();
         return store.accounts({ provider: providerId, enabled: true });
     } catch (err) {

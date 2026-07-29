@@ -29,6 +29,23 @@ interface ModelMetadata {
     description?: string;
 }
 
+/**
+ * Which key does provider detection spend? Configured account first,
+ * environment second. The old order was the reverse, so an ambient variable
+ * silently outranked the account the user had configured and you could not
+ * tell which key was being spent. The environment still resolves keys — it is
+ * just no longer the winner.
+ *
+ * Extracted so the ORDER is pinned by a unit test: this line decides whose
+ * money a call costs, and it used to be untestable inside detectProviders.
+ */
+export function detectApiKeyFor(
+    aiConfig: { getProviderApiKey(name: string): string | undefined },
+    config: Pick<ProviderConfig, "name" | "envKey">
+): string | undefined {
+    return aiConfig.getProviderApiKey(config.name) ?? env.ai.getByEnvKey(config.envKey);
+}
+
 export class ProviderManager {
     private detectedProviders: Map<string, DetectedProvider> = new Map();
     /**
@@ -68,11 +85,7 @@ export class ProviderManager {
                 continue;
             }
 
-            // Configured account first, environment second. The old order was the
-            // reverse, so an ambient variable silently outranked the account the
-            // user had configured and you could not tell which key was spent.
-            // The environment still resolves keys — it is just no longer the winner.
-            const apiKey = aiConfig.getProviderApiKey(config.name) ?? env.ai.getByEnvKey(config.envKey);
+            const apiKey = detectApiKeyFor(aiConfig, config);
             if (!apiKey) {
                 continue;
             }
