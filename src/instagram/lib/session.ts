@@ -27,16 +27,24 @@ export interface ResolvedSession extends SessionCredentials {
     envKey?: string;
 }
 
-const storage = new Storage("instagram");
+/**
+ * Built per call rather than once at module load. `Storage` resolves its root
+ * from `GENESIS_TOOLS_HOME` in its constructor, so a module-level instance would
+ * pin whatever the value was at import time and ignore it thereafter.
+ */
+function storage(): Storage {
+    return new Storage("instagram");
+}
 
 export async function readSessionConfig(): Promise<SessionConfig> {
-    const config = await storage.getConfig<SessionConfig>();
+    const config = await storage().getConfig<SessionConfig>();
     return config ?? {};
 }
 
 export async function writeSessionConfig(config: SessionConfig): Promise<void> {
-    await storage.ensureDirs();
-    await storage.setConfig(config);
+    const store = storage();
+    await store.ensureDirs();
+    await store.setConfig(config);
     log.debug({ sessionIdEnv: config.sessionIdEnv }, "wrote instagram session config");
 }
 
@@ -52,7 +60,10 @@ export async function resolveSession(explicitCookie?: string): Promise<ResolvedS
         log.debug("session resolved from --session-cookie flag");
         return {
             sessionId: stripCookiePrefix(explicitCookie),
-            csrfToken: extractCookie(explicitCookie, "csrftoken"),
+            // Same fallback as the env path below. Pasting a bare `sessionid` on the
+            // flag is the common case, and dropping a csrftoken that IS available
+            // ships the header/cookie mismatch the client warns about on every call.
+            csrfToken: extractCookie(explicitCookie, "csrftoken") ?? env.instagram.getCsrfToken(),
             source: "flag",
         };
     }
