@@ -1,8 +1,7 @@
 import { answerOverVideos, formatCitationLines } from "@app/youtube/lib/ask-answer";
 import { resolveAskScope } from "@app/youtube/lib/ask-scope";
-import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
-import { type JobActor, toJobStages } from "@app/youtube/lib/queue";
+import { type JobActor, normaliseHandle, toJobStages } from "@app/youtube/lib/queue";
 import { withConsoleContext } from "@app/youtube/lib/service-user";
 import { formatClock, videoUrl } from "@app/youtube/lib/transcript-export";
 import type { VideoId } from "@app/youtube/lib/video.types";
@@ -11,7 +10,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
 
 /**
  * A CURATED door onto the youtube library, not a mirror of the ~90 HTTP routes.
@@ -76,6 +75,21 @@ function publicVideo(video: Record<string, unknown>): Record<string, unknown> {
 
 function asVideoIds(value: unknown): VideoId[] {
     return Array.isArray(value) ? (value.filter((id): id is string => typeof id === "string") as VideoId[]) : [];
+}
+
+/**
+ * A required string argument, or null.
+ *
+ * `String(args.x)` turns a missing argument into the literal `"undefined"`, which
+ * `ask` would have sent to a paid model and `queue_add` would have enqueued as a
+ * target. The SDK does not enforce `required` in `inputSchema`.
+ */
+function requiredString(value: unknown): string | null {
+    if (typeof value !== "string" || value.trim().length === 0) {
+        return null;
+    }
+
+    return value;
 }
 
 /** The advertised tool set. Exported so its shape can be pinned without stdio. */
@@ -185,7 +199,10 @@ export async function startMcpServer(yt: Youtube): Promise<void> {
             switch (request.params.name) {
                 case "list_videos": {
                     const videos = yt.db.listVideos({
-                        ...(typeof args.channel === "string" ? { channel: args.channel as ChannelHandle } : {}),
+                        // Canonicalised, not cast: rows are stored under `@handle`, so a
+                        // client passing a bare `bridgemindai` matched nothing and got an
+                        // empty list rather than an error.
+                        ...(typeof args.channel === "string" ? { channel: normaliseHandle(args.channel) } : {}),
                         limit: toolLimit(args.limit, 50),
                     });
 
@@ -253,6 +270,12 @@ export async function startMcpServer(yt: Youtube): Promise<void> {
                 }
 
                 case "ask": {
+                    const question = requiredString(args.question);
+
+                    if (!question) {
+                        return { ...text("ask: `question` is required."), isError: true };
+                    }
+
                     return await withConsoleContext(yt.db, async () => {
                         const scope = await resolveAskScope(yt, {
                             ...(typeof args.channel === "string" ? { channel: args.channel } : {}),
@@ -262,7 +285,7 @@ export async function startMcpServer(yt: Youtube): Promise<void> {
                         const result = await answerOverVideos({
                             yt,
                             videoIds: scope.videoIds,
-                            question: String(args.question),
+                            question,
                             topK: typeof args.topK === "number" ? args.topK : undefined,
                             providerChoice: await resolveProviderChoice({}),
                         });
@@ -274,6 +297,12 @@ export async function startMcpServer(yt: Youtube): Promise<void> {
                 }
 
                 case "queue_add": {
+                    const target = requiredString(args.target);
+
+                    if (!target) {
+                        return { ...text("queue_add: `target` is required."), isError: true };
+                    }
+
                     return await withConsoleContext(yt.db, async (user) => {
                         const stages = toJobStages(
                             Array.isArray(args.stages) && args.stages.length > 0
@@ -282,7 +311,7 @@ export async function startMcpServer(yt: Youtube): Promise<void> {
                         );
 
                         const enqueued = yt.queue.enqueue({
-                            target: String(args.target),
+                            target,
                             stages,
                             userId: user.id,
                         });
@@ -312,9 +341,16 @@ export async function startMcpServer(yt: Youtube): Promise<void> {
                 }
 
                 default:
-                    return { ...text(`Unknown tool: ${request.params.name}`), isError: true };
+                    // A protocol-level fault, not a tool result: an unknown name is
+                    // JSON-RPC -32601, which a client distinguishes from a tool that
+                    // ran and reported a problem.
+                    throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`);
             }
         } catch (err) {
+            if (err instanceof McpError) {
+                throw err;
+            }
+
             // A thrown tool must not kill the server: an MCP client sees the
             // message and can correct its call.
             logger.warn({ err, tool: request.params.name }, "youtube mcp: tool failed");
