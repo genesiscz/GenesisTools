@@ -1,13 +1,19 @@
 import { describe, expect, it } from "bun:test";
-import { formatModelTable, getMaxEmbedChars, getModelsForType, getTaskPrefix, MODEL_REGISTRY } from "./model-registry";
+import {
+    EMBED_MODEL_REGISTRY,
+    formatModelTable,
+    getMaxEmbedChars,
+    getModelsForType,
+    getTaskPrefix,
+} from "./model-registry";
 
-describe("MODEL_REGISTRY", () => {
+describe("EMBED_MODEL_REGISTRY", () => {
     it("contains expected number of models", () => {
-        expect(MODEL_REGISTRY.length).toBeGreaterThanOrEqual(8);
+        expect(EMBED_MODEL_REGISTRY.length).toBeGreaterThanOrEqual(8);
     });
 
     it("each model has required fields", () => {
-        for (const model of MODEL_REGISTRY) {
+        for (const model of EMBED_MODEL_REGISTRY) {
             expect(model.id).toBeTruthy();
             expect(model.name).toBeTruthy();
             expect(model.dimensions).toBeGreaterThan(0);
@@ -20,7 +26,7 @@ describe("MODEL_REGISTRY", () => {
     });
 
     it("has unique model IDs", () => {
-        const ids = MODEL_REGISTRY.map((m) => m.id);
+        const ids = EMBED_MODEL_REGISTRY.map((m) => m.id);
         expect(new Set(ids).size).toBe(ids.length);
     });
 });
@@ -28,7 +34,7 @@ describe("MODEL_REGISTRY", () => {
 describe("getModelsForType", () => {
     it("returns code models first for type 'code'", () => {
         const models = getModelsForType("code");
-        expect(models.length).toBe(MODEL_REGISTRY.length);
+        expect(models.length).toBe(EMBED_MODEL_REGISTRY.length);
 
         const firstNonCodeIdx = models.findIndex((m) => !m.bestFor?.includes("code"));
 
@@ -70,14 +76,14 @@ describe("getModelsForType", () => {
 
     it("returns all models regardless of type", () => {
         for (const type of ["code", "files", "mail", "chat"] as const) {
-            expect(getModelsForType(type).length).toBe(MODEL_REGISTRY.length);
+            expect(getModelsForType(type).length).toBe(EMBED_MODEL_REGISTRY.length);
         }
     });
 });
 
 describe("formatModelTable", () => {
     it("produces table with headers", () => {
-        const table = formatModelTable(MODEL_REGISTRY);
+        const table = formatModelTable(EMBED_MODEL_REGISTRY);
         expect(table).toContain("Name");
         expect(table).toContain("Params");
         expect(table).toContain("Dims");
@@ -88,9 +94,9 @@ describe("formatModelTable", () => {
     });
 
     it("includes all model names", () => {
-        const table = formatModelTable(MODEL_REGISTRY);
+        const table = formatModelTable(EMBED_MODEL_REGISTRY);
 
-        for (const model of MODEL_REGISTRY) {
+        for (const model of EMBED_MODEL_REGISTRY) {
             expect(table).toContain(model.name);
         }
     });
@@ -103,7 +109,7 @@ describe("formatModelTable", () => {
     });
 
     it("shows cloud/built-in for zero-RAM models", () => {
-        const table = formatModelTable(MODEL_REGISTRY);
+        const table = formatModelTable(EMBED_MODEL_REGISTRY);
         expect(table).toContain("cloud");
         expect(table).toContain("built-in");
     });
@@ -194,7 +200,7 @@ describe("getTaskPrefix — edge cases", () => {
 
 describe("getModelsForType — google provider", () => {
     it("includes google model in registry", () => {
-        const googleModel = MODEL_REGISTRY.find((m) => m.provider === "google");
+        const googleModel = EMBED_MODEL_REGISTRY.find((m) => m.provider === "google");
         expect(googleModel).toBeDefined();
         expect(googleModel!.id).toBe("gemini-embedding-001");
         expect(googleModel!.dimensions).toBe(3072);

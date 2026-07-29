@@ -6,7 +6,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { EmbeddingSetupError } from "../lib/indexer";
 import { IndexerManager } from "../lib/manager";
-import { getModelsForType, MODEL_REGISTRY } from "../lib/model-registry";
+import { EMBED_MODEL_REGISTRY, getModelsForType } from "../lib/model-registry";
 import { createProgressCallbacks } from "../lib/progress";
 import type { IndexConfig } from "../lib/types";
 
@@ -77,7 +77,7 @@ async function ensureOllamaModel(model: string): Promise<boolean> {
 }
 
 function resolveProvider(modelId: string): string | undefined {
-    const model = MODEL_REGISTRY.find((m) => m.id === modelId);
+    const model = EMBED_MODEL_REGISTRY.find((m) => m.id === modelId);
 
     if (!model) {
         return undefined;
@@ -300,7 +300,7 @@ export function registerAddCommand(program: Command): void {
                 }
 
                 if (model) {
-                    const found = MODEL_REGISTRY.find((m) => m.id === model);
+                    const found = EMBED_MODEL_REGISTRY.find((m) => m.id === model);
                     p.log.info(
                         `Model: ${pc.bold(found?.name ?? model)} (${found?.dimensions ?? "??"}-dim, ${found?.provider ?? "unknown"})`
                     );

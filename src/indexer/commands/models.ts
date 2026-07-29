@@ -4,7 +4,7 @@ import type { ModelEntry } from "@genesiscz/utils/ai/types";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { formatModelTable, getModelsForType, MODEL_REGISTRY } from "../lib/model-registry";
+import { EMBED_MODEL_REGISTRY, formatModelTable, getModelsForType } from "../lib/model-registry";
 
 const PROVIDER_ORDER = ["ollama", "coreml", "darwinkit", "local-hf", "cloud", "google"];
 const PROVIDER_DISPLAY: Record<string, string> = {
@@ -67,7 +67,7 @@ export function registerModelsCommand(program: Command): void {
                 process.exit(1);
             }
 
-            const models = type ? getModelsForType(type) : MODEL_REGISTRY;
+            const models = type ? getModelsForType(type) : EMBED_MODEL_REGISTRY;
             const mm = new ModelManager();
 
             out.println("");
@@ -93,13 +93,13 @@ export function registerModelsCommand(program: Command): void {
         .description("Pre-download a local HuggingFace model")
         .argument("<model-id>", "Model ID from the registry")
         .action(async (modelId: string) => {
-            const model = MODEL_REGISTRY.find((m) => m.id === modelId);
+            const model = EMBED_MODEL_REGISTRY.find((m) => m.id === modelId);
 
             if (!model) {
                 p.log.error(`Unknown model: ${modelId}`);
                 p.log.info("Available model IDs:");
 
-                for (const m of MODEL_REGISTRY) {
+                for (const m of EMBED_MODEL_REGISTRY) {
                     out.println(`  ${m.id}`);
                 }
 
