@@ -24,6 +24,8 @@ export interface IndexResult {
 export interface AskOpts {
     videoIds: VideoId[];
     question: string;
+    /** The embedder model bucket to retrieve from; must match what `index()` wrote. */
+    model?: string;
     topK?: number;
     streaming?: boolean;
     providerChoice: ProviderChoice;
@@ -41,6 +43,13 @@ export interface AskOpts {
         videos: Record<string, { title: string; uploadDate: string | null }>;
         skippedUnindexed: number;
     };
+    /** Earlier turns of an ask session, oldest first, so follow-ups can refer back. */
+    history?: AskHistoryTurn[];
+}
+
+export interface AskHistoryTurn {
+    role: "user" | "assistant";
+    content: string;
 }
 
 export interface AskCitation {

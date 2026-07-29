@@ -274,31 +274,63 @@ export interface CreateCollectionInput {
     ruleJson?: string | null;
 }
 
-export interface AskThreadRecord {
+export interface WatchlistEntry {
     id: number;
     userId: number;
-    collectionId: number;
+    channelHandle: string;
+    createdAt: string;
+}
+
+/**
+ * How an ask session picks its corpus.
+ * - `collection` — membership comes from the owning collection (the original
+ *   `ask_threads` behaviour; `collectionId` is set).
+ * - `channel` — re-resolves on every ask, so new uploads join automatically.
+ * - `videos` — a frozen explicit id list.
+ * - `dir` — the directory whose exported transcripts were imported into the DB.
+ */
+export type AskSessionScopeKind = "collection" | "channel" | "videos" | "dir";
+
+export interface AskSessionRecord {
+    id: number;
+    /** Always set. Console/CLI sessions are owned by the console service user. */
+    userId: number;
+    /** Set only for `scopeKind: "collection"`. */
+    collectionId: number | null;
+    scopeKind: AskSessionScopeKind;
+    /** Channel handle, directory path, or "" for collection / explicit-id scopes. */
+    scopeValue: string;
+    /** Materialized member ids — a cache for `channel`, the authority for `videos`/`dir`. */
+    videoIds: string[];
+    /** "provider" / "provider/model" spec pinned at creation; null = resolve from config. */
+    providerSpec: string | null;
     title: string;
     createdAt: string;
     updatedAt: string;
 }
 
-export type AskMessageRole = "user" | "assistant" | "tool";
+export interface CreateAskSessionInput {
+    userId: number;
+    title: string;
+    scopeKind: AskSessionScopeKind;
+    collectionId?: number | null;
+    scopeValue?: string;
+    videoIds?: string[];
+    providerSpec?: string | null;
+}
 
-export interface AskMessageRecord {
+/** `tool` rows are written by the collection-ask agent loop; the qa.ask path uses only user/assistant. */
+export type AskSessionMessageRole = "user" | "assistant" | "tool";
+
+export interface AskSessionMessageRecord {
     id: number;
-    threadId: number;
-    role: AskMessageRole;
+    sessionId: number;
+    role: AskSessionMessageRole;
     content: string;
     toolName: string | null;
     toolArgsJson: string | null;
-    createdAt: string;
-}
-
-export interface WatchlistEntry {
-    id: number;
-    userId: number;
-    channelHandle: string;
+    /** Serialized `AskCitation[]` for assistant turns on the qa.ask path; null otherwise. */
+    citationsJson: string | null;
     createdAt: string;
 }
 

@@ -1,20 +1,28 @@
 import type { SummaryMode } from "@app/youtube/lib/video.types";
 
-export type JobStage =
-    | "discover"
-    | "metadata"
-    | "comments"
-    | "captions"
-    | "audio"
-    | "video"
-    | "transcribe"
-    | "summarize"
-    | "qa"
-    | "reportSynthesize";
+export const JOB_STAGES = [
+    "discover",
+    "metadata",
+    "comments",
+    "captions",
+    "audio",
+    "video",
+    "transcribe",
+    "qaIndex",
+    "summarize",
+    "qa",
+    "reportSynthesize",
+] as const;
 
-export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+export type JobStage = (typeof JOB_STAGES)[number];
 
-export type JobTargetKind = "video" | "channel" | "url" | "report";
+export const JOB_STATUSES = ["pending", "running", "completed", "failed", "cancelled", "interrupted"] as const;
+
+export type JobStatus = (typeof JOB_STATUSES)[number];
+
+export const JOB_TARGET_KINDS = ["video", "channel", "url", "report"] as const;
+
+export type JobTargetKind = (typeof JOB_TARGET_KINDS)[number];
 
 export interface PipelineJob {
     id: number;

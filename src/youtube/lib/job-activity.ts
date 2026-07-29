@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
-import type { JobActivity, JobActivityKind, JobStage } from "@app/youtube/lib/jobs.types";
+import type { JobActivity, JobActivityKind, JobEvent, JobStage } from "@app/youtube/lib/jobs.types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -19,6 +19,7 @@ export interface JobActivityContext {
     /** Owner of the running job — attribution for ai_calls. Undefined/null = operator work. */
     userId?: number | null;
     db: YoutubeDatabase;
+    emit?: (event: JobEvent) => void;
 }
 
 const jobActivityStorage = new AsyncLocalStorage<JobActivityContext>();
@@ -133,20 +134,33 @@ function recordSafe(
         error: string | null;
     }
 ): void {
+    let row: JobActivity;
+
     try {
-        const row: JobActivity = ctx.db.recordJobActivity({
+        row = ctx.db.recordJobActivity({
             jobId: ctx.jobId,
             stage: ctx.stage,
             ...fields,
         });
-        logger.debug(
-            { jobId: ctx.jobId, stage: ctx.stage, activityId: row.id, action: fields.action, kind: fields.kind },
-            "youtube job activity recorded"
-        );
     } catch (err) {
         logger.warn(
             { error: err, action: fields.action, jobId: ctx.jobId },
             "youtube job activity record failed (continuing)"
+        );
+        return;
+    }
+
+    logger.debug(
+        { jobId: ctx.jobId, stage: ctx.stage, activityId: row.id, action: fields.action, kind: fields.kind },
+        "youtube job activity recorded"
+    );
+
+    try {
+        ctx.emit?.({ type: "job:activity", jobId: ctx.jobId, activityId: row.id });
+    } catch (err) {
+        logger.warn(
+            { error: err, action: fields.action, jobId: ctx.jobId, activityId: row.id },
+            "youtube job activity event emit failed (continuing)"
         );
     }
 }

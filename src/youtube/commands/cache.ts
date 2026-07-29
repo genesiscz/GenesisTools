@@ -1,8 +1,8 @@
-import { existsSync, statSync, unlinkSync } from "node:fs";
 import { renderColumns } from "@app/youtube/commands/_shared/columns";
 import { confirmDestructive } from "@app/youtube/commands/_shared/confirm";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
+import { buildCacheStatsBase, clearVideoBinaries, listCacheVideos, ttlDays } from "@app/youtube/lib/cache-ops";
 import { formatBytes } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -24,11 +24,6 @@ interface CacheStats {
     audioBytes: number;
     videoBytes: number;
     thumbBytes: number;
-}
-
-interface ClearResult {
-    deletedCount: number;
-    freedBytes: number;
 }
 
 export function registerCacheCommand(program: Command): void {
@@ -116,7 +111,12 @@ export function registerCacheCommand(program: Command): void {
                 return;
             }
 
-            const result = await clearBinaries(await getYoutube(), flags);
+            const result = await clearVideoBinaries({
+                yt: await getYoutube(),
+                audio: Boolean(flags.audio),
+                video: Boolean(flags.video),
+                thumbs: Boolean(flags.thumbs),
+            });
 
             await renderOrEmit({
                 text: `Deleted ${result.deletedCount} file(s), freed ${formatBytes(result.freedBytes)}`,
@@ -128,75 +128,26 @@ export function registerCacheCommand(program: Command): void {
 
 function cacheStats(yt: Awaited<ReturnType<typeof getYoutube>>): CacheStats {
     const channels = yt.db.listChannels().length;
-    const videos = yt.videos.list({ limit: 1_000_000, includeShorts: true, includeLive: true });
+    const videos = listCacheVideos(yt);
     const jobs = yt.pipeline.listJobs({ limit: 1_000_000 }).reduce<Map<string, number>>((counts, job) => {
         counts.set(job.status, (counts.get(job.status) ?? 0) + 1);
         return counts;
     }, new Map());
-    const transcripts = videos.reduce((count, video) => count + yt.db.listTranscripts(video.id).length, 0);
+    const stats = buildCacheStatsBase({ yt, channels, videos });
 
     return {
-        channels,
-        videos: videos.length,
-        transcripts,
+        channels: stats.channels,
+        videos: stats.videos,
+        transcripts: stats.transcripts,
         jobs: [...jobs.entries()].map(([status, count]) => ({ status, count })),
-        audioBytes: sum(videos.map((video) => video.audioSizeBytes)),
-        videoBytes: sum(videos.map((video) => video.videoSizeBytes)),
+        audioBytes: stats.audioBytes,
+        videoBytes: stats.videoBytes,
         thumbBytes: 0,
     };
-}
-
-async function clearBinaries(
-    yt: Awaited<ReturnType<typeof getYoutube>>,
-    flags: Pick<ClearOpts, "audio" | "video" | "thumbs">
-): Promise<ClearResult> {
-    let deletedCount = 0;
-    let freedBytes = 0;
-
-    for (const video of yt.videos.list({ limit: 1_000_000, includeShorts: true, includeLive: true })) {
-        if (flags.audio && video.audioPath) {
-            freedBytes += deletePath(video.audioPath, video.audioSizeBytes);
-            yt.db.setVideoBinaryPath(video.id, "audio", null);
-            deletedCount++;
-        }
-
-        if (flags.video && video.videoPath) {
-            freedBytes += deletePath(video.videoPath, video.videoSizeBytes);
-            yt.db.setVideoBinaryPath(video.id, "video", null);
-            deletedCount++;
-        }
-
-        if (flags.thumbs && video.thumbPath) {
-            freedBytes += deletePath(video.thumbPath, null);
-            yt.db.setVideoBinaryPath(video.id, "thumb", null);
-            deletedCount++;
-        }
-    }
-
-    return { deletedCount, freedBytes };
 }
 
 function selectedKinds(flags: Pick<ClearOpts, "audio" | "video" | "thumbs">): string[] {
     return [flags.audio ? "audio" : null, flags.video ? "video" : null, flags.thumbs ? "thumbs" : null].filter(
         (value): value is string => value !== null
     );
-}
-
-function ttlDays(raw: string): number | undefined {
-    const match = raw.match(/^(\d+)\s+days?$/);
-    return match?.[1] ? Number.parseInt(match[1], 10) : undefined;
-}
-
-function deletePath(path: string, knownBytes: number | null): number {
-    const bytes = knownBytes ?? (existsSync(path) ? statSync(path).size : 0);
-
-    if (existsSync(path)) {
-        unlinkSync(path);
-    }
-
-    return bytes;
-}
-
-function sum(values: Array<number | null>): number {
-    return values.reduce<number>((total, value) => total + (value ?? 0), 0);
 }

@@ -2,7 +2,8 @@ import { renderColumns } from "@app/youtube/commands/_shared/columns";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import { statusIcon } from "@app/youtube/commands/_shared/status-icon";
-import { resolveTargetKind, splitTargets, toJobStages } from "@app/youtube/commands/_shared/utils";
+import { splitTargets, toJobStages } from "@app/youtube/commands/_shared/utils";
+import { withConsoleContext } from "@app/youtube/lib/service-user";
 import type { PipelineJob } from "@app/youtube/lib/types";
 import type { Command } from "commander";
 
@@ -40,34 +41,39 @@ export function registerPipelineCommand(program: Command): void {
                 yt.pipeline.setGlobalConcurrencyOverride(opts.concurrency);
             }
 
-            const jobs = splitTargets(targets)
-                .map((target) => {
-                    const result = yt.pipeline.enqueue({
-                        targetKind: resolveTargetKind(target),
-                        target,
-                        stages,
-                    });
+            // Console context so these jobs and their AI usage get a real owner instead
+            // of a NULL user_id — `QueueService.enqueue` reads the owner from this ALS.
+            const finalRows = await withConsoleContext(yt.db, async () => {
+                const jobs = splitTargets(targets)
+                    .map((target) => {
+                        const result = yt.queue.enqueue({
+                            target,
+                            stages,
+                        });
 
-                    if (!result.job) {
-                        if (result.skipped === "artifact") {
-                            if (!cmd.optsWithGlobals().silent) {
-                                process.stderr.write(`${target}: artifact already cached, skipping.\n`);
+                        if (!result.job) {
+                            if (result.skipped === "artifact") {
+                                if (!cmd.optsWithGlobals().silent) {
+                                    process.stderr.write(`${target}: artifact already cached, skipping.\n`);
+                                }
+
+                                return null;
                             }
 
-                            return null;
+                            throw new Error(`pipeline enqueue returned no job for ${target}`);
                         }
 
-                        throw new Error(`pipeline enqueue returned no job for ${target}`);
-                    }
+                        return result.job;
+                    })
+                    .filter((job): job is PipelineJob => job !== null);
+                await yt.pipeline.start();
 
-                    return result.job;
-                })
-                .filter((job): job is PipelineJob => job !== null);
-            await yt.pipeline.start();
-
-            const finalRows = opts.watch
-                ? await Promise.all(jobs.map((job) => streamJobToCompletion(yt, job.id, !cmd.optsWithGlobals().silent)))
-                : await Promise.all(jobs.map((job) => waitForJob(yt, job.id)));
+                return opts.watch
+                    ? await Promise.all(
+                          jobs.map((job) => streamJobToCompletion(yt, job.id, !cmd.optsWithGlobals().silent))
+                      )
+                    : await Promise.all(jobs.map((job) => yt.queue.waitForJob(job.id)));
+            });
 
             await renderOrEmit({
                 text: renderPipelineRows(finalRows),
@@ -75,50 +81,6 @@ export function registerPipelineCommand(program: Command): void {
                 flags: cmd.optsWithGlobals(),
             });
         });
-}
-
-export async function waitForJob(yt: Awaited<ReturnType<typeof getYoutube>>, jobId: number): Promise<PipelineJob> {
-    const immediate = yt.pipeline.getJob(jobId);
-
-    if (immediate && isFinal(immediate)) {
-        return immediate;
-    }
-
-    return new Promise((resolve, reject) => {
-        const cleanup: Array<() => void> = [];
-        const timer = setInterval(() => {
-            const job = yt.pipeline.getJob(jobId);
-
-            if (job && isFinal(job)) {
-                clearInterval(timer);
-                for (const dispose of cleanup) {
-                    dispose();
-                }
-                resolve(job);
-            }
-        }, 100);
-
-        cleanup.push(
-            yt.pipeline.on("job:completed", (event) => {
-                if (event.job.id === jobId) {
-                    clearInterval(timer);
-                    for (const dispose of cleanup) {
-                        dispose();
-                    }
-                    resolve(event.job);
-                }
-            }),
-            yt.pipeline.on("job:failed", (event) => {
-                if (event.job.id === jobId) {
-                    clearInterval(timer);
-                    for (const dispose of cleanup) {
-                        dispose();
-                    }
-                    reject(new Error(event.error));
-                }
-            })
-        );
-    });
 }
 
 export async function streamJobToCompletion(
@@ -136,7 +98,7 @@ export async function streamJobToCompletion(
     });
 
     try {
-        return await waitForJob(yt, jobId);
+        return await yt.queue.waitForJob(jobId);
     } finally {
         dispose();
     }
@@ -153,10 +115,6 @@ function renderPipelineRows(rows: PipelineJob[]): string {
             { header: "Error", get: (job) => job.error ?? "" },
         ],
     });
-}
-
-function isFinal(job: PipelineJob): boolean {
-    return job.status === "completed" || job.status === "failed" || job.status === "cancelled";
 }
 
 function buildPipelineExamples(): string {

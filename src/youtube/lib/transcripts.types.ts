@@ -14,6 +14,8 @@ export interface TranscribeProgressInfo {
 export interface TranscribeOpts {
     videoId: VideoId;
     forceTranscribe?: boolean;
+    /** When set, a captions miss throws NoCaptionsError instead of downloading audio and running paid ASR. */
+    captionsOnly?: boolean;
     /** Awaited immediately before ANY paid ASR run (no-captions fallback AND
      *  forceTranscribe). Throwing aborts the transcription — the pipeline's
      *  diamond gate reserves credits here. */

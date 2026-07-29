@@ -69,7 +69,7 @@ describe("askCollection", () => {
 
         expect(result.answer).toBe("All about testing.");
         expect(result.toolCalls).toBe(0);
-        const messages = db.listAskMessages(result.threadId);
+        const messages = db.listAskSessionMessages(result.threadId);
 
         expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
     });
@@ -85,7 +85,7 @@ describe("askCollection", () => {
         const result = await askCollection({ db, userId: 1, collection, question: "What?", providerChoice, deps });
 
         expect(result.toolCalls).toBe(3);
-        const toolMessages = db.listAskMessages(result.threadId).filter((message) => message.role === "tool");
+        const toolMessages = db.listAskSessionMessages(result.threadId).filter((message) => message.role === "tool");
 
         expect(toolMessages).toHaveLength(3);
         expect(toolMessages[0].toolName).toBe("list_videos");
@@ -101,11 +101,11 @@ describe("askCollection", () => {
         await expect(
             askCollection({ db, userId: 1, collection, question: "Loop?", providerChoice, deps })
         ).rejects.toThrow("tool budget");
-        const collectionThread = db.listAskThreads(1, collection.id)[0];
+        const collectionThread = db.listAskSessions(1, { collectionId: collection.id })[0];
 
-        expect(db.listAskMessages(collectionThread.id).filter((message) => message.role === "tool")).toHaveLength(
-            MAX_TOOL_CALLS
-        );
+        expect(
+            db.listAskSessionMessages(collectionThread.id).filter((message) => message.role === "tool")
+        ).toHaveLength(MAX_TOOL_CALLS);
     });
 
     it("continues an existing thread and rejects foreign threads", async () => {
@@ -124,7 +124,7 @@ describe("askCollection", () => {
         });
 
         expect(second.threadId).toBe(first.threadId);
-        expect(db.listAskMessages(first.threadId)).toHaveLength(4);
+        expect(db.listAskSessionMessages(first.threadId)).toHaveLength(4);
 
         await expect(
             askCollection({

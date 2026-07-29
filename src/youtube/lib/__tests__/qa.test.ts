@@ -60,6 +60,34 @@ describe("QaService", () => {
         }
     });
 
+    it("retrieves only the requested embedder model bucket", async () => {
+        const { db, config, dir } = await makeFixture();
+
+        try {
+            const service = new QaService(db, config, makeDeps());
+            const providerChoice = { provider: { type: "test" }, model: { id: "model" } } as never;
+
+            await service.index({ videoId: "abc123def45", model: "custom-embedder" });
+            const matching = await service.ask({
+                videoIds: ["abc123def45"],
+                question: "What matters?",
+                providerChoice,
+                model: "custom-embedder",
+            });
+            const defaultBucket = await service.ask({
+                videoIds: ["abc123def45"],
+                question: "What matters?",
+                providerChoice,
+            });
+
+            expect(matching.citations).not.toHaveLength(0);
+            expect(defaultBucket.citations).toHaveLength(0);
+        } finally {
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
     it("skips existing chunks unless forceReindex is set", async () => {
         const { db, config, dir } = await makeFixture();
 

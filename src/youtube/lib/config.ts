@@ -15,7 +15,16 @@ export const DEFAULT_YOUTUBE_CONFIG: YoutubeConfigShape = {
     apiBaseUrl: "http://localhost:9876",
     provider: {},
     powerUsers: [],
-    ai: [],
+    // Default the LLM tasks to the SuperGrok subscription (`grok-sub` account →
+    // provider name "grok") rather than the metered `xai` API key.
+    //
+    // Deliberately NOT `for: ["all"]`: that also matches `embed` and `transcribe`,
+    // whose specs are passed to `Embedder.create`/`Transcriber.create` as a provider
+    // NAME. Grok is a chat model with no embedding endpoint, and `Embedder.create`
+    // throws on a provider that fails `supports("embed")` — an "all" default would
+    // break every indexing run. Those two tasks keep their local, free defaults
+    // (`darwinkit` / `local-hf`) unless explicitly configured.
+    ai: [{ provider: "grok", model: "grok-4.5", for: ["summary", "insights", "qa"] }],
     referrals: { enabled: false, offers: [] },
     freeTier: { actionsPerMonth: null },
     defaultQuality: "720p",

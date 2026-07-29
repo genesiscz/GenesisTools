@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { YoutubeConfig } from "@app/youtube/lib/config";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
-import { TranscriptService } from "@app/youtube/lib/transcripts";
+import { NoCaptionsError, TranscriptService } from "@app/youtube/lib/transcripts";
 
 let captionResult: unknown = null;
 const captionCalls: unknown[] = [];
@@ -73,7 +73,9 @@ describe("TranscriptService", () => {
             await config.set("preferredLangs", ["en", "cs"]);
             const service = new TranscriptService(db, config, makeDeps());
 
-            await expect(service.transcribe({ videoId: "abc123def45", lang: "cs" })).resolves.toMatchObject({
+            await expect(
+                service.transcribe({ videoId: "abc123def45", lang: "cs", captionsOnly: true })
+            ).resolves.toMatchObject({
                 text: "Caption text",
                 lang: "cs",
                 source: "captions",
@@ -81,6 +83,62 @@ describe("TranscriptService", () => {
             expect(captionCalls).toEqual([{ videoId: "abc123def45", preferredLangs: ["cs", "en"] }]);
             expect(db.getTranscript("abc123def45", { lang: "cs", source: "captions" })?.text).toBe("Caption text");
             expect(downloadAudioCalls).toHaveLength(0);
+            expect(transcriberCreateCalls).toHaveLength(0);
+        } finally {
+            db.close();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("throws NoCaptionsError without entering the paid path when captions-only misses", async () => {
+        const { db, config, dir } = await makeFixture();
+        let gateCalls = 0;
+
+        try {
+            const service = new TranscriptService(db, config, makeDeps());
+            const result = service.transcribe({
+                videoId: "abc123def45",
+                captionsOnly: true,
+                beforeAiTranscription: () => {
+                    gateCalls += 1;
+                },
+            });
+
+            await expect(result).rejects.toMatchObject({
+                name: "NoCaptionsError",
+                message: "no captions available for video abc123def45",
+            });
+            await expect(result).rejects.toBeInstanceOf(NoCaptionsError);
+            expect(gateCalls).toBe(0);
+            expect(downloadAudioCalls).toHaveLength(0);
+            expect(transcriberCreateCalls).toHaveLength(0);
+            expect(transcriberTranscribeCalls).toHaveLength(0);
+        } finally {
+            db.close();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("treats captions-only as stronger than force-transcribe", async () => {
+        const { db, config, dir } = await makeFixture();
+
+        try {
+            const service = new TranscriptService(db, config, makeDeps());
+
+            await expect(
+                service.transcribe({
+                    videoId: "abc123def45",
+                    captionsOnly: true,
+                    forceTranscribe: true,
+                })
+            ).rejects.toMatchObject({
+                name: "NoCaptionsError",
+                message: "no captions available for video abc123def45",
+            });
+            expect(captionCalls).toHaveLength(0);
+            expect(downloadAudioCalls).toHaveLength(0);
+            expect(transcriberCreateCalls).toHaveLength(0);
+            expect(transcriberTranscribeCalls).toHaveLength(0);
         } finally {
             db.close();
             rmSync(dir, { recursive: true, force: true });

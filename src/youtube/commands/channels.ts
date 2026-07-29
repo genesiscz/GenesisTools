@@ -4,6 +4,7 @@ import { confirmDestructive } from "@app/youtube/commands/_shared/confirm";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import { normaliseHandle, validateHandle } from "@app/youtube/commands/_shared/utils";
+import { withConsoleContext } from "@app/youtube/lib/service-user";
 import type { ChannelHandle } from "@app/youtube/lib/types";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
@@ -16,6 +17,7 @@ interface SyncOpts {
     limit: number;
     includeShorts?: boolean;
     since?: string;
+    sync?: boolean;
 }
 
 export function registerChannelsCommand(program: Command): void {
@@ -134,15 +136,51 @@ export function registerChannelsCommand(program: Command): void {
         .option("--limit <n>", "Max videos per channel (default 30)", (value) => Number.parseInt(value, 10), 30)
         .option("--include-shorts", "Include Shorts in the sync")
         .option("--since <date>", "Only sync uploads on/after YYYY-MM-DD")
+        .option("--sync", "Run synchronously and print the channel results table")
         .addHelpText(
             "after",
-            "\nExamples:\n  $ tools youtube channels sync @mkbhd --limit 100\n  $ tools youtube channels sync --all\n"
+            "\nExamples:\n  $ tools youtube channels sync @mkbhd\n  $ tools youtube channels sync --all\n  $ tools youtube channels sync @mkbhd --sync --limit 100\n"
         )
         .action(async (handleArg: string | undefined, opts: SyncOpts) => {
             const yt = await getYoutube();
             const targets = await resolveSyncTargets({ yt, handleArg, all: opts.all });
 
             if (!targets.length) {
+                return;
+            }
+
+            if (!opts.sync) {
+                // Console context so these jobs get a real owner instead of a NULL
+                // user_id — `QueueService.enqueue` reads the owner from this ALS.
+                const enqueuedJobIds = await withConsoleContext(yt.db, async () => {
+                    const jobIds: number[] = [];
+
+                    for (const handle of targets) {
+                        const result = yt.queue.enqueue({
+                            targetKind: "channel",
+                            target: handle,
+                            stages: ["discover", "metadata"],
+                            params: {
+                                limit: opts.limit,
+                                includeShorts: opts.includeShorts,
+                            },
+                        });
+
+                        if (!result.job) {
+                            throw new Error(`channel sync enqueue returned no job for ${handle}`);
+                        }
+
+                        jobIds.push(result.job.id);
+                    }
+
+                    return jobIds;
+                });
+
+                await renderOrEmit({
+                    text: `Enqueued job ids: ${enqueuedJobIds.join(", ")}`,
+                    json: { enqueuedJobIds },
+                    flags: cmd.optsWithGlobals(),
+                });
                 return;
             }
 

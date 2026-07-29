@@ -22,6 +22,7 @@ import type { CallLLMOptions, CallLLMResult } from "@genesiscz/utils/ai/call-llm
 import { callLLM as defaultCallLLM } from "@genesiscz/utils/ai/call-llm";
 import { Transcriber } from "@genesiscz/utils/ai/tasks/Transcriber";
 import { speakerIndexFromLabel } from "@genesiscz/utils/ai/transcription/speaker-label";
+import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { estimateTokens } from "@genesiscz/utils/tokens";
 
@@ -33,6 +34,13 @@ const DEFAULT_TRANSCRIPT_DEPS: TranscriptServiceDeps = {
     downloadAudio,
     createTranscriber: (opts) => Transcriber.create(opts),
 };
+
+export class NoCaptionsError extends Error {
+    constructor(videoId: VideoId) {
+        super(`no captions available for video ${videoId}`);
+        this.name = "NoCaptionsError";
+    }
+}
 
 export class TranscriptService {
     constructor(
@@ -160,11 +168,25 @@ export class TranscriptService {
             throw new Error(`unknown video: ${opts.videoId}`);
         }
 
+        if (opts.captionsOnly && opts.forceTranscribe) {
+            logger.warn(
+                { videoId: opts.videoId },
+                "youtube transcribe received conflicting captionsOnly and forceTranscribe options"
+            );
+            logger.info({ videoId: opts.videoId }, "youtube captions-only miss");
+            throw new NoCaptionsError(opts.videoId);
+        }
+
         if (!opts.forceTranscribe) {
             const fromCaptions = await this.tryCaptions({ videoId: opts.videoId, lang: opts.lang });
 
             if (fromCaptions) {
                 return fromCaptions;
+            }
+
+            if (opts.captionsOnly) {
+                logger.info({ videoId: opts.videoId }, "youtube captions-only miss");
+                throw new NoCaptionsError(opts.videoId);
             }
 
             opts.onProgress?.({ phase: "audio", message: "no captions available — preparing AI transcription" });

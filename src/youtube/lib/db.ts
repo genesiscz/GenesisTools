@@ -11,12 +11,14 @@ import type {
     AdminUserRow,
     AdminUserTotals,
     AiCallRecord,
-    AskMessageRecord,
-    AskMessageRole,
-    AskThreadRecord,
+    AskSessionMessageRecord,
+    AskSessionMessageRole,
+    AskSessionRecord,
+    AskSessionScopeKind,
     ClaimJobOpts,
     CollectionKind,
     CollectionRecord,
+    CreateAskSessionInput,
     CreateCollectionInput,
     EnqueueJobInput,
     EnqueueJobResult,
@@ -677,30 +679,92 @@ export class YoutubeDatabase extends BaseDatabase {
             `);
         });
 
-        // Collection-Ask conversations (Phase 3). Tool calls persist as
-        // role='tool' rows so a replay shows WHAT the agent looked at.
-        this.runMigration("add-ask-threads", () => {
+        // Ask sessions: a named, user-owned conversation over a corpus. Originally
+        // `ask_threads`, collection-only; widened so ONE table serves the collection-ask
+        // path AND console/CLI sessions scoped to a channel, an explicit id list, or an
+        // imported transcript directory. Tool calls still persist as role='tool' rows so
+        // a replay shows WHAT the agent looked at. `user_id` is mandatory on every row —
+        // CLI work is owned by the console service user, never by nobody.
+        //
+        // This upgrade step runs BEFORE the create step below: on a legacy DB it renames
+        // and rebuilds, on a fresh DB it no-ops and the create step lays down the final
+        // shape directly. Ordering it the other way would let the `IF NOT EXISTS` create
+        // resurrect an empty `ask_threads` on every open.
+        this.runMigration("ask-threads-to-sessions", () => {
+            const legacy = this.db
+                .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='ask_threads'")
+                .get();
+
+            if (!legacy) {
+                return;
+            }
+
+            // Full rebuild rather than ALTER: `collection_id` was NOT NULL and SQLite
+            // cannot relax that in place, while a channel/ids/dir session has no
+            // collection. Existing rows are collection-backed, so they carry over as
+            // scope_kind='collection' with their collection_id intact.
             this.db.exec(`
-                CREATE TABLE IF NOT EXISTS ask_threads (
+                CREATE TABLE ask_sessions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,
-                    collection_id INTEGER NOT NULL,
+                    collection_id INTEGER,
+                    scope_kind TEXT NOT NULL DEFAULT 'collection'
+                        CHECK (scope_kind IN ('collection','channel','videos','dir')),
+                    scope_value TEXT NOT NULL DEFAULT '',
+                    video_ids_json TEXT NOT NULL DEFAULT '[]',
+                    provider_spec TEXT,
                     title TEXT NOT NULL,
                     created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
                     updated_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC})
                 );
-                CREATE INDEX IF NOT EXISTS idx_ask_threads_user ON ask_threads(user_id, updated_at DESC);
+                INSERT INTO ask_sessions (id, user_id, collection_id, scope_kind, title, created_at, updated_at)
+                    SELECT id, user_id, collection_id, 'collection', title, created_at, updated_at FROM ask_threads;
+                DROP TABLE ask_threads;
 
-                CREATE TABLE IF NOT EXISTS ask_messages (
+                CREATE TABLE ask_session_messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    thread_id INTEGER NOT NULL,
+                    session_id INTEGER NOT NULL,
                     role TEXT NOT NULL CHECK (role IN ('user','assistant','tool')),
                     content TEXT NOT NULL,
                     tool_name TEXT,
                     tool_args_json TEXT,
+                    citations_json TEXT,
                     created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC})
                 );
-                CREATE INDEX IF NOT EXISTS idx_ask_messages_thread ON ask_messages(thread_id, id ASC);
+                INSERT INTO ask_session_messages (id, session_id, role, content, tool_name, tool_args_json, created_at)
+                    SELECT id, thread_id, role, content, tool_name, tool_args_json, created_at FROM ask_messages;
+                DROP TABLE ask_messages;
+            `);
+        });
+
+        this.runMigration("add-ask-sessions", () => {
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS ask_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    collection_id INTEGER,
+                    scope_kind TEXT NOT NULL DEFAULT 'collection'
+                        CHECK (scope_kind IN ('collection','channel','videos','dir')),
+                    scope_value TEXT NOT NULL DEFAULT '',
+                    video_ids_json TEXT NOT NULL DEFAULT '[]',
+                    provider_spec TEXT,
+                    title TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC}),
+                    updated_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC})
+                );
+                CREATE INDEX IF NOT EXISTS idx_ask_sessions_user ON ask_sessions(user_id, updated_at DESC);
+
+                CREATE TABLE IF NOT EXISTS ask_session_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER NOT NULL,
+                    role TEXT NOT NULL CHECK (role IN ('user','assistant','tool')),
+                    content TEXT NOT NULL,
+                    tool_name TEXT,
+                    tool_args_json TEXT,
+                    citations_json TEXT,
+                    created_at TEXT NOT NULL DEFAULT (${SQL_NOW_UTC})
+                );
+                CREATE INDEX IF NOT EXISTS idx_ask_session_messages ON ask_session_messages(session_id, id ASC);
             `);
         });
 
@@ -1674,6 +1738,29 @@ export class YoutubeDatabase extends BaseDatabase {
             .all(jobId);
 
         return rows.map(rowToJobActivity);
+    }
+
+    /**
+     * Every activity row newer than `afterId`, across all jobs.
+     *
+     * `QueueService.watch()` polls this once per tick instead of calling
+     * `listJobActivity()` per watched job: an all-jobs watch can hold up to
+     * `WATCH_LIST_LIMIT` (100k) jobs, which made each 500ms tick issue that many
+     * queries. `limit` bounds the burst when a backlog is replayed.
+     */
+    listJobActivityAfter(afterId: number, limit = 1_000): JobActivity[] {
+        const rows = this.db
+            .query<JobActivityRow, [number, number]>("SELECT * FROM job_activity WHERE id > ? ORDER BY id ASC LIMIT ?")
+            .all(afterId, limit);
+
+        return rows.map(rowToJobActivity);
+    }
+
+    /** Highest activity id currently stored, or 0 on an empty table. */
+    maxJobActivityId(): number {
+        const row = this.db.query<{ maxId: number | null }, []>("SELECT MAX(id) AS maxId FROM job_activity").get();
+
+        return row?.maxId ?? 0;
     }
 
     recordVideoWatch(input: { userId: number | null; videoId: string }): void {
@@ -3103,13 +3190,15 @@ export class YoutubeDatabase extends BaseDatabase {
 
             if (result.changes > 0) {
                 this.db.run("DELETE FROM collection_videos WHERE collection_id = ?", [id]);
-                // Ask threads reference the collection — no FK cascade exists,
-                // so delete them (and their messages) here or they orphan.
+                // Collection-scoped ask sessions reference the collection — no FK
+                // cascade exists, so delete them (and their messages) here or they
+                // orphan. Channel/ids/dir sessions carry a NULL collection_id and are
+                // deliberately untouched.
                 this.db.run(
-                    "DELETE FROM ask_messages WHERE thread_id IN (SELECT id FROM ask_threads WHERE collection_id = ?)",
+                    "DELETE FROM ask_session_messages WHERE session_id IN (SELECT id FROM ask_sessions WHERE collection_id = ?)",
                     [id]
                 );
-                this.db.run("DELETE FROM ask_threads WHERE collection_id = ?", [id]);
+                this.db.run("DELETE FROM ask_sessions WHERE collection_id = ?", [id]);
             }
 
             return result.changes > 0;
@@ -3144,76 +3233,123 @@ export class YoutubeDatabase extends BaseDatabase {
         return rows.map((row) => row.video_id);
     }
 
-    createAskThread(input: { userId: number; collectionId: number; title: string }): AskThreadRecord {
+    createAskSession(input: CreateAskSessionInput): AskSessionRecord {
         const row = this.db
-            .query<AskThreadRow, [number, number, string]>(
-                "INSERT INTO ask_threads (user_id, collection_id, title) VALUES (?, ?, ?) RETURNING *"
+            .query<AskSessionRow, [number, number | null, string, string, string, string | null, string]>(
+                `INSERT INTO ask_sessions (user_id, collection_id, scope_kind, scope_value, video_ids_json, provider_spec, title)
+                 VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *`
             )
-            .get(input.userId, input.collectionId, input.title);
+            .get(
+                input.userId,
+                input.collectionId ?? null,
+                input.scopeKind,
+                input.scopeValue ?? "",
+                SafeJSON.stringify(input.videoIds ?? [], { strict: true }),
+                input.providerSpec ?? null,
+                input.title
+            );
 
         if (!row) {
-            throw new Error("createAskThread: insert returned no row");
+            throw new Error("createAskSession: insert returned no row");
         }
 
-        return rowToAskThread(row);
+        return rowToAskSession(row);
     }
 
-    getAskThread(userId: number, id: number): AskThreadRecord | null {
+    /** Ownership-scoped read — a session is only ever visible to the user that owns it. */
+    getAskSession(userId: number, id: number): AskSessionRecord | null {
         const row = this.db
-            .query<AskThreadRow, [number, number]>("SELECT * FROM ask_threads WHERE id = ? AND user_id = ?")
+            .query<AskSessionRow, [number, number]>("SELECT * FROM ask_sessions WHERE id = ? AND user_id = ?")
             .get(id, userId);
 
-        return row ? rowToAskThread(row) : null;
+        return row ? rowToAskSession(row) : null;
     }
 
-    listAskThreads(userId: number, collectionId?: number): AskThreadRecord[] {
-        const rows =
-            collectionId !== undefined
-                ? this.db
-                      .query<AskThreadRow, [number, number]>(
-                          "SELECT * FROM ask_threads WHERE user_id = ? AND collection_id = ? ORDER BY updated_at DESC, id DESC"
-                      )
-                      .all(userId, collectionId)
-                : this.db
-                      .query<AskThreadRow, [number]>(
-                          "SELECT * FROM ask_threads WHERE user_id = ? ORDER BY updated_at DESC, id DESC"
-                      )
-                      .all(userId);
+    /** Named lookup within one owner's namespace — CLI sessions are addressed by name. */
+    getAskSessionByTitle(userId: number, title: string): AskSessionRecord | null {
+        const row = this.db
+            .query<AskSessionRow, [number, string]>(
+                "SELECT * FROM ask_sessions WHERE user_id = ? AND title = ? ORDER BY id DESC LIMIT 1"
+            )
+            .get(userId, title);
 
-        return rows.map(rowToAskThread);
+        return row ? rowToAskSession(row) : null;
     }
 
-    appendAskMessage(input: {
-        threadId: number;
-        role: AskMessageRole;
+    listAskSessions(
+        userId: number,
+        opts: { collectionId?: number; scopeKind?: AskSessionScopeKind } = {}
+    ): AskSessionRecord[] {
+        const where: string[] = ["user_id = ?"];
+        const params: Array<string | number> = [userId];
+
+        if (opts.collectionId !== undefined) {
+            where.push("collection_id = ?");
+            params.push(opts.collectionId);
+        }
+
+        if (opts.scopeKind !== undefined) {
+            where.push("scope_kind = ?");
+            params.push(opts.scopeKind);
+        }
+
+        const rows = this.db
+            .query<AskSessionRow, Array<string | number>>(
+                `SELECT * FROM ask_sessions WHERE ${where.join(" AND ")} ORDER BY updated_at DESC, id DESC`
+            )
+            .all(...params);
+
+        return rows.map(rowToAskSession);
+    }
+
+    setAskSessionVideoIds(id: number, videoIds: string[]): void {
+        this.db.run(`UPDATE ask_sessions SET video_ids_json = ?, updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [
+            SafeJSON.stringify(videoIds, { strict: true }),
+            id,
+        ]);
+    }
+
+    appendAskSessionMessage(input: {
+        sessionId: number;
+        role: AskSessionMessageRole;
         content: string;
         toolName?: string | null;
         toolArgsJson?: string | null;
-    }): AskMessageRecord {
+        citationsJson?: string | null;
+    }): AskSessionMessageRecord {
         const row = this.db
-            .query<AskMessageRow, [number, string, string, string | null, string | null]>(
-                `INSERT INTO ask_messages (thread_id, role, content, tool_name, tool_args_json)
-                 VALUES (?, ?, ?, ?, ?) RETURNING *`
+            .query<AskSessionMessageRow, [number, string, string, string | null, string | null, string | null]>(
+                `INSERT INTO ask_session_messages (session_id, role, content, tool_name, tool_args_json, citations_json)
+                 VALUES (?, ?, ?, ?, ?, ?) RETURNING *`
             )
-            .get(input.threadId, input.role, input.content, input.toolName ?? null, input.toolArgsJson ?? null);
+            .get(
+                input.sessionId,
+                input.role,
+                input.content,
+                input.toolName ?? null,
+                input.toolArgsJson ?? null,
+                input.citationsJson ?? null
+            );
 
         if (!row) {
-            throw new Error("appendAskMessage: insert returned no row");
+            throw new Error("appendAskSessionMessage: insert returned no row");
         }
 
-        return rowToAskMessage(row);
+        return rowToAskSessionMessage(row);
     }
 
-    listAskMessages(threadId: number): AskMessageRecord[] {
+    listAskSessionMessages(sessionId: number): AskSessionMessageRecord[] {
         const rows = this.db
-            .query<AskMessageRow, [number]>("SELECT * FROM ask_messages WHERE thread_id = ? ORDER BY id ASC")
-            .all(threadId);
+            .query<AskSessionMessageRow, [number]>(
+                "SELECT * FROM ask_session_messages WHERE session_id = ? ORDER BY id ASC"
+            )
+            .all(sessionId);
 
-        return rows.map(rowToAskMessage);
+        return rows.map(rowToAskSessionMessage);
     }
 
-    touchAskThread(id: number): void {
-        this.db.run(`UPDATE ask_threads SET updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [id]);
+    touchAskSession(id: number): void {
+        this.db.run(`UPDATE ask_sessions SET updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [id]);
     }
 
     addWatchlistChannel(userId: number, channelHandle: string): void {
@@ -4106,33 +4242,44 @@ function rowToCollection(row: CollectionRow): CollectionRecord {
     };
 }
 
-interface AskThreadRow {
+interface AskSessionRow {
     id: number;
     user_id: number;
-    collection_id: number;
+    collection_id: number | null;
+    scope_kind: AskSessionScopeKind;
+    scope_value: string;
+    video_ids_json: string;
+    provider_spec: string | null;
     title: string;
     created_at: string;
     updated_at: string;
 }
 
-function rowToAskThread(row: AskThreadRow): AskThreadRecord {
+function rowToAskSession(row: AskSessionRow): AskSessionRecord {
+    const parsed = SafeJSON.parse(row.video_ids_json, { unbox: true });
+
     return {
         id: row.id,
         userId: row.user_id,
         collectionId: row.collection_id,
+        scopeKind: row.scope_kind,
+        scopeValue: row.scope_value,
+        videoIds: Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [],
+        providerSpec: row.provider_spec,
         title: row.title,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
     };
 }
 
-interface AskMessageRow {
+interface AskSessionMessageRow {
     id: number;
-    thread_id: number;
-    role: AskMessageRole;
+    session_id: number;
+    role: AskSessionMessageRole;
     content: string;
     tool_name: string | null;
     tool_args_json: string | null;
+    citations_json: string | null;
     created_at: string;
 }
 
@@ -4147,14 +4294,15 @@ interface VideoLiteRow {
     has_transcript: number;
 }
 
-function rowToAskMessage(row: AskMessageRow): AskMessageRecord {
+function rowToAskSessionMessage(row: AskSessionMessageRow): AskSessionMessageRecord {
     return {
         id: row.id,
-        threadId: row.thread_id,
+        sessionId: row.session_id,
         role: row.role,
         content: row.content,
         toolName: row.tool_name,
         toolArgsJson: row.tool_args_json,
+        citationsJson: row.citations_json,
         createdAt: row.created_at,
     };
 }

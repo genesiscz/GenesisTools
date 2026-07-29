@@ -1,4 +1,4 @@
-import type { AskMessageRecord } from "@app/youtube/lib/types";
+import type { AskSessionMessageRecord } from "@app/youtube/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 /** Human-readable summary of a dynamic collection's stored rule JSON. */
@@ -17,14 +17,15 @@ export function ruleSummary(ruleJson: string | null): string {
 }
 
 /** Synthetic user message shown optimistically while a collection ask is in flight. */
-export function optimisticUserMessage(threadId: number | null, content: string): AskMessageRecord {
+export function optimisticUserMessage(threadId: number | null, content: string): AskSessionMessageRecord {
     return {
         id: -1,
-        threadId: threadId ?? -1,
+        sessionId: threadId ?? -1,
         role: "user",
         content,
         toolName: null,
         toolArgsJson: null,
+        citationsJson: null,
         createdAt: new Date().toISOString(),
     };
 }

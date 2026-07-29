@@ -1,9 +1,18 @@
 import { renderColumns } from "@app/youtube/commands/_shared/columns";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
-import type { ChannelHandle, JobStage, JobTargetKind, TimestampedSummaryEntry, VideoId } from "@app/youtube/lib/types";
+import { extractVideoId, normaliseTarget } from "@app/youtube/lib/queue";
+import type { ChannelHandle, TimestampedSummaryEntry, VideoId } from "@app/youtube/lib/types";
 import type { Youtube } from "@app/youtube/lib/youtube";
 import { formatDuration } from "@genesiscz/utils/format";
 import pc from "picocolors";
+
+export {
+    CHANNEL_URL_PATTERN,
+    extractVideoId,
+    normaliseTarget,
+    resolveTargetKind,
+    toJobStages,
+} from "@app/youtube/lib/queue";
 
 export interface GlobalFlags {
     json?: boolean;
@@ -37,37 +46,6 @@ export function validateHandle(value: string | undefined): string | undefined {
     return undefined;
 }
 
-export function extractVideoId(value: string): VideoId | null {
-    const patterns = [
-        /(?:youtube\.com\/watch\?v=)([a-zA-Z0-9_-]{11})/,
-        /(?:youtu\.be\/)([a-zA-Z0-9_-]{11})/,
-        /(?:youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
-        /(?:youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/,
-        /^([a-zA-Z0-9_-]{11})$/,
-    ];
-
-    for (const pattern of patterns) {
-        const match = value.match(pattern);
-        if (match) {
-            return match[1] as VideoId;
-        }
-    }
-
-    return null;
-}
-
-export function resolveTargetKind(target: string): JobTargetKind {
-    if (target.startsWith("@")) {
-        return "channel";
-    }
-
-    if (target.includes("://")) {
-        return "url";
-    }
-
-    return "video";
-}
-
 export function splitTargets(targets: string[]): string[] {
     return targets.flatMap((target) =>
         target
@@ -80,7 +58,9 @@ export function splitTargets(targets: string[]): string[] {
 export async function resolveTargetsToVideoIds(yt: Youtube, targets: string[]): Promise<VideoId[]> {
     const ids: VideoId[] = [];
 
-    for (const target of splitTargets(targets)) {
+    for (const raw of splitTargets(targets)) {
+        const target = normaliseTarget(raw);
+
         if (target.startsWith("@")) {
             const videos = yt.videos.list({
                 channel: normaliseHandle(target),
@@ -101,27 +81,6 @@ export async function resolveTargetsToVideoIds(yt: Youtube, targets: string[]): 
     }
 
     return [...new Set(ids)];
-}
-
-export function toJobStages(values: string[]): JobStage[] {
-    const allowed = new Set<JobStage>([
-        "discover",
-        "metadata",
-        "comments",
-        "captions",
-        "audio",
-        "video",
-        "transcribe",
-        "summarize",
-    ]);
-
-    return values.map((value) => {
-        if (!allowed.has(value as JobStage)) {
-            throw new Error(`Unknown pipeline stage: ${value}`);
-        }
-
-        return value as JobStage;
-    });
 }
 
 export function wrap(value: string, width: number): string {
