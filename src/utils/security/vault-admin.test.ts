@@ -229,3 +229,54 @@ describe("exportVault / importVault", () => {
         await expect(importVault('{"version":99,"kdf":"scrypt"}', "passphrase123")).rejects.toThrow("Unrecognised");
     });
 });
+
+describe("interrupted rotation, from the reader's side", () => {
+    /**
+     * The escrow only helps if something points at it. A rotation that dies
+     * after the key is stored leaves every entry needing a key that exists
+     * nowhere else, and the reader used to surface node's raw "unable to
+     * authenticate data" with no mention of the file that fixes it.
+     */
+    test("a decrypt failure names the escrow and the command that recovers it", async () => {
+        const store = await secrets();
+        await store.set("ai/acc_x/apiKey", "value-of-x");
+        const oldKey = stored;
+
+        _setMasterKeyProvidersForTest([
+            {
+                id: "keychain" as const,
+                available: async () => true,
+                get: async () => stored,
+                set: async (key: Buffer) => {
+                    stored = key;
+                    throw new Error("simulated crash after storing the new key");
+                },
+            },
+        ]);
+
+        await expect(rotateMasterKey()).rejects.toThrow("simulated crash");
+        expect(stored.equals(oldKey)).toBe(false);
+
+        // Model the RESTART, which is what the scenario is: the in-process key
+        // cache still holds the old key, so without this the read succeeds and
+        // the test would pass for the wrong reason.
+        _setMasterKeyProvidersForTest(mutableKeyring());
+        _resetSecretsForTest();
+        const reader = await secrets();
+
+        await expect(reader.get("ai/acc_x/apiKey")).rejects.toThrow(rotationBackupPath());
+        await expect(reader.get("ai/acc_x/apiKey")).rejects.toThrow("GENESIS_TOOLS_MASTER_KEY");
+    });
+
+    test("an ordinary decrypt failure with no escrow is left as it was", async () => {
+        const store = await secrets();
+        await store.set("ai/acc_x/apiKey", "value-of-x");
+
+        stored = randomBytes(32);
+        _setMasterKeyProvidersForTest(mutableKeyring());
+        _resetSecretsForTest();
+
+        expect(existsSync(rotationBackupPath())).toBe(false);
+        await expect((await secrets()).get("ai/acc_x/apiKey")).rejects.not.toThrow(rotationBackupPath());
+    });
+});

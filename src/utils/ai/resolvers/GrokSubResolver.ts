@@ -14,7 +14,10 @@ export class GrokSubResolver implements AccountResolver {
         const { resolveGrokSubToken } = await import("../grok/account");
         // Only this initial read is gated; the per-request closure below keeps its
         // refresh, because a diagnostic caller never issues a request.
-        const { token, account } = await resolveGrokSubToken(accountName, { noRefresh: options?.noRefresh });
+        const { token, account } = await resolveGrokSubToken(accountName, {
+            noRefresh: options?.noRefresh,
+            authFile: options?.authFile,
+        });
 
         const { GROK_CLI_CHAT_PROXY_BASE_URL } = await import("../grok/paths");
         const { buildCliProxyHeaders } = await import("../grok/headers");
@@ -23,7 +26,7 @@ export class GrokSubResolver implements AccountResolver {
         // Token + headers are resolved per REQUEST (live file read) so a
         // long-running process picks up CLI-refreshed JWTs automatically.
         const freshTokenFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-            const { token: fresh } = await resolveGrokSubToken(accountName);
+            const { token: fresh } = await resolveGrokSubToken(accountName, { authFile: options?.authFile });
             const headers = new Headers(init?.headers);
 
             for (const [name, value] of Object.entries(buildCliProxyHeaders({ token: fresh }))) {

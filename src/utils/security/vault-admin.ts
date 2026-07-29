@@ -1,13 +1,15 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { MASTER_KEY_BYTES } from "./keyring/types";
 import { invalidateMasterKeyCache, masterKey, masterKeySource, writeMasterKey } from "./MasterKey";
-import { decryptEntry, encryptEntry, TAG_BYTES, vaultAdmin } from "./SecretStore";
+import { decryptEntry, encryptEntry, rotationBackupPath, TAG_BYTES, vaultAdmin } from "./SecretStore";
 import type { VaultFile } from "./vault-format";
+
+export { rotationBackupPath };
 
 const EXPORT_VERSION = 1;
 const SCRYPT_N = 2 ** 15;
@@ -30,11 +32,6 @@ export interface VaultExportBlob {
 
 function passphraseKey(passphrase: string, salt: Buffer, N: number, r: number, p: number): Buffer {
     return scryptSync(passphrase, salt, MASTER_KEY_BYTES, { N, r, p, maxmem: 512 * 1024 * 1024 });
-}
-
-/** Escrow of the OUTGOING key during rotation; see rotateMasterKey. */
-export function rotationBackupPath(): string {
-    return join(dirname(vaultAdmin.path()), "master.key.rotate-bak");
 }
 
 /**

@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+    _resetVaultStampCacheForTest,
     accountBindingFingerprint,
     accountConfigFingerprint,
     migrateAccountConfig,
@@ -115,6 +116,7 @@ describe("accountBindingFingerprint", () => {
         _resetSecretsForTest();
         invalidateMasterKeyCache();
         AiConfigStore.invalidate();
+        _resetVaultStampCacheForTest();
     });
 
     afterEach(() => {
@@ -123,6 +125,7 @@ describe("accountBindingFingerprint", () => {
         _resetSecretsForTest();
         invalidateMasterKeyCache();
         AiConfigStore.invalidate();
+        _resetVaultStampCacheForTest();
         rmSync(home, { recursive: true, force: true });
     });
 
@@ -140,6 +143,9 @@ describe("accountBindingFingerprint", () => {
         const configHashBefore = accountConfigFingerprint(vaultedAccount);
 
         await store.set(VAULT_PATH, "sk-rotated");
+        // The stamp is cached for a second so a request burst costs one stat;
+        // a rotation inside that window is picked up on the next expiry.
+        _resetVaultStampCacheForTest();
 
         expect(await accountBindingFingerprint(vaultedAccount)).not.toBe(before);
         expect(accountConfigFingerprint(vaultedAccount)).toBe(configHashBefore);

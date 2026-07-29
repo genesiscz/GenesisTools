@@ -31,12 +31,39 @@ export interface ResolveGrokSubTokenOptions {
      * CLI owns and rewrite a file it manages.
      */
     noRefresh?: boolean;
+    /**
+     * Resolve straight from THIS auth file instead of looking the account up by
+     * name. The plugin already holds `credentials.authFile` from its bind
+     * context, and re-querying the legacy config for it meant a binding was not
+     * actually determined by the context it was given.
+     */
+    authFile?: string;
+}
+
+/** The live token in a Grok CLI auth file, refreshed via OIDC when expired. */
+async function tokenFromAuthFile(authPath: string, noRefresh?: boolean): Promise<string> {
+    const entries = await readAuthFileAsync(authPath);
+    const active = getActiveAuthEntry(entries);
+
+    if (!active) {
+        throw new GrokAuthExpiredError(authPath);
+    }
+
+    return ensureFreshToken(active.key, authPath, noRefresh);
 }
 
 export async function resolveGrokSubToken(
     accountName?: string,
     options?: ResolveGrokSubTokenOptions
 ): Promise<ResolvedGrokSubToken> {
+    if (options?.authFile) {
+        return {
+            token: await tokenFromAuthFile(options.authFile, options.noRefresh),
+            authPath: options.authFile,
+            account: { name: accountName ?? "grok-sub" },
+        };
+    }
+
     const config = await AIConfig.load();
     let account: AIAccountEntry | undefined;
 
@@ -80,15 +107,7 @@ export async function resolveGrokSubToken(
         return { token: account.tokens.accessToken, authPath, account: pick(account) };
     }
 
-    const entries = await readAuthFileAsync(authPath);
-    const active = getActiveAuthEntry(entries);
-
-    if (!active) {
-        throw new GrokAuthExpiredError(authPath);
-    }
-
-    const token = await ensureFreshToken(active.key, authPath, options?.noRefresh);
-    return { token, authPath, account: pick(account) };
+    return { token: await tokenFromAuthFile(authPath, options?.noRefresh), authPath, account: pick(account) };
 }
 
 /**

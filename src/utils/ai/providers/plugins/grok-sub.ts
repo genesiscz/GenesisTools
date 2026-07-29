@@ -20,7 +20,13 @@ export const grokSubPlugin: ProviderPlugin = {
     },
 
     async bind(ctx: BindContext): Promise<ProviderBinding> {
-        const detected = await resolver.resolve(ctx.account.name, { noRefresh: ctx.probe });
+        // The auth file comes from THIS context, not from a second lookup by
+        // name: an account object that is not in the live config still binds,
+        // and a duplicate name cannot resolve to the wrong one.
+        const detected = await resolver.resolve(ctx.account.name, {
+            noRefresh: ctx.probe,
+            authFile: ctx.account.credentials.authFile,
+        });
 
         return {
             accountId: ctx.account.id,
@@ -37,7 +43,7 @@ export const grokSubPlugin: ProviderPlugin = {
      */
     async health(ctx: BindContext) {
         try {
-            await resolver.resolve(ctx.account.name, { noRefresh: true });
+            await resolver.resolve(ctx.account.name, { noRefresh: true, authFile: ctx.account.credentials.authFile });
             return { ok: true, detail: "grok CLI token resolved" };
         } catch (err) {
             return { ok: false, detail: err instanceof Error ? err.message : String(err) };
