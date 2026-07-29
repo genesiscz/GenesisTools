@@ -1,13 +1,15 @@
 import type { DetectedProvider, ModelInfo } from "@genesiscz/utils/ask/types";
 import type { AIProvider } from "@genesiscz/utils/config/ai.types";
-import type { AccountResolver } from "./index";
+import type { AccountResolver, ResolveAccountOptions } from "./index";
 
 export class OpenAISubResolver implements AccountResolver {
     readonly providerType: AIProvider = "openai-sub";
 
-    async resolve(accountName: string): Promise<DetectedProvider> {
+    async resolve(accountName: string, options?: ResolveAccountOptions): Promise<DetectedProvider> {
         const { resolveCodexAccountToken, WHAM_BASE_URL } = await import("../openai/codex-auth");
-        const { token, accountId } = await resolveCodexAccountToken(accountName);
+        // Only this initial read is gated; the per-request closure below keeps its
+        // refresh, because a diagnostic caller never issues a request.
+        const { token, accountId } = await resolveCodexAccountToken(accountName, { noRefresh: options?.noRefresh });
 
         const { AIConfig } = await import("../AIConfig");
         const config = await AIConfig.load();

@@ -98,13 +98,31 @@ export async function fetchCopilotSessionToken(ghoToken: string): Promise<Copilo
 
 export async function getCopilotSession(
     dataDir: string,
-    options?: Pick<ResolveGithubCopilotGhoTokenOptions, "allowKeychain">
+    options?: Pick<ResolveGithubCopilotGhoTokenOptions, "allowKeychain"> & {
+        /**
+         * Diagnosis mode: serve a live cached session, never mint a new one.
+         *
+         * Minting rewrites the session cache every other process reads, which is
+         * durable state a probe has no business changing (CLAUDE.md, "A
+         * diagnostic must never mutate": no cache mint that changes what a later
+         * process observes).
+         */
+        noMint?: boolean;
+    }
 ): Promise<CopilotSessionCache> {
     const cached = readSessionCache(dataDir);
     const now = Date.now();
 
     if (cached && cached.expiresAtMs - REFRESH_BUFFER_MS > now) {
         return cached;
+    }
+
+    // Guard sits above the mint, not at the caller: everything below writes.
+    if (options?.noMint) {
+        throw new Error(
+            `The Copilot session cache is ${cached ? "expired" : "absent"} and minting is disabled for diagnosis ` +
+                "(it would rewrite the session cache other processes read). Run any Copilot request to mint one."
+        );
     }
 
     const resolved = await resolveGithubCopilotGhoToken({

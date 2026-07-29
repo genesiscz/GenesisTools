@@ -45,6 +45,12 @@ export const githubCopilotPlugin: ProviderPlugin = {
     },
 
     async bind(ctx: BindContext): Promise<ProviderBinding> {
+        // A probe binds to REPORT, so prove a live session exists without minting
+        // one: minting rewrites the session cache every other process reads.
+        if (ctx.probe) {
+            await getCopilotSession(copilotDataDir(ctx.account.credentials.dataDir), { noMint: true });
+        }
+
         const api = new GithubCopilotApi({ dataDir: ctx.account.credentials.dataDir });
         const provider = createOpenAI({
             apiKey: "github-copilot-session",
@@ -60,9 +66,16 @@ export const githubCopilotPlugin: ProviderPlugin = {
         };
     },
 
+    /**
+     * Read-side only, per CLAUDE.md "A diagnostic must never mutate". `health` is
+     * always a probe; `bind` honours `ctx.probe` so testing an account observes
+     * it instead of changing it.
+     */
     async health(ctx: BindContext) {
         try {
-            const session = await getCopilotSession(copilotDataDir(ctx.account.credentials.dataDir));
+            const session = await getCopilotSession(copilotDataDir(ctx.account.credentials.dataDir), {
+                noMint: true,
+            });
             return { ok: true, detail: `copilot session valid until ${new Date(session.expiresAtMs).toISOString()}` };
         } catch (err) {
             return { ok: false, detail: err instanceof Error ? err.message : String(err) };

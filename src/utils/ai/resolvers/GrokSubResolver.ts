@@ -1,6 +1,6 @@
 import type { DetectedProvider, ModelInfo } from "@genesiscz/utils/ask/types";
 import type { AIProvider } from "@genesiscz/utils/config/ai.types";
-import type { AccountResolver } from "./index";
+import type { AccountResolver, ResolveAccountOptions } from "./index";
 
 /**
  * Grok CLI subscription: bills the user's SuperGrok plan via the CLI chat
@@ -10,9 +10,11 @@ import type { AccountResolver } from "./index";
 export class GrokSubResolver implements AccountResolver {
     readonly providerType: AIProvider = "grok-sub";
 
-    async resolve(accountName: string): Promise<DetectedProvider> {
+    async resolve(accountName: string, options?: ResolveAccountOptions): Promise<DetectedProvider> {
         const { resolveGrokSubToken } = await import("../grok/account");
-        const { token, account } = await resolveGrokSubToken(accountName);
+        // Only this initial read is gated; the per-request closure below keeps its
+        // refresh, because a diagnostic caller never issues a request.
+        const { token, account } = await resolveGrokSubToken(accountName, { noRefresh: options?.noRefresh });
 
         const { GROK_CLI_CHAT_PROXY_BASE_URL } = await import("../grok/paths");
         const { buildCliProxyHeaders } = await import("../grok/headers");

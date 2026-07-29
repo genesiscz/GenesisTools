@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getCopilotSession } from "@genesiscz/utils/ai/github-copilot";
 import { claudeOAuth } from "@genesiscz/utils/claude/auth";
 import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
 import { env } from "@genesiscz/utils/env";
@@ -238,5 +239,205 @@ describe("real use still refreshes", () => {
             "a diagnostic probe must never reach claudeOAuth.refresh"
         );
         expect(refreshCalls).toEqual(["sk-ant-ort01-single-use"]);
+    });
+});
+
+/**
+ * The other plugins whose probe paths can mutate durable state. Each gets the
+ * pair CLAUDE.md requires: the probe changes nothing, and a negative control
+ * proves normal use still reaches the mutation.
+ *
+ * The spy here is `globalThis.fetch`, because every one of these grants is spent
+ * by a network call — the OIDC grant for grok, the token POST for codex, the
+ * session mint for copilot. It throws as well as records, so a probe that
+ * reaches it fails loudly instead of passing quietly.
+ */
+function expiredJwt(): string {
+    const payload = Buffer.from(SafeJSON.stringify({ exp: Math.floor((Date.now() - HOUR) / 1000) })).toString(
+        "base64url"
+    );
+
+    return `eyJhbGciOiJIUzI1NiJ9.${payload}.signature`;
+}
+
+let fetchCalls: string[];
+let realFetch: typeof globalThis.fetch;
+
+function spyOnFetch(): void {
+    fetchCalls = [];
+    realFetch = globalThis.fetch;
+    // `preconnect` on the real fetch type has no counterpart here, so the cast
+    // goes through unknown rather than pretending the shapes overlap.
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+        fetchCalls.push(String(input instanceof Request ? input.url : input));
+        throw new Error("a diagnostic probe must never reach the network to spend a grant");
+    }) as unknown as typeof globalThis.fetch;
+}
+
+async function loadAccount(name: string): Promise<AccountEntry> {
+    const entry = (await AiConfigStore.load()).account(name);
+
+    if (!entry) {
+        throw new Error(`fixture account "${name}" missing`);
+    }
+
+    return entry;
+}
+
+describe("grok-sub probe purity", () => {
+    let authPath: string;
+
+    beforeEach(async () => {
+        authPath = join(home, "grok-auth.json");
+        writeFileSync(
+            authPath,
+            SafeJSON.stringify({
+                default: {
+                    key: expiredJwt(),
+                    refresh_token: "grok-single-use-rt",
+                    oidc_issuer: "https://issuer.invalid",
+                    oidc_client_id: "grok-cli",
+                },
+            })
+        );
+        await seed([
+            account({
+                id: "acc_grok",
+                name: "grok-main",
+                provider: "grok-sub",
+                credentials: { authFile: authPath },
+            }),
+        ]);
+        spyOnFetch();
+    });
+
+    afterEach(() => {
+        globalThis.fetch = realFetch;
+    });
+
+    test("health reports the expiry without the OIDC grant or rewriting auth.json", async () => {
+        const before = readFileSync(authPath, "utf8");
+        const plugin = providerPlugin("grok-sub");
+
+        const health = await plugin.health?.({ account: await loadAccount("grok-main") });
+
+        expect(fetchCalls).toEqual([]);
+        expect(health?.ok).toBe(false);
+        expect(health?.detail).toContain("refresh is disabled for diagnosis");
+        expect(readFileSync(authPath, "utf8")).toBe(before);
+    });
+
+    test("negative control: a bind without probe still attempts the OIDC grant", async () => {
+        const plugin = providerPlugin("grok-sub");
+
+        await expect(plugin.bind({ account: await loadAccount("grok-main") })).rejects.toThrow();
+        expect(fetchCalls.length).toBeGreaterThan(0);
+    });
+});
+
+describe("openai-sub probe purity", () => {
+    beforeEach(async () => {
+        await seed([
+            account({
+                id: "acc_codex",
+                name: "codex-main",
+                provider: "openai-sub",
+                credentials: {
+                    accessToken: "codex-stale-at",
+                    refreshToken: "codex-single-use-rt",
+                    expiresAt: Date.now() - HOUR,
+                },
+            }),
+        ]);
+        spyOnFetch();
+    });
+
+    afterEach(() => {
+        globalThis.fetch = realFetch;
+    });
+
+    test("health reports the expiry and spends no grant", async () => {
+        const before = readFileSync(configPath(), "utf8");
+        const plugin = providerPlugin("openai-sub");
+
+        const health = await plugin.health?.({ account: await loadAccount("codex-main") });
+
+        expect(fetchCalls).toEqual([]);
+        expect(health?.ok).toBe(false);
+        expect(health?.detail).toContain("codex login");
+        expect(readFileSync(configPath(), "utf8")).toBe(before);
+    });
+
+    test("negative control: a bind without probe still reaches the refresh", async () => {
+        const plugin = providerPlugin("openai-sub");
+
+        await expect(plugin.bind({ account: await loadAccount("codex-main") })).rejects.toThrow();
+        expect(fetchCalls.length).toBeGreaterThan(0);
+    });
+});
+
+describe("github-copilot probe purity", () => {
+    let dataDir: string;
+    let sessionPath: string;
+
+    beforeEach(async () => {
+        dataDir = join(home, "copilot");
+        sessionPath = join(dataDir, "session.json");
+        mkdirSync(dataDir, { recursive: true });
+        writeFileSync(join(dataDir, "github_token"), "gho_fixture\n");
+        writeFileSync(
+            sessionPath,
+            SafeJSON.stringify({
+                token: "tid=stale",
+                expiresAtMs: Date.now() - HOUR,
+                apiBaseUrl: "https://api.githubcopilot.invalid",
+                refreshedAt: new Date(Date.now() - HOUR).toISOString(),
+            })
+        );
+        await seed([
+            account({
+                id: "acc_copilot",
+                name: "copilot-main",
+                provider: "github-copilot",
+                credentials: { dataDir },
+            }),
+        ]);
+        spyOnFetch();
+    });
+
+    afterEach(() => {
+        globalThis.fetch = realFetch;
+    });
+
+    test("health reports the stale session without minting a new one", async () => {
+        const before = readFileSync(sessionPath, "utf8");
+        const plugin = providerPlugin("github-copilot");
+
+        const health = await plugin.health?.({ account: await loadAccount("copilot-main") });
+
+        expect(fetchCalls).toEqual([]);
+        expect(health?.ok).toBe(false);
+        expect(health?.detail).toContain("minting is disabled");
+        expect(readFileSync(sessionPath, "utf8")).toBe(before);
+        // Real use moves this file into auth storage and deletes it; the guard
+        // sits above that call, so a probe must leave it exactly where it was.
+        expect(existsSync(join(dataDir, "github_token"))).toBe(true);
+    });
+
+    test("a probe bind proves the session without minting, and leaves the cache alone", async () => {
+        const before = readFileSync(sessionPath, "utf8");
+        const plugin = providerPlugin("github-copilot");
+
+        await expect(plugin.bind({ account: await loadAccount("copilot-main"), probe: true })).rejects.toThrow(
+            "minting is disabled"
+        );
+        expect(fetchCalls).toEqual([]);
+        expect(readFileSync(sessionPath, "utf8")).toBe(before);
+        expect(existsSync(join(dataDir, "github_token"))).toBe(true);
+    });
+
+    test("negative control: real use still mints a session", async () => {
+        await expect(getCopilotSession(dataDir)).rejects.toThrow();
+        expect(fetchCalls.length).toBeGreaterThan(0);
     });
 });

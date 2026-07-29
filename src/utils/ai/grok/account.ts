@@ -22,7 +22,21 @@ export interface ResolvedGrokSubToken {
  * without the CLI), but goes stale on its own — the file reference is the
  * recommended mode.
  */
-export async function resolveGrokSubToken(accountName?: string): Promise<ResolvedGrokSubToken> {
+export interface ResolveGrokSubTokenOptions {
+    /**
+     * Diagnosis mode: read the stored JWT, never perform the OIDC grant.
+     *
+     * `refreshGrokAuth` rewrites `~/.grok/auth.json` and rotates the CLI's
+     * `refresh_token`, so a probe that refreshed would spend a grant the Grok
+     * CLI owns and rewrite a file it manages.
+     */
+    noRefresh?: boolean;
+}
+
+export async function resolveGrokSubToken(
+    accountName?: string,
+    options?: ResolveGrokSubTokenOptions
+): Promise<ResolvedGrokSubToken> {
     const config = await AIConfig.load();
     let account: AIAccountEntry | undefined;
 
@@ -53,6 +67,7 @@ export async function resolveGrokSubToken(accountName?: string): Promise<Resolve
         // here is only the CLI's default file — whoever the CLI happens to be
         // logged in as. Refreshing from it would hand back a DIFFERENT account's
         // token and quietly cross a billing boundary, so expiry is fatal instead.
+        // This path never refreshes, so `noRefresh` has nothing to guard here.
         if (isTokenExpired(decodeJwtClaims(account.tokens.accessToken))) {
             logger.warn(
                 { account: account.name },
@@ -72,7 +87,7 @@ export async function resolveGrokSubToken(accountName?: string): Promise<Resolve
         throw new GrokAuthExpiredError(authPath);
     }
 
-    const token = await ensureFreshToken(active.key, authPath);
+    const token = await ensureFreshToken(active.key, authPath, options?.noRefresh);
     return { token, authPath, account: pick(account) };
 }
 
@@ -83,9 +98,18 @@ export async function resolveGrokSubToken(accountName?: string): Promise<Resolve
  * and the reason provider detection used to fail outright. Only a refresh that
  * cannot be attempted (no refresh fields) or that the issuer rejects is fatal.
  */
-async function ensureFreshToken(token: string, authPath: string): Promise<string> {
+async function ensureFreshToken(token: string, authPath: string, noRefresh?: boolean): Promise<string> {
     if (!isTokenExpired(decodeJwtClaims(token))) {
         return token;
+    }
+
+    // Guard above the consuming call: refreshGrokAuth rewrites auth.json and
+    // rotates the refresh token, which a diagnosis must never do.
+    if (noRefresh) {
+        throw new Error(
+            `The grok-sub token in ${authPath} is expired and the OIDC refresh is disabled for diagnosis ` +
+                "(it would rotate the Grok CLI's refresh token and rewrite its auth file). Run: grok"
+        );
     }
 
     return refreshGrokAuthOrThrow({

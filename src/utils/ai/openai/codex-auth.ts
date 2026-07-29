@@ -304,7 +304,15 @@ export interface ResolvedCodexToken {
  */
 export async function resolveCodexAccountToken(
     accountName: string,
-    options?: { forceRefresh?: boolean }
+    options?: {
+        forceRefresh?: boolean;
+        /**
+         * Diagnosis mode: read the stored token, never rotate it. The refresh
+         * below POSTs a single-use grant and writes the rotated pair back into
+         * the AI config, which a probe must never do.
+         */
+        noRefresh?: boolean;
+    }
 ): Promise<ResolvedCodexToken> {
     const { AIConfig } = await import("../AIConfig");
     const config = await AIConfig.load();
@@ -350,6 +358,14 @@ export async function resolveCodexAccountToken(
     const wantsRefresh =
         options?.forceRefresh === true ||
         (entry.tokens.expiresAt != null && codexOAuth.needsRefresh(entry.tokens.expiresAt));
+
+    // Guard above the consuming call: everything inside the lock rotates and writes.
+    if (wantsRefresh && options?.noRefresh) {
+        throw new Error(
+            `The access token for openai-sub account "${accountName}" is expired and refresh is disabled for ` +
+                "diagnosis (it would spend a single-use grant and rewrite the config). Run: codex login"
+        );
+    }
 
     if (wantsRefresh) {
         accessToken = await config.withLock(async (data) => {
