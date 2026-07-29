@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getAiProxyConfigStore, parseConfigJson, resetAiProxyConfigStore } from "@app/ai-proxy/lib/config-store";
@@ -76,6 +76,30 @@ describe("config-store migration", () => {
 
         const fresh = await store.loadFresh();
         expect(fresh.translation.thinking).toBe("raw");
+
+        rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it("keeps the saved config owner-only, since it stores billed api keys in plain text", async () => {
+        const tempDir = mkdtempSync(join(tmpdir(), "ai-proxy-config-mode-"));
+        env.testing.set("GENESIS_TOOLS_HOME", tempDir);
+        resetAiProxyConfigStore();
+        resetAiProxyStorage();
+
+        const store = getAiProxyConfigStore();
+        const config = await store.load();
+        config.accounts = [
+            { name: "work", provider: "xai-api-key", providerSlug: "xai", enabled: true, apiKey: "xai-secret-value" },
+        ];
+
+        await store.save(config);
+
+        // Written through a rename of a fresh umask'd temp file, so this has to
+        // be re-applied per save rather than once at creation.
+        expect(statSync(getAiProxyStorage().getConfigPath()).mode & 0o777).toBe(0o600);
+
+        await store.save(config);
+        expect(statSync(getAiProxyStorage().getConfigPath()).mode & 0o777).toBe(0o600);
 
         rmSync(tempDir, { recursive: true, force: true });
     });
