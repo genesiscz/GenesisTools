@@ -14,8 +14,15 @@ import type { Pipeline } from "@app/youtube/lib/pipeline";
 import type { EnqueuePipelineResult } from "@app/youtube/lib/pipeline.types";
 import { getRequestContext } from "@app/youtube/lib/request-context";
 import type { VideoId } from "@app/youtube/lib/video.types";
+import { logger } from "@genesiscz/utils/logger";
 
 const SERVER_OWNED_PARAM_KEYS = ["holdId", "creditCost"] as const;
+// Redaction covers the read surface, not storage. `question` / `presetInstructions`
+// ARE the job's input — the `qa` stage reads them back out of `params_json` and
+// throws without them (`Youtube.stages.qa`) — so they have to be persisted. What
+// this prevents is one user's question travelling back out of the multi-user HTTP
+// API on someone else's job listing; the file itself is per-install under
+// `~/.genesis-tools/youtube/`.
 const SENSITIVE_PARAM_KEYS = ["holdId", "creditCost", "question", "presetInstructions"] as const;
 const WATCH_LIST_LIMIT = 100_000;
 const FINAL_JOB_STATUSES = new Set<JobStatus>(["completed", "failed", "cancelled"]);
@@ -85,6 +92,15 @@ export class QueueService {
         // `withConsoleContext`, which puts the console service user in this ALS.
         // Fixed here rather than at each call site so a new caller cannot forget it.
         const userId = input.userId ?? getRequestContext()?.userId ?? null;
+
+        if (userId === null) {
+            // Not fatal: `pipeline.enqueue` accepts a null owner and anonymous HTTP
+            // paths use it deliberately. It IS worth a line in the log, because the
+            // other way to get here is a new CLI/MCP caller that forgot
+            // `withConsoleContext`, and the symptom (no ai_calls rows, job invisible
+            // to its owner) is otherwise silent.
+            logger.warn({ target, targetKind, stages }, "youtube queue: enqueuing an unowned job (no userId in scope)");
+        }
 
         return this.pipeline.enqueue({
             target,
