@@ -31,6 +31,13 @@ interface SttRequest {
 
 const sttRequests: SttRequest[] = [];
 
+interface ClientSecretRequest {
+    authorization: string | null;
+    body: string;
+}
+
+const clientSecretRequests: ClientSecretRequest[] = [];
+
 let baseConfig: AiProxyConfig;
 let mockUpstream: ReturnType<typeof Bun.serve>;
 let proxy: ReturnType<typeof startAiProxyServer>;
@@ -57,6 +64,17 @@ function startMockUpstream() {
                 });
 
                 return new Response(SafeJSON.stringify({ text: "mock transcript", language: "en", duration: 1.2 }), {
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/realtime/client_secrets" && req.method === "POST") {
+                clientSecretRequests.push({
+                    authorization: req.headers.get("Authorization"),
+                    body: await req.text(),
+                });
+
+                return new Response(SafeJSON.stringify({ value: "ek_mock_secret", expires_at: 1785312000 }), {
                     headers: { "Content-Type": "application/json" },
                 });
             }
@@ -370,6 +388,34 @@ describe("realtime client_secrets mint", () => {
         expect(res.status).toBe(400);
         const body = (await res.json()) as { error: { message: string } };
         expect(body.error.message).toContain("Missing model");
+    });
+
+    /**
+     * The other side of the guard. A minted secret talks to the vendor directly,
+     * so this is the ONE path where the proxy hands out an ability whose usage it
+     * will never see; only the refusal was pinned, which meant nothing proved the
+     * enabled path forwards the ACCOUNT key rather than the caller's proxy key.
+     */
+    it("mints against the account key, not the proxy key, when the flag is on", async () => {
+        const before = clientSecretRequests.length;
+
+        const res = await fetch(`http://127.0.0.1:${proxy.port}/v1/realtime/client_secrets`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${PROXY_KEY}`, "Content-Type": "application/json" },
+            body: SafeJSON.stringify({ session: { type: "realtime", model: "martin/grok/grok-voice-latest" } }),
+        });
+
+        expect(res.status).toBe(200);
+        expect(((await res.json()) as { value?: string }).value).toBe("ek_mock_secret");
+
+        expect(clientSecretRequests.length).toBe(before + 1);
+        const forwarded = clientSecretRequests[before];
+        // The caller's proxy key must never reach the vendor.
+        expect(forwarded.authorization).not.toContain(PROXY_KEY);
+        expect(forwarded.authorization).toBe("Bearer xai-mock-key");
+        // And the proxy model id is rewritten to the upstream one.
+        expect(forwarded.body).toContain("grok-voice-latest");
+        expect(forwarded.body).not.toContain("martin/grok/");
     });
 
     it("refuses to mint when realtime.allowClientSecrets is off", async () => {

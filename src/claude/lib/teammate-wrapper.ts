@@ -84,9 +84,21 @@ export function resolveClaudeBinaryForTeammates(): string {
         }
     }
 
-    // Last resort: leave it on PATH for the wrapper's exec. Better than aborting
-    // the lead launch; teammate may still fail if `claude` is only a shell fn.
-    logger.warn("[teammate-wrapper] could not resolve absolute claude binary; wrapper will exec 'claude' on PATH");
+    // Last resort: leave it on PATH for the wrapper's exec, because aborting the
+    // LEAD launch over a teammate's binary is the worse failure.
+    //
+    // The one way this still works is a tmux pane whose PATH carries a `claude`
+    // this process's PATH does not, which is why it is not a hard error. What it
+    // can NEVER be is a shell function or alias, as the previous comment here
+    // suggested: the wrapper is `#!/usr/bin/env bash` with `set -euo pipefail`,
+    // sources no profile, and ends in `exec`, so only a real executable resolves.
+    // Bun.which already looked, so error level rather than warn: this is a
+    // probably-broken teammate, and the log is the only place that says so.
+    logger.error(
+        "[teammate-wrapper] no executable `claude` found (checked ~/.bun/bin, ~/.local/bin and PATH). " +
+            "The wrapper will exec `claude` and the teammate will fail unless the tmux pane's PATH has one. " +
+            "Install it somewhere on PATH, or point the lead at an absolute path."
+    );
     return "claude";
 }
 
