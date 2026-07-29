@@ -73,6 +73,8 @@
             "**/*.{ts,tsx,js,jsx}",
             "*.{json,mjs,cjs}",
             "!src/claude-history-dashboard",
+            "!DevDashboard/mobile",
+            "!DevDashboard/cloud",
             "!**/routeTree.gen.ts",
             "!scripts/codemod/__fixtures__",
             "!scripts/benchmarks/clones/microbenches",
