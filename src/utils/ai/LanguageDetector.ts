@@ -274,6 +274,17 @@ export class MmsLidDriver implements LanguageDetectionDriver {
         return { language: "en", confidence: 0, driver: this.name };
     }
 
+    /**
+     * TODO(phase6): this is the one language-detection driver that could share
+     * `TransformersJsRuntime.getPipeline`, and it still does not. Two behavior
+     * deltas block a straight swap: the runtime hardcodes `dtype: "q4"` for
+     * every non-ASR task (this wants fp32), and it always passes an explicit
+     * `device`, where this call passes none. Moving it needs a dtype/device
+     * override on the runtime plus a measurement that q4 LID is as accurate —
+     * a behavior change, not a restructure. `WhisperLanguageDriver` above is
+     * further away still: it loads an AutoProcessor + model pair via
+     * `from_pretrained`, never `pipeline()`.
+     */
     private async ensureLoaded(): Promise<void> {
         if (this.pipeline) {
             return;

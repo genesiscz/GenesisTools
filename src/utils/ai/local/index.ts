@@ -10,6 +10,7 @@
  * under runtimes/.
  */
 
+export { descriptorsFor, type LocalModelState, localPlugins, modelStatesFor } from "./adapters";
 export type { CachedArtifact, PruneReport, ResolvedArtifact } from "./artifacts";
 export { ArtifactStore, HfSource, UrlSource } from "./artifacts";
 export type { ArtifactRef, LocalModelDescriptor, LocalRuntimeId } from "./descriptors";
