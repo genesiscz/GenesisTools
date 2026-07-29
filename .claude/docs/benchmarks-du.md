@@ -690,3 +690,95 @@ and the full du + format suite still runs in well under a second.
 The distinction worth keeping: the size check protects against an **inconsistent or
 truncated** cache (out-of-bounds reads), and nothing more. It is not a bound on
 `nrecs`, and it should not be described as one.
+
+---
+
+## 2026-07-29 07:44 — Review round 4 (PR #302): integer overflow in the cache header check
+
+**This round DID change `clonesize.c`,** so unlike rounds 1-3 it gets measured. The
+change is a security fix in `cache_open`, which runs **once per scan** (called from
+`run_scan`, one call site), not in the per-file path. `cache_lookup` — the function
+actually in the hot loop — is untouched.
+
+### The bug
+
+`cache_open` validated the header by multiplying the counts out first:
+
+```c
+size_t need = sizeof(CacheHeader) + (size_t)h->nrecs * sizeof(CacheEnt) + (size_t)h->nexts * sizeof(CacheExt);
+if (... || need > (size_t)st.st_size) { munmap(...); return; }
+```
+
+`h->nrecs` is a `uint64_t` read straight off disk, and the product wraps a 64-bit
+`size_t`. `sizeof(CacheEnt)` is 48, and **48 · 2^60 = 3 · 2^64 ≡ 0 (mod 2^64)** — so
+`nrecs = 2^60` makes the record term exactly zero, `need` collapses to the 40-byte
+header, the size check passes, and `g_cache_nents` becomes 1.15e18. `cache_lookup`
+then binary-searches that many entries across a 280-byte mapping.
+
+Verified on the pre-fix binary, four forged headers, same fixture:
+
+| forged header | pre-fix | post-fix |
+|---|---|---|
+| `nrecs = 2^60` | **exit 139 (SIGSEGV)** | rejected, totals correct |
+| `nrecs = UINT64_MAX` | rejected | rejected |
+| `nexts = UINT64_MAX` | rejected | rejected |
+| `nrecs = 2^60`, `nexts = UINT64_MAX` | **exit 139 (SIGSEGV)** | rejected, totals correct |
+
+Two of four bypassed. `UINT64_MAX` alone does **not**: `(2^64−1)·48 mod 2^64` is
+huge, so the sum stays over the file size. The dangerous shapes are the ones whose
+product wraps *near zero*, which needs a count that is a multiple of 2^60 (for
+`nrecs`) or a companion term that pulls the total back down.
+
+### The fix
+
+Bound each count by **division** against the bytes that are actually present, before
+anything is scaled:
+
+```c
+size_t avail = (size_t)st.st_size - sizeof(CacheHeader);
+if (... || h->nrecs > avail / sizeof(CacheEnt)) { munmap(...); return; }
+size_t after_ents = avail - (size_t)h->nrecs * sizeof(CacheEnt);
+if (h->nexts > after_ents / sizeof(CacheExt)) { munmap(...); return; }
+```
+
+Division cannot overflow, and the multiplication that remains is provably in range.
+The earlier `st.st_size >= sizeof(CacheHeader)` check keeps `avail` from underflowing.
+
+### Correctness
+
+Byte totals on `node_modules`, pre-fix binary vs fixed, **all identical**:
+`files_scanned` 94696 · `files_opened` 94691 · `extents` 95834 ·
+`naive_bytes` 2461622272 · `unique_bytes` 2061258070 ·
+`unique_allocated_bytes` 2289090560 · `shared_bytes` 400364202 ·
+`outside_shared_bytes` 2257260544.
+
+The padded-cache eviction test from round 3 still passes, which is the check that
+matters for false rejection: a *legitimate* header claiming 1,999,999 records with
+the bytes to back it up is still accepted.
+
+### Benchmark, and why the numbers say nothing
+
+T2 (`node_modules`), `--warmup 2 --runs 7`. Load average at run time: **54-65**.
+
+| | Wall mean ± σ | Wall min | System CPU |
+|---|---|---|---|
+| OLD (multiply-then-compare) | 2.894 s ± 0.787 s | 2.084 s | 24.772 s |
+| NEW (divide-then-bound) | 3.113 s ± 0.446 s | 2.564 s | 29.027 s |
+
+Read naively that is a 23% regression on minima — which would be impossible, since
+the change is two divisions executed **once per scan**. So the control was run: the
+**same old binary against itself**, back to back.
+
+| | Wall mean ± σ | Wall min | System CPU |
+|---|---|---|---|
+| CONTROL A (old binary) | 3.212 s ± 0.820 s | 2.141 s | 32.131 s |
+| CONTROL B (same old binary) | 3.137 s ± 0.379 s | 2.543 s | 31.006 s |
+
+**Identical code shows a 19% spread on minima and its own system CPU moved 24.8 s →
+32.1 s across runs.** The OLD-vs-NEW difference is smaller than the noise floor of
+the machine at this load, so the benchmark cannot resolve this change and no
+conclusion should be drawn from it in either direction.
+
+**Methodology note worth keeping:** when a measurement disagrees with the structure
+of the change, run the same binary against itself before believing the measurement.
+This log has twice recorded a "regression" that a control would have dismissed.
