@@ -11,6 +11,23 @@ export interface DownloadResult {
     item: StoryItem;
 }
 
+export interface DownloadSummary {
+    requested: number;
+    downloaded: number;
+    failed: number;
+}
+
+/**
+ * `downloadReels` only throws when EVERY item failed, so the caller cannot tell a
+ * complete run from a short one by its return value alone. Kept here as a pure
+ * function rather than inline in the command so the "did anything go missing?"
+ * decision is testable without driving the commander entrypoint.
+ */
+export function summarizeDownloads(reels: StoryReel[], results: DownloadResult[]): DownloadSummary {
+    const requested = reels.reduce((sum, reel) => sum + reel.items.length, 0);
+    return { requested, downloaded: results.length, failed: requested - results.length };
+}
+
 /**
  * Everything in a file name except the timestamp is remote input. The owner
  * username and the item pk both come straight out of Instagram's JSON, so both

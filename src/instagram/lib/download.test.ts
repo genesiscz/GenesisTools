@@ -2,7 +2,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { downloadReels } from "./download";
+import { downloadReels, summarizeDownloads } from "./download";
 import type { StoryItem, StoryReel } from "./types";
 
 const realFetch = globalThis.fetch;
@@ -91,6 +91,30 @@ describe("downloadReels", () => {
 
         expect(requested).toBe(0);
         expect(failure).toBeInstanceOf(Error);
+    });
+
+    test("keeps going past one failed item and reports the survivor", async () => {
+        // The mixed path: neither all-success nor all-failure, and the only one
+        // where a short download could be mistaken for a complete one.
+        let call = 0;
+        globalThis.fetch = mock(async () => {
+            call += 1;
+            return call === 1
+                ? new Response("nope", { status: 404 })
+                : new Response(new Uint8Array([9, 9]), { status: 200 });
+        }) as unknown as typeof fetch;
+        const dir = await scratchDir();
+
+        const reel: StoryReel = {
+            reelId: "123",
+            ownerUsername: "someone",
+            items: [storyItem({ id: "gone" }), storyItem({ id: "kept" })],
+        };
+        const results = await downloadReels([reel], dir);
+
+        expect(results).toHaveLength(1);
+        expect(results[0].item.id).toBe("kept");
+        expect(summarizeDownloads([reel], results)).toEqual({ requested: 2, downloaded: 1, failed: 1 });
     });
 
     test("reports every-download-failed rather than returning an empty success", async () => {
