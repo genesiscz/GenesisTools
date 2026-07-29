@@ -25,7 +25,7 @@ Driver model: **sonnet** by default; **opus** when there is no committed plan, w
 
 Spawning the driver (after §1's brief is written and `tools agents login --agent-main --agent-name lead` is running in the background):
 
-```
+```text
 Agent(
   subagent_type: "genesis-tools:agent-driver",
   model: "sonnet",              // or "opus" per above
@@ -109,6 +109,8 @@ tools codex approve --name <task> --request <id>
 tools codex deny    --name <task> --request <id>
 ```
 
+**The recipient is always `lead`** — it is hardcoded (`leadName: "lead"`, `src/codex/lib/session.ts`), not the driver's name. So in driver mode the bus message lands on the orchestrator, not on `driver_<task>`. The driver picks approvals up from its own `tools codex tail --name <task> --follow` stream, which carries the request id; if `lead` sees the bus message first, it forwards the id to the driver. Either way the session stays paused until someone answers, so an unanswered approval shows up as a stall, not a silent continue.
+
 Driver authority: **approve autonomously** only when the action is inside the declared writable roots and inside the declared task scope. **Escalate to the human** for anything that expands scope, adds a dependency, touches git history, or leaves the declared paths.
 
 Compact receiver stream for the orchestrator:
@@ -162,6 +164,9 @@ Wait on event types only (`error:` appears in normal red-test output):
 
 ```bash
 SECONDS=0; until rg -q '"type":"turn.completed"|"type":"turn.failed"' /tmp/codex-<task>.log 2>/dev/null || [ $SECONDS -ge 600 ]; do sleep 5; done
+rg -q '"type":"turn.completed"|"type":"turn.failed"' /tmp/codex-<task>.log || { echo "TIMEOUT after ${SECONDS}s — turn never terminated"; tail -20 /tmp/codex-<task>.log; }
 ```
 
-Resume: `command codex exec resume <thread_id> --json --skip-git-repo-check -c sandbox_mode="workspace-write" -o /tmp/codex-<task>-steer.md "<correction>"`. `--skip-git-repo-check` is **not** inherited; `--sandbox`/`--cd` are **not** re-applied on resume — pass sandbox as `-c sandbox_mode=`.
+The re-check after the loop is not optional: the loop also exits on the deadline, and a timed-out run still leaves a stale `-o` file on disk. Reading that file without confirming a terminal event reports a half-finished turn as a result. On timeout, stop and report — do not resume blindly.
+
+Resume: `command codex exec resume <thread_id> --json --ignore-user-config --skip-git-repo-check -c sandbox_mode="workspace-write" -o /tmp/codex-<task>-steer.md "<correction>"`. Nothing is inherited from the original invocation — `--ignore-user-config` and `--skip-git-repo-check` must both be repeated, and `--sandbox`/`--cd` are **not** re-applied on resume, so pass sandbox as `-c sandbox_mode=`. Dropping `--ignore-user-config` on resume silently reloads `~/.codex` config and skills mid-thread.
