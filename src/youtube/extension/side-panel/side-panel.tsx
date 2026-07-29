@@ -15,6 +15,7 @@ import {
     useSummary,
     useUpdateSettings,
 } from "@ext/api.hooks";
+import { pausePlayer, seekPlayerTo } from "@ext/player-control";
 import { loadUiLang } from "@ext/shared/i18n";
 import type { ExtensionEvent, PlayerChaptersMessage } from "@ext/shared/messages";
 import { type AccountSection, AccountView } from "@ext/side-panel/account-view";
@@ -25,6 +26,7 @@ import { PlaylistPanel } from "@ext/side-panel/playlist-panel";
 import { connectEventPort } from "@ext/side-panel/port";
 import { SettingsDialog } from "@ext/side-panel/settings-dialog";
 import type { PanelTarget } from "@ext/side-panel/target";
+import { logger } from "@genesiscz/utils/logger/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -440,13 +442,16 @@ function VideoPanel({ videoId, placement }: { videoId: string; placement: Placem
     }, [pipelineProgress, invalidateForStages]);
 
     function seek(seconds: number): void {
-        window.postMessage({ event: "command", func: "seekTo", args: [seconds, true] }, "https://www.youtube.com");
+        if (!seekPlayerTo(seconds)) {
+            logger.debug({ seconds }, "seek ignored — no <video> on the page yet");
+        }
     }
 
-    // Feature 12 exclusivity, direction 1: panel audio play → pause YouTube
-    // via the same postMessage bridge `seek` uses.
+    // Feature 12 exclusivity, direction 1: panel audio play → pause YouTube.
     function pauseVideo(): void {
-        window.postMessage({ event: "command", func: "pauseVideo", args: [] }, "https://www.youtube.com");
+        if (!pausePlayer()) {
+            logger.debug("pause ignored — no <video> on the page yet");
+        }
     }
 
     const runStages = useCallback(

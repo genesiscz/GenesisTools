@@ -10,8 +10,8 @@ import type {
 import type {
     ActionHistoryGroup,
     AskCitation,
-    AskMessageRecord,
-    AskThreadRecord,
+    AskSessionMessageRecord,
+    AskSessionRecord,
     Channel,
     ChannelEnsureResult,
     ChannelHandle,
@@ -286,8 +286,8 @@ export interface ExtensionApiMap {
     "api:deleteCollection": { deleted: boolean };
     "api:addCollectionVideo": { added: boolean };
     "api:removeCollectionVideo": { removed: boolean };
-    "api:listThreads": { threads: AskThreadRecord[] };
-    "api:getThread": { thread: AskThreadRecord; messages: AskMessageRecord[] };
+    "api:listThreads": { threads: AskSessionRecord[] };
+    "api:getThread": { thread: AskSessionRecord; messages: AskSessionMessageRecord[] };
     "api:askCollection": { threadId: number; answer: string; toolCalls: number; creditsSpent: number; credits: number };
     "api:userHistory": {
         groupBy: "video" | "action";
