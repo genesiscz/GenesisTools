@@ -12,8 +12,15 @@ export interface ArtifactRef {
     file?: string;
     /** Set only where upstream publishes one — none of the current sources do. */
     sha256?: string;
-    /** `url` artifacts shipped as a tarball are extracted into the artifact root. */
+    /** `url` artifacts shipped as a tarball are extracted rather than written as-is. */
     archive?: "tar.bz2";
+    /**
+     * Directory a `tar.bz2` unpacks into. The archive carries its own top-level
+     * folder, so this is the parent of that folder, not of `file` — `file` is
+     * then the path the archive is expected to yield, and a miss is an error.
+     * Defaults to `file`'s directory, which is only right for flat archives.
+     */
+    archiveRoot?: string;
 }
 
 /** On-device execution backends. Hosted models have no runtime. */

@@ -1,15 +1,11 @@
-import { existsSync, readdirSync, rmdirSync, statSync, unlinkSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import { type AIProviderType, isCloudProvider } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
-import { ensurePackage } from "@genesiscz/utils/packages";
-import { getModelsByProvider } from "./ModelRegistry";
+import { HfSource } from "./local/artifacts";
+import { byTaskAndProvider } from "./local/descriptors";
 import type { ModelEntry } from "./types";
-
-const HF_CACHE_DIR = join(homedir(), ".cache", "huggingface", "hub");
 
 export interface ModelInfo {
     id: string;
@@ -63,7 +59,7 @@ export function getDefaultModel(task: string, provider: string): string | undefi
  */
 export function getModelsForTask(task: string, provider: string): ModelInfo[] {
     if (provider === "local-hf") {
-        const entries = getModelsByProvider(task as Parameters<typeof getModelsByProvider>[0], "local-hf");
+        const entries = byTaskAndProvider(task as Parameters<typeof byTaskAndProvider>[0], "local-hf");
         return entries.map(toModelInfo);
     }
 
@@ -78,67 +74,28 @@ export function getModelsForTask(task: string, provider: string): ModelInfo[] {
     return [];
 }
 
+/**
+ * @deprecated Thin facade over `./local/artifacts`. The HuggingFace cache logic
+ * it used to own now lives in `HfSource` (which reconciles the hub directory
+ * with transformers.js's own `env.cacheDir`) and `ArtifactStore`; new code
+ * should use those directly.
+ */
 export class ModelManager {
-    private transformersCacheDir: string | null = null;
+    private readonly hf = new HfSource();
 
     async listDownloaded(): Promise<Array<{ modelId: string; sizeBytes: number }>> {
-        if (!existsSync(HF_CACHE_DIR)) {
-            return [];
-        }
-
-        const entries = readdirSync(HF_CACHE_DIR, { withFileTypes: true });
-        const models: Array<{ modelId: string; sizeBytes: number }> = [];
-
-        for (const entry of entries) {
-            if (!entry.isDirectory() || !entry.name.startsWith("models--")) {
-                continue;
-            }
-
-            const modelId = entry.name.replace("models--", "").replace(/--/g, "/");
-            const modelPath = join(HF_CACHE_DIR, entry.name);
-            const sizeBytes = this.getDirSize(modelPath);
-            models.push({ modelId, sizeBytes });
-        }
-
-        return models;
+        return this.hf.list().map((a) => ({ modelId: a.id, sizeBytes: a.sizeBytes }));
     }
 
     async download(
         modelId: string,
         options?: { dtype?: "auto" | "fp16" | "fp32" | "q4" | "q8" | "int8" | "uint8" }
     ): Promise<void> {
-        logger.info(`Downloading model: ${modelId}`);
-
-        await ensurePackage("@huggingface/transformers", {
-            label: "HuggingFace Transformers (ML models)",
-        });
-        const { pipeline } = await import("@huggingface/transformers");
-        // Trigger a download by creating a pipeline — HF caches the model automatically
-        const pipe = await pipeline("feature-extraction", modelId, {
-            dtype: options?.dtype ?? "fp32",
-        });
-        await pipe.dispose();
-
-        logger.info(`Model downloaded: ${modelId}`);
+        return this.hf.download(modelId, options);
     }
 
     isDownloaded(modelId: string): boolean {
-        const dirName = `models--${modelId.replace(/\//g, "--")}`;
-
-        if (existsSync(join(HF_CACHE_DIR, dirName))) {
-            return true;
-        }
-
-        if (this.transformersCacheDir) {
-            const localPath = join(this.transformersCacheDir, modelId);
-
-            if (existsSync(localPath)) {
-                const files = readdirSync(localPath);
-                return files.some((f) => f.endsWith(".json")) && files.length > 1;
-            }
-        }
-
-        return false;
+        return this.hf.isCached(modelId);
     }
 
     /**
@@ -146,56 +103,27 @@ export class ModelManager {
      * Call once before using isDownloaded if you need transformers.js cache detection.
      */
     async resolveTransformersCache(): Promise<void> {
-        if (this.transformersCacheDir) {
-            return;
-        }
-
-        try {
-            const { env } = await import("@huggingface/transformers");
-            this.transformersCacheDir = env.cacheDir;
-        } catch {
-            // transformers.js not available
-        }
+        await this.hf.resolveTransformersCache();
     }
 
     getModelPath(modelId: string): string | null {
-        const dirName = `models--${modelId.replace(/\//g, "--")}`;
-        const modelPath = join(HF_CACHE_DIR, dirName);
-
-        if (!existsSync(modelPath)) {
-            return null;
-        }
-
-        return modelPath;
+        return this.hf.cachedPath(modelId);
     }
 
+    /** Returns how many cached models were removed. */
     async cleanup(olderThanMs?: number): Promise<number> {
-        if (!existsSync(HF_CACHE_DIR)) {
-            return 0;
-        }
-
-        const entries = readdirSync(HF_CACHE_DIR, { withFileTypes: true });
+        const cached = this.hf.list();
+        const cutoff = olderThanMs === undefined ? null : Date.now() - olderThanMs;
         let removedCount = 0;
 
-        for (const entry of entries) {
-            if (!entry.isDirectory() || !entry.name.startsWith("models--")) {
+        for (const artifact of cached) {
+            if (cutoff !== null && artifact.mtimeMs >= cutoff) {
                 continue;
             }
 
-            const modelPath = join(HF_CACHE_DIR, entry.name);
-
-            if (olderThanMs !== undefined) {
-                const stats = statSync(modelPath);
-                const age = Date.now() - stats.mtimeMs;
-
-                if (age < olderThanMs) {
-                    continue;
-                }
-            }
-
-            this.removeDirRecursive(modelPath);
+            await rm(artifact.path, { recursive: true, force: true });
             removedCount++;
-            logger.info(`Removed model cache: ${entry.name}`);
+            logger.info(`Removed model cache: ${artifact.id}`);
         }
 
         return removedCount;
@@ -204,42 +132,11 @@ export class ModelManager {
     async getCacheSize(): Promise<{ totalBytes: number; formatted: string; modelCount: number }> {
         const models = await this.listDownloaded();
         const totalBytes = models.reduce((sum, m) => sum + m.sizeBytes, 0);
+
         return {
             totalBytes,
             formatted: formatBytes(totalBytes),
             modelCount: models.length,
         };
-    }
-
-    private getDirSize(dirPath: string): number {
-        let totalSize = 0;
-
-        const entries = readdirSync(dirPath, { withFileTypes: true });
-        for (const entry of entries) {
-            const fullPath = join(dirPath, entry.name);
-
-            if (entry.isDirectory()) {
-                totalSize += this.getDirSize(fullPath);
-            } else {
-                totalSize += statSync(fullPath).size;
-            }
-        }
-
-        return totalSize;
-    }
-
-    private removeDirRecursive(dirPath: string): void {
-        const entries = readdirSync(dirPath, { withFileTypes: true });
-        for (const entry of entries) {
-            const fullPath = join(dirPath, entry.name);
-
-            if (entry.isDirectory()) {
-                this.removeDirRecursive(fullPath);
-            } else {
-                unlinkSync(fullPath);
-            }
-        }
-
-        rmdirSync(dirPath);
     }
 }
