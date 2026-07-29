@@ -62,7 +62,71 @@ function seedDuplicates(): void {
     raw.close();
 }
 
+/**
+ * The shape an earlier build of this branch left behind: the index exists, but as a
+ * FULL unique index over (user_id, title) rather than the partial one. Only the
+ * `DROP INDEX` in the migration repairs it — without that step these rows would
+ * keep rejecting a repeated collection title.
+ */
+function seedWithFullIndex(): void {
+    const raw = new Database(path);
+
+    raw.exec(`
+        CREATE TABLE ask_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            collection_id INTEGER,
+            scope_kind TEXT NOT NULL DEFAULT 'collection',
+            scope_value TEXT NOT NULL DEFAULT '',
+            video_ids_json TEXT NOT NULL DEFAULT '[]',
+            provider_spec TEXT,
+            title TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:00.000Z',
+            updated_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:00.000Z'
+        );
+        CREATE TABLE ask_session_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            tool_name TEXT,
+            tool_args_json TEXT,
+            citations_json TEXT,
+            created_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:00.000Z'
+        );
+        CREATE UNIQUE INDEX idx_ask_sessions_user_title ON ask_sessions(user_id, title);
+        INSERT INTO ask_sessions (id, user_id, scope_kind, title)
+            VALUES (1, 1, 'collection', 'what did they say about pricing?');
+    `);
+    raw.close();
+}
+
 describe("ask-sessions-unique-title-per-user migration", () => {
+    it("replaces a previously shipped FULL index with the partial one", () => {
+        seedWithFullIndex();
+        const db = new YoutubeDatabase(path);
+
+        try {
+            // The repaired index is partial, so the collection namespace is free again.
+            expect(() =>
+                db.createAskSession({
+                    userId: 1,
+                    collectionId: 3,
+                    scopeKind: "collection",
+                    title: "what did they say about pricing?",
+                })
+            ).not.toThrow();
+
+            // …while named sessions are still constrained.
+            db.createAskSession({ userId: 1, scopeKind: "channel", scopeValue: "@chan", title: "digest" });
+            expect(() =>
+                db.createAskSession({ userId: 1, scopeKind: "channel", scopeValue: "@chan", title: "digest" })
+            ).toThrow();
+        } finally {
+            db.close();
+        }
+    });
+
     it("merges pre-existing duplicates into the lowest id, keeping their messages", () => {
         seedDuplicates();
         const db = new YoutubeDatabase(path);

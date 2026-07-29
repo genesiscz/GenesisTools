@@ -137,6 +137,60 @@ describe("QueueService", () => {
         }
     });
 
+    // waitForJob is an authorization boundary, not just a wait: it hands the caller a
+    // whole PipelineJob row, unredacted.
+    it("refuses to wait on a job belonging to someone else", async () => {
+        const fixture = await makeFixture();
+
+        try {
+            const { job } = fixture.queue.enqueue({ target: "theirs", stages: ["metadata"], userId: 7 });
+
+            expect(job).not.toBeNull();
+            await expect(
+                fixture.queue.waitForJob(job?.id ?? 0, { actor: { kind: "user", userId: 8 }, timeoutMs: 1_000 })
+            ).rejects.toThrow(/no longer exists/);
+        } finally {
+            await disposeFixture(fixture);
+        }
+    });
+
+    it("lets the owner wait on their own job", async () => {
+        const fixture = await makeFixture();
+
+        try {
+            const { job } = fixture.queue.enqueue({ target: "mine", stages: ["metadata"], userId: 7 });
+
+            if (!job) {
+                throw new Error("enqueue returned no job");
+            }
+
+            await fixture.pipeline.start();
+            const finished = await fixture.queue.waitForJob(job.id, {
+                actor: { kind: "user", userId: 7 },
+                timeoutMs: 2_000,
+            });
+
+            expect(finished.id).toBe(job.id);
+        } finally {
+            await disposeFixture(fixture);
+        }
+    });
+
+    // A missing row is terminal, not "not yet": treating it as pending parked the
+    // caller, and left a window where a job later created with that id resolved
+    // without an ownership check.
+    it("rejects immediately for a job id that never existed", async () => {
+        const fixture = await makeFixture();
+
+        try {
+            await expect(
+                fixture.queue.waitForJob(999_999, { actor: { kind: "operator" }, timeoutMs: 1_000 })
+            ).rejects.toThrow(/no longer exists/);
+        } finally {
+            await disposeFixture(fixture);
+        }
+    });
+
     it("prefers an explicit userId over the ambient one", async () => {
         const fixture = await makeFixture();
 
