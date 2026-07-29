@@ -117,6 +117,20 @@ static const CacheEnt *g_cache_ents = NULL;
 static const CacheExt *g_cache_exts = NULL;
 static uint64_t    g_cache_nents = 0, g_cache_nexts = 0;
 
+/**
+ * True when `count` items starting at index `off` fit inside `limit` items.
+ *
+ * Every bounds check against the cache MUST go through this. `off` and `count`
+ * are read straight out of the cache file, so the obvious `off + count > limit`
+ * is wrong: the sum wraps a 64-bit unsigned and lands back under `limit`, so the
+ * check passes for a range nowhere near inside the mapping. Subtracting from the
+ * limit instead is exact for every input, and dividing (rather than multiplying)
+ * at the call site keeps byte-sized limits safe the same way.
+ */
+static inline int range_within(uint64_t off, uint64_t count, uint64_t limit) {
+    return off <= limit && count <= limit - off;
+}
+
 /** Per-file record of what to write back — one per accounted shared file. */
 typedef struct {
     uint64_t fileid, mtime_ns, dlen, alloc;
@@ -417,7 +431,7 @@ static const CacheEnt *cache_lookup(uint64_t fileid, uint64_t mtime_ns, uint64_t
     if (lo >= g_cache_nents || g_cache_ents[lo].fileid != fileid) return NULL;
     const CacheEnt *e = &g_cache_ents[lo];
     if (e->mtime_ns != mtime_ns || e->dlen != dlen || e->alloc != alloc) return NULL;
-    if (e->ext_off + e->ext_count > g_cache_nexts) return NULL;   // corrupt/truncated
+    if (!range_within(e->ext_off, e->ext_count, g_cache_nexts)) return NULL;   // corrupt/truncated
     return e;
 }
 
@@ -992,23 +1006,22 @@ static void cache_open(const char *target) {
 
     const CacheHeader *h = map;
 
-    // Validate the counts by DIVIDING the space that is actually there, never by
-    // multiplying the counts out first. The counts are attacker-influenceable
-    // (they are just bytes in an on-disk file), and `nrecs * sizeof(CacheEnt)`
-    // wraps a 64-bit size_t: nrecs = 2^60 makes that product exactly 0, so a
-    // "total > st_size" test passes and cache_lookup then binary-searches 2^60
-    // entries across a 280-byte mapping. That segfaults (verified: exit 139).
-    // Dividing cannot overflow, so each count is bounded before it is ever scaled.
+    // Bound each count against the space that is actually there, DIVIDING the
+    // available bytes into elements rather than multiplying the counts out.
+    // Multiplying first wraps a 64-bit size_t — nrecs = 2^60 makes
+    // nrecs * sizeof(CacheEnt) exactly 0, so a "total > st_size" test passes and
+    // cache_lookup then binary-searches 2^60 entries across a 280-byte mapping
+    // (verified: SIGSEGV, exit 139). Division cannot overflow.
     size_t avail = (size_t)st.st_size - sizeof(CacheHeader);
     if (h->magic != CACHE_MAGIC || h->version != CACHE_VERSION || h->fsid != g_fsid ||
-        h->nrecs > avail / sizeof(CacheEnt)) {
+        !range_within(0, h->nrecs, avail / sizeof(CacheEnt))) {
         munmap(map, (size_t)st.st_size);
         return;
     }
 
     // Safe to scale now: nrecs is known to fit, so this cannot wrap or underflow.
     size_t after_ents = avail - (size_t)h->nrecs * sizeof(CacheEnt);
-    if (h->nexts > after_ents / sizeof(CacheExt)) {
+    if (!range_within(0, h->nexts, after_ents / sizeof(CacheExt))) {
         munmap(map, (size_t)st.st_size);
         return;
     }
@@ -1112,6 +1125,12 @@ static void cache_write(int nthreads) {
         uint64_t fid = g_cache_ents[oi].fileid;
         while (ni < n && pend[ni].ent.fileid < fid) ni++;
         if (ni < n && pend[ni].ent.fileid == fid) { oi++; continue; }
+        // Carrying a record over means reading its extents back out of the old
+        // mapping, so it needs the same bound cache_lookup applies. Nothing had
+        // checked this one: a forged ext_off reached the fwrite loop below and
+        // read outside the mapping even when the header itself was consistent.
+        if (!range_within(g_cache_ents[oi].ext_off, g_cache_ents[oi].ext_count, g_cache_nexts)) { oi++; continue; }
+
         pend[merged].ent = g_cache_ents[oi];
         pend[merged].ent.ext_off = 0;
         pend[merged].from_scan = NULL;
