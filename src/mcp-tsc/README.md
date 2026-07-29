@@ -314,7 +314,7 @@ For very large projects, the LSP may timeout waiting for diagnostics. This is co
 
 - `typescript`: TypeScript compiler
 - `ts-lsp-client`: LSP client library
-- `@modelcontextprotocol/sdk`: MCP server SDK
+- `@modelcontextprotocol/server` (2.0.0): MCP server SDK
 - `glob`: File pattern matching
 
 ## Related Tools
