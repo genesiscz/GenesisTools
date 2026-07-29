@@ -31,6 +31,39 @@ export interface ModelPricing {
     outputPer1MAbove200k?: number;
     cachedReadPer1MAbove200k?: number;
     cachedCreatePer1MAbove200k?: number;
+    /**
+     * Conditional rates layered over the base ones, resolved by
+     * `effectivePricing`. Authoritative for static entries: the flat
+     * `Above200k` fields above stay populated for the consumers and feeds that
+     * already read them, but a rule is what actually decides the rate.
+     */
+    rules?: PricingRule[];
+}
+
+/**
+ * One conditional rate: "this price, when X".
+ *
+ * Two conditions exist because vendors price along two axes. A window alone is
+ * a promotional price that must stop applying on its own date rather than
+ * waiting for someone to notice and ship a revert. A context band alone is a
+ * long-context tier. Both together is legal and means exactly what it reads as.
+ *
+ * Every rate field is optional: a rule overrides only what it names, so an
+ * intro price on input/output leaves the cache rates alone.
+ */
+export interface PricingRule {
+    /** Inclusive UTC date (YYYY-MM-DD) the rule starts applying. Open-ended when absent. */
+    from?: string;
+    /** Inclusive UTC date the rule stops applying. Open-ended when absent. */
+    to?: string;
+    /** Inclusive lower bound on the request's token count. */
+    ctxFrom?: number;
+    /** Inclusive upper bound on the request's token count. */
+    ctxTo?: number;
+    inputPer1M?: number;
+    outputPer1M?: number;
+    cachedReadPer1M?: number;
+    cachedCreatePer1M?: number;
 }
 
 export interface CatalogEntry {

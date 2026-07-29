@@ -1,7 +1,7 @@
 import { logger } from "@genesiscz/utils/logger";
 import { liteLLMPricingFetcher } from "./litellm";
 import { byId } from "./static";
-import type { ModelPricing } from "./types";
+import type { ModelPricing, PricingRule } from "./types";
 
 /**
  * The one price ladder: curated static price, then LiteLLM, then OpenRouter.
@@ -108,6 +108,11 @@ function scopedStaticPricing(provider: string, modelId: string): ModelPricing | 
     return byId(modelId, provider)?.pricing;
 }
 
+/**
+ * The ladder answers with rates as published, rules included and UNRESOLVED —
+ * resolving needs a request's date and size, which only the caller has. Pass the
+ * result through `effectivePricing` to get the rate an actual call would bill.
+ */
 export async function pricingFor(provider: string, modelId: string): Promise<ModelPricing | undefined> {
     const key = `${provider}/${modelId}`;
     const hit = cache.get(key);
@@ -123,6 +128,99 @@ export async function pricingFor(provider: string, modelId: string): Promise<Mod
 
     if (resolved) {
         cache.set(key, { pricing: resolved, at: Date.now() });
+    }
+
+    return resolved;
+}
+
+export interface PricingContext {
+    /** When the call happens. Omit and dated rules simply do not apply. */
+    at?: Date;
+    /** The request's token count. Omit and context-banded rules do not apply. */
+    contextTokens?: number;
+}
+
+/** ISO dates compare correctly as strings, and UTC keeps the boundary reproducible. */
+function utcDay(at: Date): string {
+    return at.toISOString().slice(0, 10);
+}
+
+/**
+ * An absent condition is open-ended; an absent INPUT fails the condition.
+ *
+ * That asymmetry is deliberate. A caller who does not say when the call happens
+ * cannot have a dated discount applied on their behalf, and one who does not say
+ * how long the prompt is cannot be charged a long-context surcharge. Both
+ * unknowns therefore fall back to the base rate rather than guessing, and the
+ * guess that would have been convenient (assume "now") is also the one that
+ * makes this function untestable.
+ */
+function ruleApplies(rule: PricingRule, context: PricingContext): boolean {
+    const dated = rule.from !== undefined || rule.to !== undefined;
+
+    if (dated) {
+        if (!context.at) {
+            return false;
+        }
+
+        const day = utcDay(context.at);
+
+        if ((rule.from !== undefined && day < rule.from) || (rule.to !== undefined && day > rule.to)) {
+            return false;
+        }
+    }
+
+    const banded = rule.ctxFrom !== undefined || rule.ctxTo !== undefined;
+
+    if (banded) {
+        const tokens = context.contextTokens;
+
+        if (tokens === undefined) {
+            return false;
+        }
+
+        if (
+            (rule.ctxFrom !== undefined && tokens < rule.ctxFrom) ||
+            (rule.ctxTo !== undefined && tokens > rule.ctxTo)
+        ) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
+ * Resolve conditional rates into the one price that applies.
+ *
+ * Pure: same arguments, same answer, no clock and no I/O. Matching rules are
+ * applied in array order and a later match wins field by field, so a promo rule
+ * placed after a context tier overrides only the fields it names.
+ *
+ * The result carries no `rules` — it is the resolved price, and dropping them
+ * makes re-applying it to itself impossible rather than merely wrong.
+ */
+export function effectivePricing(pricing: ModelPricing, context: PricingContext = {}): ModelPricing {
+    const { rules, ...base } = pricing;
+
+    if (!rules || rules.length === 0) {
+        return base;
+    }
+
+    const resolved: ModelPricing = { ...base };
+
+    for (const rule of rules) {
+        if (!ruleApplies(rule, context)) {
+            continue;
+        }
+
+        for (const field of ["inputPer1M", "outputPer1M", "cachedReadPer1M", "cachedCreatePer1M"] as const) {
+            const override = rule[field];
+
+            if (override !== undefined) {
+                resolved[field] = override;
+            }
+        }
     }
 
     return resolved;

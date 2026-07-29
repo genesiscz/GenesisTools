@@ -72,6 +72,17 @@ const SONNET_4_5_PRICING: ModelPricing = {
     outputPer1MAbove200k: 22.5,
     cachedCreatePer1MAbove200k: 7.5,
     cachedReadPer1MAbove200k: 0.6,
+    // 200_001, not 200_000: the band is inclusive and the surcharge applies to
+    // requests OVER 200K, so a request of exactly 200K still bills at base.
+    rules: [
+        {
+            ctxFrom: 200_001,
+            inputPer1M: 6,
+            outputPer1M: 22.5,
+            cachedCreatePer1M: 7.5,
+            cachedReadPer1M: 0.6,
+        },
+    ],
 };
 
 function anthropic(entry: {
@@ -119,8 +130,16 @@ const ANTHROPIC_ENTRIES: CatalogEntry[] = [
         displayName: "Claude Sonnet 5",
         contextWindow: 1_000_000,
         thinking: "reasoning",
-        // Standard list; intro $2/$10 runs through 2026-08-31 (anthropic.com/pricing).
-        pricing: { inputPer1M: 3, outputPer1M: 15, cachedCreatePer1M: 3.75, cachedReadPer1M: 0.3 },
+        // Standard list, with the introductory $2/$10 as a dated rule so the
+        // discount expires by itself on 2026-08-31 instead of waiting for
+        // someone to notice and ship a revert (anthropic.com/pricing).
+        pricing: {
+            inputPer1M: 3,
+            outputPer1M: 15,
+            cachedCreatePer1M: 3.75,
+            cachedReadPer1M: 0.3,
+            rules: [{ to: "2026-08-31", inputPer1M: 2, outputPer1M: 10 }],
+        },
         aliases: ["sonnet"],
         // 1M is the base window, so there is no 200K mode to suffix back up.
         flags: { native1m: true, cli: { label: "Sonnet 5 (1M native)" } },

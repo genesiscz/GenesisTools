@@ -1,3 +1,4 @@
+export { effectivePricing, type PricingContext } from "./pricing";
 export {
     aliasMapFor,
     byCapability,
@@ -10,4 +11,4 @@ export {
     staticPricingFor,
     stripModelVariantSuffix,
 } from "./static";
-export type { CatalogEntry, CatalogSource, ModelFamily, ModelPricing } from "./types";
+export type { CatalogEntry, CatalogSource, ModelFamily, ModelPricing, PricingRule } from "./types";
