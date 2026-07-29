@@ -365,7 +365,7 @@ export class LiteLLMPricingFetcher {
      * and importing a tool surface's vocabulary made every non-ask consumer of
      * this module depend transitively on ask's type layer.
      */
-    convertToPricingInfo(pricing: LiteLLMModelPricing): ModelPricing {
+    convertToModelPricing(pricing: LiteLLMModelPricing): ModelPricing {
         // LiteLLM pricing is per token, convert to per 1M tokens (multiply by 1,000,000)
         const inputPer1M = pricing.input_cost_per_token ? pricing.input_cost_per_token * 1_000_000 : 0;
         const outputPer1M = pricing.output_cost_per_token ? pricing.output_cost_per_token * 1_000_000 : 0;

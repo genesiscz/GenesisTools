@@ -102,7 +102,7 @@ async function fetchLiteLlmPricing(provider: string, modelId: string): Promise<M
 
             if (found) {
                 logger.debug({ provider, modelId, candidate }, "pricing resolved from LiteLLM");
-                return liteLLMPricingFetcher.convertToPricingInfo(found);
+                return liteLLMPricingFetcher.convertToModelPricing(found);
             }
         } catch (err) {
             logger.debug({ err, candidate }, "LiteLLM pricing lookup failed for candidate");
