@@ -13,6 +13,15 @@ const TAIL_BYTES = 32 * 1024;
 /** Files bigger than this without an agentName hit in the head are skipped. */
 const SKIP_LARGE_WITHOUT_AGENT_BYTES = 2 * 1024 * 1024;
 
+/**
+ * Agent names come out of transcript JSON, so they are arbitrary text. Interpolated
+ * raw into a pattern, one containing `.`/`+`/`(` silently stops matching its own
+ * transcript, and an unbalanced one (`a[b`) throws and aborts the whole index pass.
+ */
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function stripTeammateEnvelope(text: string): string {
     return text
         .replace(/^<teammate-message[^>]*>\s*/i, "")
@@ -77,14 +86,15 @@ export function readHeadTail(
         }
 
         return { head: headBuf.toString("utf8"), tail, size, mtimeMs };
-    } catch {
+    } catch (error) {
+        logger.debug({ error, path }, "[teams] could not read transcript head/tail; skipping this file");
         return null;
     } finally {
         if (fd !== undefined) {
             try {
                 closeSync(fd);
-            } catch {
-                // ignore
+            } catch (error) {
+                logger.debug({ error, path }, "[teams] could not close transcript fd");
             }
         }
     }
@@ -113,7 +123,11 @@ function summarizeSlice(
         let obj: Record<string, unknown>;
         try {
             obj = SafeJSON.parse(line, { strict: true }) as Record<string, unknown>;
-        } catch {
+        } catch (error) {
+            // Expected, not exceptional: head and tail are byte slices, so the line
+            // at each cut is usually truncated. trace (not debug) because this fires
+            // per unparsable line across every transcript in the project.
+            logger.trace({ error, path }, "[teams] skipping unparsable transcript line");
             continue;
         }
 
@@ -227,7 +241,8 @@ export function indexProjectTranscripts(
         let files: string[];
         try {
             files = readdirSync(projectDir).filter((f) => f.endsWith(".jsonl"));
-        } catch {
+        } catch (error) {
+            logger.debug({ error, projectDir }, "[teams] could not list the project dir; no transcripts indexed");
             return byTeam;
         }
 
@@ -291,7 +306,7 @@ export function indexProjectTranscripts(
                 for (const agentName of agentNames) {
                     if (
                         size > SKIP_LARGE_WITHOUT_AGENT_BYTES &&
-                        !new RegExp(`"agentName"\\s*:\\s*"${agentName}"`).test(head.slice(0, 8192))
+                        !new RegExp(`"agentName"\\s*:\\s*"${escapeRegExp(agentName)}"`).test(head.slice(0, 8192))
                     ) {
                         continue;
                     }

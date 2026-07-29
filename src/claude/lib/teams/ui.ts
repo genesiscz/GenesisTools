@@ -1,4 +1,5 @@
 import { isInteractive } from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
 import { out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
@@ -11,6 +12,15 @@ import { formatStatusBadge, readProcessEnvKeys } from "./status";
 import type { TeamMemberView, TeamView } from "./types";
 
 const prof = profiler.scope("teams");
+
+/**
+ * `/Users/me/src/app` → `~/src/app` for display. Reads HOME through the env facade,
+ * which always resolves to a real path — the previous `process.env.HOME || ""` fell
+ * back to an empty pattern, and replacing "" prepends the tilde to the whole string.
+ */
+function tildify(path: string): string {
+    return path.replace(env.paths.getHome(), "~");
+}
 
 /** Terminal-safe single-line truncation. */
 function ellipsize(text: string, max = 88): string {
@@ -65,7 +75,7 @@ export function renderTeamsTree(teams: TeamView[]): string[] {
         const liveCount = team.teammates.filter((t) => t.live).length;
         const liveTag = liveCount > 0 ? pc.green(`${liveCount} live`) : pc.dim("none live");
         const tmux = team.tmuxSession ? pc.cyan(team.tmuxSession) : pc.dim("no-tmux");
-        const cwd = team.cwd ? pc.dim(team.cwd.replace(process.env.HOME || "", "~")) : "";
+        const cwd = team.cwd ? pc.dim(tildify(team.cwd)) : "";
         lines.push(
             `${pc.bold(pc.cyan(team.teamName))}  ${liveTag}  ${tmux}  ${pc.dim(ageLabel(team.mtimeMs))}  ${cwd}`
         );
@@ -183,10 +193,7 @@ export async function runTeamsInteractive(opts: { all?: boolean; account?: strin
                             ageLabel(t.mtimeMs),
                         ],
                         detail: [
-                            ellipsize(
-                                t.cwd ? pc.dim(t.cwd.replace(process.env.HOME || "", "~")) : pc.dim("(no cwd)"),
-                                100
-                            ),
+                            ellipsize(t.cwd ? pc.dim(tildify(t.cwd)) : pc.dim("(no cwd)"), 100),
                             ...t.teammates
                                 .slice(0, 6)
                                 .map((m) =>
@@ -248,7 +255,7 @@ async function runTeamDetail(teamName: string, accountFlag?: string): Promise<"b
     out.println(
         `${pc.bold(fresh.teamName)}` +
             (fresh.tmuxSession ? `  ${pc.cyan(fresh.tmuxSession)}` : "") +
-            (fresh.cwd ? `  ${pc.dim(fresh.cwd.replace(process.env.HOME || "", "~"))}` : "")
+            (fresh.cwd ? `  ${pc.dim(tildify(fresh.cwd))}` : "")
     );
     if (fresh.config.description) {
         out.println(pc.dim(ellipsize(fresh.config.description, 100)));
@@ -342,7 +349,7 @@ function buildTeammateDetail(team: TeamView, t: TeamMemberView): string[] {
 
     // Do NOT dump the full tools cc run command here — it wraps and wrecks the frame.
     // Shown on the action screen / print action instead.
-    lines.push(pc.dim(`cwd ${t.member.cwd || team.cwd || "—"}`.replace(process.env.HOME || "", "~")));
+    lines.push(pc.dim(tildify(`cwd ${t.member.cwd || team.cwd || "—"}`)));
 
     return lines.map((l) => ellipsize(l, 100));
 }

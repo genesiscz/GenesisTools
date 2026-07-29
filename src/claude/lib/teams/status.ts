@@ -77,8 +77,10 @@ export function readProcessEnvKeys(pid: number, keys: string[]): Record<string, 
                 out[key] = m[1];
             }
         }
-    } catch {
-        // ignore
+    } catch (error) {
+        // Callers treat a missing key as "account unknown" and fall back, so a
+        // failed `ps eww` (process gone, permissions) is degraded, not fatal.
+        logger.debug({ error, pid }, "[teams] could not read process env; account attribution skipped");
     }
 
     return out;

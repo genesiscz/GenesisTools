@@ -91,7 +91,8 @@ async function resolveAccount(preferred?: string): Promise<string> {
         throw new Error("No accounts with a long-lived token. Run: tools claude login-long");
     }
 
-    // Prefer an account already used by a live process on this team
+    // Last resort only: preferring an account already live on the team happens one
+    // level up, in pickDefaultAccount, which calls this after those lookups miss.
     return withToken[0]!.name;
 }
 
@@ -407,8 +408,8 @@ export async function resolveClaudeBin(): Promise<string> {
         if (existsSync(`${env.paths.getHome()}/.bun/bin/claude`)) {
             return `${env.paths.getHome()}/.bun/bin/claude`;
         }
-    } catch {
-        // ignore
+    } catch (error) {
+        logger.debug({ error }, "[teams] bun-bin claude probe failed; falling back to findClaudeCommand");
     }
 
     return findClaudeCommand();
