@@ -108,6 +108,17 @@ referer: https://app.timelyapp.com/558481/calendar/week`;
         expect(extractCookie(block)).toEqual({ cookie: COOKIE, source: "header-line" });
     });
 
+    test("a curl flag wins over a bare Cookie: line elsewhere in the same paste", () => {
+        // Both parse as cookie pairs, so only the source order decides. The whole token
+        // scan runs before any line scan, which is what makes this independent of where
+        // the stray line sits.
+        const both = `curl 'https://app.timelyapp.com/558481/x' -b 'from_b=1' \\
+  -H 'accept: application/json'
+Cookie: from_header_line=2`;
+
+        expect(extractCookie(both)).toEqual({ cookie: "from_b=1", source: "curl-cookie-flag" });
+    });
+
     test("returns undefined for empty or unusable input", () => {
         expect(extractCookie("")).toBeUndefined();
         expect(extractCookie("   \n  ")).toBeUndefined();
@@ -135,6 +146,13 @@ describe("shellTokens", () => {
     test("a plain '…' keeps a backslash literal, the way a shell does", () => {
         expect(shellTokens(String.raw`curl -b 'sess=a\b'`)).toEqual(["curl", "-b", String.raw`sess=a\b`]);
     });
+
+    test("an unclosed quote yields the rest as one token rather than dropping it", () => {
+        // A half-copied paste. Returning the partial value is deliberate: the login
+        // command probes it against Timely and refuses to save anything but a 200,
+        // so a truncated cookie is rejected there rather than silently stored.
+        expect(shellTokens("curl -b 'sess=abc")).toEqual(["curl", "-b", "sess=abc"]);
+    });
 });
 
 describe("looksLikeCookiePairs", () => {
@@ -154,6 +172,10 @@ describe("describeCookie", () => {
         expect(described).toBe("4 cookies: login_form_alert, _memory_session, ajs_group_id, tic-session");
         expect(described).not.toContain("abc%3D%3D");
         expect(described).not.toContain("558481");
+    });
+
+    test("says 'cookie' not 'cookies' for a single pair", () => {
+        expect(describeCookie("sess=abc")).toBe("1 cookie: sess");
     });
 
     test("caps the list for a long cookie", () => {

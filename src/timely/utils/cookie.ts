@@ -121,10 +121,11 @@ export function looksLikeCookiePairs(value: string): boolean {
  * quotes, double quotes, bash's `$'...'` (Chrome emits it when a header value
  * contains a quote), backslash escapes and backslash-newline continuations.
  *
- * Inside `$'...'` a backslash escapes the next character literally. The ANSI-C
- * control escapes (`\n`, `\t`, `\xNN`) are deliberately left untranslated: a
- * Cookie header cannot legally carry those bytes, so decoding them would only
- * turn a malformed paste into a header value that looks valid.
+ * Inside `$'...'` a backslash is dropped and the character after it is kept as
+ * written, so `\\` yields one backslash and `\'` yields a quote. The ANSI-C
+ * control escapes (`\n`, `\t`, `\xNN`) are deliberately NOT decoded: a Cookie
+ * header cannot legally carry those bytes, so decoding them would only turn a
+ * malformed paste into a header value that looks valid.
  */
 export function shellTokens(input: string): string[] {
     const tokens: string[] = [];
