@@ -91,9 +91,12 @@ function walk(value: unknown, path: string, out: Referrer[]): void {
     }
 }
 
-/** Everything pointing at this account, in-config and via registered scanners. */
-export async function referrersOf(config: AiConfigData, id: string): Promise<Referrer[]> {
-    const target = accountRef(id);
+/**
+ * Every account ref held anywhere, in-config and via registered scanners,
+ * whether or not the account it names still exists. `doctor` needs the unfiltered
+ * list to spot refs that point at a deleted account.
+ */
+export async function allReferrers(config: AiConfigData): Promise<Referrer[]> {
     const found: Referrer[] = [];
 
     walk(config.defaults, "defaults", found);
@@ -105,6 +108,14 @@ export async function referrersOf(config: AiConfigData, id: string): Promise<Ref
             found.push({ path: `${name}:${referrer.path}`, ref: referrer.ref });
         }
     }
+
+    return found;
+}
+
+/** Everything pointing at this account, in-config and via registered scanners. */
+export async function referrersOf(config: AiConfigData, id: string): Promise<Referrer[]> {
+    const target = accountRef(id);
+    const found = await allReferrers(config);
 
     return found.filter((referrer) => referrer.ref === target);
 }

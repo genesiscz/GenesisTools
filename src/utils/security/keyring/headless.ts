@@ -39,14 +39,36 @@ export function masterKeyFilePath(): string {
     return `${securityStorage().getBaseDir()}/master.key`;
 }
 
-interface SecurityLocalConfig {
+export interface SecurityLocalConfig {
     allowKeyFile?: boolean;
+    /** Epoch ms of the last vault export. Drives `doctor`'s escrow nag. */
     lastExportAt?: number;
 }
 
 async function securityConfig(): Promise<SecurityLocalConfig> {
     const config = await securityStorage().getConfig<SecurityLocalConfig>();
     return config ?? {};
+}
+
+/**
+ * When the vault was last escrowed to a passphrase-protected export.
+ *
+ * A vault with no export is one keychain loss away from unrecoverable, so
+ * `doctor` asks this and nags, rather than the user discovering it the hard way.
+ */
+export async function lastVaultExportAt(): Promise<number | undefined> {
+    return (await securityConfig()).lastExportAt;
+}
+
+export async function recordVaultExport(at: number = Date.now()): Promise<void> {
+    const storage = securityStorage();
+
+    await storage.withConfigLock(async () => {
+        const current = (await storage.getConfig<SecurityLocalConfig>()) ?? {};
+        await storage.setConfig({ ...current, lastExportAt: at });
+    });
+
+    logger.debug({ at }, "recorded vault export timestamp");
 }
 
 /**
