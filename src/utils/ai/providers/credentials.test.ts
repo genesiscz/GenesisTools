@@ -76,10 +76,7 @@ describe("resolveCredential", () => {
         const ref = await (await secrets()).set("ai/acc_xai/apiKey", "xai-from-vault");
         env.testing.set("XAI_API_KEY", "xai-from-env");
 
-        const resolved = await resolveCredential(
-            account({ credentials: { apiKey: ref }, useEnvApiKey: true }),
-            SPEC
-        );
+        const resolved = await resolveCredential(account({ credentials: { apiKey: ref }, useEnvApiKey: true }), SPEC);
 
         // The old ProviderManager did the opposite, so you could not tell which
         // key was being spent when both existed.
