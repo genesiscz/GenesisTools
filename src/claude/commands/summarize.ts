@@ -11,12 +11,12 @@ import { resolve } from "node:path";
 import { parseDate } from "@app/claude/lib/history/search";
 import type { SummarizeOptions, SummarizeResult } from "@app/claude/lib/history/summarize/engine.ts";
 import { listTemplates, SummarizeEngine } from "@app/claude/lib/history/summarize/engine.ts";
-import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import * as p from "@clack/prompts";
 import { getAgentRuntimeContext } from "@genesiscz/utils/agent-runtime";
 import { encodedProjectDir } from "@genesiscz/utils/claude";
 import { ClaudeSession } from "@genesiscz/utils/claude/session";
+import { formatCost } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { pickAppleNotesFolder } from "@genesiscz/utils/prompts/clack/apple-notes";
 import chalk from "chalk";
@@ -350,7 +350,7 @@ function displayResult(result: SummarizeResult): void {
     }
 
     if (result.cost !== undefined && result.cost > 0) {
-        parts.push(chalk.dim(`Cost: ${dynamicPricingManager.formatCost(result.cost)}`));
+        parts.push(chalk.dim(`Cost: ${formatCost(result.cost)}`));
     }
 
     if (result.outputPaths.length > 0) {

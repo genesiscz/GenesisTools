@@ -305,8 +305,17 @@ export function formatBytes(bytes: number): string {
 
 /**
  * Format a cost value as "$X.XXXX" (4 decimal places).
+ *
+ * A positive cost below the 4-decimal floor switches to exponential rather than
+ * rendering "$0.0000", which is indistinguishable from free. Cheap models make
+ * this the common case, not an edge case: a few hundred tokens on a fast model
+ * lands around $0.00003.
  */
 export function formatCost(cost: number): string {
+    if (cost > 0 && cost < 0.0001) {
+        return `$${cost.toExponential(2)}`;
+    }
+
     return `$${cost.toFixed(4)}`;
 }
 
