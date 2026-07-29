@@ -25,9 +25,57 @@ tools youtube transcribe dQw4w9WgXcQ
 | Command | Description |
 |---------|-------------|
 | `transcribe <url-or-id>` | Fetch captions or transcribe the audio of a YouTube video |
+| `ask [question] [targets...]` | Ask across videos, a channel, or a directory of transcripts |
+| `queue <add\|list\|show\|watch\|cancel\|stats>` | Enqueue and inspect pipeline jobs |
+| `transcripts <export\|import\|show>` | Move transcripts between the database and files |
+| `config <get\|set>` | Read and write tool configuration |
+| `mcp` | Serve the curated MCP tool set over stdio |
 | `server` | Run the API server the browser extension consumes (see hosted deployment below) |
 
-Run `tools youtube transcribe --help` for the full option list.
+Run `tools youtube <command> --help` for the full option list of any of them.
+
+### Asking questions
+
+`ask` takes one of three corpus selectors, which are mutually exclusive:
+
+```bash
+tools youtube ask "what did they say about pricing?" dQw4w9WgXcQ   # explicit video ids
+tools youtube ask "what shipped this month?" --channel @bridgemindai
+tools youtube ask "summarise the objections" --dir ./exported-transcripts
+```
+
+`--session <name>` keeps conversational memory under that name, so follow-up questions
+see the earlier turns. `--history --session <name>` prints those turns and exits (no
+question argument needed).
+
+A channel ask lazily embeds at most a handful of not-yet-indexed videos per call and
+reports the rest as skipped, so a first question against a large channel answers
+promptly instead of embedding the whole corpus. Pass explicit ids to `analyze --ask`
+when you want every named target indexed regardless.
+
+### Watching the queue
+
+```bash
+tools youtube queue add <target> --stages metadata,captions --watch
+tools youtube queue watch 41 42 --timeout 300     # specific jobs
+tools youtube queue watch --jsonl | jq .          # everything active, machine-readable
+```
+
+`queue watch` writes its event stream to stdout (that is the result); `queue add --watch`
+writes progress to stderr so `--json` output stays parseable.
+
+### MCP server
+
+`tools youtube mcp` exposes a **curated** subset over stdio — video listing, transcript
+search and windows, ask, and queue add/status. Admin, billing, cache and config verbs are
+deliberately absent, and the door treats its client as untrusted:
+
+- it reads the queue as its own console service account, never as the operator, so it
+  cannot see or cancel another user's jobs;
+- paging limits and retrieval depth are clamped in the handler, not merely advertised;
+- `queue_add` defaults to the **free** stages (`metadata`, `captions`, `summarize`).
+  Pass `transcribe` explicitly to authorise paid AI transcription of a video that has
+  no captions.
 
 ---
 
