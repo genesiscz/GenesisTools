@@ -266,10 +266,29 @@ export class ChatEngine {
         return this.conversationHistory.reduce((total, msg) => total + (msg.tokens || 0), 0);
     }
 
-    async switchModel(newModel: LanguageModel, provider: string, modelName: string): Promise<void> {
+    /**
+     * `providerChoice` is not decoration here.
+     *
+     * `/model` can move the session to a different provider TYPE, and this used
+     * to update only the name and the model. `callTarget` reads `providerType`
+     * for usage attribution and `providerChoice` for the system-prompt prefix, so
+     * everything after a switch was recorded against the provider the session
+     * started on, and subscription prefixes were applied from the old one.
+     */
+    async switchModel(
+        newModel: LanguageModel,
+        provider: string,
+        modelName: string,
+        providerChoice?: ProviderChoice
+    ): Promise<void> {
         this.config.model = newModel;
         this.config.provider = provider;
         this.config.modelName = modelName;
+
+        if (providerChoice) {
+            this.config.providerChoice = providerChoice;
+            this.config.providerType = providerChoice.provider.type;
+        }
 
         logger.info(`Switched to ${provider}/${modelName}`);
     }
