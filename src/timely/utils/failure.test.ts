@@ -93,6 +93,20 @@ describe("reportTimelyFailure", () => {
         expect(infos.join("\n")).toContain("tools timely login cookies");
     });
 
+    test("a sign-in redirect with a stored cookie says the cookie expired, not 'request failed'", async () => {
+        const probe = liveSession();
+
+        await reportTimelyFailure(
+            new TimelyHttpError("bounced", { status: 302, scope: "memories", usedCookie: true }),
+            probe
+        );
+
+        expect(probe.calls).toBe(0);
+        expect(errors.join("\n")).toContain("cookie has expired");
+        expect(errors.join("\n")).not.toContain("request failed");
+        expect(infos.join("\n")).toContain("tools timely login cookies");
+    });
+
     test("a memories 401 with a dead session still says to log in again", async () => {
         const probe = deadSession();
 

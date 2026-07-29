@@ -74,6 +74,25 @@ describe("fetchMemoriesForDates", () => {
         expect(result.byDate.get("2026-07-23")).toHaveLength(1);
     });
 
+    // The failure this whole change exists to remove: a stale cookie is answered with a
+    // bounce to sign-in, and following it produced a 200 page that read as "this day has
+    // no memories". It has to surface as a refused session, on the first date.
+    test("a sign-in redirect aborts the run as an auth failure instead of reporting empty days", async () => {
+        let calls = 0;
+        stubFetch(async () => {
+            calls++;
+            return new Response(null, { status: 302, headers: { location: "/login" } });
+        });
+
+        const promise = fetchMemoriesForDates(
+            fetchOptions(["2026-07-22", "2026-07-23", "2026-07-24"], await storageWithCookie("_memory_session=stale"))
+        );
+
+        await expect(promise).rejects.toThrow(TimelyHttpError);
+        await expect(promise).rejects.toMatchObject({ status: 302, scope: "memories", usedCookie: true });
+        expect(calls).toBe(1);
+    });
+
     test("a genuinely empty day stays empty and does not fail", async () => {
         stubFetch(async () => new Response("[]", { status: 200 }));
 

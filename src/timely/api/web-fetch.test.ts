@@ -70,6 +70,33 @@ describe("fetchTimelyWebJson", () => {
         await expect(promise).rejects.toThrow("returned a non-JSON body (200)");
     });
 
+    test("a sign-in redirect is an auth failure carrying the real 3xx, not a followed 200", async () => {
+        const redirectModes: (RequestRedirect | undefined)[] = [];
+        stubFetch(async (_input, init) => {
+            redirectModes.push(init?.redirect);
+            return new Response(null, { status: 302, headers: { location: "/login" } });
+        });
+
+        const promise = fetchTimelyWebJson(options({ cookie: "_memory_session=stale" }));
+
+        await expect(promise).rejects.toThrow(TimelyHttpError);
+        await expect(promise).rejects.toMatchObject({ status: 302, scope: "memories", usedCookie: true });
+        await expect(promise).rejects.toThrow("was redirected to a sign-in page (302)");
+        // Same no-follow policy as the login probe, from the one helper both call.
+        expect(redirectModes).toEqual(["manual"]);
+    });
+
+    test("a redirect is classified as an auth failure, so callers abort the run", async () => {
+        stubFetch(async () => new Response(null, { status: 302, headers: { location: "/login" } }));
+
+        try {
+            await fetchTimelyWebJson(options({ cookie: "_memory_session=stale" }));
+            throw new Error("expected a rejection");
+        } catch (err) {
+            expect(isTimelyAuthFailure(err)).toBe(true);
+        }
+    });
+
     test("the request carries an abort signal, so a stalled host cannot hang the CLI", async () => {
         let signal: AbortSignal | null | undefined;
         stubFetch(async (_input, init) => {
