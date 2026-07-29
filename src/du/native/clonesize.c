@@ -991,9 +991,24 @@ static void cache_open(const char *target) {
     if (map == MAP_FAILED) return;
 
     const CacheHeader *h = map;
-    size_t need = sizeof(CacheHeader) + (size_t)h->nrecs * sizeof(CacheEnt) + (size_t)h->nexts * sizeof(CacheExt);
+
+    // Validate the counts by DIVIDING the space that is actually there, never by
+    // multiplying the counts out first. The counts are attacker-influenceable
+    // (they are just bytes in an on-disk file), and `nrecs * sizeof(CacheEnt)`
+    // wraps a 64-bit size_t: nrecs = 2^60 makes that product exactly 0, so a
+    // "total > st_size" test passes and cache_lookup then binary-searches 2^60
+    // entries across a 280-byte mapping. That segfaults (verified: exit 139).
+    // Dividing cannot overflow, so each count is bounded before it is ever scaled.
+    size_t avail = (size_t)st.st_size - sizeof(CacheHeader);
     if (h->magic != CACHE_MAGIC || h->version != CACHE_VERSION || h->fsid != g_fsid ||
-        need > (size_t)st.st_size) {
+        h->nrecs > avail / sizeof(CacheEnt)) {
+        munmap(map, (size_t)st.st_size);
+        return;
+    }
+
+    // Safe to scale now: nrecs is known to fit, so this cannot wrap or underflow.
+    size_t after_ents = avail - (size_t)h->nrecs * sizeof(CacheEnt);
+    if (h->nexts > after_ents / sizeof(CacheExt)) {
         munmap(map, (size_t)st.st_size);
         return;
     }
