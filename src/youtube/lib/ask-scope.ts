@@ -1,5 +1,5 @@
-import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import type { AskSessionScopeKind } from "@app/youtube/lib/db.types";
+import { normaliseHandle } from "@app/youtube/lib/queue";
 import { type ImportTranscriptDirResult, importTranscriptDir } from "@app/youtube/lib/transcript-export";
 import type { VideoId } from "@app/youtube/lib/video.types";
 import type { Youtube } from "@app/youtube/lib/youtube";
@@ -54,7 +54,10 @@ export async function resolveAskScope(yt: Youtube, input: AskScopeInput): Promis
     }
 
     if (input.channel) {
-        const handle = input.channel as ChannelHandle;
+        // Canonicalise first: `yt.videos.list` matches on the stored `@handle`, and
+        // the result is persisted as the session's `scopeValue` and re-resolved on
+        // every later ask, so a bare `mkbhd` would keep resolving to zero videos.
+        const handle = normaliseHandle(input.channel);
         const videos = yt.videos.list({
             channel: handle,
             includeShorts: true,
