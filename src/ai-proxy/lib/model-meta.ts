@@ -14,6 +14,7 @@ import {
     resolveAnthropicSubModel,
     tryFetchAnthropicSubModels,
 } from "@genesiscz/utils/ai/anthropic/models";
+import { byProvider } from "@genesiscz/utils/ai/catalog";
 import { toProxyId as toCopilotProxyId } from "@genesiscz/utils/ai/github-copilot/models";
 import { COPILOT_INDIVIDUAL_API } from "@genesiscz/utils/ai/github-copilot/paths";
 import type { CopilotModelRecord } from "@genesiscz/utils/ai/github-copilot/types";
@@ -360,16 +361,6 @@ export async function listCopilotProxyModels(
     );
 }
 
-/** Fallback when GET /models fails or key is missing — chat models only. */
-export const XAI_STATIC_CHAT_MODELS: Array<{ id: string; contextWindow: number }> = [
-    { id: "grok-4.5", contextWindow: 500_000 },
-    { id: "grok-4.3", contextWindow: 1_000_000 },
-    { id: "grok-4.20-0309-reasoning", contextWindow: 1_000_000 },
-    { id: "grok-4.20-0309-non-reasoning", contextWindow: 1_000_000 },
-    { id: "grok-4.20-multi-agent-0309", contextWindow: 1_000_000 },
-    { id: "grok-build-0.1", contextWindow: 256_000 },
-];
-
 interface XaiApiModelRecord {
     id: string;
     context_length?: number;
@@ -424,19 +415,29 @@ function xaiRecordToProxyMeta(
     };
 }
 
-function listXaiStaticProxyModels(account: AiProxyAccountConfig, baseUrl: string): ProxyModelMeta[] {
-    return XAI_STATIC_CHAT_MODELS.filter((record) => isCuratedGrokModelId(record.id)).map((record) =>
-        xaiRecordToProxyMeta(
-            account,
-            {
-                id: record.id,
-                contextWindow: record.contextWindow,
-                source: "static",
-                probeStatus: "skipped",
-            },
-            baseUrl
-        )
-    );
+/**
+ * Fallback when GET /models fails or the key is missing — chat models only.
+ *
+ * The ids come from the shared catalog rather than a six-entry array that used
+ * to live here and drifted from the catalog it duplicated. `isCuratedGrokModelId`
+ * still decides what a client is offered; that curation is proxy policy, not a
+ * fact about the model, so it stays here.
+ */
+export function listXaiStaticProxyModels(account: AiProxyAccountConfig, baseUrl: string): ProxyModelMeta[] {
+    return byProvider("xai")
+        .filter((entry) => isCuratedGrokModelId(entry.id))
+        .map((entry) =>
+            xaiRecordToProxyMeta(
+                account,
+                {
+                    id: entry.id,
+                    contextWindow: entry.contextWindow,
+                    source: "static",
+                    probeStatus: "skipped",
+                },
+                baseUrl
+            )
+        );
 }
 
 /**
