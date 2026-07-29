@@ -65,16 +65,33 @@ describe("resolveSession", () => {
         expect(session?.csrfToken).toBe("tok999");
     });
 
-    test("falls back to IG_CSRFTOKEN when the flag carries only a bare sessionid", async () => {
-        // Regression: the flag path used to skip this fallback that the env path
-        // has, so `--session-cookie <bare id>` shipped the header/cookie mismatch
-        // the client warns about on every single request.
-        env.testing.set("IG_CSRFTOKEN", "from-env");
+    test("never pairs an explicit session with the environment's csrftoken", async () => {
+        // The flag exists to OVERRIDE the environment's session. Borrowing that
+        // session's csrftoken would hand Instagram a new cookie wearing the old
+        // account's token — the mismatch this tool warns about, manufactured by
+        // the tool itself. Better to send none and log the warning.
+        env.testing.set("IG_SESSIONID", "old-session");
+        env.testing.set("IG_CSRFTOKEN", "old-token");
 
-        const session = await resolveSession("bare-session-id");
+        const session = await resolveSession("new-session");
 
-        expect(session?.sessionId).toBe("bare-session-id");
-        expect(session?.csrfToken).toBe("from-env");
+        expect(session?.sessionId).toBe("new-session");
+        expect(session?.csrfToken).toBeUndefined();
+    });
+
+    test("accepts a csrftoken passed explicitly alongside the session flag", async () => {
+        env.testing.set("IG_CSRFTOKEN", "ambient-and-unrelated");
+
+        const session = await resolveSession("new-session", "paired-token");
+
+        expect(session?.sessionId).toBe("new-session");
+        expect(session?.csrfToken).toBe("paired-token");
+    });
+
+    test("prefers an explicit csrftoken over one embedded in the pasted cookie", async () => {
+        const session = await resolveSession("csrftoken=embedded; sessionid=sess", "explicit");
+
+        expect(session?.csrfToken).toBe("explicit");
     });
 
     test("reads IG_SESSIONID and names the variable it came from", async () => {

@@ -55,15 +55,21 @@ export async function writeSessionConfig(config: SessionConfig): Promise<void> {
  * command must keep working with no session at all, so only the story path
  * turns a missing cookie into an error.
  */
-export async function resolveSession(explicitCookie?: string): Promise<ResolvedSession | undefined> {
+export async function resolveSession(
+    explicitCookie?: string,
+    explicitCsrfToken?: string
+): Promise<ResolvedSession | undefined> {
     if (explicitCookie) {
         log.debug("session resolved from --session-cookie flag");
         return {
             sessionId: stripCookiePrefix(explicitCookie),
-            // Same fallback as the env path below. Pasting a bare `sessionid` on the
-            // flag is the common case, and dropping a csrftoken that IS available
-            // ships the header/cookie mismatch the client warns about on every call.
-            csrfToken: extractCookie(explicitCookie, "csrftoken") ?? env.instagram.getCsrfToken(),
+            // Deliberately NOT falling back to $IG_CSRFTOKEN here. That variable
+            // belongs to whatever session the environment holds, and the whole
+            // point of the flag is to override that session — pairing the new
+            // cookie with the old account's token is the mismatch this tool warns
+            // about, manufactured by the tool itself. Paste the full cookie string
+            // or pass --csrf-token to supply one that actually belongs together.
+            csrfToken: explicitCsrfToken ?? extractCookie(explicitCookie, "csrftoken"),
             source: "flag",
         };
     }
