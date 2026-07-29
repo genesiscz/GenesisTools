@@ -5,6 +5,7 @@ import { registerChannelsCommand } from "@app/youtube/commands/channels";
 import { registerConfigCommand } from "@app/youtube/commands/config";
 import { registerDownloadCommand } from "@app/youtube/commands/download";
 import { registerExtensionCommand } from "@app/youtube/commands/extension";
+import { registerMcpCommand } from "@app/youtube/commands/mcp";
 import { registerPipelineCommand } from "@app/youtube/commands/pipeline";
 import { registerQueueCommand } from "@app/youtube/commands/queue";
 import { registerServerCommand } from "@app/youtube/commands/server";
@@ -37,6 +38,7 @@ export function buildYoutubeProgram(): Command {
     registerAskCommand(program);
     registerTranscriptsCommand(program);
     registerConfigCommand(program);
+    registerMcpCommand(program);
     registerAnalyzeCommand(program);
     registerCacheCommand(program);
     registerServerCommand(program);
