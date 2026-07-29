@@ -35,6 +35,10 @@ const IP_BLOCK_MARKERS = ["sentry_block", "rate_limit_error"] as const;
 /** Arrives as 401 + `require_login: true`, so it must be matched before login_required. */
 const PLEASE_WAIT_MARKERS = ["please wait a few minutes", "wait a few minutes"] as const;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
 /**
  * Instagram's failure envelope, and the gate every marker scan sits behind.
  *
@@ -43,8 +47,14 @@ const PLEASE_WAIT_MARKERS = ["please wait a few minutes", "wait a few minutes"] 
  * `web_profile_info` as a perfectly good HTTP 200, and scanning that body for
  * substrings turns a working account into a fabricated enforcement error. A
  * marker only means what it says inside a response Instagram itself failed.
+ *
+ * Read off the parsed object rather than the raw text, so it is the document's
+ * OWN top-level verdict. A regex over the body would also accept a `status`
+ * belonging to some nested object while the real top-level one said "ok".
  */
-const FAIL_ENVELOPE = /"status"\s*:\s*"fail"/;
+function hasFailEnvelope(parsed: unknown): boolean {
+    return isRecord(parsed) && parsed.status === "fail";
+}
 
 export interface RequestOptions {
     sessionId?: string;
@@ -91,6 +101,32 @@ export interface InstagramResponse<T> {
  */
 const wwwClaims: Record<AuthMode, string> = { anonymous: "0", session: "0" };
 
+/**
+ * Fingerprint of the credential the session claim was minted for. Two different
+ * sessions must not inherit each other's claim either, so the claim is dropped
+ * whenever the cookie changes rather than only when the auth mode does.
+ *
+ * Hashed rather than stored: the cookie is a live credential and has no business
+ * living in a second module-level variable when equality is all that is needed.
+ */
+let sessionClaimOwner: string | undefined;
+
+function forgetSessionClaimIfCredentialChanged(sessionId: string): void {
+    // Stringified because `Bun.hash` is typed `number | bigint`; only equality
+    // matters here, and the same input always yields the same value and type.
+    const owner = String(Bun.hash(sessionId));
+    if (owner === sessionClaimOwner) {
+        return;
+    }
+
+    if (sessionClaimOwner !== undefined) {
+        log.debug("session credential changed — dropping the previous session's www-claim");
+    }
+
+    sessionClaimOwner = owner;
+    wwwClaims.session = "0";
+}
+
 let limiter = new RateLimiter();
 
 function buildHeaders(options: RequestOptions): Record<string, string> {
@@ -129,11 +165,19 @@ interface Classification {
     challengeUrl?: string;
 }
 
-function classify(status: number, body: string, authMode: AuthMode): Classification | undefined {
+interface ClassifyInput {
+    status: number;
+    body: string;
+    /** The already-parsed body, or `undefined` when it is not JSON at all. */
+    parsed: unknown;
+    authMode: AuthMode;
+}
+
+function classify({ status, body, parsed, authMode }: ClassifyInput): Classification | undefined {
     const lower = body.toLowerCase();
     // Instagram answers enforcement with 200 + a fail envelope as readily as with
     // a 4xx, so neither signal alone is enough to decide the body is worth scanning.
-    const failed = status >= 400 || FAIL_ENVELOPE.test(lower);
+    const failed = status >= 400 || hasFailEnvelope(parsed);
 
     if (failed && CHECKPOINT_MARKERS.some((marker) => lower.includes(marker))) {
         const challengeUrl = extractChallengeUrl(body);
@@ -184,6 +228,16 @@ function classify(status: number, body: string, authMode: AuthMode): Classificat
     return undefined;
 }
 
+/** `undefined` for anything that is not JSON: the HTML shell, a truncated body. */
+function tryParseJson(text: string, label: string): unknown {
+    try {
+        return SafeJSON.parse(text);
+    } catch (error) {
+        log.debug({ error, label, bytes: text.length }, "instagram body did not parse as JSON");
+        return undefined;
+    }
+}
+
 function extractChallengeUrl(body: string): string | undefined {
     const match = body.match(/"url"\s*:\s*"([^"]*challenge[^"]*)"/i);
     return match ? match[1].replace(/\\\//g, "/") : undefined;
@@ -192,6 +246,10 @@ function extractChallengeUrl(body: string): string | undefined {
 export async function getJson<T>(path: string, options: RequestOptions): Promise<InstagramResponse<T>> {
     const url = path.startsWith("http") ? path : `${WEB_BASE}${path}`;
     const authMode: AuthMode = options.sessionId ? "session" : "anonymous";
+
+    if (options.sessionId) {
+        forgetSessionClaimIfCredentialChanged(options.sessionId);
+    }
 
     await limiter.acquire(options.label);
     log.debug({ url, label: options.label, authMode, budgetUsed: limiter.used }, "instagram request");
@@ -220,7 +278,11 @@ export async function getJson<T>(path: string, options: RequestOptions): Promise
     }
 
     const text = await response.text();
-    const classification = classify(response.status, text, authMode);
+    // Parsed once, up front: the classifier needs the top-level `status` field to
+    // tell an Instagram failure from a bio that merely reads like one, and the
+    // success path needs the same object. `undefined` means "not JSON at all".
+    const parsed = tryParseJson(text, options.label);
+    const classification = classify({ status: response.status, body: text, parsed, authMode });
 
     if (classification) {
         log.warn(
@@ -254,18 +316,19 @@ export async function getJson<T>(path: string, options: RequestOptions): Promise
         );
     }
 
-    try {
-        return { data: SafeJSON.parse(text) as T, authMode };
-    } catch (error) {
-        // `startsWith("{")` only proves it is not the HTML shell. A truncated or
-        // half-written body still gets here, and letting the raw SyntaxError out
-        // means the user sees a parser message instead of an Instagram one.
+    // `startsWith("{")` above only proves it is not the HTML shell — a truncated
+    // or half-written body still reaches here, and a raw SyntaxError escaping
+    // would show the user a parser message for what is an Instagram problem.
+    // Nothing that opens with `{` can parse TO undefined, so the sentinel is safe.
+    if (parsed === undefined) {
         log.warn(
-            { error, status: response.status, label: options.label, authMode, bytes: text.length },
+            { status: response.status, label: options.label, authMode, bytes: text.length },
             "instagram returned a body that opens like JSON but does not parse"
         );
         throw new InstagramError("network", `${options.label} returned malformed JSON`, response.status);
     }
+
+    return { data: parsed as T, authMode };
 }
 
 /** Anonymous-only entrypoint. See `AnonymousRequestOptions` for why it exists. */
@@ -283,6 +346,7 @@ export const __testing = {
     resetWwwClaim: () => {
         wwwClaims.anonymous = "0";
         wwwClaims.session = "0";
+        sessionClaimOwner = undefined;
     },
     currentWwwClaim: (mode: AuthMode = "anonymous") => wwwClaims[mode],
     useInstantLimiter: () => {
