@@ -12,7 +12,7 @@ import {
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import axios, { type AxiosInstance } from "axios";
 import { createClient, readEnvAuth } from "./lib/client";
-import { extractErrors } from "./lib/errors";
+import { axiosLogFields, extractErrors } from "./lib/errors";
 import { formatDuration, formatStageLine, statusBody } from "./lib/format";
 import { fetchLog, grepLog } from "./lib/log";
 import { type BuildMeta, findFailingLeaf, flattenBuildMeta, getStages } from "./lib/pipeline";
@@ -436,15 +436,7 @@ class JenkinsServer {
                 }
 
                 if (axios.isAxiosError(error)) {
-                    logger.warn(
-                        {
-                            error,
-                            tool: request.params.name,
-                            status: error.response?.status,
-                            url: error.config?.url,
-                        },
-                        "Jenkins API call failed"
-                    );
+                    logger.warn({ ...axiosLogFields(error), tool: request.params.name }, "Jenkins API call failed");
                     throw new ProtocolError(
                         ProtocolErrorCode.InternalError,
                         `Jenkins API error: ${error.response?.data?.message || error.message}`

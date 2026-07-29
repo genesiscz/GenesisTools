@@ -1,3 +1,5 @@
+import type { AxiosError } from "axios";
+
 // Tool-agnostic failure markers. Each term should appear across at least two
 // unrelated build/package/language ecosystems so the pattern doesn't bias
 // toward one stack. Case-insensitive so we catch `Failed`, `error:`, etc.
@@ -58,4 +60,32 @@ export function extractErrors(text: string, opts: ExtractOpts = {}): ErrorBlock[
         matched: lines[r.matchIdx],
         window: lines.slice(r.from, r.to + 1),
     }));
+}
+
+export interface AxiosLogFields {
+    message: string;
+    stack?: string;
+    code?: string;
+    status?: number;
+    method?: string;
+    url?: string;
+}
+
+/**
+ * Flatten an AxiosError into log-safe fields.
+ *
+ * Never hand the AxiosError itself to the logger: pino's error serializer copies
+ * the error's own enumerable properties, and `AxiosError.config` carries
+ * `auth: { username, password }` populated by createClient() with the Jenkins API
+ * token in plaintext, so the token would land in the day-stamped log file.
+ */
+export function axiosLogFields(error: AxiosError): AxiosLogFields {
+    return {
+        message: error.message,
+        stack: error.stack,
+        code: error.code,
+        status: error.response?.status,
+        method: error.config?.method,
+        url: error.config?.url,
+    };
 }
