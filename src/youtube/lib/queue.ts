@@ -54,6 +54,8 @@ export interface QueueEnqueueInput {
 }
 
 export interface WatchQueueOpts {
+    /** Required like every other job read here, so wiring this to a door cannot forget it. */
+    actor: JobActor;
     jobIds?: number[];
     followChildren?: boolean;
     intervalMs?: number;
@@ -148,7 +150,7 @@ export class QueueService {
 
         return {
             job: opts.redact ? redactJobForApi(job) : job,
-            queuePosition: this.db.getJobQueuePosition(id),
+            queuePosition: this.db.getJobQueuePosition(id, ownerFilter(opts.actor)),
         };
     }
 
@@ -177,7 +179,7 @@ export class QueueService {
     stats(actor: JobActor): QueueStats {
         // Counts leak too: queue-wide depth, per-stage workload and oldest-job age
         // describe every other tenant's activity even though no row is returned.
-        return this.db.getQueueStats(actor.kind === "user" ? { userId: actor.userId } : {});
+        return this.db.getQueueStats(ownerFilter(actor));
     }
 
     async *watch(opts: WatchQueueOpts): AsyncGenerator<QueueWatchEvent> {
@@ -319,8 +321,14 @@ export class QueueService {
         }
     }
 
-    async waitForJob(jobId: number, opts?: { timeoutMs?: number }): Promise<PipelineJob> {
+    async waitForJob(jobId: number, opts: { actor: JobActor; timeoutMs?: number }): Promise<PipelineJob> {
         const immediate = this.db.getJob(jobId);
+
+        // A foreign id is treated exactly as a missing one, matching `get`/`cancel`:
+        // waiting on someone else's job would otherwise return their row on completion.
+        if (immediate && !actorOwnsJob(immediate, opts.actor)) {
+            throw new Error(`Job ${jobId} no longer exists`);
+        }
 
         if (immediate && isFinalJobStatus(immediate.status)) {
             return immediate;
@@ -399,7 +407,7 @@ export class QueueService {
                 }
             }, 100);
 
-            if (opts?.timeoutMs !== undefined) {
+            if (opts.timeoutMs !== undefined) {
                 timeout = setTimeout(() => {
                     rejectOnce(new Error(`Timed out waiting for job ${jobId} after ${opts.timeoutMs}ms`));
                 }, opts.timeoutMs);
@@ -408,10 +416,13 @@ export class QueueService {
     }
 
     private jobsInScope(opts: WatchQueueOpts): PipelineJob[] {
+        const owner = ownerFilter(opts.actor);
+
         if (opts.jobIds === undefined) {
             return [
-                ...this.db.listJobs({ status: "pending", limit: WATCH_LIST_LIMIT }),
+                ...this.db.listJobs({ ...owner, status: "pending", limit: WATCH_LIST_LIMIT }),
                 ...this.db.listJobs({
+                    ...owner,
                     status: "running",
                     limit: WATCH_LIST_LIMIT,
                 }),
@@ -423,12 +434,14 @@ export class QueueService {
         for (const jobId of opts.jobIds) {
             const job = this.db.getJob(jobId);
 
-            if (job) {
+            // An explicit id list is still filtered: naming a foreign job must not
+            // stream its status transitions back.
+            if (job && actorOwnsJob(job, opts.actor)) {
                 jobsById.set(job.id, job);
             }
 
             if (opts.followChildren ?? true) {
-                const children = this.db.listJobs({ parentJobId: jobId, limit: WATCH_LIST_LIMIT });
+                const children = this.db.listJobs({ ...owner, parentJobId: jobId, limit: WATCH_LIST_LIMIT });
 
                 for (const child of children) {
                     jobsById.set(child.id, child);
@@ -528,6 +541,11 @@ export function toJobStages(values: string[]): JobStage[] {
  */
 function actorOwnsJob(job: PipelineJob, actor: JobActor): boolean {
     return actor.kind === "operator" || job.userId === actor.userId;
+}
+
+/** The `{ userId? }` filter the DB layer takes: empty for an operator, narrowed for a user. */
+function ownerFilter(actor: JobActor): { userId?: number } {
+    return actor.kind === "user" ? { userId: actor.userId } : {};
 }
 
 /**

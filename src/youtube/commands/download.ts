@@ -47,7 +47,7 @@ export function registerDownloadCommand(program: Command): void {
                     }
                 }
 
-                return yt.queue.waitForJob(job.id);
+                return yt.queue.waitForJob(job.id, { actor: { kind: "operator" } });
             });
             await renderOrEmit({
                 text: renderDownloadResult(final),

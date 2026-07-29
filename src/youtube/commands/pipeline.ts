@@ -72,7 +72,9 @@ export function registerPipelineCommand(program: Command): void {
                     ? await Promise.all(
                           jobs.map((job) => streamJobToCompletion(yt, job.id, !cmd.optsWithGlobals().silent))
                       )
-                    : await Promise.all(jobs.map((job) => yt.queue.waitForJob(job.id)));
+                    : await Promise.all(
+                          jobs.map((job) => yt.queue.waitForJob(job.id, { actor: { kind: "operator" } }))
+                      );
             });
 
             await renderOrEmit({
@@ -98,7 +100,7 @@ export async function streamJobToCompletion(
     });
 
     try {
-        return await yt.queue.waitForJob(jobId);
+        return await yt.queue.waitForJob(jobId, { actor: { kind: "operator" } });
     } finally {
         dispose();
     }

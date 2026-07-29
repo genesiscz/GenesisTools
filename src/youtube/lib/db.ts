@@ -776,6 +776,45 @@ export class YoutubeDatabase extends BaseDatabase {
             `);
         });
 
+        // `ensureAskSession` treats (user_id, title) as unique, but its check/recheck
+        // only holds inside ONE connection — a CLI run and the server are separate
+        // SQLite connections and could both insert. The constraint has to live in the
+        // schema for that to be true across processes.
+        this.runMigration("ask-sessions-unique-title-per-user", () => {
+            const dedupe = this.db.transaction(() => {
+                // Any duplicate that predates the index has to go first, or CREATE
+                // UNIQUE INDEX fails and the migration throws on every open. The
+                // lowest id wins and inherits the others' messages, so no
+                // conversation is lost — merging beats deleting here because the
+                // rows are user-written history.
+                this.db.exec(`
+                    UPDATE ask_session_messages
+                       SET session_id = (
+                           SELECT MIN(keep.id) FROM ask_sessions keep
+                            WHERE keep.user_id = (SELECT user_id FROM ask_sessions WHERE id = session_id)
+                              AND keep.title = (SELECT title FROM ask_sessions WHERE id = session_id)
+                       )
+                     WHERE session_id IN (
+                           SELECT dup.id FROM ask_sessions dup
+                            WHERE dup.id > (
+                                SELECT MIN(keep.id) FROM ask_sessions keep
+                                 WHERE keep.user_id = dup.user_id AND keep.title = dup.title
+                            )
+                       );
+
+                    DELETE FROM ask_sessions
+                     WHERE id > (
+                           SELECT MIN(keep.id) FROM ask_sessions keep
+                            WHERE keep.user_id = ask_sessions.user_id AND keep.title = ask_sessions.title
+                       );
+
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_ask_sessions_user_title
+                        ON ask_sessions(user_id, title);
+                `);
+            });
+            dedupe();
+        });
+
         // Per-user channel follows (Phase 3). Distinct from the global
         // `channels` table, which is operator state.
         this.runMigration("add-watchlist", () => {
@@ -1540,19 +1579,29 @@ export class YoutubeDatabase extends BaseDatabase {
         return row ? rowToJob(row) : null;
     }
 
-    /** 1-based position in the pending queue (priority-aware); `null` if the job is missing or not pending. */
-    getJobQueuePosition(jobId: number): number | null {
+    /**
+     * 1-based position in the pending queue (priority-aware); `null` if the job is
+     * missing or not pending.
+     *
+     * `userId` counts only that owner's pending jobs. The global count is a read of
+     * other tenants' queue depth even though it returns a single integer, so every
+     * caller that hands the number to a user passes the owner.
+     */
+    getJobQueuePosition(jobId: number, opts: { userId?: number } = {}): number | null {
         const job = this.getJob(jobId);
 
         if (job?.status !== "pending") {
             return null;
         }
 
+        const owner = opts.userId === undefined ? "" : " AND user_id = ?";
+        const params = opts.userId === undefined ? [] : [opts.userId];
         const row = this.db
-            .query<{ count: number }, [number, number, number]>(
-                "SELECT COUNT(*) AS count FROM jobs WHERE status = 'pending' AND (priority > ? OR (priority = ? AND id < ?))"
+            .query<{ count: number }, number[]>(
+                `SELECT COUNT(*) AS count FROM jobs
+                 WHERE status = 'pending'${owner} AND (priority > ? OR (priority = ? AND id < ?))`
             )
-            .get(job.priority, job.priority, job.id);
+            .get(...params, job.priority, job.priority, job.id);
 
         return (row?.count ?? 0) + 1;
     }

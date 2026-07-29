@@ -196,7 +196,7 @@ describe("QueueService", () => {
                 }).job
             );
             await yt.pipeline.start();
-            await yt.queue.waitForJob(job.id, { timeoutMs: 1_000 });
+            await yt.queue.waitForJob(job.id, { actor: { kind: "operator" }, timeoutMs: 1_000 });
 
             expect(received).toEqual([
                 {
@@ -254,8 +254,8 @@ describe("QueueService", () => {
                 }).job
             );
             await yt.pipeline.start();
-            await yt.queue.waitForJob(valid.id, { timeoutMs: 1_000 });
-            await yt.queue.waitForJob(invalid.id, { timeoutMs: 1_000 });
+            await yt.queue.waitForJob(valid.id, { actor: { kind: "operator" }, timeoutMs: 1_000 });
+            await yt.queue.waitForJob(invalid.id, { actor: { kind: "operator" }, timeoutMs: 1_000 });
 
             expect(received[0]).toMatchObject({
                 videoId: "abc123def45",
@@ -288,7 +288,12 @@ describe("QueueService", () => {
                     stages: ["metadata"],
                 }).job
             );
-            const watcher = fixture.queue.watch({ jobIds: [job.id], intervalMs: 20, timeoutMs: 500 });
+            const watcher = fixture.queue.watch({
+                actor: { kind: "operator" },
+                jobIds: [job.id],
+                intervalMs: 20,
+                timeoutMs: 500,
+            });
             const seen = await watcher.next();
             expect(seen.value).toMatchObject({ type: "job:seen", job: { id: job.id } });
 
@@ -325,7 +330,7 @@ describe("QueueService", () => {
                     stages: ["metadata"],
                 }).job
             );
-            const watcher = fixture.queue.watch({ intervalMs: 20, timeoutMs: 500 });
+            const watcher = fixture.queue.watch({ actor: { kind: "operator" }, intervalMs: 20, timeoutMs: 500 });
             const seen = await watcher.next();
             expect(seen.value).toMatchObject({ type: "job:seen", job: { id: job.id } });
 
@@ -358,6 +363,7 @@ describe("QueueService", () => {
                 }).job
             );
             const watcher = fixture.queue.watch({
+                actor: { kind: "operator" },
                 jobIds: [parent.id],
                 followChildren: true,
                 intervalMs: 20,

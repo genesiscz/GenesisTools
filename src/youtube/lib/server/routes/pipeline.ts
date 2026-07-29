@@ -20,6 +20,9 @@ interface EnqueueBody {
 
 type ParseResult = { ok: true; value: EnqueueBody } | { ok: false; error: string };
 
+const DEFAULT_JOBS_LIMIT = 100;
+const MAX_JOBS_LIMIT = 1000;
+
 export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): Promise<Response> {
     try {
         // Resolved once, for every branch below: the same identity decides who a new
@@ -70,7 +73,12 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
 
         if (matchRoute(req, "GET", "/api/v1/jobs", url.pathname)) {
             const status = parseJobStatus(url.searchParams.get("status"));
-            const limit = parseInt(url.searchParams.get("limit") ?? "100", 10);
+            const limit = parseListLimit(url.searchParams.get("limit"));
+
+            if (limit === null) {
+                return jsonError(`limit must be an integer between 1 and ${MAX_JOBS_LIMIT}`, 400);
+            }
+
             const jobs = yt.queue.list({ status: status ?? undefined, limit, redact: true, actor });
 
             return Response.json({ jobs }, { headers: CORS_HEADERS });
@@ -123,6 +131,27 @@ export async function handlePipelineRoute(req: Request, url: URL, yt: Youtube): 
     } catch (err) {
         return toErrorResponse(err);
     }
+}
+
+/**
+ * Strict integer in `[1, MAX_JOBS_LIMIT]`, or `null` for a 400.
+ *
+ * `parseInt` was wrong twice over here: it stops at the first non-digit, so `"5x"`
+ * silently became 5, and it happily returns a negative — which SQLite reads as
+ * "no limit", turning `?limit=-1` into a full-table read, map, redact and serialize.
+ */
+function parseListLimit(raw: string | null): number | null {
+    if (raw === null) {
+        return DEFAULT_JOBS_LIMIT;
+    }
+
+    if (!/^\d+$/.test(raw.trim())) {
+        return null;
+    }
+
+    const value = Number(raw);
+
+    return value >= 1 && value <= MAX_JOBS_LIMIT ? value : null;
 }
 
 function parseEnqueueBody(raw: unknown): ParseResult {
