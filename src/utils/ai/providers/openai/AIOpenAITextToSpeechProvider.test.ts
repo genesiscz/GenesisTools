@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { env } from "@genesiscz/utils/env";
+import { skip } from "@genesiscz/utils/test/skip";
 import { AIOpenAITextToSpeechProvider } from "./AIOpenAITextToSpeechProvider";
 
 describe("AIOpenAITextToSpeechProvider", () => {
@@ -42,8 +43,10 @@ describe("AIOpenAITextToSpeechProvider", () => {
         expect(ids).toContain("verse");
     });
 
-    // Live integration test — short utterance round-trip.
-    test.skipIf(!env.ai.openai.getKey())(
+    // Live integration test — short utterance round-trip. Gated on RUN_REAL_APIS
+    // as well as the key: a key being present in the environment is not consent
+    // to spend it (and a key without the audio scope fails the whole suite).
+    test.skipIf(skip.realApis || !env.ai.openai.getKey())(
         "synthesize() returns audio bytes for a short utterance (requires OPENAI_API_KEY)",
         async () => {
             const p = new AIOpenAITextToSpeechProvider();

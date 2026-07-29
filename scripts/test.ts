@@ -140,9 +140,7 @@ function reportGates(): void {
         );
     }
 
-    process.stderr.write(
-        `\x1b[90m[test] e2e suites are excluded from this run — use \`bun run test:e2e\`\x1b[0m\n`
-    );
+    process.stderr.write(`\x1b[90m[test] e2e suites are excluded from this run — use \`bun run test:e2e\`\x1b[0m\n`);
 }
 
 reportGates();

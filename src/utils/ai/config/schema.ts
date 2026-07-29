@@ -85,6 +85,11 @@ export const accountEntrySchema = z.object({
     /** Tools that use this account. Carried from v3, where it lived on the account. */
     apps: z.array(z.string()).optional(),
     billing: accountBillingSchema,
+    /**
+     * Base URL for providers that are not at a fixed host: a gateway (ai-proxy),
+     * a self-hosted runtime (ollama), or an OpenAI-compatible endpoint.
+     */
+    endpoint: z.string().optional(),
     credentials: accountCredentialsSchema,
     useEnvApiKey: useEnvApiKeySchema.default(false),
     /** Escape hatch for selector exceptions; empty in the common case. */
