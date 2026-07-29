@@ -120,6 +120,19 @@ export interface AiProxyAccountConfig {
     githubCopilot?: AiProxyGithubCopilotAccountConfig;
     anthropicSub?: AiProxyAnthropicSubAccountConfig;
     openaiSub?: AiProxyOpenAiSubAccountConfig;
+    /**
+     * Literal API key for api-key providers, stored in config instead of the
+     * environment. Takes precedence over `apiKeyEnv` so the account keeps
+     * working when the proxy runs without the user's shell env (launchd, cron).
+     * This is a real billed credential — `redactConfig` masks it.
+     */
+    apiKey?: string;
+    /**
+     * Opt in to resolving this account's billed key from the environment. Off by
+     * default: an ambient `XAI_API_KEY` must never be spent just because the
+     * shell happens to export it.
+     */
+    allowEnvApiKey?: boolean;
     apiKeyEnv?: string;
     baseUrl?: string;
     /**
@@ -142,12 +155,23 @@ export interface AiProxyClientConfig {
     disabled?: boolean;
 }
 
+export interface AiProxyRealtimeConfig {
+    /**
+     * Allow POST /v1/realtime/client_secrets. Off by default: the minted secret
+     * is spent talking to the vendor DIRECTLY, so the session itself never
+     * passes through the proxy and cannot be logged. The WS tunnel
+     * (GET /v1/realtime) is the observable path.
+     */
+    allowClientSecrets?: boolean;
+}
+
 export interface AiProxyConfig {
     listen: AiProxyListenConfig;
     proxyApiKey: string;
     /** Per-user keys for multi-client (VPS) mode. proxyApiKey remains the owner key. */
     clients?: AiProxyClientConfig[];
     translation: AiProxyTranslationConfig;
+    realtime?: AiProxyRealtimeConfig;
     public?: AiProxyPublicConfig;
     accounts: AiProxyAccountConfig[];
 }

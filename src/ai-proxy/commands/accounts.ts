@@ -1,10 +1,12 @@
 import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
 import { loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { type AccountListRow, displayAccountsTable, displayAccountTestResult } from "@app/ai-proxy/lib/display";
+import { apiKeyStatus, findEnvSourceFile } from "@app/ai-proxy/lib/providers/api-key-state";
 import { createProvider, isProviderImplemented } from "@app/ai-proxy/lib/providers/registry";
+import type { AiProxyAccountConfig, AiProxyProviderType } from "@app/ai-proxy/lib/types";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { CODEX_AUTH_PATH, extractPlanType, readCodexAuthJson } from "@genesiscz/utils/ai/openai/codex-auth";
-import { suggestCommand } from "@genesiscz/utils/cli";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 
 function cmd(replaceCommand: string[]): string {
@@ -165,6 +167,205 @@ export async function runAccountsSetEnabled(name: string, enabled: boolean): Pro
     await saveConfig(config);
     out.log.success(`${enabled ? "Enabled" : "Disabled"} account: ${name} (${account.provider})`);
     out.log.info("Restart the proxy to apply: tools ai-proxy down && tools ai-proxy up");
+}
+
+const API_KEY_PROVIDERS = new Set<AiProxyProviderType>(["xai-api-key", "openai"]);
+
+export async function runAccountsSetKey(name: string, key: string | undefined): Promise<void> {
+    const config = await loadConfig();
+    const account = config.accounts.find((item) => item.name === name);
+
+    if (!account) {
+        out.log.warn(`Account not found: ${name}`);
+        out.log.info(cmd(["accounts", "list"]));
+        return;
+    }
+
+    if (!API_KEY_PROVIDERS.has(account.provider)) {
+        out.log.warn(`Account "${name}" is ${account.provider} — it authenticates via OAuth, not an API key.`);
+        return;
+    }
+
+    const trimmed = key?.trim();
+
+    if (trimmed) {
+        // Passing the key as argv puts it in shell history and in `ps` for the
+        // lifetime of the command — kept for scripts, but say so.
+        out.log.warn("A key passed on the command line lands in shell history and is visible to `ps`.");
+        out.log.info(`Interactive, masked entry: ${cmd(["accounts", "set-key", name])}`);
+        applyStoredKey(account, trimmed);
+        await saveConfig(config);
+        reportStoredKey(name, account.provider);
+        return;
+    }
+
+    if (!isInteractive()) {
+        out.log.warn(`No key given for "${name}" and this is not a terminal, so nothing was changed.`);
+        out.log.info(`Pass the key as an argument, or opt in to the environment key: ${allowEnvHint(name)}`);
+        return;
+    }
+
+    await chooseCredential({ config, account, name });
+}
+
+function applyStoredKey(account: AiProxyAccountConfig, key: string): void {
+    account.apiKey = key;
+    // A stored key wins over the environment anyway; clearing the opt-in keeps
+    // the two fields from describing two different intentions.
+    delete account.allowEnvApiKey;
+}
+
+function reportStoredKey(name: string, provider: AiProxyProviderType): void {
+    out.log.success(`Stored API key for "${name}" (${provider}) in the ai-proxy config.`);
+    out.log.warn("This is a billed credential and it now lives in plain text in the ai-proxy config file.");
+    out.log.info(RESTART_HINT);
+}
+
+function allowEnvHint(name: string): string {
+    return cmd(["accounts", "allow-env", name]);
+}
+
+const RESTART_HINT = "Restart the proxy to apply: tools ai-proxy down && tools ai-proxy up";
+
+/** Print where the account stands today, then offer the four end states. */
+async function chooseCredential(input: {
+    config: Awaited<ReturnType<typeof loadConfig>>;
+    account: AiProxyAccountConfig;
+    name: string;
+}): Promise<void> {
+    const { account, name } = input;
+    const status = apiKeyStatus(account);
+    const sourceFile = await findEnvSourceFile(status.envName);
+    const envDetail = `${status.envName} is ${status.envPresent ? "set" : "not set"} in this environment · ${
+        sourceFile ? `exported from ${sourceFile}` : "source unknown"
+    }`;
+
+    out.log.info(
+        [
+            `Account "${name}" (${account.provider})`,
+            status.state === "override"
+                ? `  now: a key stored on the account (${status.maskedOverride}) — the environment is ignored`
+                : status.state === "env"
+                  ? `  now: spends the environment key ${status.envName}`
+                  : "  now: no usable credential — routes to this account are refused",
+            `  ${envDetail}`,
+        ].join("\n")
+    );
+
+    const options = [
+        {
+            value: "env" as const,
+            label: `Use the environment variable ${status.envName}`,
+            hint: status.envPresent ? (sourceFile ?? "source unknown") : "not currently set",
+        },
+        { value: "override" as const, label: "Override with a specific key (entered masked)" },
+        ...(status.state === "override"
+            ? [
+                  {
+                      value: "remove-override" as const,
+                      label: "Remove the stored key and fall back to the environment",
+                  },
+              ]
+            : []),
+        { value: "none" as const, label: "Use no key at all (account becomes unusable)" },
+    ];
+
+    const choice = await out.select({ message: `Credential for "${name}"`, options });
+
+    if (out.isCancel(choice)) {
+        out.log.warn("Cancelled — nothing changed.");
+        return;
+    }
+
+    if (choice === "override") {
+        const entered = await out.password({
+            message: `API key for "${name}"`,
+            validate: (value) => (value.trim().length > 0 ? undefined : "Enter a key, or cancel."),
+        });
+
+        if (out.isCancel(entered)) {
+            out.log.warn("Cancelled — nothing changed.");
+            return;
+        }
+
+        applyStoredKey(account, entered.trim());
+        await saveConfig(input.config);
+        reportStoredKey(name, account.provider);
+        return;
+    }
+
+    if (choice === "none") {
+        delete account.apiKey;
+        delete account.allowEnvApiKey;
+        await saveConfig(input.config);
+        out.log.success(`"${name}" now has no credential at all.`);
+        out.log.warn("The account will not load and every route to it is refused until you set one.");
+        out.log.info(RESTART_HINT);
+        return;
+    }
+
+    delete account.apiKey;
+    account.allowEnvApiKey = true;
+    await saveConfig(input.config);
+    out.log.success(
+        choice === "remove-override"
+            ? `Removed the stored key for "${name}" — it now spends ${status.envName}.`
+            : `"${name}" now spends the environment key ${status.envName}.`
+    );
+
+    if (!status.envPresent) {
+        out.log.warn(`${status.envName} is not set right now, so the account will not load until it is.`);
+    }
+
+    out.log.warn("Every call on this account spends metered money on whatever key the environment holds.");
+    out.log.info(RESTART_HINT);
+}
+
+export async function runAccountsAllowEnv(name: string, allow: boolean): Promise<void> {
+    const config = await loadConfig();
+    const account = config.accounts.find((item) => item.name === name);
+
+    if (!account) {
+        out.log.warn(`Account not found: ${name}`);
+        out.log.info(cmd(["accounts", "list"]));
+        return;
+    }
+
+    if (!API_KEY_PROVIDERS.has(account.provider)) {
+        out.log.warn(`Account "${name}" is ${account.provider} — it authenticates via OAuth, not an API key.`);
+        return;
+    }
+
+    const hadOverride = Boolean(account.apiKey);
+
+    if (allow) {
+        // A stored key would win anyway, so keeping both would leave the config
+        // claiming an intention the proxy does not act on.
+        delete account.apiKey;
+        account.allowEnvApiKey = true;
+    } else {
+        delete account.allowEnvApiKey;
+    }
+
+    await saveConfig(config);
+
+    if (allow) {
+        out.log.success(`"${name}" may now resolve its billed API key from the environment.`);
+
+        if (hadOverride) {
+            out.log.warn("Removed the key that was stored on the account — the environment key is used instead.");
+        }
+
+        out.log.warn("Every call on this account spends metered money on whatever key the environment holds.");
+    } else {
+        out.log.success(`"${name}" will no longer pick up a billed API key from the environment.`);
+
+        if (!account.apiKey) {
+            out.log.warn("It now has no credential at all and will not load until you set one.");
+        }
+    }
+
+    out.log.info(RESTART_HINT);
 }
 
 export async function runAccountsRemove(name: string): Promise<void> {

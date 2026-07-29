@@ -1,5 +1,7 @@
 import { loadCatalogFile } from "@app/ai-proxy/lib/catalog-file";
 import { resolveCopilotModelRecords } from "@app/ai-proxy/lib/copilot-models-cache";
+import { assertApiKeySourceAllowed } from "@app/ai-proxy/lib/providers/api-key-guard";
+import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
 import { resolveOpenAiSubToken } from "@app/ai-proxy/lib/providers/openai-sub-token";
 import { providerKey } from "@app/ai-proxy/lib/providers/registry";
 import { resolveXaiApiKey, XAI_API_BASE_URL } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
@@ -443,17 +445,31 @@ function listXaiStaticProxyModels(account: AiProxyAccountConfig, baseUrl: string
  */
 export async function listXaiProxyModels(account: AiProxyAccountConfig): Promise<ProxyModelMeta[]> {
     const baseUrl = (account.baseUrl ?? XAI_API_BASE_URL).replace(/\/$/, "");
-    const apiKey = resolveXaiApiKey(account);
+    const resolved = resolveXaiApiKey(account);
 
-    if (!apiKey) {
+    if (!resolved) {
         logger.debug({ account: account.name }, "ai-proxy: xai catalog using static fallback (no API key)");
+        return listXaiStaticProxyModels(account, baseUrl);
+    }
+
+    // Building the catalog is still spending the key, so it walks through the
+    // same guard as provider construction — otherwise an account without
+    // `allowEnvApiKey` would burn an ambient XAI_API_KEY here anyway.
+    try {
+        assertApiKeySourceAllowed({ account, source: resolved.source, envName: defaultApiKeyEnvName(account) });
+    } catch (err) {
+        logger.warn(
+            { err, account: account.name },
+            "ai-proxy: xai catalog refused the ambient environment key — static fallback"
+        );
+
         return listXaiStaticProxyModels(account, baseUrl);
     }
 
     try {
         const response = await fetchDirect(`${baseUrl}/models`, {
             headers: {
-                Authorization: `Bearer ${apiKey}`,
+                Authorization: `Bearer ${resolved.key}`,
                 Accept: "application/json",
             },
         });

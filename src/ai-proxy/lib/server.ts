@@ -3,7 +3,7 @@ import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
 import { clientProviderDenial, resolveClient, validateClients } from "@app/ai-proxy/lib/clients";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import { stripBasePath } from "@app/ai-proxy/lib/path-prefix";
-import { acquireProvider, buildProviderMap, routeProviderKey } from "@app/ai-proxy/lib/providers/registry";
+import { acquireProvider, buildProviderMap, providerUnavailableResponse } from "@app/ai-proxy/lib/providers/registry";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { handleRealtimeClientSecrets, handleRealtimeUpgrade, realtimeWebsocket } from "@app/ai-proxy/lib/realtime";
 import { resolveModel } from "@app/ai-proxy/lib/resolve-model";
@@ -36,10 +36,15 @@ function mapProxyRequestError(err: unknown): { status: number; message: string }
 
     const message = err instanceof Error ? err.message : String(err);
 
+    // The account exists but its credentials did not resolve — a configuration
+    // problem on the proxy host, retryable once fixed, so 503 rather than 400.
+    if (message.startsWith("Provider not loaded:")) {
+        return { status: 503, message };
+    }
+
     if (
         message.startsWith("Model id must be") ||
         message.startsWith("No enabled account for model") ||
-        message.startsWith("Provider not loaded:") ||
         message.startsWith("Ambiguous model")
     ) {
         return { status: 400, message };
@@ -288,15 +293,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                     const provider = await acquireProvider(runtime.providers, route);
 
                     if (!provider) {
-                        return new Response(
-                            SafeJSON.stringify({
-                                error: { message: `Provider not loaded: ${routeProviderKey(route)}` },
-                            }),
-                            {
-                                status: 500,
-                                headers: { "Content-Type": "application/json" },
-                            }
-                        );
+                        return providerUnavailableResponse(route);
                     }
 
                     if (path === "/v1/responses") {

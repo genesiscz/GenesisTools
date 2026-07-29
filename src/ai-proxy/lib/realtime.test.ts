@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getAiProxyConfigStore, resetAiProxyConfigStore } from "@app/ai-proxy/lib/config-store";
@@ -31,6 +31,7 @@ interface SttRequest {
 
 const sttRequests: SttRequest[] = [];
 
+let baseConfig: AiProxyConfig;
 let mockUpstream: ReturnType<typeof Bun.serve>;
 let proxy: ReturnType<typeof startAiProxyServer>;
 let proxyUrl: string;
@@ -144,16 +145,18 @@ beforeAll(async () => {
 
     mockUpstream = startMockUpstream();
 
-    const config: AiProxyConfig = {
+    baseConfig = {
         listen: { host: "127.0.0.1", port: 0 },
         proxyApiKey: PROXY_KEY,
         translation: { cursorAgent: "off", thinking: "raw" },
+        realtime: { allowClientSecrets: true },
         accounts: [
             {
                 name: "martin",
                 provider: "xai-api-key",
                 providerSlug: "grok",
                 enabled: true,
+                allowEnvApiKey: true,
                 apiKeyEnv: "AI_PROXY_TEST_XAI_KEY",
                 baseUrl: `http://127.0.0.1:${mockUpstream.port}`,
                 realtimeBaseUrl: `ws://127.0.0.1:${mockUpstream.port}`,
@@ -163,6 +166,7 @@ beforeAll(async () => {
                 provider: "openai",
                 providerSlug: "openai",
                 enabled: true,
+                allowEnvApiKey: true,
                 apiKeyEnv: "AI_PROXY_TEST_OPENAI_KEY",
                 baseUrl: `http://127.0.0.1:${mockUpstream.port}`,
                 realtimeBaseUrl: `ws://127.0.0.1:${mockUpstream.port}`,
@@ -171,9 +175,9 @@ beforeAll(async () => {
     };
 
     mkdirSync(getAiProxyStorage().getBaseDir(), { recursive: true });
-    await getAiProxyConfigStore().save(config);
+    await getAiProxyConfigStore().save(baseConfig);
 
-    const runtime = await createRuntime(config);
+    const runtime = await createRuntime(baseConfig);
     proxy = startAiProxyServer(runtime);
     proxyUrl = `ws://127.0.0.1:${proxy.port}`;
 });
@@ -294,6 +298,41 @@ describe("realtime WS tunnel", () => {
         expect(closeEvent.reason).toBe("mock upstream bye");
     });
 
+    it("writes a transcript with the text events and counts the audio it skipped", async () => {
+        const client = await connectClient("?model=martin/grok/grok-voice-latest", {
+            Authorization: `Bearer ${PROXY_KEY}`,
+            "x-gt-session": "realtime-transcript-test",
+        });
+        await client.opened;
+        await waitFor(() => client.events.length >= 1);
+
+        client.ws.send(SafeJSON.stringify({ type: "session.update", session: { voice: "ara" } }));
+        // A delta frame carrying base64 audio: counted, never stored.
+        client.ws.send(SafeJSON.stringify({ type: "response.audio.delta", delta: "A".repeat(5_000) }));
+        client.ws.send(new Uint8Array([1, 2, 3, 4]));
+        await waitFor(() => client.events.length >= 4);
+
+        client.ws.close(1000);
+        await client.closed;
+
+        const file = join(
+            getAiProxyStorage().getBaseDir(),
+            "transcripts",
+            new Date().toISOString().slice(0, 10),
+            "realtime-transcript-test.jsonl"
+        );
+        await waitFor(() => existsSync(file) && readFileSync(file, "utf-8").includes("realtime session closed"));
+
+        const contents = readFileSync(file, "utf-8");
+        expect(contents).toContain("session.update");
+        expect(contents).toContain("session.created");
+        // The delta frame was counted, not stored…
+        expect(contents).toContain('"response.audio.delta":1');
+        expect(contents).not.toContain("[client] response.audio.delta");
+        // …and the binary frame only shows up as a byte count.
+        expect(contents).toContain('"binaryFrames"');
+    });
+
     it("records usage from response.done events without breaking the pipe", async () => {
         const client = await connectClient("?model=martin/grok/grok-voice-latest", {
             Authorization: `Bearer ${PROXY_KEY}`,
@@ -331,6 +370,27 @@ describe("realtime client_secrets mint", () => {
         expect(res.status).toBe(400);
         const body = (await res.json()) as { error: { message: string } };
         expect(body.error.message).toContain("Missing model");
+    });
+
+    it("refuses to mint when realtime.allowClientSecrets is off", async () => {
+        // The server re-reads the config per request (`loadConfigFresh`), so
+        // flipping the stored flag is what actually exercises the guard.
+        await getAiProxyConfigStore().save({ ...baseConfig, realtime: { allowClientSecrets: false } });
+
+        try {
+            const res = await fetch(`http://127.0.0.1:${proxy.port}/v1/realtime/client_secrets`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${PROXY_KEY}`, "Content-Type": "application/json" },
+                body: SafeJSON.stringify({ session: { type: "realtime", model: "martin/grok/grok-voice-latest" } }),
+            });
+
+            expect(res.status).toBe(403);
+            const body = (await res.json()) as { error: { code: string; message: string } };
+            expect(body.error.code).toBe("client_secrets_disabled");
+            expect(body.error.message).toContain("never reach this proxy's logs");
+        } finally {
+            await getAiProxyConfigStore().save(baseConfig);
+        }
     });
 });
 

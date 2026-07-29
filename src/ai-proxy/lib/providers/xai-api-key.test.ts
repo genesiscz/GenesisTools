@@ -17,7 +17,7 @@ describe("resolveXaiApiKey", () => {
         env.testing.unset("X_AI_API_KEY");
 
         try {
-            expect(resolveXaiApiKey(account)).toBe("test-key-from-named");
+            expect(resolveXaiApiKey(account)).toEqual({ key: "test-key-from-named", source: "configEnv" });
         } finally {
             env.testing.unset("XAI_API_KEY");
         }
@@ -28,9 +28,34 @@ describe("resolveXaiApiKey", () => {
         env.testing.set("X_AI_API_KEY", "legacy-alias-key");
 
         try {
-            expect(resolveXaiApiKey({ ...account, apiKeyEnv: "XAI_API_KEY" })).toBe("legacy-alias-key");
+            expect(resolveXaiApiKey({ ...account, apiKeyEnv: "XAI_API_KEY" })).toEqual({
+                key: "legacy-alias-key",
+                source: "defaultEnv",
+            });
         } finally {
             env.testing.unset("X_AI_API_KEY");
         }
+    });
+
+    it("prefers the key stored on the account over any environment variable", () => {
+        env.testing.set("XAI_API_KEY", "env-key");
+        env.testing.set("X_AI_API_KEY", "alias-key");
+
+        try {
+            expect(resolveXaiApiKey({ ...account, apiKey: "config-key" })).toEqual({
+                key: "config-key",
+                source: "config",
+            });
+        } finally {
+            env.testing.unset("XAI_API_KEY");
+            env.testing.unset("X_AI_API_KEY");
+        }
+    });
+
+    it("returns undefined when neither config nor env carries a key", () => {
+        env.testing.unset("XAI_API_KEY");
+        env.testing.unset("X_AI_API_KEY");
+
+        expect(resolveXaiApiKey(account)).toBeUndefined();
     });
 });

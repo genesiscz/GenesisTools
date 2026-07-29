@@ -1,9 +1,11 @@
 #!/usr/bin/env bun
 
 import {
+    runAccountsAllowEnv,
     runAccountsList,
     runAccountsRemove,
     runAccountsSetEnabled,
+    runAccountsSetKey,
     runAccountsStatus,
     runAccountsTest,
 } from "@app/ai-proxy/commands/accounts";
@@ -303,6 +305,21 @@ accountsCmd
     .description("Re-enable a disabled account")
     .action(async (name: string) => {
         await runAccountsSetEnabled(name, true);
+    });
+
+accountsCmd
+    .command("set-key <name> [key]")
+    .description("Choose an api-key account's credential (omit key for a masked interactive chooser)")
+    .action(async (name: string, key?: string) => {
+        await runAccountsSetKey(name, key);
+    });
+
+accountsCmd
+    .command("allow-env <name>")
+    .description("Non-interactive form of set-key's env choice (clears any stored key; --off revokes)")
+    .option("--off", "revoke the opt-in")
+    .action(async (name: string, options: { off?: boolean }) => {
+        await runAccountsAllowEnv(name, !options.off);
     });
 
 accountsCmd

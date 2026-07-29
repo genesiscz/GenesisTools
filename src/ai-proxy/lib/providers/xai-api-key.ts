@@ -1,5 +1,6 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { listXaiProxyModels } from "@app/ai-proxy/lib/model-meta";
+import { assertApiKeySourceAllowed } from "@app/ai-proxy/lib/providers/api-key-guard";
 import { relayHeaders, rewriteSessionModel, toWsBase } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider, RealtimeConnectTarget } from "@app/ai-proxy/lib/providers/types";
 import { resolveXaiApiKey, XAI_API_BASE_URL } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
@@ -40,16 +41,23 @@ export class XaiApiKeyProvider implements ProxyProvider {
     }
 
     static async create(account: AiProxyAccountConfig): Promise<XaiApiKeyProvider> {
-        const apiKey = resolveXaiApiKey(account);
+        const resolved = resolveXaiApiKey(account);
         const envName = account.apiKeyEnv ?? env.x.getApiEnvKey() ?? "XAI_API_KEY";
 
-        if (!apiKey) {
+        if (!resolved) {
             throw new Error(
-                `No xAI API key found (checked ${envName} / X_AI_API_KEY). Get one at https://console.x.ai/team/default/api-keys`
+                `No xAI API key found (checked config apiKey, ${envName} / X_AI_API_KEY). Set it on the account with \`tools ai-proxy accounts set-key ${account.name}\` or get one at https://console.x.ai/team/default/api-keys`
             );
         }
 
-        return new XaiApiKeyProvider(account, apiKey);
+        assertApiKeySourceAllowed({ account, source: resolved.source, envName });
+
+        logger.info(
+            { account: account.name, provider: account.provider, keySource: resolved.source, apiKeyEnv: envName },
+            "ai-proxy: xai account using a billed API key"
+        );
+
+        return new XaiApiKeyProvider(account, resolved.key);
     }
 
     async listModels(): Promise<OpenAiModel[]> {
