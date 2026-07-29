@@ -611,3 +611,51 @@ Carryover verified directly against the file header rather than inferred: `nrecs
 at offset 24 read **4** after a cold parent scan of 4 files, then **5** after a
 scan of only the 2-file subdirectory. Truncation to the scanned subtree would have
 left 2.
+
+---
+
+## 2026-07-29 05:10 — Review round 2 (PR #302): the eviction gap, answered
+
+Still no C change, so still no benchmark owed (`clonesize.c` byte-identical since
+`03a7ded22`).
+
+Round 1 recorded `CACHE_MAX_RECS` eviction as an untested gap because crossing
+2,000,000 records means creating two million shared files. The review asked the
+obvious follow-up: can the branch be reached by forging the header's record count
+instead of writing the files?
+
+**No, and the reason is a guard worth knowing about.** `cache_open` computes the
+bytes the header implies and refuses the file when they exceed its actual size:
+
+```c
+size_t need = sizeof(CacheHeader) + h->nrecs * sizeof(CacheEnt) + h->nexts * sizeof(CacheExt);
+if (h->magic != CACHE_MAGIC || h->version != CACHE_VERSION || h->fsid != g_fsid ||
+    need > (size_t)st.st_size) { munmap(...); return; }
+```
+
+Measured on the 3-file fixture: the real cache is **376 bytes** with `nrecs = 3`.
+Forging `nrecs = 1,999,999` (offset 24) implies ~96 MB of records, so the whole
+cache is dropped and the scan falls back to reading the filesystem:
+
+| | files_opened | files_cached | unique_bytes |
+|---|---|---|---|
+| warm, real header | 0 | 3 | 4,194,304 |
+| warm, `nrecs` forged to 1,999,999 | 3 | 0 | 4,194,304 |
+
+So the forged-count route is closed by corruption detection, not by luck, and the
+totals stay correct either way. Genuine eviction still needs 2M real records and
+remains untested. `cache.test.ts` now pins the rejection.
+
+### Also closed this round
+
+`renderVolume` and `renderPartners` had zero coverage. Both are branch-heavy
+(allocated-vs-mapped selection, `UNACCOUNTED` vs `over-counted`, cloud/mount/denial
+sections, the 8-mount truncation, left-truncated paths), and one branch turned out
+to be genuinely surprising: **`renderPartners` returns early when `partner_dirs` is
+empty**, so a fixture with only `partner_files` never renders any file rows. A test
+written without checking that passes for the wrong reason.
+
+Worth recording for anyone extending `PartnersResult`: `clonesize_partners_json`
+emits `denied_dirs` and `denied_files` but **never `denied_paths`**, so the partner
+report's denial warning stands on counts alone and prints
+`(N further denial(s) not listed)`.
