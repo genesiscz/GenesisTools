@@ -266,10 +266,31 @@ function ttydProcessTargetsTmux(session: TtydSession, tmuxSessionName: string): 
     return argvTargetsTmux(result.stdout.toString(), tmuxSessionName);
 }
 
-// Match the attach target specifically — the base path also contains the ttyd
-// uuid which can look like a session fragment.
-function argvTargetsTmux(cmd: string, tmuxSessionName: string): boolean {
-    return cmd.includes("attach-session") && cmd.includes(`-t ${tmuxSessionName}`);
+/**
+ * Match the attach target specifically — the base path also contains the ttyd
+ * uuid which can look like a session fragment.
+ *
+ * The name must END the argument. `ps` prints argv space-joined, so a plain
+ * `includes("-t bridge")` also matches `-t bridge-2`, and that false positive is
+ * the dangerous direction: the heal sweep would read a ttyd attached to the WRONG
+ * tmux session as correctly bound and never relaunch it.
+ */
+export function argvTargetsTmux(cmd: string, tmuxSessionName: string): boolean {
+    if (!cmd.includes("attach-session") || tmuxSessionName.length === 0) {
+        return false;
+    }
+
+    const needle = `-t ${tmuxSessionName}`;
+
+    for (let at = cmd.indexOf(needle); at !== -1; at = cmd.indexOf(needle, at + needle.length)) {
+        const next = cmd[at + needle.length];
+
+        if (next === undefined || /\s/.test(next)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /**
