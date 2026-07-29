@@ -44,6 +44,37 @@ describe("pricing ladder", () => {
         expect(await pricingFor("openai", "claude-opus-5")).toBeUndefined();
     });
 
+    /**
+     * Sonnet 4.5 bills >200K context at double, and the static entry is what
+     * answers for a dated id — so if the tier fields are missing here, every
+     * long-context estimate for that model is half the real cost.
+     */
+    test("the long-context tier survives the ladder for a dated sonnet id", async () => {
+        const pricing = await pricingFor("anthropic", "claude-sonnet-4-5-20250929");
+
+        expect(pricing?.inputPer1MAbove200k).toBe(6);
+        expect(pricing?.outputPer1MAbove200k).toBe(22.5);
+        expect(pricing?.cachedCreatePer1MAbove200k).toBe(7.5);
+        expect(pricing?.cachedReadPer1MAbove200k).toBe(0.6);
+        // Base rates are untouched by the tier.
+        expect(pricing?.inputPer1M).toBe(3);
+        expect(pricing?.outputPer1M).toBe(15);
+    });
+
+    /**
+     * The inverse, and the reason this is not a blanket "every Sonnet is
+     * tiered": Anthropic serves 1M context at standard rates from 4.6 on, so
+     * asserting a surcharge there would over-bill by 2x.
+     */
+    test("models Anthropic serves at flat 1M pricing carry no tier", async () => {
+        for (const id of ["claude-sonnet-4-6", "claude-opus-5", "claude-sonnet-5", "claude-fable-5"]) {
+            const pricing = await pricingFor("anthropic", id);
+
+            expect(pricing?.inputPer1MAbove200k).toBeUndefined();
+            expect(pricing?.outputPer1MAbove200k).toBeUndefined();
+        }
+    });
+
     test("unknown pricing is undefined, never zero", async () => {
         // gpt-5.6-sol is in the static catalog WITHOUT pricing (subscription
         // model); the ladder must not invent a rate for it.
