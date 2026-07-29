@@ -93,38 +93,28 @@ export interface InstagramResponse<T> {
  * `x-ig-set-www-claim`, which every subsequent request is expected to echo. Not
  * replaying it marks the client as not-a-browser across the whole session.
  *
- * Kept PER AUTH MODE, because the claim is minted by Instagram against the
- * caller it answered. Echoing a claim issued to the logged-in session on a later
- * anonymous request hands Instagram the link between the two, which is exactly
- * the leak `fetchProfile` refuses a `sessionId` parameter to prevent — one
- * shared variable here would have reintroduced it below the API surface.
+ * Kept PER CREDENTIAL, because the claim is minted by Instagram against the
+ * caller it answered. Echoing a claim issued to one caller on another's request
+ * hands Instagram the link between them — which for the anonymous surface is
+ * exactly the leak `fetchProfile` refuses a `sessionId` parameter to prevent.
+ *
+ * A map rather than one slot per auth mode, so correctness does not depend on
+ * request ORDER. A single shared slot needs a "whose claim is in here?" variable
+ * alongside it, and the window between switching that variable and reading the
+ * slot is one `await` wide: with two sessions in flight, A's response can land
+ * in the slot after B claimed ownership and before B builds its headers. Keying
+ * by credential removes the window instead of narrowing it, because every
+ * request reads and writes only its own entry.
  */
-const wwwClaims: Record<AuthMode, string> = { anonymous: "0", session: "0" };
+const wwwClaims = new Map<string, string>();
 
 /**
- * Fingerprint of the credential the session claim was minted for. Two different
- * sessions must not inherit each other's claim either, so the claim is dropped
- * whenever the cookie changes rather than only when the auth mode does.
- *
- * Hashed rather than stored: the cookie is a live credential and has no business
- * living in a second module-level variable when equality is all that is needed.
+ * Bounded by the number of distinct credentials a process actually uses — one or
+ * two for the CLI. The cookie is hashed rather than used directly, since a live
+ * credential has no business sitting in a module-level map key.
  */
-let sessionClaimOwner: string | undefined;
-
-function forgetSessionClaimIfCredentialChanged(sessionId: string): void {
-    // Stringified because `Bun.hash` is typed `number | bigint`; only equality
-    // matters here, and the same input always yields the same value and type.
-    const owner = String(Bun.hash(sessionId));
-    if (owner === sessionClaimOwner) {
-        return;
-    }
-
-    if (sessionClaimOwner !== undefined) {
-        log.debug("session credential changed — dropping the previous session's www-claim");
-    }
-
-    sessionClaimOwner = owner;
-    wwwClaims.session = "0";
+function claimKeyFor(sessionId: string | undefined): string {
+    return sessionId ? `session:${Bun.hash(sessionId)}` : "anonymous";
 }
 
 let limiter = new RateLimiter();
@@ -133,7 +123,7 @@ function buildHeaders(options: RequestOptions): Record<string, string> {
     const headers: Record<string, string> = {
         "x-ig-app-id": WEB_APP_ID,
         "x-asbd-id": ASBD_ID,
-        "x-ig-www-claim": wwwClaims[options.sessionId ? "session" : "anonymous"],
+        "x-ig-www-claim": wwwClaims.get(claimKeyFor(options.sessionId)) ?? "0",
         "user-agent": WEB_USER_AGENT,
         accept: "*/*",
         "accept-language": "en-US,en;q=0.9",
@@ -228,10 +218,47 @@ function classify({ status, body, parsed, authMode }: ClassifyInput): Classifica
     return undefined;
 }
 
+/**
+ * The only origin this client may speak to.
+ *
+ * `getJson` attaches `sessionid`, `csrftoken` and the www-claim to whatever it is
+ * pointed at, so the destination is a credential boundary, not a convenience. An
+ * absolute path from a caller (or a future redirect-following change) would
+ * otherwise hand a live session to an arbitrary host, and an `http://` one would
+ * put it on the wire in plaintext. Exact host match rather than a suffix test:
+ * the module's stated invariant is the WEB surface only, and `i.instagram.com`
+ * is deliberately absent — adding the mobile surface should be a decision, not
+ * something a wildcard grants silently.
+ */
+const ALLOWED_HOSTS: ReadonlySet<string> = new Set(["www.instagram.com"]);
+
+function resolveUrl(path: string, label: string): URL {
+    let url: URL;
+
+    // Resolving relative paths against WEB_BASE and absolute ones as-is, in one
+    // step, also removes the `startsWith("http")` guess about which kind it is.
+    try {
+        url = new URL(path, WEB_BASE);
+    } catch (error) {
+        log.warn({ error, label }, "instagram request path does not resolve to a url");
+        throw new InstagramError("network", `${label} has an unusable request path`);
+    }
+
+    if (url.protocol !== "https:" || !ALLOWED_HOSTS.has(url.hostname)) {
+        log.warn({ label, origin: url.origin }, "refusing to attach credentials to a non-Instagram origin");
+        throw new InstagramError("network", `${label} targeted ${url.origin}, which is not the Instagram web origin`);
+    }
+
+    return url;
+}
+
 /** `undefined` for anything that is not JSON: the HTML shell, a truncated body. */
 function tryParseJson(text: string, label: string): unknown {
     try {
-        return SafeJSON.parse(text);
+        // Strict: this is an external HTTP response, and a lenient parser that
+        // tolerates comments and trailing commas would accept bodies that Instagram
+        // could not have sent, instead of routing them to the malformed path.
+        return SafeJSON.parse(text, { strict: true });
     } catch (error) {
         log.debug({ error, label, bytes: text.length }, "instagram body did not parse as JSON");
         return undefined;
@@ -244,28 +271,29 @@ function extractChallengeUrl(body: string): string | undefined {
 }
 
 export async function getJson<T>(path: string, options: RequestOptions): Promise<InstagramResponse<T>> {
-    const url = path.startsWith("http") ? path : `${WEB_BASE}${path}`;
+    // Before anything else: this is what decides whether the credentials below
+    // are allowed to leave the machine at all.
+    const url = resolveUrl(path, options.label);
     const authMode: AuthMode = options.sessionId ? "session" : "anonymous";
-
-    if (options.sessionId) {
-        forgetSessionClaimIfCredentialChanged(options.sessionId);
-    }
+    // Captured per request, so a concurrent request for another credential can
+    // neither be read from nor written to this one's claim.
+    const claimKey = claimKeyFor(options.sessionId);
 
     await limiter.acquire(options.label);
-    log.debug({ url, label: options.label, authMode, budgetUsed: limiter.used }, "instagram request");
+    log.debug({ url: url.href, label: options.label, authMode, budgetUsed: limiter.used }, "instagram request");
 
     let response: Response;
     try {
         response = await fetch(url, { headers: buildHeaders(options), redirect: "manual" });
     } catch (error) {
-        log.warn({ error, url, label: options.label }, "instagram request failed at the network layer");
+        log.warn({ error, url: url.href, label: options.label }, "instagram request failed at the network layer");
         throw new InstagramError("network", `Request to ${options.label} failed: ${String(error)}`);
     }
 
     const setClaim = response.headers.get("x-ig-set-www-claim");
     if (setClaim) {
         log.debug({ label: options.label, authMode }, "captured a fresh x-ig-www-claim to replay on later requests");
-        wwwClaims[authMode] = setClaim;
+        wwwClaims.set(claimKey, setClaim);
     }
 
     if (response.status >= 300 && response.status < 400) {
@@ -344,11 +372,9 @@ export function getAnonymousJson<T>(path: string, options: AnonymousRequestOptio
  */
 export const __testing = {
     resetWwwClaim: () => {
-        wwwClaims.anonymous = "0";
-        wwwClaims.session = "0";
-        sessionClaimOwner = undefined;
+        wwwClaims.clear();
     },
-    currentWwwClaim: (mode: AuthMode = "anonymous") => wwwClaims[mode],
+    currentWwwClaim: (sessionId?: string) => wwwClaims.get(claimKeyFor(sessionId)) ?? "0",
     useInstantLimiter: () => {
         limiter = new RateLimiter({ random: () => 0, sleep: async () => undefined });
     },
