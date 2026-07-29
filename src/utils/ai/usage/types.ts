@@ -6,10 +6,17 @@
  * None of them could answer it across surfaces, because none of them saw the
  * others' rows. This is the shape they all agree on.
  *
- * The type is FROZEN for the phase that introduced it (Phase 8c). An emitter
+ * The type is FROZEN for the phase that introduced it (Phase 8c). An EMITTER
  * that needs to carry something else puts it in `meta` — widening the record
  * mid-phase would silently invalidate every day-file already on disk, which is
  * append-only JSONL and never rewritten.
+ *
+ * `costSource` is the one exception, added at integration. It is written by the
+ * layer itself rather than by an emitter, so `meta` is the wrong home: `meta`
+ * belongs to the caller, and a test pinning that it round-trips untouched is
+ * what caught the attempt. The freeze's stated hazard does not apply either —
+ * the field is optional, so an older row simply lacks it and every existing
+ * reader keeps working.
  */
 export interface UsageEvent {
     /**
@@ -43,9 +50,25 @@ export interface UsageEvent {
      */
     costUsd?: number;
     /**
+     * Where `costUsd` came from. Absent when the row has no cost at all.
+     *
+     * `"supplied"` is the emitter's own booked number, kept verbatim.
+     * `"catalog"` is this layer's estimate from `STATIC_CATALOG`, filled in
+     * because the emitter had none.
+     *
+     * Without this the two are indistinguishable once written, and the question
+     * that stops being answerable is "did ai-proxy's invoicing table know this
+     * model?" — the signal by which a missing entry in `billing/pricing.ts` gets
+     * noticed. A silently list-priced row makes that table look complete while
+     * it rots.
+     */
+    costSource?: "supplied" | "catalog";
+    /**
      * Emitter-specific detail. Known keys, by emitter:
      *  - claude usage poller: `{ kind: "bucket-snapshot", bucket, utilization, resetsAt }`
      *  - ai-proxy ledger: `{ kind: "proxy-request", client }`
+     *
+     * This is the CALLER's namespace: the layer never writes into it.
      */
     meta?: Record<string, unknown>;
 }
@@ -61,6 +84,12 @@ export interface UsageEvent {
  */
 export interface UsageEventInput extends Omit<UsageEvent, "at" | "costUsd"> {
     at?: string | Date;
+    /**
+     * Stored verbatim when present, never recomputed. When absent, the static
+     * catalog fills it in and `meta.costSource` records which of the two
+     * happened — see `recordUsage` for why the provenance has to be written
+     * rather than inferred later.
+     */
     costUsd?: number;
 }
 

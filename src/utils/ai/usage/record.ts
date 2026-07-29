@@ -44,10 +44,26 @@ export async function recordUsage(input: UsageEventInput): Promise<UsageEvent> {
     // ai-proxy's client ledger prices at write time on purpose (a later rate edit
     // must not rewrite past invoices), so re-deriving its rows from the catalog
     // would quietly restate billing history.
-    const costUsd = input.costUsd ?? deriveCostUsd(event);
+    //
+    // An ABSENT cost is a gap, not a refusal, so deriving one is right: the
+    // ledger calls its own unpriced rows "cost under-estimated"
+    // (client-ledger.ts) and "the estimate incomplete" (billing/pricing.ts). Its
+    // rule is about the INVOICING path's matching discipline (an open-ended
+    // prefix match once billed grok-4.5 at grok-4's 7.5x rate), not a ban on a
+    // non-invoice layer estimating from its own catalog.
+    //
+    // What derivation would destroy, and `costSource` preserves, is the answer
+    // to "did the invoicing table know this model?" — which is how a missing
+    // entry in billing/pricing.ts gets discovered at all. Silently list-pricing
+    // it makes the model look priced everywhere and lets that table rot. The log
+    // is append-only, so the distinction has to be recorded at write time or
+    // never.
+    const supplied = input.costUsd;
+    const costUsd = supplied ?? deriveCostUsd(event);
 
     if (costUsd !== undefined) {
         event.costUsd = costUsd;
+        event.costSource = supplied === undefined ? "catalog" : "supplied";
     }
 
     write(event);

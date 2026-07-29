@@ -98,6 +98,33 @@ describe("recordUsage", () => {
         expect("costUsd" in event).toBe(false);
     });
 
+    // Deriving a cost is right (an unpriced ai-proxy row is a gap: its ledger
+    // calls those rows "cost under-estimated"), but it would otherwise erase the
+    // answer to "did the invoicing table know this model?" — the signal by which
+    // a missing entry in ai-proxy's billing table gets discovered at all. The log
+    // is append-only, so provenance is recorded here or nowhere.
+    test("records where the cost came from, so a derived price is never mistaken for a booked one", async () => {
+        const booked = await recordUsage(input({ app: "ai-proxy", costUsd: 0.00042 }));
+        const derived = await recordUsage(input({ inputTokens: 1_000_000, outputTokens: 1_000_000 }));
+
+        expect(booked.costSource).toBe("supplied");
+        expect(derived.costSource).toBe("catalog");
+    });
+
+    test("an unpriced event carries no costSource, so absence stays distinguishable", async () => {
+        const event = await recordUsage(input({ provider: "some-local-thing", modelId: "no-such-model-xyz" }));
+
+        expect(event.costSource).toBeUndefined();
+    });
+
+    // The layer writes provenance to its own field, never into the caller's
+    // `meta`. Writing it there broke the meta round-trip test, which was right.
+    test("provenance never leaks into the caller's meta", async () => {
+        const event = await recordUsage(input({ costUsd: 1, meta: { kind: "proxy-request", client: "alice" } }));
+
+        expect(event.meta).toEqual({ kind: "proxy-request", client: "alice" });
+    });
+
     test("prices from the static catalog without any network call", async () => {
         const originalFetch = globalThis.fetch;
         globalThis.fetch = (() => {
