@@ -1,4 +1,5 @@
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
+import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 
 /** Where an api-key account's credential came from — logged, never the key itself. */
@@ -7,6 +8,39 @@ export type ApiKeySource = "config" | "configEnv" | "defaultEnv";
 export interface ResolvedApiKey {
     key: string;
     source: ApiKeySource;
+}
+
+/**
+ * The single precedence rule for every api-key account: a key stored on the
+ * account, then the env var the account names, then the provider's default.
+ *
+ * It lives beside the guard because the guard's whole decision is a function of
+ * the `source` this returns — a provider that resolved a key its own way could
+ * hand the guard a `source` that does not describe where the key actually came
+ * from, and the refusal would then be wrong in either direction. Only the last
+ * step differs per provider, so that one is injected.
+ */
+export function resolveAccountApiKey(input: {
+    account: AiProxyAccountConfig;
+    defaultEnvKey: () => string | undefined;
+}): ResolvedApiKey | undefined {
+    const configured = input.account.apiKey?.trim();
+
+    if (configured) {
+        return { key: configured, source: "config" };
+    }
+
+    if (input.account.apiKeyEnv) {
+        const named = env.getTrimmed(input.account.apiKeyEnv as never);
+
+        if (named) {
+            return { key: named, source: "configEnv" };
+        }
+    }
+
+    const fallback = input.defaultEnvKey();
+
+    return fallback ? { key: fallback, source: "defaultEnv" } : undefined;
 }
 
 /**
