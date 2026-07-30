@@ -1,5 +1,7 @@
+import type { AccountRef } from "@genesiscz/utils/ai/config/refs";
 import type { CopilotAccountType, CopilotUsageSummary } from "@genesiscz/utils/ai/github-copilot/types";
 import type { GrokBillingConfig, GrokModelRecord, GrokSettings } from "@genesiscz/utils/ai/grok";
+import type { MaybeSecret } from "@genesiscz/utils/security";
 
 export type CursorTranslationMode = "auto" | "on" | "off";
 
@@ -116,6 +118,12 @@ export interface AiProxyAccountConfig {
     provider: AiProxyProviderType;
     providerSlug: string;
     enabled: boolean;
+    /**
+     * The AI-config account this entry bills, as `@account/<immutable id>`.
+     * Supersedes the name-based `*.accountName` links: renaming an account no
+     * longer breaks the proxy, and `referrersOf` can see the link (account-refs.ts).
+     */
+    account?: AccountRef;
     grok?: AiProxyGrokAccountConfig;
     githubCopilot?: AiProxyGithubCopilotAccountConfig;
     anthropicSub?: AiProxyAnthropicSubAccountConfig;
@@ -147,7 +155,12 @@ export interface AiProxyAccountConfig {
 
 export interface AiProxyClientConfig {
     name: string;
-    key: string;
+    /**
+     * The bearer this client presents. A vault pointer for anything this build
+     * wrote (`tools ai-proxy clients add`), a literal for configs written before
+     * the vault existed — `tools ai-proxy clients secure` moves those in.
+     */
+    key: MaybeSecret;
     /** Provider types this client may route to. Omitted = all NON-subscription providers. */
     allowedProviders?: AiProxyProviderType[];
     monthlyTokenCap?: number;

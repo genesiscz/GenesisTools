@@ -1,3 +1,4 @@
+import { proxyAccountRefOf } from "@app/ai-proxy/lib/account-refs";
 import type { ResolvedRoute } from "@app/ai-proxy/lib/types";
 import type { CallTimeline } from "@app/ai-proxy/lib/usage/call-timeline";
 import { recordClientUsage } from "@app/ai-proxy/lib/usage/client-ledger";
@@ -10,6 +11,7 @@ import {
 import { recordUsageRequest } from "@app/ai-proxy/lib/usage/store";
 import { writeTranscript } from "@app/ai-proxy/lib/usage/transcripts";
 import type { RequestTags } from "@app/ai-proxy/lib/usage/types";
+import { refToId } from "@genesiscz/utils/ai/config/refs";
 import { logger } from "@genesiscz/utils/logger";
 
 export function trackCompletedRequest(input: {
@@ -91,11 +93,17 @@ export function trackCompletedRequest(input: {
 
     recordUsageRequest(record);
 
+    const ref = proxyAccountRefOf(input.route.account);
+
     recordClientUsage({
         client: input.client,
         ts: record.ts,
         upstreamModel: record.upstreamModel,
         usage: record.usage,
+        // The AI-config account id when this entry is linked, so proxy rows join
+        // with every other surface's usage; the proxy-side name until then.
+        accountId: ref ? refToId(ref) : input.route.accountName,
+        provider: input.route.account.provider,
     });
 
     logger.debug(

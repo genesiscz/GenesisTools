@@ -1,4 +1,5 @@
-import { loadConfig } from "@app/ai-proxy/lib/config";
+import { ensureProxyAccountRefs } from "@app/ai-proxy/lib/account-refs";
+import { loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { buildPublicBaseUrl, buildPublicHealthUrl } from "@app/ai-proxy/lib/public-url";
 import { createRuntime, startAiProxyServer } from "@app/ai-proxy/lib/server";
 import { resolveTranslationMode } from "@app/ai-proxy/lib/translation-config";
@@ -39,7 +40,7 @@ export async function runServeCommand(options: {
 }): Promise<void> {
     keepServingThroughUpstreamFaults();
 
-    const config = await loadConfig();
+    const config = await ensureProxyAccountRefs({ load: loadConfig, save: saveConfig });
 
     if (options.port !== undefined) {
         config.listen.port = options.port;

@@ -154,7 +154,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
             }
 
             if (path === "/v1/models" && req.method === "GET") {
-                const client = resolveClient(req, config);
+                const client = await resolveClient(req, config);
 
                 if (!client) {
                     return new Response(
@@ -181,7 +181,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
             }
 
             if ((path === "/v1/chat/completions" || path === "/v1/responses") && req.method === "POST") {
-                const client = resolveClient(req, config);
+                const client = await resolveClient(req, config);
 
                 if (!client) {
                     return new Response(

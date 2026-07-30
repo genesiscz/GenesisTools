@@ -251,6 +251,15 @@ export function redactConfig(config: AiProxyConfig): AiProxyConfig {
         accounts: config.accounts.map((account) =>
             account.apiKey ? { ...account, apiKey: maskApiKey(account.apiKey) } : account
         ),
+        // A SecureRef is already opaque and its path is worth showing — it is how
+        // a user learns where the key lives. A literal is a live bearer token.
+        ...(config.clients
+            ? {
+                  clients: config.clients.map((client) =>
+                      typeof client.key === "string" ? { ...client, key: `${client.key.slice(0, 4)}…` } : client
+                  ),
+              }
+            : {}),
     };
 }
 

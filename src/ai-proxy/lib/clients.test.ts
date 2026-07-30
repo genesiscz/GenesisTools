@@ -1,4 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { randomBytes } from "node:crypto";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
     clientProviderDenial,
     OWNER_CLIENT_NAME,
@@ -7,6 +11,8 @@ import {
     validateClients,
 } from "@app/ai-proxy/lib/clients";
 import type { AiProxyClientConfig, AiProxyConfig } from "@app/ai-proxy/lib/types";
+import { env } from "@genesiscz/utils/env";
+import { _resetSecretsForTest, invalidateMasterKeyCache, secrets, secureRef } from "@genesiscz/utils/security";
 
 const good: AiProxyClientConfig = { name: "alice", key: "k".repeat(24) };
 
@@ -39,8 +45,14 @@ describe("validateClients", () => {
         const malformed = { name: 123, key: true, allowedProviders: {} } as unknown as AiProxyClientConfig;
         const problems = validateClients([malformed]);
         expect(problems.some((p) => p.includes("must be a non-empty string of alphanumerics"))).toBe(true);
-        expect(problems.some((p) => p.includes("key must be a string"))).toBe(true);
+        expect(problems.some((p) => p.includes("key must be a vault reference or a string"))).toBe(true);
         expect(problems.some((p) => p.includes("allowedProviders must be an array"))).toBe(true);
+    });
+
+    it("accepts a vault reference as a key without reading it", () => {
+        const secured: AiProxyClientConfig = { name: "alice", key: secureRef("ai-proxy/clients/alice/key") };
+        expect(validateClients([secured])).toEqual([]);
+        expect(validateClients([secured, { ...secured, name: "bob" }]).some((p) => p.includes("duplicate"))).toBe(true);
     });
 
     it("reports a non-array clients config instead of throwing", () => {
@@ -59,41 +71,67 @@ function cfg(clients?: AiProxyConfig["clients"]): AiProxyConfig {
 }
 
 describe("resolveClient", () => {
-    it("resolves proxyApiKey to the owner identity", () => {
-        const resolved = resolveClient(reqWithBearer("owner-key-0123456789"), cfg());
+    it("resolves proxyApiKey to the owner identity", async () => {
+        const resolved = await resolveClient(reqWithBearer("owner-key-0123456789"), cfg());
         expect(resolved).toEqual({ name: "owner", isOwner: true });
     });
 
-    it("resolves a client key to its named identity", () => {
+    it("resolves a client key to its named identity", async () => {
         const alice = { name: "alice", key: "alice-key-0123456789" };
-        const resolved = resolveClient(reqWithBearer("alice-key-0123456789"), cfg([alice]));
+        const resolved = await resolveClient(reqWithBearer("alice-key-0123456789"), cfg([alice]));
         expect(resolved?.name).toBe("alice");
         expect(resolved?.isOwner).toBe(false);
         expect(resolved?.config).toEqual(alice);
     });
 
-    it("rejects wrong keys, missing header, and disabled clients", () => {
+    it("rejects wrong keys, missing header, and disabled clients", async () => {
         const disabled = { name: "mallory", key: "mallory-key-0123456", disabled: true };
-        expect(resolveClient(reqWithBearer("nope-nope-nope-nope"), cfg([disabled]))).toBeNull();
-        expect(resolveClient(reqWithBearer(null), cfg())).toBeNull();
-        expect(resolveClient(reqWithBearer("mallory-key-0123456"), cfg([disabled]))).toBeNull();
+        expect(await resolveClient(reqWithBearer("nope-nope-nope-nope"), cfg([disabled]))).toBeNull();
+        expect(await resolveClient(reqWithBearer(null), cfg())).toBeNull();
+        expect(await resolveClient(reqWithBearer("mallory-key-0123456"), cfg([disabled]))).toBeNull();
     });
 
-    it("skips a non-string client key and doesn't throw", () => {
+    it("skips a non-string client key and doesn't throw", async () => {
         const malformed = { name: "mallory", key: 12345 } as unknown as NonNullable<AiProxyConfig["clients"]>[number];
-        expect(resolveClient(reqWithBearer("owner-key-0123456789"), cfg([malformed]))).toEqual({
+        expect(await resolveClient(reqWithBearer("owner-key-0123456789"), cfg([malformed]))).toEqual({
             name: "owner",
             isOwner: true,
         });
-        expect(resolveClient(reqWithBearer("anything"), cfg([malformed]))).toBeNull();
+        expect(await resolveClient(reqWithBearer("anything"), cfg([malformed]))).toBeNull();
     });
 
-    it("treats a non-array clients config as empty instead of throwing", () => {
+    it("treats a non-array clients config as empty instead of throwing", async () => {
         const malformed = { owner: true } as unknown as AiProxyConfig["clients"];
-        expect(resolveClient(reqWithBearer("owner-key-0123456789"), cfg(malformed))).toEqual({
+        expect(await resolveClient(reqWithBearer("owner-key-0123456789"), cfg(malformed))).toEqual({
             name: "owner",
             isOwner: true,
         });
+    });
+
+    it("authenticates a client whose key lives in the vault", async () => {
+        const home = mkdtempSync(join(tmpdir(), "aiproxy-clients-"));
+
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: home, GENESIS_TOOLS_MASTER_KEY: randomBytes(32).toString("base64") },
+            async () => {
+                _resetSecretsForTest();
+                invalidateMasterKeyCache();
+                const store = await secrets();
+                const ref = await store.set("ai-proxy/clients/carol/key", "carol-key-0123456789");
+                const carol = { name: "carol", key: ref };
+
+                expect((await resolveClient(reqWithBearer("carol-key-0123456789"), cfg([carol])))?.name).toBe("carol");
+                expect(await resolveClient(reqWithBearer("not-carols-key-01234"), cfg([carol]))).toBeNull();
+            }
+        );
+
+        _resetSecretsForTest();
+        invalidateMasterKeyCache();
+    });
+
+    it("denies a client whose vault reference no longer resolves", async () => {
+        const ghost = { name: "ghost", key: secureRef("ai-proxy/clients/ghost/key") };
+        expect(await resolveClient(reqWithBearer("ghost-key-0123456789"), cfg([ghost]))).toBeNull();
     });
 });
 

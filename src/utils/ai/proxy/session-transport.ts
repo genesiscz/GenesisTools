@@ -29,10 +29,11 @@ import type {
  * protocol and, with a `store`, a conversation that survives the process.
  *
  * It goes through `AiProxyClient` rather than the gateway provider plugin on
- * purpose. The plugin resolves the proxy key from an `ai-proxy` ACCOUNT that
- * does not exist yet (Phase 8b), and the client's tolerant schema parsing has
- * consumers today; see the note at the top of AiProxyClient.ts. When the account
- * lands, this file is what gets deleted, not what gets rewritten.
+ * purpose. Phase 8b landed the `ai-proxy` account the plugin needs, so that half
+ * is no longer the reason; what remains is the client's tolerant schema parsing,
+ * abort-returns-partial and raw tool-call deltas, none of which `coreChat`
+ * expresses yet — see the four-point list at the top of AiProxyClient.ts. When
+ * those land, this file is what gets deleted, not what gets rewritten.
  */
 
 /** The two client methods a transport needs; narrow so tests can supply a stub. */

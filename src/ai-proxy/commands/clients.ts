@@ -5,6 +5,21 @@ import type { AiProxyClientConfig, AiProxyProviderType } from "@app/ai-proxy/lib
 import { readClientLedger } from "@app/ai-proxy/lib/usage/client-ledger";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { isSecureRef, type SecretStore, secrets } from "@genesiscz/utils/security";
+
+/** The vault address a client's key lives at. Derived from the name, so it is stable. */
+export function clientKeyPath(name: string): string {
+    return `ai-proxy/clients/${name}/key`;
+}
+
+/** A key column that reveals nothing: the vault path, or the first bytes of a literal. */
+function describeKey(key: AiProxyClientConfig["key"]): string {
+    if (isSecureRef(key)) {
+        return `vault:${key.path}`;
+    }
+
+    return `${key.slice(0, 4)}…${key.slice(-4)} (plaintext — run: tools ai-proxy clients secure)`;
+}
 
 export async function clientsList(): Promise<void> {
     const config = await loadConfigFresh();
@@ -17,11 +32,55 @@ export async function clientsList(): Promise<void> {
 
     out.result(
         SafeJSON.stringify(
-            clients.map(({ key, ...rest }) => ({ ...rest, key: `${key.slice(0, 4)}…${key.slice(-4)}` })),
+            clients.map(({ key, ...rest }) => ({ ...rest, key: describeKey(key) })),
             null,
             2
         ) ?? "[]"
     );
+}
+
+/**
+ * Move every plaintext client key into the vault, in place.
+ *
+ * Not done automatically on load: writing the vault needs the master key, and a
+ * long-running proxy must never block a request on a keychain prompt. This is
+ * the explicit, interactive moment where that cost is acceptable.
+ */
+export async function clientsSecure(): Promise<void> {
+    const config = await loadConfigFresh();
+    const clients = config.clients ?? [];
+    const plaintext = clients.filter((client) => typeof client.key === "string");
+
+    if (plaintext.length === 0) {
+        out.log.success("Every client key is already a vault reference.");
+        return;
+    }
+
+    let store: SecretStore;
+    try {
+        store = await secrets();
+    } catch (err) {
+        logger.error({ err }, "ai-proxy: cannot open the vault to secure client keys");
+        out.log.error(`Vault unavailable: ${err instanceof Error ? err.message : String(err)}`);
+        process.exitCode = 1;
+        return;
+    }
+
+    const next: AiProxyClientConfig[] = [];
+
+    for (const client of clients) {
+        if (typeof client.key !== "string") {
+            next.push(client);
+            continue;
+        }
+
+        const ref = await store.set(clientKeyPath(client.name), client.key);
+        next.push({ ...client, key: ref });
+        out.log.info(`${client.name} → ${ref.path}`);
+    }
+
+    await saveConfig({ ...config, clients: next });
+    out.log.success(`Moved ${plaintext.length} client key(s) into the vault.`);
 }
 
 export async function clientsAdd(input: {
@@ -44,9 +103,24 @@ export async function clientsAdd(input: {
 
     const config = await loadConfigFresh();
     const key = randomBytes(24).toString("base64url");
+
+    // The vault is where a new key belongs, but a machine without a master key
+    // must still be able to add a client — falling back to a literal keeps the
+    // command working and `clients list` labels it so it can be secured later.
+    let stored: AiProxyClientConfig["key"] = key;
+    try {
+        const store = await secrets();
+        stored = await store.set(clientKeyPath(input.name), key);
+    } catch (err) {
+        logger.warn({ err, client: input.name }, "ai-proxy: vault unavailable — storing the client key in config");
+        out.log.warn(
+            "Vault unavailable — key stored in config as plaintext. Secure it later: tools ai-proxy clients secure"
+        );
+    }
+
     const client: AiProxyClientConfig = {
         name: input.name,
-        key,
+        key: stored,
         ...(input.providers?.length ? { allowedProviders: input.providers } : {}),
         ...(input.tokenCap !== undefined ? { monthlyTokenCap: input.tokenCap } : {}),
         ...(input.costCap !== undefined ? { monthlyCostCapUsd: input.costCap } : {}),

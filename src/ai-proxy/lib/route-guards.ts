@@ -35,7 +35,7 @@ export async function guardProxyRoute(input: {
     proxyModel: string | null | undefined;
     logLabel: string;
 }): Promise<GuardedRoute | Response> {
-    const client = resolveClient(input.authReq, input.config);
+    const client = await resolveClient(input.authReq, input.config);
 
     if (!client) {
         return jsonError(401, "Invalid proxy API key", { type: "auth_error" });
