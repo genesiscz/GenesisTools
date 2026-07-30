@@ -7,14 +7,14 @@ import type { AITranscriptionProvider, TranscriptionResult } from "@genesiscz/ut
 // If a future change diarizes chunk-wise (or removes the diarize split-
 // bypass) this test fails, catching the regression early.
 //
-// Only the leaf `diarize-local` module is mocked (nothing else imports it,
+// Only the leaf sherpa `diarize` module is mocked (nothing else imports it,
 // so the global mock cannot leak into other suites); the Transcriber is
 // constructed directly via its (runtime-accessible) constructor so AIConfig
 // and the provider registry are NOT mocked.
 
 const seenLengths: number[] = [];
 
-mock.module("@genesiscz/utils/audio/diarize-local", () => ({
+mock.module("@genesiscz/utils/ai/local/runtimes/sherpa/diarize", () => ({
     diarizeLocal: async (buf: Buffer) => {
         seenLengths.push(buf.length);
         return [{ start: 0, end: 1, speaker: "0" }];

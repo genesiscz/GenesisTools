@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { EmbeddingModel } from "ai";
 import type { AccountEntry } from "../../config/schema";
-import type { ProviderPlugin } from "../plugin-types";
-import { localPlugins } from "./local";
+import type { ProviderPlugin } from "../../providers/plugin-types";
+import { ArtifactStore, HfSource } from "../artifacts";
+import { descriptorsFor, localPlugins, modelStatesFor } from "./index";
 
 function account(provider: string): AccountEntry {
     return {
@@ -97,5 +101,58 @@ describe("local provider plugins", () => {
             binding.dispose?.();
             binding.dispose?.();
         }).not.toThrow();
+    });
+});
+
+describe("descriptor-driven model listing", () => {
+    test("every plugin's models come from the catalogue, keyed by provider", () => {
+        expect(descriptorsFor("local-hf").every((d) => d.provider === "local-hf" && d.task === "embed")).toBe(true);
+        expect(descriptorsFor("coreml").map((d) => d.id)).toEqual(["coreml-contextual"]);
+        expect(descriptorsFor("darwinkit").map((d) => d.id)).toEqual(["darwinkit"]);
+        expect(descriptorsFor("macos")).toEqual([]);
+    });
+
+    test("transformers.js models each carry the hf artifact the store resolves", () => {
+        for (const descriptor of descriptorsFor("local-hf")) {
+            expect(descriptor.runtime).toBe("transformers-js");
+            expect(descriptor.artifacts).toEqual([{ source: "hf", locator: descriptor.id }]);
+        }
+    });
+
+    test("cached-state is resolved through the artifact store, not guessed", async () => {
+        const base = mkdtempSync(join(tmpdir(), "adapters-"));
+        const hubDir = join(base, "hub");
+        const downloaded = "Xenova/all-MiniLM-L6-v2";
+        mkdirSync(join(hubDir, `models--${downloaded.replace(/\//g, "--")}`), { recursive: true });
+        writeFileSync(join(hubDir, `models--${downloaded.replace(/\//g, "--")}`, "model.onnx"), Buffer.alloc(4));
+
+        try {
+            const store = new ArtifactStore({ root: join(base, "local-models"), hf: new HfSource(hubDir) });
+            const states = await modelStatesFor("local-hf", store);
+            const byId = new Map(states.map((s) => [s.descriptor.id, s.cached]));
+
+            expect(byId.get(downloaded)).toBe(true);
+            expect(byId.get("Xenova/multilingual-e5-small")).toBe(false);
+            expect(states.length).toBe(descriptorsFor("local-hf").length);
+        } finally {
+            rmSync(base, { recursive: true, force: true });
+        }
+    });
+
+    test("models with no artifacts of ours count as cached — nothing to download", async () => {
+        const base = mkdtempSync(join(tmpdir(), "adapters-builtin-"));
+
+        try {
+            const store = new ArtifactStore({ root: base, hf: new HfSource(join(base, "hub")) });
+
+            expect(await modelStatesFor("coreml", store)).toEqual([
+                { descriptor: descriptorsFor("coreml")[0], cached: true },
+            ]);
+            expect(await modelStatesFor("darwinkit", store)).toEqual([
+                { descriptor: descriptorsFor("darwinkit")[0], cached: true },
+            ]);
+        } finally {
+            rmSync(base, { recursive: true, force: true });
+        }
     });
 });
