@@ -190,12 +190,21 @@ export function createMiniAgent(options: MiniAgentOptions): MiniAgent {
         let usage: LanguageModelUsage | undefined;
 
         for (;;) {
+            // Interjections that arrived while no request was in flight (an
+            // idle-time interject, or an abort that lost its race with a
+            // completing turn) fold into the outgoing prompt. The queue used to
+            // be shifted unconditionally after the transport returned, which
+            // silently dropped exactly those messages.
+            if (queued.length > 0) {
+                pending = [pending, ...queued.splice(0)].join("\n\n");
+            }
+
             const result = session
                 ? await runInSession(options.session, session.id, pending, sendOptions?.callbacks)
                 : await runOnce(pending, sendOptions?.callbacks);
             toolCalls += result.toolCalls;
             usage = mergeUsage(usage, result.usage);
-            const next = queued.shift();
+            const next = result.aborted ? queued.shift() : undefined;
 
             if (result.aborted && next !== undefined) {
                 log.debug({ chars: result.text.length }, "turn interjected — partial answer kept, continuing");

@@ -3,7 +3,7 @@ import { isInteractive } from "@genesiscz/utils/cli/executor";
 import { logger } from "@genesiscz/utils/logger";
 import { searchSelect, searchSelectCancelSymbol } from "@genesiscz/utils/prompts/clack";
 import pc from "picocolors";
-import { byProvider, type CatalogEntry } from "../catalog";
+import { byProvider, type CatalogEntry, catalogKeysFor, providerNameFor } from "../catalog";
 import { discoverModels } from "../catalog/discover";
 import { AiConfigStore } from "../config/AiConfigStore";
 import { ephemeralEnvAccounts } from "../config/migrations/2026-08-seedEnvAccounts";
@@ -66,12 +66,6 @@ export function parseProviderSpec(spec: string | null | undefined): { provider?:
     }
 
     return { provider: spec.slice(0, idx), model: spec.slice(idx + 1) };
-}
-
-/** Catalog keys worth trying for a plugin id: its own, then the `-sub`-stripped name. */
-function catalogKeysFor(providerId: string): string[] {
-    const stripped = providerId.replace(/-sub$/, "");
-    return stripped === providerId ? [providerId] : [providerId, stripped];
 }
 
 /** The chat models the catalog knows for a provider, curated plus discovered. */
@@ -177,7 +171,7 @@ export async function listChoosableTargets(store?: ResolveOptions["store"]): Pro
             continue;
         }
 
-        const provider = account.provider.replace(/-sub$/, "");
+        const provider = providerNameFor(account.provider);
 
         for (const entry of await chatModelsFor(account.provider)) {
             targets.push({

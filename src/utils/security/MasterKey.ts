@@ -1,6 +1,9 @@
 import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { envKeyProvider, fileKeyProvider, masterKeyFilePath, securityStorage } from "./keyring/headless";
 import { osKeyring } from "./keyring/os-keyring";
@@ -63,6 +66,20 @@ export async function masterKey(): Promise<Buffer> {
         throw new MasterKeyUnavailableError();
     }
 
+    // Every rung answered "no key" — but if the vault already holds entries,
+    // that key existed once (keychain reset, restore onto a new machine) and
+    // minting a replacement would orphan every entry permanently. Fail loudly
+    // with the recovery options instead.
+    if (vaultHasEntries()) {
+        const variable = env.security.getMasterKeyEnvKey();
+        throw new Error(
+            "No master-key rung answered, but the vault already holds encrypted entries. " +
+                "Minting a new key would make every one of them permanently undecryptable. " +
+                `Restore the OS keychain item, set ${variable}, enable the key file, ` +
+                "or re-import a vault export with: tools ai config secret import"
+        );
+    }
+
     const generated = randomBytes(MASTER_KEY_BYTES);
     // writeMasterKey picks the first AVAILABLE non-env rung. The old inline
     // version here grabbed the first non-env provider without asking, which on
@@ -114,6 +131,30 @@ export async function masterKeySource(): Promise<MasterKeySource | undefined> {
 
 export function invalidateMasterKeyCache(): void {
     cached = null;
+}
+
+/**
+ * True when vault.json already holds entries. Read directly rather than through
+ * SecretStore (which imports this module) to stay cycle-free. An unreadable
+ * vault counts as populated: refusing to mint over a file we cannot inspect is
+ * the safe failure.
+ */
+function vaultHasEntries(): boolean {
+    const path = join(securityStorage().getBaseDir(), "vault.json");
+
+    if (!existsSync(path)) {
+        return false;
+    }
+
+    try {
+        const parsed: { entries?: Record<string, unknown> } = SafeJSON.parse(readFileSync(path, "utf8"), {
+            strict: true,
+        });
+        return Object.keys(parsed?.entries ?? {}).length > 0;
+    } catch (err) {
+        logger.warn({ err, path }, "vault unreadable while deciding whether a new master key may be minted");
+        return true;
+    }
 }
 
 /** Persist a new master key on the first writable rung (never the env rung). */

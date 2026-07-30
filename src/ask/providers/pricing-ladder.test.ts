@@ -143,11 +143,12 @@ describe("catalog pricing ladder", () => {
 
             const cost = calculateCallCostUsd(mockPricing, usage) ?? 0;
 
-            // Expected:
-            // Input: (200k / 1M) * 3.0 + (100k / 1M) * 6.0 = 0.6 + 0.6 = 1.2
-            // Output: (200k / 1M) * 15.0 + (50k / 1M) * 30.0 = 3.0 + 1.5 = 4.5
-            // Total: 1.2 + 4.5 = 5.7
-            expect(cost).toBeCloseTo(5.7, 2);
+            // Crossing 200k re-rates the WHOLE call (Anthropic/Google publish
+            // the >200k tier as a wholesale rate, not a marginal one):
+            // Input: (300k / 1M) * 6.0 = 1.8
+            // Output: (250k / 1M) * 30.0 = 7.5
+            // Total: 1.8 + 7.5 = 9.3
+            expect(cost).toBeCloseTo(9.3, 2);
         });
 
         it("should calculate tiered pricing correctly at exactly 200k threshold", async () => {
@@ -179,7 +180,7 @@ describe("catalog pricing ladder", () => {
                 outputPer1MAbove200k: 30.0,
             };
 
-            // 200,001 tokens - should use tiered pricing for 1 token
+            // 200,001 tokens - one token over the band re-rates the whole call
             const usage = toLanguageModelUsage({
                 inputTokens: 200_001,
                 outputTokens: 0,
@@ -188,8 +189,8 @@ describe("catalog pricing ladder", () => {
 
             const cost = calculateCallCostUsd(mockPricing, usage) ?? 0;
 
-            // Expected: (200k / 1M) * 3.0 + (1 / 1M) * 6.0 = 0.6 + 0.000006 = 0.600006
-            expect(cost).toBeCloseTo(0.600006, 6);
+            // Expected: (200,001 / 1M) * 6.0 = 1.200006
+            expect(cost).toBeCloseTo(1.200006, 6);
         });
 
         it("should handle zero tokens", async () => {

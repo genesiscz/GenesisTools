@@ -1,3 +1,4 @@
+export { catalogKeysFor, providerNameFor } from "./keys";
 export { effectivePricing, type PricingContext } from "./pricing";
 export {
     aliasMapFor,

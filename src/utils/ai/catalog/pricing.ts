@@ -1,4 +1,9 @@
 import { calculateCallCostUsd } from "@genesiscz/utils/ai/llm-cost";
+import {
+    usageCacheReadTokens,
+    usageCacheWriteTokens,
+    usageInputNoCacheTokens,
+} from "@genesiscz/utils/ask/usage-tokens";
 import { logger } from "@genesiscz/utils/logger";
 import type { LanguageModelUsage } from "ai";
 import { liteLLMPricingFetcher } from "./litellm";
@@ -175,7 +180,11 @@ export async function pricingForCall(
  * caller of the old `dynamicPricingManager.calculateCost` treated null that way.
  */
 export async function costForCall(provider: string, modelId: string, usage: LanguageModelUsage): Promise<number> {
-    const pricing = await pricingForCall(provider, modelId, { at: new Date() });
+    // Context-banded rules need the FULL prompt length (cache tokens included);
+    // omitting contextTokens made ruleApplies() reject every band, so the ask
+    // path priced 300k-context calls at the sub-200k rate.
+    const contextTokens = usageInputNoCacheTokens(usage) + usageCacheReadTokens(usage) + usageCacheWriteTokens(usage);
+    const pricing = await pricingForCall(provider, modelId, { at: new Date(), contextTokens });
 
     if (!pricing) {
         logger.warn(`Could not determine pricing for ${provider}/${modelId}`);

@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
-import { unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -44,9 +44,10 @@ function passphraseKey(passphrase: string, salt: Buffer, N: number, r: number, p
  * and rewriting the vault cannot be atomic together, and a crash between the
  * two used to destroy the ONLY copy of the old key while the vault still
  * needed it. On success the escrow is deleted; if it survives a crash it is
- * exactly the recovery material — and after a COMPLETED rotation the old key
- * can decrypt nothing anyway, so a stale leftover is dead weight, not a leak
- * of anything current.
+ * exactly the recovery material. After a COMPLETED rotation the old key can
+ * decrypt nothing anyway — but a failure BEFORE the key transition leaves the
+ * escrow holding the still-live key, which is why the catch below names the
+ * file and when it is safe to delete instead of failing silently.
  */
 export async function rotateMasterKey(): Promise<{ rotated: number }> {
     // The env rung is read-only (writeMasterKey skips it) AND outranks every
@@ -54,7 +55,12 @@ export async function rotateMasterKey(): Promise<{ rotated: number }> {
     // keychain, where the unchanged variable permanently shadows it, and every
     // re-encrypted entry becomes undecryptable — the exact "vault nothing can
     // read" outcome this function's abort-on-failure logic exists to prevent.
-    if ((await masterKeySource()) === "env") {
+    // Exception: when the rotation escrow exists, the env variable IS the
+    // documented recovery path (`describeDecryptFailure` tells the user to
+    // export the escrowed key and re-run rotate), so refusing here would make
+    // that recovery impossible. The rotation below re-escrows, re-keys and
+    // rewrites the vault; the user then unsets the variable as instructed.
+    if ((await masterKeySource()) === "env" && !existsSync(rotationBackupPath())) {
         const variable = env.security.getMasterKeyEnvKey();
         throw new Error(
             `The master key currently comes from ${variable}, which cannot be written back to. ` +
@@ -83,11 +89,37 @@ export async function rotateMasterKey(): Promise<{ rotated: number }> {
         const escrow = rotationBackupPath();
         writeFileSync(escrow, current.toString("base64"), { mode: 0o600 });
 
-        await writeMasterKey(next);
+        try {
+            await writeMasterKey(next);
+        } catch (err) {
+            // Do NOT delete the escrow here: a key-store failure is
+            // indistinguishable from a crash that stored the new key before
+            // throwing, and in that case the escrow is the ONLY copy of the key
+            // the vault still needs. But a silent leftover is a plaintext copy
+            // of a possibly still-live master key, so say all of this loudly.
+            const message = err instanceof Error ? err.message : String(err);
+            throw new Error(
+                `Master-key rotation failed while storing the new key (${message}), ` +
+                    `and the outgoing key stays escrowed at ${escrow}. ` +
+                    "If vault reads still work, the old key is still active: delete that file. " +
+                    `If they fail to decrypt, recover with: export ${env.security.getMasterKeyEnvKey()}=$(cat ${escrow}) ` +
+                    "then re-run 'tools ai config secret rotate' and delete the file once it succeeds.",
+                { cause: err }
+            );
+        }
+
         vaultAdmin.write(rotated);
         invalidateMasterKeyCache();
 
         unlinkSync(escrow);
+
+        if ((await masterKeySource()) === "env") {
+            logger.warn(
+                `Rotation complete, but ${env.security.getMasterKeyEnvKey()} still outranks the newly stored key. ` +
+                    "Unset it now, or every vault read keeps using the OLD key and fails to decrypt."
+            );
+        }
+
         logger.info({ entries: paths.length }, "rotated vault master key");
         return { rotated: paths.length };
     });

@@ -1,5 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
-import { byId, byProvider } from "../catalog";
+import { byId, byProvider, catalogKeysFor } from "../catalog";
 import { AiConfigStore } from "../config/AiConfigStore";
 import { ephemeralEnvAccounts } from "../config/migrations/2026-08-seedEnvAccounts";
 import type { AccountEntry, AiConfigData, TaskDefault, TaskName } from "../config/schema";
@@ -105,7 +105,8 @@ export async function resolveModelTarget(
     if ((cfg.disabledProviders ?? []).includes(account.provider)) {
         throw new ModelResolutionError(
             `Provider "${account.provider}" is switched off in the AI config, but account "${account.name}" resolves to it. ` +
-                `Re-enable it with: tools ai config provider enable ${account.provider}`
+                `Re-enable it by removing "${account.provider}" from "disabledProviders" in the AI config ` +
+                `(~/.genesis-tools/ai/config.json), or point the task at an account on another provider.`
         );
     }
 
@@ -327,17 +328,6 @@ function defaultAccountRef(cfg: AiConfigData, task: TaskName): { id: string; via
     }
 
     return undefined;
-}
-
-/**
- * Catalog keys and plugin ids are not the same vocabulary: the `anthropic-sub`
- * plugin serves models the catalog files under `anthropic`. Trying the plugin id
- * first and the `-sub`-stripped form second covers that without a hand-kept map
- * that would rot the moment a provider is added.
- */
-function catalogKeysFor(providerId: string): string[] {
-    const stripped = providerId.replace(/-sub$/, "");
-    return stripped === providerId ? [providerId] : [providerId, stripped];
 }
 
 function defaultModelIdFor(providerId: string, capability: Capability): string | undefined {

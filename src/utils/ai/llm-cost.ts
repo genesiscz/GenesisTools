@@ -52,8 +52,10 @@ export function estimateLlmCallCostUsd({ pricing, inputTokens, outputTokens }: L
  * into the top-level `inputTokens`, so billing on that field would charge cache
  * tokens twice, once at the full rate and once at the cache rate.
  *
- * Long-context tiers apply only when input or output crosses 200k, matching how
- * Anthropic and Google publish them.
+ * Long-context tiers re-rate the WHOLE call once the prompt crosses 200k,
+ * matching how Anthropic and Google publish them: the band is measured on the
+ * full context (cache reads included), and there is no marginal "first 200k at
+ * the cheap rate".
  */
 export function calculateCallCostUsd(
     pricing: CallPricing | undefined,
@@ -76,35 +78,25 @@ export function calculateCallCostUsd(
 
     const flat = (tokens: number, per1M: number): number => (tokens / 1_000_000) * per1M;
 
-    const tiered = (tokens: number, basePer1M: number, abovePer1M?: number): number => {
-        if (tokens <= 0) {
-            return 0;
-        }
+    // The band is measured on the FULL prompt — cache reads and writes count
+    // toward context length even though they bill at their own rates. Gating on
+    // the cache-excluded count alone meant a 400k prompt served mostly from
+    // cache never crossed the band. And once crossed, vendors re-rate every
+    // token class wholesale; the old marginal split (first 200k at the base
+    // rate) under-reported every banded call.
+    const totalInputTokens = inputTokens + cachedReadTokens + cachedCreateTokens;
+    const crossed = hasTieredPricing && (totalInputTokens > 200_000 || outputTokens > 200_000);
 
-        if (tokens > 200_000 && abovePer1M != null) {
-            return flat(200_000, basePer1M) + flat(tokens - 200_000, abovePer1M);
-        }
+    const rate = (basePer1M: number, abovePer1M?: number): number =>
+        crossed && abovePer1M != null ? abovePer1M : basePer1M;
 
-        return flat(tokens, basePer1M);
-    };
-
-    const useTiers = hasTieredPricing && (inputTokens > 200_000 || outputTokens > 200_000);
-
-    const inputCost = useTiers
-        ? tiered(inputTokens, pricing.inputPer1M, pricing.inputPer1MAbove200k)
-        : flat(inputTokens, pricing.inputPer1M);
-    const outputCost = useTiers
-        ? tiered(outputTokens, pricing.outputPer1M, pricing.outputPer1MAbove200k)
-        : flat(outputTokens, pricing.outputPer1M);
+    const inputCost = flat(inputTokens, rate(pricing.inputPer1M, pricing.inputPer1MAbove200k));
+    const outputCost = flat(outputTokens, rate(pricing.outputPer1M, pricing.outputPer1MAbove200k));
     const cachedReadCost = pricing.cachedReadPer1M
-        ? useTiers
-            ? tiered(cachedReadTokens, pricing.cachedReadPer1M, pricing.cachedReadPer1MAbove200k)
-            : flat(cachedReadTokens, pricing.cachedReadPer1M)
+        ? flat(cachedReadTokens, rate(pricing.cachedReadPer1M, pricing.cachedReadPer1MAbove200k))
         : 0;
     const cachedCreateCost = pricing.cachedCreatePer1M
-        ? useTiers
-            ? tiered(cachedCreateTokens, pricing.cachedCreatePer1M, pricing.cachedCreatePer1MAbove200k)
-            : flat(cachedCreateTokens, pricing.cachedCreatePer1M)
+        ? flat(cachedCreateTokens, rate(pricing.cachedCreatePer1M, pricing.cachedCreatePer1MAbove200k))
         : 0;
 
     return inputCost + outputCost + cachedReadCost + cachedCreateCost;

@@ -69,18 +69,13 @@ export function projectToV3(config: AiConfigData): V3ConfigData {
         }
     }
 
-    // v3's providers block was dropped in v4; enablement is per account now, so
-    // project a disabled entry only when every account of a provider is disabled.
+    // v3's providers block was dropped in v4; only an explicit provider-level
+    // switch-off projects here. Deriving one from "all accounts happen to be
+    // disabled" looked equivalent but promoted account state into a global flag
+    // that re-enabling the account never cleared — a one-way trapdoor.
     const providers: V3ConfigData["providers"] = {};
     for (const provider of config.disabledProviders ?? []) {
         providers[provider] = { enabled: false, envVariable: "" };
-    }
-
-    for (const account of config.accounts) {
-        const all = config.accounts.filter((entry) => entry.provider === account.provider);
-        if (all.every((entry) => !entry.enabled)) {
-            providers[account.provider] = { enabled: false, envVariable: "" };
-        }
     }
 
     return {
@@ -211,13 +206,14 @@ export async function syncV3IntoStore(config: AiConfigData, v3: V3ConfigData): P
         };
     }
 
+    // Provider-level enablement maps to `disabledProviders` alone. Cascading it
+    // onto `account.enabled` had no inverse (nothing ever set accounts back to
+    // true), so a provider toggle permanently disabled accounts; the global flag
+    // already blocks resolution for every account of the provider.
     const disabled = new Set<string>();
     for (const [provider, providerConfig] of Object.entries(v3.providers ?? {})) {
         if (providerConfig?.enabled === false) {
             disabled.add(provider);
-            for (const account of config.accounts.filter((entry) => entry.provider === provider)) {
-                account.enabled = false;
-            }
         }
     }
 

@@ -4,6 +4,8 @@ import { existsSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { registerAiProxyRefScanner } from "@app/ai-proxy/lib/account-refs";
+import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import * as p from "@clack/prompts";
 import { AI, AIConfig } from "@genesiscz/utils/ai/index.ts";
 import { ModelManager } from "@genesiscz/utils/ai/ModelManager.ts";
@@ -22,6 +24,13 @@ import pc from "picocolors";
 import { registerConfigCommands } from "./commands/config";
 import { readStdinValue } from "./commands/config/stdin";
 import { runConfigTui } from "./commands/config/tui";
+
+// Without this, `referrersOf` in this process cannot see the accounts the
+// ai-proxy config bills, so `account rm` would delete an account (and its vault
+// secrets) the running proxy still routes to, and `link ls`/`doctor` would
+// miss dangling proxy refs. The scanner registry is per process; ai-proxy's own
+// entrypoint registers the same scanner for itself.
+registerAiProxyRefScanner(loadConfigFresh);
 
 // ============================================
 // Translate

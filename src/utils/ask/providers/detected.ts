@@ -1,5 +1,6 @@
 import { byId } from "@genesiscz/utils/ai/catalog";
 import { discoverModels } from "@genesiscz/utils/ai/catalog/discover";
+import { catalogKeysFor, providerNameFor } from "@genesiscz/utils/ai/catalog/keys";
 import { pricingFor } from "@genesiscz/utils/ai/catalog/pricing";
 import type { ResolvedBinding, ResolvedModel } from "@genesiscz/utils/ai/core/types";
 import type { ProviderBinding } from "@genesiscz/utils/ai/providers/plugin-types";
@@ -18,21 +19,7 @@ import { getProviderConfig } from "./compat";
  * everything behind it is the unified config/plugin/catalog stack.
  */
 
-/**
- * Plugin ids carry the billing mode (`anthropic-sub`), the names `ask` shows and
- * the catalog keys models are filed under do not. Stripping the suffix is what
- * kept `--provider anthropic` working for a Claude Max account before this layer
- * existed, and callers (usage records, pricing lookups) still key on it.
- */
-export function providerNameFor(pluginId: string): string {
-    return pluginId.replace(/-sub$/, "");
-}
-
-/** Catalog keys worth trying for a plugin: its own id first, then the stripped name. */
-export function catalogKeysFor(pluginId: string): string[] {
-    const stripped = providerNameFor(pluginId);
-    return stripped === pluginId ? [pluginId] : [pluginId, stripped];
-}
+export { catalogKeysFor, providerNameFor };
 
 /**
  * `ProviderConfig` is required by `DetectedProvider` and is only read for its
