@@ -8,6 +8,7 @@ import { tarGz } from "@app/dev-dashboard/lib/boards/tar";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { findFreePort } from "@genesiscz/utils/net/free-port";
+import { optIn } from "@genesiscz/utils/test/skip";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
@@ -39,7 +40,11 @@ async function waitReady(base: string, deadline: number): Promise<void> {
     }
 }
 
-describe("boards MCP tools (stdio e2e against a real agent-mode dev-dashboard)", () => {
+// Gated in-file, not only by the package.json exclude globs: a direct
+// `bun test` / `bun scripts/test.ts` invocation bypasses those globs, and this
+// suite spawns REAL dev-dashboard agent servers. Ungated, every such run leaked
+// two orphaned agents (each sampling `top` forever) — dozens accumulated.
+describe.if(optIn.e2e)("boards MCP tools (stdio e2e against a real agent-mode dev-dashboard)", () => {
     it("drives the full annotate → wait → work → attach → in_review loop", async () => {
         const home = mkdtempSync(join(tmpdir(), "boards-e2e-home-"));
         const port = await findFreePort();
@@ -175,6 +180,9 @@ describe("boards MCP tools (stdio e2e against a real agent-mode dev-dashboard)",
             }
         } finally {
             proc.kill();
+            // Reap before the test ends: an unawaited child can outlive a dying
+            // worker and reparent to launchd as a permanent orphan.
+            await proc.exited;
         }
     }, 60000);
 
@@ -330,6 +338,9 @@ describe("boards MCP tools (stdio e2e against a real agent-mode dev-dashboard)",
             }
         } finally {
             proc.kill();
+            // Reap before the test ends: an unawaited child can outlive a dying
+            // worker and reparent to launchd as a permanent orphan.
+            await proc.exited;
         }
     }, 60000);
 });
