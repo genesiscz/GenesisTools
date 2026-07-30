@@ -3,6 +3,13 @@
 # Runs all permutations and asserts exact behavior.
 
 set -uo pipefail
+
+# The CLI resolves its data root from GENESIS_TOOLS_HOME (falling back to $HOME),
+# so this script must too. Hardcoding ~ made every `tools agents` write land in a
+# sandboxed root while the script polled the real one, and the waits below then
+# spun until the test timeout.
+GT_ROOT="${GENESIS_TOOLS_HOME:-$HOME}/.genesis-tools/agents"
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/../../.." || exit 1
 
@@ -121,7 +128,7 @@ assert_count "peer1 still single record" "$DISC" '"agent_name":"peer1"' 1
 # 1.6 --debug enables session debug
 S=$(mksess l6)
 quick_login --agent-name lead --agent-main --debug --session "$S"
-META=$(cat ~/.genesis-tools/agents/"$S"/session-meta.json 2>/dev/null || echo "")
+META=$(cat "$GT_ROOT/$S/session-meta.json" 2>/dev/null || echo "")
 assert_contains "--debug writes session-meta debug:true" "$META" '"debug":true'
 
 # ============================================================
@@ -135,7 +142,7 @@ quick_login --agent-name lead --agent-main --session "$S"
 OLD_PID=$!
 BG_PIDS+=("$OLD_PID")
 LOCK=$(./tools agents discover --session "$S" --format json | tools json 2>/dev/null | grep -oE 'main_[a-z0-9]+' | head -1)
-LOCKPATH=~/.genesis-tools/agents/"$S"/slots/"$LOCK".login
+LOCKPATH="$GT_ROOT/$S/slots/$LOCK.login"
 for i in $(seq 1 30); do
     [ -f "$LOCKPATH" ] && break
     sleep 0.1

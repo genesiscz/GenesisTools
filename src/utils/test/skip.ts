@@ -80,6 +80,13 @@ export const optIn = {
      */
     integration: flag("RUN_INTEGRATION"),
     /**
+     * The agents CLI matrix e2e: one bash script driving dozens of `tools agents`
+     * subprocesses. It passes in ~89s alone but exceeds the default test timeout
+     * under the 16-way parallel run, so it belongs to `bun run test:e2e`.
+     * Set RUN_AGENTS_E2E=1 to include it in an ordinary run.
+     */
+    agentsE2E: flag("RUN_AGENTS_E2E"),
+    /**
      * Tests that call AIAccount.listClaude() / AIAccount.list(), which read local AI
      * account config (Claude subscriptions, OpenAI keys, etc.). On CI there are no
      * credentials, so list() returns 0 accounts and the length assertions fail.
@@ -197,3 +204,45 @@ export function skipIfAny(...conditions: boolean[]): boolean {
 export function shouldSkipOnWindows(): boolean {
     return isWindows;
 }
+
+/**
+ * What an ordinary `bun run test` is NOT running.
+ *
+ * Opt-in gates are silent by design, which means a green suite can hide whole
+ * categories of coverage. The runner prints this once per run so the skipped set
+ * is visible rather than folklore.
+ */
+export function describeGates(): { enabled: string[]; disabled: string[] } {
+    const enabled: string[] = [];
+    const disabled: string[] = [];
+
+    for (const [name, on] of Object.entries(optIn)) {
+        if (on) {
+            enabled.push(name);
+        } else {
+            disabled.push(name);
+        }
+    }
+
+    return { enabled: enabled.sort(), disabled: disabled.sort() };
+}
+
+/** The variable that turns each opt-in gate on, for the runner's hint line. */
+export const GATE_ENV_VARS: Record<keyof typeof optIn, string> = {
+    network: "RUN_NETWORK_TESTS",
+    live: "RUN_LIVE",
+    liveSmoke: "RUN_LIVE_SMOKE",
+    e2e: "RUN_E2E",
+    notifyE2E: "RUN_NOTIFY_E2E",
+    wip: "RUN_WIP_E2E",
+    darwinkit: "RUN_DARWINKIT",
+    solid: "RUN_SOLID",
+    mailInfra: "RUN_MAIL_INFRA",
+    integration: "RUN_INTEGRATION",
+    agentsE2E: "RUN_AGENTS_E2E",
+    aiAccounts: "RUN_AI_ACCOUNTS",
+    claudeData: "RUN_CLAUDE_DATA",
+    localModels: "RUN_LOCAL_MODELS",
+    audioDevice: "RUN_AUDIO_DEVICE",
+    realApis: "RUN_REAL_APIS",
+};

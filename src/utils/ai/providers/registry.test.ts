@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { _resetBuiltInPluginsForTest, registerBuiltInPlugins } from "./plugins";
 import type { ProviderPlugin } from "./plugin-types";
+import { _resetBuiltInPluginsForTest, registerBuiltInPlugins } from "./plugins";
 import {
     _resetPluginsForTest,
     allProviderPlugins,
     pluginsByCapability,
     providerPlugin,
-    registerPlugin,
     registeredProviderIds,
+    registerPlugin,
     UnknownProviderError,
 } from "./registry";
 

@@ -150,7 +150,13 @@ export const env = {
     },
 
     tools: {
+        // NOTE: this FALLS BACK to homedir(), so it is never undefined. Asking it
+        // "is a sandbox configured?" always answers yes — that bug let worktree
+        // builds migrate the user's real config. Use hasExplicitHome() for that
+        // question.
         getHome: () => getTrimmed("GENESIS_TOOLS_HOME") ?? homedir(),
+        /** True only when GENESIS_TOOLS_HOME is actually set (a sandboxed root). */
+        hasExplicitHome: () => isNonEmpty("GENESIS_TOOLS_HOME"),
         getHomeEnvKey: () => (isNonEmpty("GENESIS_TOOLS_HOME") ? "GENESIS_TOOLS_HOME" : undefined),
         getPath: () => getTrimmed("GENESIS_TOOLS_PATH"),
         getRoot: () => getTrimmed("GENESIS_TOOLS_ROOT"),
