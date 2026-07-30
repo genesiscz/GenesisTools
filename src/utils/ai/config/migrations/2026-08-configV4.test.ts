@@ -182,6 +182,26 @@ describe("migrateConfigV4", () => {
         expect(await migrateConfigV4.shouldRun()).toBe(false);
     });
 
+    /**
+     * `version !== 4` alone also matched corrupt files and configs from newer
+     * builds; run() then attempted to convert garbage and logged a TypeError on
+     * every load. Unrecognisable input is the reader's loud error to raise, and
+     * a NEWER config must never be "migrated" backwards.
+     */
+    test("refuses garbage and newer-version configs instead of attempting conversion", async () => {
+        writeFileSync(configPath(), SafeJSON.stringify({ version: 99, accounts: "not-an-array" }, null, 2));
+        expect(await migrateConfigV4.shouldRun()).toBe(false);
+
+        writeFileSync(configPath(), SafeJSON.stringify({ _schemaVersion: 3, accounts: "not-an-array" }, null, 2));
+        expect(await migrateConfigV4.shouldRun()).toBe(false);
+
+        writeFileSync(configPath(), SafeJSON.stringify({ version: 5, accounts: [] }, null, 2));
+        expect(await migrateConfigV4.shouldRun()).toBe(false);
+
+        writeFileSync(configPath(), SafeJSON.stringify({ somethingElse: true }, null, 2));
+        expect(await migrateConfigV4.shouldRun()).toBe(false);
+    });
+
     test("credential VALUES survive the migration byte-for-byte", async () => {
         writeFileSync(configPath(), SafeJSON.stringify(V3, null, 2));
         await migrateConfigV4.run();

@@ -10,7 +10,6 @@ import type {
     TaskConfig,
 } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
-import { Storage } from "@genesiscz/utils/storage/storage";
 import { AiConfigStore } from "./config/AiConfigStore";
 import { projectToV3, syncV3IntoStore } from "./config/store-bridge";
 
@@ -79,11 +78,9 @@ export function mergeAccountEntry(existing: AIAccountEntry, incoming: AIAccountE
 
 export class AIConfig {
     private static instance: AIConfig | null = null;
-    private storage: Storage;
     private data: AIConfigData;
 
-    private constructor(storage: Storage, data: AIConfigData) {
-        this.storage = storage;
+    private constructor(data: AIConfigData) {
         this.data = data;
     }
 
@@ -94,13 +91,12 @@ export class AIConfig {
             return AIConfig.instance;
         }
 
-        const storage = new Storage("ai");
         // AiConfigStore.load runs the migration chain, so both entry points land
         // on a shape their reader understands.
         const store = await AiConfigStore.load();
         const data = applyDefaults(projectToV3(store.data()));
 
-        AIConfig.instance = new AIConfig(storage, data);
+        AIConfig.instance = new AIConfig(data);
         return AIConfig.instance;
     }
 

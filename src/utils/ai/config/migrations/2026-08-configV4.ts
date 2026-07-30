@@ -240,7 +240,7 @@ export const migrateConfigV4: ConfigMigration = {
     description: "Convert the AI config to v4: account ids, credentials block, account refs",
 
     shouldRun: async () => {
-        const raw = await aiStorage().getConfig<{ version?: number; _schemaVersion?: number }>();
+        const raw = await aiStorage().getConfig<{ version?: number; _schemaVersion?: number; accounts?: unknown }>();
         if (!raw || Object.keys(raw).length === 0) {
             return false;
         }
@@ -249,7 +249,17 @@ export const migrateConfigV4: ConfigMigration = {
             return false;
         }
 
-        return raw.version !== CONFIG_VERSION;
+        // Only a recognisable OLDER config migrates. `version !== 4` alone also
+        // matched corrupt files and configs from newer builds, so run() would
+        // attempt to convert garbage and log a TypeError on every load before
+        // the reader's own loud schema error. Unrecognisable input is the
+        // reader's problem, not a migration's.
+        const version = raw.version ?? raw._schemaVersion;
+        if (typeof version !== "number" || version >= CONFIG_VERSION) {
+            return false;
+        }
+
+        return raw.accounts === undefined || Array.isArray(raw.accounts);
     },
 
     run: async () => {
@@ -257,7 +267,7 @@ export const migrateConfigV4: ConfigMigration = {
 
         await storage.withConfigLock(async () => {
             const raw = await storage.getConfig<V3ConfigData & { version?: number }>();
-            if (!raw || raw.version === CONFIG_VERSION) {
+            if (!raw || raw.version === CONFIG_VERSION || (raw.accounts !== undefined && !Array.isArray(raw.accounts))) {
                 return;
             }
 

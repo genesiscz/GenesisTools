@@ -22,28 +22,31 @@ describe("DynamicPricingManager", () => {
     });
 
     describe("getPricing", () => {
-        it("should return OpenAI direct pricing for gpt-4o", async () => {
+        // These used to assert the exact 2024 rates from a hardcoded map inside
+        // DynamicPricing. The map was killed (it had drifted from reality and
+        // outranked the live feeds), so pricing now comes from LiteLLM and only
+        // its SHAPE is pinned here — the live-rate checks sit in the
+        // network-gated "Current Pricing Verification" block below.
+        it("should return live-sourced pricing for gpt-4o", async () => {
             const pricing = await pricingManager.getPricing("openai", "gpt-4o");
 
             expect(pricing).not.toBeNull();
-            // Direct OpenAI pricing: $5/$15 per million (as of 2024)
-            // If this test fails, OpenAI may have changed their pricing
-            expect(pricing?.inputPer1M).toBe(5.0);
-            expect(pricing?.outputPer1M).toBe(15.0);
+            expect(pricing?.inputPer1M).toBeGreaterThan(0);
+            expect(pricing?.outputPer1M).toBeGreaterThan(pricing?.inputPer1M ?? 0);
             // Cached read may or may not be present depending on source
             if (pricing?.cachedReadPer1M !== undefined) {
                 expect(pricing.cachedReadPer1M).toBeGreaterThan(0);
             }
         });
 
-        it("should return OpenAI direct pricing for gpt-4o-mini", async () => {
-            const pricing = await pricingManager.getPricing("openai", "gpt-4o-mini");
+        it("should price gpt-4o-mini below gpt-4o", async () => {
+            const mini = await pricingManager.getPricing("openai", "gpt-4o-mini");
+            const full = await pricingManager.getPricing("openai", "gpt-4o");
 
-            expect(pricing).not.toBeNull();
-            // Direct OpenAI pricing: $0.15/$0.6 per million (as of 2024)
-            // If this test fails, OpenAI may have changed their pricing
-            expect(pricing?.inputPer1M).toBe(0.15);
-            expect(pricing?.outputPer1M).toBe(0.6);
+            expect(mini).not.toBeNull();
+            expect(mini?.inputPer1M).toBeGreaterThan(0);
+            expect(mini?.inputPer1M ?? 0).toBeLessThan(full?.inputPer1M ?? 0);
+            expect(mini?.outputPer1M ?? 0).toBeLessThan(full?.outputPer1M ?? 0);
         });
 
         it("should fetch real pricing from LiteLLM for OpenRouter models", async () => {
@@ -499,24 +502,30 @@ describe("DynamicPricingManager", () => {
          * Update the expected values if prices legitimately change.
          */
 
-        it("should match current OpenAI GPT-4o pricing ($5/$15 per million)", async () => {
-            // ⚠️ BREAKS IF: OpenAI changes GPT-4o pricing
+        it("should match current OpenAI GPT-4o pricing from LiteLLM ($2.5/$10 per million)", async () => {
+            // ⚠️ BREAKS IF: OpenAI changes GPT-4o pricing or LiteLLM updates it.
+            // Was $5/$15 from the killed 2024 static map — stale by two price
+            // cuts, which is exactly why the map died.
             const pricing = await pricingManager.getPricing("openai", "gpt-4o");
 
             expect(pricing).not.toBeNull();
-            expect(pricing?.inputPer1M).toBe(5.0); // $5.00 per million input tokens
-            expect(pricing?.outputPer1M).toBe(15.0); // $15.00 per million output tokens
+            expect(pricing?.inputPer1M).toBe(2.5); // $2.50 per million input tokens
+            expect(pricing?.outputPer1M).toBe(10.0); // $10.00 per million output tokens
         });
 
-        it("should match current OpenAI GPT-4o-mini pricing ($0.15/$0.6/$0.075/$0 per million)", async () => {
-            // ⚠️ BREAKS IF: OpenAI changes GPT-4o-mini pricing
+        it("should match current OpenAI GPT-4o-mini pricing from LiteLLM ($0.15/$0.6 per million)", async () => {
+            // ⚠️ BREAKS IF: OpenAI changes GPT-4o-mini pricing or LiteLLM updates it
             const pricing = await pricingManager.getPricing("openai", "gpt-4o-mini");
 
             expect(pricing).not.toBeNull();
             expect(pricing?.inputPer1M).toBe(0.15); // $0.15 per million input tokens
             expect(pricing?.outputPer1M).toBe(0.6); // $0.60 per million output tokens
-            expect(pricing?.cachedReadPer1M).toBe(0.075); // $0.075 per million cached read tokens
-            expect(pricing?.cachedCreatePer1M).toBe(0); // $0 per million cached creation tokens
+
+            // Cache pricing depends on which LiteLLM key answered (the openai/
+            // prefixed entry omits it); when present it must be a real rate.
+            if (pricing?.cachedReadPer1M !== undefined) {
+                expect(pricing.cachedReadPer1M).toBeGreaterThan(0);
+            }
         });
 
         it("should match current OpenRouter GPT-4o pricing from LiteLLM", async () => {
@@ -548,18 +557,22 @@ describe("DynamicPricingManager", () => {
         });
 
         it("should calculate exact cost for 1M input + 500k output tokens with OpenAI GPT-4o", async () => {
-            // ⚠️ BREAKS IF: OpenAI changes GPT-4o pricing
-            // Real calculation using current OpenAI pricing: $5/$15 per million
+            // Cost must equal the arithmetic over whatever pricing the ladder
+            // returned — pinning a dollar figure here would just re-test the
+            // rate assertions above and break twice on every price change.
             const usage = toLanguageModelUsage({
                 inputTokens: 1_000_000,
                 outputTokens: 500_000,
                 totalTokens: 1_500_000,
             });
 
+            const pricing = await pricingManager.getPricing("openai", "gpt-4o");
             const cost = await pricingManager.calculateCost("openai", "gpt-4o", usage);
 
-            // Expected: (1M / 1M) * 5.0 + (500k / 1M) * 15.0 = 5.0 + 7.5 = 12.5
-            expect(cost).toBeCloseTo(12.5, 2);
+            expect(pricing).not.toBeNull();
+            const expected = (pricing?.inputPer1M ?? 0) * 1 + (pricing?.outputPer1M ?? 0) * 0.5;
+            expect(cost).toBeCloseTo(expected, 6);
+            expect(cost).toBeGreaterThan(0);
         });
 
         it("should calculate exact cost for 300k input + 250k output with Claude (no tiered pricing)", async () => {

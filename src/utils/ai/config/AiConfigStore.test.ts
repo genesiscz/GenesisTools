@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { adaptOlderConfig, AiConfigStore } from "./AiConfigStore";
+import { AiConfigStore, adaptOlderConfig } from "./AiConfigStore";
 import { _clearExternalRefScanners, registerExternalRefScanner } from "./refs";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "./schema";
 
@@ -121,6 +121,28 @@ describe("AiConfigStore freshness", () => {
         expect(same).toBe(store);
         // v3's AIConfig returned the stale snapshot here; that is the daemon bug.
         expect(same.account("acc_late")?.name).toBe("late-arrival");
+    });
+
+    /**
+     * Integration wiring for the adapter: a v3 file appearing under a live store
+     * (the installed tools write v3 while a worktree build has the config open)
+     * must be READ through the v3 adapter, not crash the refresh — and must not
+     * be written back, because upgrading it is the gated migration's job.
+     */
+    test("an external v3 write is read through the adapter without touching the file", async () => {
+        await AiConfigStore.load();
+
+        const v3 = { _schemaVersion: 3, accounts: [{ name: "legacy", provider: "openai", tokens: {} }] };
+        writeFileSync(configPath(home), SafeJSON.stringify(v3, null, 2));
+
+        const store = await AiConfigStore.load();
+
+        expect(store.account("legacy")?.provider).toBe("openai");
+        expect(store.data().version).toBe(CONFIG_VERSION);
+
+        // The file stays v3: reading never migrates.
+        const onDisk: { _schemaVersion?: number } = SafeJSON.parse(readFileSync(configPath(home), "utf8"));
+        expect(onDisk._schemaVersion).toBe(3);
     });
 
     test("an unchanged file is not re-parsed into a different object", async () => {

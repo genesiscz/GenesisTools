@@ -1,236 +1,29 @@
-import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
-import type { OpenRouterModelResponse, OpenRouterModelsResponse, OpenRouterPricing, PricingInfo } from "@ask/types";
+import type { PricingInfo } from "@ask/types";
 import { usageCacheReadTokens, usageCacheWriteTokens, usageInputNoCacheTokens } from "@ask/utils/helpers";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { clearPricingCache, pricingCacheSize, pricingFor } from "@genesiscz/utils/ai/catalog/pricing";
 import { logger } from "@genesiscz/utils/logger";
 import type { LanguageModelUsage } from "ai";
 
+/**
+ * Compatibility shim over `@genesiscz/utils/ai/catalog/pricing`.
+ *
+ * The price ladder and its caching now live in the catalog, where every AI
+ * surface can reach them rather than importing ask's internals. This class
+ * keeps the old method surface for its six existing consumers (CostTracker,
+ * CostPredictor, ChatEngine, ConversationManager, src/usage, the claude
+ * summarize engine) until Phase 8 flips them.
+ *
+ * The cost math below stays here because it reads ai-sdk usage objects, which
+ * is the caller's shape, not the catalog's.
+ *
+ * @deprecated Use `pricingFor` from `@genesiscz/utils/ai/catalog/pricing`.
+ */
 export class DynamicPricingManager {
-    private pricingCache = new Map<string, { pricing: PricingInfo; timestamp: number }>();
-    private readonly CACHE_DURATION = 1000 * 60 * 60; // 1 hour
-
     async getPricing(provider: string, modelId: string): Promise<PricingInfo | null> {
-        const cacheKey = `${provider}/${modelId}`;
-        const cached = this.pricingCache.get(cacheKey);
-
-        if (cached && Date.now() - cached.timestamp < this.CACHE_DURATION) {
-            return cached.pricing;
-        }
-
-        const pricing = await this.fetchPricing(provider, modelId);
-        if (pricing) {
-            this.pricingCache.set(cacheKey, { pricing, timestamp: Date.now() });
-        }
-
-        return pricing;
-    }
-
-    private async fetchPricing(provider: string, modelId: string): Promise<PricingInfo | null> {
-        try {
-            // 1. For OpenRouter provider, use LiteLLM's openrouter/* pricing first
-            if (provider === "openrouter") {
-                const liteLLMPricing = await liteLLMPricingFetcher.getModelPricing(`openrouter/${modelId}`);
-                if (liteLLMPricing) {
-                    logger.debug(`Using LiteLLM pricing for openrouter/${modelId}`);
-                    return liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
-                }
-                // Fallback to OpenRouter API
-                return await this.fetchOpenRouterPricing(modelId);
-            }
-
-            // 2. Use direct provider pricing FIRST (more accurate for direct API calls)
-            switch (provider) {
-                case "openai": {
-                    const openAIPricing = await this.fetchOpenAIPricing(modelId);
-                    if (openAIPricing) {
-                        return openAIPricing;
-                    }
-                    // Fallback to LiteLLM for unknown OpenAI models
-                    break;
-                }
-                case "anthropic": {
-                    // Try LiteLLM first for Anthropic (for tiered pricing support)
-                    const liteLLMCandidates = [
-                        `${provider}/${modelId}`, // e.g., anthropic/claude-3-5-sonnet-20241022
-                        modelId, // e.g., claude-3-5-sonnet-20241022
-                    ];
-
-                    for (const candidate of liteLLMCandidates) {
-                        const liteLLMPricing = await liteLLMPricingFetcher.getModelPricing(candidate);
-                        if (liteLLMPricing && !candidate.startsWith("openrouter/")) {
-                            logger.debug(`Using LiteLLM pricing for ${candidate}`);
-                            return liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
-                        }
-                    }
-                    // Fallback to OpenRouter
-                    return await this.fetchOpenRouterPricing(`anthropic/${modelId}`);
-                }
-                case "google":
-                    return await this.fetchGooglePricing(modelId);
-                case "groq":
-                    return await this.fetchGroqPricing(modelId);
-                case "xai":
-                    return await this.fetchXAIPricing(modelId);
-                default: {
-                    // For unknown providers, try LiteLLM first
-                    const liteLLMCandidates = [`${provider}/${modelId}`, modelId];
-
-                    for (const candidate of liteLLMCandidates) {
-                        const liteLLMPricing = await liteLLMPricingFetcher.getModelPricing(candidate);
-                        if (liteLLMPricing && !candidate.startsWith("openrouter/")) {
-                            logger.debug(`Using LiteLLM pricing for ${candidate}`);
-                            return liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
-                        }
-                    }
-                    // Fallback to OpenRouter for all other providers
-                    return await this.fetchOpenRouterPricing(`${provider}/${modelId}`);
-                }
-            }
-
-            // 3. For OpenAI models not in direct pricing, try LiteLLM as fallback
-            if (provider === "openai") {
-                const liteLLMCandidates = [`${provider}/${modelId}`, modelId];
-
-                for (const candidate of liteLLMCandidates) {
-                    const liteLLMPricing = await liteLLMPricingFetcher.getModelPricing(candidate);
-                    if (liteLLMPricing && !candidate.startsWith("openrouter/")) {
-                        logger.debug(`Using LiteLLM pricing for ${candidate} (fallback)`);
-                        return liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
-                    }
-                }
-                // Final fallback to OpenRouter
-                return await this.fetchOpenRouterPricing(`openai/${modelId}`);
-            }
-
-            return null;
-        } catch (error) {
-            logger.warn({ error }, `Failed to fetch pricing for ${provider}/${modelId}, falling back to OpenRouter`);
-            return await this.fetchOpenRouterPricing(`${provider}/${modelId}`);
-        }
-    }
-
-    /**
-     * Convert OpenRouter pricing per token to PricingInfo (per million tokens)
-     * OpenRouter API returns pricing per token (e.g., "0.00000015" = $0.15 per million tokens)
-     */
-    private convertOpenRouterPricing(pricing: OpenRouterPricing): PricingInfo {
-        const promptPricePerToken =
-            typeof pricing.prompt === "string" ? parseFloat(pricing.prompt) : (pricing.prompt ?? 0);
-        const completionPricePerToken =
-            typeof pricing.completion === "string" ? parseFloat(pricing.completion) : (pricing.completion ?? 0);
-
-        // Handle both cache_read and input_cache_read field names
-        const cachePricePerToken =
-            pricing.cache_read !== undefined
-                ? typeof pricing.cache_read === "string"
-                    ? parseFloat(pricing.cache_read)
-                    : pricing.cache_read
-                : pricing.input_cache_read !== undefined
-                  ? typeof pricing.input_cache_read === "string"
-                      ? parseFloat(pricing.input_cache_read)
-                      : pricing.input_cache_read
-                  : undefined;
-
-        return {
-            inputPer1M: promptPricePerToken * 1_000_000, // Convert per-token to per-million
-            outputPer1M: completionPricePerToken * 1_000_000, // Convert per-token to per-million
-            cachedReadPer1M: cachePricePerToken ? cachePricePerToken * 1_000_000 : undefined, // Convert per-token to per-million
-        };
-    }
-
-    private async fetchOpenRouterPricing(modelId: string): Promise<PricingInfo | null> {
-        try {
-            const response = await fetch("https://openrouter.ai/api/v1/models", {
-                headers: {
-                    "X-Title": "GenesisTools ASK",
-                },
-            });
-
-            if (!response.ok) {
-                throw new Error(`OpenRouter API error: ${response.status}`);
-            }
-
-            const data = (await response.json()) as OpenRouterModelsResponse;
-
-            const model = data.data.find((m: OpenRouterModelResponse) => m.id === modelId);
-            if (!model?.pricing) {
-                return null;
-            }
-
-            return this.convertOpenRouterPricing(model.pricing);
-        } catch (error) {
-            logger.warn(`Failed to fetch OpenRouter pricing: ${error}`);
-            return null;
-        }
-    }
-
-    private async fetchOpenAIPricing(modelId: string): Promise<PricingInfo | null> {
-        // OpenAI direct pricing (as of 2024)
-        // Source: https://platform.openai.com/pricing
-        const openAIPricing: Record<string, PricingInfo> = {
-            "gpt-4o": {
-                inputPer1M: 5.0, // $5.00 per million tokens
-                outputPer1M: 15.0, // $15.00 per million tokens
-                cachedReadPer1M: 2.5, // $2.50 per million tokens (estimated)
-            },
-            "gpt-4o-mini": {
-                inputPer1M: 0.15, // $0.15 per million tokens
-                outputPer1M: 0.6, // $0.60 per million tokens
-                cachedReadPer1M: 0.075, // $0.075 per million cached read tokens
-                cachedCreatePer1M: 0, // $0 per million cached creation tokens
-            },
-            "gpt-4-turbo": {
-                inputPer1M: 10.0, // $10.00 per million tokens
-                outputPer1M: 30.0, // $30.00 per million tokens
-            },
-            "gpt-4": {
-                inputPer1M: 30.0, // $30.00 per million tokens
-                outputPer1M: 60.0, // $60.00 per million tokens
-            },
-            "gpt-3.5-turbo": {
-                inputPer1M: 0.5, // $0.50 per million tokens
-                outputPer1M: 1.5, // $1.50 per million tokens
-            },
-        };
-
-        const pricing = openAIPricing[modelId];
-        if (pricing) {
-            logger.debug(`Using OpenAI direct pricing for ${modelId}`);
-            return pricing;
-        }
-
-        // Fallback to OpenRouter for unknown models
-        logger.debug(`No direct pricing for ${modelId}, falling back to OpenRouter`);
-        return await this.fetchOpenRouterPricing(`openai/${modelId}`);
-    }
-
-    private async fetchGooglePricing(modelId: string): Promise<PricingInfo | null> {
-        // Google doesn't have a public pricing API, fallback to OpenRouter
-        return await this.fetchOpenRouterPricing(`google/${modelId}`);
-    }
-
-    private async fetchGroqPricing(modelId: string): Promise<PricingInfo | null> {
-        // Groq pricing, fallback to OpenRouter
-        return await this.fetchOpenRouterPricing(`groq/${modelId}`);
-    }
-
-    private async fetchXAIPricing(modelId: string): Promise<PricingInfo | null> {
-        // xAI pricing, fallback to OpenRouter
-        return await this.fetchOpenRouterPricing(`xai/${modelId}`);
+        return (await pricingFor(provider, modelId)) ?? null;
     }
 
     async calculateCost(provider: string, model: string, usage: LanguageModelUsage): Promise<number> {
-        // DEBUG: Log the usage object structure
-        logger.debug(`[DynamicPricing] calculateCost called for ${provider}/${model}`);
-        logger.debug({ usage: SafeJSON.stringify(usage, null, 2) }, `[DynamicPricing] usage object`);
-        logger.debug({ type: typeof usage }, `[DynamicPricing] usage type`);
-        logger.debug({ keys: Object.keys(usage || {}) }, `[DynamicPricing] usage keys`);
-        logger.debug({ inputTokens: usage.inputTokens }, `[DynamicPricing] usage.inputTokens`);
-        logger.debug({ outputTokens: usage.outputTokens }, `[DynamicPricing] usage.outputTokens`);
-        logger.debug({ totalTokens: usage.totalTokens }, `[DynamicPricing] usage.totalTokens`);
-        logger.debug({ cachedInputTokens: usageCacheReadTokens(usage) }, `[DynamicPricing] usage cacheReadTokens`);
-        logger.debug({ cacheWriteTokens: usageCacheWriteTokens(usage) }, `[DynamicPricing] usage cacheWriteTokens`);
-
         const pricing = await this.getPricing(provider, model);
 
         if (!pricing) {
@@ -244,62 +37,51 @@ export class DynamicPricingManager {
         const inputTokens = usageInputNoCacheTokens(usage);
         const outputTokens = usage.outputTokens ?? 0;
         const cachedReadTokens = usageCacheReadTokens(usage);
-        // ai@7 distinguishes cache reads from cache writes (inputTokenDetails)
         const cachedCreateTokens = usageCacheWriteTokens(usage);
 
-        logger.debug({ inputTokens, outputTokens, cachedReadTokens }, `[DynamicPricing] Using tokens`);
-
-        // Check if model supports tiered pricing
         const hasTieredPricing =
             pricing.inputPer1MAbove200k != null ||
             pricing.outputPer1MAbove200k != null ||
             pricing.cachedReadPer1MAbove200k != null ||
             pricing.cachedCreatePer1MAbove200k != null;
 
-        let inputCost: number;
-        let outputCost: number;
-        let cachedReadCost: number;
-        let cachedCreateCost: number;
+        const flat = (tokens: number, per1M: number): number => (tokens / 1_000_000) * per1M;
 
-        if (hasTieredPricing && (inputTokens > 200_000 || outputTokens > 200_000)) {
-            // Use tiered pricing calculation (pricing is per million tokens)
-            const calculateTieredCost = (tokens: number, basePricePer1M: number, tieredPricePer1M?: number): number => {
-                if (tokens <= 0) {
-                    return 0;
-                }
-                if (tokens > 200_000 && tieredPricePer1M != null) {
-                    const tokensBelow200k = 200_000;
-                    const tokensAbove200k = tokens - 200_000;
-                    return (
-                        (tokensBelow200k / 1_000_000) * basePricePer1M +
-                        (tokensAbove200k / 1_000_000) * tieredPricePer1M
-                    );
-                }
-                return (tokens / 1_000_000) * basePricePer1M;
-            };
+        const tiered = (tokens: number, basePer1M: number, abovePer1M?: number): number => {
+            if (tokens <= 0) {
+                return 0;
+            }
 
-            inputCost = calculateTieredCost(inputTokens, pricing.inputPer1M, pricing.inputPer1MAbove200k);
-            outputCost = calculateTieredCost(outputTokens, pricing.outputPer1M, pricing.outputPer1MAbove200k);
-            cachedReadCost = pricing.cachedReadPer1M
-                ? calculateTieredCost(cachedReadTokens, pricing.cachedReadPer1M, pricing.cachedReadPer1MAbove200k)
-                : 0;
-            cachedCreateCost = pricing.cachedCreatePer1M
-                ? calculateTieredCost(cachedCreateTokens, pricing.cachedCreatePer1M, pricing.cachedCreatePer1MAbove200k)
-                : 0;
-        } else {
-            // Use flat pricing (pricing is per million tokens)
-            inputCost = (inputTokens / 1_000_000) * pricing.inputPer1M;
-            outputCost = (outputTokens / 1_000_000) * pricing.outputPer1M;
-            cachedReadCost = pricing.cachedReadPer1M ? (cachedReadTokens / 1_000_000) * pricing.cachedReadPer1M : 0;
-            cachedCreateCost = pricing.cachedCreatePer1M
-                ? (cachedCreateTokens / 1_000_000) * pricing.cachedCreatePer1M
-                : 0;
-        }
+            if (tokens > 200_000 && abovePer1M != null) {
+                return flat(200_000, basePer1M) + flat(tokens - 200_000, abovePer1M);
+            }
+
+            return flat(tokens, basePer1M);
+        };
+
+        const useTiers = hasTieredPricing && (inputTokens > 200_000 || outputTokens > 200_000);
+
+        const inputCost = useTiers
+            ? tiered(inputTokens, pricing.inputPer1M, pricing.inputPer1MAbove200k)
+            : flat(inputTokens, pricing.inputPer1M);
+        const outputCost = useTiers
+            ? tiered(outputTokens, pricing.outputPer1M, pricing.outputPer1MAbove200k)
+            : flat(outputTokens, pricing.outputPer1M);
+        const cachedReadCost = pricing.cachedReadPer1M
+            ? useTiers
+                ? tiered(cachedReadTokens, pricing.cachedReadPer1M, pricing.cachedReadPer1MAbove200k)
+                : flat(cachedReadTokens, pricing.cachedReadPer1M)
+            : 0;
+        const cachedCreateCost = pricing.cachedCreatePer1M
+            ? useTiers
+                ? tiered(cachedCreateTokens, pricing.cachedCreatePer1M, pricing.cachedCreatePer1MAbove200k)
+                : flat(cachedCreateTokens, pricing.cachedCreatePer1M)
+            : 0;
 
         const totalCost = inputCost + outputCost + cachedReadCost + cachedCreateCost;
         logger.debug(
-            { inputCost, outputCost, cachedReadCost, cachedCreateCost, totalCost },
-            `[DynamicPricing] Calculated costs`
+            { provider, model, inputCost, outputCost, cachedReadCost, cachedCreateCost, totalCost },
+            "calculated call cost"
         );
 
         return totalCost;
@@ -310,6 +92,7 @@ export class DynamicPricingManager {
         if (cost > 0 && cost < 0.0001) {
             return `$${cost.toExponential(2)}`;
         }
+
         return `$${cost.toFixed(4)}`;
     }
 
@@ -318,13 +101,12 @@ export class DynamicPricingManager {
     }
 
     clearCache(): void {
-        this.pricingCache.clear();
+        clearPricingCache();
     }
 
     getCacheSize(): number {
-        return this.pricingCache.size;
+        return pricingCacheSize();
     }
 }
 
-// Singleton instance
 export const dynamicPricingManager = new DynamicPricingManager();
