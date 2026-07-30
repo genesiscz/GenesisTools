@@ -319,9 +319,9 @@ Debug logs (visible in `logs/YYYY-MM-DD.log`, always written regardless of `--ve
 
 ### Unified ModelRegistry
 
-- **Source of truth**: `src/utils/ai/ModelRegistry.ts` — all models for all tasks
+- **Source of truth**: `src/utils/ai/local/descriptors/` — all on-device models for all tasks
 - **Indexer layer**: `src/indexer/lib/model-registry.ts` — thin re-export with `getModelsForType()`, `formatModelTable()`
-- **ModelManager**: `src/utils/ai/ModelManager.ts` — delegates to ModelRegistry, keeps download/cache mgmt
+- **ModelManager**: `src/utils/ai/ModelManager.ts` — delegates to the descriptors, keeps download/cache mgmt
 - **ModelEntry interface**: `src/utils/ai/types.ts` — id, name, task, provider, dims, contextLength, speed, ramGB, license, bestFor, taskPrefix
 
 ### Provider selection UX

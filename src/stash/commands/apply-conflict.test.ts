@@ -218,13 +218,17 @@ describe.serial("apply conflict state machine", () => {
         const content = await readFile(join(projectB, "a.ts"), "utf8");
         expect(content).toContain("<<<<<<<");
 
-        let exitedWithError = false;
+        // "Exits non-zero" means `process.exitCode = 1`, not a throw: the
+        // command reports the remaining markers and returns, and the process
+        // exit status carries the failure. Save/restore so the test runner's
+        // own exit status is not polluted by the assertion subject.
+        const previousExitCode = process.exitCode;
         try {
             await applyCommand({ name: "conflict-stash", verboseMarkers: false, action: "resume" });
-        } catch {
-            exitedWithError = true;
+            expect(process.exitCode).toBe(1);
+        } finally {
+            process.exitCode = previousExitCode;
         }
-        expect(exitedWithError).toBe(true);
 
         // Application row still not inserted
         const appRow = getApplicationsRow("conflict-stash", projectB);

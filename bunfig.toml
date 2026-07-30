@@ -22,6 +22,11 @@ minimumReleaseAgeExcludes = [
 
 [test]
 preload = [
+    # First and before any Database exists: the [test] list REPLACES the global
+    # preload, which silently dropped the extension-capable-SQLite swap and made
+    # every sqlite-vec suite fail with "no such module: vec0" whenever another
+    # test file in the same worker had opened a Database first.
+    "./src/utils/search/stores/sqlite-vec-preload.ts",
     "./src/utils/bun/preload-test-sandbox.ts",
     "./src/utils/bun/preload-test-keyring.ts",
     "./src/utils/bun/preload-test-process-exit.ts",

@@ -5,7 +5,7 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import { slugify } from "@genesiscz/utils/string";
 import { readDefaultsSnapshot, writeDefaultsSnapshot } from "../defaults-snapshot";
 import { migrationAllowedHere } from "../migration-guard";
-import { accountRef } from "../refs";
+import { accountRef, isAccountRef, refToId } from "../refs";
 import {
     type AccountEntry,
     type AiConfigData,
@@ -409,7 +409,19 @@ export const migrateConfigV4: ConfigMigration = {
                 const snapshot = readDefaultsSnapshot(storage);
 
                 if (snapshot) {
-                    converted.defaults = snapshot;
+                    // The snapshot may predate an old-binary account REMOVAL, so
+                    // its refs are filtered against the accounts that actually
+                    // survived — a restored default must never point at a ghost.
+                    const ids = new Set(converted.accounts.map((entry) => entry.id));
+                    const account = Object.fromEntries(
+                        Object.entries(snapshot.account ?? {}).filter(
+                            ([, ref]) => isAccountRef(ref) && ids.has(refToId(ref))
+                        )
+                    );
+                    converted.defaults = {
+                        ...snapshot,
+                        ...(Object.keys(account).length > 0 ? { account } : { account: undefined }),
+                    };
                     logger.info("v4 migration: restored defaults from the snapshot after an old-binary rewrite");
                 }
             }

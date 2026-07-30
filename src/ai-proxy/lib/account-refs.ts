@@ -65,10 +65,15 @@ export function resolveProxyAccountEntry(
             return byId;
         }
 
+        // A dangling ref resolves to NOTHING, never to a name. The id is
+        // immutable precisely so that traffic and billing cannot silently move
+        // to a different account that happens to reuse the display name after
+        // the referenced one was deleted.
         logger.warn(
             { proxyAccount: account.name, ref },
-            "ai-proxy: account ref points at an AI-config account that no longer exists"
+            "ai-proxy: account ref points at an AI-config account that no longer exists; refusing the name fallback"
         );
+        return undefined;
     }
 
     const name = legacyAccountNameOf(account);

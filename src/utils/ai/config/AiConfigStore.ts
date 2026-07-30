@@ -248,6 +248,11 @@ export class AiConfigStore {
 
     async withLock<T>(fn: (data: AiConfigData) => Promise<T>): Promise<T> {
         return this.storage.withConfigLock(async () => {
+            // BEFORE the callback, not only before the write: callers nest vault
+            // writes inside `fn` (the lock-order contract says config lock first,
+            // vault second), so a worktree build that is refused the config write
+            // must be refused before it can mutate the vault behind a live ref.
+            assertSafeToWriteRealConfig();
             const { config } = await AiConfigStore.readFrom(this.storage);
             const result = await fn(config);
 

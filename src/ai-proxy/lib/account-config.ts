@@ -120,6 +120,31 @@ export function accountConfigFingerprint(account: AiProxyAccountConfig): string 
  * key and would put a keychain prompt in the request path.
  */
 export async function accountBindingFingerprint(account: AiProxyAccountConfig): Promise<string> {
+    // Same 1s TTL as the vault stamp below, for the same reason: this runs per
+    // routed request, and without the cache every request paid a config load,
+    // a redactSecrets deep clone, two stringifies and a sha256 even when
+    // nothing had changed. One second still catches a rotation within a
+    // rebuild's worth of latency.
+    const now = Date.now();
+    const cached = bindingFingerprintCache.get(account.name);
+
+    if (cached && now - cached.at < VAULT_STAMP_TTL_MS) {
+        return cached.fingerprint;
+    }
+
+    const fingerprint = await computeBindingFingerprint(account);
+    bindingFingerprintCache.set(account.name, { at: now, fingerprint });
+    return fingerprint;
+}
+
+const bindingFingerprintCache = new Map<string, { at: number; fingerprint: string }>();
+
+/** Drop the fingerprint cache. Tests rotate credentials faster than its TTL. */
+export function _resetBindingFingerprintCacheForTest(): void {
+    bindingFingerprintCache.clear();
+}
+
+async function computeBindingFingerprint(account: AiProxyAccountConfig): Promise<string> {
     const parts: Record<string, unknown> = { config: accountConfigFingerprint(account) };
 
     try {
@@ -187,6 +212,9 @@ function vaultStamp(): number {
 /** Drop the stamp cache. Tests swap config roots faster than its TTL. */
 export function _resetVaultStampCacheForTest(): void {
     vaultStampCache = null;
+    // The binding fingerprint rides the same TTL; a test that resets one
+    // expects both to recompute.
+    bindingFingerprintCache.clear();
 }
 
 export function migrateAccountConfig(account: AiProxyAccountConfig & LegacyAccountFields): AiProxyAccountConfig {

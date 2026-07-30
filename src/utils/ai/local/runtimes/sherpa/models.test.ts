@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { homedir } from "node:os";
+import { env } from "@genesiscz/utils/env";
 import { DIARIZE_ARTIFACTS, DIARIZE_MODEL_DIR, EMBEDDING_MODEL, SEGMENTATION_MODEL } from "./models";
 
 describe("diarize-models config", () => {
@@ -10,6 +12,21 @@ describe("diarize-models config", () => {
             "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx"
         );
         expect(DIARIZE_MODEL_DIR).toMatch(/[\\/]\.genesis-tools[\\/]transcribe[\\/]models[\\/]diarization/);
+    });
+
+    /**
+     * The safety property the path exists for: `ArtifactStore.prune()` deletes
+     * under this dir, so a sandboxed run (the test preload sets
+     * GENESIS_TOOLS_HOME to a throwaway root before any import) must resolve it
+     * INSIDE the sandbox. The suffix assertion above also passed for the old
+     * bare-homedir() spelling, which pointed sandboxed prunes at real weights.
+     */
+    it("follows GENESIS_TOOLS_HOME instead of the real home", () => {
+        const sandboxHome = env.tools.getHome();
+
+        expect(sandboxHome).not.toBe(homedir());
+        expect(DIARIZE_MODEL_DIR.startsWith(sandboxHome)).toBe(true);
+        expect(DIARIZE_MODEL_DIR.startsWith(`${homedir()}/.genesis-tools`)).toBe(false);
     });
 
     it("describes both weights as url artifacts, the tarball unpacking into the model dir", () => {

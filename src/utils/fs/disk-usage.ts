@@ -310,14 +310,18 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
             }
             return;
         } catch (err) {
+            // Fall through to the readdir path on EVERY bulk failure, not only
+            // ENOTSUP. Returning here on ENOENT/EACCES/EMFILE silently dropped
+            // the whole subtree: under fd pressure (transient EMFILE from
+            // concurrent FSEvents watchers) a scan of a perfectly readable
+            // directory yielded ZERO entries and no error a caller would act
+            // on. readdirSync gets its own attempt below — a persistent
+            // condition still surfaces through the same onError, and a
+            // transient one heals instead of undercounting.
             if (err instanceof GetattrlistbulkUnsupportedError) {
                 logger.debug({ root }, "walkFiles: ENOTSUP, falling back to readdir+stat");
-                // fall through to readdir path below
             } else {
-                // `open(dir)` failed (ENOENT, EACCES, ENOTDIR…) — surface as a
-                // walk error, same shape readdir would have produced.
-                opts.onError?.({ path: root, errno: errnoOf(err) });
-                return;
+                logger.debug({ root, errno: errnoOf(err) }, "walkFiles: bulk open failed, falling back to readdir");
             }
         }
     }
