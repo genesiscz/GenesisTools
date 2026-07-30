@@ -14,8 +14,24 @@ import { logger } from "@genesiscz/utils/logger";
  * against the real home only when this build is the installed one, or the user
  * opts in explicitly.
  */
+const WORKTREE_MARKERS = ["/.worktrees/", "/.claude/worktrees/"];
+
+/**
+ * Where this build's code lives. A worktree build stays a worktree build no
+ * matter what the cwd says: agent shells reset cwd between calls, daemons run
+ * from `/`, and `bun /abs/path/to/worktree/src/... ` from $HOME has an
+ * innocent-looking cwd — which is exactly how the cwd-only version of this
+ * guard let a worktree build migrate the real config anyway.
+ */
+let codeDir = import.meta.dir;
+
 export function isWorktreeCheckout(cwd: string = process.cwd()): boolean {
-    return cwd.includes("/.worktrees/") || cwd.includes("/.claude/worktrees/");
+    return [cwd, codeDir].some((dir) => WORKTREE_MARKERS.some((marker) => dir.includes(marker)));
+}
+
+/** Test seam: fake the build location. Pass undefined to restore the real one. */
+export function _setCodeDirForTest(dir: string | undefined): void {
+    codeDir = dir ?? import.meta.dir;
 }
 
 /**
@@ -52,13 +68,12 @@ export function migrationAllowedHere(): boolean {
         return true;
     }
 
-    const cwd = process.cwd();
-    if (!cwd.includes("/.worktrees/") && !cwd.includes("/.claude/worktrees/")) {
+    if (!isWorktreeCheckout()) {
         return true;
     }
 
     logger.warn(
-        { cwd },
+        { cwd: process.cwd(), codeDir },
         "skipping AI config migration: this is a worktree build and the real config is shared with the installed tools. Set GENESIS_TOOLS_ALLOW_REAL_MIGRATION=1 to override."
     );
     return false;

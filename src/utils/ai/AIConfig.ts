@@ -404,9 +404,29 @@ export class AIConfig {
         const store = await AiConfigStore.load();
 
         return store.withLock(async (config) => {
-            const projected = applyDefaults(projectToV3(config));
+            const raw = projectToV3(config);
+            const projected = applyDefaults(raw);
 
             const result = await fn(projected);
+
+            // applyDefaults() injected DEFAULT_TASKS rungs the v4 config never
+            // contained. Persisting an untouched one would overwrite a real v4
+            // task default (a model-only pin) with a synthetic provider — and
+            // `summarize: cloud` names a provider no plugin implements, which
+            // would break resolution outright. Drop every injected rung the
+            // mutator left unchanged; the read view still applies the default.
+            for (const [task, value] of Object.entries(projected.tasks)) {
+                const synthetic = DEFAULT_TASKS[task];
+
+                if (
+                    !raw.tasks[task] &&
+                    synthetic &&
+                    value.provider === synthetic.provider &&
+                    value.model === synthetic.model
+                ) {
+                    delete projected.tasks[task];
+                }
+            }
 
             // Fold the v3-shaped edits back into the v4 document the store will
             // persist, then refresh this facade's projection from it.

@@ -39,10 +39,13 @@ interface ApiKeyProviderSpec {
 }
 
 const SPECS: ApiKeyProviderSpec[] = [
+    // summarize/translate are plain chat calls (the facade builds the prompt),
+    // so every chat-capable provider declares them — omitting them here made
+    // `ai.summarize()`/`ai.translate()` hard-fail for non-anthropic accounts.
     {
         id: "openai",
         envKeys: ["OPENAI_API_KEY"],
-        capabilities: ["chat", "embed", "transcribe", "tts"],
+        capabilities: ["chat", "summarize", "translate", "embed", "transcribe", "tts"],
         create: createOpenAI,
     },
     {
@@ -51,34 +54,39 @@ const SPECS: ApiKeyProviderSpec[] = [
         capabilities: ["chat", "summarize", "translate"],
         create: createAnthropic,
     },
-    { id: "groq", envKeys: ["GROQ_API_KEY"], capabilities: ["chat", "transcribe"], create: createGroq },
+    {
+        id: "groq",
+        envKeys: ["GROQ_API_KEY"],
+        capabilities: ["chat", "summarize", "translate", "transcribe"],
+        create: createGroq,
+    },
     {
         id: "google",
         // GOOGLE_GENERATIVE_AI_API_KEY is what the bare @ai-sdk/google singleton
         // read. Naming it here keeps that variable working now that the singleton
         // path is gone, instead of it silently disappearing.
         envKeys: ["GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"],
-        capabilities: ["chat", "embed"],
+        capabilities: ["chat", "summarize", "translate", "embed"],
         create: createGoogleGenerativeAI,
     },
     {
         id: "xai",
         envKeys: ["XAI_API_KEY", "X_AI_API_KEY"],
-        capabilities: ["chat", "tts", "transcribe"],
+        capabilities: ["chat", "summarize", "translate", "tts", "transcribe"],
         baseURL: "https://api.x.ai/v1",
         create: createOpenAI,
     },
     {
         id: "openrouter",
         envKeys: ["OPENROUTER_API_KEY"],
-        capabilities: ["chat"],
+        capabilities: ["chat", "summarize", "translate"],
         baseURL: "https://openrouter.ai/api/v1",
         create: createOpenAI,
     },
     {
         id: "jinaai",
         envKeys: ["JINA_AI_API_KEY"],
-        capabilities: ["chat", "embed", "rerank"],
+        capabilities: ["chat", "summarize", "translate", "embed", "rerank"],
         baseURL: "https://api.jina.ai/v1",
         create: createOpenAI,
     },

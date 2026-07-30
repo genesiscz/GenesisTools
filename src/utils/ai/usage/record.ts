@@ -1,4 +1,5 @@
 import { appendFileSync, mkdirSync } from "node:fs";
+import { usageCacheReadTokens, usageCacheWriteTokens } from "@genesiscz/utils/ask/usage-tokens";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { effectivePricing } from "../catalog/pricing";
@@ -114,9 +115,13 @@ function deriveCostUsd(event: UsageEvent, usage: UsageEventInput["usage"]): numb
         return undefined;
     }
 
+    // The band is measured on the FULL prompt: `event.inputTokens` is the
+    // cache-EXCLUDED count (by design, see types.ts), so cache reads and writes
+    // must be added back or a 400k prompt served mostly from cache never
+    // crosses the >200k rule and books at the sub-200k rates.
     const resolved = effectivePricing(rates, {
         at: new Date(event.at),
-        contextTokens: event.inputTokens,
+        contextTokens: event.inputTokens + usageCacheReadTokens(usage) + usageCacheWriteTokens(usage),
     });
 
     if (usage) {

@@ -4,6 +4,7 @@ import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import { englishLanguageName } from "@app/youtube/lib/languages";
 import { createPartialThrottle, type PartialThrottle } from "@app/youtube/lib/partial-throttle";
 import { buildPresetBlock } from "@app/youtube/lib/presets";
+import { resolveProviderChoice } from "@app/youtube/lib/provider-choice";
 import type { SummarizeOpts, SummarizeResult, SummaryBin, SummaryServiceDeps } from "@app/youtube/lib/summarize.types";
 import type { Transcript } from "@app/youtube/lib/transcript.types";
 import { compactTranscript } from "@app/youtube/lib/transcript-compact";
@@ -244,19 +245,25 @@ export class SummaryService {
             ? null
             : (opts.provider ?? resolveAiSpecForTask(await this.config.getAll(), "summary"));
 
+        // A configured spec is "provider" or "provider/model" — NOT a ModelRef.
+        // Passed raw as `model:`, a provider-only "grok" parses as a bare model
+        // id: some default account gets billed and the literal string goes
+        // upstream as the model id. Route it through the same resolver every
+        // other consumer of these specs uses.
+        const configuredChoice = configuredSpec ? await resolveProviderChoice({ fallbackSpec: configuredSpec }) : null;
+        const effectiveChoice = opts.providerChoice ?? configuredChoice;
+
         const startedAt = new Date();
         const result = await this.deps.callLLM({
             systemPrompt,
             userPrompt: text,
             streaming: false,
-            ...(opts.providerChoice
-                ? { providerChoice: opts.providerChoice }
-                : { task: "summarize" as const, app: "youtube", ...(configuredSpec ? { model: configuredSpec } : {}) }),
+            ...(effectiveChoice ? { providerChoice: effectiveChoice } : { task: "summarize" as const, app: "youtube" }),
         });
         const completedAt = new Date();
-        const ids = opts.providerChoice
-            ? identifyProviderChoice(opts.providerChoice)
-            : { provider: configuredSpec ?? "default", model: "(config default)" };
+        const ids = effectiveChoice
+            ? identifyProviderChoice(effectiveChoice)
+            : { provider: "default", model: "(config default)" };
 
         await recordYoutubeUsage({
             action: "summarize:short",

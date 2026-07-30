@@ -158,14 +158,23 @@ export async function applyV3Tokens(account: AccountEntry, tokens: AIAccountEntr
 
 export async function applyV3Secondary(account: AccountEntry, secondary: AISecondaryLogin): Promise<void> {
     const { accessToken, refreshToken, ...rest } = secondary;
+    const existing = account.credentials.secondary;
 
+    // An empty token here usually means toSecondary() coerced a failed vault
+    // read to "" (no master-key rung answered synchronously), not that the
+    // caller cleared it. Rebuilding without the field would drop the SecureRef
+    // and orphan the vault entry, so keep the stored credential instead.
     account.credentials.secondary = {
         ...rest,
         ...(accessToken
             ? { accessToken: await vaultOrLiteral(`ai/${account.id}/secondary.accessToken`, accessToken) }
-            : {}),
+            : existing?.accessToken
+              ? { accessToken: existing.accessToken }
+              : {}),
         ...(refreshToken
             ? { refreshToken: await vaultOrLiteral(`ai/${account.id}/secondary.refreshToken`, refreshToken) }
-            : {}),
+            : existing?.refreshToken
+              ? { refreshToken: existing.refreshToken }
+              : {}),
     };
 }
