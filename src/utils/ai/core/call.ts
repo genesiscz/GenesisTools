@@ -49,6 +49,8 @@ export interface CallLLMOptions {
     streaming?: boolean;
     maxTokens?: number;
     temperature?: number;
+    /** Extra per-request HTTP headers, e.g. the ai-proxy's `x-gt-*` job tags. */
+    headers?: Record<string, string | undefined>;
     /** Write streaming chunks to this writable (defaults to process.stdout) */
     streamTarget?: NodeJS.WritableStream;
 }
@@ -109,6 +111,15 @@ export interface CoreChatOptions {
     maxSteps?: number;
     maxTokens?: number;
     temperature?: number;
+    /**
+     * Extra HTTP headers for THIS request. The ai-proxy reads `x-gt-session` /
+     * `x-gt-stage` / `x-gt-run` / `x-gt-label` off them and groups its transcripts
+     * and usage records by those tags (src/ai-proxy/lib/usage/transcripts.ts:419).
+     *
+     * They belong on the call rather than on the binding: a binding is built once
+     * per account and reused, while tags change from one request to the next.
+     */
+    headers?: Record<string, string | undefined>;
     stream?: boolean;
     /** Required when `stream` is set: where text deltas go. */
     onChunk?: (text: string) => void;
@@ -154,6 +165,7 @@ export async function coreChat(options: CoreChatOptions): Promise<CoreChatResult
         model: target.model,
         system: effectiveSystemPrompt(target.systemPromptPrefix, options.system),
         providerOptions: buildProviderOptions(target.providerType),
+        ...(options.headers ? { headers: options.headers } : {}),
         ...(options.maxTokens ? { maxOutputTokens: options.maxTokens } : {}),
         ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
         ...(hasTools && tools ? { tools, stopWhen: stepCountIs(options.maxSteps ?? DEFAULT_MAX_STEPS) } : {}),
@@ -269,6 +281,7 @@ export async function callLLM(options: CallLLMOptions): Promise<CallLLMResult> {
             prompt: options.userPrompt,
             maxTokens: options.maxTokens,
             temperature: options.temperature,
+            headers: options.headers,
         });
 
         return { content: result.content, usage: result.usage };
@@ -297,6 +310,7 @@ export async function callLLM(options: CallLLMOptions): Promise<CallLLMResult> {
         prompt: options.userPrompt,
         maxTokens: options.maxTokens,
         temperature: options.temperature,
+        headers: options.headers,
         stream: true,
         onChunk: write,
     });
@@ -318,6 +332,7 @@ export async function streamLLM(
         prompt: options.userPrompt,
         maxTokens: options.maxTokens,
         temperature: options.temperature,
+        headers: options.headers,
         stream: true,
         onChunk: options.onChunk,
     });

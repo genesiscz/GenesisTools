@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { clearPricingCache, convertOpenRouterPricing, pricingCacheSize, pricingFor } from "./pricing";
+import { clearPricingCache, convertOpenRouterPricing, effectivePricing, pricingCacheSize, pricingFor } from "./pricing";
+import { byId } from "./static";
+import type { ModelPricing } from "./types";
 
 /**
  * Network is stubbed out: these tests pin the LADDER (which source answers,
@@ -113,5 +115,171 @@ describe("pricing ladder", () => {
             cachedReadPer1M: 1.25,
         });
         expect(convertOpenRouterPricing({})).toEqual({ inputPer1M: 0, outputPer1M: 0 });
+    });
+});
+
+describe("effectivePricing", () => {
+    const base: ModelPricing = { inputPer1M: 3, outputPer1M: 15, cachedReadPer1M: 0.3 };
+
+    test("pricing without rules passes through unchanged", () => {
+        expect(effectivePricing(base)).toEqual(base);
+        expect(effectivePricing({ ...base, rules: [] }, { at: new Date("2026-07-29") })).toEqual(base);
+    });
+
+    test("the resolved price carries no rules, so it cannot be applied twice", () => {
+        const withRule: ModelPricing = { ...base, rules: [{ to: "2026-08-31", inputPer1M: 2 }] };
+        const resolved = effectivePricing(withRule, { at: new Date("2026-07-29") });
+
+        expect(resolved.rules).toBeUndefined();
+        expect(effectivePricing(resolved)).toEqual(resolved);
+    });
+
+    test("date windows are inclusive at both ends", () => {
+        const promo: ModelPricing = { ...base, rules: [{ from: "2026-08-01", to: "2026-08-31", inputPer1M: 2 }] };
+        const on = (day: string) => effectivePricing(promo, { at: new Date(`${day}T12:00:00Z`) }).inputPer1M;
+
+        expect(on("2026-07-31")).toBe(3);
+        expect(on("2026-08-01")).toBe(2);
+        expect(on("2026-08-31")).toBe(2);
+        expect(on("2026-09-01")).toBe(3);
+    });
+
+    test("an open-ended window applies on the side it omits", () => {
+        const until: ModelPricing = { ...base, rules: [{ to: "2026-08-31", inputPer1M: 2 }] };
+        const since: ModelPricing = { ...base, rules: [{ from: "2026-08-01", inputPer1M: 4 }] };
+
+        expect(effectivePricing(until, { at: new Date("2020-01-01") }).inputPer1M).toBe(2);
+        expect(effectivePricing(since, { at: new Date("2099-01-01") }).inputPer1M).toBe(4);
+    });
+
+    test("context bands are inclusive and only apply when the size is known", () => {
+        const tiered: ModelPricing = { ...base, rules: [{ ctxFrom: 200_001, inputPer1M: 6 }] };
+
+        expect(effectivePricing(tiered, { contextTokens: 200_000 }).inputPer1M).toBe(3);
+        expect(effectivePricing(tiered, { contextTokens: 200_001 }).inputPer1M).toBe(6);
+        // No token count given: the surcharge cannot be justified, so it is not charged.
+        expect(effectivePricing(tiered).inputPer1M).toBe(3);
+    });
+
+    test("an upper context bound closes the band", () => {
+        const banded: ModelPricing = { ...base, rules: [{ ctxFrom: 100, ctxTo: 200, inputPer1M: 9 }] };
+
+        expect(effectivePricing(banded, { contextTokens: 99 }).inputPer1M).toBe(3);
+        expect(effectivePricing(banded, { contextTokens: 100 }).inputPer1M).toBe(9);
+        expect(effectivePricing(banded, { contextTokens: 200 }).inputPer1M).toBe(9);
+        expect(effectivePricing(banded, { contextTokens: 201 }).inputPer1M).toBe(3);
+    });
+
+    test("a dated rule needs a date, or it does not apply", () => {
+        const promo: ModelPricing = { ...base, rules: [{ to: "2026-08-31", inputPer1M: 2 }] };
+
+        expect(effectivePricing(promo).inputPer1M).toBe(3);
+    });
+
+    test("a rule overrides only the fields it names", () => {
+        const promo: ModelPricing = { ...base, rules: [{ to: "2026-08-31", inputPer1M: 2 }] };
+        const resolved = effectivePricing(promo, { at: new Date("2026-07-29") });
+
+        expect(resolved.inputPer1M).toBe(2);
+        expect(resolved.outputPer1M).toBe(15);
+        expect(resolved.cachedReadPer1M).toBe(0.3);
+    });
+
+    test("later matching rules win field by field", () => {
+        const stacked: ModelPricing = {
+            ...base,
+            rules: [
+                { ctxFrom: 200_001, inputPer1M: 6, outputPer1M: 22.5 },
+                { to: "2026-08-31", inputPer1M: 2 },
+            ],
+        };
+        const resolved = effectivePricing(stacked, { at: new Date("2026-07-29"), contextTokens: 300_000 });
+
+        // The promo, being later, wins input; the tier still owns output.
+        expect(resolved.inputPer1M).toBe(2);
+        expect(resolved.outputPer1M).toBe(22.5);
+    });
+
+    test("window and band on one rule must BOTH match", () => {
+        const both: ModelPricing = { ...base, rules: [{ to: "2026-08-31", ctxFrom: 200_001, inputPer1M: 7 }] };
+
+        expect(effectivePricing(both, { at: new Date("2026-07-29"), contextTokens: 300_000 }).inputPer1M).toBe(7);
+        expect(effectivePricing(both, { at: new Date("2026-09-29"), contextTokens: 300_000 }).inputPer1M).toBe(3);
+        expect(effectivePricing(both, { at: new Date("2026-07-29"), contextTokens: 1_000 }).inputPer1M).toBe(3);
+    });
+});
+
+describe("catalog entries carrying rules", () => {
+    /** The user's chosen resolution: the discount expires on its own date. */
+    test("Sonnet 5 bills the intro rate inside the window and list price after", () => {
+        const pricing = byId("claude-sonnet-5", "anthropic")?.pricing;
+
+        if (!pricing) {
+            throw new Error("claude-sonnet-5 is missing from the catalog");
+        }
+
+        const intro = effectivePricing(pricing, { at: new Date("2026-07-29T12:00:00Z") });
+        expect(intro.inputPer1M).toBe(2);
+        expect(intro.outputPer1M).toBe(10);
+
+        const listed = effectivePricing(pricing, { at: new Date("2026-09-01T00:00:00Z") });
+        expect(listed.inputPer1M).toBe(3);
+        expect(listed.outputPer1M).toBe(15);
+
+        // The intro price never touched the cache rates.
+        expect(intro.cachedReadPer1M).toBe(0.3);
+        expect(intro.cachedCreatePer1M).toBe(3.75);
+    });
+
+    /**
+     * The compat fields and the rule describe the same surcharge, so they must
+     * never drift apart — this fails the moment someone edits one of them alone.
+     */
+    test("Sonnet 4.5's context rule agrees with its Above200k fields", () => {
+        const pricing = byId("claude-sonnet-4-5-20250929", "anthropic")?.pricing;
+
+        if (!pricing) {
+            throw new Error("claude-sonnet-4-5-20250929 is missing from the catalog");
+        }
+
+        const long = effectivePricing(pricing, { contextTokens: 300_000 });
+
+        // Compared as a whole so the check cannot pass by both sides being
+        // undefined, which is how a consistency assertion quietly goes vacuous.
+        expect({
+            input: long.inputPer1M,
+            output: long.outputPer1M,
+            cachedRead: long.cachedReadPer1M,
+            cachedCreate: long.cachedCreatePer1M,
+        }).toEqual({
+            input: 6,
+            output: 22.5,
+            cachedRead: 0.6,
+            cachedCreate: 7.5,
+        });
+        expect({
+            input: pricing.inputPer1MAbove200k,
+            output: pricing.outputPer1MAbove200k,
+            cachedRead: pricing.cachedReadPer1MAbove200k,
+            cachedCreate: pricing.cachedCreatePer1MAbove200k,
+        }).toEqual({
+            input: 6,
+            output: 22.5,
+            cachedRead: 0.6,
+            cachedCreate: 7.5,
+        });
+
+        // Below the threshold it is the plain Sonnet rate.
+        expect(effectivePricing(pricing, { contextTokens: 200_000 }).inputPer1M).toBe(3);
+    });
+
+    test("models with no conditional pricing resolve to their base rate", () => {
+        const opus = byId("claude-opus-5", "anthropic")?.pricing;
+
+        if (!opus) {
+            throw new Error("claude-opus-5 is missing from the catalog");
+        }
+
+        expect(effectivePricing(opus, { at: new Date("2026-07-29"), contextTokens: 900_000 })).toEqual(opus);
     });
 });

@@ -211,14 +211,27 @@ export const vaultAdmin = {
     },
 };
 
-let instance: SecretStore | null = null;
+let instance: FileSecretStore | null = null;
 
-export async function secrets(): Promise<SecretStore> {
-    if (!instance) {
-        instance = new FileSecretStore();
+/**
+ * Store bound to the CURRENT vault path. Memoised, but rebinds when the
+ * resolved path changes (GENESIS_TOOLS_HOME moves between tests): a singleton
+ * pinned to the first home of the process made migrations write one home's
+ * vault while sync reads consulted another's, which read back as "entry
+ * missing" rather than any error.
+ */
+function fileStore(): FileSecretStore {
+    const fresh = new FileSecretStore();
+
+    if (!instance || instance.vaultFilePath() !== fresh.vaultFilePath()) {
+        instance = fresh;
     }
 
     return instance;
+}
+
+export async function secrets(): Promise<SecretStore> {
+    return fileStore();
 }
 
 export function _resetSecretsForTest(): void {
@@ -240,7 +253,7 @@ export function resolveSecretSync(value: MaybeSecret | undefined): string | unde
         return undefined;
     }
 
-    return new FileSecretStore().getSync(value.path);
+    return fileStore().getSync(value.path);
 }
 
 export async function resolveSecret(value: MaybeSecret | undefined): Promise<string | undefined> {

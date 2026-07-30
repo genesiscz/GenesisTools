@@ -267,7 +267,11 @@ export const migrateConfigV4: ConfigMigration = {
 
         await storage.withConfigLock(async () => {
             const raw = await storage.getConfig<V3ConfigData & { version?: number }>();
-            if (!raw || raw.version === CONFIG_VERSION || (raw.accounts !== undefined && !Array.isArray(raw.accounts))) {
+            if (
+                !raw ||
+                raw.version === CONFIG_VERSION ||
+                (raw.accounts !== undefined && !Array.isArray(raw.accounts))
+            ) {
                 return;
             }
 
