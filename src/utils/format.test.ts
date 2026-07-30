@@ -265,6 +265,17 @@ describe("formatCost", () => {
         expect(formatCost(1.23456)).toBe("$1.2346");
         expect(formatCost(0.001)).toBe("$0.0010");
     });
+
+    // "$0.0000" is indistinguishable from free, and cheap models put real calls
+    // below the 4-decimal floor routinely.
+    it("switches to exponential for a positive cost under the decimal floor", () => {
+        expect(formatCost(0.00003)).toBe("$3.00e-5");
+        expect(formatCost(0.0001)).toBe("$0.0001");
+    });
+
+    it("keeps exact zero as $0.0000 rather than exponential", () => {
+        expect(formatCost(0)).toBe("$0.0000");
+    });
 });
 
 describe("formatTokens", () => {

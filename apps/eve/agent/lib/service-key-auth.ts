@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { type AuthFn, UnauthenticatedError, extractBearerToken } from "eve/channels/auth";
+import { eveEnv } from "./env";
 
 /**
  * Optional per-user service-key auth for the eve agent's HTTP routes.
@@ -16,8 +17,9 @@ import { type AuthFn, UnauthenticatedError, extractBearerToken } from "eve/chann
  * (a comma-separated list — one key per user). When no key is configured the
  * agent stays open, so `eve dev` and localhost use are unaffected.
  *
- * apps/eve is an isolated subproject, so this reads `process.env` directly
- * (the parent repo's env facade is intentionally not imported here).
+ * apps/eve is an isolated subproject and cannot import the parent repo's env
+ * facade, so the variable is read through eve's own facade in `./env` — the
+ * same one-named-accessor rule, applied locally.
  */
 
 /** Split the comma-separated key list into individual keys, dropping blanks. */
@@ -96,7 +98,7 @@ const ACCEPTED_CONTEXT = {
  * mirroring the youtube server's start-time resolution.
  */
 export function serviceKeyAuth(): AuthFn<Request> {
-  const keys = resolveServiceKeys(process.env.EVE_SERVICE_KEY);
+  const keys = resolveServiceKeys(eveEnv.getServiceKey());
 
   return (request) => {
     if (keys.length === 0) {

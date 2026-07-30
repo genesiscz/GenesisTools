@@ -7,13 +7,15 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { ProviderChoice } from "@ask/types";
 import { type CallLLMResult, callLLM as sharedCallLLM } from "@genesiscz/utils/ai/call-llm";
+import { pricingFor } from "@genesiscz/utils/ai/catalog/pricing";
+import { calculateCallCostUsd } from "@genesiscz/utils/ai/llm-cost";
 import type { ClaudeSession, PreparedContent } from "@genesiscz/utils/claude/session";
 import { applySystemPromptPrefix } from "@genesiscz/utils/claude/subscription-billing";
+import { logger } from "@genesiscz/utils/logger";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { estimateTokens } from "@genesiscz/utils/tokens";
 import type { LanguageModelUsage } from "ai";
@@ -530,11 +532,20 @@ export class SummarizeEngine {
         // Step 4: Calculate cost
         let cost: number | undefined;
         if (llmResult.usage) {
-            cost = await dynamicPricingManager.calculateCost(
-                providerChoice.provider.name,
-                providerChoice.model.id,
-                llmResult.usage
-            );
+            // Straight to the catalog + the one cost implementation, rather than
+            // through ask's deprecated pricing shim. `pricingFor` walks the full
+            // ladder (static, then LiteLLM, then OpenRouter), which is what a
+            // one-shot summarize wants: it runs once per command, not per token.
+            const pricing = await pricingFor(providerChoice.provider.name, providerChoice.model.id);
+
+            if (pricing) {
+                cost = calculateCallCostUsd(pricing, llmResult.usage) ?? undefined;
+            } else {
+                logger.warn(
+                    { provider: providerChoice.provider.name, model: providerChoice.model.id },
+                    "summarize: no pricing found; cost omitted rather than reported as zero"
+                );
+            }
         }
 
         // Step 5: Format output
