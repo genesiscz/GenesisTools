@@ -36,6 +36,16 @@ So when you write the end-of-task notification, you can typically rely on a save
 
 This exists because inside a **git worktree** any `bunx` call creates a partial `node_modules/` that shadows the parent checkout's complete one. Bare `bun test` then fails across a hundred unrelated files with errors like `Cannot find module 'parse5/lib/common/doctype'`, which looks exactly like the branch broke the world. Logic lives in `scripts/test-deps.ts` (`diagnose()` / `lockStamp()`), covered by `scripts/test-deps.test.ts`.
 
+### 🛑 Hard rules for agents working in an isolated worktree
+
+Every teammate/subagent given its own worktree MUST, before ANY other work:
+
+1. **Verify the base commit.** Isolated worktrees are often cut from `origin/master`, NOT the campaign/feature branch you were briefed on. Run `git log --oneline -1`; if the briefed base commit is not an ancestor, `git fetch origin <branch> && git reset --hard <base-sha>`. Building on the wrong base silently invalidates every anchor in your brief.
+2. **Run `bun install` in the worktree.** A worktree without its own `node_modules` resolves imports against the MAIN repo's dependency tree and fabricates failures that look like "the branch broke the world" (verified repeatedly; see also Running Tests below).
+3. **Never bare `bun test`** — always `bun run test` (the wrapper repairs the dependency tree first).
+
+Skipping any of these has cost real sessions hours; there are no exceptions.
+
 ### Installation & Setup
 
 ```bash
@@ -152,6 +162,16 @@ See `.claude/docs/tool-template.md` for complete templates (@inquirer + @clack/p
 ## Working on `tools du` (`src/du/`)
 
 **Before touching ANYTHING under `src/du/`, read `.claude/docs/benchmarks-du.md`, and append a new dated section to it for every feature you add.** The native core (`src/du/native/clonesize.c`) is syscall-bound and runs in the hot loop of multi-million-file scans, so an unmeasured feature is a silent regression. Measure with `src/du/native/bench.sh <label>` (fixed target matrix + hyperfine), record system CPU time as the primary metric (wall time on this machine swings with load average — always note `uptime`), and diff the `--json` byte totals. **Identical totals are required only when the change is meant to preserve scan semantics** (refactors, performance work, validation hardening). Features that deliberately change what is counted — `--changed-within` filtering, cloud-boundary pruning, allocation-vs-mapped reporting — must instead state which totals move, by how much, and why. Unexplained movement is a bug either way.
+
+## Code Style: Biome formatting gotchas (write it right the first time)
+
+- **Imports are auto-sorted by module specifier** (`bun:` / `node:` builtins first, then packages and `@genesiscz/...` aliases alphabetically), and named imports inside braces are sorted case-insensitively — write them pre-sorted or the hook churns your diff.
+- **Line width is 120, 4-space indent.** Don't hand-wrap below that; biome unwraps your "pretty" 3-line call back onto one line.
+- **Long call: biome keeps args inline and expands only the trailing object/array** (`fn(a, b, {\n ... \n})`), not one-arg-per-line.
+- **Long `if`: parenthesized multiline, one clause per line** — `if (\n  a ||\n  b\n ) {`.
+- **`// biome-ignore` must name a rule that actually fires there**, else it becomes a `suppressions/unused` warning itself.
+- **The SafeJSON rule (`noRestrictedGlobals` denying bare `JSON`) is already OFF in two zones** — `plugins/*/skills/*/scripts/**` and `src/youtube/extension/**` (biome.json overrides). In those zones use `JSON` directly with NO biome-ignore (it warns as unused); everywhere else use `SafeJSON`, never an ignore.
+- **The pre-commit hook runs `biome check --write --staged`**: it can fix the staged copy while leaving a reflow residue in the working tree of the SAME file. After committing, glance at `git status` and commit the residue as `style:` — don't leave it to pollute the next person's diff.
 
 ## Code Style Rules
 
