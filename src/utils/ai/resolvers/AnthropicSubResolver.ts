@@ -1,15 +1,17 @@
 import type { DetectedProvider } from "@genesiscz/utils/ask/types";
 import type { AIProvider } from "@genesiscz/utils/config/ai.types";
 import { composeAuthFetch } from "../core/fetch";
-import type { AccountResolver } from "./index";
+import type { AccountResolver, ResolveAccountOptions } from "./index";
 import { resolveModelsWithPricing } from "./resolve-models";
 
 export class AnthropicSubResolver implements AccountResolver {
     readonly providerType: AIProvider = "anthropic-sub";
 
-    async resolve(accountName: string): Promise<DetectedProvider> {
+    async resolve(accountName: string, options?: ResolveAccountOptions): Promise<DetectedProvider> {
         const { resolveAccountToken } = await import("@genesiscz/utils/claude/subscription-auth");
-        const { token, account } = await resolveAccountToken(accountName);
+        // `noRefresh` gates only this initial read. The per-request closures below
+        // keep their refresh, because a diagnostic caller never issues a request.
+        const { token, account } = await resolveAccountToken(accountName, { noRefresh: options?.noRefresh });
 
         const { createSubscriptionFetch, SUBSCRIPTION_BETAS, SUBSCRIPTION_SYSTEM_PREFIX } = await import(
             "@genesiscz/utils/claude/subscription-billing"

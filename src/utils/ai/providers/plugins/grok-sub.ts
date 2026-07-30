@@ -20,7 +20,7 @@ export const grokSubPlugin: ProviderPlugin = {
     },
 
     async bind(ctx: BindContext): Promise<ProviderBinding> {
-        const detected = await resolver.resolve(ctx.account.name);
+        const detected = await resolver.resolve(ctx.account.name, { noRefresh: ctx.probe });
 
         return {
             accountId: ctx.account.id,
@@ -30,9 +30,14 @@ export const grokSubPlugin: ProviderPlugin = {
         };
     },
 
+    /**
+     * Read-side only, per CLAUDE.md "A diagnostic must never mutate". `health` is
+     * always a probe; `bind` honours `ctx.probe` so testing an account observes
+     * it instead of changing it.
+     */
     async health(ctx: BindContext) {
         try {
-            await resolver.resolve(ctx.account.name);
+            await resolver.resolve(ctx.account.name, { noRefresh: true });
             return { ok: true, detail: "grok CLI token resolved" };
         } catch (err) {
             return { ok: false, detail: err instanceof Error ? err.message : String(err) };

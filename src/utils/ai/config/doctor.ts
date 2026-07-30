@@ -177,7 +177,7 @@ async function checkAccount(account: AccountEntry, options: DoctorOptions, now: 
 
     if (options.live && plugin.health) {
         try {
-            const health = await plugin.health({ account });
+            const health = await plugin.health({ account, probe: true });
             checks.push(check("account.health", account.name, health.ok ? "ok" : "err", health.detail));
         } catch (err) {
             logger.debug({ err, account: account.name }, "doctor health probe threw");

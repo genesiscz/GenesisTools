@@ -254,6 +254,10 @@ export interface AccountTestResult {
  * Prove an account works: resolve its credential, run the plugin's health probe,
  * and bind the provider once. Binding is the cheap end-to-end call — it is what
  * every task facade does before its first token, and it needs no network.
+ *
+ * Every plugin call here carries `probe: true`. Testing an account must observe
+ * it, never change it: a subscription bind that refreshed would spend the
+ * single-use grant that `test` was supposed to be reporting on.
  */
 export async function testAccount(idOrName: string, options: { live?: boolean } = {}): Promise<AccountTestResult> {
     const store = await AiConfigStore.load();
@@ -266,7 +270,7 @@ export async function testAccount(idOrName: string, options: { live?: boolean } 
     let health: AccountTestResult["health"];
     if (options.live && plugin.health) {
         try {
-            health = await plugin.health({ account });
+            health = await plugin.health({ account, probe: true });
         } catch (err) {
             logger.debug({ err, account: account.name }, "health probe threw during account test");
             health = { ok: false, detail: err instanceof Error ? err.message : String(err) };
@@ -277,7 +281,7 @@ export async function testAccount(idOrName: string, options: { live?: boolean } 
     let bound: ProviderBinding | undefined;
 
     try {
-        bound = await plugin.bind({ account });
+        bound = await plugin.bind({ account, probe: true });
         binding = { ok: true, detail: `bound ${plugin.id} (${bound.billed ? "billed" : "not billed"})` };
     } catch (err) {
         logger.debug({ err, account: account.name }, "bind failed during account test");
