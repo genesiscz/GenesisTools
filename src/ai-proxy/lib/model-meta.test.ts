@@ -1,7 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import { listAnthropicSubProxyModels, listOpenAiSubProxyModels } from "@app/ai-proxy/lib/model-meta";
+import {
+    listAnthropicSubProxyModels,
+    listOpenAiSubProxyModels,
+    listXaiStaticProxyModels,
+} from "@app/ai-proxy/lib/model-meta";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { ANTHROPIC_SUB_ALIASES } from "@genesiscz/utils/ai/anthropic/models";
+import { byProvider } from "@genesiscz/utils/ai/catalog";
+import { isCuratedGrokModelId } from "@genesiscz/utils/ai/grok";
 
 const account: AiProxyAccountConfig = {
     name: "martin",
@@ -14,6 +20,13 @@ const codexAccount: AiProxyAccountConfig = {
     name: "codex",
     provider: "openai-subscription",
     providerSlug: "codex",
+    enabled: true,
+};
+
+const xaiAccount: AiProxyAccountConfig = {
+    name: "xkey",
+    provider: "xai-api-key",
+    providerSlug: "xai",
     enabled: true,
 };
 
@@ -38,6 +51,35 @@ describe("listAnthropicSubProxyModels", () => {
 
         // Live API → ok; no auth / fetch fail → skipped. Never n/a (undefined).
         expect([...statuses].every((status) => status === "ok" || status === "skipped")).toBe(true);
+    });
+});
+
+describe("listXaiStaticProxyModels", () => {
+    it("offers every curated xAI id the shared catalog carries", () => {
+        const models = listXaiStaticProxyModels(xaiAccount, "https://api.x.ai/v1");
+        const expected = byProvider("xai")
+            .map((entry) => entry.id)
+            .filter(isCuratedGrokModelId);
+
+        expect(models.map((model) => model.upstreamId).sort()).toEqual(expected.sort());
+        // The list this replaced held six ids, of which curation kept two.
+        expect(models.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("takes context windows from the catalog and marks the source static", () => {
+        const models = listXaiStaticProxyModels(xaiAccount, "https://api.x.ai/v1");
+        const fast = models.find((model) => model.upstreamId === "grok-4-fast");
+
+        expect(fast?.contextWindow).toBe(2_000_000);
+        expect(models.every((model) => model.source === "static" && model.probeStatus === "skipped")).toBe(true);
+        expect(models.every((model) => model.proxyId.startsWith("xkey/xai/"))).toBe(true);
+    });
+
+    it("keeps ids curation excludes out of the client-facing list", () => {
+        const ids = listXaiStaticProxyModels(xaiAccount, "https://api.x.ai/v1").map((model) => model.upstreamId);
+
+        expect(ids).not.toContain("grok-3");
+        expect(ids).not.toContain("grok-4.20-0309-reasoning");
     });
 });
 

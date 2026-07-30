@@ -1,5 +1,16 @@
 import type { ProviderConfig } from "@genesiscz/utils/ask/types";
 
+/**
+ * The pre-plugin provider wiring, kept alive until the plugin registry owns it.
+ *
+ * This file used to also carry `KNOWN_MODELS`, a hand-maintained model list that
+ * nobody refreshed: it still advertised Opus 4.6 as Anthropic's newest model and
+ * Gemini 1.5 as Google's, so `tools ask models` showed a catalog two generations
+ * stale. Model facts now come from `@genesiscz/utils/ai/catalog`; what is left
+ * here is credential/endpoint wiring, unchanged, waiting for its own move into
+ * the provider plugins.
+ */
+
 export const PROVIDER_CONFIGS: ProviderConfig[] = [
     // OpenAI - High priority, reliable
     {
@@ -130,220 +141,6 @@ export const TRANSCRIPTION_PROVIDERS = [
         priority: 6,
     },
 ];
-
-// Known model configurations for providers that don't have model discovery APIs
-export const KNOWN_MODELS = {
-    openai: [
-        // GPT-5.x series
-        {
-            id: "gpt-5.4",
-            name: "GPT-5.4",
-            contextWindow: 1048576,
-            capabilities: ["chat", "vision", "function-calling", "reasoning"],
-            category: "standard",
-        },
-        {
-            id: "gpt-5.3",
-            name: "GPT-5.3",
-            contextWindow: 1048576,
-            capabilities: ["chat", "vision", "function-calling", "reasoning"],
-            category: "standard",
-        },
-        {
-            id: "gpt-5.2",
-            name: "GPT-5.2",
-            contextWindow: 1048576,
-            capabilities: ["chat", "vision", "function-calling", "reasoning"],
-            category: "standard",
-        },
-        {
-            id: "gpt-5.3-codex",
-            name: "GPT-5.3 Codex",
-            contextWindow: 1048576,
-            capabilities: ["chat", "vision", "function-calling", "reasoning"],
-            category: "standard",
-        },
-        {
-            id: "gpt-5.2-codex",
-            name: "GPT-5.2 Codex",
-            contextWindow: 1048576,
-            capabilities: ["chat", "vision", "function-calling", "reasoning"],
-            category: "standard",
-        },
-        {
-            id: "gpt-5",
-            name: "GPT-5",
-            contextWindow: 1048576,
-            capabilities: ["chat", "vision", "function-calling", "reasoning"],
-            category: "standard",
-        },
-        {
-            id: "gpt-5-mini",
-            name: "GPT-5 Mini",
-            contextWindow: 1048576,
-            capabilities: ["chat", "vision", "function-calling"],
-            category: "mini",
-        },
-        // o-series reasoning models
-        {
-            id: "o3",
-            name: "o3",
-            contextWindow: 200000,
-            capabilities: ["chat", "reasoning", "function-calling"],
-            category: "standard",
-        },
-        {
-            id: "o4-mini",
-            name: "o4 Mini",
-            contextWindow: 200000,
-            capabilities: ["chat", "reasoning", "function-calling"],
-            category: "mini",
-        },
-        {
-            id: "o3-mini",
-            name: "o3 Mini",
-            contextWindow: 200000,
-            capabilities: ["chat", "reasoning", "function-calling"],
-            category: "mini",
-        },
-        // GPT-4o series
-        {
-            id: "gpt-4o",
-            name: "GPT-4o",
-            contextWindow: 128000,
-            capabilities: ["chat", "vision", "function-calling"],
-            category: "standard",
-        },
-        {
-            id: "gpt-4o-mini",
-            name: "GPT-4o Mini",
-            contextWindow: 128000,
-            capabilities: ["chat", "vision", "function-calling"],
-            category: "mini",
-        },
-        // Legacy
-        {
-            id: "gpt-4-turbo",
-            name: "GPT-4 Turbo",
-            contextWindow: 128000,
-            capabilities: ["chat", "function-calling"],
-            category: "standard",
-        },
-        {
-            id: "gpt-4",
-            name: "GPT-4",
-            contextWindow: 8192,
-            capabilities: ["chat", "function-calling"],
-            category: "standard",
-        },
-        {
-            id: "gpt-3.5-turbo",
-            name: "GPT-3.5 Turbo",
-            contextWindow: 16384,
-            capabilities: ["chat"],
-            category: "mini",
-        },
-    ],
-    anthropic: [
-        {
-            id: "claude-opus-4-6",
-            name: "Claude Opus 4.6",
-            contextWindow: 200000,
-            capabilities: ["chat", "vision", "function-calling"],
-            category: "opus",
-        },
-        {
-            id: "claude-sonnet-4-6",
-            name: "Claude Sonnet 4.6",
-            contextWindow: 200000,
-            capabilities: ["chat", "vision", "function-calling"],
-            category: "sonnet",
-        },
-        {
-            id: "claude-opus-4-5",
-            name: "Claude Opus 4.5",
-            contextWindow: 200000,
-            capabilities: ["chat", "vision", "function-calling"],
-            category: "opus",
-        },
-        {
-            id: "claude-sonnet-4-5",
-            name: "Claude Sonnet 4.5",
-            contextWindow: 200000,
-            capabilities: ["chat", "vision", "function-calling"],
-            category: "sonnet",
-        },
-        {
-            id: "claude-haiku-4-5",
-            name: "Claude Haiku 4.5",
-            contextWindow: 200000,
-            capabilities: ["chat", "vision", "function-calling"],
-            category: "haiku",
-        },
-    ],
-    groq: [
-        {
-            id: "llama-3.1-405b-reasoning",
-            name: "Llama 3.1 405B Reasoning",
-            contextWindow: 131072,
-            capabilities: ["chat", "reasoning"],
-        },
-        {
-            id: "llama-3.1-70b-versatile",
-            name: "Llama 3.1 70B Versatile",
-            contextWindow: 131072,
-            capabilities: ["chat"],
-        },
-        {
-            id: "llama-3.1-8b-instant",
-            name: "Llama 3.1 8B Instant",
-            contextWindow: 131072,
-            capabilities: ["chat"],
-        },
-        {
-            id: "mixtral-8x7b-32768",
-            name: "Mixtral 8x7B",
-            contextWindow: 32768,
-            capabilities: ["chat"],
-        },
-    ],
-    google: [
-        {
-            id: "gemini-1.5-pro-latest",
-            name: "Gemini 1.5 Pro (Latest)",
-            contextWindow: 2097152,
-            capabilities: ["chat", "vision", "function-calling"],
-        },
-        {
-            id: "gemini-1.5-flash-latest",
-            name: "Gemini 1.5 Flash (Latest)",
-            contextWindow: 1048576,
-            capabilities: ["chat", "vision", "function-calling"],
-        },
-        {
-            id: "gemini-1.0-pro",
-            name: "Gemini 1.0 Pro",
-            contextWindow: 32768,
-            capabilities: ["chat", "function-calling"],
-        },
-    ],
-    xai: [
-        {
-            id: "grok-beta",
-            name: "Grok Beta",
-            contextWindow: 131072,
-            capabilities: ["chat", "reasoning"],
-        },
-    ],
-    jinaai: [
-        {
-            id: "jina-r1",
-            name: "Jina R1",
-            contextWindow: 8192,
-            capabilities: ["chat", "reasoning"],
-        },
-    ],
-};
 
 export function getProviderConfig(name: string): ProviderConfig | undefined {
     return PROVIDER_CONFIGS.find((config) => config.name === name);

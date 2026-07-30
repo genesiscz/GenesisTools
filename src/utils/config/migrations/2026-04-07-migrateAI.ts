@@ -76,7 +76,7 @@ interface OldClaudeConfig {
 }
 
 // ── Default provider registry ──
-// Matches envKey from src/ask/providers/providers.ts PROVIDER_CONFIGS
+// Matches envKey from src/utils/ask/providers/compat.ts PROVIDER_CONFIGS
 
 const DEFAULT_PROVIDERS: Record<string, ProviderConfig> = {
     openai: { enabled: true, envVariable: "OPENAI_API_KEY" },

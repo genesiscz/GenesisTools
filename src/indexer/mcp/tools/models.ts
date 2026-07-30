@@ -1,4 +1,4 @@
-import { getModelsForType, MODEL_REGISTRY } from "@app/indexer/lib/model-registry";
+import { EMBED_MODEL_REGISTRY, getModelsForType } from "@app/indexer/lib/model-registry";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { registerTool } from "../shared";
@@ -21,7 +21,7 @@ export function registerModelsTools(server: McpServer): void {
 }
 
 function handleModels(args: { type?: "code" | "files" | "mail" | "chat" }): string {
-    const models = args.type ? getModelsForType(args.type) : MODEL_REGISTRY;
+    const models = args.type ? getModelsForType(args.type) : EMBED_MODEL_REGISTRY;
 
     const lines = [
         args.type

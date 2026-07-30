@@ -12,7 +12,12 @@ export type ModelInfo = ModelEntry;
 
 export { getMaxEmbedChars, getTaskPrefix };
 
-export const MODEL_REGISTRY: ModelEntry[] = [...getModelsForTask("embed")];
+/**
+ * On-device embedding models. Named for the task it serves because the plain
+ * `MODEL_REGISTRY` collided with the LLM catalog's legacy export of that name —
+ * two unrelated lists, one identifier, and an import that read as either.
+ */
+export const EMBED_MODEL_REGISTRY: ModelEntry[] = [...getModelsForTask("embed")];
 
 /**
  * Returns models sorted with best matches for the given type first.

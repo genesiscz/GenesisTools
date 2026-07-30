@@ -14,7 +14,9 @@ import type {
 } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
 import type { AskConfig } from "@ask/types/config";
-import { getProviderConfigs, KNOWN_MODELS } from "@genesiscz/utils/ask/providers/providers";
+import { byProvider, formatModelDisplayName } from "@genesiscz/utils/ai/catalog";
+import { toModelInfo } from "@genesiscz/utils/ai/resolvers/resolve-models";
+import { getProviderConfigs } from "@genesiscz/utils/ask/providers/compat";
 import {
     createSubscriptionFetch,
     SUBSCRIPTION_BETAS,
@@ -405,23 +407,20 @@ export class ProviderManager {
                 return await this.getOpenAIModels();
             }
 
-            // For other providers, discover models from LiteLLM pricing data + KNOWN_MODELS fallback
+            // For other providers, discover models from LiteLLM pricing data + static catalog fallback
             const models = await this.getModelsFromLiteLLM(config.name);
             if (models.length > 0) {
                 return models;
             }
 
-            // Fallback to KNOWN_MODELS if LiteLLM has no data for this provider
-            const knownModels = KNOWN_MODELS[config.name as keyof typeof KNOWN_MODELS];
-            if (knownModels) {
+            // Fallback to the static catalog if LiteLLM has no data for this provider
+            const entries = byProvider(config.name);
+            if (entries.length > 0) {
                 const modelsWithPricing = await Promise.all(
-                    knownModels.map(async (model) => {
-                        const pricing = await dynamicPricingManager.getPricing(config.name, model.id);
-                        return {
-                            ...model,
-                            provider: config.name,
-                            pricing: pricing || undefined,
-                        };
+                    entries.map(async (entry) => {
+                        const info = toModelInfo(entry);
+                        const pricing = await dynamicPricingManager.getPricing(config.name, entry.id);
+                        return { ...info, pricing: pricing || info.pricing };
                     })
                 );
 
@@ -473,6 +472,8 @@ export class ProviderManager {
 
         try {
             const allPricing = await liteLLMPricingFetcher.fetchModelPricing();
+            // Provider-scoped so a shared id never borrows another vendor's entry.
+            const curated = new Map(byProvider(providerName).map((entry) => [entry.id, toModelInfo(entry)]));
             const models: ModelInfo[] = [];
             const seenAliases = new Set<string>();
 
@@ -522,13 +523,12 @@ export class ProviderManager {
                 // part of the real id, so only strip slash-style prefixes.
                 const id = prefix.endsWith("/") ? key.slice(prefix.length) : key;
 
-                // Use KNOWN_MODELS for display name if available
-                const knownModels = KNOWN_MODELS[providerName as keyof typeof KNOWN_MODELS];
-                const known = knownModels?.find((m) => m.id === id);
+                // Curated display name when the catalog knows the id, else derive one.
+                const known = curated.get(id);
 
                 models.push({
                     id,
-                    name: known?.name ?? this.formatModelName(id),
+                    name: known?.name ?? formatModelDisplayName(id),
                     contextWindow,
                     capabilities: known?.capabilities ?? ["chat"],
                     provider: providerName,
@@ -567,9 +567,8 @@ export class ProviderManager {
 
             const data = (await response.json()) as OpenAIModelsResponse;
 
-            // Get known model metadata for enrichment
-            const knownModels = KNOWN_MODELS.openai || [];
-            const knownModelsMap = new Map(knownModels.map((m) => [m.id, m]));
+            // Curated metadata to enrich the live list with, where the catalog has it.
+            const knownModelsMap = new Map(byProvider("openai").map((entry) => [entry.id, toModelInfo(entry)]));
 
             // Known chat model prefixes (from @ai-sdk/openai OpenAIChatModelId type)
             const chatModelPrefixes = [
@@ -629,7 +628,7 @@ export class ProviderManager {
 
                     return {
                         id: model.id,
-                        name: knownModel?.name || this.formatModelName(model.id),
+                        name: knownModel?.name || formatModelDisplayName(model.id),
                         contextWindow,
                         capabilities,
                         provider: "openai",
@@ -644,16 +643,21 @@ export class ProviderManager {
             return models;
         } catch (error) {
             logger.error(`Failed to fetch OpenAI models: ${error}`);
-            // Fallback to known models
-            const knownModels = KNOWN_MODELS.openai || [];
+
+            // Fallback to the static catalog. OpenAI's own API is the catalog of
+            // record here, so this list is short by design — it exists for the
+            // ids worth pinning, not to mirror the endpoint offline.
+            const entries = byProvider("openai");
+
+            if (entries.length === 0) {
+                logger.warn("No static OpenAI catalog entries — model list is empty until the API answers again");
+            }
+
             return await Promise.all(
-                knownModels.map(async (model) => {
-                    const pricing = await dynamicPricingManager.getPricing("openai", model.id);
-                    return {
-                        ...model,
-                        provider: "openai",
-                        pricing: pricing || undefined,
-                    };
+                entries.map(async (entry) => {
+                    const info = toModelInfo(entry);
+                    const pricing = await dynamicPricingManager.getPricing("openai", entry.id);
+                    return { ...info, pricing: pricing || info.pricing };
                 })
             );
         }
@@ -698,15 +702,6 @@ export class ProviderManager {
         }
         // Default fallback
         return 4096;
-    }
-
-    private formatModelName(modelId: string): string {
-        // Convert model ID to readable name
-        // e.g., "gpt-4-turbo-preview" -> "GPT-4 Turbo Preview"
-        return modelId
-            .split("-")
-            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-            .join(" ");
     }
 
     private async getOpenRouterModels(): Promise<ModelInfo[]> {
