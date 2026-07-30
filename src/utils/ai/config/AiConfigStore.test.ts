@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { AiConfigStore } from "./AiConfigStore";
+import { adaptOlderConfig, AiConfigStore } from "./AiConfigStore";
 import { _clearExternalRefScanners, registerExternalRefScanner } from "./refs";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "./schema";
 
@@ -224,6 +224,30 @@ describe("AiConfigStore validation", () => {
         AiConfigStore.invalidate();
 
         expect(AiConfigStore.load()).rejects.toThrow("not a valid v4 config");
+    });
+
+    /**
+     * When the migration is refused — a worktree build, or a user who deferred it —
+     * the file on disk stays v3 while the tools still have to work. Before this,
+     * `tools ask models` died on a schema error and could not list one provider.
+     * The conversion is read-only: it produces the v4 shape in memory and writes
+     * nothing back.
+     */
+    test("a pre-v4 config converts in memory rather than failing the read", () => {
+        const adapted = adaptOlderConfig({
+            _schemaVersion: 3,
+            accounts: [{ name: "legacy", provider: "openai", tokens: { apiKey: "sk-old" } }],
+        });
+
+        expect(adapted?.version).toBe(CONFIG_VERSION);
+        expect(adapted?.accounts[0]?.name).toBe("legacy");
+    });
+
+    test("the in-memory conversion refuses anything it does not recognise", () => {
+        // A v4 file is not "older" — it is the caller's schema errors that matter.
+        expect(adaptOlderConfig({ version: 4, accounts: "not-an-array" })).toBeUndefined();
+        expect(adaptOlderConfig({ version: 99 })).toBeUndefined();
+        expect(adaptOlderConfig({ nothing: true })).toBeUndefined();
     });
 
     test("a missing config loads as empty", async () => {

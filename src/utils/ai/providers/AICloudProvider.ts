@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { providerApiKey } from "@genesiscz/utils/ai/providers/resolve";
 import { TranscriptionManager } from "@genesiscz/utils/ai/transcription/TranscriptionManager";
 import type {
     AIEmbeddingProvider,
@@ -209,7 +210,7 @@ export class AICloudProvider
 
         const model = options?.model ?? "text-embedding-3-small";
         const { createOpenAI } = await import("@ai-sdk/openai");
-        const openai = createOpenAI();
+        const openai = createOpenAI({ apiKey: await providerApiKey("openai") });
 
         const MAX_BATCH = 2048;
         const results: EmbeddingResult[] = [];
@@ -261,20 +262,20 @@ export class AICloudProvider
         switch (providerName) {
             case "groq": {
                 const { createGroq } = await import("@ai-sdk/groq");
-                const groq = createGroq();
+                const groq = createGroq({ apiKey: await providerApiKey("groq") });
                 return groq(modelId);
             }
             case "openrouter": {
                 const { createOpenAI } = await import("@ai-sdk/openai");
                 const openrouter = createOpenAI({
-                    apiKey: env.ai.openrouter.getKey(),
+                    apiKey: await providerApiKey("openrouter"),
                     baseURL: "https://openrouter.ai/api/v1",
                 });
                 return openrouter(modelId);
             }
             case "openai": {
                 const { createOpenAI } = await import("@ai-sdk/openai");
-                const openai = createOpenAI();
+                const openai = createOpenAI({ apiKey: await providerApiKey("openai") });
                 return openai(modelId);
             }
             default:

@@ -1,5 +1,10 @@
+import { aiProxyPlugin } from "./plugins/ai-proxy";
 import { anthropicSubPlugin } from "./plugins/anthropic-sub";
 import { apiKeyPlugins } from "./plugins/api-key";
+import { githubCopilotPlugin } from "./plugins/github-copilot";
+import { grokSubPlugin } from "./plugins/grok-sub";
+import { localPlugins } from "./plugins/local";
+import { openAiSubPlugin } from "./plugins/openai-sub";
 import { registerPlugin } from "./registry";
 
 /**
@@ -18,7 +23,12 @@ export function registerBuiltInPlugins(): void {
     }
 
     registerPlugin(anthropicSubPlugin);
-    for (const plugin of apiKeyPlugins) {
+    registerPlugin(openAiSubPlugin);
+    registerPlugin(grokSubPlugin);
+    registerPlugin(githubCopilotPlugin);
+    registerPlugin(aiProxyPlugin);
+
+    for (const plugin of [...apiKeyPlugins, ...localPlugins]) {
         registerPlugin(plugin);
     }
 

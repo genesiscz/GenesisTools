@@ -15,6 +15,8 @@ export type Capability =
     | "tts"
     | "translate"
     | "summarize"
+    | "classify"
+    | "sentiment"
     | "image"
     | "video"
     | "realtime"

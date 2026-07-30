@@ -1,10 +1,36 @@
 import { statSync } from "node:fs";
+import type { AIConfigData as V3ConfigData } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { _resetMigrationStateForTest, ensureAiConfigMigrated } from "./migrate";
 import { assertSafeToWriteRealConfig } from "./migration-guard";
+import { convertConfig } from "./migrations/2026-08-configV4";
 import { type AccountRef, accountRef, type Referrer, referrersOf } from "./refs";
-import { type AccountEntry, type AiConfigData, aiConfigSchema, emptyConfig } from "./schema";
+import { type AccountEntry, type AiConfigData, aiConfigSchema, CONFIG_VERSION, emptyConfig } from "./schema";
+
+/**
+ * Read a pre-v4 config into the v4 shape, in memory only.
+ *
+ * Returns undefined when the file is not a recognisable older config, so a
+ * genuinely corrupt file still reports the schema errors instead of being
+ * silently treated as empty.
+ */
+export function adaptOlderConfig(raw: Record<string, unknown>): AiConfigData | undefined {
+    const version = raw.version ?? raw._schemaVersion;
+
+    if (version === undefined || Number(version) >= CONFIG_VERSION) {
+        return undefined;
+    }
+
+    try {
+        const converted = convertConfig(raw as unknown as V3ConfigData);
+        logger.debug({ version }, "read an unmigrated AI config through the v3 adapter");
+        return aiConfigSchema.parse(converted);
+    } catch (err) {
+        logger.debug({ err, version }, "older AI config could not be adapted");
+        return undefined;
+    }
+}
 
 export interface AccountFilter {
     provider?: string | string[];
@@ -81,6 +107,15 @@ export class AiConfigStore {
 
         const parsed = aiConfigSchema.safeParse(raw);
         if (!parsed.success) {
+            // An unmigrated file is not a broken file. The migration can legitimately
+            // be deferred (a worktree build, an explicit opt-out), and when it is,
+            // every AI tool must still read the config rather than die on its shape.
+            // Converting in memory is read-only: nothing is written back here.
+            const adapted = adaptOlderConfig(raw);
+            if (adapted) {
+                return { config: adapted, mtimeMs: AiConfigStore.mtimeOf(storage) };
+            }
+
             throw new Error(
                 `~/.genesis-tools/ai/config.json is not a valid v4 config: ${parsed.error.issues
                     .map((issue) => `${issue.path.join(".")} ${issue.message}`)

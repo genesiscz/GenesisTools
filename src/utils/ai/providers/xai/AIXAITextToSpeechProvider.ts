@@ -57,7 +57,12 @@ export class AIXAITextToSpeechProvider implements AITextToSpeechProvider {
      */
     readonly loudnessOffsetDb = 7;
     private readonly client = new XAIClient();
-    private readonly storage = new Storage("ai");
+    /**
+     * The voice list is a 7-day presentation cache, not configuration. It used to
+     * live under `Storage("ai")` beside the credential config, whose lock
+     * discipline and migration chain it has no business touching.
+     */
+    private readonly storage = new Storage("say");
     private readonly forceFreshVoices: boolean;
 
     constructor(options?: AIXAITextToSpeechProviderOptions) {

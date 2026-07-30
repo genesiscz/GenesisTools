@@ -11,6 +11,15 @@ import {
     UnknownProviderError,
 } from "./registry";
 
+function isPlugin(value: unknown): value is ProviderPlugin {
+    return (
+        typeof value === "object" &&
+        value !== null &&
+        typeof (value as ProviderPlugin).id === "string" &&
+        typeof (value as ProviderPlugin).bind === "function"
+    );
+}
+
 function fakePlugin(id: string): ProviderPlugin {
     return {
         id,
@@ -94,23 +103,36 @@ describe("built-in plugins", () => {
     });
 
     // Guards the one manual step in adding a provider: a plugin file that is never
-    // listed in plugins.ts would otherwise just not exist at runtime.
+    // listed in plugins.ts would otherwise just not exist at runtime. The ids come
+    // from the modules themselves rather than a list kept here, because a list
+    // here would need the same manual update it is supposed to catch.
     test("every plugin file is reachable through the barrel", async () => {
         registerBuiltInPlugins();
         const registered = new Set(registeredProviderIds());
 
         const glob = new Bun.Glob("*.ts");
-        const files: string[] = [];
+        const found: string[] = [];
+
         for await (const file of glob.scan({ cwd: `${import.meta.dir}/plugins` })) {
-            files.push(file.replace(/\.ts$/, ""));
+            if (file.endsWith(".test.ts")) {
+                continue;
+            }
+
+            const module: Record<string, unknown> = await import(`${import.meta.dir}/plugins/${file}`);
+
+            for (const exported of Object.values(module)) {
+                for (const candidate of Array.isArray(exported) ? exported : [exported]) {
+                    if (isPlugin(candidate)) {
+                        found.push(candidate.id);
+                    }
+                }
+            }
         }
 
-        for (const file of files) {
-            // api-key.ts contributes several ids; check it by one of them.
-            const ids = file === "api-key" ? ["openai", "xai", "groq", "google", "openrouter", "anthropic"] : [file];
-            for (const id of ids) {
-                expect(registered.has(id)).toBe(true);
-            }
+        expect(found.length).toBeGreaterThan(0);
+
+        for (const id of found) {
+            expect(registered.has(id)).toBe(true);
         }
     });
 });
