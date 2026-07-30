@@ -40,15 +40,15 @@ export type {
     TextLanguageDetectionDriver,
 } from "./LanguageDetector";
 export { createLanguageDetector, LanguageDetector } from "./LanguageDetector";
-export { ModelManager } from "./ModelManager";
 export {
-    findModel,
-    getEmbedModelsForType,
-    getMaxEmbedChars,
-    getModelsByProvider,
-    getModelsForTask,
-    getTaskPrefix,
-} from "./ModelRegistry";
+    byTask as getModelsForTask,
+    byTaskAndProvider as getModelsByProvider,
+    embedModelsForType as getEmbedModelsForType,
+    findDescriptor as findModel,
+    maxEmbedChars as getMaxEmbedChars,
+    taskPrefix as getTaskPrefix,
+} from "./local/descriptors";
+export { ModelManager } from "./ModelManager";
 export { Embedder } from "./tasks/Embedder";
 export { ai, type TaskCommonOptions } from "./tasks/facade";
 export { Summarizer } from "./tasks/Summarizer";

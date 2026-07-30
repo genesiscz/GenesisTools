@@ -1,6 +1,6 @@
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { findModel } from "@genesiscz/utils/ai/ModelRegistry";
+import { findDescriptor } from "@genesiscz/utils/ai/local/descriptors";
 import type { Embedder } from "@genesiscz/utils/ai/tasks/Embedder";
 import { startWakefulInterval, type WakefulInterval } from "@genesiscz/utils/async";
 import type { WatcherSubscription } from "@genesiscz/utils/fs/watcher";
@@ -108,7 +108,7 @@ export class Indexer extends IndexerEventEmitter {
         const modelId = this.config.embedding?.model;
 
         if (modelId) {
-            const model = findModel(modelId);
+            const model = findDescriptor(modelId);
 
             if (model?.contextLength) {
                 return model.contextLength;

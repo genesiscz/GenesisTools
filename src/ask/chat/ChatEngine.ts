@@ -1,14 +1,15 @@
-import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { ChatConfig, ChatMessage, DetectedProvider, ProviderChoice } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
 import type { AIAccount } from "@genesiscz/utils/ai/AIAccount";
+import { costForCall } from "@genesiscz/utils/ai/catalog/pricing";
 import { type CoreChatResult, coreChat } from "@genesiscz/utils/ai/core/call";
 import {
     type AnthropicModelCategory,
     type OpenAIModelCategory,
     resolveModel as resolveModelByName,
 } from "@genesiscz/utils/ask/providers/ModelResolver";
+import { formatTokens } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
 import { estimateTokens } from "@genesiscz/utils/tokens";
 import type { LanguageModel, LanguageModelUsage, ModelMessage, ToolSet } from "ai";
@@ -231,9 +232,7 @@ export class ChatEngine {
      */
     private async withCost(result: CoreChatResult): Promise<ChatResponse> {
         const usage = result.usage;
-        const cost = usage
-            ? await dynamicPricingManager.calculateCost(this.config.provider, this.config.modelName, usage)
-            : undefined;
+        const cost = usage ? await costForCall(this.config.provider, this.config.modelName, usage) : undefined;
 
         logger.debug({ usage, cost, model: this.config.modelName }, "[ChatEngine] call finished");
 
@@ -350,7 +349,7 @@ export class ChatEngine {
         const assistantMessages = this.conversationHistory.filter((msg) => msg.role === "assistant").length;
         const totalTokens = this.getTotalTokens();
 
-        return `${userMessages} user messages, ${assistantMessages} assistant responses, ${dynamicPricingManager.formatTokens(
+        return `${userMessages} user messages, ${assistantMessages} assistant responses, ${formatTokens(
             totalTokens
         )} total tokens`;
     }
@@ -382,9 +381,7 @@ export class ChatEngine {
                 .filter((m) => m.role === "user" || m.role === "assistant")
                 .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
-            logger.info(
-                `Trimmed conversation to fit within ${dynamicPricingManager.formatTokens(maxTokens)} token limit`
-            );
+            logger.info(`Trimmed conversation to fit within ${formatTokens(maxTokens)} token limit`);
         }
     }
 }

@@ -21,7 +21,7 @@ import type {
 } from "@app/youtube/lib/qa.types";
 import { identifyProviderChoice, recordYoutubeUsage } from "@app/youtube/lib/usage";
 import type { VideoId } from "@app/youtube/lib/video.types";
-import { callLLM } from "@genesiscz/utils/ai/call-llm";
+import { callLLM } from "@genesiscz/utils/ai/core/call";
 import { Embedder } from "@genesiscz/utils/ai/tasks/Embedder";
 import { logger } from "@genesiscz/utils/logger";
 

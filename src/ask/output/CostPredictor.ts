@@ -1,4 +1,5 @@
-import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
+import { pricingForCall } from "@genesiscz/utils/ai/catalog/pricing";
+import { formatCost, formatTokens } from "@genesiscz/utils/format";
 
 export interface CostPrediction {
     estimatedCost: number;
@@ -30,7 +31,7 @@ export class CostPredictor {
         const estimatedOutputTokens = estimatedOutputLength ? Math.ceil(estimatedOutputLength / 4) : 500;
 
         // Get pricing for the model
-        const pricing = await dynamicPricingManager.getPricing(provider, model);
+        const pricing = await pricingForCall(provider, model);
 
         if (!pricing) {
             return {
@@ -72,9 +73,9 @@ export class CostPredictor {
      * Format cost prediction for display
      */
     formatPrediction(prediction: CostPrediction): string {
-        const costStr = dynamicPricingManager.formatCost(prediction.estimatedCost);
-        const inputTokensStr = dynamicPricingManager.formatTokens(prediction.estimatedInputTokens);
-        const outputTokensStr = dynamicPricingManager.formatTokens(prediction.estimatedOutputTokens);
+        const costStr = formatCost(prediction.estimatedCost);
+        const inputTokensStr = formatTokens(prediction.estimatedInputTokens);
+        const outputTokensStr = formatTokens(prediction.estimatedOutputTokens);
 
         let confidenceEmoji = "⚠️";
         if (prediction.confidence === "high") {

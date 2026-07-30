@@ -20,6 +20,7 @@ import { formatTable } from "@genesiscz/utils/table.ts";
 import { Command } from "commander";
 import pc from "picocolors";
 import { registerConfigCommands } from "./commands/config";
+import { readStdinValue } from "./commands/config/stdin";
 import { runConfigTui } from "./commands/config/tui";
 
 // ============================================
@@ -33,23 +34,15 @@ interface TranslateFlags {
     clipboard?: boolean;
 }
 
+/**
+ * Prose input, so full trimming is wanted here — unlike `config secret set`,
+ * whose `readStdinValue` preserves bytes verbatim for PEM blobs. One stream
+ * reader underneath, two contracts on top.
+ */
 async function readStdin(): Promise<string | null> {
-    if (process.stdin.isTTY) {
-        return null;
-    }
+    const value = await readStdinValue();
 
-    const chunks: Buffer[] = [];
-    for await (const chunk of process.stdin) {
-        chunks.push(chunk as Buffer);
-    }
-
-    const text = Buffer.concat(chunks).toString("utf-8").trim();
-
-    if (!text) {
-        return null;
-    }
-
-    return text;
+    return value?.trim() || null;
 }
 
 async function cmdTranslate(text: string | undefined, opts: TranslateFlags): Promise<void> {

@@ -1,6 +1,6 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { findModel, getEmbeddingProviderTypes, getEmbedModelsForType } from "./ModelRegistry";
+import { embeddingProviderTypes, embedModelsForType, findDescriptor } from "./local/descriptors";
 import { getProvider } from "./providers";
 import type { ModelEntry } from "./types";
 
@@ -39,8 +39,8 @@ const GPU_LABELS: Record<EmbedProvider, string> = {
 export async function discoverEmbeddingProviders(
     type: "mail" | "code" | "chat" | "files" = "mail"
 ): Promise<EmbeddingProviderOption[]> {
-    const providerTypes = getEmbeddingProviderTypes();
-    const models = getEmbedModelsForType(type);
+    const providerTypes = embeddingProviderTypes();
+    const models = embedModelsForType(type);
 
     const availabilityMap = new Map<EmbedProvider, boolean>();
 
@@ -110,7 +110,7 @@ export async function selectEmbeddingModel(
     provider: string,
     type: "mail" | "code" | "chat" | "files" = "mail"
 ): Promise<string | null> {
-    const allModels = getEmbedModelsForType(type);
+    const allModels = embedModelsForType(type);
     const providerModels = allModels.filter((m) => m.provider === provider);
 
     if (providerModels.length === 0) {
@@ -143,7 +143,7 @@ export async function selectEmbeddingModel(
 // ── Logging ──
 
 export function logProviderChoice(provider: string, model: string): void {
-    const entry = findModel(model);
+    const entry = findDescriptor(model);
     const dims = entry?.dimensions;
     const gpu = GPU_LABELS[provider as EmbedProvider] ?? provider;
     const suffix = dims ? ` (${dims}-dim, ${gpu})` : "";
@@ -152,7 +152,7 @@ export function logProviderChoice(provider: string, model: string): void {
 }
 
 export function getDefaultModel(provider: string, type: "mail" | "code" | "chat" | "files" = "mail"): string {
-    const models = getEmbedModelsForType(type);
+    const models = embedModelsForType(type);
     const first = models.find((m) => m.provider === provider);
     return first?.id ?? provider;
 }

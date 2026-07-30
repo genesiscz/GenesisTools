@@ -11,7 +11,7 @@
  * client-ledger), so date-bounded rules resolve against the booking date and a
  * later table edit never rewrites past invoices.
  */
-import { stripModelVariantSuffix } from "@genesiscz/utils/ai/models/registry";
+import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
 
 interface RatePair {
     inputUsdPerMTok: number;

@@ -392,14 +392,20 @@ export const migrateConfigV4: ConfigMigration = {
 
             const converted = convertConfig(raw);
 
-            // A hybrid means an old binary rewrote a previously-migrated config,
-            // and its rewrite drops the v4 `defaults` block (accounts survive by
-            // reference; defaults do not). The snapshot in defaults.v4.json is
-            // the copy old code cannot touch — prefer it over the reconstruction
-            // above, which is built from the old binary's own fallback values.
-            const hadHybrid = (raw.accounts ?? []).some((account) => accountEntrySchema.safeParse(account).success);
+            // An old binary's rewrite drops the v4 `defaults` block (accounts
+            // survive by reference; defaults do not). The snapshot in
+            // defaults.v4.json is the copy old code cannot touch, and it is
+            // authoritative by construction (written on every v4 write) — so it
+            // is consulted whenever the conversion produced no defaults, NOT
+            // only when a v4-shaped account betrays the rewrite. An old binary
+            // that converted the accounts too (a token refresh through its own
+            // save path) leaves no hybrid to detect, and gating on one would
+            // hand that case the old binary's fallback values instead.
+            const noDefaults =
+                Object.keys(converted.defaults.account ?? {}).length === 0 &&
+                Object.keys(converted.defaults.app ?? {}).length === 0;
 
-            if (hadHybrid) {
+            if (noDefaults) {
                 const snapshot = readDefaultsSnapshot(storage);
 
                 if (snapshot) {

@@ -14,7 +14,7 @@ import {
     resolveAnthropicSubModel,
     tryFetchAnthropicSubModels,
 } from "@genesiscz/utils/ai/anthropic/models";
-import { byProvider } from "@genesiscz/utils/ai/catalog";
+import { byProvider, isDatedModelId } from "@genesiscz/utils/ai/catalog";
 import { toProxyId as toCopilotProxyId } from "@genesiscz/utils/ai/github-copilot/models";
 import { COPILOT_INDIVIDUAL_API } from "@genesiscz/utils/ai/github-copilot/paths";
 import type { CopilotModelRecord } from "@genesiscz/utils/ai/github-copilot/types";
@@ -27,7 +27,6 @@ import {
     isCuratedGrokModelId,
     toProxyId,
 } from "@genesiscz/utils/ai/grok";
-import { isDatedModelId } from "@genesiscz/utils/ai/models/registry";
 import { WHAM_BASE_URL } from "@genesiscz/utils/ai/openai/codex-auth";
 import {
     OPENAI_SUB_BUILTIN_ALIAS_NAMES,

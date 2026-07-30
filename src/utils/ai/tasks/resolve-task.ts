@@ -9,6 +9,8 @@ import { registerBuiltInPlugins } from "../providers/plugins";
 import { tryProviderPlugin } from "../providers/registry";
 import { taskModelDefault } from "./task-models";
 
+const { log } = logger.scoped("ai-tasks");
+
 /**
  * Task resolution WITH graceful degradation.
  *
@@ -83,7 +85,6 @@ export class NoProviderForTaskError extends Error {
  * loaded model per bind (local/adapters/index.ts:102), and nothing else frees it.
  */
 export async function resolveForTask(opts: ResolveTaskOptions): Promise<ResolvedBinding> {
-    const { log } = logger.scoped("ai-tasks");
     const capability = TASK_CAPABILITY[opts.task];
     const base = {
         task: opts.task,
@@ -137,7 +138,6 @@ async function degrade(
     capability: Capability,
     cause: ModelResolutionError
 ): Promise<ResolvedBinding> {
-    const { log } = logger.scoped("ai-tasks");
     registerBuiltInPlugins();
 
     const store = await AiConfigStore.load();
