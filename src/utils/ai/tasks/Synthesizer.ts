@@ -1,5 +1,4 @@
 import { playBuffer, playStream } from "@genesiscz/utils/audio/playback";
-import { isInteractive } from "@genesiscz/utils/cli/executor";
 import type { AIProviderType } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
 import { AIConfig } from "../AIConfig";
@@ -352,6 +351,3 @@ async function resolveProvider(opts: {
             : `No ${selector} TTS provider is available.`
     );
 }
-
-// `isInteractive` import retained for upcoming CLI helpers; silence unused-warn for now.
-void isInteractive;

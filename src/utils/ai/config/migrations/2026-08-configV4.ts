@@ -198,10 +198,28 @@ export function convertConfig(v3: V3ConfigData): AiConfigData {
             continue;
         }
 
+        // Every AIProviderType is also a plugin id EXCEPT "cloud", which was
+        // AICloudProvider("auto") — not a provider at all, but "whichever
+        // OpenAI-shaped key happens to be set". Copying it verbatim produced a
+        // v4 default naming a plugin that does not exist, and `tools ai
+        // summarize` then died with `No enabled account for provider "cloud"`
+        // on any freshly migrated home. Dropping it is the faithful
+        // translation: the availability chain in tasks/resolve-task.ts already
+        // expands "cloud" into openai/groq/openrouter at the same position, so
+        // an absent provider resolves to exactly what "auto" meant.
+        const provider = config.provider === "cloud" ? undefined : config.provider;
+
+        if (config.provider === "cloud") {
+            logger.info(
+                { task },
+                'v4 migration: dropping the legacy "cloud" task provider, the fallback chain covers it'
+            );
+        }
+
         defaults.task = {
             ...(defaults.task ?? {}),
             [task]: {
-                ...(config.provider ? { provider: config.provider } : {}),
+                ...(provider ? { provider } : {}),
                 ...(config.model ? { model: config.model } : {}),
             },
         };

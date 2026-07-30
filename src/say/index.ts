@@ -3,9 +3,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, resolve } from "node:path";
 import * as p from "@clack/prompts";
-import { AI } from "@genesiscz/utils/ai/index.ts";
 import { getModelsForTask } from "@genesiscz/utils/ai/ModelManager";
 import { getProvidersForTask } from "@genesiscz/utils/ai/providers";
+import { ai } from "@genesiscz/utils/ai/tasks/facade";
+import { Synthesizer } from "@genesiscz/utils/ai/tasks/Synthesizer";
 import type { AIProviderType } from "@genesiscz/utils/ai/types.ts";
 import { playBuffer } from "@genesiscz/utils/audio/playback";
 import { runTool } from "@genesiscz/utils/cli";
@@ -390,7 +391,7 @@ interface SpeakCachedArgs {
 
 /**
  * Speak `text` with caching for repeated cloud-TTS phrases. Local macOS
- * provider always uses the standard `AI.speak` path (no cache, free). For
+ * provider always uses the standard `ai.speak` path (no cache, free). For
  * cloud providers, hash the request — on a hit, play the cached audio
  * directly; on a miss, synthesize, play, and record the miss so the Nth
  * occurrence persists.
@@ -410,7 +411,7 @@ async function speakCached(args: SpeakCachedArgs): Promise<void> {
     //     providers. Honor the flag instead.
     // `--output` needs a full buffer, so it never takes the stream-only path.
     if ((provider === "macos" || stream === true) && !outputPath) {
-        await AI.speak(text, {
+        await ai.speak(text, {
             provider,
             voice: effective.voice ?? undefined,
             language: effective.language ?? undefined,
@@ -426,7 +427,7 @@ async function speakCached(args: SpeakCachedArgs): Promise<void> {
 
     // macos + --output, or cloud (with optional cache): need the buffer.
     if (provider === "macos") {
-        const result = await AI.synthesize(text, {
+        const result = await ai.synthesize(text, {
             provider,
             voice: effective.voice ?? undefined,
             language: effective.language ?? undefined,
@@ -484,9 +485,9 @@ async function speakCached(args: SpeakCachedArgs): Promise<void> {
 
     // Miss: synthesize fresh, play the buffer, record the miss (with audio so
     // it persists once the threshold is crossed). We use synthesize+playBuffer
-    // instead of AI.speak so we always have the buffer in hand for caching,
+    // instead of ai.speak so we always have the buffer in hand for caching,
     // regardless of length-based stream/buffer routing in the synthesizer.
-    const result = await AI.synthesize(text, {
+    const result = await ai.synthesize(text, {
         provider,
         voice: effective.voice ?? undefined,
         language: effective.language ?? undefined,
@@ -708,7 +709,7 @@ async function resolveEffective(args: {
 }
 
 async function printVoiceList(filter?: SayProvider): Promise<void> {
-    const grouped = await AI.Synthesizer.create({ provider: "any" }).then((s) =>
+    const grouped = await Synthesizer.create({ provider: "any" }).then((s) =>
         s.listVoices(filter ? { provider: filter as AIProviderType } : undefined)
     );
 
@@ -745,7 +746,7 @@ async function main(): Promise<void> {
 }
 
 // Top-level await keeps the event loop alive for the full synth path.
-// A floating `main()` lets Bun exit early during `AI.synthesize` (Bun.spawn
+// A floating `main()` lets Bun exit early during `ai.synthesize` (Bun.spawn
 // for `say -o` does not always hold a process ref the way `say` playback does).
 await main();
 

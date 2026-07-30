@@ -47,7 +47,13 @@ function shouldRetryTransient(error: unknown): boolean {
 export class Transcriber {
     private provider: AITranscriptionProvider;
 
-    private constructor(provider: AITranscriptionProvider) {
+    private constructor(
+        provider: AITranscriptionProvider,
+        /** Which provider the ladder picked, for callers that report it. */
+        readonly providerType: string,
+        /** The model id the ladder picked, likewise. */
+        readonly modelId: string
+    ) {
         this.provider = provider;
     }
 
@@ -79,7 +85,7 @@ export class Transcriber {
             needs: "transcription",
         });
 
-        return new Transcriber(fromTranscriptionModel(resolved));
+        return new Transcriber(fromTranscriptionModel(resolved), resolved.plugin.id, resolved.model.id);
     }
 
     async transcribe(audioOrPath: Buffer | string, options?: TranscribeOptions): Promise<TranscriptionResult> {
