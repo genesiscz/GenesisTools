@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
-import { masterKey } from "./MasterKey";
+import { masterKey, masterKeySync } from "./MasterKey";
 import { isSecretPath, isSecureRef, type MaybeSecret, type SecureRef, secureRef } from "./SecureRef";
 import { emptyVault, VAULT_HKDF_SALT, VAULT_VERSION, type VaultEntry, type VaultFile } from "./vault-format";
 
@@ -13,6 +13,8 @@ const IV_BYTES = 12;
 
 export interface SecretStore {
     get(path: string): Promise<string | undefined>;
+    /** Sync read for callers whose signature cannot become async. */
+    getSync(path: string): string | undefined;
     set(path: string, value: string): Promise<SecureRef>;
     delete(path: string): Promise<boolean>;
     list(prefix?: string): Promise<string[]>;
@@ -114,6 +116,21 @@ class FileSecretStore implements SecretStore {
         return decryptEntry(await masterKey(), path, entry);
     }
 
+    getSync(path: string): string | undefined {
+        const entry = this.read().entries[path];
+        if (!entry) {
+            return undefined;
+        }
+
+        const key = masterKeySync();
+        if (!key) {
+            logger.warn({ path }, "vault secret needs the master key but no rung could supply it synchronously");
+            return undefined;
+        }
+
+        return decryptEntry(key, path, entry);
+    }
+
     async set(path: string, value: string): Promise<SecureRef> {
         const ref = secureRef(path);
         const entry = encryptEntry(await masterKey(), path, value);
@@ -198,6 +215,23 @@ export function _resetSecretsForTest(): void {
 }
 
 /** Resolve a config field that may be a literal or a vault pointer. */
+export function resolveSecretSync(value: MaybeSecret | undefined): string | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    if (typeof value === "string") {
+        return value;
+    }
+
+    if (!isSecureRef(value)) {
+        logger.warn({ value }, "ignoring malformed secure reference");
+        return undefined;
+    }
+
+    return new FileSecretStore().getSync(value.path);
+}
+
 export async function resolveSecret(value: MaybeSecret | undefined): Promise<string | undefined> {
     if (value === undefined) {
         return undefined;

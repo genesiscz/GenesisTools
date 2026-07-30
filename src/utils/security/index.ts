@@ -8,8 +8,16 @@ export {
     MasterKeyUnavailableError,
     masterKey,
     masterKeySource,
+    masterKeySync,
 } from "./MasterKey";
-export { _resetSecretsForTest, redactSecrets, resolveSecret, type SecretStore, secrets } from "./SecretStore";
+export {
+    _resetSecretsForTest,
+    redactSecrets,
+    resolveSecret,
+    resolveSecretSync,
+    type SecretStore,
+    secrets,
+} from "./SecretStore";
 export { isSecretPath, isSecureRef, type MaybeSecret, type SecureRef, secureRef } from "./SecureRef";
 export { exportVault, importVault, rotateMasterKey, type VaultExportBlob } from "./vault-admin";
 export { VAULT_VERSION, type VaultEntry, type VaultFile } from "./vault-format";

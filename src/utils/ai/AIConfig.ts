@@ -11,6 +11,8 @@ import type {
 } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { AiConfigStore } from "./config/AiConfigStore";
+import { projectToV3, syncV3IntoStore } from "./config/store-bridge";
 
 const DEFAULT_TASKS: Record<string, TaskConfig> = {
     transcribe: { provider: "local-hf" },
@@ -94,11 +96,13 @@ export class AIConfig {
 
         const { runMigrations } = await import("@genesiscz/utils/config/migration");
         const { migrateAI } = await import("@genesiscz/utils/config/migrations/2026-04-07-migrateAI");
-        await runMigrations([migrateAI]);
+        const { migrateConfigV4 } = await import("./config/migrations/2026-08-configV4");
+        const { migrateSecretsToVault } = await import("./config/migrations/2026-08-secretsToVault");
+        await runMigrations([migrateAI, migrateConfigV4, migrateSecretsToVault]);
 
         const storage = new Storage("ai");
-        const raw = await storage.getConfig<Partial<AIConfigData>>();
-        const data = applyDefaults(raw);
+        const store = await AiConfigStore.load();
+        const data = applyDefaults(projectToV3(store.data()));
 
         AIConfig.instance = new AIConfig(storage, data);
         return AIConfig.instance;
@@ -106,6 +110,7 @@ export class AIConfig {
 
     static invalidate(): void {
         AIConfig.instance = null;
+        AiConfigStore.invalidate();
     }
 
     // ── Task config ──
@@ -392,33 +397,9 @@ export class AIConfig {
      * into a single disk write (e.g. refreshAccountLabels).
      */
     async mutate(updater: (data: AIConfigData) => void): Promise<void> {
-        const updated = await this.storage.atomicConfigUpdate<AIConfigData>((data) => {
-            // Ensure defaults exist for the fresh-from-disk data
-            if (!data.accounts) {
-                data.accounts = [];
-            }
-
-            if (!data.defaultAccounts) {
-                data.defaultAccounts = {};
-            }
-
-            if (!data.tasks) {
-                data.tasks = { ...DEFAULT_TASKS };
-            }
-
-            if (!data.apps) {
-                data.apps = {};
-            }
-
-            if (!data.providers) {
-                data.providers = {};
-            }
-
+        await this.withLock(async (data) => {
             updater(data);
         });
-
-        // Refresh in-memory cache with what was actually written to disk
-        this.data = applyDefaults(updated);
     }
 
     /**
@@ -427,18 +408,20 @@ export class AIConfig {
      * Mutate `data` in the callback; it's persisted automatically on return.
      * Use for operations that need async I/O while holding the lock (e.g. token refresh).
      */
-    async withLock<T>(fn: (data: AIConfigData) => Promise<T>, timeout?: number): Promise<T> {
-        return this.storage.withConfigLock(async () => {
-            const fresh = await this.storage.getConfig<Partial<AIConfigData>>();
-            const data = applyDefaults(fresh);
+    async withLock<T>(fn: (data: AIConfigData) => Promise<T>, _timeout?: number): Promise<T> {
+        const store = await AiConfigStore.load();
 
-            const result = await fn(data);
+        return store.withLock(async (config) => {
+            const projected = applyDefaults(projectToV3(config));
 
-            // Persist whatever the callback mutated
-            await this.storage.setConfig(data);
-            this.data = data;
+            const result = await fn(projected);
+
+            // Fold the v3-shaped edits back into the v4 document the store will
+            // persist, then refresh this facade's projection from it.
+            await syncV3IntoStore(config, projected);
+            this.data = applyDefaults(projectToV3(config));
 
             return result;
-        }, timeout);
+        });
     }
 }

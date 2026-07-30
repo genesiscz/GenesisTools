@@ -125,6 +125,13 @@ export const migrateAI: ConfigMigration = {
         const storage = new Storage("ai");
         const existing = await storage.getConfig<Record<string, unknown>>();
 
+        // v4 dropped `_schemaVersion` for `version`. Without this guard the
+        // absence of the old field reads as "never migrated" and this migration
+        // rewrites a v4 config back into v3 shape on every load.
+        if (typeof existing?.version === "number" && existing.version >= 4) {
+            return false;
+        }
+
         if (!existing?._schemaVersion) {
             return true;
         }

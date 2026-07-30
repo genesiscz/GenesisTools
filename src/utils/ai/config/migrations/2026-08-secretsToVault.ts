@@ -1,7 +1,8 @@
 import { chmodSync, copyFileSync, existsSync } from "node:fs";
+import { isInteractive } from "@genesiscz/utils/cli";
 import type { ConfigMigration } from "@genesiscz/utils/config/migration";
 import { logger, out } from "@genesiscz/utils/logger";
-import { isSecureRef, secrets } from "@genesiscz/utils/security";
+import { isSecureRef, masterKeySync, secrets } from "@genesiscz/utils/security";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { type AccountCredentials, type AccountEntry, type AiConfigData, CONFIG_VERSION } from "../schema";
 
@@ -59,7 +60,22 @@ export const migrateSecretsToVault: ConfigMigration = {
             return false;
         }
 
-        return configHasPlaintext(raw);
+        if (!configHasPlaintext(raw)) {
+            return false;
+        }
+
+        // A headless process (launchd, cron, CI) may have no reachable master key.
+        // Deferring is right: the credentials keep working as they are, and the
+        // next interactive run migrates them. Failing here would take the daemon
+        // down over a hygiene task it cannot complete.
+        if (!masterKeySync() && !isInteractive()) {
+            logger.warn(
+                "plaintext credentials are present but no vault master key is reachable in this non-interactive process; deferring"
+            );
+            return false;
+        }
+
+        return true;
     },
 
     run: async () => {

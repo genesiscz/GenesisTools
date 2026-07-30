@@ -84,6 +84,10 @@ export function convertAccount(account: AIAccountEntry, id: string, envVariable?
         entry.label = account.label;
     }
 
+    if (account.apps && account.apps.length > 0) {
+        entry.apps = [...account.apps];
+    }
+
     if (account.subscriptionCreatedAt) {
         entry.subscriptionCreatedAt = account.subscriptionCreatedAt;
     }
@@ -211,7 +215,14 @@ export function convertConfig(v3: V3ConfigData): AiConfigData {
         defaults.app = { ...(defaults.app ?? {}), [app]: { ...(defaults.app?.[app] ?? {}), ...converted } };
     }
 
-    return { version: CONFIG_VERSION, accounts, defaults };
+    const disabled = [...disabledProviders].sort();
+
+    return {
+        version: CONFIG_VERSION,
+        accounts,
+        defaults,
+        ...(disabled.length > 0 ? { disabledProviders: disabled } : {}),
+    };
 }
 
 /**
