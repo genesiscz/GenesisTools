@@ -1,4 +1,4 @@
-import { appendFileSync, chmodSync, readFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { retry } from "@genesiscz/utils/async";
@@ -92,8 +92,53 @@ function journalTokenRotation(account: string, oldTokens: Partial<OAuthTokens>, 
         );
 
         chmodSync(path, 0o600);
+        pruneJournal(path);
     } catch (err) {
         logger.warn({ err, account }, "[token-refresh] journal append failed");
+    }
+}
+
+const JOURNAL_MAX_BYTES = 1_000_000;
+const JOURNAL_KEEP_DAYS = 30;
+
+/**
+ * Keep the journal bounded without weakening it.
+ *
+ * The token VALUES have to stay readable: this file is the last resort when a
+ * config write is lost mid-rotation, and `readJournalRecovery` reuses the pair
+ * verbatim. Redacting or encrypting it would trade a real recovery path for
+ * cosmetic hygiene, and the master key may be exactly what is unavailable in
+ * that situation. So instead of touching entries, drop the old ones: anything
+ * older than the retention window can no longer be the live pair.
+ */
+function pruneJournal(path: string): void {
+    try {
+        if (!existsSync(path) || statSync(path).size < JOURNAL_MAX_BYTES) {
+            return;
+        }
+
+        const cutoff = Date.now() - JOURNAL_KEEP_DAYS * 24 * 60 * 60 * 1000;
+        const kept = readFileSync(path, "utf8")
+            .split("\n")
+            .filter((line) => {
+                if (!line.trim()) {
+                    return false;
+                }
+
+                try {
+                    const entry = SafeJSON.parse(line, { strict: true }) as { ts?: string };
+                    return entry.ts ? Date.parse(entry.ts) >= cutoff : true;
+                } catch {
+                    // An unparsable line is corruption, not a token pair worth keeping.
+                    return false;
+                }
+            });
+
+        writeFileSync(path, kept.length > 0 ? `${kept.join("\n")}\n` : "", { mode: 0o600 });
+        chmodSync(path, 0o600);
+        logger.info({ path, kept: kept.length }, "[token-refresh] pruned token journal");
+    } catch (err) {
+        logger.warn({ err, path }, "[token-refresh] journal prune failed");
     }
 }
 

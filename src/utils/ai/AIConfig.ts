@@ -94,13 +94,9 @@ export class AIConfig {
             return AIConfig.instance;
         }
 
-        const { runMigrations } = await import("@genesiscz/utils/config/migration");
-        const { migrateAI } = await import("@genesiscz/utils/config/migrations/2026-04-07-migrateAI");
-        const { migrateConfigV4 } = await import("./config/migrations/2026-08-configV4");
-        const { migrateSecretsToVault } = await import("./config/migrations/2026-08-secretsToVault");
-        await runMigrations([migrateAI, migrateConfigV4, migrateSecretsToVault]);
-
         const storage = new Storage("ai");
+        // AiConfigStore.load runs the migration chain, so both entry points land
+        // on a shape their reader understands.
         const store = await AiConfigStore.load();
         const data = applyDefaults(projectToV3(store.data()));
 
