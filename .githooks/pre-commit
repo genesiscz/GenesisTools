@@ -17,7 +17,25 @@ if git diff --cached --name-only --diff-filter=d | grep -q '^src/claude-history-
     cd ../..
 fi
 
-echo "▶ tsgo --noEmit..."
-bunx tsgo --noEmit
+echo "▶ tsgo --noEmit (failing on staged files only)..."
+# tsgo has no per-file mode (types cross files), so the whole project is checked
+# but only errors in STAGED files block the commit. Unstaged breakage — e.g. a
+# parallel agent mid-rewire in the same worktree — must not wedge an unrelated
+# commit; CI still gates the full tree.
+tsgo_output=$(bunx tsgo --noEmit 2>&1) || true
+staged_files=$(git diff --cached --name-only --diff-filter=d | grep -E '\.(ts|tsx)$' || true)
+
+if [ -n "$staged_files" ] && [ -n "$tsgo_output" ]; then
+    patterns=$(mktemp)
+    printf '%s\n' "$staged_files" | sed 's/$/(/' > "$patterns"
+    staged_errors=$(printf '%s\n' "$tsgo_output" | grep -F -f "$patterns" || true)
+    rm -f "$patterns"
+
+    if [ -n "$staged_errors" ]; then
+        printf '%s\n' "$staged_errors"
+        echo "✖ tsgo errors in staged files"
+        exit 1
+    fi
+fi
 
 echo "✔ pre-commit passed"

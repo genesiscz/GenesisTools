@@ -1,9 +1,11 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+import { unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { MASTER_KEY_BYTES } from "./keyring/types";
 import { invalidateMasterKeyCache, masterKey, writeMasterKey } from "./MasterKey";
-import { decryptEntry, encryptEntry, vaultAdmin } from "./SecretStore";
+import { decryptEntry, encryptEntry, TAG_BYTES, vaultAdmin } from "./SecretStore";
 import type { VaultFile } from "./vault-format";
 
 const EXPORT_VERSION = 1;
@@ -29,11 +31,24 @@ function passphraseKey(passphrase: string, salt: Buffer, N: number, r: number, p
     return scryptSync(passphrase, salt, MASTER_KEY_BYTES, { N, r, p, maxmem: 512 * 1024 * 1024 });
 }
 
+/** Escrow of the OUTGOING key during rotation; see rotateMasterKey. */
+export function rotationBackupPath(): string {
+    return join(dirname(vaultAdmin.path()), "master.key.rotate-bak");
+}
+
 /**
  * Re-encrypt every entry under a freshly generated master key, then store the
  * new key. Aborts before writing anything if a single entry fails to decrypt,
  * because a partial rotation would leave a vault whose entries need two
  * different keys, which nothing can read.
+ *
+ * The old key is escrowed to a 0600 file for the duration: storing the new key
+ * and rewriting the vault cannot be atomic together, and a crash between the
+ * two used to destroy the ONLY copy of the old key while the vault still
+ * needed it. On success the escrow is deleted; if it survives a crash it is
+ * exactly the recovery material — and after a COMPLETED rotation the old key
+ * can decrypt nothing anyway, so a stale leftover is dead weight, not a leak
+ * of anything current.
  */
 export async function rotateMasterKey(): Promise<{ rotated: number }> {
     const current = await masterKey();
@@ -53,9 +68,14 @@ export async function rotateMasterKey(): Promise<{ rotated: number }> {
             rotated.entries[path] = encryptEntry(next, path, value);
         }
 
+        const escrow = rotationBackupPath();
+        writeFileSync(escrow, current.toString("base64"), { mode: 0o600 });
+
         await writeMasterKey(next);
         vaultAdmin.write(rotated);
         invalidateMasterKeyCache();
+
+        unlinkSync(escrow);
         logger.info({ entries: paths.length }, "rotated vault master key");
         return { rotated: paths.length };
     });
@@ -112,9 +132,14 @@ export async function importVault(blob: string, passphrase: string): Promise<{ i
         throw new Error("Unrecognised vault export. Expected a version 1 scrypt blob.");
     }
 
+    const tag = Buffer.from(parsed.tag, "base64");
+    if (tag.length !== TAG_BYTES) {
+        throw new Error(`Vault export has a ${tag.length}-byte auth tag (expected ${TAG_BYTES}); refusing.`);
+    }
+
     const key = passphraseKey(passphrase, Buffer.from(parsed.salt, "base64"), parsed.N, parsed.r, parsed.p);
     const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(parsed.iv, "base64"));
-    decipher.setAuthTag(Buffer.from(parsed.tag, "base64"));
+    decipher.setAuthTag(tag);
 
     let payload: { exportedAt: number; secrets: Record<string, string> };
     try {
