@@ -27,6 +27,8 @@ import { registerAiProxyRefScanner } from "@app/ai-proxy/lib/account-refs";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import { isValidThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import type { AiProxyProviderType, CursorTranslationMode, ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
+import { setProxyUsageSink } from "@app/ai-proxy/lib/usage/usage-events";
+import { recordUsage } from "@genesiscz/utils/ai/usage";
 import { runTool } from "@genesiscz/utils/cli";
 import { configureLogger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
@@ -43,6 +45,14 @@ if (process.argv.includes("serve")) {
 // PROCESS, so `tools ai config link` needs the same one line in its own
 // entrypoint to see proxy links (src/ai/ is another phase's file).
 registerAiProxyRefScanner(loadConfigFresh);
+
+// Mirror the ledger's bookings into the shared usage layer. `recordUsage` never
+// throws, so a failure here cannot break a proxied request. A booked cost is
+// stored verbatim (the invoicing table is a deliberate carve-out and its rates
+// may differ from the catalog's); an unpriced row gets a catalog estimate
+// tagged `costSource: "catalog"`, which keeps "the invoicing table did not know
+// this model" answerable instead of hiding it behind a list price.
+setProxyUsageSink((event) => void recordUsage(event));
 
 const program = new Command()
     .name("ai-proxy")

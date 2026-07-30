@@ -1,5 +1,10 @@
 import type { ProviderChoice } from "@genesiscz/utils/ask/types";
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
+import {
+    usageCacheReadTokens,
+    usageCacheWriteTokens,
+    usageInputNoCacheTokens,
+} from "@genesiscz/utils/ask/usage-tokens";
 import { applySystemPromptPrefix } from "@genesiscz/utils/claude/subscription-billing";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -7,6 +12,7 @@ import type { LanguageModel, LanguageModelUsage, ModelMessage, ToolSet } from "a
 import { generateObject, generateText, stepCountIs, streamObject, streamText } from "ai";
 import type { z } from "zod";
 import { buildProviderOptions } from "../prompt-caching";
+import { recordUsage } from "../usage";
 import type { ModelRef } from "./model-ref";
 import { resolveModel } from "./resolve";
 import type { ResolvedBinding, ResolveOptions } from "./types";
@@ -97,6 +103,18 @@ export interface CallTarget {
     systemPromptPrefix?: string;
     /** `<provider>/<model>`, for logs. */
     label: string;
+    /**
+     * Who pays, what dialect, which model — the three things a usage row needs
+     * and a `label` cannot be split back into (an account name may contain a
+     * slash). Optional because `resolveCallTarget` is not the only way to build
+     * a target; a call whose account is unknown is recorded as `unknown` rather
+     * than not recorded.
+     */
+    accountId?: string;
+    provider?: string;
+    modelId?: string;
+    /** Which surface is spending, for `defaults.app.*` and for the usage row. */
+    app?: string;
 }
 
 export interface CoreChatOptions {
@@ -232,15 +250,48 @@ export async function coreChat(options: CoreChatOptions): Promise<CoreChatResult
     return { content, usage, responseMessages: response.messages as ModelMessage[] };
 }
 
+/**
+ * Log the call's token usage and record it to the shared usage layer.
+ *
+ * `recordUsage` is fired rather than awaited: it never rejects (the guarantee is
+ * enforced inside it, not assumed here) and awaiting it would put a filesystem
+ * write between the provider's last token and the caller's return. A usage row
+ * is accounting; the answer is the product.
+ */
 function logUsage(target: CallTarget, usage: LanguageModelUsage | undefined): void {
     const { log } = logger.scoped("ai-core");
 
-    if (!usage) {
+    // The SDK always hands back a usage OBJECT; a provider that reported nothing
+    // shows up as undefined token counts inside it. Both spellings mean the same
+    // thing, and recording a 0/0 row for them would assert this call cost $0
+    // rather than that its cost is unknown.
+    if (!usage || (usage.inputTokens === undefined && usage.outputTokens === undefined)) {
         log.warn({ model: target.label }, "provider returned no usage; cost for this call cannot be attributed");
         return;
     }
 
     log.debug({ model: target.label, usage }, "call usage");
+
+    const cacheRead = usageCacheReadTokens(usage);
+    const cacheWrite = usageCacheWriteTokens(usage);
+
+    void recordUsage({
+        app: target.app ?? "ai-core",
+        accountId: target.accountId ?? "unknown",
+        provider: target.provider ?? target.providerType ?? "unknown",
+        modelId: target.modelId ?? target.label,
+        // NOT `usage.inputTokens`: ai@7's Anthropic provider folds cache tokens
+        // into that field, so recording it as billable input charges every cached
+        // token twice — once at the full rate here and once at the cache rate.
+        inputTokens: usageInputNoCacheTokens(usage),
+        outputTokens: usage.outputTokens ?? 0,
+        // The frozen event shape has no cache columns, so the counts ride in
+        // `meta` while `usage` (unstored) lets the cost use the real cache rates.
+        usage,
+        ...(cacheRead > 0 || cacheWrite > 0
+            ? { meta: { cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite } }
+            : {}),
+    });
 }
 
 /**
@@ -268,6 +319,13 @@ export async function resolveCallTarget(options: {
             providerType,
             systemPromptPrefix: providerChoice.provider.systemPromptPrefix,
             label: `${providerChoice.provider.name}/${providerChoice.model.id}`,
+            // This path predates account ids: `DetectedProvider` carries a human
+            // account NAME. Usage rows treat the field as an opaque key, so a
+            // mixed corpus groups into two buckets instead of losing rows.
+            accountId: providerChoice.provider.account?.name ?? providerChoice.provider.name,
+            provider: providerType,
+            modelId: providerChoice.model.id,
+            app: options.app,
         };
     }
 
@@ -283,6 +341,10 @@ export async function resolveCallTarget(options: {
         providerType: resolved.plugin.id,
         systemPromptPrefix: resolved.binding.systemPromptPrefix,
         label: `${resolved.account.name}/${resolved.model.id}`,
+        accountId: resolved.account.id,
+        provider: resolved.account.provider,
+        modelId: resolved.model.id,
+        app: options.app,
     };
 }
 
