@@ -31,7 +31,9 @@ export class CredentialUnavailableError extends Error {
 }
 
 function fixHint(account: AccountEntry, spec: CredentialSpec): string {
-    const vars = spec.envKeys.join(" or ");
+    // Comma-joined, not prose: this string is pasted straight into a shell, and
+    // `--use-env A or B` is not a command anyone can run.
+    const vars = spec.envKeys.join(",");
     return [
         `Set one with: tools ai config secret set ai/${account.id}/apiKey`,
         spec.envKeys.length > 0

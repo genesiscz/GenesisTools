@@ -1,4 +1,10 @@
-export { masterKeyFilePath, securityStorage } from "./keyring/headless";
+export {
+    lastVaultExportAt,
+    masterKeyFilePath,
+    recordVaultExport,
+    type SecurityLocalConfig,
+    securityStorage,
+} from "./keyring/headless";
 export type { MasterKeyProvider, MasterKeySource } from "./keyring/types";
 export { KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, MASTER_KEY_BYTES } from "./keyring/types";
 export {
