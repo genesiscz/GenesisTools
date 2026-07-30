@@ -3,6 +3,7 @@ import type { AIConfigData as V3ConfigData } from "@genesiscz/utils/config/ai.ty
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { _resetMigrationStateForTest, ensureAiConfigMigrated } from "./migrate";
+import { writeDefaultsSnapshot } from "./defaults-snapshot";
 import { assertSafeToWriteRealConfig } from "./migration-guard";
 import { convertConfig } from "./migrations/2026-08-configV4";
 import { type AccountRef, accountRef, type Referrer, referrersOf } from "./refs";
@@ -250,11 +251,15 @@ export class AiConfigStore {
             const { config } = await AiConfigStore.readFrom(this.storage);
             const result = await fn(config);
 
-            const validated = aiConfigSchema.parse(config);
+            // The `_schemaVersion: 3` stamp is the pre-v4-binary armor (schema.ts).
+            const validated = { ...aiConfigSchema.parse(config), _schemaVersion: 3 as const };
             // Last line of defence: every v4 write in the codebase funnels through
             // here, so even a mis-gated migration cannot reach the real config.
             assertSafeToWriteRealConfig();
             await this.storage.setConfig(validated);
+            // Keep the copy old binaries cannot touch in step; the hybrid repair
+            // restores `defaults` from it after an old-code rewrite.
+            writeDefaultsSnapshot(this.storage, validated.defaults);
             this.config = validated;
             this.stamp = AiConfigStore.stampOf(this.storage);
             return result;

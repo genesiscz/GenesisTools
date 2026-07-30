@@ -3,12 +3,14 @@ import type { ConfigMigration } from "@genesiscz/utils/config/migration";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { slugify } from "@genesiscz/utils/string";
+import { readDefaultsSnapshot, writeDefaultsSnapshot } from "../defaults-snapshot";
 import { migrationAllowedHere } from "../migration-guard";
 import { accountRef } from "../refs";
 import {
     type AccountEntry,
     type AiConfigData,
     type AppDefault,
+    accountEntrySchema,
     CONFIG_VERSION,
     isTaskName,
     type TaskDefault,
@@ -154,6 +156,31 @@ function convertAppDefaults(defaults: Record<string, unknown> | undefined): AppD
     return Object.keys(converted).length > 0 ? converted : undefined;
 }
 
+const STALE_TOKEN_FIELDS = ["apiKey", "accessToken", "refreshToken", "longLivedToken", "authFile"] as const;
+const STALE_EXPIRY_FIELDS = ["expiresAt", "refreshExpiresAt", "longLivedTokenExpiresAt"] as const;
+
+function mergeStaleDaemonTokens(kept: AccountEntry, tokens: AIAccountEntry["tokens"] | undefined): void {
+    if (!tokens) {
+        return;
+    }
+
+    for (const field of STALE_TOKEN_FIELDS) {
+        const value = tokens[field];
+
+        if (typeof value === "string" && value) {
+            kept.credentials[field] = value;
+        }
+    }
+
+    for (const field of STALE_EXPIRY_FIELDS) {
+        const value = tokens[field];
+
+        if (typeof value === "number") {
+            kept.credentials[field] = value;
+        }
+    }
+}
+
 export function convertConfig(v3: V3ConfigData): AiConfigData {
     const taken = new Set<string>();
     const idByName = new Map<string, string>();
@@ -171,7 +198,49 @@ export function convertConfig(v3: V3ConfigData): AiConfigData {
         }
     }
 
+    // HYBRID entries: a pre-v4 binary (a stale daemon, a checkout that has not
+    // pulled) loaded an already-migrated config and its own migration stamped
+    // `_schemaVersion: 3` back onto the file while preserving the account
+    // objects it did not understand. Such an account is already v4 —
+    // `credentials` (holding live SecureRefs) and no `tokens` — so running it
+    // through the v3 converter crashed on `account.tokens` and bricked the
+    // config for every tool on the machine. Pass it through unchanged, and
+    // reserve its `id` BEFORE any v3 entry slugifies (the vault paths embed the
+    // id, so a collision would re-point another account at its secrets).
+    const hybrids = new Map<AIAccountEntry, AccountEntry>();
+    for (const account of v3.accounts ?? []) {
+        const hybrid = accountEntrySchema.safeParse(account);
+
+        if (hybrid.success) {
+            hybrids.set(account, hybrid.data);
+            taken.add(hybrid.data.id);
+        }
+    }
+
     const accounts: AccountEntry[] = (v3.accounts ?? []).map((account) => {
+        const kept = hybrids.get(account);
+
+        if (kept) {
+            if (!idByName.has(kept.name)) {
+                idByName.set(kept.name, kept.id);
+            }
+
+            // The old binary may have refreshed a token AFTER the re-stamp and
+            // written it into a v3 `tokens` block beside the untouched
+            // `credentials` (the schema parse above silently strips it). The
+            // vault then holds the CONSUMED half of a single-use refresh pair,
+            // so dropping the block would brick the account. Overlay the fresher
+            // values as literals; secretsToVault vaults them later in the chain.
+            mergeStaleDaemonTokens(kept, account.tokens);
+
+            logger.info(
+                { account: kept.name, id: kept.id },
+                "v4 migration: account is already v4 (re-stamped by an older binary); kept verbatim"
+            );
+
+            return kept;
+        }
+
         const id = slugifyAccountId(account.name, taken);
 
         // First wins, because v3 `getAccount(name)` was a `find()` (AIConfig.ts).
@@ -256,6 +325,8 @@ export function convertConfig(v3: V3ConfigData): AiConfigData {
 
     return {
         version: CONFIG_VERSION,
+        // The pre-v4-binary armor; see the field's doc in schema.ts.
+        _schemaVersion: 3,
         accounts,
         defaults,
         ...(disabled.length > 0 ? { disabledProviders: disabled } : {}),
@@ -320,7 +391,25 @@ export const migrateConfigV4: ConfigMigration = {
             }
 
             const converted = convertConfig(raw);
+
+            // A hybrid means an old binary rewrote a previously-migrated config,
+            // and its rewrite drops the v4 `defaults` block (accounts survive by
+            // reference; defaults do not). The snapshot in defaults.v4.json is
+            // the copy old code cannot touch — prefer it over the reconstruction
+            // above, which is built from the old binary's own fallback values.
+            const hadHybrid = (raw.accounts ?? []).some((account) => accountEntrySchema.safeParse(account).success);
+
+            if (hadHybrid) {
+                const snapshot = readDefaultsSnapshot(storage);
+
+                if (snapshot) {
+                    converted.defaults = snapshot;
+                    logger.info("v4 migration: restored defaults from the snapshot after an old-binary rewrite");
+                }
+            }
+
             await storage.setConfig(converted);
+            writeDefaultsSnapshot(storage, converted.defaults);
             logger.info(
                 { accounts: converted.accounts.length, from: raw._schemaVersion ?? "unknown" },
                 "migrated AI config to v4"

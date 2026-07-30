@@ -130,6 +130,19 @@ export const appDefaultSchema = z.object({
 
 export const aiConfigSchema = z.object({
     version: z.literal(CONFIG_VERSION),
+    /**
+     * ARMOR AGAINST PRE-v4 BINARIES, not a version. The old migration
+     * (`2026-04-07-migrateAI.ts`) fires on `!existing._schemaVersion ||
+     * existing._schemaVersion < 3` and then rewrites this file in the v3 shape,
+     * dropping `version` and `defaults`. A stale daemon or an unpulled checkout
+     * merely LOADING the config was enough to trigger it. Carrying the v3
+     * sentinel makes that predicate false, so old code reads (degraded) and
+     * never rewrites. Optional in the TYPE so fixtures need not carry it; the
+     * write chokepoints (`AiConfigStore.withLock`, the v4 migration) stamp it
+     * on every write, so the file on disk always has it. Remove only when no
+     * pre-v4 binary can plausibly touch `~/.genesis-tools/ai/config.json`.
+     */
+    _schemaVersion: z.literal(3).optional(),
     accounts: z.array(accountEntrySchema),
     defaults: z
         .object({
@@ -173,7 +186,7 @@ export type AiConfigData = z.infer<typeof aiConfigSchema>;
 export type UseEnvApiKey = z.infer<typeof useEnvApiKeySchema>;
 
 export function emptyConfig(): AiConfigData {
-    return { version: CONFIG_VERSION, accounts: [], defaults: {} };
+    return { version: CONFIG_VERSION, _schemaVersion: 3, accounts: [], defaults: {} };
 }
 
 export function isTaskName(value: string): value is TaskName {
