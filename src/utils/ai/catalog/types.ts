@@ -57,6 +57,11 @@ export interface CatalogEntry {
         native1m?: boolean;
         /** Pickers hide it; it stays listed for id resolution. */
         hidden?: boolean;
+        /**
+         * Accepts client-side tool/function definitions. Absent means unknown,
+         * not "no" — a picker should not claim a capability nobody verified.
+         */
+        tools?: boolean;
         /** Present when the model is launchable via `claude --model`. */
         cli?: { id?: string; label: string };
     };

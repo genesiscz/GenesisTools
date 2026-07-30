@@ -15,6 +15,9 @@ mock.module("ai", () => ({
     streamText: () => {
         throw new Error("streamText should not be called by callLLMStructured");
     },
+    // Imported by core/call.ts for the tool loop. Unused on the structured path,
+    // but a module mock must cover every named import or the import itself fails.
+    stepCountIs: () => () => false,
 }));
 
 const fakeProviderChoice = {

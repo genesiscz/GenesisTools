@@ -1,5 +1,6 @@
 import type { DetectedProvider } from "@genesiscz/utils/ask/types";
 import type { AIProvider } from "@genesiscz/utils/config/ai.types";
+import { composeAuthFetch } from "../core/fetch";
 import type { AccountResolver } from "./index";
 import { resolveModelsWithPricing } from "./resolve-models";
 
@@ -17,25 +18,14 @@ export class AnthropicSubResolver implements AccountResolver {
         // Resolve the token per REQUEST, not at detection time: a long-running
         // process otherwise keeps serving a token another process has rotated
         // away (revoked-but-unexpired → upstream 401). On 401, force-refresh
-        // once (fresh disk read + OAuth refresh) and retry.
-        const subscriptionFetch = createSubscriptionFetch();
-        const freshTokenFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-            const call = (bearer: string): Promise<Response> => {
-                const headers = new Headers(init?.headers);
-                headers.set("Authorization", `Bearer ${bearer}`);
-                return subscriptionFetch(input, { ...init, headers });
-            };
-
-            const { token: current } = await resolveAccountToken(accountName);
-            const response = await call(current);
-
-            if (response.status !== 401) {
-                return response;
-            }
-
-            const { token: refreshed } = await resolveAccountToken(accountName, { forceRefresh: true });
-            return call(refreshed);
-        };
+        // once (fresh disk read + OAuth refresh) and retry. That dance now lives
+        // in `composeAuthFetch`; `createSubscriptionFetch` stays underneath it
+        // because it also strips x-api-key and injects the billing system block.
+        const freshTokenFetch = composeAuthFetch({
+            getToken: async () => (await resolveAccountToken(accountName)).token,
+            refresh: async () => (await resolveAccountToken(accountName, { forceRefresh: true })).token,
+            fetch: createSubscriptionFetch(),
+        });
 
         const { createAnthropic } = await import("@ai-sdk/anthropic");
         const provider = createAnthropic({
@@ -43,7 +33,7 @@ export class AnthropicSubResolver implements AccountResolver {
             headers: {
                 "anthropic-beta": SUBSCRIPTION_BETAS,
             },
-            fetch: freshTokenFetch as typeof fetch,
+            fetch: freshTokenFetch,
         });
 
         const { models, config: providerConfig } = await resolveModelsWithPricing("anthropic");

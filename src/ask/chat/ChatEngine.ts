@@ -1,14 +1,17 @@
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
+import { providerManager } from "@ask/providers/ProviderManager";
 import type { ChatConfig, ChatMessage, DetectedProvider, ProviderChoice } from "@ask/types";
+import { getLanguageModel } from "@ask/types";
 import type { AIAccount } from "@genesiscz/utils/ai/AIAccount";
-import { buildProviderOptions } from "@genesiscz/utils/ai/prompt-caching";
-import type { AnthropicModelCategory, OpenAIModelCategory } from "@genesiscz/utils/ask/providers/ModelResolver";
-import { applySystemPromptPrefix } from "@genesiscz/utils/claude/subscription-billing";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { type CoreChatResult, coreChat } from "@genesiscz/utils/ai/core/call";
+import {
+    type AnthropicModelCategory,
+    type OpenAIModelCategory,
+    resolveModel as resolveModelByName,
+} from "@genesiscz/utils/ask/providers/ModelResolver";
 import { logger } from "@genesiscz/utils/logger";
 import { estimateTokens } from "@genesiscz/utils/tokens";
 import type { LanguageModel, LanguageModelUsage, ModelMessage, ToolSet } from "ai";
-import { generateText, stepCountIs, streamText } from "ai";
 
 export interface ChatResponse {
     content: string;
@@ -47,15 +50,11 @@ export class ChatEngine {
     }
 
     static async oneShot(options: OneShotOptions): Promise<ChatResponse> {
-        const { resolveModel } = await import("@genesiscz/utils/ask/providers/ModelResolver");
-        const { getLanguageModel } = await import("@ask/types");
-
         let provider: DetectedProvider;
 
         if (options.account) {
             provider = await options.account.provider();
         } else {
-            const { providerManager } = await import("@ask/providers/ProviderManager");
             const providers = await providerManager.detectProviders("anthropic");
             const found = providers.find((p) => p.name === "anthropic");
 
@@ -66,7 +65,10 @@ export class ChatEngine {
             provider = found;
         }
 
-        const selection = resolveModel(options.model, provider.models);
+        // `resolveModelByName` is ask's fuzzy matcher over an already-detected
+        // provider's list, NOT the config-wide ladder in `utils/ai/core/resolve`.
+        // Both are called `resolveModel`; this one never touches the AI config.
+        const selection = resolveModelByName(options.model, provider.models);
 
         if (!selection.model) {
             const accountHint = options.account ? ` for account "${options.account.name}"` : "";
@@ -89,19 +91,14 @@ export class ChatEngine {
         return engine.sendMessage(options.message, options.tools);
     }
 
-    private getEffectiveSystemPrompt(): string | undefined {
-        const prefix = this.config.providerChoice?.provider.systemPromptPrefix;
-        const userPrompt = this.config.systemPrompt;
-
-        if (!prefix && !userPrompt) {
-            return undefined;
-        }
-
-        if (!userPrompt) {
-            return prefix;
-        }
-
-        return applySystemPromptPrefix(prefix, userPrompt);
+    /** What `coreChat` needs to know about this engine's configured model. */
+    private callTarget() {
+        return {
+            model: this.config.model,
+            providerType: this.config.providerType,
+            systemPromptPrefix: this.config.providerChoice?.provider.systemPromptPrefix,
+            label: `${this.config.provider}/${this.config.modelName}`,
+        };
     }
 
     async sendMessage(
@@ -176,198 +173,61 @@ export class ChatEngine {
             onToolResult?: (name: string, result: unknown) => void;
         }
     ): Promise<ChatResponse> {
-        let finishUsage: LanguageModelUsage | undefined;
-        let finishCost: number | undefined;
+        // Without an onChunk callback the engine is driving a terminal directly,
+        // so it owns the trailing newline the interactive UI expects.
+        const toStdout = !callbacks?.onChunk;
 
-        const hasTools = tools && Object.keys(tools).length > 0;
-
-        const result = await streamText({
-            model: this.config.model,
+        const result = await coreChat({
+            target: this.callTarget(),
+            system: this.config.systemPrompt,
             messages,
-            system: this.getEffectiveSystemPrompt(),
+            tools,
+            maxTokens: this.config.maxTokens,
             temperature: this.config.temperature,
-            providerOptions: buildProviderOptions(this.config.providerType),
-            ...(this.config.maxTokens && { maxOutputTokens: this.config.maxTokens }),
-            ...(hasTools && { tools, stopWhen: stepCountIs(5) }),
-            onFinish: async ({ usage }) => {
-                // This is called when the stream completes - usage is available HERE
-                logger.debug(
-                    { usage: SafeJSON.stringify(usage, null, 2) },
-                    `[ChatEngine] onFinish callback called with usage`
-                );
-                if (usage) {
-                    finishUsage = usage;
-                    finishCost = await dynamicPricingManager.calculateCost(
-                        this.config.provider,
-                        this.config.modelName,
-                        usage
-                    );
-                    logger.debug({ cost: finishCost }, `[ChatEngine] onFinish calculated cost`);
-                }
-            },
+            stream: true,
+            onChunk: callbacks?.onChunk ?? ((chunk) => process.stdout.write(chunk)),
+            onThinking: callbacks?.onThinking,
+            onToolCall: callbacks?.onToolCall,
+            onToolResult: callbacks?.onToolResult,
         });
 
-        // DEBUG: Log the full result object structure
-        logger.debug({ keys: Object.keys(result) }, `[ChatEngine] streamText result object keys`);
-        logger.debug(
-            { usage: result.usage ? SafeJSON.stringify(result.usage, null, 2) : "null/undefined" },
-            `[ChatEngine] streamText result.usage`
-        );
-        logger.debug({ usageType: typeof result.usage }, `[ChatEngine] streamText result.usage type`);
-        logger.debug(
-            {
-                usageStructure: result.usage
-                    ? {
-                          hasInputTokens: "inputTokens" in (result.usage || {}),
-                          hasOutputTokens: "outputTokens" in (result.usage || {}),
-                          hasTotalTokens: "totalTokens" in (result.usage || {}),
-                          hasCachedInputTokens: "cachedInputTokens" in (result.usage || {}),
-                          allKeys: Object.keys(result.usage || {}),
-                      }
-                    : "no usage object",
-            },
-            `[ChatEngine] streamText result.usage structure`
-        );
-
-        let fullResponse = "";
-        const startTime = Date.now();
-
-        // Stream output — use fullStream to capture both text and reasoning deltas
-        for await (const part of result.fullStream) {
-            if (part.type === "text-delta") {
-                if (callbacks?.onChunk) {
-                    callbacks.onChunk(part.text);
-                } else {
-                    process.stdout.write(part.text);
-                }
-
-                fullResponse += part.text;
-            } else if (part.type === "reasoning-delta" && callbacks?.onThinking) {
-                callbacks.onThinking(part.text);
-            } else if (part.type === "tool-call") {
-                callbacks?.onToolCall?.(part.toolName, "input" in part ? part.input : undefined);
-            } else if (part.type === "tool-result") {
-                callbacks?.onToolResult?.(part.toolName, "output" in part ? part.output : undefined);
-            }
-        }
-
-        const endTime = Date.now();
-        const _duration = endTime - startTime;
-
-        // Add a newline after streaming (only for stdout, not callbacks)
-        if (!callbacks?.onChunk) {
+        if (toStdout) {
             process.stdout.write("\n");
         }
 
-        // Wait a bit for onFinish callback to complete (it's async)
-        await new Promise((resolve) => setTimeout(resolve, 100));
-
-        // DEBUG: Log usage sources
-        logger.debug({ available: !!finishUsage }, `[ChatEngine] After streaming, finishUsage available`);
-        logger.debug({ usageType: typeof result.usage }, `[ChatEngine] After streaming, result.usage type`);
-        logger.debug(
-            { isPromise: result.usage instanceof Promise },
-            `[ChatEngine] After streaming, result.usage is Promise`
-        );
-
-        // Try to get usage - prioritize onFinish callback as it's most reliable
-        let usage: LanguageModelUsage | undefined;
-        let cost: number | undefined;
-
-        if (finishUsage) {
-            // Use usage from onFinish callback (most reliable)
-            logger.debug(
-                { usage: SafeJSON.stringify(finishUsage, null, 2) },
-                `[ChatEngine] Using usage from onFinish callback`
-            );
-            usage = finishUsage;
-            cost = finishCost;
-        } else {
-            // streamText exposes usage as a promise-like; await handles both shapes
-            usage = await result.usage;
-            logger.debug(
-                { usage: SafeJSON.stringify(usage, null, 2) },
-                `[ChatEngine] Resolved usage from result.usage`
-            );
-
-            if (usage) {
-                cost = await dynamicPricingManager.calculateCost(this.config.provider, this.config.modelName, usage);
-            }
-        }
-
-        if (!usage) {
-            logger.warn(
-                `[ChatEngine] No usage data available from streamText result for ${this.config.provider}/${this.config.modelName}`
-            );
-        }
-
-        // Get response messages (includes tool calls/results for multi-turn history)
-        const sdkResponse = await result.response;
-        const responseMessages = sdkResponse.messages as ModelMessage[];
-
-        return {
-            content: fullResponse,
-            usage,
-            cost,
-            responseMessages,
-        };
+        return this.withCost(result);
     }
 
     private async sendNonStreamingMessage(messages: ModelMessage[], tools?: ToolSet): Promise<ChatResponse> {
-        const hasTools = tools && Object.keys(tools).length > 0;
-
-        const result = await generateText({
-            model: this.config.model,
+        const result = await coreChat({
+            target: this.callTarget(),
+            system: this.config.systemPrompt,
             messages,
-            system: this.getEffectiveSystemPrompt(),
+            tools,
+            maxTokens: this.config.maxTokens,
             temperature: this.config.temperature,
-            providerOptions: buildProviderOptions(this.config.providerType),
-            ...(this.config.maxTokens && { maxOutputTokens: this.config.maxTokens }),
-            ...(hasTools && { tools, stopWhen: stepCountIs(5) }),
         });
 
-        // DEBUG: Log the full result object structure
-        logger.debug({ keys: Object.keys(result) }, `[ChatEngine] generateText result object keys`);
-        logger.debug(
-            { usage: result.usage ? SafeJSON.stringify(result.usage, null, 2) : "null/undefined" },
-            `[ChatEngine] generateText result.usage`
-        );
-        logger.debug({ usageType: typeof result.usage }, `[ChatEngine] generateText result.usage type`);
-        logger.debug(
-            {
-                usageStructure: result.usage
-                    ? {
-                          hasInputTokens: "inputTokens" in (result.usage || {}),
-                          hasOutputTokens: "outputTokens" in (result.usage || {}),
-                          hasTotalTokens: "totalTokens" in (result.usage || {}),
-                          hasCachedInputTokens: "cachedInputTokens" in (result.usage || {}),
-                          allKeys: Object.keys(result.usage || {}),
-                      }
-                    : "no usage object",
-            },
-            `[ChatEngine] generateText result.usage structure`
-        );
+        return this.withCost(result);
+    }
 
-        // Calculate cost
-        let cost: number | undefined;
-        if (result.usage) {
-            logger.debug(
-                { usage: SafeJSON.stringify(result.usage, null, 2) },
-                `[ChatEngine] Calculating cost for ${this.config.provider}/${this.config.modelName}`
-            );
-            cost = await dynamicPricingManager.calculateCost(this.config.provider, this.config.modelName, result.usage);
-            logger.debug({ cost }, `[ChatEngine] Calculated cost`);
-        } else {
-            logger.warn(
-                `[ChatEngine] No usage data available from generateText result for ${this.config.provider}/${this.config.modelName}`
-            );
-        }
+    /**
+     * Price the call. Cost is ask's concern, not the transport's: the core call
+     * reports tokens, this decides what they were worth to this provider.
+     */
+    private async withCost(result: CoreChatResult): Promise<ChatResponse> {
+        const usage = result.usage;
+        const cost = usage
+            ? await dynamicPricingManager.calculateCost(this.config.provider, this.config.modelName, usage)
+            : undefined;
+
+        logger.debug({ usage, cost, model: this.config.modelName }, "[ChatEngine] call finished");
 
         return {
-            content: result.text,
-            usage: result.usage,
+            content: result.content,
+            usage,
             cost,
-            responseMessages: result.response.messages as ModelMessage[],
+            responseMessages: result.responseMessages,
         };
     }
 

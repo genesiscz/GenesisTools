@@ -41,6 +41,23 @@ describe("toModelInfo", () => {
         expect(capabilities).not.toContain("translate");
     });
 
+    /**
+     * `--caps functions` filters on this. When the catalog replaced KNOWN_MODELS
+     * the claim vanished with it, because nothing in `CatalogEntry` recorded
+     * tool support; `flags.tools` is that record.
+     */
+    test("emits function-calling for models the catalog flags as tool-capable", () => {
+        expect(toModelInfo(entry("claude-opus-5")).capabilities).toContain("function-calling");
+        expect(toModelInfo(entry("gpt-5.5")).capabilities).toContain("function-calling");
+        expect(toModelInfo(entry("grok-4.5")).capabilities).toContain("function-calling");
+    });
+
+    test("does not claim tool support the catalog never stated", () => {
+        const unflagged: CatalogEntry = { ...entry("claude-opus-5"), flags: undefined };
+
+        expect(toModelInfo(unflagged).capabilities).not.toContain("function-calling");
+    });
+
     test("uses the Anthropic family as the category ModelResolver matches on", () => {
         expect(toModelInfo(entry("claude-opus-5")).category).toBe("opus");
         expect(toModelInfo(entry("claude-haiku-4-5-20251001")).category).toBe("haiku");

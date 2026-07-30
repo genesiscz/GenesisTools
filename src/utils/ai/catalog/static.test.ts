@@ -12,11 +12,31 @@ import {
 } from "./static";
 
 describe("static catalog", () => {
-    test("ids are unique across providers", () => {
-        const ids = STATIC_CATALOG.map((entry) => entry.id);
-        const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
+    /**
+     * Uniqueness is per provider, not global: `gpt-5.4` names both a 272K
+     * Codex-subscription model and a 1.05M OpenAI API model, and both are real.
+     * What must never happen is one provider listing an id twice.
+     */
+    test("ids are unique within a provider", () => {
+        const seen = new Map<string, string[]>();
 
-        expect(duplicates).toEqual([]);
+        for (const entry of STATIC_CATALOG) {
+            const key = `${entry.provider}/${entry.id}`;
+            seen.set(key, [...(seen.get(key) ?? []), entry.displayName]);
+        }
+
+        expect([...seen.entries()].filter(([, names]) => names.length > 1)).toEqual([]);
+    });
+
+    /**
+     * The shadowing this guards: an unscoped `byId` returns whichever entry sits
+     * earlier in the list, so asking for the OpenAI API's `gpt-5.4` used to hand
+     * back the subscription record with a quarter of the real context window.
+     */
+    test("a shared id resolves per provider", () => {
+        expect(byId("gpt-5.4", "openai")?.contextWindow).toBe(1_050_000);
+        expect(byId("gpt-5.4", "openai-sub")?.contextWindow).toBe(272_000);
+        expect(byId("gpt-5.4", "anthropic")).toBeUndefined();
     });
 
     test("every provider that used to keep its own list is represented", () => {
