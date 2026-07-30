@@ -1,8 +1,8 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { invalidateMasterKeyCache, masterKey, writeMasterKey } from "./MasterKey";
 import { MASTER_KEY_BYTES } from "./keyring/types";
+import { invalidateMasterKeyCache, masterKey, writeMasterKey } from "./MasterKey";
 import { decryptEntry, encryptEntry, vaultAdmin } from "./SecretStore";
 import type { VaultFile } from "./vault-format";
 
