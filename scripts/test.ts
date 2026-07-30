@@ -174,6 +174,25 @@ const LOAD_SENSITIVE_FILES = [
     "src/utils/prompts/p/backend.test.ts",
 ];
 
+/**
+ * Excluded from every full run unless targeted explicitly. These lived only in
+ * package.json's `test` script for a long time, which meant a direct
+ * `bun scripts/test.ts` (agents do this constantly) silently INCLUDED them —
+ * and the e2e suites among them spawn real servers: every such run leaked two
+ * orphaned dev-dashboard agents, dozens accumulated over days. The wrapper is
+ * the single entrypoint, so the excludes live here.
+ */
+const DEFAULT_EXCLUDES = [
+    "**/dashboard/**",
+    "**/dev-dashboard/**",
+    "**/claude-history-dashboard/**",
+    "**/Internal/**",
+    "**/shops/**",
+    "**/task/tests/**",
+    "**/*.e2e.test.ts",
+    "**/matrix-e2e.test.ts",
+];
+
 // Force NODE_ENV=test even when the caller's shell exports something else:
 // two of the keychain safety layers (os-keyring's under-test block and the
 // keychainService() sandboxed item name) key off it, and they must hold in
@@ -198,6 +217,7 @@ if (hasExplicitPaths) {
 
 const parallelExit = await runBunTest([
     ...args,
+    ...DEFAULT_EXCLUDES.map((glob) => `--path-ignore-patterns=${glob}`),
     ...LOAD_SENSITIVE_FILES.map((file) => `--path-ignore-patterns=${file}`),
 ]);
 process.stderr.write(`\x1b[90m[test] serial phase: ${LOAD_SENSITIVE_FILES.length} load-sensitive file(s)\x1b[0m\n`);
