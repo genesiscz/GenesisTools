@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ChatSessionManager } from "../ChatSessionManager";
@@ -103,5 +103,39 @@ describe("ChatSessionManager", () => {
     it("accepts valid session IDs with hyphens and underscores", () => {
         const session = manager.create("my-session_123");
         expect(session.id).toBe("my-session_123");
+    });
+
+    it("resumes a session file written before the store refactor", async () => {
+        // Byte-for-byte what ChatSessionManager wrote when it owned the file IO.
+        writeFileSync(
+            join(tempDir, "legacy-session.jsonl"),
+            `${[
+                '{"type":"config","timestamp":"2026-07-01T10:00:00.000Z","provider":"anthropic","model":"claude-sonnet-4-5"}',
+                '{"type":"user","content":"hello","timestamp":"2026-07-01T10:00:01.000Z"}',
+                '{"type":"assistant","content":"hi","timestamp":"2026-07-01T10:00:02.000Z","cost":0.001}',
+                "",
+                '{"type":"context","content":"README","timestamp":"2026-07-01T10:00:03.000Z","label":"docs"}',
+                "{ not json }",
+            ].join("\n")}\n`
+        );
+
+        const loaded = await manager.load("legacy-session");
+        const entries = loaded.getAllEntries();
+
+        // Blank and malformed lines are skipped, everything else survives typed.
+        expect(entries.map((e) => e.type)).toEqual(["config", "user", "assistant", "context"]);
+        expect(loaded.toMessages()).toEqual([
+            { role: "user", content: "hello" },
+            { role: "assistant", content: "hi" },
+            { role: "system", content: "README" },
+        ]);
+        expect(loaded.getStats().cost).toBeCloseTo(0.001);
+
+        // Resuming means appending and saving back into the same file.
+        loaded.add({ role: "user", content: "and now?" });
+        await loaded.save();
+        const reloaded = await manager.load("legacy-session");
+        expect(reloaded.length).toBe(5);
+        expect((await manager.list())[0]).toMatchObject({ id: "legacy-session", messageCount: 5 });
     });
 });

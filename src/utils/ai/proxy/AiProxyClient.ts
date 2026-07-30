@@ -570,6 +570,14 @@ export class AiProxyClient {
 
 export type ToolHandler = (call: ToolCall) => Promise<string> | string;
 
+/**
+ * @deprecated Prefer `createProxySession` (./session-transport.ts), which runs
+ * the same send / interject / tool-loop semantics through the shared
+ * `MiniAgent` and can persist the conversation to a `SessionStore`. This class
+ * stays for the duration of the AI overhaul because its in-memory `messages`
+ * array and `toolResult` entry point have no equivalent yet; it is otherwise
+ * unchanged, and still the transport underneath the new path.
+ */
 export class AiProxySession {
     readonly messages: ChatMessage[] = [];
     private inflight?: AbortController;
