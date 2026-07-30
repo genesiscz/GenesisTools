@@ -115,6 +115,14 @@ export const env = {
         getCsrfToken: () => getTrimmed("IG_CSRFTOKEN"),
     },
 
+    security: {
+        // Base64 of the vault's 32-byte master key. The headless rung: launchd
+        // daemons started before login and SSH sessions cannot reach the login
+        // keychain, so they carry the key in the environment instead.
+        getMasterKey: () => getTrimmed("GENESIS_TOOLS_MASTER_KEY"),
+        getMasterKeyEnvKey: () => "GENESIS_TOOLS_MASTER_KEY" as const,
+    },
+
     brave: createApiKeyAccessor(["BRAVE_API_KEY"]),
 
     google: {
