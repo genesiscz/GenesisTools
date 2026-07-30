@@ -1,12 +1,12 @@
 import { statSync } from "node:fs";
-import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import type { TranscriptionModel } from "ai";
 import { transcribe } from "ai";
 import pc from "picocolors";
+import { CredentialUnavailableError } from "../providers/credentials";
+import { resolveProviderApiKey } from "../providers/resolve";
 import type { TranscriptionCapableProvider, TranscriptionSegment } from "../types";
-import { cleanRepetitions } from "./repetition-cleanup";
-import { normalizeSpeakerLabel } from "./speaker-label";
+import { buildTranscriptionProviderOptions, mapSdkTranscription } from "./sdk-result";
 
 function getTranscriptionModel(provider: TranscriptionCapableProvider, modelId: string): TranscriptionModel {
     const factory = provider.transcription ?? provider.transcriptionModel;
@@ -21,112 +21,12 @@ function getTranscriptionModel(provider: TranscriptionCapableProvider, modelId: 
     return factory.call(provider, modelId) as TranscriptionModel;
 }
 
-interface SdkTranscriptionResult {
-    text: string;
-    segments?: ReadonlyArray<{ text: string; startSecond: number; endSecond: number }>;
-    language?: string;
-    durationInSeconds?: number;
-    responses?: ReadonlyArray<unknown>;
-}
-
-interface DeepgramUtterance {
-    speaker: number;
-    transcript: string;
-    start: number;
-    end: number;
-}
-
-interface DeepgramRawResponse {
-    body?: { results?: { utterances?: DeepgramUtterance[] } };
-}
-
 /**
- * Deepgram's `diarize+utterances` puts speaker-grouped sentence segments in
- * the *raw* provider response (`responses[0].body.results.utterances`) — the
- * AI SDK does not surface them. Pull them out with narrow typed access (no
- * `any`); speaker ids are normalized through the single label source.
+ * `deepgramUtteranceSegments` now lives in `./sdk-result` alongside the rest of
+ * the SDK-result mapping, so the facade path and this one cannot drift. Kept
+ * re-exported here because callers import it from this module.
  */
-export function deepgramUtteranceSegments(result: {
-    responses?: ReadonlyArray<unknown>;
-}): TranscriptionSegment[] | undefined {
-    const first = result.responses?.[0] as DeepgramRawResponse | undefined;
-    const utts = first?.body?.results?.utterances;
-
-    if (!utts?.length) {
-        return undefined;
-    }
-
-    return utts.map((u) => ({
-        text: u.transcript,
-        start: u.start,
-        end: u.end,
-        speaker: normalizeSpeakerLabel(u.speaker),
-    }));
-}
-
-/**
- * Rebuild sentence-level segments from a formatted transcript + word timings.
- *
- * Some providers (Deepgram via `@ai-sdk/deepgram`) only expose per-word
- * segments containing the *raw, lowercase, unpunctuated* token — the
- * smart-formatted text exists solely as `result.text`. We recover usable
- * subtitle cues by splitting `result.text` into sentences and distributing
- * them across the word timings proportionally (robust to token-count drift
- * from smart-formatting, since it never assumes a 1:1 word↔segment match).
- */
-function rebuildSentenceSegments(text: string, wordSegments: TranscriptionSegment[]): TranscriptionSegment[] {
-    const sentences =
-        text
-            .match(/[^.!?…]+[.!?…]+["')\]]*|\S[^.!?…]*$/g)
-            ?.map((s) => s.trim())
-            .filter(Boolean) ?? [];
-
-    const wordCounts = sentences.map((s) => s.split(/\s+/).filter(Boolean).length);
-    const totalWords = wordCounts.reduce((a, b) => a + b, 0);
-    const n = wordSegments.length;
-
-    if (sentences.length === 0 || totalWords === 0 || n === 0) {
-        return wordSegments;
-    }
-
-    const out: TranscriptionSegment[] = [];
-    let cum = 0;
-
-    for (let i = 0; i < sentences.length; i++) {
-        const startIdx = Math.min(n - 1, Math.floor((cum / totalWords) * n));
-        cum += wordCounts[i];
-        const endIdx = Math.min(n - 1, Math.max(startIdx, Math.ceil((cum / totalWords) * n) - 1));
-        out.push({
-            text: sentences[i],
-            start: wordSegments[startIdx].start,
-            end: wordSegments[endIdx].end,
-        });
-    }
-
-    return out;
-}
-
-/** Map an AI SDK transcription result to our segment shape, recovering
- * sentence cues for word-level providers. */
-function mapResultSegments(result: SdkTranscriptionResult): TranscriptionSegment[] | undefined {
-    if (!result.segments?.length) {
-        return undefined;
-    }
-
-    const segments: TranscriptionSegment[] = result.segments.map((seg) => ({
-        text: seg.text,
-        start: seg.startSecond,
-        end: seg.endSecond,
-    }));
-
-    const singleWord = segments.filter((s) => !/\s/.test(s.text.trim())).length;
-
-    if (result.text && segments.length > 1 && singleWord / segments.length > 0.7) {
-        return rebuildSentenceSegments(result.text, segments);
-    }
-
-    return segments;
-}
+export { deepgramUtteranceSegments } from "./sdk-result";
 
 export interface TranscriptionOptions {
     language?: string;
@@ -201,7 +101,7 @@ export class TranscriptionManager {
 
             // Perform transcription
             const model = getTranscriptionModel(transcriptionModel.providerInstance, transcriptionModel.model);
-            const providerOptions = this.buildProviderOptions(transcriptionModel.provider, options);
+            const providerOptions = buildTranscriptionProviderOptions(transcriptionModel.provider, options);
             const requestStart = Date.now();
             logger.info(
                 {
@@ -229,14 +129,12 @@ export class TranscriptionManager {
                 "Transcription request ← cloud (response received)"
             );
 
-            const mapped =
-                transcriptionModel.provider === "deepgram" && options.diarize
-                    ? (deepgramUtteranceSegments(result) ?? mapResultSegments(result))
-                    : mapResultSegments(result);
-            const cleaned =
-                options.clean === false
-                    ? { text: result.text, segments: mapped }
-                    : cleanRepetitions({ text: result.text, segments: mapped });
+            const cleaned = mapSdkTranscription({
+                result,
+                provider: transcriptionModel.provider,
+                diarize: options.diarize,
+                clean: options.clean,
+            });
 
             const transcriptionResult: TranscriptionResult = {
                 text: cleaned.text,
@@ -277,19 +175,17 @@ export class TranscriptionManager {
         options: TranscriptionOptions,
         initialTime: number
     ): Promise<TranscriptionResult> {
-        const fallbackProviders = [
-            { env: "ASSEMBLYAI_API_KEY", provider: "assemblyai" },
-            { env: "DEEPGRAM_API_KEY", provider: "deepgram" },
-            { env: "GLADIA_API_KEY", provider: "gladia" },
-            { env: "GROQ_API_KEY", provider: "groq" },
-            { env: "OPENROUTER_API_KEY", provider: "openrouter" },
-            { env: "OPENAI_API_KEY", provider: "openai" },
-        ];
+        // Was a table of raw environment variable names. It is now just the
+        // ORDER: whether a provider has a usable key is `resolveProviderApiKey`'s
+        // question, and it answers it account-first with the same variables as a
+        // declared fallback — so a machine with only `DEEPGRAM_API_KEY` exported
+        // still gets here, and one with a configured account no longer needs it.
+        const fallbackProviders = ["assemblyai", "deepgram", "gladia", "groq", "openrouter", "openai"];
 
         const triedProviders = new Set<string>([options.provider ?? ""]);
 
-        for (const { env: envKey, provider } of fallbackProviders) {
-            if (!env.get(envKey) || triedProviders.has(provider)) {
+        for (const provider of fallbackProviders) {
+            if (triedProviders.has(provider) || !(await hasUsableKey(provider))) {
                 continue;
             }
 
@@ -309,18 +205,19 @@ export class TranscriptionManager {
 
                 const audioBuffer = await Bun.file(filePath).arrayBuffer();
                 const model = getTranscriptionModel(transcriptionModel.providerInstance, transcriptionModel.model);
-                const providerOptions = this.buildProviderOptions(transcriptionModel.provider, options);
+                const providerOptions = buildTranscriptionProviderOptions(transcriptionModel.provider, options);
                 const result = await transcribe({
                     model,
                     audio: audioBuffer,
                     ...(Object.keys(providerOptions).length > 0 && { providerOptions }),
                 });
 
-                const fbMapped = mapResultSegments(result);
-                const fbCleaned =
-                    options.clean === false
-                        ? { text: result.text, segments: fbMapped }
-                        : cleanRepetitions({ text: result.text, segments: fbMapped });
+                const fbCleaned = mapSdkTranscription({
+                    result,
+                    provider,
+                    diarize: options.diarize,
+                    clean: options.clean,
+                });
 
                 return {
                     text: fbCleaned.text,
@@ -365,27 +262,17 @@ export class TranscriptionManager {
 
         // For large files (>25MB), prioritize providers that support large files
         if (fileSize > 25 * 1024 * 1024) {
-            // Try AssemblyAI first (supports large files, high quality)
-            if (env.ai.assemblyai.getKey()) {
-                const model = await this.getSpecificTranscriptionModel("assemblyai", "best");
-                if (model) {
-                    return model;
-                }
-            }
+            // AssemblyAI, Deepgram and Gladia all accept large single uploads;
+            // the first one with a resolvable key wins, in that quality order.
+            for (const [provider, model] of [
+                ["assemblyai", "best"],
+                ["deepgram", "nova-3"],
+                ["gladia", "default"],
+            ] as const) {
+                const resolved = await this.getSpecificTranscriptionModel(provider, model);
 
-            // Try Deepgram (supports large files, fast)
-            if (env.ai.deepgram.getKey()) {
-                const model = await this.getSpecificTranscriptionModel("deepgram", "nova-3");
-                if (model) {
-                    return model;
-                }
-            }
-
-            // Try Gladia (supports large files)
-            if (env.ai.gladia.getKey()) {
-                const model = await this.getSpecificTranscriptionModel("gladia", "default");
-                if (model) {
-                    return model;
+                if (resolved) {
+                    return resolved;
                 }
             }
         }
@@ -408,89 +295,75 @@ export class TranscriptionManager {
         return null;
     }
 
+    /**
+     * Build an SDK provider instance for one vendor, or null when no key resolves.
+     *
+     * Every factory is called WITH an explicit key. The previous version used the
+     * bare `groq` / `openai` / `deepgram` singletons, which read
+     * `process.env.<VENDOR>_API_KEY` inside the SDK where nothing could audit,
+     * disable or attribute them — the last place in the AI layer that still did.
+     * `providerApiKeyOrNull` keeps every one of those variables working (it tries
+     * configured accounts first, then the variables the plugin declares, with a
+     * warning), so no machine loses transcription by upgrading.
+     */
     private async getSpecificTranscriptionModel(
         providerName: string,
         modelName: string
     ): Promise<{ provider: string; model: string; providerInstance: TranscriptionCapableProvider } | null> {
+        const apiKey = await providerApiKeyOrNull(providerName);
+
+        if (!apiKey) {
+            return null;
+        }
+
         try {
             switch (providerName) {
                 case "groq": {
-                    if (!env.ai.groq.getKey()) {
-                        return null;
-                    }
-                    const { groq } = await import("@ai-sdk/groq");
-                    return {
-                        provider: "groq",
-                        model: modelName,
-                        providerInstance: groq,
-                    };
+                    const { createGroq } = await import("@ai-sdk/groq");
+                    return { provider: "groq", model: modelName, providerInstance: createGroq({ apiKey }) };
                 }
 
                 case "openrouter": {
-                    if (!env.ai.openrouter.getKey()) {
-                        return null;
-                    }
                     const { createOpenAI } = await import("@ai-sdk/openai");
-                    const openrouter = createOpenAI({
-                        apiKey: env.ai.openrouter.getKey(),
-                        baseURL: "https://openrouter.ai/api/v1",
-                    });
                     return {
                         provider: "openrouter",
                         model: modelName,
-                        providerInstance: openrouter,
+                        providerInstance: createOpenAI({ apiKey, baseURL: "https://openrouter.ai/api/v1" }),
                     };
                 }
 
                 case "openai": {
-                    if (!env.ai.openai.getKey()) {
-                        return null;
-                    }
-                    const { openai } = await import("@ai-sdk/openai");
-                    return {
-                        provider: "openai",
-                        model: modelName,
-                        providerInstance: openai,
-                    };
-                }
-
-                case "assemblyai": {
-                    if (!env.ai.assemblyai.getKey()) {
-                        return null;
-                    }
-                    // @ts-expect-error - Optional dependency, may not be installed
-                    const { assemblyai } = await import("@ai-sdk/assemblyai");
-                    return {
-                        provider: "assemblyai",
-                        model: modelName,
-                        providerInstance: assemblyai,
-                    };
+                    const { createOpenAI } = await import("@ai-sdk/openai");
+                    return { provider: "openai", model: modelName, providerInstance: createOpenAI({ apiKey }) };
                 }
 
                 case "deepgram": {
-                    if (!env.ai.deepgram.getKey()) {
-                        return null;
-                    }
-                    // Optional dependency — string-typed specifier so tsc skips
-                    // module resolution whether or not @ai-sdk/deepgram is installed.
-                    const { deepgram } = await import("@ai-sdk/deepgram" as string);
+                    const { createDeepgram } = await import("@ai-sdk/deepgram");
                     return {
                         provider: "deepgram",
                         model: modelName,
-                        providerInstance: deepgram,
+                        providerInstance: createDeepgram({ apiKey }) as TranscriptionCapableProvider,
                     };
                 }
 
+                case "assemblyai":
                 case "gladia": {
-                    if (!env.ai.gladia.getKey()) {
+                    // Optional dependencies — string-typed specifier so the type
+                    // checker skips resolution for a package that may be absent.
+                    const factoryName = providerName === "assemblyai" ? "createAssemblyAI" : "createGladia";
+                    const module = (await import(`@ai-sdk/${providerName}` as string)) as Record<string, unknown>;
+                    const create = module[factoryName];
+
+                    if (typeof create !== "function") {
                         return null;
                     }
-                    // @ts-expect-error - Optional dependency, may not be installed
-                    const { gladia } = await import("@ai-sdk/gladia");
+
                     return {
-                        provider: "gladia",
+                        provider: providerName,
                         model: modelName,
-                        providerInstance: gladia,
+                        providerInstance: (create as (o: { apiKey: string }) => TranscriptionCapableProvider)({
+                            apiKey,
+                        }),
                     };
                 }
 
@@ -501,83 +374,6 @@ export class TranscriptionManager {
             logger.warn(`Failed to create transcription provider ${providerName}: ${error}`);
             return null;
         }
-    }
-
-    /**
-     * Build provider-specific options for the AI SDK `transcribe()` call.
-     *
-     * The AI SDK has NO top-level `language` parameter — a language hint only
-     * reaches the model through `providerOptions.<providerId>.language`.
-     * Passing it anywhere else is silently dropped, which makes Whisper
-     * auto-detect per 30s window and hallucinate/loop on non-English audio.
-     * So `language` MUST be threaded here for every provider.
-     *
-     * The outer key is the AI SDK *provider id*, not our internal name:
-     * `openrouter` is created via `createOpenAI(...)` so its id is `openai`.
-     */
-    private buildProviderOptions(
-        provider: string,
-        options: TranscriptionOptions
-    ): Record<string, Record<string, import("@ai-sdk/provider").JSONValue>> {
-        const result: Record<string, Record<string, import("@ai-sdk/provider").JSONValue>> = {};
-        const lang = options.language;
-
-        if (provider === "openai" || provider === "openrouter" || provider === "groq") {
-            // whisper-based; keys are camelCase per AI SDK. temperature:0 is the
-            // documented anti-hallucination setting; segment timestamps power SRT/VTT.
-            const opts: Record<string, import("@ai-sdk/provider").JSONValue> = {
-                temperature: 0,
-                timestampGranularities: ["segment"],
-            };
-
-            if (lang) {
-                opts.language = lang;
-            }
-
-            // openrouter uses the openai-compatible provider instance → id "openai"
-            const key = provider === "groq" ? "groq" : "openai";
-            result[key] = opts;
-        }
-
-        if (provider === "deepgram") {
-            const deepgramOpts: Record<string, import("@ai-sdk/provider").JSONValue> = {
-                // Smart Format implies punctuation + capitalization + numerals;
-                // without it Deepgram returns lowercase unpunctuated text.
-                smartFormat: true,
-                punctuate: true,
-            };
-
-            if (lang) {
-                deepgramOpts.language = lang;
-            } else {
-                deepgramOpts.detectLanguage = true;
-            }
-
-            if (options.diarize) {
-                deepgramOpts.diarize = true;
-                deepgramOpts.utterances = true; // gives speaker-grouped sentence segments
-            }
-
-            result.deepgram = deepgramOpts;
-        }
-
-        if (provider === "assemblyai") {
-            const assemblyaiOpts: Record<string, import("@ai-sdk/provider").JSONValue> = {};
-
-            if (lang) {
-                assemblyaiOpts.languageCode = lang;
-            }
-
-            if (options.diarize) {
-                assemblyaiOpts.speakerLabels = true;
-            }
-
-            if (Object.keys(assemblyaiOpts).length > 0) {
-                result.assemblyai = assemblyaiOpts;
-            }
-        }
-
-        return result;
     }
 
     private getDefaultModelForProvider(provider: string): string {
@@ -661,26 +457,14 @@ export class TranscriptionManager {
         return [...this.SUPPORTED_FORMATS];
     }
 
-    getAvailableProviders(): string[] {
+    /** Async since the ladder may read the config; the only caller already awaited. */
+    async getAvailableProviders(): Promise<string[]> {
         const providers: string[] = [];
 
-        if (env.ai.groq.getKey()) {
-            providers.push("groq");
-        }
-        if (env.ai.openrouter.getKey()) {
-            providers.push("openrouter");
-        }
-        if (env.ai.openai.getKey()) {
-            providers.push("openai");
-        }
-        if (env.ai.assemblyai.getKey()) {
-            providers.push("assemblyai");
-        }
-        if (env.ai.deepgram.getKey()) {
-            providers.push("deepgram");
-        }
-        if (env.ai.gladia.getKey()) {
-            providers.push("gladia");
+        for (const provider of ["groq", "openrouter", "openai", "assemblyai", "deepgram", "gladia"]) {
+            if (await hasUsableKey(provider)) {
+                providers.push(provider);
+            }
         }
 
         return providers;
@@ -692,11 +476,36 @@ export class TranscriptionManager {
         maxFileSize: string;
     }> {
         return {
-            availableProviders: this.getAvailableProviders(),
+            availableProviders: await this.getAvailableProviders(),
             supportedFormats: this.getSupportedFormats(),
             maxFileSize: "500MB",
         };
     }
+}
+
+/**
+ * The api key for a vendor, or null when none resolves.
+ *
+ * `resolveProviderApiKey` throws when it finds nothing, which is the right shape
+ * for a caller that must have a key; here "no key" is just "skip this vendor",
+ * so the throw becomes a null and every other error still propagates.
+ */
+async function providerApiKeyOrNull(providerId: string): Promise<string | null> {
+    try {
+        const resolved = await resolveProviderApiKey(providerId);
+        return resolved.apiKey ?? null;
+    } catch (err) {
+        if (err instanceof CredentialUnavailableError) {
+            logger.debug({ provider: providerId }, "no transcription key resolves for this provider");
+            return null;
+        }
+
+        throw err;
+    }
+}
+
+async function hasUsableKey(providerId: string): Promise<boolean> {
+    return (await providerApiKeyOrNull(providerId)) !== null;
 }
 
 // Singleton instance

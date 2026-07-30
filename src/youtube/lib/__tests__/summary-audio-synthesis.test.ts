@@ -9,8 +9,12 @@ let xaiAvailable = true;
 let openaiAvailable = false;
 let synthesizeResponses: Array<{ audio: Buffer; contentType: string }> = [];
 
-mock.module("@genesiscz/utils/ai/providers", () => ({
-    getTextToSpeechProvider: (type: "xai" | "openai") => {
+// The engine table is the seam now: `summary-audio` asks it which of xai/openai
+// is available, and `ai.synthesize` reaches the same table for the provider it
+// then speaks with (utils/ai/providers/speech-engines.ts).
+mock.module("@genesiscz/utils/ai/providers/speech-engines", () => ({
+    speechEngineIds: () => ["macos", "xai", "openai"],
+    speechEngineFor: (type: "xai" | "openai") => {
         if (type === "xai") {
             return {
                 isAvailable: async () => xaiAvailable,

@@ -13,7 +13,6 @@ import type {
     CallLLMStructuredOptions,
     CallLLMStructuredResult,
 } from "@genesiscz/utils/ai/call-llm";
-import type { SummarizationResult } from "@genesiscz/utils/ai/types";
 
 export interface SummaryProgressInfo {
     phase: "summarize";
@@ -28,11 +27,12 @@ export interface SummarizeOpts {
     targetBins?: number;
     /** Default false. When true, ignores any cached summary for this mode. */
     forceRecompute?: boolean;
-    /** Free-form provider hint passed to the legacy Summarizer wrapper for `mode = "short"` only. */
+    /** A ModelRef for `mode = "short"` when no `providerChoice` is passed. */
     provider?: string;
     /**
-     * Required for `timestamped` and `long` modes. When omitted for `short`, falls back to the
-     * Summarizer wrapper using `config.provider.summarize`.
+     * Required for `timestamped` and `long` modes. When omitted for `short`, the
+     * model comes from `config.provider.summarize` (or the AI config's summarize
+     * default) through the same prompt.
      */
     providerChoice?: ProviderChoice;
     /** Free-form tone steering. Default "insightful". */
@@ -73,13 +73,7 @@ export interface SummaryBin {
     text: string;
 }
 
-export interface SummaryServiceSummarizer {
-    summarize(text: string): Promise<SummarizationResult>;
-    dispose(): void;
-}
-
 export interface SummaryServiceDeps {
-    createSummarizer: (opts: { provider?: string }) => Promise<SummaryServiceSummarizer>;
     callLLM: (opts: CallLLMOptions) => Promise<CallLLMResult>;
     callLLMStructured: <T>(opts: CallLLMStructuredOptions<T>) => Promise<CallLLMStructuredResult<T>>;
 }

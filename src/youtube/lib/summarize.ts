@@ -18,12 +18,10 @@ import type {
 } from "@app/youtube/lib/video.types";
 import type { ProviderChoice } from "@ask/types";
 import { type CallLLMStructuredResult, callLLM, callLLMStructured } from "@genesiscz/utils/ai/call-llm";
-import { Summarizer } from "@genesiscz/utils/ai/tasks/Summarizer";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 
 const DEFAULT_SUMMARY_DEPS: SummaryServiceDeps = {
-    createSummarizer: (opts) => Summarizer.create(opts),
     callLLM,
     callLLMStructured,
 };
@@ -225,11 +223,15 @@ export class SummaryService {
 
     /**
      * Produces the short summary and reports the language actually used.
-     * The `providerChoice` path honours `opts.lang` via the system prompt; the
-     * legacy `createSummarizer` fallback has no language/tone knob (its API is
-     * `summarize(text)` only), so it always emits English default-shaped prose —
-     * hence `langUsed: "en"` there, so the caller never mis-tags a stored
-     * artifact with a language it wasn't generated in.
+     *
+     * There used to be two ways to get here: this prompt, or a `Summarizer`
+     * wrapper reached when no `providerChoice` was passed. The wrapper's API was
+     * `summarize(text)` with no language or tone knob, so it silently emitted
+     * English default-shaped prose and the caller had to report `langUsed: "en"`
+     * to avoid mis-tagging the stored artifact. Both paths are now this one: when
+     * nothing names a provider, the configured spec becomes a ModelRef and the
+     * SAME prompt runs, so `--lang cs` and `--tone` finally hold whichever way
+     * the provider was chosen.
      */
     private async summarizeText(text: string, opts: SummarizeOpts): Promise<{ summary: string; langUsed: string }> {
         opts.onProgress?.({ phase: "summarize", percent: 30, message: "Calling LLM for short summary" });
@@ -238,51 +240,39 @@ export class SummaryService {
             opts.presetInstructions
         );
 
-        if (opts.providerChoice) {
-            const startedAt = new Date();
-            const result = await this.deps.callLLM({
-                systemPrompt,
-                userPrompt: text,
-                providerChoice: opts.providerChoice,
-                streaming: false,
-            });
-            const completedAt = new Date();
-            const ids = identifyProviderChoice(opts.providerChoice);
-            await recordYoutubeUsage({
-                action: "summarize:short",
-                provider: ids.provider,
-                model: ids.model,
-                usage: result.usage,
-                scope: opts.videoId,
-                videoId: opts.videoId,
-                prompt: formatPrompt(systemPrompt, text),
-                response: result.content,
-                durationMs: completedAt.getTime() - startedAt.getTime(),
-                startedAt: startedAt.toISOString(),
-                completedAt: completedAt.toISOString(),
-            });
+        const configuredSpec = opts.providerChoice
+            ? null
+            : (opts.provider ?? resolveAiSpecForTask(await this.config.getAll(), "summary"));
 
-            return { summary: result.content, langUsed: opts.lang ?? "en" };
-        }
+        const startedAt = new Date();
+        const result = await this.deps.callLLM({
+            systemPrompt,
+            userPrompt: text,
+            streaming: false,
+            ...(opts.providerChoice
+                ? { providerChoice: opts.providerChoice }
+                : { task: "summarize" as const, app: "youtube", ...(configuredSpec ? { model: configuredSpec } : {}) }),
+        });
+        const completedAt = new Date();
+        const ids = opts.providerChoice
+            ? identifyProviderChoice(opts.providerChoice)
+            : { provider: configuredSpec ?? "default", model: "(config default)" };
 
-        const configuredSpec = resolveAiSpecForTask(await this.config.getAll(), "summary");
-        const providerName = opts.provider ?? configuredSpec ?? "default";
-        const summarizer = await this.deps.createSummarizer({ provider: opts.provider ?? configuredSpec ?? undefined });
+        await recordYoutubeUsage({
+            action: "summarize:short",
+            provider: ids.provider,
+            model: ids.model,
+            usage: result.usage,
+            scope: opts.videoId,
+            videoId: opts.videoId,
+            prompt: formatPrompt(systemPrompt, text),
+            response: result.content,
+            durationMs: completedAt.getTime() - startedAt.getTime(),
+            startedAt: startedAt.toISOString(),
+            completedAt: completedAt.toISOString(),
+        });
 
-        try {
-            const result = await summarizer.summarize(text);
-            await recordYoutubeUsage({
-                action: "summarize:short",
-                provider: providerName,
-                model: "(summarizer-default)",
-                scope: opts.videoId,
-                videoId: opts.videoId,
-            });
-
-            return { summary: result.summary, langUsed: "en" };
-        } finally {
-            summarizer.dispose();
-        }
+        return { summary: result.content, langUsed: opts.lang ?? "en" };
     }
 
     private async summarizeTimestamped(

@@ -2,10 +2,13 @@ import type { LanguageModel } from "ai";
 import { AICoreMLProvider } from "../../providers/AICoreMLProvider";
 import { AIDarwinKitProvider } from "../../providers/AIDarwinKitProvider";
 import { AILocalProvider } from "../../providers/AILocalProvider";
+import { AIMacOSTextToSpeechProvider } from "../../providers/AIMacOSTextToSpeechProvider";
 import { AIOllamaProvider } from "../../providers/AIOllamaProvider";
 import { toEmbeddingModel } from "../../providers/embedding-adapter";
 import type { BindContext, Capability, ProviderBinding, ProviderPlugin } from "../../providers/plugin-types";
-import type { AIEmbeddingProvider } from "../../types";
+import { toSpeechModel } from "../../providers/speech-adapter";
+import { toTranscriptionModel } from "../../providers/transcription-adapter";
+import type { AIEmbeddingProvider, AITextToSpeechProvider, AITranscriptionProvider } from "../../types";
 import { ArtifactStore } from "../artifacts";
 import { byTask, type LocalModelDescriptor } from "../descriptors";
 
@@ -25,6 +28,10 @@ interface LocalPluginSpec {
     capabilities: Capability[];
     /** Runtimes load a model at construction, so this is per model id. */
     createEmbedder?: (modelId: string) => AIEmbeddingProvider;
+    /** Same contract for speech-to-text: one runtime per model id, cached on the binding. */
+    createTranscriber?: (modelId: string) => AITranscriptionProvider;
+    /** Text-to-speech. `Synthesizer` uses the rich engine directly; this is for byte consumers. */
+    createSpeaker?: (modelId: string) => AITextToSpeechProvider;
 }
 
 const SPECS: LocalPluginSpec[] = [
@@ -32,6 +39,10 @@ const SPECS: LocalPluginSpec[] = [
         id: "local-hf",
         capabilities: ["embed", "transcribe", "translate", "summarize"],
         createEmbedder: () => new AILocalProvider(),
+        // Whisper via transformers.js. The model id reaches the runtime through
+        // the per-call options rather than the constructor, so one instance
+        // serves whichever whisper the descriptor catalogue named.
+        createTranscriber: () => new AILocalProvider(),
     },
     {
         id: "ollama",
@@ -54,11 +65,12 @@ const SPECS: LocalPluginSpec[] = [
         createEmbedder: () => new AIDarwinKitProvider(),
     },
     {
-        // macOS `say`. Its speech() adapter lands in Phase 5 with the task facade
-        // that defines the voice/rate option surface; here it exists so the
-        // provider is discoverable and capability-checkable.
+        // macOS `say`. One engine for every voice, so the model id is ignored:
+        // the voice is a call option, not a model (tasks/task-models.ts names it
+        // "system" purely so the ladder has something to resolve).
         id: "macos",
         capabilities: ["tts"],
+        createSpeaker: () => new AIMacOSTextToSpeechProvider(),
     },
 ];
 
@@ -99,7 +111,28 @@ function buildPlugin(spec: LocalPluginSpec): ProviderPlugin {
         credential: { fields: [], envKeys: [] },
 
         async bind(ctx: BindContext): Promise<ProviderBinding> {
-            const runtimes = new Map<string, AIEmbeddingProvider>();
+            // Keyed by task as well as model id: a runtime instance holds ONE
+            // loaded model, so an embedder and a transcriber for the same id are
+            // still two native handles, and `dispose()` has to free both.
+            const runtimes = new Map<string, { dispose?(): void }>();
+            const { createEmbedder, createTranscriber, createSpeaker } = spec;
+
+            function runtimeFor<T extends { dispose?(): void }>(
+                task: string,
+                modelId: string,
+                create: (id: string) => T
+            ): T {
+                const key = `${task}:${modelId}`;
+                const existing = runtimes.get(key) as T | undefined;
+
+                if (existing) {
+                    return existing;
+                }
+
+                const created = create(modelId);
+                runtimes.set(key, created);
+                return created;
+            }
 
             return {
                 accountId: ctx.account.id,
@@ -110,23 +143,34 @@ function buildPlugin(spec: LocalPluginSpec): ProviderPlugin {
                         `${spec.id} has no chat model (${modelId}); it provides ${spec.capabilities.join(", ")}.`
                     );
                 },
-                ...(spec.createEmbedder
+                ...(createEmbedder
                     ? {
-                          embedding: (modelId: string) => {
-                              let runtime = runtimes.get(modelId);
-
-                              if (!runtime) {
-                                  runtime = spec.createEmbedder?.(modelId);
-
-                                  if (!runtime) {
-                                      throw new Error(`${spec.id} cannot embed`);
-                                  }
-
-                                  runtimes.set(modelId, runtime);
-                              }
-
-                              return toEmbeddingModel({ provider: runtime, providerId: spec.id, modelId });
-                          },
+                          embedding: (modelId: string) =>
+                              toEmbeddingModel({
+                                  provider: runtimeFor("embed", modelId, createEmbedder),
+                                  providerId: spec.id,
+                                  modelId,
+                              }),
+                      }
+                    : {}),
+                ...(createTranscriber
+                    ? {
+                          transcription: (modelId: string) =>
+                              toTranscriptionModel({
+                                  provider: runtimeFor("transcribe", modelId, createTranscriber),
+                                  providerId: spec.id,
+                                  modelId,
+                              }),
+                      }
+                    : {}),
+                ...(createSpeaker
+                    ? {
+                          speech: (modelId: string) =>
+                              toSpeechModel({
+                                  provider: runtimeFor("tts", modelId, createSpeaker),
+                                  providerId: spec.id,
+                                  modelId,
+                              }),
                       }
                     : {}),
                 dispose: () => {

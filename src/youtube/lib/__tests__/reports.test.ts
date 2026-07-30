@@ -82,9 +82,6 @@ describe("synthesizeReport", () => {
 
         try {
             const deps: SummaryServiceDeps = {
-                createSummarizer: async () => {
-                    throw new Error("not used");
-                },
                 callLLM: async () => {
                     throw new Error("not used");
                 },
